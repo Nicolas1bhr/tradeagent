@@ -6322,3 +6322,34 @@ Manager's gate at `f9f5878` (the reported tip, 0 behind `main` `b896e36`; `src`/
 **NOT done, NOT verified:** a fifth position gate; the review's UNVERIFIED list; anything on the bridge; the box; any defence of a closure against a clock moved while the
 process is DOWN beyond declining to credit the gap — there is no trustworthy elapsed-time source across a process boundary, and the contract says so rather than
 implying one; no box, no ATAS, no money.
+
+## 2026-09-19 — the direction landed: `docs/PRINCIPLES.md` is the product definition, `manager-prompt.md` the fleet handoff, the read-gate points at both; docs only
+
+The owner's corrective direction (draft 2026-09-17, prepared 2026-09-18, last pass 2026-09-19) landed as documentation on `90af8e4` — the handoff committed
+untouched first, so the pass is a readable diff. No product file changed. `docs/PRINCIPLES.md` (106 lines) holds the principles verbatim from the handoff's § 3
+with one grammar fix; the handoff (201 → 100 lines) points at it, marks this landing done, bounds the fleet's reading, tells the survey to be a general-purpose
+leg (an Explore leg cannot write its report), and anchors every § 4 evidence bullet to file:line; `CLAUDE.md` "Start here" names the principles ahead of the
+resume file with the preserved protections and the build-fleet/product-organisation distinction, and its test count is corrected (329 → ~2,190); `docs/COUNCIL.md`
+carries a precedence note (its ten rules and boundary protections stay; its fixed organisation and unbuilt machinery are proposals to reassess, not a backlog);
+the resume block's item 6 no longer lists `U-allocator-1`, `U-promote-bounds`, `U-flatten-2` and the milestone review as pending, decision (e) is recorded as
+decided (option B, `U-reopen-1`/`-2`), and the "three routes" are replaced by the survey-then-briefs queue with the release and the box kept as the owner's calls.
+
+**Source observations at `90af8e4` (by `git grep`; NOT executed checks, NOT runtime verification), each written into the handoff's § 4:** `GrantedWorkerTools.cs:49-54`
+six tool names, `:74` `Writable = [CouncilRoles.OutDir, "trading"]`, no exec or spawn tool; `TradingGateway.cs:112` `public Core.Strategy.Referee Referee`, its doc
+"no pipe op and no `trade` verb asks for a verdict"; `Referee.Verdict` (`Referee.cs:177`) named in `src/` only by two doc comments, called from four test files;
+`RequestVerdict` called only at `Referee.cs:186`; `StrategyEvaluator` named in `src/` only by `Backtest.cs`, `StrategyInterpreter.cs` and itself; `IntentDecision.From(`
+called only from `IntentDecisionTests.cs`; `TradingGateway.Allocate` (`:145`) called only from `DashboardView.cs:2248` ("allocated by the account owner");
+`CouncilRelay.ReportLines = 20` (`:57`); `WorkspaceRevisions.Restore` (`:71`) and `Snapshot` (`:82`); `BoundaryBaselines` (`BoundaryStore.cs:229`) checked at
+`:106-109`; `CouncilBoundaries` class (`BoundaryStore.cs:360`) with `Open`/`OpenRetirement`/`Assess`/`Release`, named in ten `src/` files; `Containment.Sandbox()`
+(`Containment.cs:43`) `new(false, "NONE", …)`; `FakeBroker.BasePrice` (`FakeBroker.cs:62`). `[Fact]`/`[Theory]` in `tests/`: 1821 — the last gate ran 2190
+(Unit 1146 + Fault 374 + Integration 670, 1 skipped), so the old "329 tests" in `CLAUDE.md` was three weeks stale.
+
+**Verified by running:** `git rev-parse HEAD` → `bd7d9c2d6b9cfac74161abc4fc951d80a11b4ab8` before the pass (the handoff's inspected sha); `git worktree list` → the main
+tree only; `git branch` → `main` plus the merged unit branches and the three probes branches; `git status -sb` → `## main...origin/main`, clean after the first
+commit and its push (`push exit: 0`); caps measured with `wc -l`/python: `manager-prompt.md` 100, `docs/PRINCIPLES.md` 106, the resume block 45, this section
+30; the secret scan on the staged diff as a gate both times (judged false positives excluded by name: "unrelated secrets", "secret scan", `CancellationToken`,
+`IpcToken`, `string token`); no `Co-Authored-By` trailer on either commit.
+
+**NOT done, NOT verified:** no product code, no build, no suite run — docs only; CI runs at the landing sha and its verdict is recorded when it completes; no survey
+leg dispatched, no brief written, `docs/briefs/` not created; no box, no ATAS, no money; nothing here marks a feature implemented, a test passed or a boundary
+enforced — the handoff's § 4 items are starting points for the survey, not findings.

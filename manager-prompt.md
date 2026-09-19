@@ -1,6 +1,6 @@
 # TradeAgent — final direction for the build fleet
 
-Prepared 2026-09-18 from the owner's original corrective draft, Fable's 2026-09-17 revision, and a source inspection of `main` at `bd7d9c2d6b9cfac74161abc4fc951d80a11b4ab8`. This is the handoff to execute; preparing it did not implement or verify the product changes below. Recheck implementation claims against the checkout you actually receive.
+Prepared 2026-09-18 from the owner's original corrective draft, Fable's 2026-09-17 revision, and a source inspection of `main` at `bd7d9c2d6b9cfac74161abc4fc951d80a11b4ab8`. Revised 2026-09-19 in a last pass: every source claim in § 4 re-read at `90af8e4` (identical `src/` and `tests/` to `bd7d9c2`), the documentation landing of § 2 executed in the same commit as this revision, the principles moved to `docs/PRINCIPLES.md` as the single copy. This is the handoff to execute; preparing it implemented and verified none of the product changes below. Recheck implementation claims against the checkout you actually receive.
 
 ## 1. Your mandate and the destination
 
@@ -12,131 +12,28 @@ The architectural direction is **a broad autonomous working environment inside a
 
 There are two fleets here: the **build fleet** receiving this prompt, and the **agent organisation inside the product**. `docs/HOW-WE-BUILD.md` governs the former. Its builder roles, worktrees, short briefs and landing procedure are not automatically requirements to hard-code into the latter.
 
-## 2. Standing and the first landing
+## 2. Standing, reading, and the first landing (done)
 
-Read this directive first, then `CLAUDE.md`, `docs/RESUME-HERE.md`, `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md`, and the relevant current evidence in `BUILD-STATUS.md`. Establish the actual branch, changes and work in flight before acting; dated resume text is not proof of current state.
+**Read, in this order and nothing more before acting:** this directive; `docs/PRINCIPLES.md` in full; `CLAUDE.md`; `docs/HOW-WE-BUILD.md`; the "Do this first" block of `docs/RESUME-HERE.md` (the rest of that file is reference and traps, read per topic); the precedence note, the ten rules and "The unit order" in `docs/COUNCIL.md`; `docs/REVIEW-2026-09-16.md` § UNVERIFIED; the `## 2026-09-16` sections at the end of `BUILD-STATUS.md`. `BUILD-STATUS.md` is 6,300 lines and `docs/RESUME-HERE.md` 1,100; reading either whole is a wasted hour. Establish the actual branch, changes and work in flight from git before acting; dated resume text is not proof of current state.
 
-This directive supersedes conflicting product philosophy, organisational prescriptions and future sequencing in `docs/COUNCIL.md` and old handoffs. It preserves the no-terminal promise, the honesty rule, and the existing money, credential, accounting, evidence and recovery protections. Do not use the phrase “principles outrank other documents” as permission to bypass a protection. Where a policy needs a local change, name the protected property and show how the replacement preserves it.
+This directive supersedes conflicting product philosophy, organisational prescriptions and future sequencing in `docs/COUNCIL.md` and old handoffs. It preserves the no-terminal promise, the honesty rule, and the existing money, credential, accounting, evidence and recovery protections. Do not use the phrase "principles outrank other documents" as permission to bypass a protection. Where a policy needs a local change, name the protected property and show how the replacement preserves it.
 
-**First land the direction in the repo, as a documentation-only change:**
+**The documentation landing is done, in the commit that carries this revision — docs only, no product change:**
 
-1. Save the text between the `PRINCIPLES` markers below as `docs/PRINCIPLES.md`. It is the durable product definition.
-2. Point `CLAUDE.md`'s “Start here” and `docs/RESUME-HERE.md`'s “Do this first” to it before the older council doctrine. Make the preserved protections and the build-process distinction explicit.
-3. Add a precedence note atop `docs/COUNCIL.md`: its existing boundary protections remain; its fixed organisation, mandatory deliberation patterns and unbuilt machinery are historical design proposals to reassess against the principles, not an automatic backlog. Memory, accountability and delegation remain product needs; their earlier prescribed implementations are not commitments.
-4. Correct the active resume block where completed work still appears pending, and replace its old next-work choices with this inspection and the resulting loop-closing queue. Preserve historical evidence. Amend conflicting aspirational instructions locally when needed; avoid a broad documentation rewrite.
+1. `docs/PRINCIPLES.md` holds the principles that used to sit in § 3 of this file. It is the durable product definition and the only copy; this file points to it so two copies cannot evolve independently.
+2. `CLAUDE.md` "Start here" and `docs/RESUME-HERE.md` "Do this first" point to it ahead of the council doctrine, with the preserved protections and the build-process distinction stated.
+3. `docs/COUNCIL.md` carries a precedence note at its top: its boundary protections remain; its fixed organisation, mandatory deliberation patterns and unbuilt machinery are historical design proposals to reassess against the principles, not an automatic backlog. Memory, accountability and delegation remain product needs; their earlier prescribed implementations are not commitments.
+4. The resume block no longer shows landed work as pending, decision (e) is recorded as decided, and its "three routes" are replaced by the survey and the loop-closing queue. Historical evidence is preserved.
 
-Retain this file as the fleet handoff. Make `docs/PRINCIPLES.md` the source of future product direction so two copies do not evolve independently. Follow the repo's scan and landing procedure. Documentation establishes intent; it must not mark a feature implemented, a test passed, or a boundary enforced.
+On arrival, confirm it (`ls docs/PRINCIPLES.md`, `head -9 docs/COUNCIL.md`). If your checkout lacks them, `git pull`; do not recreate them by hand. Retain this file as the fleet handoff and keep it in step with `docs/PRINCIPLES.md`. Documentation establishes intent; it must not mark a feature implemented, a test passed, or a boundary enforced.
 
 ## 3. Canonical principles
 
-<!-- PRINCIPLES BEGIN -->
-# What TradeAgent is
-
-TradeAgent is a factory for autonomous LLM agents pursuing a trading mission: discover, test, operate and improve strategies, aiming to cover their full costs within the owner's chosen risk and spending limits.
-
-The factory floor belongs to the models. The vault door belongs to deterministic code.
-
-```text
-AUTONOMOUS WORKING ENVIRONMENT
-research · reasoning · coding · tools · experiments
-strategy creation · delegation · communication · memory
-planning · paper trading · failure · adaptation
-                         │
-                  proposed action
-                         ▼
-TRUSTED BOUNDARIES
-resources and spending · evidence integrity
-credentials · account identity · real exposure
-                         │
-                         ▼
-AUTHORISED EXTERNAL EFFECTS
-```
-
-### The user experience and economic mission
-
-The product runs through its own app on the target Windows laptop. Dependencies, sign-in, configuration, reporting and recovery must support an owner who never uses a terminal. The owner grants authority and sets ceilings; ordinary work proceeds within them without continual human direction. The app explains what is working, waiting, blocked or paused, why, what it costs, and what happens next.
-
-The economic score is measured trading performance after trading fees and applicable financing, data, inference, subscription, infrastructure and other operating costs. Keep actual charges, estimates and subscription/list-price equivalents distinct. Name missing costs and incomplete valuations; unknown is never zero. Attribute results and costs to the relevant account, strategy version and attempts where the system can establish that lineage. Backtest and paper results remain labelled simulations and establish no realised live profit.
-
-### Three zones, with different purposes
-
-| Zone | What belongs here | Default |
-|---|---|---|
-| Creative | Research, coding, workspace tools, delegation, plans, communication, ordinary experiments and losing paper strategies | Freedom within granted resources and the workspace boundary |
-| Evidence | App-computed measurements, frozen versions, causal data access, holdouts, trial accounting, lineage and forward evidence | Protect the measurement and its provenance; let models choose hypotheses |
-| Capital and external effects | Real exposure, accounts, credentials, hard spending limits, operator controls and enabled external actions | Explicit authority, deterministic enforcement and attributable effects |
-
-Paper losses and bad hypotheses are acceptable. Spending on those experiments is still real. Writing scratch code is acceptable; writing the supervisor, trusted configuration, measurement ledger or private holdout is a different action. Agents can cooperate and share ordinary research; protected evaluation evidence does not become shareable merely because agents want to discuss it.
-
-### Models own the organisation
-
-Agents choose what to investigate, how to investigate it, when to seek help, what tools to build, and when to keep, modify, abandon or branch their work. Several workers may attack the same problem differently. An inefficient experiment, an unnecessary worker within budget, a changed plan or a losing paper strategy is an ordinary outcome to observe and learn from.
-
-Supply useful primitives rather than prescribing every sequence of thought and work. A task record may preserve identity, completion, cost and recovery without defining a corporate workflow. A typed tool interface may protect an actual boundary without requiring an organisational approval chain.
-
-Keep the council and role identities already in use for compatibility. Do not grow a fixed list of roles to represent every helper the models invent, and do not make the current number of roles a permanent product limit. Powerful models can coordinate and challenge important decisions; cheaper capable models can do bounded work. Choose that balance from measured capability and cost. A meeting or a second opinion must have a purpose within budget; every ordinary experiment need not purchase a fixed ceremony.
-
-### Delegation is one reusable capability
-
-A parent asks the runtime for a child with a mission, relevant context, workspace/data scope, a subset of its delegable capabilities, a resource allowance and a lifetime. The app mints the child's identity and records its parentage. The child works autonomously and returns artifacts and evidence; the parent chooses the next step.
-
-Delegation cannot manufacture authority or money. Parent and children draw from the same encompassing ceilings; reservation, cancellation and expiry apply to the actual work and its descendants. Replacing or renaming a worker does not reset campaign trials, spending commitments or unresolved operations. Operator controls, credentials and authority to modify the supervisor are not delegable agent capabilities.
-
-Examples of broad capabilities are workspace access, contained code execution, market data, web research, backtesting, paper simulation, spawning workers and separately scoped external actions. Identity establishes who acted; capabilities establish what that launch may do. A title, model-supplied role name or directory depth establishes neither.
-
-### Useful autonomy needs code, tools and durable memory
-
-The working environment must eventually let agents write and execute useful code, develop temporary tools, analyse data, conduct experiments and delegate inside its boundary. A model that can only exchange small reports does not meet that requirement. Reuse and extend the existing runtimes before inventing a replacement. Runtime selection must satisfy the intended capabilities and the actual isolation and spending requirements; neither CLI nor API is the product philosophy.
-
-Keep active context small and relevant. Preserve durable plans, findings, failed experiments, decisions, source references, artifacts and lineage outside the transcript so a fresh attempt can resume. Distinguish measurements, external claims and agent interpretations. Bounds on context, retrieval, storage and compute are legitimate; a short summary limit is not a reason to discard the underlying research. Prefer a bounded summary with artifact references, explicit refusal and recoverable output over silent truncation or destruction. Add elaborate retrieval or consolidation only when an observed failure needs it.
-
-“Never stopping” means an enduring mission that can schedule useful work, wait, resume and recover. It does not mean constant paid inference. Agents can choose a next task or wake condition within their allowance; app scheduling persists that intent and avoids duplicate launches. No useful eligible work is healthy idleness. Budget exhaustion stops paid work; app protection and reconciliation continue. A restart must not erase costs or uncertainty, repeat an unresolved external action, or require the owner to reconstruct the mission.
-
-### Evidence supports iteration and governs promotion
-
-Models may explore freely on research data. The app owns authoritative measurements and protected evaluation: immutable candidate identity, evaluator and data versions, declared execution/cost assumptions, causal inputs, trial limits and relevant holdout protection. Models may propose candidates for evaluation; software decides admission and issues the verdict within the existing evidence budget. Requesting evaluation does not grant access to the holdout, alter the scorer or authorise live capital.
-
-Distinguish acceptance of a program, a favourable historical verdict, eligibility for paper observation, and eligibility for live capital. Preserve the deployed contract while making these meanings explicit. Forward paper evidence cannot be required before the very first paper run that produces it. A paper experiment also cannot confer live authority. Keep rejection, inconclusive evidence and no trade as valid outcomes; do not lower the scorer or invent a profitable candidate to obtain a demonstration.
-
-Frozen strategies execute through the app's deterministic runner and existing gateway. Agent-authored research code does not run with the gateway's authority. Models can revise strategies between versions; no model call is required for each signal or for emergency protection. Preserve the existing language and semantics until a demonstrated strategy need justifies extending them.
-
-### The boundary remains enforceable
-
-Preserve the existing dispatch and recovery protections: enabled authority; valid deployment and allocation where required; connector, mode and account identity; current launch authority; reconciled order state; fresh required data and decisions; exposure and loss limits; idempotency; app-owned emergency risk reduction; and durable attribution. UNKNOWN remains uncertainty requiring reconciliation, never permission to retry a potentially completed order.
-
-Owner controls remain in-process. Inbox documents and agent prose grant no authority. New live authority and live capital allocations retain their deliberate owner confirmation. Pause, stop and flatten retain their distinct meanings and existing confirmation behaviour; making routine work autonomous must not weaken emergency controls.
-
-Resource and spending caps must be enforced where costs are incurred, including children and retries, with unresolved charges retained across restarts. Describe advisory limits as advisory. Protect the supervisor, trusted state, credentials and private evaluation data from agent code. A process group, a job object or a prompt instruction alone does not establish that protection.
-
-The target is to prevent unauthorised effects by construction. Claim only the properties actually demonstrated on the supported environment. A loss limit constrains permitted exposure and triggers protection; it is not a guarantee against market gaps, execution failure or every possible loss. Preserve evidence of limitations instead of promising catastrophic outcomes are universally impossible.
-
-Before adding a blocker, name the concrete consequence, why an existing control does not cover it, and why observation, a resource bound or ordinary failure is insufficient. Add the smallest control at the responsible boundary. Do not turn an LLM's reversible mistakes into a growing set of prescribed workflows. Equally, do not remove a genuine boundary merely because it has deterministic enforcement.
-
-### The loop and the priority rule
-
-```text
-notice / choose useful work
-  → research and create a candidate
-  → test and obtain a bounded independent verdict
-  → when eligible, run forward on paper
-  → receive fills, P&L, costs and evidence
-  → keep / modify / kill / branch / choose another problem
-  → continue without the owner supplying the next step
-
-Separately: sufficient evidence + explicit live authority
-  → bounded live execution → measured results → further learning
-```
-
-This describes an outcome to enable, not an app-enforced script for every agent. Models can revisit, skip inapplicable research steps, work in parallel or stop an unpromising line; they cannot skip an applicable evidence or capital boundary.
-
-Prioritise work that closes an arrow, removes a demonstrated blocker, makes that loop usable and recoverable by the owner, or protects an actual material boundary. Prefer a local extension of a working primitive over a new subsystem. Preserve useful existing machinery; simplify a concrete obstruction without tearing out its underlying guarantees.
-
-Broader strategy languages, extra venues, copy trading, fixed worker hierarchies, generic governance and hypothetical external-tool policies are not the next priority simply because an older plan mentioned them. Build them when the mission demonstrates the need. Success is autonomous, economically accountable operation inside the owner's limits, not the number of safeguards, roles, tests or commits accumulated.
-<!-- PRINCIPLES END -->
+`docs/PRINCIPLES.md`, read in full; it is not summarised here so that there is one copy. Its spine: the factory floor belongs to the models, the vault door belongs to deterministic code; three zones — creative, evidence, capital and external effects — with different defaults; models own the organisation; delegation is one reusable capability that cannot manufacture authority or money; useful autonomy needs code, tools and durable memory; evidence supports iteration and governs promotion; the boundary remains enforceable; and the loop with its priority rule — close an arrow, remove a demonstrated blocker, protect a material boundary, prefer a local extension of a working primitive over a new subsystem.
 
 ## 4. Inspect the reachable loop before choosing units
 
-After the documentation landing, dispatch one fresh read-only survey leg. It may write its inspection report; it must not modify product code. Have it read the principles first. Use `docs/INSPECTION-<date>.md`, five compact tables, target at most 100 lines. Cite the inspected SHA and file:line evidence, with separate labels for source observations, executed checks and historical claims. Do not call source inspection runtime verification.
+Dispatch one fresh read-only survey leg first, from a ≤ 40-line brief at `docs/briefs/SURVEY.md`. **Dispatch it as a general-purpose leg**, not an Explore leg — an Explore agent has no write tool and cannot save its report — and tell it that it changes nothing under `src/`, `tests/` or `docs/` except the one file it writes; it must not modify product code. Have it read `docs/PRINCIPLES.md` first. It writes `docs/INSPECTION-<date>.md`: five compact tables, target at most 100 lines. Cite the inspected sha and file:line evidence, with separate labels for source observations, executed checks and historical claims. Do not call source inspection runtime verification. Land the report as a docs commit through the repo's scan and landing procedure and retire the brief.
 
 | Table | What it must settle |
 |---|---|
@@ -146,16 +43,16 @@ After the documentation landing, dispatch one fresh read-only survey leg. It may
 | Hard boundaries and limitations | Identify what is enforced and where, what is merely stated, and the isolation and account conditions needed for the next demonstration. Preserve the difference between a protected evaluation and a mechanics-only run. |
 | Smallest next slice | Name the earliest broken dependency, the subsequent forward-paper connection, the acceptance evidence, and any genuine owner-only prerequisite. Order a short queue by those dependencies. |
 
-Starting evidence to recheck, not a prewritten verdict:
+Starting evidence to recheck, not a prewritten verdict. Each item was re-read at `90af8e4` on 2026-09-19 — source observations by `git grep`, not executed checks:
 
-- `GrantedWorkerTools.cs` offers six tool names, no code-execution or child-spawn tool, and writes only to `out/` and `trading/`. Trace what a real model can accomplish through the offered schemas and handlers, not just what internal methods exist. Contrast that with the vendor CLI's capabilities and actual isolation.
-- `TradingGateway.cs` exposes `Referee` in process and explicitly documents no agent-facing verdict request. The source inspection for this handoff found no production invocation of `Referee.Verdict`. Campaign setup and holdout selection also need tracing. This may break the loop before the missing paper runner. A bounded candidate-submission path is compatible with an app-owned referee; exposing protected data or arbitrary evaluation-budget renewal is not.
-- `StrategyEvaluator` emits `StrategyIntent`; the latest build record reports no deployed paper/live runner converting it to an order. The interpreter and backtester already exist. Distinguish them from the missing forward execution host.
-- `TradingGateway.Allocate` and the Capital card currently put allocations behind an owner press. Trace how that affects paper deployment; paper experimentation must not require Nicolas to grant capital to every candidate.
-- `CouncilRelay.ReportLines`, `WorkspaceRevisions` restore behaviour and `BoundaryBaselines` declaration checks constrain publication. Establish whether each protects cost/evidence, prevents useful work, loses recoverable work, or only prescribes a format. Preserve useful limits and protected publication properties when changing a concrete obstruction.
-- Trace `CouncilBoundaries` wakes, deadlines, assessments and dispositions to **all** their consumers, including subsequent agent decisions. No order-path consumer alone does not prove a review is useless. Conversely, paid review with no useful consequence is a candidate for local simplification, not a reason to add another dispatch veto.
-- `Containment.Sandbox()` reports `NONE`. Same-user agent code can reach files a tool-level contract says it cannot modify. Do not describe those files as physically protected until isolation proves it.
-- The built-in simulator's fixed quotes establish mechanics only. Historical records also leave real provider calls, current UI behaviour and an autonomous strategy loop unverified. Use historical evidence with its date and scope; do not infer that something has never happened solely from an old handoff.
+- `src/TradeAgent.AgentRuntime/GrantedWorkerTools.cs` offers six tool names — `read_file`, `list_files`, `write_file`, `trade`, `data`, `report` (lines 49–54) — no code-execution or child-spawn tool, and writes only to `out/` and `trading/` (`Writable`, line 74). Trace what a real model can accomplish through the offered schemas and handlers, not just what internal methods exist. Contrast that with the vendor CLI's capabilities and actual isolation.
+- `src/TradeAgent.Gateway/TradingGateway.cs:99-112` exposes `Referee` in process and documents that no pipe op and no `trade` verb asks for a verdict. `Referee.Verdict` (`src/TradeAgent.Core/Strategy/Referee.cs:177`) has no production caller — four test files only — and `RequestVerdict` is called only from inside `Verdict` itself. Campaign setup and holdout selection also need tracing. This may break the loop before the missing paper runner. A bounded candidate-submission path is compatible with an app-owned referee; exposing protected data or arbitrary evaluation-budget renewal is not.
+- `StrategyEvaluator` emits `StrategyIntent` and is reached in production only by `Backtest.cs` and `StrategyInterpreter.cs`; `IntentDecision.From(StrategyIntent)` (`src/TradeAgent.Gateway/GatewayTypes.cs:328`), the adapter into the freshness gate, has only test callers; nothing turns a `StrategyIntent` into a `PlaceIntent`. The interpreter and backtester already exist. Distinguish them from the missing forward execution host.
+- `TradingGateway.Allocate` (`TradingGateway.cs:145`) has one caller, `src/TradeAgent.App/DashboardView.cs:2248` — the Capital card's owner press, "allocated by the account owner". Trace how that affects paper deployment; paper experimentation must not require Nicolas to grant capital to every candidate.
+- `CouncilRelay.ReportLines` (20, `src/TradeAgent.AgentRuntime/CouncilRelay.cs:57`), `WorkspaceRevisions` restore behaviour (`WorkspaceRevisions.cs:23-82`) and `BoundaryBaselines` declaration checks (`src/TradeAgent.Core/Db/BoundaryStore.cs:106-109` and `:229`) constrain publication. Establish whether each protects cost/evidence, prevents useful work, loses recoverable work, or only prescribes a format. Preserve useful limits and protected publication properties when changing a concrete obstruction.
+- `CouncilBoundaries` is a class inside `src/TradeAgent.Core/Db/BoundaryStore.cs:360` (`Open`, `OpenRetirement`, `Assess`, `Release`), consumed from ten files including `CouncilRelay.cs`, `MissionLoop.cs`, `AppHost.cs`, `Referee.cs`, `DailyReports.cs`, `LossHold.cs` and `TradingGateway.cs`. Trace its wakes, deadlines, assessments and dispositions to **all** their consumers, including subsequent agent decisions. No order-path consumer alone does not prove a review is useless. Conversely, paid review with no useful consequence is a candidate for local simplification, not a reason to add another dispatch veto.
+- `Containment.Sandbox()` (`src/TradeAgent.AgentRuntime/Containment.cs:43`) reports `NONE`. Same-user agent code can reach files a tool-level contract says it cannot modify. Do not describe those files as physically protected until isolation proves it.
+- The built-in simulator's fixed quotes (`FakeBroker.BasePrice`, `src/TradeAgent.Connectors.Fake/FakeBroker.cs:62`) establish mechanics only. Historical records also leave real provider calls, current UI behaviour and an autonomous strategy loop unverified. Use historical evidence with its date and scope; do not infer that something has never happened solely from an old handoff.
 
 ## 5. Execute the smallest connected slices
 
@@ -194,8 +91,10 @@ Use `docs/HOW-WE-BUILD.md` for unit delivery: fresh builders, at most two heavy 
 
 Every brief starts with the loop arrow it closes or the actual boundary it protects, then the observable result that will prove it. Run the real model and app at the first useful integration point within the configured allowance; do not postpone all runtime discovery until after another long sequence of disconnected landings. Use the Windows box at the appropriate milestone and under its existing access rules. External capability, platform-rule and provider assumptions must be verified from current official sources when a unit depends on them.
 
-If taking the existing Astra consult before the paper line, give it the principles and concrete survey findings first, ask the bounded unresolved question, and use the final answer as advice. No consultant's preferred organisation overrides the owner's product direction.
+Take one bounded Astra consult after the survey and before the first paper-line brief, and no more than that without a new unresolved question: give it the principles and the concrete survey findings first, ask the bounded unresolved question, and use the final answer as advice. No consultant's preferred organisation overrides the owner's product direction.
 
 At each landing and session close, record what was actually run and what remains **NOT VERIFIED** under `BUILD-STATUS.md`'s honesty rule. Distinguish the loop connection gained from the protections preserved. Update the resume block with the current principles, inspection, observed milestone, next small units and genuine owner-only dependencies. Preserve concurrent work and the repository's normal landing discipline.
+
+**Machine facts that otherwise cost the first hour** (the resume block's items 5 and 8 hold the detail): `docs/briefs/` does not exist until the first brief creates it, and git drops it again when the last brief is deleted — never name it in a `git add`. Worktrees go under `~/Projects/ai-trading-software-for-mihael-worktrees/`. Two heavy Opus legs plus the manager's gates reach the session limit in about 5.5 hours, three legs in 2–3; a killed leg's branch is the handoff, and `SendMessage` to its agent id resumes it with its context. One manager gate at a time, detached (`nohup` build plus the three suites to files, a Monitor on a DONE file), about 13 minutes; an Integration run reading three times its 11 minutes is contaminated and is re-run alone on the same build. The secret scan wraps the commit as a gate, no `Co-Authored-By` trailers, `--ff-only` with its exit checked, and every cap (brief ≤ 40, report ≤ 20, record ≤ 40 lines) measured with `wc -l` before the commit. Astra is `codex exec -s read-only -m gpt-6-astra` with `-o` to an answer file; only the answer file is used, never its reasoning log.
 
 Keep the fleet aimed at the destination: models doing useful autonomous work, learning from measured outcomes, within a boundary the software can actually enforce.

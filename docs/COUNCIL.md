@@ -1,5 +1,12 @@
 # The council — how the never-stopping mission is run
 
+> **Precedence, 2026-09-19.** `docs/PRINCIPLES.md` is the product direction. The ten rules below and every boundary
+> protection they name — in-process owner controls, the inbox as data, code-enforced gates, spending commitments made
+> before launch, the referee's private evidence — remain in force. The fixed organisation (the roles, the two directors,
+> the mandatory review policy) and the unbuilt machinery in "The shape" and "The unit order" are historical design
+> proposals to reassess against the principles, not an automatic backlog. Memory, accountability and delegation remain
+> product needs; the implementations prescribed here for them are not commitments. Everything below keeps its date.
+
 **Doctrine from 2026-09-07.** The owner's direction that day: the mission "should NOT be a single agent, it should be a
 council of very smart top level manager agents with different tasks that run their own teams on cheaper models and with
 incredible persistent memory and context etiquette." Debated in three written rounds between the manager (Claude) and

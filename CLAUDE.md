@@ -4,6 +4,14 @@
 
 ## Start here
 
+**`docs/PRINCIPLES.md` is the product definition** (landed 2026-09-19): what TradeAgent is, the three zones,
+the loop and the priority rule. On product philosophy, organisation and future sequencing it outranks the
+older council doctrine in `docs/COUNCIL.md`; it outranks no protection. The no-terminal rule, the honesty
+rule and the money, credential, accounting, evidence and recovery protections in this file and on the code
+stay as they are — where a change touches one, name the protected property and show how the replacement
+keeps it. `docs/HOW-WE-BUILD.md` governs the build fleet; its roles and passes are not a design for the
+agent organisation inside the product. `manager-prompt.md` at the root is the fleet's handoff.
+
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
 
@@ -69,7 +77,8 @@ them and do not let a note touch a material row — a record the observed party 
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # 329 tests; green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # ~2,190 tests in three projects; the latest gate line in BUILD-STATUS.md
+                                  # is the figure. Green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```

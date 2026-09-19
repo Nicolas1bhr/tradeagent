@@ -10,25 +10,23 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session state at 2026-09-16 18:20 CEST: NOTHING is in flight, `docs/briefs/` is empty, no worktree exists, `main` is clean and pushed.** Restart in this order:
+**Session state at 2026-09-19: NOTHING is in flight, `docs/briefs/` does not exist (the first brief creates it), no worktree exists, `main` is clean and pushed.** Restart in this order:
 
-1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md`, `docs/REVIEW-2026-09-16.md` and the `## 2026-09-15` and `## 2026-09-16` sections at the end of `BUILD-STATUS.md`**
-   (one per landing, every merge sha's CI verdict recorded).
-2. **`main` is `6e091de` (`U-review-med`, product sha `f9f5878`, plus its record). Schema 22.** Seventeen landings since 2026-09-15 morning, in order: `U-flatten-1`,
-   `U-allocator-1` (20), `U-peer-row-ubuntu`, `U-flatten-2`, `U-decision-hook-race`, `U-promote-bounds`, `U-reopen-1`, `U-loopback-listener-mac`, `U-reopen-2`,
-   `U-close-all-win`, `U-flatten-3`, `U-allocator-2` (21), `U-press-budget-legs`, the third milestone review at `c441120` (five HIGH, three MED, all executed),
-   `U-grant-liveness`, `U-scope-identity` (22), `U-approve-gates`, `U-review-med` — every finding of the review is fixed on `main`; every merge sha's CI green on
-   all four jobs, every verdict recorded — none owed. The owner's reopen decision (option B, "exquisite logic and edge case handling") is in the
-   product: `U-reopen-1`/`-2`, hardened by the review's MED 6.
-3. **Nothing is in flight.** The probes branch `review-probes-c` @ `58aa4fa` stays (the fix units' REDs came from it); every other branch merged is left in place
-   (deleting merged branches is not part of the grant).
-4. **The queue is EMPTY and the next work is the owner's call.** Three routes, none briefed: (a) **a release** — `docs/HOW-WE-BUILD.md` makes the milestone review the last
-   step before a release is cut, and it is done with its fixes landed; a release needs the Windows box (the ATAS adapter compiles only there; CI's artifact is
-   `NO-ATAS-ADAPTER` and must never be published) and the 17 landings have NOT been run on the box or on a screen; (b) **the box verification** of what landed
-   (the bridge at protocol 3, the Safety page's new cards — Capital, Reopen after review, the loss and valuation settings — seen once); (c) **the paper loop** — the
-   gap every record names: no runner turns a `StrategyIntent` into a `PlaceIntent`, so the dispatch gate, the ceiling, the freshness refusal and the flatten are
-   bound end to end against a deployment that does not exist; that line needs a read-only survey and one Astra consult before it is briefed (the unit order after
-   `U-allocator` in `docs/COUNCIL.md`). The review's seven UNVERIFIED items are listed in `docs/REVIEW-2026-09-16.md` and are not fix units.
+1. **Read `manager-prompt.md` (the fleet handoff), `docs/PRINCIPLES.md` (the product definition, in full), `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, the precedence
+   note, the ten rules and "The unit order" in `docs/COUNCIL.md`, `docs/REVIEW-2026-09-16.md` § UNVERIFIED, and the `## 2026-09-16` sections at the end of
+   `BUILD-STATUS.md`.** Nothing else is a read-gate; the rest of this file is reference and traps, read per topic.
+2. **`main` is `90af8e4` (the handoff committed untouched) plus the direction landing on top of it — docs only, no product change — over `bd7d9c2`, the CI record
+   of `U-review-med` (product sha `f9f5878`, schema 22).** Seventeen product landings between 2026-09-15 and 2026-09-16, `U-flatten-1` … `U-review-med` (each its
+   own `BUILD-STATUS.md` section), closed the third milestone review: five HIGH, three MED, every finding fixed on `main`, every merge sha's CI green on all four
+   jobs (ubuntu, windows, macos, package), none owed. The owner's reopen decision (option B) is in the product: `U-reopen-1`/`-2`, hardened by the review's MED 6.
+3. **Nothing is in flight.** The probes branch `review-probes-c` @ `58aa4fa` stays (the fix units' REDs came from it); every other merged branch is left in
+   place (deleting merged branches is not part of the grant).
+4. **The queue is the paper loop, in the order `manager-prompt.md` § 4–5 gives:** (a) ONE fresh read-only survey leg — a general-purpose leg, since an Explore
+   leg cannot write a file — from a ≤ 40-line brief at `docs/briefs/SURVEY.md`, writing `docs/INSPECTION-<date>.md` (five tables, ≤ 100 lines, the inspected
+   sha, file:line evidence, source observations labelled apart from executed checks and historical claims); (b) from it, ≤ 40-line briefs for the smallest
+   connected slices, the earliest broken dependency first — § 4's evidence bullets are the anchors, re-checked on the checkout received; (c) one bounded Astra
+   consult after the survey and before the first paper-line brief, advice only. A release (needs the box; CI's artifact is `NO-ATAS-ADAPTER` and is never
+   published) and the box verification of the seventeen landings (never run there, never seen on a screen) stay the owner's to call; they are not the default.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
@@ -36,17 +34,21 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    checked; `rev-list --count` 0; push the PRODUCT sha before the record commit so CI runs at it; the record ≤ 40 lines measured; the brief deleted; the worktree
    removed; the merge sha's CI recorded when it completes. A gate whose Integration run reads three times its normal 11 min is contaminated (a dying session, a
    sleep, three legs): re-run alone on the same build (`--no-build`) and quote both runs before judging.
-6. **What is proven and what is not:** nothing on a screen (nothing in the suite runs Avalonia); no real provider call; no real venue; no runner on the ORDER PATH
-   (nothing turns a `StrategyIntent` into a `PlaceIntent`; nothing reads `Promotions.Standing` at `PlaceAsync` until `U-allocator-1` lands); no paper or live
-   execution; the box untouched since 2026-09-08. The dispatch gate refuses a stale decision (`U-freshness`) but nothing forces a promoted version to declare
-   bounds (`U-promote-bounds`, queued). A confirmed loss-budget breach is now a durable record the gate refuses off, watched on a
-   15 s tick and reported — and NOTHING IS SENT on it until `U-flatten-2`. A milestone review of the money path on `main` is DUE before any release is cut: the last was
-   2026-09-06; run it after `U-allocator-1` and the two fixers land.
+6. **What is proven and what is not:** nothing on a screen (nothing in the suite runs Avalonia); no real provider call; no real venue; no runner on the ORDER
+   PATH — nothing in production turns a `StrategyIntent` into a `PlaceIntent`: `IntentDecision.From` (`GatewayTypes.cs:328`) has only test callers,
+   `StrategyEvaluator` is reached only by `Backtest.cs` and `StrategyInterpreter.cs`, and `Referee.Verdict` has no production caller (source observations by
+   `git grep` at `90af8e4`, not executed checks); no paper or live execution; `Containment.Sandbox()` reports `NONE`; the box untouched since 2026-09-08. What the
+   seventeen landings proved, every one against the simulator behind `RecordingConnector` and none on Windows: the dispatch gate refuses a stale decision
+   (`U-freshness`); the referee refuses a version that declares no bounds (`U-promote-bounds`); a confirmed loss-budget breach is a durable record the gate refuses
+   off and the flatten closes the book by code (`U-flatten-1`/`-2`/`-3`); a closed scope reopens by code only when earned (`U-reopen-1`/`-2`); capital is allocated
+   to a promoted version behind the owner's press and the gate refuses past it (`U-allocator-1`/`-2`); an approval runs every position gate (`U-approve-gates`);
+   a grant that ends closes its connection (`U-grant-liveness`); the loss line knows its scope (`U-scope-identity`). All of it against a deployment that does not
+   exist. The third milestone review is DONE with its fixes landed, so a release is not blocked on a review; it is blocked on the box.
 7. **Decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) containment beyond `U-containment`; (c) the Revolut X
    PUBLIC CANDLES endpoint — `U-data-2` ships the row with an EMPTY base URL, unverified, the first real fetch is the owner's by recording it in `sources.json`;
-   (d) the Binance spot instrument row in `venues.json` (`verified = false` until then); (e) NEW: after an app-initiated flatten on a loss-budget breach, option A
-   (the order path stays paused until the owner reads it) or option B (reopens the next UTC day by code — the briefs' default, recorded in `CONTRACTS.md` as the
-   owner's to overrule; Astra's answer, final answers only, was handed to the owner on 2026-09-14).
+   (d) the Binance spot instrument row in `venues.json` (`verified = false` until then); (e) DECIDED 2026-09-15 — option B ("only if it has exquisite logic and edge case handling"), landed as
+   `U-reopen-1`/`-2` and hardened by the review's MED 6; nothing is open on it. Under `docs/PRINCIPLES.md` the owner also owns the deliberate grant to work
+   unattended (the mission's paper authority and budgets), live activation and live capital, and any paid commitment (a provider key, a data subscription).
 8. **Machine facts that cost time:** the session limit hit at ~21:40 CEST after ≈ 3 h 20 m of two heavy legs plus the manager's gates (resets at 23:50; the fourth
    such kill in three sessions); a survey ≈ 200k tokens and 7.5 min; a builder 280–540k tokens; the manager's gate ≈ 13 min alone and 30+ min under three legs;
    `docs/briefs/` holds only work in flight or queued.
