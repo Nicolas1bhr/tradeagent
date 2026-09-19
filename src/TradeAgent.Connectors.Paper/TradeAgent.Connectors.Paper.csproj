@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" />
+    <!-- KlineBar, Paths and VenueCatalog. Nothing else, and nothing that can open a socket:
+         PaperConnectorTests.The_assembly_references_no_http_client reads this assembly's reference
+         list back and holds it to that, because "this connector cannot reach a venue" is a claim
+         about what it is LINKED against and not about what its methods happen to do today. -->
+    <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The book is a SQLite file of this connector's own, beside the app's but never inside it.
+         Declared here rather than taken transitively from Core, because this project opens a
+         connection itself. Same versions Core pins, for the reason Core pins them. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+  </ItemGroup>
+</Project>

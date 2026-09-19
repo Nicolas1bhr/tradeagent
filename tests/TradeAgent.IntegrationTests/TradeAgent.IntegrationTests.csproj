@@ -7,5 +7,6 @@
     <ProjectReference Include="../../src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
     <ProjectReference Include="../../src/TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
     <ProjectReference Include="../../src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
+    <ProjectReference Include="..\..\src\TradeAgent.Connectors.Paper\TradeAgent.Connectors.Paper.csproj" />
   </ItemGroup>
 </Project>

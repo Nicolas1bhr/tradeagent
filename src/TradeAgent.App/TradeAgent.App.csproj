@@ -23,5 +23,6 @@
     <ProjectReference Include="../TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
     <ProjectReference Include="../TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
     <ProjectReference Include="../TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
+    <ProjectReference Include="..\TradeAgent.Connectors.Paper\TradeAgent.Connectors.Paper.csproj" />
   </ItemGroup>
 </Project>
