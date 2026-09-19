@@ -6350,6 +6350,7 @@ commit and its push (`push exit: 0`); caps measured with `wc -l`/python: `manage
 30; the secret scan on the staged diff as a gate both times (judged false positives excluded by name: "unrelated secrets", "secret scan", `CancellationToken`,
 `IpcToken`, `string token`); no `Co-Authored-By` trailer on either commit.
 
-**NOT done, NOT verified:** no product code, no build, no suite run — docs only; CI runs at the landing sha and its verdict is recorded when it completes; no survey
+**NOT done, NOT verified:** no product code, no build, no suite run — docs only; CI at `90af8e4`: GREEN on all four jobs (run 35433376334: ubuntu, windows, macos, package); CI at `cadc212`: GREEN on all four jobs (run 35433804915: ubuntu,
+windows, macos, package) — both docs-only, both recorded here, none owed; no survey
 leg dispatched, no brief written, `docs/briefs/` not created; no box, no ATAS, no money; nothing here marks a feature implemented, a test passed or a boundary
 enforced — the handoff's § 4 items are starting points for the survey, not findings.
