@@ -197,7 +197,7 @@ public class AllocationLedgerTests
     /// <para>A ceiling is what the gateway refuses orders against. A limit its subject could edit is
     /// not a limit, and a capital decision the app could quietly restate once the outcome was known is
     /// not a record (<c>docs/COUNCIL.md</c>:210-212). Lowering or withdrawing an allocation is a fresh
-    /// row from a later instant, which <see cref="Allocations.StandingFor"/> answers with.</para>
+    /// row from a later instant, which <see cref="Allocations.StandingForLive"/> answers with.</para>
     /// </summary>
     [Fact]
     public void The_allocation_ledger_exposes_one_write_and_it_only_inserts()
@@ -206,13 +206,19 @@ public class AllocationLedgerTests
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(m => !m.IsSpecialName)
             .Select(m => m.Name)
-            // `Standing` and `StandingFor` are READS — which row is in force, and where the promotion
-            // under it stands, both computed from rows nobody edited.
-            .Where(n => n is not ("ById" or "For" or "All" or "Standing" or "StandingFor"))
+            // EVERY NAME HERE IS A READ — which row is in force, in which envelope, and where the
+            // promotion under it stands, all computed from rows nobody edited. `StandingFor` became
+            // `StandingForLive` and `StandingForPaper` at schema 25, which is why the list moved.
+            .Where(n => n is not ("ById" or "For" or "All" or "Standing" or "PaperStanding"
+                        or "StandingForLive" or "StandingForPaper" or "InEnvelope"))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(["Record"], writes);
+        // TWO WRITES AT SCHEMA 25 AND STILL EXACTLY TWO. `RecordPaper` is the app's own policy writing
+        // a PAPER allocation inside an envelope the owner granted, and it is an INSERT with the same
+        // `ON CONFLICT DO NOTHING` as `Record`: what the list is guarding is that nothing here can
+        // edit, delete or withdraw a row, which is as true of the second writer as of the first.
+        Assert.Equal(["Record", "RecordPaper"], writes);
         Assert.DoesNotContain(typeof(Allocations).GetMethods(), m =>
             m.Name.Contains("Update", StringComparison.OrdinalIgnoreCase)
             || m.Name.Contains("Delete", StringComparison.OrdinalIgnoreCase)
@@ -257,14 +263,14 @@ public class AllocationLedgerTests
         Assert.True(allocations.Record(RowFor(a, quantity: 5m, from: At)).Ok);
         Assert.True(allocations.Record(RowFor(a, quantity: 1m, from: At.AddDays(1))).Ok);
 
-        Assert.Equal(5m, allocations.StandingFor(a.VersionId, At.AddHours(1))!.Allocation.MaxQuantity);
-        Assert.Equal(1m, allocations.StandingFor(a.VersionId, At.AddDays(2))!.Allocation.MaxQuantity);
+        Assert.Equal(5m, allocations.StandingForLive(a.VersionId, At.AddHours(1))!.Allocation.MaxQuantity);
+        Assert.Equal(1m, allocations.StandingForLive(a.VersionId, At.AddDays(2))!.Allocation.MaxQuantity);
         Assert.Equal(2, allocations.For(a.VersionId).Count);
 
         // Before it takes effect, and after it has expired, nothing stands.
-        Assert.Null(allocations.StandingFor(a.VersionId, At.AddDays(-1)));
+        Assert.Null(allocations.StandingForLive(a.VersionId, At.AddDays(-1)));
         Assert.True(allocations.Record(RowFor(a, quantity: 2m, from: At.AddDays(3), to: At.AddDays(4))).Ok);
-        Assert.Equal(1m, allocations.StandingFor(a.VersionId, At.AddDays(5))!.Allocation.MaxQuantity);
+        Assert.Equal(1m, allocations.StandingForLive(a.VersionId, At.AddDays(5))!.Allocation.MaxQuantity);
     }
 
     // ---- item 2: only against a version that stands promoted ----------------------------------
@@ -297,7 +303,7 @@ public class AllocationLedgerTests
         Assert.Null(refused.Allocation);
         Assert.Contains("does not stand promoted", refused.Why, StringComparison.Ordinal);
         Assert.Empty(allocations.For(a.VersionId));
-        Assert.Null(allocations.StandingFor(a.VersionId, At));
+        Assert.Null(allocations.StandingForLive(a.VersionId, At));
     }
 
     /// <summary>
@@ -321,7 +327,7 @@ public class AllocationLedgerTests
         Assert.False(unjudged.Ok, unjudged.Why);
         Assert.Contains("no verdict has been recorded", unjudged.Why, StringComparison.Ordinal);
         Assert.Empty(allocations.For(a.UnjudgedVersionId));
-        Assert.Null(allocations.StandingFor(a.UnjudgedVersionId, At));
+        Assert.Null(allocations.StandingForLive(a.UnjudgedVersionId, At));
     }
 
     /// <summary>

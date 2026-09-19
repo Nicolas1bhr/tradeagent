@@ -2349,7 +2349,7 @@ sealed class SafetyPage
     {
         var version = (_allocationVersion.Text ?? "").Trim();
         if (version.Length == 0) return null;
-        try { return _host.Gateway.Allocations.StandingFor(version, DateTimeOffset.UtcNow)?.Allocation; }
+        try { return _host.Gateway.Allocations.StandingForLive(version, DateTimeOffset.UtcNow)?.Allocation; }
         catch (Exception) { return null; }
     }
 

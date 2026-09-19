@@ -1134,7 +1134,7 @@ public sealed class Database : IDisposable
             // decision, two rows, and no way to say which one the gateway was enforcing.
             //
             // THERE IS NO UPDATE AND NO DELETE. A ceiling is lowered or withdrawn by recording a
-            // FRESH allocation from a later instant, and `Allocations.StandingFor` answers with the
+            // FRESH allocation from a later instant, and `Allocations.StandingForLive` answers with the
             // newest row in force. A limit its subject could edit is not a limit, and a capital
             // decision that can be moved after the outcome is known is not a record
             // (`docs/COUNCIL.md`:210-212, provenance and precommitment).
@@ -1472,6 +1472,38 @@ public sealed class Database : IDisposable
             CREATE INDEX IF NOT EXISTS ix_envelope_account
               ON paper_envelope(connector_id, account_id, granted_at);
             """);
+
+            // AND WHAT AN ALLOCATION IS AN ALLOCATION *OF*: FIVE COLUMNS THAT SAY LIVE OR PAPER, AND
+            // WHERE.
+            //
+            // Before this rung `strategy_allocation` was one kind of thing — the owner's own capital,
+            // behind a promoted version, applying wherever the gateway happened to be pointed. The
+            // paper arrow needs a second kind that the app itself may write, and the two must not be
+            // able to be mistaken for one another on the money path: `scope` is what
+            // `Allocations.StandingForLive` and `StandingForPaper` split on, and `connector_id`, `mode`
+            // and `account_id` are what stop a paper row written for one platform, mode and account
+            // authorising anything on another. `envelope_id` is the grant it was written under, which
+            // is what makes withdrawing that grant stop every row beneath it at once.
+            //
+            // ALL FIVE NULLABLE AND NOT BACKFILLED WITH 'paper', obviously — but also not backfilled
+            // with anything at all, and NULL is READ as live (`AllocationRow.EffectiveScope`). Every
+            // allocation row any installation holds was written by `TradingGateway.Allocate`, which is
+            // the owner's own two presses on the Safety page, and an owner's press is never a paper
+            // grant. This is the 22 reading rather than the 17/21 one in form and the 17/21 one in
+            // substance: there is no column to fill in, because the absence of a scope IS the answer,
+            // and a rung that wrote 'live' into them would be a migration restating a fact the reader
+            // already knows in a place a later writer could disagree with.
+            //
+            // NO FOREIGN KEY ON `envelope_id`, for the reason `execution_request` has none on
+            // `allocation_id`: an allocation is a record of a decision that may already have been
+            // acted on, and a grant removed from this installation later must not make an existing
+            // allocation row unreadable. Whether the envelope still STANDS is a read-time question
+            // (`Envelopes.Standing`) and is deliberately not a column here.
+            Exec("ALTER TABLE strategy_allocation ADD COLUMN scope TEXT;");
+            Exec("ALTER TABLE strategy_allocation ADD COLUMN connector_id TEXT;");
+            Exec("ALTER TABLE strategy_allocation ADD COLUMN mode TEXT;");
+            Exec("ALTER TABLE strategy_allocation ADD COLUMN account_id TEXT;");
+            Exec("ALTER TABLE strategy_allocation ADD COLUMN envelope_id TEXT;");
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','25') ON CONFLICT(key) DO UPDATE SET value='25';");
         }

@@ -1276,7 +1276,7 @@ public sealed class AppHost : IAsyncDisposable
             try
             {
                 if (PromotedStanding() is not { IsPromoted: true, Promotion: { } promotion }) return null;
-                return host.Gateway.Allocations.StandingFor(promotion.VersionId, DateTimeOffset.UtcNow)
+                return host.Gateway.Allocations.StandingForLive(promotion.VersionId, DateTimeOffset.UtcNow)
                     is { Authorises: true } standing ? standing.Allocation : null;
             }
             catch (Exception) { return null; }

@@ -100,7 +100,7 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
 
         clock.Advance(TimeSpan.FromMinutes(1));
         Assert.True(gw.Allocate(version, 0m, null, "the owner withdrew it").Ok);
-        Assert.Equal(0m, gw.Allocations.StandingFor(version, clock.GetUtcNow())!.Allocation.MaxQuantity);
+        Assert.Equal(0m, gw.Allocations.StandingForLive(version, clock.GetUtcNow())!.Allocation.MaxQuantity);
 
         var fresh = await AnswerTo(() => gw.PlaceAsync(new AgentContext("a"), "c3a-fresh", intent));
         log.WriteLine($"a FRESH order now         : {fresh}");
@@ -195,7 +195,7 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
 
         var version = PromotedVersion(db, clock.GetUtcNow());
         Assert.True(gw.Allocate(version, 5m, null, "the owner allocated five").Ok);
-        var parkedUnder = gw.Allocations.StandingFor(version, clock.GetUtcNow())!.Allocation.Id;
+        var parkedUnder = gw.Allocations.StandingForLive(version, clock.GetUtcNow())!.Allocation.Id;
 
         var intent = Order(OrderSide.Buy, 5m, version);
         Assert.Equal(ErrorCode.APPROVAL_REQUIRED.ToString(),
@@ -206,7 +206,7 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
         // one that stands when the press happens.
         clock.Advance(TimeSpan.FromMinutes(1));
         Assert.True(gw.Allocate(version, 5m, null, "the owner restated it").Ok);
-        var standing = gw.Allocations.StandingFor(version, clock.GetUtcNow())!.Allocation.Id;
+        var standing = gw.Allocations.StandingForLive(version, clock.GetUtcNow())!.Allocation.Id;
         log.WriteLine($"parked under              : {parkedUnder}");
         log.WriteLine($"standing at the press     : {standing}");
         Assert.NotEqual(parkedUnder, standing);

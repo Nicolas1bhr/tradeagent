@@ -1981,7 +1981,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         try
         {
-            return _allocations.StandingFor(version, Now) is { Authorises: true } standing
+            return _allocations.StandingForLive(version, Now) is { Authorises: true } standing
                 ? standing.Allocation : null;
         }
         catch (Exception ex)

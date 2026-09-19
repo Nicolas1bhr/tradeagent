@@ -194,7 +194,7 @@ public class RetirementBoundaryTests
         Assert.True(new Promotions(c.Db).Standing(c.VersionId).IsPromoted);
 
         // AND THE DEPLOYED STRATEGY KEEPS ITS CAPITAL, which is the clause with money behind it.
-        var standing = new Allocations(c.Db).StandingFor(c.VersionId, At.AddDays(2));
+        var standing = new Allocations(c.Db).StandingForLive(c.VersionId, At.AddDays(2));
         Assert.NotNull(standing);
         Assert.Equal(allocation.Id, standing.Allocation.Id);
         Assert.Equal(2m, standing.Allocation.MaxQuantity);
