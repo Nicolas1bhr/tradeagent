@@ -190,10 +190,32 @@ public sealed class Allocations(Database db)
         ArgumentNullException.ThrowIfNull(allocation);
 
         var standing = _promotions.Standing(allocation.VersionId);
+
+        // THE GATE IS `IsPromoted` AND NOTHING ELSE, AND A PAPER-ELIGIBLE VERSION ONLY CHANGES THE
+        // WORDS OF ITS REFUSAL.
+        //
+        // The temptation is a second condition above this one, and it is the wrong shape: it would make
+        // an `IsPromoted` that started answering true for `paper_eligible` — the mutant — invisible
+        // here, because the extra check would go on refusing while `AllocationStanding.Authorises` and
+        // every other reader on the money path quietly began to allow. ONE question, asked once, is
+        // what makes this the capital gate `docs/COUNCIL.md`:14-15 names.
+        //
+        // The sentence is its own because the general one ("does not stand promoted") would be shown on
+        // the owner's card beside a verdict that had just come back FAVOURABLE. `docs/PRINCIPLES.md` §
+        // Evidence keeps the meanings apart — "a paper experiment also cannot confer live authority" —
+        // and the historical verdict beneath a paper experiment is weaker still: a result over months
+        // the submission may already have been written around.
         if (!standing.IsPromoted)
             return new AllocationResult(false,
-                $"version {Short(allocation.VersionId)} does not stand promoted, so no capital was "
-                + $"allocated to it: {standing.Why}", null);
+                standing.IsPaperEligible
+                    ? $"version {Short(allocation.VersionId)} is paper-eligible and not promoted, so no "
+                      + "capital was allocated to it: its favourable verdict is over held-back months "
+                      + "that do not post-date its own freeze — historical evidence; paper only. Observe "
+                      + "it forward on paper; only forward evidence collected after the freeze can "
+                      + "promote a version, and only a promoted version may be given the account owner's "
+                      + "money."
+                    : $"version {Short(allocation.VersionId)} does not stand promoted, so no capital was "
+                      + $"allocated to it: {standing.Why}", null);
 
         if (!string.Equals(standing.Promotion!.Id, allocation.PromotionId, StringComparison.Ordinal))
             return new AllocationResult(false,

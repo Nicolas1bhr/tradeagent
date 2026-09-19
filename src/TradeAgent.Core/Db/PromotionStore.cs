@@ -187,11 +187,19 @@ public sealed record PromotionRow(
             ? new Strategy.FreshnessBounds(t, d, m) : null;
 }
 
-/// <summary>WHERE A VERSION STANDS, COMPUTED AT READ TIME. Four answers; see <see cref="Promotions.Standing"/>.</summary>
+/// <summary>WHERE A VERSION STANDS, COMPUTED AT READ TIME. Five answers; see <see cref="Promotions.Standing"/>.</summary>
 public static class PromotionState
 {
     /// <summary>A promotion was recorded and every assumption it rested on is still true.</summary>
     public const string Promoted = "promoted";
+
+    /// <summary>
+    /// A favourable HISTORICAL verdict was recorded and every assumption it rested on is still true.
+    /// The version may be observed forward on paper; it is not promoted and gets no capital.
+    /// <c>docs/PRINCIPLES.md</c> § Evidence: "distinguish acceptance of a program, a favourable
+    /// historical verdict, eligibility for paper observation, and eligibility for live capital".
+    /// </summary>
+    public const string PaperEligible = "paper_eligible";
 
     /// <summary>The referee answered and the answer was no. <see cref="PromotionReason"/> says which clause.</summary>
     public const string Refused = "refused";
@@ -218,6 +226,13 @@ public static class PromotionState
 public sealed record PromotionStanding(string State, string Why, PromotionRow? Promotion)
 {
     public bool IsPromoted => State == PromotionState.Promoted;
+
+    /// <summary>
+    /// Whether the version may be observed forward on paper on the strength of a favourable HISTORICAL
+    /// verdict. It is never a second way of asking <see cref="IsPromoted"/> — the two are true of
+    /// disjoint states, and <c>Allocations.Record</c> refuses this one by name.
+    /// </summary>
+    public bool IsPaperEligible => State == PromotionState.PaperEligible;
 }
 
 /// <summary>
@@ -375,14 +390,26 @@ public sealed class Promotions(Database db)
         if (Invalidation(promotion) is { } changed)
             return new PromotionStanding(PromotionState.Invalidated, changed, promotion);
 
-        return promotion.IsPromoted
-            ? new PromotionStanding(PromotionState.Promoted,
+        if (promotion.IsPromoted)
+            return new PromotionStanding(PromotionState.Promoted,
                 $"TradeAgent's referee promoted version {Short(versionId)} at {promotion.At:u} on the "
                 + $"evidence of holdout run {Short(promotion.HoldoutRunId)}, and every assumption that "
-                + "verdict was bound to still holds.", promotion)
-            : new PromotionStanding(PromotionState.Refused,
-                $"TradeAgent's referee refused version {Short(versionId)} at {promotion.At:u}: "
-                + PromotionReason.Words(promotion.Reason) + ".", promotion);
+                + "verdict was bound to still holds.", promotion);
+
+        // THE FIFTH STATE, AND IT IS INVALIDATED ABOVE EXACTLY AS A PROMOTION IS. A favourable verdict
+        // that escaped `Invalidation` would be a standing whose truth nothing rechecks — and this one
+        // decides whether the app will spend compute observing a version forward.
+        if (promotion.IsPaperEligible)
+            return new PromotionStanding(PromotionState.PaperEligible,
+                $"TradeAgent's referee judged version {Short(versionId)} paper-eligible at "
+                + $"{promotion.At:u} on the evidence of holdout run {Short(promotion.HoldoutRunId)}, and "
+                + "every assumption that verdict was bound to still holds. It is NOT promoted: the "
+                + "months it was measured over do not post-date its own freeze, so it may be observed "
+                + "forward on paper and may be given no capital.", promotion);
+
+        return new PromotionStanding(PromotionState.Refused,
+            $"TradeAgent's referee refused version {Short(versionId)} at {promotion.At:u}: "
+            + PromotionReason.Words(promotion.Reason) + ".", promotion);
     }
 
     /// <summary>
@@ -420,10 +447,18 @@ public sealed class Promotions(Database db)
                 + $"build is {StrategyStore.InterpreterBuild}: the program may not mean the same thing, "
                 + "so the evidence does not carry across.";
 
-        if (!string.Equals(promotion.ScoringPolicySha256, CampaignPolicy.Sha256Of(CampaignPolicy.V1),
-                StringComparison.OrdinalIgnoreCase))
+        // THE POLICY COMPARED IS THE ONE THAT PRODUCED THE ANSWER. A paper-eligible row was scored by
+        // `CampaignPolicy.PaperV1` and carries ITS sha, so comparing every row with V1's would
+        // invalidate every paper verdict this build writes the instant it writes it — and comparing
+        // every row with whatever produced it is the check, not the tautology: either text edited
+        // withdraws the verdicts taken under that text and leaves the others standing.
+        var applied = promotion.IsPaperEligible
+            ? CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1)
+            : CampaignPolicy.Sha256Of(CampaignPolicy.V1);
+
+        if (!string.Equals(promotion.ScoringPolicySha256, applied, StringComparison.OrdinalIgnoreCase))
             return $"this verdict was taken under scoring policy {Short(promotion.ScoringPolicySha256)} "
-                + $"and this build applies {Short(CampaignPolicy.Sha256Of(CampaignPolicy.V1))}: the "
+                + $"and this build applies {Short(applied)}: the "
                 + "standard has changed, so what met it then is not what would meet it now.";
 
         return null;

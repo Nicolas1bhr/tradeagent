@@ -110,8 +110,9 @@ public sealed record BoundaryDeclaration(string? Recommendation, string? Baselin
             return new BoundaryDeclaration(null, null,
                 $"your assessment must also declare, on a line of its own, `{BaselinePrefix} <state>` — "
                 + "what you expect TradeAgent to measure about this version when the boundary is "
-                + $"reviewed. One of `{PromotionState.Promoted}`, `{PromotionState.Refused}`, "
-                + $"`{PromotionState.Invalidated}`, `{PromotionState.Unjudged}`. It is taken NOW and "
+                + $"reviewed. One of `{PromotionState.Promoted}`, `{PromotionState.PaperEligible}`, "
+                + $"`{PromotionState.Refused}`, `{PromotionState.Invalidated}`, "
+                + $"`{PromotionState.Unjudged}`. It is taken NOW and "
                 + "compared with what the app actually measures at the review, which is what makes it a "
                 + "forecast rather than a description.");
 
@@ -240,10 +241,15 @@ public static class BoundaryBaselines
     public static string? Measure(Database db, string kind, string entity) =>
         Measurable(kind) ? new Promotions(db).Standing(entity).State : null;
 
-    /// <summary>Whether a declared word is one this vocabulary holds.</summary>
+    /// <summary>
+    /// Whether a declared word is one this vocabulary holds. It is every state
+    /// <see cref="Measure"/> can answer and no other word — a forecast a director cannot spell is a
+    /// forecast it is refused for making, and <c>Promotions.Standing</c> gained a fifth answer with
+    /// the paper-eligible verdict.
+    /// </summary>
     public static bool IsKnown(string? word) =>
         word is PromotionState.Promoted or PromotionState.Refused or PromotionState.Invalidated
-             or PromotionState.Unjudged;
+             or PromotionState.Unjudged or PromotionState.PaperEligible;
 }
 
 /// <summary>ONE CONSEQUENTIAL BOUNDARY, as the app wrote it down.</summary>
