@@ -270,6 +270,44 @@ refusal, every reason.
 support package** makes a single file you can send to whoever helps you. It contains logs and
 settings, and no passwords.
 
+## Market data — the history, and the minutes as they happen
+
+On the **Settings** page there is a card called **Market data**, and it does two separate things.
+
+**Download 12 months** fetches the twelve most recent complete months of that pair's 1-minute bars from
+Binance's public archive and checks every file against the checksum Binance published beside it. One
+press: this only ever changes what TradeAgent can READ. It is not a trading connection, it decides
+nothing about what the AI may trade — that is the allowlist on the Safety page — and it moves no money.
+A month Binance has not published yet is recorded as not published; a file whose bytes do not match the
+published checksum is thrown away rather than used.
+
+**Collect live bars** is the other half, and it is **on to start with**. While TradeAgent is running it
+asks the same pair's closed 1-minute bars as they happen, about once a minute, from Binance's
+*market-data-only* address — the one that serves public prices and accepts no trading request at all.
+Press the button once to stop, once more to start again; there is nothing here worth asking you twice
+about. It is on by default because this cannot be caught up later: **a minute nobody collected is gone**,
+and switching it on next month gives you a month of nothing.
+
+Three things it will not do, and the line under the card says which is which:
+
+- **A bar is only kept once it has finished.** The minute still being traded is never stored, because it
+  is still moving.
+- **The first reading of a minute is the one that stands.** If Binance later serves a different candle
+  for a minute TradeAgent already has, the stored one is not overwritten — the disagreement is written
+  down beside the attempt instead.
+- **A minute Binance does not publish is recorded as missing and is never filled in.** Nothing is guessed
+  at, carried forward or averaged. The card shows how many minutes are missing, and they stay missing.
+
+**These live bars carry no checksum, and that is not a bug** — nobody publishes one for a minute that has
+only just happened. So TradeAgent never judges a strategy on them. They are what a paper run is *watched*
+against; the verdict on whether a strategy is any good is taken over the frozen, checked history above,
+and over the months you chose to hold back. The AI can read the live bars and everything recorded about
+where they came from; it cannot collect, change or delete any of it.
+
+If the line reads **"not being collected"** or shows a last look that failed, TradeAgent is still running
+normally — a public price service having a bad afternoon is an ordinary Tuesday. It keeps trying, more
+slowly, up to once every five minutes, and picks up where it left off.
+
 ## The Inbox — giving the AI things to work with
 
 The **Inbox** page is where you hand the AI files: a program, an installer, a spreadsheet, a PDF, a

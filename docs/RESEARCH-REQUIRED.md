@@ -183,6 +183,29 @@ enforces it.
 
 ---
 
+## C5 — Forward market data host (measured 2026-09-19 by hand from this Mac; re-verify at build time)
+
+**Decided: TradeAgent collects the configured pair's closed 1-minute bars itself while it runs**
+(`U-forward-bars`), so it needs a public endpoint that serves an advancing window and needs no key.
+
+| Fact | Value |
+|---|---|
+| Host | `https://data-api.binance.vision` — Binance's **market-data-only** host. It serves public market data and accepts **no authenticated or trading request at all**, which is why the collector holds no credential and can place nothing. Official: https://developers.binance.com/en/docs/products/spot/faqs/market_data_only |
+| Endpoint | `GET /api/v3/klines?symbol={SYMBOL}&interval=1m&startTime={ms}&limit=1000` |
+| Measured | 2026-09-19, from the dev Mac: `symbol=BTCUSDT&interval=1m&limit=2` → **HTTP 200 in 0.46 s, no API key**. That is the ONE real call this unit was allowed; the test suite talks to a loopback `HttpListener` and has never reached this host. |
+| Answer shape | A JSON array of arrays. Columns read: `[0]` open time, `[1..4]` open/high/low/close, `[5]` volume, `[6]` close time. Timestamps are read through `KlineNormaliser.TryUnitOf`, so the millisecond→microsecond move Binance made in January 2025 reads correctly here for the same reason it does in the archive. |
+| Checksum | **NONE, and none is possible.** No sidecar is published for a live window — the minute did not exist when one would have been signed. The ledger records only the hash THIS BUILD computed of the body it received, and `docs/CONTRACTS.md` "Forward bars" states what that does and does not prove. |
+| Recorded as | `CandleSourceCatalog.BinanceForwardKlines` (`binance-spot-forward-klines`), `Verified = true` with the measurement quoted on the row, `ChecksumUrlShape = ""`, `CoverageTargetDays = 0`. **Data, not code**: correcting it is one line of `sources.json` in TradeAgent's own folder. |
+
+**Still to re-verify at build time.** (1) The per-request `limit` ceiling — this build asks for 1000 and
+has never been answered with more than two. (2) The host's rate limits for an unauthenticated caller: the
+collector makes one request a minute per pair, which no published figure comes near, but the number is
+not recorded here because nothing measured it. (3) Whether `startTime` is inclusive of the bar opening at
+exactly that instant; this build asks from the first minute it does not hold, so an inclusive reading
+costs nothing and an exclusive one loses no bar either — but it has not been measured.
+
+---
+
 ## D — AI list prices (read 2026-09-06 from OpenAI's own pages; re-read before every release)
 
 **File:** `src/TradeAgent.AgentRuntime/ListPrices.cs` — the whole catalogue, in `costs.json`'s shape.

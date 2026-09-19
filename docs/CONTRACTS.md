@@ -2172,6 +2172,83 @@ every bar in it reads as `traded`, which is what those bars are. The count is on
 (`BarQuality.Note`) reaches `data-list`, `data-bars`, the backtest reply and section 8 of the owner's
 daily report. A run over such bars must not report like a run over traded ones.
 
+## Forward bars — `src/TradeAgent.Core/Data/ForwardBars.cs`, `Db/ForwardBarStore.cs`, `Provisioning/ForwardBarCollector.cs`
+
+**Two kinds of market data now live in this product and they are never merged.** A DATASET is months of
+a vendor's archive, downloaded once by the owner's press, checksummed where the vendor publishes one,
+normalised to a file whose SHA-256 is recorded, and frozen. A FORWARD BAR is one closed minute this
+installation asked for shortly after it closed, while the app was running. They are separate tables,
+separate lists in `data-list`, separate replies from `data-bars`, and separately worded. `U-forward-bars`
+is the first thing in this build that watches a market that is still moving: `docs/PRINCIPLES.md`:65
+requires forward paper observation and a paper run over the archive is a re-run of last year.
+
+**WHAT A FORWARD BAR CLAIMS: exactly the candle the vendor served for that minute, at the instant it was
+received.** `received_at` is on the bar itself and not only on the fetch, so a reader can check the
+closure claim rather than trust it — every stored row's `close_time` precedes its own `received_at`.
+
+**WHAT IT DOES NOT CLAIM, and all four are said in words on every surface that serves one.** (1) *A vendor
+checksum.* There is none and there could be none: the minute did not exist when a sidecar for it would
+have been signed, so the row carries only the hash THIS BUILD computed of the body it received — which
+proves the answer has not changed since, and is a different claim from proving it is what the vendor
+meant to publish. That is the same separation `dataset_file.published_sha256` has kept since schema 17.
+(2) *Executability.* They are bars: no fill, no queue position, no intrabar ordering. (3) *Evaluation
+evidence.* No verdict is ever taken over them. A verdict rests on frozen, checksummed, holdout-protected
+months, and a program judged on minutes that arrived while it was being judged is a program judged on
+nothing. (4) *A guarantee of coverage.* A forward series is as deep as this app has been running and no
+deeper; its catalogue row declares a coverage target of 0 for that reason.
+
+**A BAR IS STORED ONLY WHEN IT HAS CLOSED.** `close_time < received_at`, strictly. The vendor's last row
+is usually the minute in progress, whose high, low, close and volume are all still moving; stored, it
+would be a row that changes after it was written.
+
+**THE FIRST READING STANDS, AND SQLITE ENFORCES IT.** `forward_bar` is keyed `(source, symbol, open_time)`
+and the store inserts `ON CONFLICT DO NOTHING`. A re-fetch of a minute already held cannot overwrite it;
+a re-fetch that DISAGREES is counted on the later attempt's own note, never on the bar. The insert is
+what refuses — not a branch above it — and that is a measured distinction rather than a stylistic one:
+an earlier draft read the row and skipped, which left `INSERT OR REPLACE` passing every test because the
+replacing statement was never reached. `Database.AddKvOnce` had already had to take the same reading.
+
+**GAPS ARE RECORDED AND NEVER FILLED.** A run of minutes with no bar is one `forward_gap` row keyed on
+its first missing minute, so a hole seen twice is one hole. Nothing interpolates, carries a price
+forward or invents a volume, and a window with a hole in it is served with the hole.
+
+**EVERY ATTEMPT IS A ROW, SUCCEEDED OR FAILED.** `forward_fetch` holds the URL asked for, both instants,
+the status and the reason in words. A body that does not parse is a recorded failure and never a bar —
+not "the rows it could read", because an error page served with a 200 would otherwise be reported as a
+healthy minute. A host that says nothing at all has a NULL status: "the vendor said 503" and "the vendor
+said nothing" are different facts and the ledger keeps them apart. A failing host backs the look off to
+five minutes and is a status line, never a crash.
+
+**NO HOLDOUT APPLIES TO FORWARD BARS, AND THAT IS A FACT ABOUT WHAT THEY ARE RATHER THAN A RELAXATION.**
+A holdout is a time cutoff the owner drew across a frozen dataset. Every forward bar post-dates every
+freeze on this installation, because it did not exist when the freeze was taken — so there is nothing
+here to hold back, and `data-bars --source forward` serves any role and a caller that proved none. The
+archive reader's cutoff is untouched by this: the same caller, the same window and the same database is
+still refused the held-back months through `--source archive`, which `ForwardBarsOverPipeTests` asserts
+side by side in one test. The protection that matters for forward bars is on the EVIDENCE side, and it
+is that no verdict is taken over them at all.
+
+**STALENESS IS ANSWERED HERE AND ENFORCED WHERE IT ALWAYS WAS.** `ForwardBarStore.Freshness` is the age
+of the newest closed bar, computed off the ROWS and never off "when the collector last ran" — a collector
+running happily against a vendor publishing nothing is exactly what a liveness figure must not report as
+fresh. It reaches `status.forward_data`, `data-bars --source forward` and section 7 of the owner's report.
+It does NOT add a gate: a program's `data_freshness` is checked at dispatch against the bar its decision
+was computed from (`RefuseAStaleDecisionOrThrow`), exactly as before, and nothing here satisfies that
+bound on a caller's behalf.
+
+**THE HOST IS DATA.** `binance-spot-forward-klines` is a `CandleSourceEntry` like the others, overridable
+in `sources.json`, carrying the endpoint shape and the one measurement that verified it. It is Binance's
+market-data-only host — it accepts no authenticated or trading request at all — and that is why the
+collector holds no credential and can place nothing. Asking that row for a PERIOD is refused in words:
+it is not an archive, it has no periods, and driving it as one would fetch a live window and hand it to
+the normaliser, producing a frozen dataset claiming a freeze it never had.
+
+**IT IS APP-OWNED, LIKE THE DATASET LEDGER.** The collector runs in the app's own process, started with
+the app and stopped with it, independent of the mission loop — a paused AI, an exhausted spending ceiling
+and a pressed kill switch all leave it collecting, because evidence is not a paid turn. There is no verb
+and no pipe op that starts it, stops it, points it somewhere else or writes a row; the owner's one-press
+toggle on the Settings page is the only control, and it is in-process.
+
 ## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
 
 **A holdout is a TIME CUTOFF on a dataset, not a second dataset, and that is a CHOICE this build made
