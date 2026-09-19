@@ -988,6 +988,11 @@ down" is not a state this can end up in.
 - **Rolling an update back has never been tried**, nor has an update interrupted halfway.
 - **The installer has not been tried on a brand-new computer** — only on machines that already had
   developer tools on them.
+- **A strategy can now be marked "paper-eligible" but nothing yet runs one forward on paper.** When
+  TradeAgent judges a strategy favourably over months it was never shown, and those months are not
+  *later* than the day the strategy was frozen, the result is history the strategy may already have been
+  written around — so TradeAgent records it as eligible for paper practice only, never as promoted, and
+  it will not let you put money behind it.
 - One of the two AI assistants has never been tested at all; only the other one has.
 - **The daily spending limit is enforced against the supplier's published list prices, not against
   your bill.** Nobody has reconciled a day of TradeAgent's figures with an invoice from OpenAI. The

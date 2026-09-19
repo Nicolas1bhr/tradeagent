@@ -2352,8 +2352,42 @@ Then: the run must have COMPLETED, it must have closed at least one trade, and i
 costs must be above zero. Every clause answers a **reason class from a closed vocabulary**
 (`PromotionReason`), which is why the row's `reason` column can never hold a figure.
 
+**And where the FIRST clause is the one that failed, the same run is scored a second time — by
+`CampaignPolicy.PaperV1`, which can confer eligibility for PAPER and never capital.** `docs/PRINCIPLES.md`
+§ Evidence asks that "acceptance of a program, a favourable historical verdict, eligibility for paper
+observation, and eligibility for live capital" be four distinct meanings, and adds the clause that makes
+a paper loop reachable at all: "forward paper evidence cannot be required before the very first paper run
+that produces it". Under `ScoringPolicyV1` alone a version frozen after the cutoff can be told nothing
+but `evidence-precedes-the-freeze`. So the holdout is run **once**, V1 is asked **first and unchanged**,
+and only on that one answer are the paper policy's clauses — V1's three performance clauses, without the
+forward-evidence one — evaluated on the same run. All met is `paper-eligible` with a reason class of its
+own (`meets-the-paper-policy-on-historical-evidence`); anything else is `refused` naming the PERFORMANCE
+clause that failed, because the freeze is a fact about this arm's existence and tells the submitter
+nothing it can act on. **The clauses are really evaluated** — mapping the freeze refusal straight to
+paper-eligible is the mutant, and it makes a program that LOSES money eligible on the strength of its
+date. A paper-eligible row carries **PaperV1's sha** in `scoring_policy_sha256` and the campaign is
+required to hold it, refused in words otherwise; a refusal keeps the campaign's own, because the three
+clauses it failed are V1's word for word and the two arms produce the same reason classes. The paper
+standard is a **separate text with a separate hash** and never a relaxation applied under the sha the
+campaign precommitted to.
+
+**A paper-eligible verdict is DELIVERED and opens NO consequential boundary.** The wake and the
+sanitised note happen exactly as for any verdict — `RefereeFeedback.Text` says PAPER-ELIGIBLE in words,
+says it is not promoted, and carries no figure, the same disclosure boundary with one more sentence in
+it. But paper observation is an ordinary experiment by app policy (`docs/PRINCIPLES.md`, "every ordinary
+experiment need not purchase a fixed ceremony"): it risks no capital and the version may be given no
+money whatever the directors say, so the 24 h review and the two paid assessments stay the ceremony of a
+`promoted` verdict. **And the live path refuses it, categorically and by name.** `Allocations.Record`
+asks `Standing.IsPromoted` and **nothing else** — one question, so an `IsPromoted` that started answering
+true for `paper_eligible` cannot be hidden by a second check in front of it — and a paper-eligible
+version's refusal names "historical evidence; paper only". The dispatch gate is unchanged: no allocation
+is still `ALLOCATION_NONE`.
+
 **Invalidation is computed at READ time, never written** (`Promotions.Standing(versionId)`, the one
-reader, answering `promoted` / `refused` / `invalidated` / `unjudged`). It compares the hashes ON THE ROW
+reader, answering `promoted` / `paper_eligible` / `refused` / `invalidated` / `unjudged`). A
+paper-eligible standing is invalidated by exactly what invalidates a promotion, and the policy sha it is
+re-checked against is the sha of the policy that PRODUCED it — comparing every row with V1's would
+withdraw every paper verdict the instant it was written. It compares the hashes ON THE ROW
 with the facts as they are now: the holdout dataset gone, REJECTED, re-collected under a different sha or
 reclassified as a fixture; the interpreter build or the scoring-policy sha no longer this build's. A
 column would make a version's truth depend on a sweep having run. The dataset's **state** is read off the

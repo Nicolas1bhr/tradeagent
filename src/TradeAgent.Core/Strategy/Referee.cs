@@ -321,8 +321,20 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 MaxDecisionAge = program.Freshness?.MaxDecisionAge
             });
 
-Deliver(promotion, at);
-            OpenBoundary(promotion, at);
+            // TOLD, ALWAYS. The research process is told what was judged and why, because being told is
+            // what lets it iterate at all, and the note is sanitised by `RefereeFeedback` either way.
+            Deliver(promotion, at);
+
+            // BUT A PAPER-ELIGIBLE VERDICT OPENS NO CONSEQUENTIAL BOUNDARY.
+            //
+            // `docs/PRINCIPLES.md`: "every ordinary experiment need not purchase a fixed ceremony",
+            // and paper observation is an ordinary experiment by this app's policy — it risks no
+            // capital, it is reversible, and the version it is about may be given no money whatever
+            // the directors say. `docs/COUNCIL.md`:59 spends the strongest model on "promotion of a
+            // strategy"; that is what the 24 h review and the two paid assessments are the ceremony
+            // OF, and attaching them to every historical verdict would buy four director turns per
+            // submission for a decision code has already made.
+            if (!promotion.IsPaperEligible) OpenBoundary(promotion, at);
 
             return new RefereeVerdict(true, "", promotion);
         });

@@ -701,6 +701,17 @@ public sealed record MissionSituation
                   + ", and that ceiling is enforced when an order arrives."
                 : " No capital is allocated to it, so it can place nothing. Only your owner allocates "
                   + "capital, in TradeAgent; there is no command that asks for it."),
+        // PAPER-ELIGIBLE IS A FIFTH CASE AND IT READS AS "none" FOR THE PROMOTED HALF, deliberately.
+        // A favourable verdict has been recorded and the turn must know it — it is what makes a paper
+        // run worth starting — but nothing about it is a permission, no capital can stand behind it,
+        // and a line that opened with "Promoted strategy: <version>" would be planned around as one.
+        PromotionState.PaperEligible =>
+            $"Promoted strategy: none. Version {Short(standing!.Promotion!.VersionId)} is PAPER-ELIGIBLE: "
+            + "TradeAgent's referee judged it favourably over months you have never been shown, but "
+            + "those months do not post-date the version's freeze, so the result is history your "
+            + "submission may already have been written around. It may be observed forward on paper and "
+            + "it can be given no capital at all. Only forward evidence collected after the freeze "
+            + "promotes a version, and only your owner allocates capital.",
         PromotionState.Invalidated =>
             $"Promoted strategy: none. Version {Short(standing!.Promotion!.VersionId)} was promoted and "
             + "no longer stands — " + standing.Why,
