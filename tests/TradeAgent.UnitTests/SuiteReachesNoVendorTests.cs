@@ -55,6 +55,16 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string SecondSourceHost = "revolut" + ".com";
 
+    /// <summary>
+    /// THE FORWARD HOST (<c>U-forward-bars</c>), spelled the same way and for the same reason as the
+    /// archive's — and it is a DIFFERENT name, which is exactly the hazard. <c>data-api.binance.vision</c>
+    /// does not contain <c>data.binance.vision</c>, so the scan above would not have found a test that
+    /// named it, and <see cref="ForwardBarCollector"/>'s base URL defaults to the catalogue row, which
+    /// is the vendor: a test that forgets to point it at loopback would poll a public endpoint every
+    /// tick, on three platforms, and pass.
+    /// </summary>
+    const string ForwardHost = "data-api" + ".binance" + ".vision";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -109,6 +119,9 @@ public class SuiteReachesNoVendorTests
                     offenders.Add($"{name}:{n} names the second candle source's vendor host, which this "
                                   + "build has never reached and has no endpoint for");
 
+                if (code.Contains(ForwardHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names the forward collector's vendor host");
+
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
                 if (Regex.IsMatch(code, @"new\s+BinanceArchiveClient\s*\(\s*\)"))
@@ -130,6 +143,17 @@ public class SuiteReachesNoVendorTests
                 && !body.Contains("BaseUrl =", StringComparison.Ordinal))
                 offenders.Add($"{name} uses ApiAgentRuntime and never sets BaseUrl, so it would "
                               + "send a request to the AI provider");
+
+            // AND THE FORWARD COLLECTOR, WHICH IS THE SAME TRAP A THIRD TIME. Its `baseUrl` argument
+            // is optional and defaults to the catalogue row — the vendor's market-data host — so a
+            // test that CONSTRUCTS one without naming a base URL would poll a public endpoint on
+            // every tick and pass. A file-level rule, like the harness above: a test source that
+            // builds one has to point it somewhere in the same file. The lookahead lets static
+            // access through, because `ForwardBarCollector.MaxBackoff` reaches no host at all.
+            if (Regex.IsMatch(body, @"\bForwardBarCollector\b(?!\s*\.)")
+                && !body.Contains("baseUrl:", StringComparison.Ordinal))
+                offenders.Add($"{name} builds a ForwardBarCollector and never names a baseUrl, so it "
+                              + "would poll the vendor's market-data host every tick");
         }
 
         Assert.True(offenders.Count == 0,
@@ -199,6 +223,20 @@ public class SuiteReachesNoVendorTests
     {
         Assert.Equal(BinanceArchive.BaseUrl, new BinanceArchiveClient().BaseUrl);
         Assert.StartsWith("https://", BinanceArchive.BaseUrl);
+    }
+
+    /// <summary>
+    /// AND SO IS THE FORWARD ROW'S, which is why the collector's own rule above exists. The row is
+    /// DATA and ships pointing at the vendor — that is the product working — so the claim the suite
+    /// has to keep is that no TEST takes it.
+    /// </summary>
+    [Fact]
+    public void The_forward_sources_shipped_base_url_really_is_the_vendor()
+    {
+        var entry = Assert.Single(CandleSourceCatalog.BuiltIn(), s => s.Id == ForwardBars.Source);
+
+        Assert.Contains(ForwardHost, entry.BaseUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", entry.BaseUrl);
     }
 
     /// <summary>

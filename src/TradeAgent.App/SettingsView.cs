@@ -71,6 +71,12 @@ sealed class SettingsPage
     readonly TextBlock _dataNote = Ui.Muted("");
     readonly Control _dataBusy = Ui.Busy("Collecting months from Binance's public archive.");
     readonly Button _collect;
+
+    /// <summary>The live series as it stands: how many bars, how old the newest one is, any holes.</summary>
+    readonly TextBlock _liveValue = Ui.Mono("—");
+
+    /// <inheritdoc cref="ToggleLiveBars"/>
+    readonly Button _liveBars;
     bool _collecting;
 
     // ---- the holdout ----
@@ -166,6 +172,13 @@ sealed class SettingsPage
         _dataBusy.IsVisible = false;
         _dataNote.IsVisible = false;
 
+        // LIVE BARS. ONE press, and the same judgement as the download above it: this reads Binance's
+        // market-data-only host, which accepts no authenticated request at all, and it grants nothing,
+        // changes no limit and touches no order. ON by default, because forward observation cannot be
+        // retrofitted — a minute nobody collected is gone.
+        _liveBars = Ui.Secondary("Stop collecting live bars", ToggleLiveBars);
+        _liveBars.HorizontalAlignment = HorizontalAlignment.Left;
+
         var marketData = Ui.Section("Market data", Ui.Col(Theme.S4,
             Ui.KeyValueLive("History TradeAgent holds", _dataValue),
             _dataNote,
@@ -173,6 +186,17 @@ sealed class SettingsPage
             Ui.FieldRow("Pair", _dataPair, "Upper-case letters and digits, as Binance writes it — BTCUSDT, ETHUSDT."),
             _collect,
             _dataBusy,
+            Ui.Divider(),
+            Ui.KeyValueLive("Live bars TradeAgent has collected", _liveValue),
+            _liveBars,
+            Ui.Muted("While TradeAgent is running it also collects that pair's CLOSED 1-minute bars as they happen, "
+                     + "from Binance's market-data-only host — the one that serves public data and accepts no "
+                     + "trading request at all. A bar is kept only once it has closed, the first reading of a minute "
+                     + "is the one that stands, and a minute the host does not publish is recorded as missing and is "
+                     + "never filled in or guessed at."),
+            Ui.Micro("These bars carry NO vendor checksum — none is published for a live window — so they are not "
+                     + "evaluation evidence and no verdict is ever taken over them. They are what a paper run is "
+                     + "watched against, and the AI can read them and nothing else about them."),
             Ui.Divider(),
             Ui.Muted("TradeAgent downloads the twelve most recent complete months of 1-minute bars from Binance's " +
                      "public archive and checks every file against the checksum Binance published beside it. A month " +
@@ -365,6 +389,8 @@ sealed class SettingsPage
         _collect.IsEnabled = !_collecting;
         _dataPair.IsEnabled = !_collecting;
 
+        ApplyLiveBars();
+
         try
         {
             var newest = _host.Gateway.Datasets.All().FirstOrDefault();
@@ -379,6 +405,68 @@ sealed class SettingsPage
         }
         catch (Exception) { _dataValue.Text = "could not be read"; }
     }
+
+    /// <summary>
+    /// ONE PRESS, AND IT ONLY EVER CHANGES WHAT TRADEAGENT READS. See
+    /// <see cref="TradeAgentSettings.CollectLiveBars"/>: the host this reaches accepts no
+    /// authenticated request, so there is nothing here for a second press to protect.
+    ///
+    /// <para>The collector itself reads the setting at every look, so nothing has to be restarted:
+    /// switched off it writes nothing at all, and switched back on the next look carries on from the
+    /// newest bar in the ledger — with the minutes in between recorded as the gap they are.</para>
+    /// </summary>
+    void ToggleLiveBars()
+    {
+        var on = !_host.Gateway.Settings.CollectLiveBars;
+        _host.Gateway.Update(s => s.CollectLiveBars = on);
+        _host.Gateway.Log.Activity(on
+            ? "Live 1-minute bars: collection switched ON"
+            : "Live 1-minute bars: collection switched off");
+        ApplyLiveBars();
+    }
+
+    /// <summary>
+    /// THE LIVE SERIES AS IT STANDS, off the rows and never off "when the collector last ran": a
+    /// collector running happily against a host publishing nothing is exactly the case this line must
+    /// not report as healthy.
+    /// </summary>
+    void ApplyLiveBars()
+    {
+        var on = _host.Gateway.Settings.CollectLiveBars;
+        _liveBars.Content = on ? "Stop collecting live bars" : "Collect live bars";
+
+        try
+        {
+            var pair = _host.Gateway.Settings.MarketDataPair;
+            var series = _host.Gateway.Forward.Series(pair);
+
+            if (series.Bars == 0)
+            {
+                _liveValue.Text = on
+                    ? $"{pair} — nothing collected yet"
+                    : $"{pair} — not being collected";
+                if (series.LastError is { Length: > 0 } why) _liveValue.Text += $" ({why})";
+                return;
+            }
+
+            var age = _host.Gateway.Forward.Freshness(pair, DateTimeOffset.UtcNow);
+            _liveValue.Text =
+                $"{pair} {series.Interval}, {series.Bars:N0} bars, newest {Age(age)} old, "
+                + $"{series.BarsMissing:N0} minutes missing"
+                + (on ? "" : " — collection is off")
+                + (series.LastError is { Length: > 0 } error ? $" — last look: {error}" : "");
+        }
+        catch (Exception) { _liveValue.Text = "could not be read"; }
+    }
+
+    /// <summary>A duration in the plainest words that are still exact enough to act on.</summary>
+    static string Age(TimeSpan? age) => age switch
+    {
+        null => "unknown",
+        { TotalSeconds: < 90 } d => $"{d.TotalSeconds:N0} s",
+        { TotalMinutes: < 90 } d => $"{d.TotalMinutes:N0} min",
+        var d => $"{d!.Value.TotalHours:N1} h"
+    };
 
     // ---- the holdout -------------------------------------------------------------------------
 

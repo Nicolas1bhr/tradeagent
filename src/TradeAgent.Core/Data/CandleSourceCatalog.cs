@@ -88,6 +88,33 @@ public static class CandleSourceCatalog
     /// <summary>Revolut X's public candles. NO ENDPOINT IS RECORDED IN THIS REPOSITORY — see the type.</summary>
     public const string RevolutXCandles = "revolut-x-public-candles";
 
+    /// <summary>
+    /// BINANCE'S MARKET-DATA-ONLY HOST, COLLECTED FORWARD MINUTE BY MINUTE. Not an archive: see
+    /// <see cref="ForwardBars"/> and <c>docs/CONTRACTS.md</c>, "Forward bars".
+    /// </summary>
+    public const string BinanceForwardKlines = ForwardBars.Source;
+
+    /// <summary>
+    /// THE FORWARD HOST AND ENDPOINT, AS DATA — the whole reason this row exists rather than a
+    /// constant in the collector. A vendor that renames a query parameter or moves a host should
+    /// cost one line of <c>sources.json</c>, not a rebuild (<c>CLAUDE.md</c>: vendor commands are
+    /// data, not code).
+    ///
+    /// <para>Spelled in pieces so the test-tree scan that forbids a test naming a vendor host can be
+    /// extended to this one without finding the constant that defines it.</para>
+    /// </summary>
+    public const string ForwardBaseUrl = "https://data-api" + ".binance" + ".vision";
+
+    /// <summary>What the forward row says about itself. Measured once, by hand, and quoted.</summary>
+    public const string ForwardMeasured =
+        "measured by hand on 2026-09-19: GET {base}/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2 "
+        + "-> HTTP 200 in 0.46 s with no API key. It is Binance's MARKET-DATA-ONLY host — it serves "
+        + "public market data and accepts no authenticated or trading request at all, which is why "
+        + "this build collects forward from it and never from a trading base "
+        + "(developers.binance.com/en/docs/products/spot/faqs/market_data_only). NO CHECKSUM IS "
+        + "PUBLISHED FOR A LIVE WINDOW and none could be: the minute did not exist when a sidecar "
+        + "for it would have been signed. These bars are therefore never evaluation evidence.";
+
     /// <inheritdoc cref="VenueCatalog.ShippedAt"/>
     public static readonly DateTimeOffset ShippedAt = new(2026, 9, 14, 0, 0, 0, TimeSpan.Zero);
 
@@ -150,8 +177,35 @@ public static class CandleSourceCatalog
             Source = NoEndpointRecorded,
             RecordedAt = ShippedAt,
             Verified = false
+        },
+        new CandleSourceEntry
+        {
+            // THE FORWARD ROW. It is VERIFIED — the host and the endpoint were reached once, by hand,
+            // and the measurement is quoted on the row — and that is a claim about the ENDPOINT only.
+            // It says nothing about the bars being checkable: `ChecksumUrlShape` is empty because the
+            // vendor publishes no sidecar for a live window, and every surface that serves these bars
+            // says in words that they are not evaluation evidence (`ForwardBars.Evidence`).
+            Id = BinanceForwardKlines,
+            DisplayName = "Binance (live)",
+            VenueId = VenueCatalog.BinanceSpot,
+            Interval = ForwardBars.Interval,
+            // A FORWARD SERIES HAS NO COVERAGE TARGET. It is as deep as the app has been running and
+            // no deeper, and a number here would be a depth this collector never promised to reach.
+            CoverageTargetDays = 0,
+            BaseUrl = ForwardBaseUrl,
+            UrlShape = "{base}/api/v3/klines?symbol={symbol}&interval={interval}&startTime={from}&limit={limit}",
+            ChecksumUrlShape = "",
+            CandlesCarryVolume = true,
+            // Nothing is kept as a file at all: a forward answer is parsed and becomes rows.
+            RawFileExtension = "",
+            Source = ForwardMeasured,
+            RecordedAt = ForwardRecordedAt,
+            Verified = true
         }
     ];
+
+    /// <summary>When the forward row's one measurement was taken. See <see cref="ForwardMeasured"/>.</summary>
+    public static readonly DateTimeOffset ForwardRecordedAt = new(2026, 9, 19, 0, 0, 0, TimeSpan.Zero);
 
     /// <summary>
     /// The catalogue, or the reason there is none. See the type summary: an unreadable
@@ -202,6 +256,19 @@ public static class CandleSourceCatalog
     public static ICandleSource Of(CandleSourceEntry entry, string? baseUrl = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
+
+        // THE FORWARD ROW IS NOT AN ARCHIVE AND MUST NOT BE DRIVEN AS ONE. Every other source here
+        // publishes PERIODS — a month, a window — that the owner's one press downloads, hashes and
+        // normalises into a frozen dataset. A forward series has no periods to ask for: it is
+        // whatever this installation has collected since it started running, one closed minute at a
+        // time, and a dataset built from it would be a frozen file claiming a freeze it never had.
+        // Refused in words rather than served as a DataCandleSource that would fetch the live window
+        // and hand it to the normaliser.
+        if (entry.Id == BinanceForwardKlines)
+            throw new TradeAgentException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"'{entry.Id}' is collected FORWARD, one closed minute at a time, and has no periods "
+                + "to download. It is not evaluation evidence and is never normalised into a dataset; "
+                + "read it with 'trade data bars --source forward'.");
 
         return entry.Id == BinanceMonthlyKlines
             ? new BinanceCandleSource(baseUrl ?? entry.BaseUrl)

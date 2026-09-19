@@ -454,6 +454,20 @@ public sealed class AppHost : IAsyncDisposable
     MarketDataService? _marketData;
 
     /// <summary>
+    /// THE FORWARD BAR COLLECTOR — the one thing in this product that watches an advancing market.
+    ///
+    /// <para>Started with the app and stopped with it, and INDEPENDENT OF THE MISSION LOOP: a paused
+    /// AI, an exhausted spending ceiling and a kill switch all leave it running, because what it
+    /// collects is evidence and evidence is not a paid turn. The reverse matters more — it takes no
+    /// turn, spends nothing and places nothing.</para>
+    ///
+    /// <para>In-process only, like everything else on this object. There is no verb and no pipe op
+    /// that starts it, stops it or points it somewhere else; the owner's toggle on the Settings page
+    /// is the only control.</para>
+    /// </summary>
+    public ForwardBarCollector? Forward { get; private set; }
+
+    /// <summary>
     /// Whether TradeAgent asks GitHub about new versions on its own.
     ///
     /// Off means never touching the network for this; it does not mean never updating. An update is
@@ -506,6 +520,26 @@ public sealed class AppHost : IAsyncDisposable
             // collector's own transaction, and this only stops a sleeping loop from waiting for its
             // next scheduled look to find out.
             _marketData = new MarketDataService(_db, nudge: () => Mission?.Wake());
+
+            // THE FORWARD COLLECTOR, STARTED WITH THE APP. Both functions are read at every look
+            // rather than captured: the owner changes the pair and flips the toggle on the Settings
+            // page while the app is running, and the next look is the one that has to obey.
+            //
+            // A catalogue with no forward row — an owner's sources.json that removed it — is a
+            // startup fact and not a crash: the collector is simply absent, `data-list` says the
+            // series is not being collected, and the app comes up.
+            try
+            {
+                Forward = new ForwardBarCollector(_db,
+                    () => Gateway.Settings.MarketDataPair,
+                    () => Gateway.Settings.CollectLiveBars);
+                Forward.Start();
+            }
+            catch (Exception ex)
+            {
+                Gateway.Log.Activity(
+                    "TradeAgent is not collecting live bars: " + ex.Message.ReplaceLineEndings(" "), "warn");
+            }
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
@@ -1274,6 +1308,10 @@ public sealed class AppHost : IAsyncDisposable
         // it is never written, so there is nothing to delete, and it does not outlive this process.
         HarnessKey.Clear();
         _harness?.Dispose();
+        // STOPPED WITH THE APP, AND BEFORE THE DATABASE CLOSES: a look in flight holds a write
+        // transaction, and disposing the store underneath it is how a clean exit becomes a corrupt
+        // row. This waits for the look it interrupted.
+        if (Forward is not null) { await Forward.DisposeAsync(); Forward = null; }
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();

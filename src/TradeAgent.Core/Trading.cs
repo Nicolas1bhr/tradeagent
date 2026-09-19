@@ -359,6 +359,23 @@ public sealed class TradeAgentSettings
     public string MarketDataPair { get; set; } = "BTCUSDT";
 
     /// <summary>
+    /// WHETHER TRADEAGENT COLLECTS THE CLOSED 1-MINUTE BARS OF THAT PAIR AS THEY HAPPEN.
+    ///
+    /// <para>ON by default and ONE press to change, for the reason the download beside it is one
+    /// press: it reads a public market-data endpoint that accepts no authenticated request at all,
+    /// it grants nothing, changes no limit and touches no order. The two-press rule is for widening
+    /// what the AI may DO, and making the owner confirm a read twice would teach them to confirm
+    /// things twice.</para>
+    ///
+    /// <para>On by default because forward observation cannot be retrofitted: a minute nobody
+    /// collected is gone, and an owner who discovers the switch in a month has a month of nothing.
+    /// Off, the collector writes NOTHING — not even a failed attempt, because "the owner switched it
+    /// off" is not a fetch that went wrong — and <c>data-list</c> says the series is not being
+    /// collected rather than reporting it stale.</para>
+    /// </summary>
+    public bool CollectLiveBars { get; set; } = true;
+
+    /// <summary>
     /// Turns resumed into one agent CLI session before a fresh one starts. Resuming for ever grows
     /// one context until the runtime refuses it or prices it absurdly; nothing is lost by starting
     /// again, because the AI's memory is its files and every turn is told so.

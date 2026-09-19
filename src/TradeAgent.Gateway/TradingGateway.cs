@@ -25,6 +25,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly MaterialStore _materials;
     readonly FillStore _fills;
     readonly DatasetStore _datasets;
+    readonly ForwardBarStore _forward;
     readonly VenueStore _venues;
     readonly CampaignStore _campaigns;
     readonly Allocations _allocations;
@@ -79,6 +80,19 @@ public sealed class TradingGateway : IAsyncDisposable
     /// serves it over <c>data-list</c> and <c>data-bars</c> without ever writing a row.
     /// </summary>
     public DatasetStore Datasets => _datasets;
+
+    /// <summary>
+    /// THE FORWARD LEDGER — the closed 1-minute bars this installation collected itself while it was
+    /// running. READ ONLY from here, exactly as <see cref="Datasets"/> is: it is written by the app's
+    /// own <c>ForwardBarCollector</c>, which the agent-facing pipe cannot reach, and this gateway
+    /// serves it over <c>data-list</c> and <c>data-bars --source forward</c> without writing a row.
+    ///
+    /// <para>These bars are NOT evaluation evidence and every surface that serves them says so:
+    /// there is no vendor checksum for a live window and none is claimed
+    /// (<see cref="ForwardBars.Evidence"/>). Their freshness is the fact a program's
+    /// <c>data_freshness</c> bound is checked against at dispatch.</para>
+    /// </summary>
+    public ForwardBarStore Forward => _forward;
 
     /// <summary>
     /// The venue catalogue — what instruments this installation knows of, on which venue, with what
@@ -435,6 +449,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _materials = new MaterialStore(db);
         _fills = new FillStore(db);
         _datasets = new DatasetStore(db);
+        _forward = new ForwardBarStore(db);
         // THE CATALOGUE IS WRITTEN HERE, ONCE, FROM THE FILE AND THE BUILT-INS. It is app-owned data
         // and not a migration's (see the schema 17 rung): recording it at construction is what makes an
         // edit to `venues.json` take effect on the next start rather than on the next release, and it
