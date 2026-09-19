@@ -6468,3 +6468,44 @@ Manager's gate at `d8000fa` (the reported tip, 0 behind `main` `3557e1e`; `src`/
 **NOT done, NOT verified:** nothing runs a paper-eligible version forward on paper — no envelope, no paper allocation, no runner (`U-paper-envelope` cut from this
 tip); `MissionLoop.PromotedLine`'s `_` arm still says "You cannot ask for a verdict" (handed to the envelope builder); `DailyReports.cs` unchanged beyond what
 section 8 already printed; no real model has received a paper-eligible verdict; no box, no ATAS, no money.
+
+## 2026-09-19 — U-forward-bars landed: real, advancing one-minute bars the app collects itself — closed bars only, receipt provenance, first reading stands, apart from the frozen evaluation datasets
+
+The data arrow of forward paper (`manager-prompt.md` § 5 "Actual market observation"), built by one fresh Opus builder from the 36-line brief
+`docs/briefs/U-forward-bars.md` (landed `d123e91`) as the second of three parallel legs the owner allowed. Merge `6016fdd`, 5 commits (4 items + the report),
+26 files, +2767/−19. **Schema 24** (over `U-paper-verdict`'s 23). Not the money path: nothing here places an order, and staleness adds no dispatch gate —
+`data_freshness` is still `RefuseAStaleDecisionOrThrow` against the decision's own bar.
+
+- **The forward ledger** (`ForwardBarStore`): `forward_bar` keyed (source, symbol, open_time), `forward_fetch` (every attempt, succeeded or failed, with its
+  body sha), `forward_gap` (recorded, never filled). A bar is written only when its close precedes its receipt; a re-fetched bar that differs is refused by the
+  insert's own conflict clause — the first reading stands and the disagreement is counted on the fetch. `Since` clamps at `MaxBars + 1` so a window over the cap
+  is REFUSED naming the cap, never truncated (a defect the builder found in its own first cut, stated).
+- **`ForwardBarCollector`** (Provisioning): every 60 s for the market-data pair while the Data page's one-press toggle (default ON) allows; the host is a
+  catalogue row `binance-spot-forward-klines` on `data-api.binance.vision`, the market-data-only host, `Verified = true` with the vendor's document on the row —
+  data, not code; 10 s request timeout, exponential backoff to 5 min, a `BarClosed` event for the runner to come; started and stopped by `AppHost` with the app,
+  independent of the mission loop. RUN 2026-09-19 from this Mac (the manager, before the brief): the endpoint answered HTTP 200 in 0.46 s with the current
+  minute's bar, no key; the builder did NOT re-run it and quotes the brief.
+- **The read-only surface:** `data-list` names the forward series apart from the frozen datasets with the sentence "FORWARD — collected by TradeAgent minute by
+  minute; no vendor checksum; not evaluation evidence"; `data-bars --source forward` serves a bounded window to any role with no holdout (every forward bar
+  post-dates every freeze, `CONTRACTS.md` says so); `status.forward_data` (symbol, last bar, age, gaps today, last error); report section 7 prints a COUNT, never a
+  price, the existing "nothing here is priced" gap kept. `CONTRACTS.md` "Forward bars", `USER-GUIDE.md` Market data, `RESEARCH-REQUIRED.md` C5 (host and endpoint
+  with source and date).
+- **Kept, stated:** one existing assertion changed — `DataOpsTests.The_schema_names_both_data_operations_and_neither_of_them_mutates` pins the usage string with
+  `[--source archive|forward]` and asserts `source` optional; `SuiteReachesNoVendorTests` strengthened twice (the forward host `data-api.binance.vision` does not
+  contain `data.binance.vision`, so the old scan missed it; a test building a collector must name a `baseUrl`, proved to fire). Item 1's line said "Schema 25", a
+  typo; 24 was built.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate first at `3331fc0` (over `3557e1e`, ladder 22 → 24 with no 23 block, as
+briefed: Unit 1158 + Fault 374 + Integration 685, 0 failed), then at `c7a2840` after the rebase over rung 23 (`main` `e89a4cb`; `Database.cs` and `Versioning.cs`
+conflicted, both sides kept in ladder order, the rollback fixture carrying both arms; `git diff 3331fc0 c7a2840 -- src tests` = rung 23 and nothing else), Release
+`--no-incremental`: 0 warnings, 0 errors; Unit 1168 + Fault 374 + Integration 685 = 2227 passed, 0 failed, 1 skipped (11 m 7 s); touched classes 3× → five Unit
+classes 34 ×3, `ForwardBarsOverPipeTests` 8 ×3, every class asserting `schema_version` 109 ×3; names 1871 → 1889, 18 added, 0 removed. RED (behavioural): the integration class `Failed: 7, Passed: 0`, the
+headline refusing `{"code":"HOLDOUT_WITHHELD","message":"dataset 1 (BTCUSDT 1m v1) holds out every bar from 2026-08-01 01:00:00Z onwards…"}` — `--source`
+ignored, the archive answered; the rollback fixture `SqliteException : SQLite Error 1: 'no such table: forward_bar'` at `VenueCatalogTests.cs:246`; the rest red
+on the base only as `CS0246` (the weak red it is, stated). Mutant (i), the closed-bar check dropped: `Only_closed_bars_are_stored… Expected: 2 Actual: 3` at
+`ForwardBarStoreTests.cs:59`. Mutant (ii), first-reading-stands replaced: `A_differing_refetch… Expected: 0 Actual: 2` at `:167` — it PASSED at first because
+`Append` read-then-continued before the insert; fixed so the conflict clause refuses. Manager's gate at `c7a2840` (the reported tip; landed as `6016fdd` after a docs-only rebase over `636ea94`, `src`/`tests` identical), Release: build `--no-incremental`, 17 projects → 0 warnings, 0 errors; Unit 1168/1168 (22 s), Fault 374/374 (1 m 27 s), Integration 685/686, 1 skipped (11 m 8 s, its normal length, beside two builders' suites) → 0 failed. Names vs `main` (git objects): sets 1870 → 1888, 0 removed, 18 added. Scan: one judged false positive excluded by name ("no passwords", a contract sentence), otherwise clean; no trailers; `rev-list --count` → 0. CI at `6016fdd`: recorded when complete.
+
+**NOT done, NOT verified:** the Market data card never rendered (`tools/mac-run.sh` not run); no run against the real host by the builder, no vendor call from any
+test (`SuiteReachesNoVendorTests` proves it); no order anywhere; nothing consumes the bars yet — no runner, no paper adapter wired to `IPaperBarSource`; no
+box, no ATAS, no money.
