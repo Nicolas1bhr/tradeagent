@@ -110,6 +110,60 @@ three legs that legitimately answer `not-sent` are unaffected**, because none of
 dispatch site: a target resolution that failed before its record existed, a leg parked for approval,
 and a `close-all` symbol with nothing left to close.
 
+## The paper connector — `src/TradeAgent.Connectors.Paper/`
+
+**A paper fill is a declared simulation and never evidence.** The `paper` connector takes closed bars
+from an `IPaperBarSource` and settles orders against them in the backtest's order: a MARKET order
+placed at `t` fills at the OPEN of the first closed bar whose `open_time` is after `t`, plus adverse
+slippage; a STOP fills at that open when the bar gapped through its level and at the level otherwise;
+a LIMIT fills at its level; a bar that would trigger both a resting stop and a resting limit on one
+instrument counts as the **stop**, because bars carry no intrabar ordering and the other reading
+invents a winning trade. What that establishes is that the price existed at the open of a bar. It
+establishes **no actual fill, no queue position and nothing about whether an order of that size could
+have been traded there** — the same sentence `docs/COUNCIL.md` puts on a backtest, for the same reason,
+and it does not become execution evidence because the bars were recent.
+
+**Friction is DECLARED and zero says so.** `TradeAgentSettings.PaperFeeFraction` and
+`PaperSlippageFraction` are fractions (`0.001` is ten basis points) and both default to 0. Declared
+neither, every fill the connector writes carries the word **FRICTIONLESS** and the sentence that a
+cost of nothing was modelled rather than measured, and the connector's status line repeats it. Slippage
+is adverse and applies only to a market order's fill at the open; protection fills where protection
+fires. Sizes are rounded **DOWN** to the instrument's quantity increment and a size that rounds to
+nothing is refused. Neither number is a risk limit: nothing is refused by them and no cap moves with
+them, so they ask once.
+
+**It trades the venue catalogue's VERIFIED rows and nothing else.** The instruments come from
+`VenueCatalog` — every venue but TradeAgent's own simulator — filtered to `verified = true`, which is
+`Backtests.Increment`'s judgement applied to the same number: a size is rounded down to the increment,
+so an increment nobody confirmed against the venue's own definition would make every simulated position
+one that could not have been taken. Out of the box that list is **empty**, because Binance spot's
+BTCUSDT ships unverified; the account owner records the row in `venues.json` and it trades.
+
+**The book is its own SQLite file, at `state/paper-<account>.db`, versioned inside the file.** It is
+not a rung of the app's schema and must not become one: simulated fills one join away from real ones
+is the shape that makes a paper experiment a migration. Orders are keyed by **client order id**, fills
+are keyed `UNIQUE (client_order_id, bar_open_time)`, and the positions are average-cost. Every SDK read
+— orders, executions since a timestamp, positions, and the account whose equity is starting + realised
+− fees with an unrealised figure off the last closed bar or NULL — comes off that file, so a second
+instance over it answers the same book. **Re-processing a bar writes no second fill, and that unique
+key is the whole of the guarantee**: settlement replays whatever the source hands it and takes the
+constraint's answer, because a watermark is right until the process holding it restarts and a restart
+is precisely what this has to survive.
+
+**What it cannot do, by construction.** The assembly references `TradeAgent.ConnectorSdk` and
+`TradeAgent.Core` and nothing else — no HTTP client, no socket, no vendor SDK — and a test reads the
+reference list back and holds it there. `SupportsClientOrderId` and `SupportsOrderHistory` are true
+because the id is the book's primary key and nothing prunes either table, not because paper fills are
+harmless. `SupportsStreaming` is **false**: a price exists here only when a bar closes, and a stream
+repeating the last close would be inventing ticks. A `ConnectorRejectedException` is a definite refusal
+only — an instrument the catalogue does not hold verified, a size below the increment, a cancellation
+of an order that has already filled — and an I/O error on the book or a bar source that throws
+propagates, so the gateway records UNKNOWN and reconciles rather than reading a broken read as a no.
+
+**Which connector an id names is decided in one place**, `Connectors.Create` in
+`src/TradeAgent.Platforms/`, for the desktop app and the gateway host alike; an id neither recognises
+still falls back to the practice simulator, which is the one platform where being wrong costs nothing.
+
 ## `IAgentRuntime` — `src/TradeAgent.AgentRuntime/IAgentRuntime.cs`
 
 Detect · Install · Update · GetVersion · BeginAuthentication · GetAuthenticationState ·

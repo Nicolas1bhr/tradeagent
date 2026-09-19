@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- The one place that knows which trading platforms exist. It is a project of its own, and not
+         a method on the gateway, because the gateway is handed an ITradingConnector and must go on
+         being unable to name a concrete one: PlaceRouteTests' argument about the measurement route
+         is about what the gateway's type can express, and a reference from there to AtasConnector
+         would be the first step in turning that fact back into a habit. -->
+    <ProjectReference Include="../TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Paper/TradeAgent.Connectors.Paper.csproj" />
+  </ItemGroup>
+</Project>

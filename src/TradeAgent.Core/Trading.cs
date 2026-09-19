@@ -376,6 +376,28 @@ public sealed class TradeAgentSettings
     public bool CollectLiveBars { get; set; } = true;
 
     /// <summary>
+    /// WHAT A FILL ON THE PAPER CONNECTOR IS CHARGED, as a FRACTION — <c>0.001</c> is ten basis
+    /// points, the same spelling a backtest's <c>--fees</c> uses and for the same reason.
+    ///
+    /// <para><b>Zero by default, and zero is a DECLARATION.</b> Declared no fee and no slippage, the
+    /// paper connector is FRICTIONLESS and every fill it writes says so in those words — because a
+    /// zero that was allowed to read as a measurement of a venue charging nothing is the figure
+    /// <c>docs/CONTRACTS.md</c> will not let a run report.</para>
+    ///
+    /// <para><b>It is not a risk limit and not a permission.</b> Nothing is refused by it, no cap
+    /// moves with it and no order is allowed or denied because of it; it only makes the simulation
+    /// dearer or cheaper. So it does not ask twice on the Safety page, and
+    /// <see cref="SettingsDelta"/> does not count it as a widening.</para>
+    /// </summary>
+    public decimal PaperFeeFraction { get; set; }
+
+    /// <inheritdoc cref="PaperFeeFraction"/>
+    /// <remarks>Applied ADVERSELY and only to a market order's fill at the bar's open: a buy pays up
+    /// and a sell gets less. A stop and a target fill where they fire, which is the backtest's rule
+    /// — protection is an order already resting, not a decision taken at a close.</remarks>
+    public decimal PaperSlippageFraction { get; set; }
+
+    /// <summary>
     /// Turns resumed into one agent CLI session before a fresh one starts. Resuming for ever grows
     /// one context until the runtime refuses it or prices it absurdly; nothing is lost by starting
     /// again, because the AI's memory is its files and every turn is told so.

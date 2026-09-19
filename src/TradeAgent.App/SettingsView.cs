@@ -48,8 +48,10 @@ sealed class SettingsPage
     readonly TextBlock _platformNote = Ui.Muted("");
     readonly Control _switchBusy = Ui.Busy("Switching platform. The old connection is being closed.");
     readonly Border _fakeInUse = Ui.Pill("IN USE", Theme.Positive);
+    readonly Border _paperInUse = Ui.Pill("IN USE", Theme.Positive);
     readonly Border _atasInUse = Ui.Pill("IN USE", Theme.Positive);
     readonly Button _fakeButton;
+    readonly Button _paperButton;
     readonly Button _atasButton;
     bool _switching;
 
@@ -119,10 +121,16 @@ sealed class SettingsPage
         // Back to the simulator is one press: it can only ever reduce what is at stake. Forward to
         // ATAS is two, and the armed label says which platform it is about to move to rather than
         // the word "Confirm" on its own.
-        _fakeButton = Ui.Secondary("Use the practice simulator", () => SwitchPlatformAsync("fake"));
-        _atasButton = Ui.Confirm("Use ATAS", "Confirm: switch to ATAS", () => SwitchPlatformAsync("atas"));
+        _fakeButton = Ui.Secondary("Use the practice simulator", () => SwitchPlatformAsync(Platforms.Connectors.Simulator));
+
+        // ONE PRESS, like the simulator and unlike ATAS: this platform reaches no venue at all, so
+        // moving to it cannot put anything at stake. The two-press rule is about money and
+        // permission, and TradeAgent paper has neither to offer.
+        _paperButton = Ui.Secondary("Use TradeAgent paper", () => SwitchPlatformAsync(Platforms.Connectors.Paper));
+        _atasButton = Ui.Confirm("Use ATAS", "Confirm: switch to ATAS", () => SwitchPlatformAsync(Platforms.Connectors.Atas));
 
         _fakeInUse.IsVisible = false;
+        _paperInUse.IsVisible = false;
         _atasInUse.IsVisible = false;
         _switchBusy.IsVisible = false;
 
@@ -134,6 +142,13 @@ sealed class SettingsPage
             Option("Practice simulator", Ui.Pill("RECOMMENDED", Theme.Positive), _fakeInUse,
                 "A built-in fake account. Nothing here is real and nothing can be lost.",
                 _fakeButton),
+            Ui.Divider(),
+            Option("TradeAgent paper — real prices, simulated fills", null, _paperInUse,
+                "The prices are the ones TradeAgent is collecting; the fills are simulated inside "
+                + "TradeAgent and reach no exchange. It is how a strategy is tried on a market that "
+                + "is still moving. A fill here is a simulation, never proof that the price could "
+                + "have been traded.",
+                _paperButton),
             Ui.Divider(),
             Option("ATAS", null, _atasInUse,
                 "Your real trading platform. TradeAgent connects to it and stays inside the limits you set.",
@@ -618,14 +633,26 @@ sealed class SettingsPage
 
         _switchBusy.IsVisible = _switching;
         _platformNote.IsVisible = !_switching;
-        _platformNote.Text = id == "atas"
-            ? "Orders go to ATAS on this computer. Whether real money is involved depends on the account below."
-            : "Every order goes to the built-in simulator. Nothing reaches a broker and nothing can be lost.";
+        _platformNote.Text = id switch
+        {
+            Platforms.Connectors.Atas =>
+                "Orders go to ATAS on this computer. Whether real money is involved depends on the account below.",
+            Platforms.Connectors.Paper =>
+                "Orders are filled inside TradeAgent against the prices it has collected. Nothing reaches "
+                + "an exchange and nothing can be lost.",
+            _ => "Every order goes to the built-in simulator. Nothing reaches a broker and nothing can be lost."
+        };
 
-        _fakeInUse.IsVisible = id != "atas";
-        _atasInUse.IsVisible = id == "atas";
-        _fakeButton.IsEnabled = !_switching && id == "atas";
-        _atasButton.IsEnabled = !_switching && id != "atas";
+        // The simulator is what an id this build does not recognise falls back to, exactly as
+        // Connectors.Create does, so the marked card and the platform actually in use agree.
+        var paper = id == Platforms.Connectors.Paper;
+        var atas = id == Platforms.Connectors.Atas;
+        _fakeInUse.IsVisible = !paper && !atas;
+        _paperInUse.IsVisible = paper;
+        _atasInUse.IsVisible = atas;
+        _fakeButton.IsEnabled = !_switching && (paper || atas);
+        _paperButton.IsEnabled = !_switching && !paper;
+        _atasButton.IsEnabled = !_switching && !atas;
         ApplyLookAgain();
     }
 
@@ -837,6 +864,7 @@ sealed class SettingsPage
         _switchBusy.IsVisible = true;
         _platformNote.IsVisible = false;
         _fakeButton.IsEnabled = false;
+        _paperButton.IsEnabled = false;
         _atasButton.IsEnabled = false;
         ApplyLookAgain();
 

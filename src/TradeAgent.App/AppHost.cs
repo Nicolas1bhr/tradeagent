@@ -2,10 +2,12 @@ using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
+using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
+using TradeAgent.Platforms;
 using TradeAgent.Provisioning;
 using TradeAgent.Security;
 
@@ -511,8 +513,8 @@ public sealed class AppHost : IAsyncDisposable
                 ToolDeployer.TradeCliReady(out var cliReason) ? HealthState.READY : HealthState.FAILED, cliReason);
 
             // Which backend to talk to is a persisted choice; the simulator is the safe default.
-            var chosen = _db.GetKv("connector") ?? "fake";
-            Connector = chosen == "atas" ? new AtasConnector() : new FakeConnector();
+            var chosen = _db.GetKv("connector") ?? Platforms.Connectors.Simulator;
+            Connector = Platforms.Connectors.Create(chosen, PaperChoice());
 
             Gateway = new TradingGateway(_db, Connector, Health);
             // THE COLLECTOR RAISES THE `data` WAKE ITSELF and this is what pokes the loop, the way
@@ -674,6 +676,23 @@ public sealed class AppHost : IAsyncDisposable
     /// the connector that was still loaded. Choosing ATAS therefore validated the practice simulator
     /// and finished setup claiming success. A choice that is not applied is not a choice.
     /// </summary>
+    /// <summary>
+    /// What the paper connector needs from this host: the declared friction, READ AT THE MOMENT OF
+    /// THE FILL rather than captured now. The connector is built before the gateway that loads the
+    /// settings exists, and the owner can change the two numbers while it is running — a fill has to
+    /// record what it was actually simulated under, not what the app was started with.
+    ///
+    /// <para>No bar source yet. The forward-bars ledger implements <c>IPaperBarSource</c>; until it
+    /// does, the connector quotes nothing and fills nothing and says exactly that in its status
+    /// line, which is the honest shape and not a silent one.</para>
+    /// </summary>
+    ConnectorChoice PaperChoice() => new()
+    {
+        PaperFrictionNow = () => new PaperFriction(
+            Gateway?.Settings.PaperFeeFraction ?? 0m,
+            Gateway?.Settings.PaperSlippageFraction ?? 0m)
+    };
+
     public async Task SwitchConnectorAsync(string id)
     {
         if (_db is null) return;
@@ -696,7 +715,7 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         Health.Set(Components.TradingConnection, HealthState.STARTING);
-        Connector = id == "atas" ? new AtasConnector() : new FakeConnector();
+        Connector = Platforms.Connectors.Create(id, PaperChoice());
         Gateway = new TradingGateway(_db, Connector, Health);
         Gateway.StateChanged += OnGatewayStateChanged;
         // A new gateway is a new object and the sink is on the object, exactly like the hook below.

@@ -9,5 +9,6 @@
     <ProjectReference Include="../TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
     <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
     <ProjectReference Include="..\TradeAgent.Connectors.Paper\TradeAgent.Connectors.Paper.csproj" />
+    <ProjectReference Include="..\TradeAgent.Platforms\TradeAgent.Platforms.csproj" />
   </ItemGroup>
 </Project>

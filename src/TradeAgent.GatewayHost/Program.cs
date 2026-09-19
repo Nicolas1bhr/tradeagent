@@ -1,9 +1,9 @@
 using TradeAgent.ConnectorSdk;
-using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Platforms;
 using TradeAgent.Security;
 
 // Headless gateway. The desktop app hosts the same objects in-process; this exists so the trading
@@ -11,7 +11,7 @@ using TradeAgent.Security;
 //
 // Operator authority lives on stdin here, never on the agent-facing pipe.
 
-var connectorArg = Arg("--connector") ?? "fake";
+var connectorArg = Arg("--connector") ?? Connectors.Simulator;
 
 using var instance = SingleInstanceLock.TryAcquire();
 if (instance is null)
@@ -24,11 +24,10 @@ Paths.EnsureAllVerbose();
 using var db = new Database();
 var health = new HealthRegistry();
 
-ITradingConnector connector = connectorArg switch
-{
-    "atas" => new AtasConnector(),
-    _ => new FakeConnector(new FakeBroker { AccountId = Arg("--account") ?? "SIM-001" })
-};
+// One place decides which platform an id names, shared with the desktop app: a host with its own
+// ternary agreed with the other by coincidence and would have disagreed about the third platform.
+ITradingConnector connector = Connectors.Create(connectorArg,
+    new ConnectorChoice { SimulatorAccountId = Arg("--account") });
 
 await using var gateway = new TradingGateway(db, connector, health);
 var token = IpcToken.Ensure();

@@ -183,6 +183,22 @@ decision but is not one of the places Back can return you to.
 **You should never need to type a command.** If a screen ever asks you to, that is a fault worth
 reporting, not something to work around.
 
+## TradeAgent paper — real prices, simulated fills
+
+On the Settings page, between the practice simulator and ATAS, there is a third platform called
+**TradeAgent paper**. It uses the prices TradeAgent has actually been collecting, and it fills orders
+**inside TradeAgent**: nothing reaches an exchange, no broker is involved, and nothing can be lost. It
+is one press to switch to, like the simulator, because there is nothing at stake. What it is for is
+the question a backtest cannot answer — how a strategy behaves on a market that is still moving —
+without putting money on the answer. An order is accepted straight away and fills at the opening price
+of the next completed minute, with whatever fee and slippage you have declared (both are zero unless
+you set them, and TradeAgent then says **FRICTIONLESS** on every fill rather than letting a cost of
+nothing look like a measurement). **A fill here is a simulation and never proof that the price could
+have been traded** — it says the price existed, not that your order would have got it. Out of the box
+TradeAgent paper trades nothing at all, because it will not size an order against a step size nobody
+has confirmed; the same `venues.json` line described under *If a backtest says it will not guess an
+instrument's size step* is what opens it.
+
 ## About ATAS
 
 ATAS is not TradeAgent's software, and this is the one part of setup that is not automatic.

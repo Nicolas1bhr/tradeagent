@@ -43,6 +43,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradeAgent.Connectors.Paper", "src\TradeAgent.Connectors.Paper\TradeAgent.Connectors.Paper.csproj", "{1F53DC43-C23E-49A5-9623-768FA1AC3439}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradeAgent.Platforms", "src\TradeAgent.Platforms\TradeAgent.Platforms.csproj", "{1A1D65EA-8C11-4904-8897-0A9111BB585E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -269,6 +271,18 @@ Global
 		{1F53DC43-C23E-49A5-9623-768FA1AC3439}.Release|x64.Build.0 = Release|Any CPU
 		{1F53DC43-C23E-49A5-9623-768FA1AC3439}.Release|x86.ActiveCfg = Release|Any CPU
 		{1F53DC43-C23E-49A5-9623-768FA1AC3439}.Release|x86.Build.0 = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|x64.Build.0 = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Debug|x86.Build.0 = Debug|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|x64.ActiveCfg = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|x64.Build.0 = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|x86.ActiveCfg = Release|Any CPU
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -276,5 +290,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{854E245D-02F1-46C0-A75E-D00DDED87675} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{1F53DC43-C23E-49A5-9623-768FA1AC3439} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{1A1D65EA-8C11-4904-8897-0A9111BB585E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
