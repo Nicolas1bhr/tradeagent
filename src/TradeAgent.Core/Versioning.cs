@@ -251,8 +251,14 @@ public static class Versions
     /// no campaign written before it fixed a second standard because none existed, so the build's own
     /// is the truth about those rows, and an empty column would refuse a paper verdict on every
     /// campaign of every installation that upgrades.</para>
+    ///
+    /// <para>AND THE FORWARD LEDGER at 24 (<c>U-forward-bars</c>): <c>forward_bar</c>,
+    /// <c>forward_fetch</c> and <c>forward_gap</c> — the closed one-minute bars this installation
+    /// collected itself, every attempt that fetched them, and the minutes that are not there. Keyed
+    /// (source, symbol, open_time) with the FIRST READING STANDING, because these bars have no
+    /// vendor checksum and the attempt is what stands in its place.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 23;
+    public const int DatabaseSchemaVersion = 24;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

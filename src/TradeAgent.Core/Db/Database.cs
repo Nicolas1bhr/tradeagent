@@ -1338,6 +1338,96 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','23') ON CONFLICT(key) DO UPDATE SET value='23';");
         }
 
+        if (have < 24)
+        {
+            // FORWARD BARS: THE MINUTES THIS INSTALLATION COLLECTED ITSELF — `U-forward-bars`.
+            //
+            // `docs/PRINCIPLES.md`:65 requires forward paper observation, and before this rung the
+            // only market data in this product was HISTORY: twelve months of a vendor's archive,
+            // fetched once by the owner's press and frozen. An advancing market was nowhere. A paper
+            // run over the archive is a re-run of last year; the arrow `manager-prompt.md` § 5 asks
+            // for needs a bar that did not exist a minute ago.
+            //
+            // THREE TABLES BECAUSE THERE ARE THREE DIFFERENT FACTS, and merging any two of them
+            // would destroy the one thing forward data has instead of a checksum.
+            //
+            // `forward_fetch` IS THE PROVENANCE AND IT IS WRITTEN WHETHER OR NOT ANYTHING ARRIVED.
+            // An archive file carries the vendor's published SHA-256 beside it; a live window
+            // carries none and can carry none, because the window did not exist when a sidecar for
+            // it would have been signed. What stands in its place is the ATTEMPT: the URL asked for,
+            // the instant it was asked, the instant the answer was in hand, the status and the hash
+            // of the body THIS BUILD computed. `body_sha256` is never a vendor's hash and is never
+            // reported as one — it proves the body has not changed since, which is a different claim
+            // from proving it is what the vendor meant to publish, and this database has kept those
+            // two apart since schema 17 (`dataset_file.published_sha256`).
+            //
+            // `forward_bar` IS KEYED (source, symbol, open_time) AND THE FIRST READING STANDS. The
+            // store inserts ON CONFLICT DO NOTHING, so a re-fetch of a minute already held cannot
+            // overwrite it and a re-fetch that DISAGREES is counted on the fetch's note instead.
+            // `INSERT OR REPLACE` is the mutant this key was chosen against: the vendor would then
+            // be able to edit evidence a research run had already been served, after the fact and
+            // with nothing in the record saying so. `received_at` is on the BAR and not only on the
+            // fetch so a reader can check the closure claim itself — every row's close_time precedes
+            // its own received_at — without trusting that the collector checked.
+            //
+            // `forward_gap` RECORDS WHAT IS NOT THERE, keyed on the run's first missing minute so a
+            // hole seen twice is one row. Nothing fills a gap: no interpolation, no carried-forward
+            // price, no invented volume. `dataset.gaps` counts the same absence for the archive and
+            // is likewise a count and never a repair.
+            //
+            // NO HOLDOUT COLUMN, deliberately. A holdout is a cutoff the owner set on a frozen
+            // dataset; every forward bar post-dates every freeze this installation holds, because it
+            // did not exist when the freeze was taken. There is nothing here to hold back — and the
+            // reverse is what matters: these bars are NOT evaluation evidence, which is said in
+            // words on every surface that serves them rather than enforced by a column that would
+            // imply they could be.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS forward_fetch(
+              id            INTEGER PRIMARY KEY AUTOINCREMENT,
+              source        TEXT NOT NULL,
+              symbol        TEXT NOT NULL,
+              url           TEXT NOT NULL,
+              requested_at  TEXT NOT NULL,
+              received_at   TEXT NOT NULL,
+              http_status   INTEGER,
+              bars          INTEGER NOT NULL,
+              first_open    TEXT,
+              last_open     TEXT,
+              body_sha256   TEXT,
+              note          TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_forward_fetch_series
+              ON forward_fetch(source, symbol, received_at);
+
+            CREATE TABLE IF NOT EXISTS forward_bar(
+              source      TEXT NOT NULL,
+              symbol      TEXT NOT NULL,
+              open_time   TEXT NOT NULL,
+              open        TEXT NOT NULL,
+              high        TEXT NOT NULL,
+              low         TEXT NOT NULL,
+              close       TEXT NOT NULL,
+              volume      TEXT NOT NULL,
+              close_time  TEXT NOT NULL,
+              received_at TEXT NOT NULL,
+              fetch_id    INTEGER NOT NULL REFERENCES forward_fetch(id),
+              PRIMARY KEY(source, symbol, open_time)
+            );
+
+            CREATE TABLE IF NOT EXISTS forward_gap(
+              source       TEXT NOT NULL,
+              symbol       TEXT NOT NULL,
+              from_open    TEXT NOT NULL,
+              to_open      TEXT NOT NULL,
+              bars_missing INTEGER NOT NULL,
+              seen_at      TEXT NOT NULL,
+              PRIMARY KEY(source, symbol, from_open)
+            );
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','24') ON CONFLICT(key) DO UPDATE SET value='24';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

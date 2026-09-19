@@ -240,6 +240,9 @@ public class VenueCatalogTests
                 DROP TABLE strategy_allocation;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;
+                DROP TABLE forward_bar;
+                DROP TABLE forward_gap;
+                DROP TABLE forward_fetch;
                 UPDATE meta SET value='16' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();
