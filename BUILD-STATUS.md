@@ -6431,3 +6431,40 @@ of the 6 new tests. Mutant (`text` built from the holdout run's metrics): `Asser
 **NOT done, NOT verified:** no test of the one-at-a-time refusal (two concurrent pipe callers); `RefereeFeedback.Text` still ends "You cannot ask for one" — stale,
 in `Referee.cs`, which `U-paper-verdict` owns and was told to fix; no real model has asked for a verdict — every caller is a test over the pipe against the
 simulator; over completed-month archives every production verdict is still `evidence-precedes-the-freeze` until `U-paper-verdict` lands; no box, no ATAS, no money.
+
+## 2026-09-19 — U-paper-verdict landed: a favourable verdict over never-served HISTORICAL holdout months makes a version eligible for PAPER, and the live path refuses it categorically
+
+The principles' distinction "a favourable historical verdict → eligibility for paper observation" put into the referee (`docs/PRINCIPLES.md` § Evidence), built by
+one fresh Opus builder from the 38-line brief `docs/briefs/U-paper-verdict.md` (landed `a617486`), resumed once after the wifi outage with nothing on disk, given
+one extra item mid-leg by the manager. Merge `d8000fa`, 7 commits (5 items + one test move + the report), 14 files, +996/−42. **Schema 23.** MONEY PATH:
+`Allocations.Record`'s standing check — a refusal added, none removed.
+
+- **A second standard, fixed at open.** `CampaignPolicy.PaperV1` — V1's performance clauses (run completed, ≥ 1 closed trade, net after declared costs > 0)
+  without the freeze clause, worded "historical holdout evidence: eligible for paper observation only" — with its own sha; `campaign.paper_policy` and
+  `paper_policy_sha256` copied at `Open`, carried by `Renew`; the rung pins this build's PaperV1 onto every campaign that predates it (the one backfill this rung
+  makes, `CONTRACTS.md` says so); a campaign that fixed ANOTHER paper policy is not judged by this build's clauses.
+- **One holdout run, two readings.** `ScoringPolicyV1.Reason` is asked first and is unchanged; only when its answer is `evidence-precedes-the-freeze` are the paper
+  clauses ACTUALLY evaluated on the same run: all met → `paper-eligible` (`MetOnHistory`, its own reason class), else `refused` with the performance clause that
+  failed — the informative reason, never the freeze. The row's policy sha is PaperV1's for a paper-eligible verdict and the campaign must hold it.
+- **A fifth standing, `paper_eligible`,** invalidated by exactly what invalidates a promotion; `IsPromoted` stays FALSE for it; `IsPaperEligible` added; the live
+  allocation path refuses it naming "historical evidence; paper only"; the dispatch gate untouched (no allocation → `ALLOCATION_NONE` as before).
+  `BoundaryBaselines.IsKnown` widened to accept the new state (its own `Measure` returns the standing) — no guard weakened.
+- **Delivered, no ceremony.** A paper-eligible verdict wakes Research with the sanitised note and opens NO consequential boundary — paper observation is an ordinary
+  experiment by app policy; the directors' 24 h review stays the ceremony of `promoted`. `RefereeFeedback.Text` says PAPER-ELIGIBLE and why it is not promoted, and
+  its stale "You cannot ask for one" sentence (the manager's added item) now names `trade verdict` and the budget across renewals — no digits, the no-figure
+  test unchanged and exact. `PromotedLine`, report section 8 (asserted on the rendered document), `CONTRACTS.md`, `USER-GUIDE.md`.
+- **Kept, stated:** one existing assertion changed — `RefereeVerdictTests.A_version_frozen_after_the_held_back_window_begins_is_refused_in_words`, name and fixture
+  kept, its recorded word now `PaperEligible`/`MetOnHistory`, its original property asserted unchanged. `Promotions.Current()` not widened (not asked).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `d71e9ad` (the last code commit, rebased onto `3557e1e` which carried
+`U-verdict-op`, no conflicts), Release `--no-incremental`: 17 projects, 0 warnings, 0 errors; Unit 1156 + Fault 374 + Integration 677 = 2207 passed, 0 failed,
+1 skipped; touched classes 3× → 30 each; names 1861 → 1871, 0 removed. RED on the base, 5 of 6: `Expected: "paper-eligible" / Actual: "refused"`; `Expected:
+"not-profitable-after-costs" / Actual: "evidence-precedes-the-freeze"`; `Expected: "paper_eligible" / Actual: "refused"`;
+`A_version_frozen_before_the_cutoff_is_still_promoted_under_V1` GREEN on the base — a guard checked, not a RED. Mutant (i), `IsPromoted` true for the new state:
+`capital was allocated to a paper-eligible version`; mutant (ii), the paper clauses skipped: `Expected: "refused" / Actual: "paper-eligible"`; both put back.
+Manager's gate at `d8000fa` (the reported tip, 0 behind `main` `3557e1e`; `src`/`tests` identical to the gated `d71e9ad`), Release: build `--no-incremental`, 17 projects → 0 warnings, 0 errors; Unit 1156/1156 (22 s), Fault 374/374 (1 m 27 s), Integration 677/678, 1 skipped (11 m 3 s, its normal length) → 0 failed. Names vs `main` (git objects): sets 1860 → 1870, 0 removed, 10 added; `[Fact]`/`[Theory]` 1827 → 1837. Scan clean; no trailers; `rev-list
+--count` → 0. CI at `d8000fa`: recorded when complete.
+
+**NOT done, NOT verified:** nothing runs a paper-eligible version forward on paper — no envelope, no paper allocation, no runner (`U-paper-envelope` cut from this
+tip); `MissionLoop.PromotedLine`'s `_` arm still says "You cannot ask for a verdict" (handed to the envelope builder); `DailyReports.cs` unchanged beyond what
+section 8 already printed; no real model has received a paper-eligible verdict; no box, no ATAS, no money.
