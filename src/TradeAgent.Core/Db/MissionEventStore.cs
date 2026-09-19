@@ -257,6 +257,19 @@ public static class MissionEventIds
     public static string Verdict(string promotionId) => $"{MissionEventKind.Verdict}:{promotionId}";
 
     /// <summary>
+    /// THE PAPER-ALLOCATION WAKE, KEYED BY THE ALLOCATION AND NOT BY THE SWEEP THAT WROTE IT.
+    ///
+    /// <para>The allocation is the ENTITY (<c>docs/COUNCIL.md</c>:64), and its id is already the hash
+    /// of the version, the ceiling, the platform, the account and the grant it was written under — so
+    /// the app's policy running again on the next tick, after a restart, or straight after a verdict
+    /// raises an id the table already holds and costs nobody a turn. Keyed by the sweep, an
+    /// installation left running would have bought a paid turn every five seconds to be told the same
+    /// thing.</para>
+    /// </summary>
+    public static string PaperAllocation(string allocationId) =>
+        $"{PublicationKind.Note}:paper-allocation:{allocationId}";
+
+    /// <summary>
     /// THE BOUNDARY WAKE, KEYED BY THE BOUNDARY — whose own id is already the entity and the revision
     /// (<see cref="BoundaryIds.Of"/>). Wrapped per role by <see cref="ForRole"/>, so the pair is still a
     /// function of the fact and a repeat of either is still free.

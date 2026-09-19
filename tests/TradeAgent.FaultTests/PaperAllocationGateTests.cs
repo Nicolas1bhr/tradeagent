@@ -3,6 +3,7 @@ using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Gateway;
 using Xunit;
 using Xunit.Abstractions;
@@ -502,6 +503,96 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         Assert.Equal(2, conn.Places);
         Assert.Null(gw.GetRequest("reserved-agent"));
         Assert.Equal(envelope.AccountId, gw.GetRequest("reserved-owner")!.AccountId);
+        await gw.DisposeAsync();
+    }
+
+    // ---- item 4: the app allocates, with no press ----------------------------------------------
+
+    /// <summary>
+    /// (a) A PAPER-ELIGIBLE VERSION WITH A STANDING ENVELOPE IS ALLOCATED TO PAPER BY THE APP, WITH NO
+    /// PRESS — THE WHOLE ARROW THIS UNIT CLOSES.
+    ///
+    /// <para><c>manager-prompt.md</c> § 5 asks for a verdict that becomes a paper allocation without
+    /// the owner confirming per version, and <c>docs/PRINCIPLES.md</c> § boundary keeps "new live
+    /// authority and live capital allocations" on their deliberate confirmation. The owner pressed
+    /// ONCE, on the envelope. After that the app writes the allocation itself, at the envelope's own
+    /// ceiling, and tells Research in one sanitised note keyed by the allocation — so re-running the
+    /// sweep buys nobody a second paid turn.</para>
+    ///
+    /// <para><b>And nothing about it is capital.</b> The same version is still refused by the live
+    /// press, has no live allocation, and the note carries no figure from the held-back months.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_paper_eligible_version_with_a_standing_envelope_is_allocated_to_paper_by_the_app_with_no_press()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = await Envelope(gw);
+        var version = Judged(db, PromotionVerdict.PaperEligible);
+
+        // NOTHING BEFORE THE SWEEP, which is what makes the line below the app's own act.
+        Assert.Null(gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At));
+
+        var written = gw.AllocatePaperDue(At);
+        var again = gw.AllocatePaperDue(At);
+
+        var standing = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At);
+        var notes = db.Read(_ =>
+        {
+            var found = new List<string>();
+            using var c = db.Cmd("SELECT content FROM publication WHERE kind=$k ORDER BY revision",
+                ("$k", PublicationKind.Note));
+            using var r = c.ExecuteReader();
+            while (r.Read()) found.Add(r.GetString(0));
+            return found;
+        });
+        var wakes = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT COUNT(*) FROM mission_event WHERE id LIKE 'note:paper-allocation:%'");
+            return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        });
+
+        log.WriteLine($"written on the sweep : {written}, and on the second {again}");
+        log.WriteLine($"ceiling              : {standing?.Allocation.MaxQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none"}");
+        log.WriteLine($"reason               : {standing?.Allocation.Reason ?? "none"}");
+        log.WriteLine($"notes                : {notes.Count}, wakes {wakes}");
+        foreach (var n in notes) log.WriteLine($"note                 : {n}");
+
+        Assert.Equal(1, written);
+        Assert.Equal(0, again);
+        Assert.NotNull(standing);
+        Assert.True(standing.Authorises);
+        Assert.Equal(envelope.MaxQuantity, standing.Allocation.MaxQuantity);
+        Assert.Equal(envelope.Id, standing.Allocation.EnvelopeId);
+        Assert.Contains("app policy", standing.Allocation.Reason, StringComparison.Ordinal);
+
+        // ONE NOTE AND ONE WAKE, whatever the sweep runs.
+        Assert.Single(notes);
+        Assert.Equal(1, wakes);
+        Assert.Contains("PAPER", notes[0], StringComparison.Ordinal);
+        Assert.Contains("NO LIVE AUTHORITY", notes[0], StringComparison.Ordinal);
+
+        // AND STILL NO CAPITAL.
+        Assert.False(gw.Allocate(version, 1m, null, "by the account owner").Ok);
+        Assert.Null(gw.Allocations.StandingForLive(version, At));
+        Assert.Empty(gw.Allocations.Standing(At));
+        Assert.Single(gw.Allocations.PaperStanding(At));
+
+        // THE OWNER'S REPORT SAYS IT, AND SAYS IT APART FROM THE CAPITAL LINES.
+        var report = gw.Reports.Compose(At);
+        log.WriteLine($"report paper         : {string.Join(" | ", report.Performance.PaperAllocations)}");
+        Assert.Contains(report.Performance.PaperAllocations,
+            l => l.Contains("PAPER — no live authority", StringComparison.Ordinal));
+        Assert.Empty(report.Performance.Allocations);
+
+        // AND SO DOES THE LINE THE ROLES READ.
+        var line = MissionSituation.PromotedLine(gw.Promotions.Standing(version), null,
+            standing.Allocation);
+        log.WriteLine($"promoted line        : {line}");
+        Assert.Contains("PAPER", line, StringComparison.Ordinal);
+        Assert.Contains("no capital", line, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
         await gw.DisposeAsync();
     }
 }

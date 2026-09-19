@@ -351,10 +351,17 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // empty list — "nothing is allocated" and "TradeAgent could not look" are different facts and
         // this section is the one place they must not collapse into each other.
         var allocations = new List<string>();
+        var paper = new List<string>();
         try
         {
             foreach (var standing in gateway.Allocations.Standing(at))
                 allocations.Add(AllocationLine(standing));
+
+            // AND WHAT THE APP PUT ON PAPER ITSELF, read at the same instant and kept in its own list:
+            // it is not capital, it authorises nothing in a real-money mode, and a reader skimming one
+            // list would take it for an allocation however the line was worded.
+            foreach (var standing in gateway.Allocations.PaperStanding(at))
+                paper.Add(PaperAllocationLine(standing));
         }
         catch (Exception ex)
         {
@@ -393,6 +400,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             ExtendedWhy = reopen.Extended,
             Closures = Cap(gateway.ClosureHistory(), ListShown, "closure"),
             Allocations = Cap(allocations, ListShown, "allocation"),
+            PaperAllocations = Cap(paper, ListShown, "paper allocation"),
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,
             SymbolsClosed = closed.Symbols,
@@ -450,6 +458,35 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                    + "TradeAgent no longer promotes a version without the three; this promotion was "
                    + "recorded before that and still stands."
             : line;
+    }
+
+    /// <summary>
+    /// ONE PAPER ALLOCATION, AND EVERY LINE SAYS WHAT IT IS NOT.
+    ///
+    /// <para>The version, the instrument, the account, the ceiling the OWNER declared on the envelope
+    /// card, and then the words "PAPER — no live authority" on every line without exception. A figure
+    /// from the held-back months never appears here, exactly as it never appears beside a promotion:
+    /// the ceiling is the owner's own number from their own screen.</para>
+    ///
+    /// <para>A row whose GRANT no longer stands is listed and MARKED rather than filtered out — the
+    /// <c>WITHDRAWN</c> reading <see cref="AllocationLine"/> takes of a promotion, applied to the
+    /// envelope: the row is still on the table and the experiment is over.</para>
+    /// </summary>
+    internal static string PaperAllocationLine(AllocationStanding standing)
+    {
+        var a = standing.Allocation;
+        var line = $"{Short(a.VersionId)} up to {AllocationRow.Num(a.MaxQuantity)}"
+                   + (a.MaxNotional is { } n and > 0m ? $" and {Labels.Money(n, a.Currency)}" : "")
+                   + $" on account {a.AccountId} at {a.ConnectorId}, from "
+                   + $"{a.EffectiveFrom:yyyy-MM-dd HH:mm:ssK} — PAPER — no live authority";
+
+        if (standing.Envelope is null)
+            return line + ", and WITHDRAWN: the paper envelope it was written under no longer stands, "
+                        + "so it may trade nothing at all.";
+
+        return standing.Authorises
+            ? line
+            : line + ", and WITHDRAWN: the verdict under it no longer stands. " + standing.Promotion.Why;
     }
 
     ReportExecution ComposeExecution(DateTimeOffset from, DateTimeOffset to, DateTimeOffset at)

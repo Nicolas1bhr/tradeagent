@@ -255,9 +255,21 @@ public class PaperEligibleVerdictTests
         {
             raw.Open();
             using var c = raw.CreateCommand();
+            // EVERY RUNG ABOVE 22 HAS TO BE UNDONE, not only 23's — a reopen runs all of them, and a
+            // half-rolled-back database is one no installation has ever had. `VenueCatalogTests` states
+            // the same rule against schema 16.
             c.CommandText = """
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
+                ALTER TABLE strategy_allocation DROP COLUMN scope;
+                ALTER TABLE strategy_allocation DROP COLUMN connector_id;
+                ALTER TABLE strategy_allocation DROP COLUMN mode;
+                ALTER TABLE strategy_allocation DROP COLUMN account_id;
+                ALTER TABLE strategy_allocation DROP COLUMN envelope_id;
+                DROP TABLE paper_envelope;
+                DROP TABLE forward_bar;
+                DROP TABLE forward_gap;
+                DROP TABLE forward_fetch;
                 UPDATE meta SET value='22' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();

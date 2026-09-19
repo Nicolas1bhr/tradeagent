@@ -2461,6 +2461,16 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // THE APP'S OWN REFEREE, UNCHANGED AND UNPARAMETERISED BEYOND THE TWO IDS. The charge, the
             // holdout feed, the scoring policy, the promotion row and the delivery are all its own.
             var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct);
+
+            // AND THE APP'S OWN PAPER POLICY, IMMEDIATELY AFTER THE VERDICT RATHER THAN AT THE NEXT
+            // TICK. It is the same sweep the mission loop runs on its periodic seam, and it writes
+            // nothing this caller asked for and nothing this caller can see: no figure comes back, the
+            // reply below is unchanged, and a version that has just been judged paper-eligible is in
+            // the owner's envelope by the time the submitter reads the answer rather than up to a tick
+            // later. It never throws (see `TradingGateway.AllocatePaperDue`), so a sweep that could not
+            // run cannot turn a delivered verdict into a refusal.
+            gateway.AllocatePaperDue();
+
             return Answered(campaign, version, verdict.Promotion, verdict.Ok ? null : verdict.Why);
         }
         finally

@@ -244,6 +244,20 @@ public sealed record ReportPerformance
     /// </summary>
     public IReadOnlyList<string> Allocations { get; init; } = [];
 
+    /// <summary>
+    /// WHAT TRADEAGENT PUT ON PAPER BY ITS OWN POLICY, LISTED APART FROM THE CAPITAL ABOVE.
+    ///
+    /// <para>A separate list rather than a flag on the same lines, because "this version has your
+    /// money behind it" and "this version is being observed on a practice account TradeAgent asked you
+    /// for once" are the two facts this product most needs never to blur — and a reader skimming one
+    /// list would blur them however each line was worded. Every line says PAPER and says it carries no
+    /// live authority.</para>
+    ///
+    /// <para>Empty is "TradeAgent has put nothing on paper", printed as <c>none</c> rather than
+    /// omitted, for the reason <see cref="Allocations"/> is.</para>
+    /// </summary>
+    public IReadOnlyList<string> PaperAllocations { get; init; } = [];
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -646,6 +660,9 @@ public static class DailyReportText
         // listed and marked rather than dropped, because the row is still there and the version can
         // trade nothing.
         List(b, "allocated", r.Performance.Allocations);
+        // AND WHAT THE APP PUT ON PAPER ITSELF, on its own line beneath. See
+        // ReportPerformance.PaperAllocations: it is not capital and it must not be read as any.
+        List(b, "on paper (no capital)", r.Performance.PaperAllocations);
         Gaps(b, r.Performance.Missing);
 
         Section(b, "5. Execution health");

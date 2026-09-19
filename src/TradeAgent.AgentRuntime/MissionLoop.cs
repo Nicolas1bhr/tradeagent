@@ -226,6 +226,22 @@ public interface IMissionHost
     CouncilBoundaries? Boundaries => null;
 
     /// <summary>
+    /// RUNS THE APP'S OWN PAPER-ALLOCATION POLICY, and it is not a turn: no wake is consumed, no
+    /// inference is bought and nothing is dispatched. A version whose verdict stands as
+    /// <c>paper_eligible</c> or <c>promoted</c> is put into the standing paper envelope the owner
+    /// granted, bounded entirely by that grant.
+    ///
+    /// <para>It is on the LOOP's clock for the reason <see cref="Boundaries"/> is: `docs/COUNCIL.md`:62
+    /// — "code applies the promotion and allocation policy so neither director can veto an eligible
+    /// deployment forever" — and a policy that ran only when an agent happened to be woken would be a
+    /// policy with the agent's clock in it.</para>
+    ///
+    /// <para>A default of nothing, so a host with no gateway behind it — a test, a build with no AI
+    /// prepared — keeps working. The restrictive reading belongs where the ledgers are.</para>
+    /// </summary>
+    void AllocatePaperDue(DateTimeOffset now) { }
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -689,7 +705,19 @@ public sealed record MissionSituation
     /// case, and the mutant — printing it while the standing reads <c>invalidated</c> — makes a
     /// withdrawn allocation read live to the agent planning against it.</para>
     /// </param>
-    public static string PromotedLine(PromotionStanding? standing, AllocationRow? allocation = null) => standing?.State switch
+    /// <param name="paper">
+    /// WHAT PAPER ALLOCATION STANDS BEHIND THAT VERSION ON THE PAIR THE GATEWAY IS RUNNING ON, or null
+    /// because none does.
+    ///
+    /// <para>Said for the reason <paramref name="allocation"/> is said, and then said to be the
+    /// opposite of it. A turn told a version is paper-eligible and nothing more would plan a forward
+    /// run the gateway refuses with <c>ALLOCATION_NONE</c>; a turn told "allocated" without the word
+    /// PAPER would plan a deployment of the owner's money. So the line carries the ceiling — the
+    /// owner's own number off their own envelope card, and no figure from the held-back months — and
+    /// says in the same breath that no capital and no live authority come with it.</para>
+    /// </param>
+    public static string PromotedLine(PromotionStanding? standing, AllocationRow? allocation = null,
+        AllocationRow? paper = null) => standing?.State switch
     {
         PromotionState.Promoted =>
             $"Promoted strategy: version {Short(standing!.Promotion!.VersionId)}, promoted by "
@@ -700,7 +728,8 @@ public sealed record MissionSituation
                   + (a.MaxNotional is { } n and > 0m ? $", worth at most {Money(n, a.Currency)}" : "")
                   + ", and that ceiling is enforced when an order arrives."
                 : " No capital is allocated to it, so it can place nothing. Only your owner allocates "
-                  + "capital, in TradeAgent; there is no command that asks for it."),
+                  + "capital, in TradeAgent; there is no command that asks for it.")
+            + PaperClause(paper),
         // PAPER-ELIGIBLE IS A FIFTH CASE AND IT READS AS "none" FOR THE PROMOTED HALF, deliberately.
         // A favourable verdict has been recorded and the turn must know it — it is what makes a paper
         // run worth starting — but nothing about it is a permission, no capital can stand behind it,
@@ -711,15 +740,39 @@ public sealed record MissionSituation
             + "those months do not post-date the version's freeze, so the result is history your "
             + "submission may already have been written around. It may be observed forward on paper and "
             + "it can be given no capital at all. Only forward evidence collected after the freeze "
-            + "promotes a version, and only your owner allocates capital.",
+            + "promotes a version, and only your owner allocates capital."
+            + PaperClause(paper),
         PromotionState.Invalidated =>
             $"Promoted strategy: none. Version {Short(standing!.Promotion!.VersionId)} was promoted and "
             + "no longer stands — " + standing.Why,
+        // AND THE LAST ARM SAYS HOW A VERDICT IS ASKED FOR, because since `U-verdict-op` one can be.
+        // It used to read "You cannot ask for a verdict", which was true when nothing on the agent's
+        // surface reached the referee and became a turn planned around a door that had opened.
         _ =>
             "Promoted strategy: none. TradeAgent's referee has promoted nothing, and only a promoted "
-            + "version may ever run on your owner's money. You cannot ask for a verdict; the app decides "
-            + "when a version is judged."
+            + "version may ever run on your owner's money. You ask for a verdict with "
+            + "`trade verdict --version <hash>`, and the campaign's budget of final judgements is what "
+            + "bounds how many you may ever have: the reply carries the verdict and the reason class, "
+            + "and never a figure from the months you have not been shown."
     };
+
+    /// <summary>
+    /// WHAT THE APP PUT ON PAPER FOR THIS VERSION, or nothing to say because it put nothing.
+    ///
+    /// <para>One clause, appended to whichever arm is answering, because a paper allocation is a fact
+    /// about a version in BOTH states that can hold one — a promoted version may also be observed
+    /// forward, and a paper-eligible one has nowhere else to go. It names the ceiling and the account
+    /// and then says the two things it is not, in the words the refusals use: no capital, no live
+    /// authority.</para>
+    /// </summary>
+    static string PaperClause(AllocationRow? paper) =>
+        paper is not { } p
+            ? ""
+            : $" TradeAgent has allocated it to PAPER on account {p.AccountId}, up to "
+              + $"{AllocationRow.Num(p.MaxQuantity)} at a time, inside a paper envelope your owner "
+              + "granted once. That is no capital and no live authority: it authorises nothing in a "
+              + "real-money mode, on any other platform or on any other account, and nothing is "
+              + "running it yet. You cannot ask for an envelope and you cannot widen one.";
 
     static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
@@ -1795,6 +1848,13 @@ public sealed class MissionLoop
     {
         try { _host.Boundaries?.ApplyDue(_now()); }
         catch (Exception) { /* the boundary stays open; the next tick settles it */ }
+
+        // AND THE PAPER-ALLOCATION POLICY, on the same seam and for the same reason: it is the app
+        // applying its own rule with nobody running, so it must not wait for an agent to be woken.
+        // It launches nothing — see `IMissionHost.AllocatePaperDue` — and a sweep that could not run
+        // allocates nothing and is tried again on the next tick.
+        try { _host.AllocatePaperDue(_now()); }
+        catch (Exception) { /* nothing was allocated; the next tick tries again */ }
     }
 
     /// <summary>The earliest deadline still to come, or null — the other thing the loop may sleep until.</summary>

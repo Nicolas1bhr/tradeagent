@@ -269,6 +269,175 @@ public sealed class TradingGateway : IAsyncDisposable
     public const int PaperDeploymentsPerEnvelope = 1;
 
     /// <summary>
+    /// WHO THE APP'S OWN PAPER ALLOCATIONS ARE PUBLISHED AS. Not a council role —
+    /// <c>CouncilRoles.IsKnown</c> rejects it, exactly as it rejects <c>Referee.RunRole</c> — because
+    /// nothing here is a turn anybody took: it is the allocation policy, which
+    /// <c>docs/COUNCIL.md</c>:56-57 puts among the things that are "code and never a role".
+    /// </summary>
+    public const string PaperAllocatorRole = "allocator";
+
+    /// <summary>
+    /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every version whose verdict stands
+    /// as <c>promoted</c> or <c>paper_eligible</c>, with no paper allocation yet, is put into the
+    /// standing envelope while it has room. Answers how many it wrote.
+    ///
+    /// <para><b>This is the arrow.</b> <c>manager-prompt.md</c> § 5 asks that a favourable verdict
+    /// become a paper allocation without the owner confirming per version, and
+    /// <c>docs/PRINCIPLES.md</c> § boundary keeps that confirmation for "new live authority and live
+    /// capital allocations". The owner pressed ONCE, on the envelope; everything below is bounded by
+    /// what they granted there — the platform, the account, the instrument, the ceiling, the deployment
+    /// count and the date — and <see cref="Allocations.RecordPaper"/> re-asks every one of those inside
+    /// the write.</para>
+    ///
+    /// <para><b>The ceiling is the ENVELOPE'S and is never derived.</b> There is no fraction of a
+    /// balance and no number computed from a verdict's figures anywhere in here: the owner declared a
+    /// size, and that is the size, which is the same choice <c>docs/CONTRACTS.md</c> records for
+    /// capital.</para>
+    ///
+    /// <para><b>The instrument must be the envelope's.</b> A version that trades something else is
+    /// skipped rather than squeezed in — the grant names an instrument and means it. The program is
+    /// re-parsed from the recorded source, never read off a column somebody else restated.</para>
+    ///
+    /// <para><b>It never throws.</b> It runs on the mission loop's periodic seam and after a verdict,
+    /// and a sweep that could not run must leave the ledger alone rather than take a turn down with
+    /// it: nothing is allocated and the next tick tries again.</para>
+    /// </summary>
+    public int AllocatePaperDue(DateTimeOffset? at = null)
+    {
+        try { return AllocatePaperDueCore(at ?? Now); }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "paper_allocation_sweep_failed", "error", ex: ex);
+            return 0;
+        }
+    }
+
+    int AllocatePaperDueCore(DateTimeOffset now)
+    {
+        if (ClosureAccountId is not { Length: > 0 } account) return 0;
+        if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
+
+        var written = 0;
+
+        foreach (var versionId in Promotions.All(PaperSweepLooksBack)
+                     .Select(p => p.VersionId)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            // ALREADY IN IT: nothing to do, and no note. The sweep runs on every tick, so an
+            // allocation that is already standing must cost nobody a second paid turn.
+            if (_allocations.StandingForPaper(versionId, Connector.Id, account, now) is not null) continue;
+
+            var standing = Promotions.Standing(versionId);
+            if (standing is not { Promotion: { } promotion } || (!standing.IsPromoted && !standing.IsPaperEligible))
+                continue;
+
+            if (InstrumentOf(versionId) is not { } instrument
+                || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
+                continue;
+
+            var result = _allocations.RecordPaper(new AllocationRow(
+                "", versionId, promotion.Id, AllocationPolicy.V1,
+                envelope.MaxQuantity, envelope.MaxNotional, envelope.Currency, now, null,
+                $"app policy: {promotion.Verdict}", now)
+            {
+                Scope = AllocationScope.Paper,
+                ConnectorId = Connector.Id,
+                Mode = TradingMode.PAPER.ToString(),
+                AccountId = account,
+                EnvelopeId = envelope.Id
+            }, now);
+
+            // A FULL ENVELOPE IS NOT AN ERROR AND IS NOT NEWS. `RecordPaper` refuses it in words for
+            // the owner's card; here the next version is simply not put anywhere.
+            if (!result.Ok || result.Allocation is not { } allocation) continue;
+
+            written++;
+            TellResearch(allocation, envelope, now);
+            _log.Activity($"TradeAgent allocated strategy version {Short(versionId)} to PAPER on account "
+                          + $"{account}, up to {AllocationRow.Num(envelope.MaxQuantity)} at a time, "
+                          + "inside the paper envelope you granted. No capital and no live authority "
+                          + "came with it.");
+        }
+
+        return written;
+    }
+
+    /// <summary>
+    /// How many recent verdicts the paper sweep considers. The same reading <c>Promotions.Current</c>
+    /// takes: a version judged long ago is still judged, and the sweep is a policy over what is on the
+    /// table rather than over history.
+    /// </summary>
+    const int PaperSweepLooksBack = 100;
+
+    /// <summary>
+    /// THE INSTRUMENT THIS VERSION'S FROZEN PROGRAM TRADES, re-parsed from the recorded source — never
+    /// off a column, for the reason <c>Referee.Verdict</c> reads its bounds off the text: a column is a
+    /// restatement somebody else wrote. Null when the row is gone or no longer parses, which skips the
+    /// version rather than guessing at what it would trade.
+    /// </summary>
+    string? InstrumentOf(string versionId)
+    {
+        try
+        {
+            return Strategies.VersionById(versionId) is { } version
+                ? Core.Strategy.StrategyParser.Parse(version.Source).Program?.Instrument
+                : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// ONE PERSISTED WAKE AND ONE SANITISED NOTE, KEYED BY THE ALLOCATION.
+    ///
+    /// <para>Keyed by the allocation rather than by the sweep, so re-running the policy — a restart, a
+    /// tick, a verdict delivered twice — raises an id the table already holds and buys nobody a second
+    /// paid turn (<c>docs/COUNCIL.md</c>:64, deduplicate by entity). The same shape
+    /// <c>Referee.Deliver</c> has, keyed by the promotion.</para>
+    ///
+    /// <para><b>What crosses is the fact and no figure.</b> The version, the account, the ceiling the
+    /// OWNER declared, and three sentences saying what it is not: no live authority, no capital, and
+    /// nothing running it yet. The ceiling is the owner's own number on their own screen and says
+    /// nothing about the held-back months — the same disclosure boundary
+    /// <c>MissionSituation.PromotedLine</c> keeps.</para>
+    /// </summary>
+    void TellResearch(AllocationRow allocation, PaperEnvelopeRow envelope, DateTimeOffset now)
+    {
+        var content =
+            $"Version {Short(allocation.VersionId)} is allocated to PAPER on account {envelope.AccountId} "
+            + $"at {envelope.ConnectorId}, in {envelope.Symbol}, up to "
+            + $"{AllocationRow.Num(allocation.MaxQuantity)} at a time"
+            + (allocation.MaxNotional is { } n and > 0m
+                ? $" and {Labels.Money(n, allocation.Currency)}" : "")
+            + $", until {envelope.ExpiresAt:yyyy-MM-dd}. TradeAgent wrote this itself, under the paper "
+            + "envelope the account owner granted; there is no command that asks for one and none that "
+            + "widens it. It carries NO LIVE AUTHORITY and no capital: it authorises nothing in a "
+            + "real-money mode, on any other platform or on any other account. Nothing runs it yet — "
+            + "the allocation is what a forward paper run would be dispatched under, and only forward "
+            + "evidence collected after the version's freeze can promote it.";
+
+        try
+        {
+            new PublicationStore(_db).Commit(new Publication
+            {
+                Id = Publication.IdOf(PaperAllocatorRole, PublicationKind.Note, content),
+                Role = PaperAllocatorRole,
+                Kind = PublicationKind.Note,
+                Recipients = CouncilRoles.Research,
+                Classification = PublicationClass.Council,
+                CreatedAt = now,
+                Content = content
+            }, now, MissionEventIds.PaperAllocation(allocation.Id));
+        }
+        catch (Exception ex)
+        {
+            // THE ALLOCATION IS WRITTEN EITHER WAY. A note nobody could publish is a turn nobody is
+            // bought, which is the fail-safe direction: the row is on the table, the owner's report
+            // lists it, and the next Situation says it.
+            _log.TryEngineering("Gateway", "paper_allocation_note_failed", "error", ex: ex);
+        }
+    }
+
+    /// <summary>
     /// Whether this account is under a standing paper envelope right now — the question
     /// <see cref="AllocationCeilingOrThrow"/> asks of an order that names no version. A ledger that
     /// cannot be read answers FALSE, which is the direction that changes nothing: this rule exists to

@@ -881,6 +881,25 @@ futures.
 instrument, every order is refused, and the box says so. That is on purpose: "I have not said which
 ones yet" and "any of them" are different sentences, and only one of them is a decision you made.
 
+## Letting TradeAgent run its own paper experiments
+
+On the **Safety** page, under *Paper experiments, with no capital*, and it is the one place you hand
+TradeAgent something without handing over money. Name an instrument, a size, a value limit if you
+want one, and how many days it runs for, then press twice — the button turns red and says in full
+what the second press does. After that, whenever TradeAgent's own referee finds a version favourable
+on months it was never shown, TradeAgent puts that version into the grant by itself and tells its
+research role, without asking you again: that is the whole point of the card, because a strategy
+cannot earn the forward evidence that promotes it until something runs it forward. What it cannot do
+is anything else. The account must be a practice account on **both** your platform's word and the
+account's own, and TradeAgent must be in *Practice* when you press — stricter than it is for a single
+order, because this grant is spent while you are not watching. Nothing written under it is capital,
+and it can never authorise an order in *Real, ask me first* or *Real, fully automatic*, on another
+platform, or on another account: those are separate refusals, not a setting. While a grant stands,
+that account also stops accepting AI orders that do not say which strategy version they are for —
+your own orders on it are untouched. **Withdraw this paper envelope** takes it back in one press plus
+a confirm, and everything running under it stops at once. The grant ends on its own date and nothing
+renews it.
+
 ## If TradeAgent says your settings could not be read
 
 Everything you had set is stored together, and a version change or an interrupted write can leave

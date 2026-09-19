@@ -1079,6 +1079,13 @@ public sealed class AppHost : IAsyncDisposable
         public CouncilBoundaries? Boundaries => host.Boundaries;
 
         /// <summary>
+        /// The app's own paper-allocation policy, run on the loop's periodic seam. It writes a PAPER
+        /// allocation inside the envelope the owner granted and buys nobody a turn beyond the single
+        /// deduplicated note the gateway publishes; it dispatches nothing and touches no capital.
+        /// </summary>
+        public void AllocatePaperDue(DateTimeOffset now) => host.Gateway.AllocatePaperDue(now);
+
+        /// <summary>
         /// The launch record and its reservation, written before the CLI starts, together with the
         /// wakes this turn is answering. Nothing else on this interface writes to the database, and
         /// this one cannot change a mode, lift the kill switch or approve anything — it commits
@@ -1224,7 +1231,7 @@ public sealed class AppHost : IAsyncDisposable
                 Spend = host.SpendToday,
                 Loss = loss,
                 Data = MissionSituation.DataLine(NewestDataset(), DateTimeOffset.UtcNow),
-                Promoted = MissionSituation.PromotedLine(PromotedStanding(), PromotedAllocation())
+                Promoted = PromotedLine()
             };
         }
 
@@ -1278,6 +1285,56 @@ public sealed class AppHost : IAsyncDisposable
                 if (PromotedStanding() is not { IsPromoted: true, Promotion: { } promotion }) return null;
                 return host.Gateway.Allocations.StandingForLive(promotion.VersionId, DateTimeOffset.UtcNow)
                     is { Authorises: true } standing ? standing.Allocation : null;
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// THE WHOLE PROMOTED LINE, INCLUDING WHAT THE APP PUT ON PAPER BY ITSELF.
+        ///
+        /// <para><c>Promotions.Current</c> answers with a PROMOTED version or an invalidated one and
+        /// with nothing else, which is right for the half of this line that is about capital. A version
+        /// that is only <c>paper_eligible</c> is therefore invisible to it — and it is exactly the
+        /// version the app will have put on paper, so this falls back to the verdict of whatever
+        /// version holds a standing paper allocation on the pair the gateway is running on. Neither
+        /// reader is changed: section 3 of the owner's report goes on asking the same question it
+        /// asked.</para>
+        ///
+        /// <para>The paper clause is passed ONLY when it is about the same version the line is about.
+        /// A promoted version A beside a paper experiment on version B is two facts, and one sentence
+        /// carrying both would read as though A were the one on paper.</para>
+        /// </summary>
+        string PromotedLine()
+        {
+            var paper = PaperOnThisPair();
+            var standing = PromotedStanding() ?? paper?.Promotion;
+
+            var matched = paper is { } p && standing?.Promotion is { } promotion
+                          && string.Equals(p.Allocation.VersionId, promotion.VersionId, StringComparison.Ordinal)
+                ? p.Allocation
+                : null;
+
+            return MissionSituation.PromotedLine(standing, PromotedAllocation(), matched);
+        }
+
+        /// <summary>
+        /// WHAT THE APP HAS PUT ON PAPER ON THE PAIR THE GATEWAY IS RUNNING ON, or null because it has
+        /// put nothing there.
+        ///
+        /// <para>The platform and the account are matched because a paper allocation is a statement
+        /// about one of each, and <c>Authorises</c> rather than "a row exists": a withdrawn envelope
+        /// authorises nothing, and a turn told about it would plan a run the gateway refuses. A failure
+        /// to read answers null, which the line reads as "none" — the safe direction, and the one
+        /// <see cref="PromotedStanding"/> already takes.</para>
+        /// </summary>
+        AllocationStanding? PaperOnThisPair()
+        {
+            try
+            {
+                return host.Gateway.Allocations.PaperStanding(DateTimeOffset.UtcNow)
+                    .FirstOrDefault(p => p.Authorises
+                        && string.Equals(p.Allocation.ConnectorId, host.Gateway.Connector.Id, StringComparison.Ordinal)
+                        && string.Equals(p.Allocation.AccountId, host.Gateway.ClosureAccountId, StringComparison.Ordinal));
             }
             catch (Exception) { return null; }
         }

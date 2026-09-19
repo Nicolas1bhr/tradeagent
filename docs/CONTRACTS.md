@@ -2608,6 +2608,80 @@ refuses with `ALLOCATION_NONE`.
 ceilings does not exist. What is contracted here is the gate, end to end, and it is what will be there
 when one does.
 
+### U-paper-envelope — an allocation now has a SCOPE, and the owner grants paper experimentation once
+
+**An allocation is live or it is paper, and schema 25 is where that becomes a fact rather than a
+convention.** `strategy_allocation` gains `scope`, `connector_id`, `mode`, `account_id` and
+`envelope_id`, all nullable and none backfilled: **a row with no scope is LIVE**, because every
+allocation any installation holds was written by `TradingGateway.Allocate`, which is the owner pressing
+twice on the Capital card, and an owner's press is never a paper grant. A paper row's id hashes the
+seven facts `AllocationRow.IdOf` already spelled **and then the five that make it a paper allocation**
+(`PaperIdOf`) — live ids are unchanged and `IdOf`'s order is untouched. The scope facts are in the hash
+because two envelopes on two accounts carrying one version at one instant are TWO allocations; hashing
+the seven alone collapses them onto one id and leaves the second account reading as allocated under a
+row that names the first.
+
+**The grant is `paper_envelope`, one immutable row, written by a two-press card and by nothing else.**
+Its id is the SHA-256 of nine facts — platform, account, instrument, currency, the two ceilings,
+`max_deployments`, and the two instants it runs between — with `reason` and `withdrawn_at` outside the
+hash for the reason `effective_to` is outside an allocation's. **It is refused unless the account is
+provably simulated by BOTH witnesses** (`AccountInfo.IsSimulated` AND `Capabilities.IsPaper`) and the
+mode is PAPER at the press. That is deliberately stricter than the `||` the dispatch gate's own
+`MODE_ACCOUNT_MISMATCH` check uses, and the difference is stated: that check refuses ONE order and
+either witness settles it, while this is a standing authority the app will spend without the owner in
+the room, and an installation whose two witnesses disagree is one where nobody can say which is wrong.
+**Withdrawal is the one UPDATE in the product's ledgers that is not a fresh row**, and it is written
+under `WHERE withdrawn_at IS NULL`, so it is write-once by the statement: an allocation is superseded
+because a ceiling is a number, whereas withdrawing an envelope must stop EVERY row beneath it at once,
+which a new row cannot say. It only ever removes authority, so it is one press plus a confirm.
+
+**`Allocations.StandingFor` became two readers and the money path splits on the mode.**
+`StandingForLive` sees live rows only. `StandingForPaper` sees paper rows only, and matches the
+platform, the account and the word PAPER on the row, then asks the envelope ledger **at this instant**
+— never a copy stored beside the allocation, which is why one press on the withdrawal card stops every
+experiment under the grant. `AllocationStanding.Authorises` keeps its LIVE arm as ONE question
+(`IsPromoted`), so an `IsPromoted` that started answering true for `paper_eligible` is still catchable
+there; its PAPER arm asks the grant and the verdict. In `LIVE_CONFIRM` and `LIVE_AUTONOMOUS` the paper
+ledger **is not read at all** — a paper allocation is not refused there, it is never looked at.
+
+**In PAPER mode the split is by ACCOUNT, and that is a choice, stated.** On an account under a standing
+envelope, only paper rows authorise: that account is the one the owner handed over, and what may trade
+on it is what the grant allows. Anywhere else in PAPER mode the gate reads LIVE rows exactly as it did
+before this unit — the owner's declared ceiling has bounded a practice order since schema 20
+(`AllocationGateTests`), that is a guard rather than an oversight, and removing it would leave a
+promoted version placing practice orders of any size the per-order limits allow.
+
+**On an envelope's account, an AGENT order naming no version is refused `ENVELOPE_ACCOUNT_RESERVED`.**
+An unattributed order is ungated everywhere else — the owner's own buy and the emergency press have
+nothing to be charged against — and on this one account that reading has a hole in it: an agent placing
+there would be trading inside the grant while standing outside every bound the grant has. **The owner's
+own press is never refused by it**, for the loss budgets' reason, and a ledger that cannot be read
+answers "not reserved" rather than locking the account.
+
+**`TradingGateway.AllocatePaperDue` is the app's own policy, run on a clock and not on a press.** Every
+version whose verdict stands as `promoted` or `paper_eligible`, with no paper allocation yet and whose
+frozen program trades the envelope's instrument, is written into the grant at the **envelope's own
+ceiling** — nothing here is derived from a balance or from a verdict's figures — with a reason of
+`app policy: <verdict>`. `Allocations.RecordPaper` re-asks every bound inside the write: the verdict at
+that instant, the grant standing, both ceilings, and `max_deployments`, which counts OTHER versions so
+that re-recording the one already in the envelope is not a second deployment. It is called from
+`MissionLoop`'s `ApplyBoundaryDeadlines` seam — `docs/COUNCIL.md`:62, a policy on an agent's clock is a
+policy an idle agent can hold — and again straight after a verdict is delivered, where it returns
+nothing to the caller. **One wake and one sanitised note to Research, keyed by the ALLOCATION**
+(`MissionEventIds.PaperAllocation`), so a sweep that runs every tick buys nobody a second turn; the
+note carries the version, the account and the owner's own ceiling and **no figure from the held-back
+months**, and says in words that it is not capital and not live authority. Section 4 of the owner's
+report lists paper allocations in their **own list**, every line marked `PAPER — no live authority`,
+because "your money is behind this" and "this is being watched on a practice account" are the two facts
+this product most needs never to blur. `MissionSituation.PromotedLine` says the same thing in the same
+words, and its last arm now says how a verdict is asked for — `trade verdict --version <hash>`, bounded
+by the campaign's budget of final judgements, answering with the verdict and the reason class and never
+a figure.
+
+**The honest limit, stated, again.** Nothing runs a paper allocation. No runner emits a forward intent
+yet, so what this unit closes is the arrow from a verdict to an allocation the gateway will honour, and
+the experiment the allocation is for does not exist until something dispatches one.
+
 ## U-promote-bounds — no execution bounds, no promotion — `src/TradeAgent.Core/Strategy/Referee.cs`
 
 `docs/COUNCIL.md`:96-97 says a **promoted** strategy declares its timeframe, its required data
