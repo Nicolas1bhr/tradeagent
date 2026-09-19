@@ -275,17 +275,27 @@ public class RefereeVerdictTests
     // ---- item 4: forward evidence, after the freeze -----------------------------------------------
 
     /// <summary>
-    /// A VERSION FROZEN AFTER THE HELD-BACK WINDOW BEGINS IS REFUSED, WHATEVER ITS FIGURES SAY.
+    /// A VERSION FROZEN AFTER THE HELD-BACK WINDOW BEGINS IS NEVER PROMOTED, WHATEVER ITS FIGURES SAY.
     ///
     /// <para>`docs/COUNCIL.md`:135-136: "because public history may already be known or hard-coded into
     /// a submission, forward evidence collected after the strategy's freeze is required before capital".
     /// The program under test is the profitable one — it closes winning trades over exactly these bars —
-    /// and it is refused anyway, which is the whole point: months that predate the freeze are not weak
-    /// evidence to be weighed against the rest, they are not evidence at all.</para>
+    /// and it is kept out of a promotion anyway, which is the whole point: months that predate the
+    /// freeze are not weak evidence to be weighed against the rest, they are not evidence FOR CAPITAL
+    /// at all.</para>
     ///
     /// <para>This is also the mutant: comparing the version's freeze with when the RUN was made instead
     /// of with the window the run covered. Every run is made now, so that comparison passes for every
     /// version ever submitted and refuses nothing.</para>
+    ///
+    /// <para><b>`U-paper-verdict` moved what this arm is RECORDED as, and nothing else.</b> A
+    /// profitable version on this arm is now written down as <c>paper-eligible</c> rather than
+    /// <c>refused</c> — `docs/PRINCIPLES.md` § Evidence keeps "a favourable historical verdict" and
+    /// "eligibility for live capital" apart, and a loop that could only ever be refused here can never
+    /// produce the first paper run. The property this test was written for is untouched and is asserted
+    /// below exactly as before: the clause is applied against the WINDOW, the figures were good, and
+    /// the version is not promoted and has no standing that could be given money.
+    /// `PaperEligibleVerdictTests` holds the rest of that arm.</para>
     /// </summary>
     [Fact]
     public async Task A_version_frozen_after_the_held_back_window_begins_is_refused_in_words()
@@ -297,13 +307,18 @@ public class RefereeVerdictTests
 
         Assert.True(verdict.Ok, verdict.Why);
         Assert.False(verdict.Promoted, "a version frozen after the holdout begins promoted on it");
-        Assert.Equal(PromotionVerdict.Refused, verdict.Promotion!.Verdict);
-        Assert.Equal(PromotionReason.PrecedesTheFreeze, verdict.Promotion!.Reason);
-        Assert.Equal(PromotionState.Refused, new Promotions(w.Db).Standing(w.VersionId).State);
-        Assert.Contains("not evidence collected after the freeze",
+        Assert.NotEqual(PromotionVerdict.Promoted, verdict.Promotion!.Verdict);
+        Assert.NotEqual(PromotionReason.Met, verdict.Promotion!.Reason);
+        Assert.Equal(PromotionVerdict.PaperEligible, verdict.Promotion!.Verdict);
+        Assert.Equal(PromotionReason.MetOnHistory, verdict.Promotion!.Reason);
+
+        var standing = new Promotions(w.Db).Standing(w.VersionId);
+        Assert.Equal(PromotionState.PaperEligible, standing.State);
+        Assert.False(standing.IsPromoted, "a version frozen after the holdout begins stood promoted");
+        Assert.Contains("do not post-date its own freeze",
             PromotionReason.Words(verdict.Promotion!.Reason), StringComparison.Ordinal);
 
-        // The run really was made and really was profitable: it is the DATE that refused it.
+        // The run really was made and really was profitable: it is the DATE that kept it out.
         var run = new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!;
         Assert.True(run.Trades > 0);
         Assert.True(run.NetPnl > 0m, "the fixture program is profitable over these bars");
