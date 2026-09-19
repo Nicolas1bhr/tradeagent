@@ -1428,6 +1428,54 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','24') ON CONFLICT(key) DO UPDATE SET value='24';");
         }
 
+        if (have < 25)
+        {
+            // THE OWNER'S ONE GRANT OF BOUNDED PAPER EXPERIMENTATION — `U-paper-envelope`.
+            //
+            // `docs/PRINCIPLES.md` § Evidence asks that "eligibility for paper observation" and
+            // "eligibility for live capital" be different meanings, and adds that "forward paper
+            // evidence cannot be required before the very first paper run that produces it". Rung 23
+            // gave a version the word `paper_eligible`; nothing could act on it. A paper allocation had
+            // nowhere to come from that was not a press per version, and a press per version is the
+            // ceremony `docs/PRINCIPLES.md` § boundary reserves for LIVE capital.
+            //
+            // `id` IS THE BINDING, the way `strategy_allocation.id` and `strategy_promotion.id` are:
+            // the SHA-256 of the nine facts `PaperEnvelopeRow.IdOf` spells, in that order. `reason` is
+            // not in it — the account of the decision and not the decision — and neither is
+            // `withdrawn_at`, which is a LATER decision about this row and would otherwise make taking
+            // a grant back mint a second grant.
+            //
+            // `withdrawn_at` IS THE ONE UPDATABLE COLUMN IN THIS TABLE and it only ever takes
+            // permission away. `Envelopes.Withdraw` writes it under `WHERE withdrawn_at IS NULL`, so it
+            // is write-once by the statement rather than by a rule the caller keeps, and the instant
+            // the owner took permission back cannot be moved afterwards.
+            //
+            // NO FOREIGN KEY TO ANYTHING. A connector id and an account id are a PLATFORM's names for
+            // itself and this database holds no table of either; `strategy_allocation.envelope_id`
+            // below points HERE and not the other way about, so a grant is writable before any version
+            // exists to spend it — which is the order the owner actually does this in.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS paper_envelope(
+              id              TEXT PRIMARY KEY,
+              connector_id    TEXT NOT NULL,
+              account_id      TEXT NOT NULL,
+              symbol          TEXT NOT NULL,
+              currency        TEXT NOT NULL,
+              max_quantity    TEXT NOT NULL,
+              max_notional    TEXT,
+              max_deployments INTEGER NOT NULL,
+              granted_at      TEXT NOT NULL,
+              expires_at      TEXT NOT NULL,
+              reason          TEXT NOT NULL,
+              withdrawn_at    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_envelope_account
+              ON paper_envelope(connector_id, account_id, granted_at);
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','25') ON CONFLICT(key) DO UPDATE SET value='25';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

@@ -172,6 +172,42 @@ public static class Labels
         + (value is { Length: > 0 } v ? $", worth at most {v}" : "")
         + (widens ? " — more than it may hold now" : "");
 
+    /// <summary>
+    /// THE PAPER-ENVELOPE CARD, BESIDE THE ALLOCATION CARD, AND IT IS A DIFFERENT KIND OF GRANT.
+    ///
+    /// <para>The allocation card puts the owner's MONEY behind one version. This one puts no money
+    /// anywhere: it lets TradeAgent run experiments on an account both the platform and the account
+    /// itself say is a simulation, up to a size, on one instrument, until a date — and then lets the
+    /// app decide which eligible version goes into it, without asking again. That is why it is two
+    /// presses: the thing being handed over is the deciding, and it is handed over for a period rather
+    /// than for one press.</para>
+    ///
+    /// <para>Withdrawing is ONE press plus a confirm, because it only ever takes authority away — the
+    /// kill switch's rule rather than the allocation card's, and the allocation card's rule does not
+    /// apply because withdrawing an envelope is not a permanent record of a smaller grant: it stops
+    /// every paper allocation underneath it at once.</para>
+    /// </summary>
+    public const string EnvelopeSymbol = "The instrument the experiments may trade";
+
+    public const string EnvelopeQuantity = "The most any one of them may hold at once";
+
+    public const string EnvelopeNotional = "The most that may be worth (0 for no value limit)";
+
+    public const string EnvelopeUntil = "Until (days from now)";
+
+    public const string GrantEnvelope = "Let TradeAgent run paper experiments";
+
+    public const string WithdrawEnvelope = "Withdraw this paper envelope";
+
+    public const string WithdrawEnvelopeArmed =
+        "Confirm: stop all paper experiments under this grant";
+
+    /// <summary>What the second press will do, in full, with the figures the owner typed.</summary>
+    public static string EnvelopeArmed(string symbol, string quantity, string? value, DateTimeOffset until) =>
+        $"Confirm: TradeAgent may run paper experiments in {symbol}, up to {quantity} at a time"
+        + (value is { Length: > 0 } v ? $", worth at most {v}" : "")
+        + $", until {until:yyyy-MM-dd} — practice account only, no capital, no real orders";
+
     /// <summary>The AI's own daily spending ceiling, and the press that writes it.</summary>
     public const string DailyCostCap = "The most the AI may spend on itself in a day";
 

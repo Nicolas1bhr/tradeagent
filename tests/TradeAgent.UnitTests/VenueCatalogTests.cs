@@ -238,6 +238,7 @@ public class VenueCatalogTests
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
                 DROP TABLE strategy_allocation;
+                DROP TABLE paper_envelope;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;
                 DROP TABLE forward_bar;

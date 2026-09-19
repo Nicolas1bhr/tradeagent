@@ -29,6 +29,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly VenueStore _venues;
     readonly CampaignStore _campaigns;
     readonly Allocations _allocations;
+    readonly Envelopes _envelopes;
     readonly Core.Strategy.Referee _referee;
     readonly CouncilBoundaries _boundaries;
     readonly HealthRegistry _health;
@@ -171,6 +172,117 @@ public sealed class TradingGateway : IAsyncDisposable
                           + $"up to {AllocationRow.Num(maxQuantity)} at a time"
                           + (maxNotional is { } n ? $", worth at most {Labels.Money(n, AccountCurrency)}" : "")
                           + ". Only that version may trade it, and only while its promotion stands.");
+
+        return result;
+    }
+
+    /// <summary>
+    /// THE PAPER-ENVELOPE LEDGER, FOR READING. The one writer is the owner's own press, through
+    /// <see cref="GrantPaperEnvelopeAsync"/> and <see cref="WithdrawPaperEnvelope"/>, which are
+    /// in-process and have no <c>trade</c> verb and no pipe op behind them — the rule
+    /// <see cref="Allocations"/> keeps, for the sharper reason <c>EnvelopeStore</c> states: this row is
+    /// what decides whether a paper allocation may exist at all.
+    /// </summary>
+    public Envelopes Envelopes => _envelopes;
+
+    /// <summary>
+    /// WHAT THE OWNER'S TWO PRESSES DO ON THE PAPER CARD: one standing grant of bounded experimentation
+    /// on ONE account of the platform that is connected right now.
+    ///
+    /// <para><b>The account must be provably simulated by BOTH witnesses</b> —
+    /// <c>AccountInfo.IsSimulated</c> AND <c>ConnectorCapabilities.IsPaper</c> — which is deliberately
+    /// stricter than the <c>||</c> the dispatch gate's own paper check uses. That check is refusing ONE
+    /// order and either witness settles it; this is a standing authority the app will spend without the
+    /// owner in the room, for as long as it lasts, and an installation whose two witnesses disagree is
+    /// one where nobody can say which of them is wrong. `docs/CONTRACTS.md` records the choice.</para>
+    ///
+    /// <para><b>And the mode must be PAPER at the press.</b> Not because the grant authorises anything
+    /// in a live mode — a paper allocation authorises nothing in <c>LIVE_CONFIRM</c> or
+    /// <c>LIVE_AUTONOMOUS</c>, categorically, wherever the app is when it was written — but because an
+    /// owner pressing this while the app is pointed at real money is an owner who has not noticed which
+    /// account they are looking at.</para>
+    ///
+    /// <para><b>In-process only.</b> Operator authority (<c>CLAUDE.md</c>): not in the handler table,
+    /// no pipe op, no <c>trade</c> verb, and the result is a sentence for the owner's own window.</para>
+    /// </summary>
+    public async Task<EnvelopeResult> GrantPaperEnvelopeAsync(string symbol, decimal maxQuantity,
+        decimal? maxNotional, DateTimeOffset expiresAt, DateTimeOffset? at = null,
+        CancellationToken ct = default)
+    {
+        if (Settings.Mode != TradingMode.PAPER)
+            return new EnvelopeResult(false,
+                $"TradeAgent is in {Settings.Mode} and a paper envelope is granted in practice mode "
+                + "only, so nothing was written. Switch to practice first — the grant is about an "
+                + "account you have already decided is not real money.", null);
+
+        AccountInfo? account;
+        try { account = await AccountAsync(ct); }
+        catch (Exception ex)
+        {
+            return new EnvelopeResult(false,
+                $"the platform could not be asked about the account ({ex.Message}), so nothing was "
+                + "written. An envelope is a standing grant and is never written against an account "
+                + "TradeAgent could not read.", null);
+        }
+
+        if (account is null)
+            return new EnvelopeResult(false,
+                "no account is chosen, so there is nothing to grant an envelope on. Choose one on the "
+                + "Settings page first.", null);
+
+        // BOTH WITNESSES, AND THE REFUSAL NAMES WHICH ONE SAID NO. An `||` here is the mutant: it takes
+        // a platform that merely calls itself a practice platform as proof about an account it reports
+        // as real money, which is the one thing a standing grant must not be able to rest on.
+        if (!account.IsSimulated || !Connector.Capabilities.IsPaper)
+            return new EnvelopeResult(false,
+                $"account {account.Id} is not provably a simulation account, so nothing was written: "
+                + (account.IsSimulated
+                    ? $"the account says simulated but the {Connector.DisplayName} platform does not "
+                      + "report itself as a practice platform"
+                    : $"the account itself is not flagged as simulated"
+                      + (Connector.Capabilities.IsPaper
+                          ? $", although the {Connector.DisplayName} platform reports itself as a "
+                            + "practice platform"
+                          : $" and neither does the {Connector.DisplayName} platform"))
+                + ". A standing grant that TradeAgent spends while you are not watching needs both to "
+                + "say so.", null);
+
+        var now = at ?? Now;
+        var result = _envelopes.Grant(new PaperEnvelopeRow(
+            "", Connector.Id, account.Id, symbol, account.Currency, maxQuantity, maxNotional,
+            PaperDeploymentsPerEnvelope, now, expiresAt, "granted by the account owner", null));
+
+        if (result.Ok)
+            _log.Activity($"You let TradeAgent run paper experiments on account {account.Id} in "
+                          + $"{symbol}, up to {AllocationRow.Num(maxQuantity)} at a time"
+                          + (maxNotional is { } n ? $", worth at most {Labels.Money(n, account.Currency)}" : "")
+                          + $", until {expiresAt:yyyy-MM-dd}. No capital and no live authority came with it.");
+
+        return result;
+    }
+
+    /// <summary>
+    /// HOW MANY VERSIONS ONE ENVELOPE MAY CARRY AT A TIME. One, for now, and it is a column rather than
+    /// a constant read at every question so that raising it later is a fact about the GRANT the owner
+    /// made rather than about the build that happens to be running.
+    /// </summary>
+    public const int PaperDeploymentsPerEnvelope = 1;
+
+    /// <summary>
+    /// WHAT THE OWNER'S ONE PRESS PLUS A CONFIRM DOES: takes one grant back. One press because it only
+    /// ever removes authority — the kill switch's rule, not the allocate card's — and every paper
+    /// allocation written under it stops authorising anything the moment this returns.
+    ///
+    /// <para><b>In-process only</b>, exactly as the grant is.</para>
+    /// </summary>
+    public EnvelopeResult WithdrawPaperEnvelope(string id, DateTimeOffset? at = null)
+    {
+        var result = _envelopes.Withdraw(id, at ?? Now);
+
+        if (result.Ok && result.Envelope is { } row)
+            _log.Activity($"You withdrew TradeAgent's paper envelope on account {row.AccountId}. "
+                          + "Nothing new will be started under it and what was allocated under it may "
+                          + "trade nothing.");
 
         return result;
     }
@@ -482,6 +594,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // and CouncilBoundaries exposes none that takes a disposition from a caller.
         _boundaries = new CouncilBoundaries(db);
         _allocations = new Allocations(db);
+        _envelopes = new Envelopes(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());

@@ -118,7 +118,24 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     /// </summary>
     public string Id => id ?? Inner.Id;
     public string DisplayName => Inner.DisplayName;
-    public ConnectorCapabilities Capabilities => Inner.Capabilities;
+
+    /// <summary>
+    /// THE TWO WITNESSES TO "THIS IS NOT REAL MONEY", AND THEY CAN BE MADE TO DISAGREE.
+    ///
+    /// <para>The simulator drives both off one <c>FakeBroker.IsSimulated</c>, so with it alone an
+    /// <c>||</c> and an <c>&amp;&amp;</c> over the pair are indistinguishable — and the paper envelope
+    /// is granted on the <c>&amp;&amp;</c> (see <c>PaperEnvelopeTests</c>). These are inert until set,
+    /// and each one moves exactly one witness: <see cref="PlatformIsPaper"/> the platform's own
+    /// capability, <see cref="AccountIsSimulated"/> the flag on the account the platform hands back.</para>
+    /// </summary>
+    public bool? PlatformIsPaper { get; init; }
+
+    /// <summary>See <see cref="PlatformIsPaper"/>: the other witness, on the account row itself.</summary>
+    public bool? AccountIsSimulated { get; init; }
+
+    public ConnectorCapabilities Capabilities =>
+        PlatformIsPaper is { } p ? Inner.Capabilities with { IsPaper = p } : Inner.Capabilities;
+
     public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;
     public TimeSpan EmergencyBudget => Inner.EmergencyBudget;
     public Task ConnectAsync(CancellationToken ct = default) => Inner.ConnectAsync(ct);
@@ -127,8 +144,20 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
 
     public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => Read(Inner.GetHealthAsync(ct));
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Read(Inner.IsConnectedAsync(ct));
-    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Read(Inner.GetAccountsAsync(ct));
-    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Read(Inner.GetAccountAsync(a, ct));
+    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) =>
+        Read(Restated(Inner.GetAccountsAsync(ct)));
+
+    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) =>
+        Read(Restated(Inner.GetAccountAsync(a, ct)));
+
+    async Task<AccountInfo?> Restated(Task<AccountInfo?> call) =>
+        await call.ConfigureAwait(false) is { } account ? Restated(account) : null;
+
+    async Task<IReadOnlyList<AccountInfo>> Restated(Task<IReadOnlyList<AccountInfo>> call) =>
+        [.. (await call.ConfigureAwait(false)).Select(Restated)];
+
+    AccountInfo Restated(AccountInfo account) =>
+        AccountIsSimulated is { } s ? account with { IsSimulated = s } : account;
     /// <summary>
     /// WHAT THE INSTRUMENT READ ANSWERS, when a test needs it to answer something the simulator
     /// never would. Both knobs are inert until set, and both are about ONE thing: the notional cap

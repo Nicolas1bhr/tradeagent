@@ -1059,6 +1059,23 @@ sealed class SafetyPage
     readonly Button _allocate;
 
     /// <summary>
+    /// THE PAPER-ENVELOPE CARD, BESIDE THE CAPITAL CARD BECAUSE IT IS THE OTHER HALF OF THE SAME
+    /// SENTENCE: what TradeAgent may do with money, and what it may do WITHOUT any.
+    ///
+    /// <c>_envelopeValue</c> is live rather than rebuilt, like every other reading on these pages.
+    /// </summary>
+    readonly TextBox _envelopeSymbol = Ui.With(Ui.TextField(placeholder: "an instrument, e.g. ES"),
+        t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
+
+    readonly NumericUpDown _envelopeQuantity = Ui.NumberField(0m);
+    readonly NumericUpDown _envelopeNotional = Ui.NumberField(0m);
+    readonly NumericUpDown _envelopeDays = Ui.NumberField(30m);
+    readonly TextBlock _envelopeValue = Ui.Body("");
+    readonly TextBlock _envelopeNote = Ui.Micro("");
+    readonly Button _grantEnvelope;
+    readonly Button _withdrawEnvelope;
+
+    /// <summary>
     /// THE REVIEW-HOLD CARD. It is the unconfirmed-orders card's shape — a REQUIRED free-text note,
     /// a two-press button that stays disabled until something is typed, and an edit of the note
     /// disarming a half-made press — because it is the same kind of act: a person overruling the
@@ -1309,6 +1326,57 @@ sealed class SafetyPage
         {
             var (version, quantity, notional) = typed();
             if (!string.IsNullOrWhiteSpace(version)) apply(version.Trim(), quantity, notional);
+        });
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// THE PRESS THAT LETS TRADEAGENT RUN PAPER EXPERIMENTS ON ONE ACCOUNT. Two presses, and the
+    /// armed sentence names the instrument, both figures and the date it runs to.
+    ///
+    /// <para>Two presses because what is handed over is the DECIDING: after this, the app puts an
+    /// eligible version into the envelope by policy and asks nobody. That is the whole arrow the unit
+    /// closes, and it is exactly why the first press must not be the last word. It is not the
+    /// allocation card's rule — no money moves here and nothing written here is permanent in the way an
+    /// allocation is — it is the rule of every other standing grant on this page.</para>
+    ///
+    /// <para>Static and handed the three things it does, like the presses above it, so a rule that can
+    /// only be exercised by running the app is not a rule nobody is checking. Nothing typed applies
+    /// anything on either press: a blank instrument is not a guess at which one the owner meant.</para>
+    /// </summary>
+    internal static Button BuildEnvelopeConfirm(
+        Func<(string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until)> typed,
+        Func<string> currency, Action<string, decimal, decimal?, DateTimeOffset> apply)
+    {
+        var b = Ui.Confirm(Labels.GrantEnvelope, EnvelopeArmed(typed(), currency()), () =>
+        {
+            var (symbol, quantity, notional, until) = typed();
+            if (!string.IsNullOrWhiteSpace(symbol)) apply(symbol.Trim(), quantity, notional, until);
+        });
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>What the second press will do, in the owner's words, with the figures in the boxes.</summary>
+    internal static string EnvelopeArmed(
+        (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) typed, string currency) =>
+        Labels.EnvelopeArmed(
+            string.IsNullOrWhiteSpace(typed.Symbol) ? "that instrument" : typed.Symbol.Trim(),
+            AllocationRow.Num(typed.Quantity),
+            typed.Notional is { } n && n > 0m ? MissionSituation.Money(n, currency) : null,
+            typed.Until);
+
+    /// <summary>
+    /// THE PRESS THAT TAKES ONE PAPER ENVELOPE BACK. ONE press plus a confirm, which is the kill
+    /// switch's rule and not the allocation card's: this only ever removes authority, and every paper
+    /// allocation written under the grant stops authorising anything the moment it lands.
+    /// </summary>
+    internal static Button BuildEnvelopeWithdrawConfirm(Func<string?> standing, Action<string> apply)
+    {
+        var b = Ui.Confirm(Labels.WithdrawEnvelope, Labels.WithdrawEnvelopeArmed, () =>
+        {
+            if (standing() is { Length: > 0 } id) apply(id);
         });
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
@@ -1622,6 +1690,49 @@ sealed class SafetyPage
                 + "rather than changing the old one, so what this version was allowed to hold, and when, "
                 + "stays readable afterwards.")));
 
+        // THE PAPER ENVELOPE, BESIDE THE CAPITAL CARD AND SAYING THE OPPOSITE THING.
+        //
+        // The card above is money. This one is the absence of it: a standing permission for TradeAgent
+        // to run experiments on an account both the platform and the account itself call a simulation,
+        // bounded by an instrument, a size and a date. `docs/PRINCIPLES.md` § Evidence — "forward paper
+        // evidence cannot be required before the very first paper run that produces it" — is why it
+        // exists, and § boundary is why it is the only press: new LIVE authority keeps its deliberate
+        // confirmation per act, and paper observation does not, because it risks nothing.
+        //
+        // TWO PRESSES TO GRANT, ONE PRESS PLUS A CONFIRM TO WITHDRAW, and a typed value under a
+        // half-pressed button disarms it, for the reason the allocation card does the same.
+        _envelopeNote.IsVisible = false;
+        _envelopeSymbol.TextChanged += (_, _) => RelabelEnvelope();
+        _envelopeQuantity.ValueChanged += (_, _) => RelabelEnvelope();
+        _envelopeNotional.ValueChanged += (_, _) => RelabelEnvelope();
+        _envelopeDays.ValueChanged += (_, _) => RelabelEnvelope();
+        _grantEnvelope = BuildEnvelopeConfirm(ReadEnvelope, AccountCurrency, ApplyEnvelope);
+        _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
+
+        var envelope = Ui.Section("Paper experiments, with no capital", Ui.Col(Theme.S2,
+            Ui.Muted("This grants no money and no real orders. It lets TradeAgent put a version its own "
+                + "referee found favourable onto a practice account by itself, inside the size and the "
+                + "date below, so that it can collect forward evidence — which is the only kind that "
+                + "can ever promote one. The account must be a simulation on both the platform's word "
+                + "and its own, and TradeAgent must be in practice mode when you press."),
+            Ui.Spacer(Theme.S2),
+            Ui.KeyValueLive("Standing now", _envelopeValue),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.EnvelopeSymbol, _envelopeSymbol),
+            Ui.FieldRow(Labels.EnvelopeQuantity, _envelopeQuantity),
+            Ui.FieldRow(Labels.EnvelopeNotional, _envelopeNotional,
+                "0 means no value limit, exactly as it does above."),
+            Ui.FieldRow(Labels.EnvelopeUntil, _envelopeDays,
+                "The grant ends by itself on that day. Nothing here renews."),
+            Ui.Spacer(Theme.S2),
+            _grantEnvelope,
+            _withdrawEnvelope,
+            _envelopeNote,
+            Ui.Micro("A paper allocation TradeAgent writes under this grant can never authorise an "
+                + "order in a real-money mode, on another platform or on another account — and no "
+                + "capital is allocated by any of it. Withdrawing stops every experiment under the "
+                + "grant at once.")));
+
         // THE REVIEW-HOLD CARD, under the limits it is about. A scope that reached the loss budget
         // twice inside the strike window is not reopened by code at all, and this is the only press
         // anywhere in the product that changes that — so it sits with the loss budgets rather than
@@ -1678,7 +1789,7 @@ sealed class SafetyPage
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, modeCard, limits, _releaseCard, allocation, spending)));
+            _unreadableCard, modeCard, limits, _releaseCard, allocation, envelope, spending)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -1755,6 +1866,7 @@ sealed class SafetyPage
         // a tick that rewrote a typed version id, or relabelled a half-pressed confirmation, would be
         // this page deciding what they meant.
         ShowAllocations();
+        ShowEnvelopes();
 
         Refresh();
     }
@@ -2279,6 +2391,88 @@ sealed class SafetyPage
                     + (s.Authorises ? "" : " — its promotion no longer stands, so it may trade nothing")));
         }
         catch (Exception) { _allocationValue.Text = "could not be read"; }
+    }
+
+    // ---- the paper envelope -------------------------------------------------------------------
+
+    /// <summary>What is in the four boxes right now. A blank instrument is left blank, never guessed at.</summary>
+    (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) ReadEnvelope() =>
+        ((_envelopeSymbol.Text ?? "").Trim(),
+            _envelopeQuantity.Value ?? 0m,
+            _envelopeNotional.Value is { } n && n > 0m ? n : null,
+            DateTimeOffset.UtcNow.AddDays((double)(_envelopeDays.Value ?? 0m)));
+
+    /// <summary>
+    /// The envelope the withdrawal press is about: the one standing on the platform and the account
+    /// that are connected right now, or null because none is. A ledger this build cannot read answers
+    /// null, so the press does nothing rather than guessing at which grant the owner meant.
+    /// </summary>
+    string? StandingEnvelopeId()
+    {
+        try
+        {
+            return _host.Gateway.Envelopes.Standing(
+                _host.Gateway.Connector.Id, _host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow)?.Id;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Takes the press. The gateway asks the platform about the account, so the result is AWAITED
+    /// rather than dropped: a grant that was refused has to say so on the card and not disappear into
+    /// an unobserved task.
+    /// </summary>
+    async void ApplyEnvelope(string symbol, decimal quantity, decimal? notional, DateTimeOffset until)
+    {
+        EnvelopeResult result;
+        try { result = await _host.Gateway.GrantPaperEnvelopeAsync(symbol, quantity, notional, until); }
+        catch (Exception ex) { result = new EnvelopeResult(false, ex.Message, null); }
+
+        _envelopeNote.Text = result.Why;
+        _envelopeNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+        _envelopeNote.IsVisible = true;
+        ShowEnvelopes();
+    }
+
+    void ApplyEnvelopeWithdrawal(string id)
+    {
+        var result = _host.Gateway.WithdrawPaperEnvelope(id);
+        _envelopeNote.Text = result.Why;
+        _envelopeNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+        _envelopeNote.IsVisible = true;
+        ShowEnvelopes();
+    }
+
+    /// <summary>
+    /// Keeps the armed sentence in step with the four boxes, and disarms as it goes. A confirmation
+    /// armed against one instrument, one size and one date must not be completable against another.
+    /// </summary>
+    void RelabelEnvelope() =>
+        Ui.Relabel(_grantEnvelope, Labels.GrantEnvelope, EnvelopeArmed(ReadEnvelope(), AccountCurrency()));
+
+    /// <summary>
+    /// WHAT STANDS GRANTED RIGHT NOW, in the live line rather than a rebuilt tree, and it says on every
+    /// line that none of it is capital — the one reading on this page an owner could otherwise take for
+    /// an allocation.
+    /// </summary>
+    void ShowEnvelopes()
+    {
+        try
+        {
+            var standing = _host.Gateway.Envelopes.All()
+                .Where(e => e.StandsAt(DateTimeOffset.UtcNow))
+                .ToList();
+
+            _envelopeValue.Text = standing.Count == 0
+                ? "nothing — TradeAgent may start no paper experiments of its own"
+                : string.Join("; ", standing.Select(e =>
+                    $"{e.Symbol} on {e.AccountId} at {e.ConnectorId}, up to "
+                    + $"{AllocationRow.Num(e.MaxQuantity)}, until {e.ExpiresAt:yyyy-MM-dd} — "
+                    + "no capital, no live authority"));
+
+            _withdrawEnvelope.IsEnabled = standing.Count > 0;
+        }
+        catch (Exception) { _envelopeValue.Text = "could not be read"; }
     }
 }
 

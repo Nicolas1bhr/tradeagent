@@ -257,8 +257,15 @@ public static class Versions
     /// collected itself, every attempt that fetched them, and the minutes that are not there. Keyed
     /// (source, symbol, open_time) with the FIRST READING STANDING, because these bars have no
     /// vendor checksum and the attempt is what stands in its place.</para>
+    ///
+    /// <para><b>25 adds <c>paper_envelope</c> and the scope of an allocation</b> — the owner's ONE
+    /// grant of bounded paper experimentation, and the five columns that let a
+    /// <c>strategy_allocation</c> row say it is PAPER, on which platform, in which mode and on which
+    /// account. Existing allocation rows carry none of them and are read as LIVE, because every one of
+    /// them is an owner's own press and a press is never a paper grant
+    /// (<c>Allocations.StandingForLive</c>).</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 24;
+    public const int DatabaseSchemaVersion = 25;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
