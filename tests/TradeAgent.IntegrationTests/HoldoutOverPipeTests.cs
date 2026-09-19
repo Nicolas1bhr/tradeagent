@@ -6,6 +6,7 @@ using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
 using Xunit;
@@ -102,7 +103,7 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
     /// all, and the cutoff written by the store the owner's window calls.
     /// </summary>
     static DatasetRecord Given(Database db, string pair = "BTCUSDT", int bars = 120, bool holdout = true,
-        string evaluationClass = EvaluationClass.Research)
+        string evaluationClass = EvaluationClass.Research, TradingGateway? campaignFor = null)
     {
         var dir = BinanceArchive.DatasetDir(pair);
         Directory.CreateDirectory(Path.Combine(dir, "raw"));
@@ -128,7 +129,17 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
 
         var store = new DatasetStore(db);
         var id = store.Record(record);
-        if (holdout)
+        if (holdout && campaignFor is { } gw)
+        {
+            // THE GATEWAY'S OWN PRESS, which writes the cutoff and OPENS THE CAMPAIGN in one
+            // transaction. Only the verdict test below needs a campaign; the sweeps above are about
+            // the cutoff itself and are left on the store's writer so that nothing they prove depends
+            // on a campaign existing.
+            var (done, campaign) = gw.SetHoldout(id, Start.AddMinutes(HoldoutAtBar), evaluationClass);
+            Assert.True(done.Ok, done.Why);
+            Assert.NotNull(campaign);
+        }
+        else if (holdout)
         {
             var done = store.SetHoldout(id, Start.AddMinutes(HoldoutAtBar), evaluationClass);
             Assert.True(done.Ok, done.Why);
@@ -138,14 +149,23 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
     }
 
     /// <summary>A program in a role's own folder, so the `backtest` op has something to read.</summary>
-    static string GivenProgram(string role = CouncilRoles.Research, string name = "holdout.strategy")
+    static string GivenProgram(string role = CouncilRoles.Research, string name = "holdout.strategy",
+        string? text = null)
     {
         var dir = Path.Combine(Paths.RoleHome(role), "strategies");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, name),
-            "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n");
+            text ?? "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n");
         return "strategies/" + name;
     }
+
+    /// <summary>
+    /// A PROFITABLE PROGRAM THAT DECLARES THE THREE EXECUTION BOUNDS, which is what the referee will
+    /// agree to judge at all (`U-promote-bounds`) and what comes out ahead over bars cycling 96 → 105.
+    /// </summary>
+    const string JudgeableText =
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + "exit when close > 103\nentry when close < 97\n";
 
     /// <summary>Every op name this build has, off <see cref="Ops"/> itself rather than a list kept here.</summary>
     static IReadOnlyList<string> EveryOp() =>
@@ -475,5 +495,79 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
             Assert.True(served is null,
                 $"'{op}' over the in-process worker surface served a bar at {served:u}, at or after {cutoff:u}");
         }
+    }
+
+    // ---- item 3: the verdict op reads the holdout and hands none of it back -----------------------
+
+    /// <summary>
+    /// A VERDICT IS THE ONE THING ON THIS CHANNEL THAT CAUSES THE HELD-BACK MONTHS TO BE READ — AND IT
+    /// MOVES NO CUTOFF AND OPENS NO DOOR.
+    ///
+    /// <para>RED before <c>Ops.Verdict</c> had a handler: the frame came back <c>unknown operation
+    /// 'verdict'</c>. It is here rather than only in <c>VerdictOverPipeTests</c> because this class is
+    /// where the cutoff's invariants live: the op that asks the app to run over the holdout is exactly
+    /// the op most likely to be the one that moves it, truncates it, or hands a bar back.</para>
+    ///
+    /// <para>Three things are checked AFTER a real verdict has run: the dataset's cutoff row and its
+    /// evaluation class are untouched; not one bar at or after the cutoff is anywhere in the verdict's
+    /// own reply, at any depth; and <c>data-bars</c> past the cutoff is still refused with
+    /// <c>HOLDOUT_WITHHELD</c> to the very caller whose program was just judged on those months.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_moves_no_cutoff_and_leaves_the_held_back_bars_withheld()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db, campaignFor: gw);
+        var cutoff = set.HoldoutFrom!.Value;
+        var dataset = set.Id.ToString(CultureInfo.InvariantCulture);
+        var program = GivenProgram(name: "judgeable.strategy", text: JudgeableText);
+
+        // Frozen BEFORE the holdout window begins, so the scoring policy's forward-evidence clause can
+        // be met. `RecordVersion` is ON CONFLICT DO NOTHING, so the research run below leaves it alone.
+        var parsed = StrategyParser.Parse(JudgeableText).Program!;
+        new StrategyStore(db).RecordVersion(new StrategyVersionRow(
+            parsed.StrategyId, parsed.Source, parsed.Canonical, parsed.Manifest,
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, parsed.WarmUpBars,
+            Start, CouncilRoles.Research, "attempt-h1"));
+
+        var researched = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = "holdout-verdict-run",
+            Args = Args(("strategy", program), ("dataset", dataset), ("from", Iso(Start)),
+                ("to", Iso(cutoff.AddMinutes(-1))), ("increment", "1"))
+        });
+        Assert.True(researched.Ok, Json.Write(researched.Error));
+
+        var verdict = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Verdict, Session = "research", RequestId = "holdout-verdict",
+            Args = Args(("version", parsed.StrategyId), ("dataset", dataset))
+        });
+        log.WriteLine(Json.Write(verdict.Error ?? (object)Data(verdict)));
+        Assert.True(verdict.Ok, Json.Write(verdict.Error));
+        Assert.Equal("promoted", Data(verdict).GetProperty("verdict").GetString());
+
+        // THE CUTOFF ROW DID NOT MOVE, and the class it was set under did not change either.
+        var now = gw.Datasets.ById(set.Id)!;
+        Assert.Equal(cutoff, now.HoldoutFrom);
+        Assert.Equal(EvaluationClass.Research, now.EvaluationClass);
+
+        // NOT ONE HELD-BACK BAR IS IN THE ANSWER, at any depth.
+        Assert.Null(Held(Data(verdict), cutoff));
+
+        // AND THE DOOR IS STILL SHUT for the caller whose program was just judged on those months.
+        var bars = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.DataBars, Session = "research", RequestId = "holdout-verdict-bars",
+            Args = Args(("pair", set.Pair), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(119))))
+        });
+
+        Assert.False(bars.Ok, "the bars the owner held back were served after a verdict had read them");
+        Assert.Equal(nameof(ErrorCode.HOLDOUT_WITHHELD), bars.Error?.Code);
+        Assert.Contains("holds out every bar from", bars.Error!.Message, StringComparison.Ordinal);
     }
 }

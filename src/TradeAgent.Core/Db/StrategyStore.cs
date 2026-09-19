@@ -356,6 +356,30 @@ public sealed class StrategyStore(Database db)
     });
 
     /// <summary>
+    /// EVERY RUN OF ONE VERSION THAT ONE ROLE COMPLETED, newest first — the measurement a caller has
+    /// to have made before the app will spend a verdict on its program.
+    ///
+    /// <para>COMPLETED and not merely recorded: a FAULTED run halted at the bar it reached, so its
+    /// figures cover a window nobody asked for and it is not evidence that the program runs. The ROLE
+    /// is the one on the row and never <c>CouncilRoles.Or</c>'s reading of a missing one — a verdict
+    /// asked for on the strength of somebody else's run would let a role that measured nothing spend
+    /// the owner's evaluation budget.</para>
+    ///
+    /// <para>A read, like every other method on this store that is not <c>RecordRun</c>.</para>
+    /// </summary>
+    public IReadOnlyList<StrategyRunRow> CompletedRunsOf(string versionId, string role) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"""
+             SELECT {RunCols} FROM strategy_run
+              WHERE version_id=$v AND role=$r AND outcome=$o
+              ORDER BY created_at DESC, id DESC
+             """,
+            ("$v", versionId), ("$r", role), ("$o", nameof(Strategy.BacktestOutcome.COMPLETED)));
+        return ReadRuns(c);
+    });
+
+    /// <summary>
     /// EVERY RUN THAT FED ON ONE DATASET, newest first — which is what makes a later rejection
     /// traceable.
     ///

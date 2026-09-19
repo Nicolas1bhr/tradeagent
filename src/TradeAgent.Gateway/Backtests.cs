@@ -206,7 +206,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     /// a lineage that role did not produce. A future in-process caller passes a role rather than being
     /// special-cased here.</para>
     /// </summary>
-    static string RoleOf(AgentContext caller)
+    internal static string RoleOf(AgentContext caller)
     {
         if (CouncilRoles.IsKnown(caller.Role)) return caller.Role!;
 

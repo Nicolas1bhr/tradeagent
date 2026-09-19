@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -1206,6 +1207,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.VenueList    => VenueList(),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
+                Core.Ops.Verdict      => VerdictFor(ctx, req, ct),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -2369,6 +2371,166 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     sealed record BacktestReplyTrade(
         int Ordinal, DateTimeOffset EntryBar, decimal EntryPrice, DateTimeOffset ExitBar,
         decimal ExitPrice, decimal Quantity, string Reason, decimal Fees, decimal Pnl);
+
+    /// <summary>Roles with a verdict in flight right now. See <see cref="VerdictFor"/>.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _judging = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE VERDICT REQUEST: THE AGENT ASKS, THE APP JUDGES, AND WHAT COMES BACK IS WORDS.
+    ///
+    /// <para><c>docs/PRINCIPLES.md</c> § Evidence — "Models may propose candidates for evaluation;
+    /// software decides admission and issues the verdict within the existing evidence budget." This is
+    /// the asking half, and every line of it is the deciding half's: the caller names a version and at
+    /// most a dataset, and nothing else about the judgement is a parameter of the frame.</para>
+    ///
+    /// <para><b>Admission, and each refusal says which clause it is.</b> A KNOWN COUNCIL ROLE, by
+    /// <see cref="Backtests.RoleOf"/> and the same refusal a backtest gets — a roleless connection is
+    /// authenticated and is nobody, and the owner at the keyboard is not a council role. An OPEN
+    /// CAMPAIGN for that dataset, because a campaign is what counts the attempts made against a
+    /// holdout and there is nothing to bound a verdict without one; a dataset with no cutoff has none,
+    /// and the refusal names the owner's own press rather than inventing a campaign. A COMPLETED RUN
+    /// OF THIS VERSION BY THIS ROLE OVER THAT DATASET, with its trial registered: a version nobody
+    /// measured buys no verdict, and a LOSING measurement buys one, because the clause is that the
+    /// hypothesis was tested and not that it went well.</para>
+    ///
+    /// <para><b>IDEMPOTENT ON (version, campaign), and that is a holdout protection rather than a
+    /// convenience.</b> A promotion already recorded is answered as it stands and NOTHING runs — so a
+    /// caller that asks, waits for the collector to add a month and asks again is told the same thing
+    /// it was told before. Re-running would let one charge buy an unbounded series of peeks at a
+    /// growing holdout, each answer saying a little more about months the research process was never
+    /// shown. <c>Referee.Verdict</c> is idempotent at the CHARGE already; this is idempotent at the
+    /// RUN.</para>
+    ///
+    /// <para><b>One at a time per role, refused rather than queued</b>, exactly as a backtest is: the
+    /// judgement reads a whole holdout in process, and a caller that fires three is told so rather than
+    /// left holding a connection.</para>
+    ///
+    /// <para><b>What does NOT cross.</b> No metric, no trace hash, no run id, no bar and no figure of
+    /// any kind. <c>text</c> is <c>RefereeFeedback.Text</c> — which reads the promotion row
+    /// alone, whose reason column is a closed vocabulary that cannot hold a number — and is not built
+    /// here. <c>verdict</c> is copied through as the referee's OWN string rather than mapped, so a
+    /// value the referee learns to write later arrives here untranslated. The execution model is not a
+    /// parameter: it is the judge's default, because a submitter that chose the friction its evidence
+    /// was scored under would be choosing the standard.</para>
+    /// </summary>
+    object VerdictFor(AgentContext ctx, IpcRequest req, CancellationToken ct)
+    {
+        // THE ROLE FIRST, and it is `Backtests`' own answer rather than a second reading of the same
+        // question: one refusal, one rule, and a caller that cannot record a run cannot ask for a
+        // verdict on one either.
+        var role = Backtests.RoleOf(ctx);
+
+        var version = Require(req, "version");
+        var completed = gateway.Strategies.CompletedRunsOf(version, role);
+
+        // THE DATASET IS NAMED OR IT IS THE ONE OBVIOUS ANSWER, and never a guess between two. Each
+        // dataset with a cutoff has its own campaign and its own budget, so picking for the caller
+        // would be choosing which of the owner's holdouts to spend.
+        var dataset = req.Args is not null && req.Args.ContainsKey("dataset")
+            ? DatasetId(req)
+            : OnlyDataset(completed, version, role);
+
+        var campaign = gateway.Campaigns.OpenForDataset(dataset)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"dataset {dataset} has no open campaign, so there is no verdict to ask for. A campaign "
+                + "is opened by TradeAgent when the account owner sets a holdout cutoff on a dataset in "
+                + "TradeAgent's own window — it is what counts the attempts made against those months "
+                + "and what bounds the judgements spent on them. There is no operation here that opens, "
+                + "renews or re-budgets one.");
+
+        if (!completed.Any(r => r.DatasetId == dataset && Registered(campaign.Id, version, r.Id)))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"{CouncilRoles.Title(role)} has never completed a run of version {Short(version)} over "
+                + $"dataset {dataset}, so there is nothing to have judged. TradeAgent judges a program "
+                + "its author already measured on the months it was allowed to see: run "
+                + "'trade backtest --strategy <your program> --dataset " + dataset.ToString(CultureInfo.InvariantCulture)
+                + " --to <before the cutoff>' first. A run that LOST is admission enough — the clause is "
+                + "that the hypothesis was tested, not that it worked.");
+
+        // ALREADY JUDGED: answered as it stands, and nothing runs. See the summary.
+        if (gateway.Promotions.For(version).FirstOrDefault(p => p.CampaignId == campaign.Id) is { } standing)
+            return Answered(campaign, version, standing, null);
+
+        if (!_judging.TryAdd(role, 0))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"a verdict for {CouncilRoles.Title(role)} is already being computed. One at a time per "
+                + "role: wait for that one to answer, then ask for this one.");
+
+        try
+        {
+            // THE APP'S OWN REFEREE, UNCHANGED AND UNPARAMETERISED BEYOND THE TWO IDS. The charge, the
+            // holdout feed, the scoring policy, the promotion row and the delivery are all its own.
+            var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct);
+            return Answered(campaign, version, verdict.Promotion, verdict.Ok ? null : verdict.Why);
+        }
+        finally
+        {
+            _judging.TryRemove(role, out _);
+        }
+    }
+
+    /// <summary>
+    /// Whether this run is a registered trial anywhere in the campaign's renewal lineage. The lineage
+    /// and not the campaign, because a renewal carries the parent's holdout: a run charged before the
+    /// renewal is still a measurement of these months.
+    /// </summary>
+    bool Registered(long campaignId, string version, string runId) =>
+        gateway.Campaigns.Lineage(campaignId).Any(c => gateway.Campaigns.Registered(c, version, runId));
+
+    /// <summary>The first twelve of a content hash, which is how every refusal in this product names one.</summary>
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
+
+    /// <summary>
+    /// THE ONE DATASET THIS ROLE HAS A COMPLETED RUN OF THIS VERSION OVER, or a refusal asking for one.
+    /// Zero and several are both refused, and the refusal says which of the two it is: "you measured
+    /// nothing" and "say which" are different mistakes with different repairs.
+    /// </summary>
+    static long OnlyDataset(IReadOnlyList<StrategyRunRow> completed, string version, string role)
+    {
+        var over = completed.Select(r => r.DatasetId).Distinct().ToList();
+        if (over.Count == 1) return over[0];
+
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            over.Count == 0
+                ? $"'dataset' is required here: {CouncilRoles.Title(role)} has completed no run of "
+                  + $"version {Short(version)} at all, so TradeAgent has no measurement of it to read a "
+                  + "dataset off. 'trade data list' has the ledger ids."
+                : $"'dataset' is required here: {CouncilRoles.Title(role)} has completed runs of version "
+                  + $"{Short(version)} over {over.Count} datasets ("
+                  + string.Join(", ", over.Select(d => d.ToString(CultureInfo.InvariantCulture)))
+                  + "), and each holdout has its own campaign and its own budget — TradeAgent will not "
+                  + "choose which of the owner's held-back months to spend a judgement on.");
+    }
+
+    /// <summary>
+    /// THE WHOLE OF WHAT CROSSES, BUILT IN ONE PLACE. <paramref name="promotion"/> null with
+    /// <paramref name="why"/> set is a referee that could not judge at all — an answer, not an error,
+    /// because the budget and the words are what the caller needs and a refusal is not a fault.
+    /// </summary>
+    VerdictReply Answered(CampaignRow campaign, string version, PromotionRow? promotion, string? why) =>
+        new(version, campaign.Id,
+            promotion?.Verdict, promotion?.Reason,
+            promotion is null ? null : Core.Strategy.RefereeFeedback.Text(promotion), why,
+            gateway.Campaigns.VerdictsInLineage(campaign.Id), campaign.VerdictBudget);
+
+    /// <summary>
+    /// <inheritdoc cref="VerdictFor"/>
+    ///
+    /// <para>DECLARED TYPE AND NEVER AN ANONYMOUS OBJECT, for the reason <see cref="BacktestReplyMetrics"/>
+    /// is one — and here it is also the shape a test asserts the whole of, so a figure cannot be added
+    /// under a new name without that assertion going red.</para>
+    /// </summary>
+    sealed record VerdictReply(
+        string Version,
+        long Campaign,
+        // NEVER DROPPED WHEN NULL. "The referee could not judge" is a different answer from "this build
+        // has no such field", and a caller that read the absence as the latter would retry forever.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Verdict,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Reason,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Text,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Why,
+        int VerdictsSpent,
+        int VerdictsBudget);
 
     /// <summary>
     /// WHAT MARKET DATA THIS INSTALLATION HOLDS, AND WHERE EVERY BYTE OF IT CAME FROM.
