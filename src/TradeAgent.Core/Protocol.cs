@@ -92,6 +92,31 @@ public static class Ops
     /// </summary>
     public const string Backtest = "backtest";
 
+    /// <summary>
+    /// THE VERDICT REQUEST — the agent ASKS, and the APP judges. It asks TradeAgent's own referee for
+    /// one of the small number of final judgements a campaign budgets, over the months the account
+    /// owner held back, and what comes back is the verdict and its reason class IN WORDS.
+    ///
+    /// It is a READ as far as trading is concerned and it is not in <see cref="Mutating"/>: no order,
+    /// no connector, no mode, nothing granted. What it WRITES is the app's own record of a judgement
+    /// the caller asked for — a charge against the campaign's verdict budget and, where the referee
+    /// could judge at all, one immutable promotion row.
+    ///
+    /// <b>What it deliberately does NOT reach.</b> It reads no bar and returns none. It does not set,
+    /// clear or move a holdout cutoff. It opens no campaign and renews none — a caller that could open
+    /// one would have given itself an unlimited supply of attempts. It registers no trial and writes no
+    /// disposition. The execution model is the JUDGE'S default and is not a parameter of the frame: a
+    /// submitter that could choose the friction its own evidence was scored under would be choosing the
+    /// standard. And no figure from the held-back months crosses — the reply carries the verdict, the
+    /// reason class and the referee's own sanitised note, which reads the promotion row alone.
+    ///
+    /// Args: <c>version</c>, the program's own hash, required — a verdict is about a program this
+    /// installation has parsed and measured. <c>dataset</c> is optional: with none, the app uses the
+    /// ONE dataset this role has a completed research run of that version over, and refuses in words
+    /// asking for a dataset when that is zero or several rather than guessing which holdout to spend.
+    /// </summary>
+    public const string Verdict = "verdict";
+
     public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }
