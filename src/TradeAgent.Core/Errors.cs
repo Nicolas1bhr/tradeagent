@@ -91,6 +91,20 @@ public enum ErrorCode
     // about what one promoted strategy version may hold, and an agent told the wrong one would go
     // looking in Settings for a number that is not there.
     ALLOCATION_NONE, ALLOCATION_EXCEEDED,
+    // THE ACCOUNT THE OWNER HANDED TO TRADEAGENT FOR EXPERIMENTS IS NOT A FREE ACCOUNT.
+    //
+    // An order naming no strategy version is not charged against any allocation — the owner's own buy
+    // and the emergency press have nothing to be charged against, which is the reading
+    // `AllocationCeilingOrThrow` takes and `docs/CONTRACTS.md` states. On an account under a standing
+    // paper envelope that reading has a hole in it: an AGENT placing unattributed would be trading
+    // inside the owner's grant while standing outside every bound the grant has — its ceiling, its
+    // instrument, its deployment count and the version's own verdict.
+    //
+    // Its own code because the repair is its own: nothing about the order's SIZE is wrong and a
+    // smaller one does not help, so ALLOCATION_EXCEEDED would send an agent looking for room that is
+    // not the problem, and ALLOCATION_NONE would say "ask the owner for capital" when what is needed
+    // is a version to place under. The owner's own press is never refused by it.
+    ENVELOPE_ACCOUNT_RESERVED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -755,6 +769,10 @@ public static class Errors
         // all, which the sentence says so that a working limit does not read as a fault.
         [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocate capital to that version on the Safety page — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names.", false),
         [ErrorCode.ALLOCATION_EXCEEDED]            = ("This order would take a strategy past the capital you allocated to it, so it was not sent.", "Nothing was sent and your positions are untouched. There is nothing to do: the strategy may trade again once it is holding less, or you can raise its allocation on the Safety page.", false),
+        // THE PAPER-ENVELOPE SENTENCE. Nothing is wrong and nothing needs pressing: the AI asked to
+        // trade an account the owner set aside for TradeAgent's own experiments without saying which
+        // experiment, and the account is doing exactly what they granted it for.
+        [ErrorCode.ENVELOPE_ACCOUNT_RESERVED]      = ("The AI tried to place an order on the practice account you set aside for TradeAgent's own paper experiments, without saying which strategy version it was for, so nothing was sent.", "Nothing was sent and your positions are untouched. There is nothing for you to do: that account only accepts orders from a version TradeAgent has allocated to it, and your own orders on it are unaffected. Withdraw the paper envelope on the Safety page if you want the account back.", false),
         // THE OTHER HALF OF POSITION_MOVED, and the owner has to be told which half this is. Above:
         // the position already changed. Here: TradeAgent is holding an earlier order on the same
         // instrument that it never got an answer for, and that order can still fill and move the

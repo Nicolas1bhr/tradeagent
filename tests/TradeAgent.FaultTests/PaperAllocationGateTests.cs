@@ -51,19 +51,25 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
 
     /// <summary>A gateway on a simulator both witnesses call a simulation, in practice mode.</summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
-        Action<TradeAgentSettings>? settings = null, string? connectorId = null, Database? db = null)
+        Action<TradeAgentSettings>? settings = null, string? connectorId = null, Database? db = null,
+        string account = "SIM-001")
     {
         db ??= TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()), connectorId);
+        var conn = new RecordingConnector(
+            new FakeConnector(new FakeBroker { AccountId = account }), connectorId);
         var gw = new TradingGateway(db, conn, new HealthRegistry(),
             new GatewayOptions { Clock = new TestClock(At) });
         gw.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            // The program this suite judges trades BTCUSDT, so the installation this stands in for
+            // allows it. Added here rather than to the shared list, which is every other suite's.
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"];
             s.Risk.MaxOrderQuantity = 100m;
-            s.Risk.MaxNotionalPerOrder = 100_000_000m;
+            // 0 is "not enforced", which is this product's own default: the simulator reports no
+            // contract size for BTCUSDT, and a value cap is the only thing that multiplies one.
+            s.Risk.MaxNotionalPerOrder = 0m;
             s.Risk.MaxOpenPositions = 10;
             s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
@@ -284,6 +290,218 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         Assert.False(standing.Allocation.IsPaper);
         Assert.Equal(AllocationScope.Live, standing.Allocation.EffectiveScope);
         Assert.Null(gw.Allocations.StandingForPaper(promoted, gw.Connector.Id, envelope.AccountId, At));
+        await gw.DisposeAsync();
+    }
+
+    // ---- item 3: what a paper allocation authorises at dispatch --------------------------------
+
+    static PlaceIntent By(string? version, string symbol = "BTCUSDT", decimal qty = 1m) =>
+        new(symbol, ConnectorSdk.OrderSide.Buy, ConnectorSdk.OrderType.Market, qty, null, null,
+            ConnectorSdk.TimeInForce.Day, null)
+        { StrategyVersionId = version };
+
+    static async Task<string> SwallowAsync(Task<ExecutionRequest> t)
+    {
+        try { var r = await t; return $"ok — {r.State}"; }
+        catch (GatewayDeniedException ex) { return $"{ex.Code} — {ex.Message}"; }
+        catch (Exception ex) { return $"{ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// (b) A PAPER ALLOCATION AUTHORISES NOTHING IN A LIVE MODE, CATEGORICALLY.
+    ///
+    /// <para>Same platform, same account, same version, same standing envelope — and the mode is
+    /// <c>LIVE_AUTONOMOUS</c> with the real-money switch thrown. The dispatch gate reads LIVE rows
+    /// only, finds none, and refuses <c>ALLOCATION_NONE</c>. There is no combination of facts under
+    /// which the app's own paper grant becomes permission to spend the owner's money, which is
+    /// <c>docs/PRINCIPLES.md</c> § Evidence read literally: "a paper experiment also cannot confer live
+    /// authority".</para>
+    ///
+    /// <para>THE MUTANT: <c>AllocationFor</c> reading whatever row stands rather than splitting on the
+    /// mode. With it, this test reads
+    /// <c>Assert.StartsWith() Failure … Actual: ok — FILLED</c> — an order at the broker, in a
+    /// real-money mode, on the strength of an experiment.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_paper_allocation_never_authorises_a_live_dispatch()
+    {
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        using var _1 = db;
+
+        var envelope = await Envelope(gw);
+        var version = Judged(db, PromotionVerdict.PaperEligible);
+        Assert.True(gw.Allocations.RecordPaper(PaperRowFor(gw, version, envelope), At).Ok);
+
+        gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
+        gw.ActivateLive(true);
+
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "paper-live", By(version)));
+
+        log.WriteLine($"mode                 : {gw.Settings.Mode}, live activated {gw.Settings.LiveActivated}");
+        log.WriteLine($"outcome              : {outcome}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
+        Assert.Null(gw.Allocations.StandingForLive(version, At));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (c) AND IT AUTHORISES NOTHING ON ANOTHER PLATFORM, IN ANOTHER MODE, OR ON ANOTHER ACCOUNT.
+    ///
+    /// <para>Three arms over one database. The platform is the one the order would actually reach; the
+    /// account is the one that would actually be traded; the mode on the row is what says this is a
+    /// paper experiment and not something else. A paper allocation is a statement about one of each,
+    /// and a row standing in for any other pair would be an experiment claiming evidence it never
+    /// collected — on an account nobody granted.</para>
+    ///
+    /// <para><b>And the positive control is the mutant detector.</b> A second envelope on a second
+    /// account gets its OWN paper allocation of the same version, with a DIFFERENT id, and it
+    /// authorises there. With the scope facts dropped from the paper id hash the two collapse onto one
+    /// id, the second write is an <c>ON CONFLICT DO NOTHING</c> that changes nothing, and this arm goes
+    /// red.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_paper_allocation_never_authorises_another_connector_mode_or_account()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = await Envelope(gw);
+        var version = Judged(db, PromotionVerdict.PaperEligible);
+        var first = gw.Allocations.RecordPaper(PaperRowFor(gw, version, envelope), At);
+        Assert.True(first.Ok, first.Why);
+
+        // ARM 1 — ANOTHER PLATFORM, same account name, same database.
+        var (other, otherConn, _) = await Ready(connectorId: "another-platform", db: db);
+        var onAnotherPlatform = await SwallowAsync(
+            other.PlaceAsync(new AgentContext("a"), "paper-platform", By(version)));
+
+        // ARM 2 — ANOTHER ACCOUNT on this platform, under its own envelope. The refusal comes first,
+        // then the positive control: with its own grant it really is allocated, and with a different id.
+        var (second, secondConn, _) = await Ready(db: db, account: "SIM-002");
+        var beforeItsOwnGrant = await SwallowAsync(
+            second.PlaceAsync(new AgentContext("a"), "paper-account", By(version)));
+
+        var secondEnvelope = await Envelope(second);
+        var alsoThere = second.Allocations.RecordPaper(PaperRowFor(second, version, secondEnvelope), At);
+
+        // ARM 3 — THE MODE ON THE ROW. A paper row that claims any other mode matches nothing: what
+        // `StandingForPaper` asks for is the word PAPER, not "whatever is running".
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("UPDATE strategy_allocation SET mode=$m WHERE id=$id",
+                ("$m", TradingMode.LIVE_CONFIRM.ToString()), ("$id", first.Allocation!.Id));
+            return c.ExecuteNonQuery();
+        });
+        var restated = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "paper-mode", By(version)));
+
+        log.WriteLine($"another platform     : {onAnotherPlatform}");
+        log.WriteLine($"another account      : {beforeItsOwnGrant}");
+        log.WriteLine($"its own grant        : {alsoThere.Ok} — {alsoThere.Why}");
+        log.WriteLine($"first id             : {first.Allocation!.Id}");
+        log.WriteLine($"second id            : {alsoThere.Allocation?.Id ?? "none"}");
+        log.WriteLine($"mode restated        : {restated}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), onAnotherPlatform, StringComparison.Ordinal);
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), beforeItsOwnGrant, StringComparison.Ordinal);
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), restated, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
+        Assert.Empty(otherConn.Placed);
+
+        Assert.True(alsoThere.Ok, alsoThere.Why);
+        Assert.NotEqual(first.Allocation.Id, alsoThere.Allocation!.Id);
+        Assert.NotNull(second.Allocations.StandingForPaper(version, second.Connector.Id, "SIM-002", At));
+        Assert.Equal("SIM-002", alsoThere.Allocation.AccountId);
+
+        await gw.DisposeAsync();
+        await other.DisposeAsync();
+        await second.DisposeAsync();
+        Assert.Empty(secondConn.Placed);
+    }
+
+    /// <summary>
+    /// (e) A WITHDRAWN OR EXPIRED ENVELOPE ALLOCATES NOTHING NEW AND ITS ROWS NO LONGER AUTHORISE.
+    ///
+    /// <para>One press on the withdrawal card stops every experiment under the grant at once, and it
+    /// does so because <c>StandingForPaper</c> asks the envelope ledger at read time rather than
+    /// reading a copy stored beside the allocation — the same reading <c>Promotions.Standing</c> has,
+    /// and for the same reason. The allocation rows stay on the table: what was allowed, and when, is
+    /// still readable afterwards.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_expired_or_withdrawn_envelope_allocates_nothing_new_and_its_rows_no_longer_authorise()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = await Envelope(gw);
+        var version = Judged(db, PromotionVerdict.PaperEligible);
+        Assert.True(gw.Allocations.RecordPaper(PaperRowFor(gw, version, envelope), At).Ok);
+
+        var whileItStands = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "paper-open", By(version)));
+
+        var withdrawn = gw.WithdrawPaperEnvelope(envelope.Id, At);
+        Assert.True(withdrawn.Ok, withdrawn.Why);
+
+        var afterWithdrawal = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "paper-gone", By(version)));
+        var second = Judged(db, PromotionVerdict.PaperEligible, 105);
+        var nothingNew = gw.Allocations.RecordPaper(PaperRowFor(gw, second, envelope), At);
+
+        log.WriteLine($"while it stood       : {whileItStands}");
+        log.WriteLine($"after withdrawal     : {afterWithdrawal}");
+        log.WriteLine($"nothing new          : {nothingNew.Ok} — {nothingNew.Why}");
+        log.WriteLine($"rows still on table  : {gw.Allocations.For(version).Count}");
+
+        Assert.StartsWith("ok", whileItStands, StringComparison.Ordinal);
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), afterWithdrawal, StringComparison.Ordinal);
+        Assert.False(nothingNew.Ok);
+        Assert.Single(gw.Allocations.For(version));
+        Assert.Single(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (g) ON AN ENVELOPE'S ACCOUNT, AN AGENT ORDER NAMING NO VERSION IS REFUSED, AND THE OWNER'S IS NOT.
+    ///
+    /// <para>An order naming no version is not gated at all by the capital ceiling — the owner's own
+    /// buy and the emergency press have nothing to be charged against, which
+    /// <c>docs/CONTRACTS.md</c> states. That reading is right everywhere except here: the owner handed
+    /// this account to TradeAgent for bounded experiments, and an agent placing on it unattributed
+    /// would be trading inside that grant while standing outside every bound the grant has — the
+    /// envelope's ceiling, its instrument, its deployment count and the version's own verdict.</para>
+    ///
+    /// <para>The owner's press is untouched, and that is the half that matters: a rule that stopped the
+    /// account being flattened would be a trap.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_agent_order_naming_no_version_on_the_envelope_account_is_refused()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var beforeTheGrant = await SwallowAsync(
+            gw.PlaceAsync(new AgentContext("a"), "reserved-before", By(null)));
+
+        var envelope = await Envelope(gw);
+
+        var byTheAgent = await SwallowAsync(
+            gw.PlaceAsync(new AgentContext("a"), "reserved-agent", By(null)));
+        var byTheOwner = await SwallowAsync(
+            gw.PlaceAsync(AgentContext.Operator, "reserved-owner", By(null)));
+
+        log.WriteLine($"agent, no envelope   : {beforeTheGrant}");
+        log.WriteLine($"agent, envelope      : {byTheAgent}");
+        log.WriteLine($"owner, envelope      : {byTheOwner}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.StartsWith("ok", beforeTheGrant, StringComparison.Ordinal);
+        Assert.StartsWith(ErrorCode.ENVELOPE_ACCOUNT_RESERVED.ToString(), byTheAgent, StringComparison.Ordinal);
+        Assert.StartsWith("ok", byTheOwner, StringComparison.Ordinal);
+        Assert.Equal(2, conn.Places);
+        Assert.Null(gw.GetRequest("reserved-agent"));
+        Assert.Equal(envelope.AccountId, gw.GetRequest("reserved-owner")!.AccountId);
         await gw.DisposeAsync();
     }
 }

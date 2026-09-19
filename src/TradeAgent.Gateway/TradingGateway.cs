@@ -269,6 +269,23 @@ public sealed class TradingGateway : IAsyncDisposable
     public const int PaperDeploymentsPerEnvelope = 1;
 
     /// <summary>
+    /// Whether this account is under a standing paper envelope right now — the question
+    /// <see cref="AllocationCeilingOrThrow"/> asks of an order that names no version. A ledger that
+    /// cannot be read answers FALSE, which is the direction that changes nothing: this rule exists to
+    /// keep an experiment's account tidy, and refusing the owner's own orders because a read failed
+    /// would be the software inventing a lockout nobody granted.
+    /// </summary>
+    bool EnvelopeReserves(string accountId)
+    {
+        try { return _envelopes.AnyStandingOn(accountId, Now); }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "envelope_not_read", "error", ex: ex);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// WHAT THE OWNER'S ONE PRESS PLUS A CONFIRM DOES: takes one grant back. One press because it only
     /// ever removes authority — the kill switch's rule, not the allocate card's — and every paper
     /// allocation written under it stops authorising anything the moment this returns.
@@ -1975,14 +1992,39 @@ public sealed class TradingGateway : IAsyncDisposable
     /// says so in the engineering log, and the gate above then refuses: an order attributed to an
     /// allocation nobody could look up is worse than one refused.</para>
     /// </summary>
-    AllocationRow? AllocationFor(PlaceIntent intent)
+    AllocationRow? AllocationFor(PlaceIntent intent, string accountId)
     {
         if (intent.StrategyVersionId is not { Length: > 0 } version) return null;
 
         try
         {
-            return _allocations.StandingForLive(version, Now) is { Authorises: true } standing
-                ? standing.Allocation : null;
+            // THE MODE DECIDES WHICH LEDGER IS EVEN READ, AND A LIVE MODE READS ONE OF THEM.
+            //
+            // IN LIVE_CONFIRM AND LIVE_AUTONOMOUS: live rows only, and the paper ledger is not
+            // consulted at all. A paper allocation is not "refused" there — it is never looked at, so
+            // there is no ordering of checks, no flag and no later edit to a ceiling that can turn the
+            // app's own experiment into permission to spend the owner's money. `docs/PRINCIPLES.md` §
+            // Evidence, "a paper experiment also cannot confer live authority", by construction.
+            //
+            // IN PAPER, ON AN ACCOUNT UNDER A STANDING ENVELOPE: paper rows only, and the row must name
+            // THIS platform, THIS account and the word PAPER. That account is the one the owner handed
+            // to TradeAgent for bounded experiments, so what may trade on it is what the envelope
+            // allows and nothing else — the same sentence `ENVELOPE_ACCOUNT_RESERVED` says about an
+            // order that names no version at all.
+            //
+            // IN PAPER, ANYWHERE ELSE: live rows, exactly as before this unit. The owner's declared
+            // ceiling has bounded a practice order since schema 20 (`AllocationGateTests`), that is a
+            // guard rather than an oversight, and removing it would leave a promoted version able to
+            // place practice orders of any size the per-order limits allow.
+            //
+            // The MUTANT is one reader for both — `StandingFor(version, Now)` as it was before this
+            // unit — which makes a paper row authorise a live dispatch and a row written for one
+            // account authorise on another. `PaperAllocationGateTests` measures both at the wire.
+            var standing = Settings.Mode == TradingMode.PAPER && EnvelopeReserves(accountId)
+                ? _allocations.StandingForPaper(version, Connector.Id, accountId, Now)
+                : _allocations.StandingForLive(version, Now);
+
+            return standing is { Authorises: true } ? standing.Allocation : null;
         }
         catch (Exception ex)
         {
@@ -2029,11 +2071,36 @@ public sealed class TradingGateway : IAsyncDisposable
     /// exist, and the gate is what will be there when it does.</para>
     /// </summary>
     async Task<AllocationRow?> AllocationCeilingOrThrow(PlaceIntent intent,
-        IReadOnlyList<PositionInfo> positions, decimal reference, string requestId, CancellationToken ct)
+        IReadOnlyList<PositionInfo> positions, decimal reference, string requestId,
+        AccountInfo account, bool byOperator, CancellationToken ct)
     {
-        if (intent.StrategyVersionId is not { Length: > 0 } version) return null;
+        if (intent.StrategyVersionId is not { Length: > 0 } version)
+        {
+            // THE ONE PLACE AN UNATTRIBUTED ORDER IS REFUSED, AND IT IS ABOUT THE ACCOUNT RATHER THAN
+            // THE ORDER.
+            //
+            // An order naming no version is not gated by any ceiling — the owner's own buy and the
+            // emergency press have nothing to be charged against — and that reading is right
+            // everywhere except on an account the owner has handed to TradeAgent for bounded
+            // experiments. An AGENT placing there unattributed would be trading inside the grant while
+            // standing outside every bound the grant has: its ceiling, its instrument, its deployment
+            // count and the version's own verdict.
+            //
+            // THE OWNER'S OWN PRESS IS NEVER REFUSED BY IT, for the loss budget's reason: a rule that
+            // stopped this account being flattened would be a trap. An approved proposal is an AGENT's
+            // (see the request's own state: only a non-operator caller is ever parked for approval),
+            // so it is refused here too.
+            if (!byOperator && EnvelopeReserves(account.Id))
+                throw new GatewayDeniedException(ErrorCode.ENVELOPE_ACCOUNT_RESERVED,
+                    $"account {account.Id} is under a paper envelope you granted TradeAgent, so it "
+                    + "accepts orders only from a strategy version TradeAgent has allocated to it, and "
+                    + "this order names none. Nothing was sent. Your own orders on this account are "
+                    + "unaffected, and withdrawing the envelope in TradeAgent hands the account back.");
 
-        var allocation = AllocationFor(intent);
+            return null;
+        }
+
+        var allocation = AllocationFor(intent, account.Id);
 
         // A CLOSE OR A REDUCE IS ATTRIBUTED AND NEVER REFUSED, whether or not anything stands.
         if (!CanIncreaseExposure(intent, positions)) return allocation;
@@ -4342,7 +4409,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// same question and an awaited round trip in the one place that must stay short.</para>
     /// </summary>
     async Task<AllocationRow?> PositionGatesOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions,
-        AccountInfo account, string requestId, OrderPricing priced, CancellationToken ct)
+        AccountInfo account, string requestId, OrderPricing priced, bool byOperator, CancellationToken ct)
     {
         // See OpenPositionCapOrThrow: the cap is the one risk limit whose answer depends on what the
         // OTHER callers are doing, so it is the one that cannot be decided out there with the reads.
@@ -4365,7 +4432,8 @@ public sealed class TradingGateway : IAsyncDisposable
         // be HOLDING is a question about the position, so it is decided here with the other three
         // rather than out there with the reads, where two callers arriving together would each see the
         // same empty account and both pass one allocation.
-        return await AllocationCeilingOrThrow(intent, positions, priced.Reference, requestId, ct);
+        return await AllocationCeilingOrThrow(intent, positions, priced.Reference, requestId,
+            account, byOperator, ct);
     }
 
     public async Task<ExecutionRequest> PlaceAsync(AgentContext ctx, string requestId, PlaceIntent intent, CancellationToken ct = default)
@@ -4425,7 +4493,8 @@ public sealed class TradingGateway : IAsyncDisposable
             // gate.
             var positions = await Connector.GetPositionsAsync(account.Id, ct);
             record.AllocationId =
-                (await PositionGatesOrThrow(intent, positions, account, requestId, priced, ct))?.Id;
+                (await PositionGatesOrThrow(intent, positions, account, requestId, priced,
+                    ctx.IsOperator, ct))?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
@@ -5374,7 +5443,11 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (intent is not null)
                 {
                     var positions = await Connector.GetPositionsAsync(account.Id, ct);
-                    var allocation = await PositionGatesOrThrow(intent, positions, account, requestId, priced, ct);
+                    // BY THE AGENT, ALWAYS. Only a non-operator caller is ever parked for approval
+                    // (see the CREATED/AWAITING_APPROVAL choice at placement), so what is being
+                    // approved here is an agent's proposal whoever pressed the button.
+                    var allocation = await PositionGatesOrThrow(intent, positions, account, requestId,
+                        priced, byOperator: false, ct);
                     stored = _requests.Attribute(requestId, allocation?.Id);
                 }
                 else
