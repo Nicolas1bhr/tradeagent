@@ -628,7 +628,11 @@ public static class RefereeFeedback
             No figure from those months is in this note and none ever will be. The run's metrics and its
             trace are the account owner's private evaluation evidence; what you may have is the verdict
             and the reason, and a verdict is charged against a small budget, so there are few of them.
-            You cannot ask for one: TradeAgent decides when a version is judged.
+            You ask for one with `trade verdict --version <hash>`, naming `--dataset <id>` where this
+            installation holds more than one campaign. Each campaign budgets a fixed number of final
+            judgements and they are counted across every renewal of it, so renewing buys attempts and
+            never more of these. What comes back is this same pair — the verdict and the reason class —
+            and never a figure.
             """;
     }
 
