@@ -41,6 +41,43 @@ public static class CampaignPolicy
         + "never enough — forward evidence collected after the version was frozen is required before "
         + "capital.";
 
+    /// <summary>
+    /// THE PAPER POLICY, A SECOND STANDARD WITH ITS OWN TEXT AND ITS OWN SHA — and it can confer
+    /// eligibility for PAPER OBSERVATION and nothing else.
+    ///
+    /// <para><c>docs/PRINCIPLES.md</c> § Evidence asks for four distinct meanings — "acceptance of a
+    /// program, a favourable historical verdict, eligibility for paper observation, and eligibility for
+    /// live capital" — and then for the clause that makes a paper loop possible at all: "forward paper
+    /// evidence cannot be required before the very first paper run that produces it". Under
+    /// <see cref="V1"/> alone a version frozen after the cutoff can only ever be told its evidence
+    /// predates the freeze, so the very first paper run is unreachable.</para>
+    ///
+    /// <para><b>It is V1's performance clauses and NOT its forward-evidence clause.</b> Identical
+    /// arithmetic over the identical run — completed, at least one closed trade, net above zero after
+    /// declared costs — asked ONLY of a version <see cref="V1"/> has already refused on the date. It
+    /// is a SEPARATE text with a separate hash rather than a relaxation of V1, because a campaign
+    /// precommitted to V1 and a standard that could be softened under the sha it fixed would hollow
+    /// that out silently (<c>docs/COUNCIL.md</c>:212).</para>
+    ///
+    /// <para><b>It is the app's constant and no agent writes it</b>, exactly as <see cref="V1"/> is.
+    /// A campaign copies it at open and a renewal carries the parent's, so more attempts never come
+    /// with a different paper standard either.</para>
+    /// </summary>
+    public const string PaperV1 =
+        "Paper policy v1 — historical holdout evidence: eligible for paper observation only. A version "
+        + "is judged on evidence the app computed from its own trace, never on a figure an agent "
+        + "reported. The clauses are the performance clauses of scoring policy v1 and nothing else: the "
+        + "holdout run must have completed, it must have closed at least one trade, and its net after "
+        + "its declared costs must be above zero. Scoring policy v1's forward-evidence clause is "
+        + "deliberately absent here, because this standard is asked only of a version whose held-back "
+        + "window does not post-date its own freeze — a result over months the submission may already "
+        + "have been written around, which is why what this policy can confer is eligibility for paper "
+        + "observation and nothing else. It is never a promotion, it allocates no capital, and forward "
+        + "evidence collected after the version was frozen is still required before the account owner's "
+        + "money. Evidence is bound to the version's own hash, the dataset and its normalised hash, the "
+        + "declared execution model, the interpreter build and this policy's hash; a change to any of "
+        + "them invalidates the evidence that rested on it.";
+
     /// <summary>The SHA-256 of <see cref="V1"/>, which is what a campaign row records beside the text.</summary>
     public static string Sha256Of(string text) => Sha256Hex.Of(text);
 }
@@ -97,6 +134,22 @@ public sealed record CampaignRow(
 
     /// <summary>What is left for versions whose declared parent is promoted. Never negative.</summary>
     public int RefinementBudget => Math.Max(0, TrialBudget - ExplorationBudget);
+
+    /// <summary>
+    /// THE SECOND STANDARD THIS CAMPAIGN FIXED AT OPEN — <see cref="CampaignPolicy.PaperV1"/>, copied
+    /// onto the row beside <see cref="ScoringPolicy"/> and never updated, for the same reason that one
+    /// is: a policy read from a constant at judging time could change between the hypothesis and the
+    /// verdict.
+    ///
+    /// <para>Schema 23. Every campaign written before that rung was pinned to the build's own
+    /// <see cref="CampaignPolicy.PaperV1"/> by the migration — the one backfill that rung makes — which
+    /// is the truth about those rows: there was no second standard for any of them to have fixed, and
+    /// leaving it empty would refuse a paper verdict on every installation that upgrades.</para>
+    /// </summary>
+    public string PaperPolicy { get; init; } = "";
+
+    /// <summary>The SHA-256 of <see cref="PaperPolicy"/>, which is what the referee checks against.</summary>
+    public string PaperPolicySha256 { get; init; } = "";
 }
 
 /// <summary>What opening or renewing a campaign did, or why it did nothing. A value, not an exception.</summary>
@@ -245,7 +298,7 @@ public sealed class CampaignStore(Database db)
         "id, name, scoring_policy, scoring_policy_sha256, trial_budget, verdict_budget, " +
         "holdout_dataset_id, holdout_from, opened_at, renewed_from, closed_at, " +
         // LAST, so every positional read above it keeps its index. See `CampaignRow.ExplorationBudget`.
-        "exploration_budget";
+        "exploration_budget, paper_policy, paper_policy_sha256";
 
     /// <summary>
     /// Opens the campaign for a dataset the owner has just held back, or refuses in words.
@@ -275,7 +328,15 @@ public sealed class CampaignStore(Database db)
             0, name, text, CampaignPolicy.Sha256Of(text), Budget(trialBudget), Budget(verdictBudget),
             holdout.Id, cutoff, at, null, null)
         {
-            ExplorationBudget = Reserve(exploration, Budget(trialBudget))
+            ExplorationBudget = Reserve(exploration, Budget(trialBudget)),
+
+            // THE PAPER STANDARD IS COPIED AT OPEN TOO, and it is the APP's constant rather than the
+            // `policy` parameter above: `policy` exists so a test can prove the referee refuses a
+            // campaign whose scoring policy this build does not implement, and a caller that could
+            // also choose the paper standard would be a caller that could choose how little a paper
+            // verdict has to prove.
+            PaperPolicy = CampaignPolicy.PaperV1,
+            PaperPolicySha256 = CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1)
         }));
     });
 
@@ -326,7 +387,13 @@ public sealed class CampaignStore(Database db)
                 // and how many of them are kept for exploration is a fact about the attempts bought and
                 // not about the parent's. Carrying the parent's number onto a different budget would
                 // silently widen or narrow the reserve nobody decided to move.
-                ExplorationBudget = Reserve(exploration, Budget(trialBudget))
+                ExplorationBudget = Reserve(exploration, Budget(trialBudget)),
+
+                // THE PAPER STANDARD IS THE PARENT'S, exactly as the scoring policy is: a renewal
+                // buys attempts and never an easier standard, and there are now two standards for
+                // that sentence to be true of.
+                PaperPolicy = parent.PaperPolicy,
+                PaperPolicySha256 = parent.PaperPolicySha256
             }));
         });
 
@@ -833,14 +900,16 @@ public sealed class CampaignStore(Database db)
         using var c = db.Cmd("""
             INSERT INTO strategy_campaign(name, scoring_policy, scoring_policy_sha256, trial_budget,
                                           verdict_budget, holdout_dataset_id, holdout_from, opened_at,
-                                          renewed_from, closed_at, exploration_budget)
-            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL,$reserve);
+                                          renewed_from, closed_at, exploration_budget,
+                                          paper_policy, paper_policy_sha256)
+            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL,$reserve,$paper,$papersha);
             SELECT last_insert_rowid();
             """,
             ("$name", row.Name), ("$policy", row.ScoringPolicy), ("$sha", row.ScoringPolicySha256),
             ("$trials", row.TrialBudget), ("$verdicts", row.VerdictBudget),
             ("$ds", row.HoldoutDatasetId), ("$cut", Sql.T(row.HoldoutFrom)), ("$at", Sql.T(row.OpenedAt)),
-            ("$from", row.RenewedFrom), ("$reserve", row.ExplorationBudget));
+            ("$from", row.RenewedFrom), ("$reserve", row.ExplorationBudget),
+            ("$paper", row.PaperPolicy), ("$papersha", row.PaperPolicySha256));
 
         return row with { Id = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) };
     });
@@ -856,7 +925,9 @@ public sealed class CampaignStore(Database db)
                 r.IsDBNull(9) ? null : r.GetInt64(9),
                 Sql.TimeN(r.IsDBNull(10) ? null : r.GetString(10)))
             {
-                ExplorationBudget = r.GetInt32(11)
+                ExplorationBudget = r.GetInt32(11),
+                PaperPolicy = r.GetString(12),
+                PaperPolicySha256 = r.GetString(13)
             });
         return rows;
     }

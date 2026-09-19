@@ -239,8 +239,20 @@ public static class Versions
     /// both frozen; a forecast measured against a reading taken at review would be measured against
     /// itself. Nullable and NOT backfilled — no assessment written before this rung declared anything
     /// and no boundary settled before it measured anything.</para>
+    ///
+    /// <para><b>23 — the second standard a campaign fixes at open.</b>
+    /// <c>strategy_campaign.paper_policy</c> and <c>.paper_policy_sha256</c>, copied at
+    /// <c>CampaignStore.Open</c> and carried by <c>Renew</c> exactly as the scoring policy is.
+    /// <c>docs/PRINCIPLES.md</c> § Evidence asks that a favourable HISTORICAL verdict and eligibility
+    /// for live capital be different meanings, and that "forward paper evidence cannot be required
+    /// before the very first paper run that produces it"; a campaign with one standard could only
+    /// refuse a version frozen after its cutoff, on the date. BACKFILLED to this build's own
+    /// <c>CampaignPolicy.PaperV1</c> — the one backfill this rung makes, and the 17 and 21 reading:
+    /// no campaign written before it fixed a second standard because none existed, so the build's own
+    /// is the truth about those rows, and an empty column would refuse a paper verdict on every
+    /// campaign of every installation that upgrades.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 22;
+    public const int DatabaseSchemaVersion = 23;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

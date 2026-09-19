@@ -1305,11 +1305,52 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','22') ON CONFLICT(key) DO UPDATE SET value='22';");
         }
 
+        if (have < 23)
+        {
+            // THE SECOND STANDARD A CAMPAIGN FIXES AT OPEN — `U-paper-verdict`.
+            //
+            // `docs/PRINCIPLES.md` § Evidence asks that acceptance of a program, a favourable
+            // HISTORICAL verdict, eligibility for paper observation and eligibility for live capital be
+            // four distinct meanings, and that "forward paper evidence cannot be required before the
+            // very first paper run that produces it". Before this rung a campaign fixed ONE standard
+            // (`scoring_policy`), whose first clause refuses every version frozen after the cutoff on
+            // the date — so a favourable historical verdict had no word to be recorded under and the
+            // first paper run was unreachable.
+            //
+            // A SEPARATE TEXT WITH A SEPARATE HASH, not a relaxation of the one beside it. The referee
+            // writes the sha of whichever policy produced the answer onto the promotion, and
+            // `Promotions.Standing` re-checks it there, so a paper verdict cannot read as having met the
+            // standard the campaign precommitted to and a rewrite of either text withdraws only the
+            // verdicts taken under that one.
+            //
+            // BACKFILLED to the build's own `CampaignPolicy.PaperV1`, and this is the ONE backfill this
+            // rung makes. It is the 17 and 21 reading rather than the 22 one: there is a knowable fact
+            // here. No campaign written before this rung fixed a second standard, because no second
+            // standard existed for any of them to fix, so pinning the build's own is the truth about
+            // those rows — while leaving the column empty would refuse a paper verdict on every
+            // campaign of every installation that upgrades, which is a migration that silently retires
+            // the whole reason for the rung.
+            Exec("ALTER TABLE strategy_campaign ADD COLUMN paper_policy TEXT NOT NULL DEFAULT '';");
+            Exec("ALTER TABLE strategy_campaign ADD COLUMN paper_policy_sha256 TEXT NOT NULL DEFAULT '';");
+            Exec($"UPDATE strategy_campaign SET paper_policy='{Lit(CampaignPolicy.PaperV1)}', "
+                 + $"paper_policy_sha256='{Lit(CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1))}';");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','23') ON CONFLICT(key) DO UPDATE SET value='23';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"database schema {found} is newer than this build supports ({Versions.DatabaseSchemaVersion})");
     }
+
+    /// <summary>
+    /// One of this build's own constants, as a SQL string literal. <see cref="Exec"/> takes no
+    /// parameters — every rung above is a fixed statement — and a migration that needs a long text
+    /// gets it from a <c>const</c> in this assembly and from nowhere else, so this doubles the quote
+    /// against a future edit to one of those constants rather than against any input.
+    /// </summary>
+    static string Lit(string constant) => constant.Replace("'", "''", StringComparison.Ordinal);
 
     int? ReadInt(string sql)
     {

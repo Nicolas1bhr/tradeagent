@@ -2243,6 +2243,18 @@ second campaign**: `CampaignStore.Renew` closes the parent and opens a child car
 parent's holdout **and the parent's policy text and sha** — so a renewal buys attempts and never an easier
 standard.
 
+**A campaign fixes TWO standards at open, and both are copied and never updated.** `scoring_policy` is
+`CampaignPolicy.V1`; `paper_policy` is `CampaignPolicy.PaperV1` (schema **23**), which is V1's three
+performance clauses without its forward-evidence clause and can confer eligibility for paper observation
+and nothing else. Both texts and both SHA-256s are on the row, both are carried unchanged by `Renew`, and
+neither is a setting: the paper standard is the app's own constant even where `Open`'s `policy` parameter
+overrides the scoring one, because a caller that could choose it could choose how little a paper verdict
+has to prove. **The rung-23 migration pins this build's `PaperV1` onto every existing campaign row —
+that is the one backfill this rung makes**, and it is the 17 and 21 reading rather than the 22 one: no
+campaign written before the rung fixed a second standard because none existed for any of them to fix, so
+the build's own is the truth about those rows, while an empty column would refuse a paper verdict on
+every campaign of every installation that upgrades.
+
 **A trial is one registered research run, keyed `(campaign, version, run)` and by nothing an agent
 chooses.** There is deliberately **no role and no attempt column** — `HoldoutLedgerTests` asserts the
 column list — because a trial keyed by the attempt would make a restart a fresh budget and one keyed by
