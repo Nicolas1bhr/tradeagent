@@ -228,7 +228,63 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 $"the holdout of campaign {campaignId} could not be run: {open.Why}");
 
         var at = _now();
+
+        // THE CAMPAIGN'S PRECOMMITTED POLICY IS ASKED FIRST AND IS UNCHANGED. Its answer decides
+        // everything below, including whether a second standard is asked at all.
         var reason = ScoringPolicyV1.Reason(run, version.CreatedAt);
+        var answer = reason == PromotionReason.Met ? PromotionVerdict.Promoted : PromotionVerdict.Refused;
+        var scoredBy = campaign.ScoringPolicySha256;
+
+        // THE PAPER ARM — `docs/PRINCIPLES.md` § Evidence, and it is entered on ONE answer only.
+        //
+        // "Forward paper evidence cannot be required before the very first paper run that produces
+        // it." Under `ScoringPolicyV1` alone, a version frozen after the cutoff can be told nothing but
+        // `evidence-precedes-the-freeze` — so the figures are never reached, the loop has no favourable
+        // historical verdict to act on, and the first paper run is unreachable. Here the SAME RUN is
+        // scored again, by `CampaignPolicy.PaperV1`, whose clauses are V1's performance clauses and
+        // whose forward-evidence clause is deliberately absent.
+        //
+        // THE CLAUSES ARE REALLY EVALUATED — the mutant is mapping the freeze refusal straight to
+        // paper-eligible, which makes a program that LOSES money over the held-back months eligible on
+        // the strength of its date. A failure here is refused with the PERFORMANCE clause that failed,
+        // because that is the informative answer: the freeze is a fact about this arm's existence and
+        // tells the submitter nothing it can act on.
+        //
+        // AND THE ROW CARRIES THE SHA OF THE POLICY THAT PRODUCED THE ANSWER, which the campaign is
+        // required to hold — a verdict recorded under the sha of a standard it was not judged by would
+        // read, to `Promotions.Standing` and to every later reader, as having met a standard it never
+        // faced.
+        if (reason == PromotionReason.PrecedesTheFreeze)
+        {
+            var paperSha = CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1);
+
+            if (!string.Equals(campaign.PaperPolicySha256, paperSha, StringComparison.OrdinalIgnoreCase))
+                return RefereeVerdict.No(
+                    $"campaign {campaignId} fixed paper policy {campaign.PaperPolicySha256} at open and "
+                    + $"this build implements {paperSha}. TradeAgent will not judge historical holdout "
+                    + "evidence by a standard other than the one this campaign precommitted to, so no "
+                    + "verdict was recorded.");
+
+            reason = PaperPolicyV1.Reason(run);
+
+            if (reason == PromotionReason.MetOnHistory)
+            {
+                // ONLY A FAVOURABLE PAPER VERDICT IS RECORDED UNDER THE PAPER STANDARD. A REFUSAL down
+                // this arm keeps the campaign's own precommitted sha, and that is not a shortcut: the
+                // three clauses it failed are `ScoringPolicyV1`'s performance clauses word for word, so
+                // `refused / not-profitable-after-costs` is a true and complete statement under V1 —
+                // while a refusal stamped with the paper sha would make `Promotions.Standing` unable to
+                // tell which standard to re-check it against, the two arms producing the same three
+                // reason classes. Only the verdict that CONFERS something needs its own standard named
+                // on the row, and it is the only one that gets it.
+                answer = PromotionVerdict.PaperEligible;
+                scoredBy = paperSha;
+            }
+            else
+            {
+                answer = PromotionVerdict.Refused;
+            }
+        }
 
         return db.Write(_ =>
         {
@@ -248,11 +304,9 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
 
             var promotion = _promotions.Record(new PromotionRow(
-                "", version.Id, campaign.Id, campaign.ScoringPolicySha256, StrategyStore.InterpreterBuild,
+                "", version.Id, campaign.Id, scoredBy, StrategyStore.InterpreterBuild,
                 run.Request.DatasetId, run.Request.DatasetSha256, run.Request.Model.Canonical,
-                EvaluatorVersion, run.RunId,
-                reason == PromotionReason.Met ? PromotionVerdict.Promoted : PromotionVerdict.Refused,
-                reason, at)
+                EvaluatorVersion, run.RunId, answer, reason, at)
             {
                 // THE BOUNDS COME OFF `program`, WHICH IS THE FROZEN PROGRAM THIS METHOD JUST PARSED
                 // AND JUST PROVED HASHES TO `version.Id` — never off `version`, whose columns are a
@@ -267,7 +321,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 MaxDecisionAge = program.Freshness?.MaxDecisionAge
             });
 
-            Deliver(promotion, at);
+Deliver(promotion, at);
             OpenBoundary(promotion, at);
 
             return new RefereeVerdict(true, "", promotion);
@@ -435,6 +489,12 @@ public sealed record RefereeVerdict(bool Ok, string Why, PromotionRow? Promotion
     /// <summary>Whether the version was promoted. False for a refusal AND for a failure to judge.</summary>
     public bool Promoted => Promotion is { IsPromoted: true };
 
+    /// <summary>
+    /// Whether the version may now be observed forward on paper. Disjoint from <see cref="Promoted"/>,
+    /// and never a weaker way of asking it: nothing on the money path reads this.
+    /// </summary>
+    public bool PaperEligible => Promotion is { IsPaperEligible: true };
+
     /// <summary>The holdout run this verdict was computed from, or null where there was none.</summary>
     public string? RunId => Promotion?.HoldoutRunId;
 
@@ -482,6 +542,46 @@ public static class ScoringPolicyV1
 }
 
 /// <summary>
+/// THE PAPER POLICY, AS CODE — <see cref="CampaignPolicy.PaperV1"/> in clauses, applied in this order.
+///
+/// <para><b>It is <see cref="ScoringPolicyV1"/>'s performance clauses and nothing else.</b> The same
+/// three questions, in the same order, over the same run: did it complete, did it close a trade, did
+/// it come out ahead after its declared costs. What is missing is the forward-evidence clause, and
+/// only because this policy is asked ONLY of a run <see cref="ScoringPolicyV1"/> has already refused
+/// on exactly that clause — so nothing here loosens anything: a version that could have been promoted
+/// never reaches this code at all.</para>
+///
+/// <para><b>What it can confer is eligibility for paper observation and never capital.</b>
+/// <c>docs/PRINCIPLES.md</c> § Evidence keeps the four meanings apart, and the live allocation path
+/// refuses a paper-eligible version by name. A relaxation applied under the campaign's own precommitted
+/// sha would be the mutant; this is a SEPARATE text with a separate hash, and the hash of whichever
+/// policy produced a verdict is what that verdict's row carries.</para>
+///
+/// <para><b>Every clause answers a REASON CLASS and never a number</b>, for the reason
+/// <see cref="ScoringPolicyV1"/>'s do: the class is the only thing that crosses back to the team that
+/// submitted the version.</para>
+/// </summary>
+public static class PaperPolicyV1
+{
+    /// <summary>
+    /// WHICH CLAUSE THIS RUN LANDS ON: <see cref="PromotionReason.MetOnHistory"/> when it passes them
+    /// all. There is no <c>frozenAt</c> parameter and that is the whole difference — the freeze has
+    /// already been asked and already answered, and asking it again here could only produce the
+    /// refusal that sent the run down this arm.
+    /// </summary>
+    public static string Reason(BacktestResult run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+
+        if (run.Faulted) return PromotionReason.DidNotComplete;
+        if (run.Metrics.Trades <= 0) return PromotionReason.NoTrade;
+        if (run.Metrics.NetPnl is not { } net || net <= 0m) return PromotionReason.NotProfitable;
+
+        return PromotionReason.MetOnHistory;
+    }
+}
+
+/// <summary>
 /// WHAT THE TEAM IS TOLD ABOUT A VERDICT — the whole of it, in one place, so that what crosses the
 /// boundary is a decision somebody made rather than whatever a caller happened to pass.
 ///
@@ -512,11 +612,35 @@ public static class RefereeFeedback
             - verdict: {promotion.Verdict}
             - reason: {promotion.Reason}
             - what that means: {PromotionReason.Words(promotion.Reason)}
-
+            {PaperParagraph(promotion)}
             No figure from those months is in this note and none ever will be. The run's metrics and its
             trace are the account owner's private evaluation evidence; what you may have is the verdict
             and the reason, and a verdict is charged against a small budget, so there are few of them.
             You cannot ask for one: TradeAgent decides when a version is judged.
             """;
     }
+
+    /// <summary>
+    /// WHAT PAPER-ELIGIBLE MEANS, IN WORDS, AND WHY IT IS NOT A PROMOTION — or an empty line, because
+    /// this verdict is one of the other two.
+    ///
+    /// <para>It is here rather than left to the reason class because the class is a word and the
+    /// distinction is a rule: the research process that reads this has to know that a favourable
+    /// verdict has just been recorded AND that no capital can follow from it, or it will plan a
+    /// deployment the gateway refuses. <c>docs/PRINCIPLES.md</c> § Evidence asks for exactly that
+    /// separation of meanings.</para>
+    ///
+    /// <para><b>It carries no figure, like everything else that crosses.</b> It is a function of the
+    /// promotion's VERDICT alone — it reads no metric, and there is no number in the text at all, so
+    /// the test that counts the digits in this note is the same test either way.</para>
+    /// </summary>
+    static string PaperParagraph(PromotionRow promotion) => !promotion.IsPaperEligible ? "" : """
+
+        This verdict is PAPER-ELIGIBLE and it is not promoted. The held-back months it was measured
+        over do not post-date this version's freeze, so they are history the submission may already
+        have been written around, and no result over them can be evidence for the account owner's
+        capital. What it does buy is eligibility for paper observation: an ordinary experiment, run
+        forward, on simulated money. Only forward evidence collected after the freeze can promote a
+        version, and only the account owner allocates capital.
+        """;
 }

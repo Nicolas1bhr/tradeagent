@@ -15,7 +15,16 @@ public static class PromotionVerdict
     /// <summary>It did not, and <see cref="PromotionReason"/> says which clause it failed.</summary>
     public const string Refused = "refused";
 
-    public static bool IsKnown(string? v) => v is Promoted or Refused;
+    /// <summary>
+    /// The evidence met the campaign's fixed PAPER policy over held-back months that do NOT post-date
+    /// the version's freeze — a favourable HISTORICAL verdict, which <c>docs/PRINCIPLES.md</c> §
+    /// Evidence asks be a different meaning from eligibility for live capital. It buys eligibility for
+    /// paper observation and nothing else: <see cref="PromotionRow.IsPromoted"/> is false for it and
+    /// <c>Allocations.Record</c> refuses it in words.
+    /// </summary>
+    public const string PaperEligible = "paper-eligible";
+
+    public static bool IsKnown(string? v) => v is Promoted or Refused or PaperEligible;
 }
 
 /// <summary>
@@ -51,8 +60,16 @@ public static class PromotionReason
     /// <summary>Refused: what closed did not cover its own declared fees and slippage.</summary>
     public const string NotProfitable = "not-profitable-after-costs";
 
+    /// <summary>
+    /// Paper-eligible: the run completed, traded, and came out ahead after its declared costs — but
+    /// over a window that does not post-date the version's freeze, so <see cref="Met"/> is not
+    /// available to it and <see cref="PrecedesTheFreeze"/> is not the informative answer either.
+    /// <c>CampaignPolicy.PaperV1</c> is the standard that was applied and its sha is on the row.
+    /// </summary>
+    public const string MetOnHistory = "meets-the-paper-policy-on-historical-evidence";
+
     public static bool IsKnown(string? r) =>
-        r is Met or PrecedesTheFreeze or DidNotComplete or NoTrade or NotProfitable;
+        r is Met or PrecedesTheFreeze or DidNotComplete or NoTrade or NotProfitable or MetOnHistory;
 
     /// <summary>The same reason in the owner's words. No figure is in any of them, by construction.</summary>
     public static string Words(string reason) => reason switch
@@ -63,6 +80,9 @@ public static class PromotionReason
         DidNotComplete => "the holdout run halted before the end of its window",
         NoTrade => "the version closed no trade at all over the held-back months",
         NotProfitable => "what it did close did not cover its own declared fees and slippage",
+        MetOnHistory => "the version met this campaign's paper policy over held-back months that do not "
+            + "post-date its own freeze, so it may be observed forward on paper and is not promoted and "
+            + "gets no capital",
         _ => reason
     };
 }
@@ -105,6 +125,14 @@ public sealed record PromotionRow(
     DateTimeOffset At)
 {
     public bool IsPromoted => Verdict == PromotionVerdict.Promoted;
+
+    /// <summary>
+    /// Whether this verdict is the favourable HISTORICAL one. It is deliberately a second question
+    /// rather than a widening of <see cref="IsPromoted"/>: every caller on the money path asks that
+    /// one, and an <c>IsPromoted</c> that answered true here would put the owner's capital behind
+    /// months the submission may already have been written around.
+    /// </summary>
+    public bool IsPaperEligible => Verdict == PromotionVerdict.PaperEligible;
 
     /// <summary>
     /// THE BOUND TUPLE, HASHED: nine facts, newline separated, in this order. The order and the
