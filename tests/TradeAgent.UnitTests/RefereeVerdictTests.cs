@@ -483,20 +483,49 @@ public class RefereeVerdictTests
     }
 
     /// <summary>
-    /// AND THERE IS NO OP THAT ASKS FOR A VERDICT OR WRITES A PROMOTION. The whole agent-facing
-    /// vocabulary is asked, by name, so an op added later has to be justified here rather than pass
-    /// quietly: the caller being judged must not be able to spend the owner's evaluation budget or to
-    /// mark its own homework.
+    /// THE VERDICT REQUEST IS THE ONE OP THAT REACHES ANY OF THIS, AND EVERY OTHER PART OF IT STILL HAS
+    /// NONE. The whole agent-facing vocabulary is asked, by name, so an op added later has to be
+    /// justified here rather than pass quietly.
+    ///
+    /// <para><b>What changed, and what did not</b> (`U-verdict-op`). Until that unit this asserted that
+    /// no op was even NAMED verdict, and the sentence it stood for was `docs/CONTRACTS.md`'s "no pipe op
+    /// and no `trade` verb reaches it". The REQUEST is now reachable — `docs/PRINCIPLES.md` § Evidence:
+    /// models propose candidates, software decides admission and issues the verdict — and the property
+    /// that mattered is kept by its SHAPE rather than by its absence: the caller names a version and at
+    /// most a dataset, and the campaign's own verdict budget is what bounds it. So the assertion is now
+    /// that there is exactly ONE such op, that those two are the whole of what it takes, and that
+    /// nothing it could pass chooses the months, the scorer or the friction its evidence is judged
+    /// under.</para>
+    ///
+    /// <para>And the rest of the sentence stands unchanged: no op writes a promotion, opens, renews or
+    /// re-budgets a campaign, registers a trial, moves a holdout cutoff or writes a disposition. The
+    /// caller being judged must not be able to mark its own homework.</para>
     /// </summary>
     [Fact]
     public void No_pipe_op_asks_for_a_verdict_or_writes_a_promotion()
     {
         foreach (var op in GatewaySchema.Ops())
         {
-            Assert.DoesNotContain("verdict", op.Op, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("promot", op.Op, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("referee", op.Op, StringComparison.OrdinalIgnoreCase);
+            foreach (var forbidden in new[] { "promot", "referee", "holdout", "campaign", "trial", "disposition" })
+                Assert.DoesNotContain(forbidden, op.Op, StringComparison.OrdinalIgnoreCase);
+
+            if (op.Op.Contains("verdict", StringComparison.OrdinalIgnoreCase))
+                Assert.Equal(Ops.Verdict, op.Op);
         }
+
+        // EXACTLY ONE, AND IT IS THE REQUEST — not a writer of one.
+        var verdict = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Verdict);
+        Assert.False(verdict.Mutating);
+        Assert.DoesNotContain(Ops.Verdict, Ops.Mutating);
+
+        // AND THE WHOLE OF WHAT A CALLER MAY PASS. The execution model, the window, the policy and the
+        // campaign are deliberately absent: a submitter that could pass any of them would be choosing
+        // the standard its own evidence is scored against.
+        Assert.Equal(["version", "dataset"], verdict.Args.Select(a => a.Name).ToArray());
+        Assert.True(verdict.Args.Single(a => a.Name == "version").Required);
+        Assert.False(verdict.Args.Single(a => a.Name == "dataset").Required);
+        foreach (var never in new[] { "fees", "slippage", "from", "to", "policy", "campaign", "model" })
+            Assert.DoesNotContain(never, verdict.Args.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
     }
 
     // ---- the bounds a verdict was taken under -----------------------------------------------------

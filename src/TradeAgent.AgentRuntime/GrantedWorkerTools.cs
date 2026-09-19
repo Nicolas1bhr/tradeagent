@@ -91,6 +91,16 @@ public sealed class GrantedWorkerTools(
     /// only alternative. What it WRITES is the app's own measurement of a run the worker asked for, and
     /// there is no op here that edits or deletes one.</para>
     ///
+    /// <para><b><see cref="Ops.Verdict"/> is on it, for every role, for the reason
+    /// <see cref="Ops.Backtest"/> is.</b> It is the other half of the same loop: a role that can have a
+    /// program measured and cannot have it JUDGED can produce candidates and never learn whether any of
+    /// them is worth anything, which is the arrow `docs/PRINCIPLES.md` § Evidence describes — models
+    /// propose, software decides admission and issues the verdict. It is read-only for the gateway,
+    /// deliberately not in <see cref="Ops.Mutating"/>, and bounded on the app's side rather than here:
+    /// the campaign's verdict budget is what makes it scarce, the app chooses the months and the
+    /// scorer, and no figure from them comes back. A per-role list here would be the second role check
+    /// this class refuses to have, and it would bound nothing the campaign does not already bound.</para>
+    ///
     /// <para><b><see cref="Ops.VenueList"/> is on it too, for every role, and for the same reason.</b> It
     /// is a READ — it asks the connector nothing, writes nothing, and is deliberately not in
     /// <see cref="Ops.Mutating"/>. Every part of the AI has to know an instrument's quantity increment
@@ -102,7 +112,7 @@ public sealed class GrantedWorkerTools(
     [
         Ops.Status, Ops.Connectors, Ops.Accounts, Ops.Account, Ops.Instruments, Ops.Quote,
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
-        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.VenueList,
+        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.Verdict, Ops.VenueList,
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 

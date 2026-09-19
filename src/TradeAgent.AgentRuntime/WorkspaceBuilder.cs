@@ -293,6 +293,12 @@ public static class WorkspaceBuilder
       every run you register is counted against the campaign's own budget of attempts, which a restart
       does not reset. It still proves nothing about a FILL: a backtest is a reason to test something and
       never a record of a trade;
+    - when a version of yours has been backtested and you think it is finished, `trade verdict --version
+      <hash>` has TradeAgent judge it over the months you were never shown. It COSTS one of that
+      campaign's final judgements — three by default, counted across renewals and never reset — so it is
+      for a candidate you would stand behind, not for a sweep. What comes back is a verdict and a reason
+      class in WORDS and never a figure from those months; asking twice about one version is one
+      judgement, so waiting for the data to grow and asking again buys you nothing;
     - go back over `JOURNAL.md` and work out why the last thing failed;
     - build the tooling in `scripts/` that makes the next test cheaper than the last one.
 

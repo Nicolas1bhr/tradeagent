@@ -226,6 +226,16 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             Opt("from"); Opt("to"); Opt("fees"); Opt("slippage"); Opt("increment"); Opt("capital");
             return (Ops.Backtest, a);
 
+        // `trade verdict --version <hash> [--dataset 3]`. The agent ASKS; the app judges. It reads no
+        // bar and hands none back: what comes back is the verdict and its reason class in words. There
+        // is deliberately no `--fees`, no `--slippage` and no window — the execution model is the
+        // JUDGE'S and the months are the campaign's own, because a submitter that could choose either
+        // would be choosing the standard its own evidence was scored against.
+        case "verdict":
+            a["version"] = flags.GetValueOrDefault("version") ?? pos.ElementAtOrDefault(0) ?? "";
+            Opt("dataset");
+            return (Ops.Verdict, a);
+
         case "material":
         {
             var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
@@ -290,6 +300,11 @@ static void Usage()
                      run one of your own programs over that history and record it. The four
                      model numbers are yours to declare and are part of the run's identity;
                      omitted, the run declares no friction at all and says so
+      trade verdict --version <hash> [--dataset 3]   ask TradeAgent to judge a version you have
+                     already backtested, over the months it holds back from you. It COSTS one of
+                     the campaign's final judgements — three by default, counted across renewals
+                     and never reset — and what comes back is a verdict and a reason class in
+                     words, never a figure. Asking twice about one version is one judgement
 
       trade material list [--origin inbox|agent]     what the owner gave you, and what you made
       trade material ran <sha> <what it did>         you executed it
