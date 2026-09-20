@@ -5,6 +5,17 @@
     <ProjectReference Include="../TradeAgent.Provisioning/TradeAgent.Provisioning.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- WHAT A ROLE IS GIVEN TO READ. `ResearchLibrary` writes these into every role's home on every
+         start, which is the only way the strategy language reaches a model: there is no terminal in
+         this product and no documentation to open. The reference is the REPOSITORY'S doc file rather
+         than a copy of it, so the grammar a model is shown and the grammar the parser tests prove are
+         one file; the three programs are the ones `DayOneStrategyTests` pins to their ids, shipped
+         byte for byte from here and read by those tests from this same path. -->
+    <Content Include="../../docs/STRATEGY-LANGUAGE.md" Link="STRATEGY-LANGUAGE.md"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Strategies/*.strategy" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- The relay's crash boundaries are an internal seam: the property this unit is built on is
          "a crash at each handoff boundary recovers to exactly one task", and it cannot be asked
          without a way to make the process die exactly there. Test-only visibility, the same

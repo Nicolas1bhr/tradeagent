@@ -82,6 +82,9 @@ public static class WorkspaceBuilder
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
 
         File.WriteAllText(Path.Combine(home, "AGENTS.md"), Instructions(ctx));
+        // THE LANGUAGE AND ITS WORKED PROGRAMS, app-owned exactly as the mission file above is. A role
+        // that has to write a strategy has no other source for the grammar: there is no terminal here.
+        ResearchLibrary.Write(home);
         File.WriteAllText(Path.Combine(home, ".tradeagent", "context.json"), Json.Write(ctx, pretty: true));
         return home;
     }
