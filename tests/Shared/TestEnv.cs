@@ -48,12 +48,24 @@ public static class TestEnv
     /// </summary>
     public static readonly string[] Instruments = ["ES", "NQ", "MES", "YM", "XYZ"];
 
-    /// <summary>A gateway wired to a fresh simulator, already healthy and allowed to trade.</summary>
+    /// <summary>
+    /// A gateway wired to a fresh simulator, already healthy and allowed to trade.
+    ///
+    /// <para><paramref name="emergencyBudget"/> is the simulator's whole risk-reducing operation
+    /// budget, and it is a REAL wall clock (<see cref="Environment.TickCount64"/>) rather than
+    /// anything a test's <c>TimeProvider</c> can move. Null keeps the simulator's shipped two
+    /// seconds; a fixture whose verdict is not ABOUT that budget passes a generous one, for the
+    /// reason <c>SweepRequestIdTests.SweepBudget</c> states at length — inside it are durable SQLite
+    /// commits at <c>synchronous=FULL</c>, which is a clock kept by the runner's disk.</para>
+    /// </summary>
     public static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> Ready(
-        Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null)
+        Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null,
+        TimeSpan? emergencyBudget = null)
     {
         var db = NewDb();
-        var conn = new FakeConnector(new FakeBroker(), faults);
+        var conn = emergencyBudget is { } budget
+            ? new FakeConnector(new FakeBroker(), faults) { EmergencyBudget = budget }
+            : new FakeConnector(new FakeBroker(), faults);
         var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {

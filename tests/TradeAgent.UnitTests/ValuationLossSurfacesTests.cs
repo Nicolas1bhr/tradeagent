@@ -37,6 +37,34 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
     /// <summary>A feed that has stopped: every price the platform serves is a memory.</summary>
     static readonly TimeSpan Silent = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// THE ONE WALL CLOCK IN THIS FILE, AND IT IS THE SIMULATOR'S EMERGENCY BUDGET.
+    ///
+    /// <para>Everything these fixtures assert runs on <see cref="TestClock"/>, which is why they can
+    /// spell four thresholds and an age in seconds. One thing does not: the data-loss exit does its
+    /// cancel-then-settle-then-close inside <c>RiskReducingScope.Begin(Connector.EmergencyBudget)</c>,
+    /// an absolute <see cref="Environment.TickCount64"/> deadline, and the simulator's shipped
+    /// default is two seconds. Inside it are durable SQLite commits at <c>synchronous=FULL</c>.</para>
+    ///
+    /// <para><b>MEASURED, on draft PR #23 (runs 35504722157 and 35513092386), by a throwaway probe
+    /// that timed each health pass of the exit fixture, three runs each:</b> the pass that fires
+    /// the exit spent 29-33 ms on ubuntu-latest, 17-19 ms on macos-latest and <b>833-1258 ms on
+    /// windows-latest</b> — of 2000. A windows job whose Unit suite runs 19 m 14 s against the usual
+    /// ~40 s has nothing like that left, and the SAME probe with the budget cut to 1 ms reproduced
+    /// the runner's red exactly on all three runners, in both runs: the valuation CANCEL press does not resolve, so
+    /// <c>ExitLostValuationAsync</c> refuses to send a second press of its own kind
+    /// (<c>valuation_cancel_press_already_open</c>, <c>valuation_exit_press_already_open</c> in the
+    /// engineering log), no exit row is written, and the report's list prints its honest
+    /// <c>none</c> — on which <c>Assert.Contains("VALUATION_LOST", text)</c> fails with
+    /// <c>Sub-string not found</c>. The product is right at every step of that; the fixture was
+    /// asking a question whose answer depended on the runner's disk.</para>
+    ///
+    /// <para>Twenty seconds is 16x the worst of those three and the number the sweep family settled
+    /// on for the same reason (<c>SweepRequestIdTests.SweepBudget</c>). Nothing is loosened: no
+    /// assertion below moves, and no test here is ABOUT the emergency budget.</para>
+    /// </summary>
+    static readonly TimeSpan Emergency = TimeSpan.FromSeconds(20);
+
     static async Task<(TradingGateway Gw, FakeConnector Conn, TradeAgent.Core.Db.Database Db, TestClock Clock)>
         Ready(decimal dailyBudget = 1_000m, decimal exitAfterMinutes = 15m)
     {
@@ -45,9 +73,25 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
         {
             s.Risk.MaxDailyLoss = dailyBudget;
             s.Risk.ValuationLossExitMinutes = exitAfterMinutes;
-        }, new GatewayOptions { Clock = clock });
+        }, new GatewayOptions { Clock = clock }, emergencyBudget: Emergency);
         return (gw, conn, db, clock);
     }
+
+    /// <summary>
+    /// HOW MANY HEALTH PASSES A FIXTURE HERE WILL DRIVE BEFORE IT CALLS THE PRODUCT WRONG.
+    ///
+    /// <para>A pass that throws is swallowed by <c>RefreshHealthAsync</c>'s own catch and a pass
+    /// whose episode row will not commit is dropped by <c>WriteValuationEpisode</c> — by design, in
+    /// both cases: "an episode the app cannot record is not an episode it may act on". Either one
+    /// shifts every later step of a fixture that counts passes instead of watching for the record.
+    /// MEASURED on the same probe: losing the FIRST unvaluable pass opens the episode 20 seconds
+    /// late and the exit never fires inside four passes (<c>VALUATION_LOST in the report: False</c>
+    /// on all three runners), and losing the pass that would fire the exit does the same; driving to
+    /// the record instead took 4 passes normally and 5 with a pass lost, on every runner and at
+    /// every lost index. Twelve is three times the four this fixture needs, and it is a bound rather
+    /// than a wait: nothing here sleeps, the clock is the test's own.</para>
+    /// </summary>
+    const int Passes = 12;
 
     /// <summary>
     /// THE REPORT SAYS THE BUDGET IS A THRESHOLD AND NOT A MAXIMUM LOSS (item 3).
@@ -156,7 +200,22 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
 
         await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
         conn.Faults.QuoteAge = Silent;
-        for (var i = 0; i < 3; i++)
+
+        // THE EPISODE HAS TO OPEN BEFORE ITS CLOCK CAN BE READ, and which pass opens it is the
+        // product's answer rather than this fixture's arithmetic — see Passes. So the first tick is
+        // watched for rather than counted, and the two ticks AFTER it are what the 40 seconds below
+        // is made of, whichever pass the record turned out to be written on.
+        var opened = 0;
+        while (gw.Reports.Compose(clock.GetUtcNow()).Performance.ValuationLost.Count == 0)
+        {
+            Assert.True(opened < Passes,
+                $"no episode was opened for an unvaluable ES in {opened} loss watches");
+            clock.Advance(Tick);
+            await gw.LossWatchAsync();
+            opened++;
+        }
+
+        for (var i = 0; i < 2; i++)
         {
             clock.Advance(Tick);
             await gw.LossWatchAsync();
@@ -196,10 +255,22 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
         await gw.RefreshHealthAsync();
 
         conn.Faults.QuoteAge = Silent;
-        for (var i = 0; i < 4; i++)
+
+        // DRIVEN TO THE PRODUCT'S OWN RECORD, NOT TO A PASS COUNT — see Passes. The exit is due on
+        // the fourth pass and the fixture used to stop there, so a single pass the runner lost took
+        // the exit line out of the report and left the list saying its honest `none`, on which the
+        // assertions below fail with `Sub-string not found` rather than with anything about the
+        // product. The health pass is idempotent and the clock is this test's, so asking again costs
+        // nothing at all.
+        var passes = 0;
+        while (gw.Reports.Compose(clock.GetUtcNow()).Performance.ValuationExits.Count == 0)
         {
+            Assert.True(passes < Passes,
+                $"no data-loss exit was recorded in {passes} health passes, {passes * Tick.TotalSeconds:0} "
+                + "seconds past a bound of one minute");
             clock.Advance(Tick);
             await gw.RefreshHealthAsync();
+            passes++;
         }
 
         var text = DailyReportText.Render(gw.Reports.Compose(clock.GetUtcNow()));

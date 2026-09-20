@@ -107,6 +107,14 @@ public sealed class StubBridge : IAsyncDisposable
         };
     }
 
+    /// <summary>
+    /// COMPLETES WHEN THE FAR END HAS LET THIS PEER GO — the read loop ends on end-of-stream, which
+    /// off a connector that refused us is the connector's own accept loop disposing the pipe
+    /// instance in its <c>finally</c>. <c>Drop</c> runs BEFORE that dispose, so this task completing
+    /// means every <c>ConnectionChanged</c> the refusal raises has already been invoked.
+    /// </summary>
+    public Task Ended => _loop ?? Task.CompletedTask;
+
     public async Task ConnectAsync(CancellationToken ct = default)
     {
         _client = new NamedPipeClientStream(".", _pipe, PipeDirection.InOut, PipeOptions.Asynchronous);

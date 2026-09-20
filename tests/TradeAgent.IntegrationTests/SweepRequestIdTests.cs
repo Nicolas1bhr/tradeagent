@@ -679,11 +679,39 @@ public class SweepRequestIdTests
     ///     5000 ms is two of the worst of those plus half a second.
     ///
     /// The price is the sweep's wall time, which is the budget: ~17 s, inside the 30 s this fixture
-    /// waits for its reply. NOT `Timing`: the verdict needs the runner to keep no clock of its own —
-    /// nothing here is measured with a stopwatch, and the one runner-dependent quantity is covered
-    /// 150x over by its own measurement.
+    /// waits for its reply.
+    ///
+    /// AND IT IS `Timing`, WHICH THE PARAGRAPH ABOVE USED TO DENY — the denial rested on the room
+    /// being wide enough that no runner could reach it, and windows-latest reached it.
+    ///
+    /// <para><b>Why the category, said as the workflow says it:</b> a test belongs there when its
+    /// verdict needs the RUNNER to keep a wall clock as well as the product to be right, either by
+    /// measuring a duration or by "asserting an outcome that the product only reaches while a
+    /// deadline of its own is still open". The second clause is this fixture exactly. `sent-not-
+    /// confirmed` is what the cancel reads WHILE something is left of the operation deadline when
+    /// its turn comes; with nothing left the product answers `not-sent`, which is honest, correct,
+    /// and the reply that fails <c>Assert.NotEmpty</c>. That is run 35501396212's red at
+    /// <c>d9ae716</c>, on a windows job whose Unit suite took 19 m 14 s against the usual ~40 s.</para>
+    ///
+    /// <para><b>MEASURED, and this is what decides it rather than the red.</b> D — everything the
+    /// RUNNER spends inside the operation, the composite row, the book read's own SQL and each leg's
+    /// write-ahead row, all durable SQLite commits at <c>synchronous=FULL</c> — was measured
+    /// directly on draft PR #23 (runs 35504722157 and 35513092386) by running THIS sweep on THIS
+    /// fixture with the latency at zero and a five-minute budget, so that the reply's wall time IS
+    /// D. Three rounds per runner over three runs: ubuntu-latest 4-10 ms, macos-latest 2-6 ms,
+    /// windows-latest 31-254 ms. Against 5000 ms of room that is 20x on the worst windows reading —
+    /// and the job that went red was running 29x slow by its own suite's clock.</para>
+    ///
+    /// <para><b>Why not simply buy more room.</b> The room is <c>B - 2L</c> and the cancel must not
+    /// fit in it, so <c>L > B - 2L</c> and the room can never exceed a third of the budget — while
+    /// the sweep's wall time IS the budget. Room costs three times itself in seconds, every run, on
+    /// every platform: covering 29x of the healthy windows figure needs B = 22 s, and the 39.52x
+    /// this repository has already measured for windows file IO needs more. Buying a factor that
+    /// the next starved job beats is what the category exists instead of. Nothing is loosened to
+    /// get in: B, L and every assertion are byte-identical to the U-sweep-latency-win tip.</para>
     /// </summary>
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled()
     {
         const int B = 17_000;   // the operation budget
@@ -1066,10 +1094,20 @@ public class SweepRequestIdTests
     /// <c>B = 7 s, L = 4 s</c>: the read costs 4 of the 7, so the composite commit has 3000 ms —
     /// the worst bare one-row commit U-press-win-3 measured on windows-latest is 2234 ms — and the
     /// resolution cannot fit whatever happens, since at most 3000 ms can be left against the 4000 it
-    /// declares. Not `Timing`: no stopwatch is read here, and the one runner-dependent quantity is
-    /// stated above with the measurement that covers it.
+    /// declares.
+    ///
+    /// AND IT IS `Timing` FOR ITS CLASSMATE'S REASON, WITH LESS ROOM THAN THE CLASSMATE HAD. The
+    /// sentence this asserts is reached only while the operation's deadline is still open when each
+    /// leg is issued — the workflow's second clause, word for word — and the room that has to hold
+    /// is 3000 ms against the 5000 ms that windows-latest went through at `d9ae716`. MEASURED beside
+    /// it on draft PR #23 (runs 35504722157 and 35513092386, three rounds per runner over three
+    /// runs, this sweep with the latency at zero and a five-minute budget so the reply's wall time
+    /// IS the runner's spend): ubuntu-latest 4-10 ms, macos-latest 2-6 ms, windows-latest 31-254 ms.
+    /// That is a margin of 12x here against 20x there, and there was not enough. Membership is this
+    /// measurement and not the red: this fixture has never failed on a runner.
     /// </summary>
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task A_leg_that_failed_before_the_wire_reads_not_sent_and_writes_no_record()
     {
         const int B = 7_000;   // the operation budget
