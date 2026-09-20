@@ -6612,3 +6612,37 @@ sets 1913 → 1918, 0 removed, 5 added. Scan clean; no trailers; `rev-list --cou
 **NOT done, NOT verified:** no real model has read the reference; the box, the installer's actual staging on Windows (the publish was run on this Mac); noted
 and NOT fixed, a one-item follow-up: `MaterialScanner` walks `research/` and `strategies/`, so these app-written files record as `MaterialOrigin.Agent` — the
 reading it already applies to the app-owned `in/`.
+
+## 2026-09-20 — U-deployment landed: a paper deployment is an app-owned record with lineage, an execution identity the pipe cannot mint, a bar cursor and write-ahead operations
+
+The paper allocation → deployment arrow (`manager-prompt.md` § 5 "Forward execution"), built by one fresh Opus builder from the 38-line brief
+`docs/briefs/U-deployment.md` (landed `636ea94`), cut from the envelope tip, rebased three times as `main` moved, no conflicts. Merge `dae8605`, 5 commits (4 items + the report), 24 files, +2326/−15.
+**Schema 26.** MONEY PATH: a new in-process caller of `PlaceAsync` and `CloseAsync`, PAPER only.
+
+- **The record:** `strategy_deployment` — seven identity facts hashed into the id, immutable; `state` (`active` | `suspended` | `ended`), `cursor_open_time`,
+  reasons and instants written only by `Start/Suspend/Resume/End`, one guarded UPDATE each; `deployment_op` keyed by the sendable `dp-<12>-<bar>-<seq>` request
+  id with kind, the intent as JSON, `planned → dispatched → resolved | refused`, and the answer. Both rollback fixtures drop 26.
+- **The identity:** `AgentContext.Deployment(id)` — `ForAgent` cannot build one, the pipe refuses the reserved name and serves none of its rows; refused
+  `MODE_FORBIDS_EXECUTION` in both live modes at authorisation AND re-asked at dispatch; under it `PlaceAsync` runs every existing gate unchanged. RED with the
+  live guard removed, quoted: the order was PARKED for approval (`"request dp-live-1 is waiting for your app"`) rather than refused — the guard is what refuses.
+- **Policy and lifecycle, app-owned (gateway methods, the ledger class owning the four transitions — a deviation stated):** `StartPaperDeploymentsDue` on the
+  mission seam after `AllocatePaperDue` (one deployment per standing paper allocation while the envelope has room); `ReconcilePaperDeploymentsAsync` in the
+  app's and the gateway host's loops (a `dispatched` op takes its `execution_request` row's state, UNKNOWN stays unresolved and blocks the cursor, never re-sent; a
+  `planned` op without a row is dispatched once, `TryCreate` refusing a duplicate); `SuspendIfMoved` on the gateway's (connector, mode, account); `End(reason)` cancels
+  each working order then closes through `CloseAsync`, the allocation and the envelope untouched. `CloseAsync` gained an optional `strategyVersionId` so the
+  flatten names the run's version — without it the flatten was refused `ENVELOPE_ACCOUNT_RESERVED` on the envelope's own account, that guard working.
+- **Surfaces:** `trade deployment list` / `stop --id` (a role may end its own version's paper run), `status.deployments`, report section 4, the Safety card's
+  one press plus confirm; `CONTRACTS.md` "The paper deployment"; `USER-GUIDE.md`. `Every_mutating_op_dispatches_once_for_one_request_id` gained a
+  `deployment-stop` arm (its own comment asked for it); nothing removed or renamed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `41d3759` (rebased onto `3746774`), Release
+`--no-incremental`: 0 warnings, 0 errors; Unit 1181 + Fault 399 + Integration 687 = 2267 passed, 0 failed, 1 skipped (11 m 12 s); touched classes 3× →
+`PaperDeploymentTests` 6, `VenueCatalogTests` + `PaperEligibleVerdictTests` 18, `ReplayedSweepSendsNothingTests` 4; names 1919 → 1925, 0 removed. RED on the base
+`71dd3a9`: 57 compile errors, e.g. `PaperDeploymentTests.cs(164,23): error CS1061: 'TradingGateway' does not contain a definition for 'Deployments'`; (e) behavioural
+as quoted above. Mutant (i), the op written after dispatch: `Assert.Single() Failure: The collection was empty` (`:257`; log `written before the wire: 0 — none /
+orders at the wire : 1 then 0`); mutant (ii), the switch check on the mode alone: `Assert.Equal() Failure … Expected: "suspended" Actual: "active"` (`:329`); both
+put back. Manager's gate at `dae8605` (the reported tip, 0 behind `main` `3746774`; `src`/`tests` identical to the code tip `41d3759`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1181/1181 (25 s), Fault 399/399 (1 m 29 s), Integration 687/688, 1 skipped (11 m 7 s, its normal length, beside two builders' work) → 0 failed. Names vs `main` (git objects): sets 1918 → 1924, 0 removed, 6 added. Scan clean; no trailers; `rev-list --count` → 0. CI at `dae8605`: recorded when complete.
+
+**NOT done, NOT verified:** no runner emits an intent — the `entry`/`exit`/`stop`/`target` kinds are writable and never produced; the only ops this build
+dispatches are an end's `flatten` and a `cancel` per working order (`U-runner` cut from this tip); the Safety card never rendered; no real model; no box, no ATAS,
+no venue, no real order.
