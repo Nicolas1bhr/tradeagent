@@ -264,8 +264,14 @@ public static class Versions
     /// account. Existing allocation rows carry none of them and are read as LIVE, because every one of
     /// them is an owner's own press and a press is never a paper grant
     /// (<c>Allocations.StandingForLive</c>).</para>
+    ///
+    /// <para><b>26 adds <c>strategy_deployment</c> and <c>deployment_op</c></b> — what is actually
+    /// being run forward, and every operation it wrote down BEFORE dispatching it. The seven identity
+    /// facts are immutable and hashed into the id; a platform, mode or account that moves suspends the
+    /// deployment and never retargets it; and the cursor is the last bar whose operations ALL
+    /// resolved, so an answer nobody has blocks it rather than being read as a no.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 25;
+    public const int DatabaseSchemaVersion = 26;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

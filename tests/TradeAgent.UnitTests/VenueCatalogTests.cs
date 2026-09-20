@@ -237,6 +237,8 @@ public class VenueCatalogTests
                 ALTER TABLE fill DROP COLUMN connector;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
+                DROP TABLE deployment_op;
+                DROP TABLE strategy_deployment;
                 DROP TABLE strategy_allocation;
                 DROP TABLE paper_envelope;
                 DROP TABLE venue_instrument;

@@ -266,6 +266,8 @@ public class PaperEligibleVerdictTests
                 ALTER TABLE strategy_allocation DROP COLUMN mode;
                 ALTER TABLE strategy_allocation DROP COLUMN account_id;
                 ALTER TABLE strategy_allocation DROP COLUMN envelope_id;
+                DROP TABLE deployment_op;
+                DROP TABLE strategy_deployment;
                 DROP TABLE paper_envelope;
                 DROP TABLE forward_bar;
                 DROP TABLE forward_gap;

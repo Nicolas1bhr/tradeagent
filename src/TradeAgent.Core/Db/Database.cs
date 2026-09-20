@@ -1508,6 +1508,102 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','25') ON CONFLICT(key) DO UPDATE SET value='25';");
         }
 
+        if (have < 26)
+        {
+            // THE PAPER DEPLOYMENT: WHAT IS ACTUALLY BEING RUN FORWARD — `U-deployment`.
+            //
+            // `manager-prompt.md` § 5 asks for "an explicit app-owned execution identity with lineage
+            // back to the deployment and the research", and for "persisted progress and unresolved
+            // operations so restart, replay, replacement or cancellation cannot duplicate exposure".
+            // Before this rung an allocation said what a version MAY do and nothing at all said that
+            // it is doing it: a restart had no progress to resume, a replacement had nothing to wait
+            // for, and an operation that was sent and never answered belonged to no run.
+            //
+            // TWO TABLES BECAUSE THERE ARE TWO DIFFERENT FACTS. `strategy_deployment` is the RUN —
+            // seven identity facts, a state and a cursor. `deployment_op` is one INTENDED operation,
+            // written before it is dispatched and settled only on a definite answer. Merging them
+            // would put the progress of a run in the same row as the run, which is the shape that
+            // makes "an order this app cannot account for" unwritable.
+            //
+            // `strategy_deployment.id` IS THE BINDING, the way `strategy_allocation.id` and
+            // `paper_envelope.id` are: the SHA-256 of the seven facts `StrategyDeploymentRow.IdOf`
+            // spells, in that order. The state, the cursor, the reasons and the two later instants are
+            // OUTSIDE it — they are what happened to the deployment and not what it is, exactly as
+            // `effective_to` is outside an allocation's id and `withdrawn_at` outside an envelope's.
+            //
+            // THE SEVEN IDENTITY COLUMNS ARE IMMUTABLE AND NO STATEMENT IN `DeploymentStore` UPDATES
+            // ONE. A platform, mode or account that moves SUSPENDS the deployment; it never retargets
+            // it. A deployment whose account could be rewritten is a deployment whose fills are
+            // attributable to nothing, which is `docs/COUNCIL.md`:210-211 arriving from the other side.
+            //
+            // `cursor_open_time` IS NULLABLE AND NULL AT THE START, and it is the last bar whose
+            // operations ALL resolved rather than the last bar seen. A bar carrying an operation this
+            // app cannot account for is a bar the deployment has not finished, and a cursor past it
+            // would be the software deciding that an unresolved order did not happen.
+            //
+            // NO FOREIGN KEY TO `strategy_allocation` OR TO `paper_envelope`, for the reason
+            // `strategy_allocation.envelope_id` has none: a deployment is a record of something that
+            // may already have been acted on, and a ledger row removed from this installation later
+            // must not make it unreadable. Whether the allocation and the grant still STAND is a
+            // read-time question and deliberately not a column here.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_deployment(
+              id               TEXT PRIMARY KEY,
+              version_id       TEXT NOT NULL,
+              allocation_id    TEXT NOT NULL,
+              envelope_id      TEXT NOT NULL,
+              connector_id     TEXT NOT NULL,
+              account_id       TEXT NOT NULL,
+              symbol           TEXT NOT NULL,
+              mode             TEXT NOT NULL,
+              state            TEXT NOT NULL,
+              cursor_open_time TEXT,
+              started_at       TEXT NOT NULL,
+              suspended_reason TEXT,
+              ended_at         TEXT,
+              end_reason       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_deployment_allocation
+              ON strategy_deployment(allocation_id, started_at);
+            CREATE INDEX IF NOT EXISTS ix_deployment_envelope
+              ON strategy_deployment(envelope_id, state);
+            """);
+
+            // AND THE WRITE-AHEAD OPERATION LEDGER. `request_id` is the PRIMARY KEY and it is the
+            // gateway's own request id — the same string `execution_request.request_id` holds and the
+            // same string that goes onto the broker order as `TA-<id>`. One key for the two tables is
+            // what makes "this operation became that order" a join rather than a guess, and it is what
+            // makes a re-plan after a restart collapse onto the row that is already there instead of
+            // sending a second order: `Deployments.Plan` and `ExecutionRequestStore.TryCreate` both
+            // insert ON CONFLICT DO NOTHING under it.
+            //
+            // THE REFERENCE TO `strategy_deployment` IS REAL, unlike the two the table above does not
+            // have, and the direction is the reason: an operation with no deployment is not a record
+            // this app could act on at all, whereas a deployment whose grant was later removed is
+            // still the account of orders that were sent.
+            //
+            // `intent` IS THE `PlaceIntent` AS JSON and it is what would be dispatched, written down
+            // BEFORE anything is. It is the same blob `execution_request.parameters` carries, in the
+            // same shape, so a planned operation and the order it becomes are comparable.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS deployment_op(
+              request_id    TEXT PRIMARY KEY,
+              deployment_id TEXT NOT NULL REFERENCES strategy_deployment(id),
+              bar_open_time TEXT NOT NULL,
+              kind          TEXT NOT NULL,
+              intent        TEXT NOT NULL,
+              state         TEXT NOT NULL,
+              answer        TEXT,
+              created_at    TEXT NOT NULL,
+              resolved_at   TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_deployment_op_bar
+              ON deployment_op(deployment_id, bar_open_time, state);
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','26') ON CONFLICT(key) DO UPDATE SET value='26';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
