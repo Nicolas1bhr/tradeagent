@@ -378,8 +378,41 @@ public class CouncilLoopTests
         host.BeforeLaunch = _ => Assert.True(both.SignalAndWait(TimeSpan.FromSeconds(30)),
             "the two callers never met: one of them was refused before the lease, not at it");
 
-        Together(() => loop.TurnAsync().GetAwaiter().GetResult(),
-                 () => loop.TurnAsync().GetAwaiter().GetResult());
+        // AND THE WINNER'S LEASE IS STILL HELD WHEN THE LOSER ASKS FOR IT.
+        //
+        // The barrier above holds both callers inside SituationAsync, which the loop runs BEFORE it
+        // takes the role's lease — so it makes them MEET, and that was all it did. Nothing kept the
+        // winner turning while the loser walked the few instructions from the barrier to Lease():
+        // the winner's whole turn is a 2 ms delay and two ledger writes, it drops the lease, and a
+        // loser that arrives afterwards finds the role free and is admitted. That second turn is
+        // legitimately admitted — it is not two turns at once, which is the property this test is
+        // about — and it writes a second `ai_attempt` row for a wake already spent.
+        //
+        // MEASURED on draft PR #23 (runs 35504722157 and 35513092386), 30 rounds per row: the
+        // winner's whole TurnAsync is 3.3 ms (min 3.3, median 3.7 on this Mac), and with 20 ms of
+        // preemption on ONE of the two callers out of the barrier — nothing else changed, which is
+        // all a starved runner does to a thread — the shipped body recorded TWO launches in 30 of
+        // 30 rounds: `Expected: 1 / Actual: 2`, macos-latest's red at `659eb5b` (run 35503895941).
+        // With this hand-over and the same preemption: one launch in 30 of 30.
+        //
+        // IT CANNOT HIDE THE DEFECT IT IS HERE FOR. If both callers were admitted, both would run a
+        // turn, both would wait here for an answer that is not coming, and the wait fails by name.
+        using var answered = new ManualResetEventSlim(false);
+        var joined = true;
+        host.Conversations[CouncilRoles.Operations].OnTurn =
+            () => { if (!answered.Wait(TimeSpan.FromSeconds(30))) joined = false; };
+
+        void Turn()
+        {
+            try { loop.TurnAsync().GetAwaiter().GetResult(); }
+            finally { answered.Set(); }
+        }
+
+        Together(Turn, Turn);
+
+        Assert.True(joined,
+            "the admitted turn was never joined by the other caller's answer: either the other "
+            + "caller is running a turn of its own for this role, or it never reached the lease");
 
         // ONE LAUNCH FOR ONE REASON TO WORK. The other caller was answered, not parked.
         Assert.Equal(1, Launches(db, CouncilRoles.Operations));
