@@ -120,14 +120,35 @@ public sealed class ForwardRuns
                 "the frozen text of the version this run was started on no longer parses in this "
                 + "build, so there is nothing to step", ct);
 
+        // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
+        // made here: it reads each operation's own order row. Doing it before the replay is what lets
+        // this pass dispatch at all — the frontier below is the cursor's other half.
+        _gateway.SettleAndAdvance(deployment, _now());
+        deployment = _deployments.ById(deployment.Id) ?? deployment;
+        if (!deployment.IsActive)
+            return new ForwardRunState(deployment, null, 0, 0, null, deployment.EndReason);
+
         var bars = _bars.Since(deployment.Symbol, deployment.StartedAt, source: Source);
         var state = EvaluationState.Start(program, null, ForwardBars.BarLength);
         var books = Books(deployment, bars);
+
+        // THE FRONTIER, AND IT IS THE CURSOR'S OTHER HALF: THE EARLIEST BAR THIS RUN HAS AN OPERATION
+        // ON THAT THE CURSOR HAS NOT REACHED. Nothing is planned past it, and that is the whole of
+        // the crash guarantee. The cursor is the last bar every one of whose operations RESOLVED, so
+        // the first operation beyond it is one with no answer — an order that may be live at the
+        // platform — and planning the next bar over it is how a restart sends a second one.
+        var blocked = _deployments.OpsOf(deployment.Id)
+            .Where(o => o.BarOpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue))
+            .Select(o => (DateTimeOffset?)o.BarOpenTime)
+            .Min();
 
         var replayed = 0;
         var skipped = 0;
         DateTimeOffset? last = null;
         AccountReading? account = null;
+        StrategyIntent? entrySignal = null;
+        string? stopRequest = null;
+        string? targetRequest = null;
 
         for (var i = 0; i < bars.Count; i++)
         {
@@ -155,8 +176,44 @@ public sealed class ForwardRuns
 
             last = bar.OpenTime;
             account = books.At(i, bar);
-            var live = bar.OpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue);
             var seq = 0;
+            var planned = false;
+
+            // A BAR IS LIVE WHEN IT IS PAST THE CURSOR AND NOTHING EARLIER IS STILL UNANSWERED.
+            // Everything before the cursor is replayed for its state and nothing else: those bars are
+            // accounted for, and re-deciding them would be this software placing an order about a
+            // minute that is over.
+            var live = bar.OpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue)
+                       && (blocked is not { } wall || bar.OpenTime <= wall);
+
+            // WHAT LANDED ON THIS BAR, off the run's own executions. A position that closed takes the
+            // other half of its protection off the book with it: a resting sell stop under no position
+            // is an order that OPENS a short the moment it fires, and this language cannot spell one.
+            var landed = books.At(bar.OpenTime);
+
+            if (landed.Any(f => f.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target
+                                or DeploymentOpKind.Exit or DeploymentOpKind.Flatten))
+            {
+                if (live)
+                    planned |= await CancelRestingAsync(
+                        deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
+                stopRequest = targetRequest = null;
+            }
+
+            // AND THE ENTRY'S PROTECTION GOES TO THE VENUE THE MOMENT THE ENTRY FILLED, at the
+            // distances the program declared, measured from the price actually paid.
+            if (landed.FirstOrDefault(f => f.Kind == DeploymentOpKind.Entry) is { Quantity: > 0m } got
+                && entrySignal is { } signal)
+            {
+                // The ids are worked out on EVERY pass, live or not: a bar the cursor has passed
+                // still put those two orders on the book, and a later bar has to be able to name them
+                // to cancel the loser. They are a function of the bar and the sequence, so the replay
+                // arrives at the same two strings the run first sent.
+                var pair = await ProtectAsync(deployment, bar, signal, got, () => seq++, live, ct);
+                stopRequest = pair.Stop;
+                targetRequest = pair.Target;
+                planned |= pair.Planned;
+            }
 
             // PROTECTION FIRST, BY CODE, IN THE BACKTEST'S ORDER — AND BEFORE THE EVALUATOR IS ASKED
             // ANYTHING. `docs/PRINCIPLES.md`: "no model call is required for each signal or for
@@ -173,7 +230,11 @@ public sealed class ForwardRuns
             if (live && account.Position == PositionSide.Long
                 && program.MaxHoldBars is { } hold && account.BarsSinceEntry >= hold)
             {
-                await FlattenAsync(deployment, bar, account, seq++,
+                planned |= await CancelRestingAsync(
+                    deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
+                stopRequest = targetRequest = null;
+
+                planned |= await FlattenAsync(deployment, bar, account, seq++,
                     $"max_hold_bars {hold} reached at this bar's close", ct);
                 account = RunBooks.Flat(account);
             }
@@ -190,9 +251,188 @@ public sealed class ForwardRuns
                     "the program faulted on the bar at " + bar.OpenTime.ToString("u")
                     + ": " + (outcome.FaultReason ?? "a defined fault with no reason"), ct,
                     state, replayed, skipped, last, account);
+
+            if (outcome.Intent is { } signalled)
+            {
+                // REMEMBERED WHETHER OR NOT IT IS DISPATCHED, because a bar that is already accounted
+                // for still produced the entry whose declared stop and target the next bar's fill is
+                // measured against. That is what makes a restart place the same protection.
+                if (signalled.Kind == IntentKind.Enter) entrySignal = signalled;
+
+                // THE PROGRAM'S OWN EXECUTION BOUNDS, OR THE RUN IS OVER. `IntentDecision.From` is the
+                // only thing that builds a decision block and it answers null for a program that
+                // declared none — there is then nothing for the dispatch gate to judge staleness
+                // against, and running unbounded is the one reading that cannot be right. The referee
+                // refuses such a program a promotion (`U-promote-bounds`); a version that reached a
+                // deployment without one was judged before that rule existed.
+                if (IntentDecision.From(signalled) is not { } decision)
+                    return await EndAsync(deployment,
+                        "this program declares no execution bounds — no timeframe, no data_freshness "
+                        + "and no max_decision_age — so nothing can say how stale its decisions are; "
+                        + "the referee refuses such a program a promotion and this run is over", ct,
+                        state, replayed, skipped, last, account);
+
+                if (live && await DispatchAsync(deployment, bar, signalled, decision, account, seq++, ct))
+                    planned = true;
+            }
+
+            // AND THE FRONTIER MOVES ONTO THIS BAR IF ANYTHING IT WROTE HAS NO ANSWER YET.
+            if (planned && blocked is null
+                && _deployments.OpsOf(deployment.Id)
+                    .Any(o => o.BarOpenTime == bar.OpenTime && !o.IsSettled))
+                blocked = bar.OpenTime;
         }
 
+        // AND WHAT THIS PASS ANSWERED, SETTLED, WITH THE CURSOR MOVED OVER THE BARS THAT ARE NOW
+        // FINISHED. A refusal is an answer: an operation a gate said no to is over, nothing was sent,
+        // and a run that stalled on one would never take another bar.
+        _gateway.SettleAndAdvance(deployment, _now());
+
         return new ForwardRunState(deployment, state, replayed, skipped, last, null) { Account = account };
+    }
+
+    /// <summary>
+    /// ONE INTENT ONTO THE MONEY PATH: a market order naming the version, the decision block the
+    /// program declared, and the deployment and rule it came from — written down, then dispatched
+    /// through <c>PlaceAsync</c> and every gate.
+    ///
+    /// <para><b>An exit closes exactly what the run is holding</b> and carries
+    /// <c>OrderIntent.Close</c>, so the gateway sizes it against the position it reads at dispatch and
+    /// refuses it if that has moved. An entry is an opening order and is sized by the program's own
+    /// declared sizing, rounded DOWN to the venue's increment.</para>
+    /// </summary>
+    async Task<bool> DispatchAsync(StrategyDeploymentRow deployment, KlineBar bar,
+        StrategyIntent signal, IntentDecision decision, AccountReading account, int seq,
+        CancellationToken ct)
+    {
+        var enter = signal.Kind == IntentKind.Enter;
+        var asked = enter ? signal.Quantity : account.Quantity;
+
+        if (Sized(deployment, bar, asked, enter ? "the declared size" : "the exit's close") is not { } quantity)
+            return false;
+
+        var intent = new PlaceIntent(deployment.Symbol,
+            enter ? OrderSide.Buy : OrderSide.Sell, OrderType.Market, quantity,
+            null, null, TimeInForce.Day, Comment(deployment, signal))
+        {
+            Intent = enter ? OrderIntent.Open : OrderIntent.Close,
+            Decision = decision,
+            StrategyVersionId = deployment.VersionId
+        };
+
+        return await _gateway.RunDeploymentIntentAsync(deployment,
+            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
+            enter ? DeploymentOpKind.Entry : DeploymentOpKind.Exit, bar.OpenTime, intent, ct);
+    }
+
+    /// <summary>Which run, and which of its own statements. It goes onto the broker order's comment.</summary>
+    static string Comment(StrategyDeploymentRow deployment, StrategyIntent signal) =>
+        signal.RuleIndex >= 0
+            ? $"deployment:{deployment.Id} rule {signal.RuleIndex}"
+            : $"deployment:{deployment.Id} {signal.Cause}";
+
+    /// <summary>
+    /// THE STOP AND THE TARGET, AS ORDERS AT THE VENUE, the moment the entry filled — at the
+    /// DISTANCES the program declared, measured from the price actually paid.
+    ///
+    /// <para><c>StrategyIntent</c> says it in words: the stop and target are stated at the signal bar
+    /// and "an executor that fills at a different price recomputes them from the fill". Carrying the
+    /// absolute levels across would put the stop a different distance away than the program declared,
+    /// on every fill that is not exactly the signal bar's close — which is every fill.</para>
+    ///
+    /// <para><b>Both operations are RESOLVED when the venue acknowledges the resting order</b>, and
+    /// that is a judgement this unit makes and states. An <c>entry</c>, <c>exit</c> or
+    /// <c>flatten</c> is over only on a terminal answer, because its whole purpose is to move the
+    /// position NOW. The operation here is "put protection on the book", and it is done the moment
+    /// the venue says it has it — with a connector order id, which is a positive answer and not an
+    /// absence. Left unresolved, the run's frontier would never move past the bar it was placed on
+    /// and protection would stop the program it protects.</para>
+    /// </summary>
+    async Task<(string? Stop, string? Target, bool Planned)> ProtectAsync(
+        StrategyDeploymentRow deployment, KlineBar bar, StrategyIntent signal, RunFill filled,
+        Func<int> seq, bool live, CancellationToken ct)
+    {
+        string? stop = null, target = null;
+        var planned = false;
+
+        if (signal.StopPrice is { } declaredStop)
+        {
+            var level = filled.Price - (signal.ReferencePrice - declaredStop);
+            (stop, var sent) = await RestAsync(deployment, bar, DeploymentOpKind.Stop, OrderType.Stop,
+                level, filled.Quantity, seq(), live, ct);
+            planned |= sent;
+        }
+
+        if (signal.TargetPrice is { } declaredTarget)
+        {
+            var level = filled.Price + (declaredTarget - signal.ReferencePrice);
+            (target, var sent) = await RestAsync(deployment, bar, DeploymentOpKind.Target,
+                OrderType.Limit, level, filled.Quantity, seq(), live, ct);
+            planned |= sent;
+        }
+
+        return (stop, target, planned);
+    }
+
+    /// <summary>One resting protective order, written down, sent, and settled on the venue's answer.</summary>
+    async Task<(string? Request, bool Planned)> RestAsync(StrategyDeploymentRow deployment, KlineBar bar,
+        string kind, OrderType type, decimal level, decimal quantity, int seq, bool live,
+        CancellationToken ct)
+    {
+        var request = Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq);
+        if (!live) return (request, false);
+
+        if (Sized(deployment, bar, quantity, $"the {kind}'s size") is not { } sized) return (null, false);
+        if (level <= 0m)
+        {
+            NoTrade(deployment, bar, quantity,
+                $"the declared {kind} works out at {level} from this fill, which is not a price");
+            return (null, false);
+        }
+
+        var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, type, sized,
+            type == OrderType.Limit ? level : null, type == OrderType.Stop ? level : null,
+            TimeInForce.Day, $"deployment:{deployment.Id} {kind}")
+        {
+            Intent = OrderIntent.Close,
+            StrategyVersionId = deployment.VersionId
+        };
+
+        await _gateway.RunDeploymentIntentAsync(deployment, request, kind, bar.OpenTime, intent, ct);
+
+        if (_gateway.Requests.Get(request) is
+            { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } row)
+            _deployments.Resolve(request, $"{row.State} — resting at the venue", _now());
+
+        return (request, true);
+    }
+
+    /// <summary>
+    /// TAKES THE RUN'S OWN RESTING ORDERS OFF THE BOOK — the loser of a stop/target pair, and both of
+    /// them when the app's own protection is about to close the position.
+    ///
+    /// <para>An order that is not working any more is not cancelled: the read is the request row's,
+    /// and a cancel of an order that has already filled is a definite refusal at the connector rather
+    /// than a no-op.</para>
+    /// </summary>
+    async Task<bool> CancelRestingAsync(StrategyDeploymentRow deployment, KlineBar bar,
+        IReadOnlyList<string?> requests, Func<int> seq, CancellationToken ct)
+    {
+        var cancelled = false;
+
+        foreach (var request in requests)
+        {
+            if (request is not { Length: > 0 }) continue;
+            if (_gateway.Requests.Get(request) is not
+                { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } row)
+                continue;
+
+            cancelled |= await _gateway.CancelDeploymentOrderAsync(deployment,
+                Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq()), bar.OpenTime,
+                row.ConnectorOrderId!, ct);
+        }
+
+        return cancelled;
     }
 
     /// <summary>
@@ -311,11 +551,19 @@ public sealed class ForwardRuns
             .ToLookup(f => f.RequestId!, StringComparer.Ordinal);
 
         var settled = new List<RunFill>();
-        var pending = false;
+        var inFlight = new List<RunOp>();
 
         foreach (var op in ops)
         {
             var request = _gateway.Requests.Get(op.RequestId);
+            DateTimeOffset? filled = null;
+
+            foreach (var fill in fills[op.RequestId])
+            {
+                var at = FillBar(bars, op.BarOpenTime, fill.At);
+                settled.Add(new RunFill(at, op.Kind, fill.Quantity, fill.Price));
+                if (filled is null || at < filled) filled = at;
+            }
 
             // IN FLIGHT MEANS AN ORDER THAT COULD MOVE THE POSITION AND HAS NOT ANSWERED — and a
             // resting stop or target is not one. They are WORKING for as long as the position is
@@ -325,15 +573,11 @@ public sealed class ForwardRuns
             if (request is not null
                 && op.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten
                 && !OrderStateMachine.IsTerminal(request.State))
-                pending = true;
-
-            foreach (var fill in fills[op.RequestId])
-                settled.Add(new RunFill(
-                    FillBar(bars, op.BarOpenTime, fill.At), op.Kind, fill.Quantity, fill.Price));
+                inFlight.Add(new RunOp(op.BarOpenTime, filled));
         }
 
         settled.Sort((a, b) => a.Bar.CompareTo(b.Bar));
-        return new RunBooks(settled, pending, Capital(deployment));
+        return new RunBooks(settled, inFlight, Capital(deployment));
     }
 
     /// <summary>
@@ -356,7 +600,11 @@ public sealed class ForwardRuns
         foreach (var bar in bars)
         {
             if (bar.OpenTime > opBar && bar.OpenTime < floor) floor = bar.OpenTime;
-            if (bar.OpenTime <= at && bar.OpenTime > stamped) stamped = bar.OpenTime;
+
+            // CLOSED, not merely opened. A bar's close IS the next bar's open, and this settlement
+            // happens when a bar closes — reading "had opened" would put every fill one bar late, on
+            // the minute that had just started.
+            if (bar.CloseTime <= at && bar.OpenTime > stamped) stamped = bar.OpenTime;
         }
 
         return stamped > floor ? stamped : floor;
@@ -379,11 +627,23 @@ public sealed class ForwardRuns
     readonly record struct RunFill(DateTimeOffset Bar, string Kind, decimal Quantity, decimal Price);
 
     /// <summary>
+    /// ONE ORDER OF THIS RUN THAT COULD STILL MOVE THE POSITION: the bar it was sent on, and the bar
+    /// it landed on if it has. It is PENDING at every bar from the first to the second — and at no
+    /// bar before it was sent, which is what keeps a replay of the run's own history from reading
+    /// every past bar as one where an order was in flight.
+    /// </summary>
+    readonly record struct RunOp(DateTimeOffset Bar, DateTimeOffset? Filled);
+
+    /// <summary>
     /// THE RUN'S POSITION AS OF ANY BAR, walked forward from its own executions. Long or flat: the
     /// language cannot spell a third value and neither can this.
     /// </summary>
-    sealed class RunBooks(IReadOnlyList<RunFill> fills, bool pending, decimal capital)
+    sealed class RunBooks(IReadOnlyList<RunFill> fills, IReadOnlyList<RunOp> inFlight, decimal capital)
     {
+        /// <summary>This run's own executions that landed on one bar, in the order they landed.</summary>
+        public IReadOnlyList<RunFill> At(DateTimeOffset bar) =>
+            [.. fills.Where(f => f.Bar == bar)];
+
         public AccountReading At(int ordinal, KlineBar bar)
         {
             var quantity = 0m;
@@ -414,6 +674,9 @@ public sealed class ForwardRuns
 
             var held = since is { } entry && ordinal >= 0 ? BarsSince(entry, bar.OpenTime) : 0;
             var equity = capital + realised + (quantity > 0m ? (bar.Close - average) * quantity : 0m);
+
+            var pending = inFlight.Any(o =>
+                o.Bar <= bar.OpenTime && (o.Filled is not { } at || at > bar.OpenTime));
 
             return new AccountReading(
                 capital, equity, quantity > 0m ? PositionSide.Long : PositionSide.Flat,

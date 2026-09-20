@@ -1068,7 +1068,17 @@ public sealed class TradingGateway : IAsyncDisposable
             // with anything else is an order this gateway cannot account for, and the one thing that
             // must not be written over it is "refused".
             var row = _requests.Get(requestId);
-            var why = ex is TradeAgentException t ? $"{t.Code} — {t.Message}" : ex.Message;
+
+            // THE CODE, WHERE THERE IS ONE, AND FROM BOTH REFUSAL TYPES. A gate's refusal is a
+            // GatewayDeniedException and carries its own code — DECISION_EXPIRED, ALLOCATION_EXCEEDED,
+            // MODE_FORBIDS_EXECUTION — and an answer that recorded only the sentence left a reader
+            // grepping prose for a fact the exception was carrying.
+            var why = ex switch
+            {
+                TradeAgentException t => $"{t.Code} — {t.Message}",
+                GatewayDeniedException d => $"{d.Code} — {d.Message}",
+                _ => ex.Message
+            };
 
             if (row is null)
                 _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
