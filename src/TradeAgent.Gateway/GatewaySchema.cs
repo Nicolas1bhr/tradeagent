@@ -238,6 +238,12 @@ public static class GatewaySchema
             "trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D] [--fees F] [--slippage S] [--increment Q] [--capital C]",
             false,
             "Run a strategy program of yours over the history this installation holds, and record it. "
+            + "THE LANGUAGE ITSELF — the grammar, what each indicator computes, the limits and every "
+            + "refusal — is written into your own folder at 'research/STRATEGY-LANGUAGE.md', and three "
+            + "worked programs are in 'strategies/examples/'; both are rewritten by TradeAgent on every "
+            + "start, so an edit of yours to either does not survive. "
+            + "'trade backtest --strategy strategies/examples/ma-crossover.strategy --dataset <id>' runs "
+            + "one of them with nothing written by you. "
             + "'strategy' is a path INSIDE YOUR OWN ROLE FOLDER — relative to it is simplest — and a path "
             + "outside it is refused: this reads a program from your folder and from nowhere else, not "
             + "from the other role's and not from anywhere else on the machine, and a symlink pointing "

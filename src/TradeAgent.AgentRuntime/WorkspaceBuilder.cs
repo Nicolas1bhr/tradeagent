@@ -286,6 +286,15 @@ public static class WorkspaceBuilder
       launch grant alike, so give `--to` an earlier instant. That is not a fault to work around: it is
       how a result you produce can mean anything later, and TradeAgent judges a finished strategy on
       those months precisely because you never saw them;
+    - **the strategy language is written down in `{ResearchLibrary.ReferencePath}`** — the grammar,
+      what each indicator computes, the limits and every refusal. TradeAgent writes that file on every
+      start and overwrites anything you change in it, so read it rather than working the syntax out
+      from what the parser rejects;
+    - **three worked programs are in `{ResearchLibrary.ExamplesDir}/`** — a moving-average crossover,
+      an opening-range breakout and an RSI mean reversion, all of which parse today. Same ownership:
+      rewritten every start, so copy one into `strategies/` before you change it;
+    - **`trade backtest --strategy {ResearchLibrary.FirstExample} --dataset <id>` is the first thing
+      you can run**, with nothing written by you at all — take the `<id>` from `trade data list`;
     - when the strategy is written in the strategy language, `trade backtest --strategy
       strategies/x.strategy --dataset <id>` has TradeAgent run it and record the result itself: the
       metrics come back computed from the app's own trace rather than from your arithmetic, which is

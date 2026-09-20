@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Gateway;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -140,6 +141,36 @@ public class ResearchLibraryTests
         foreach (var name in DayOnePrograms.Names)
             Assert.Equal(File.ReadAllBytes(DayOnePrograms.At(name)),
                 File.ReadAllBytes(Path.Combine(home, "strategies", "examples", name)));
+    }
+
+    /// <summary>
+    /// AND THE ROLE IS TOLD WHERE THEY ARE, in the two places it actually reads: the mission file it
+    /// opens first and <c>trade schema</c>, which the mission tells it is the authority on the command.
+    ///
+    /// <para>A file written into a folder nobody is pointed at is a file nobody opens. These three
+    /// lines are the whole route from "I have to write a strategy" to a run: the grammar, three
+    /// programs that already parse, and one command that works without writing anything at all.</para>
+    ///
+    /// <para>The paths come off <see cref="ResearchLibrary"/> rather than being spelled here, so the
+    /// place the app WRITES them and the place it NAMES them cannot drift apart — which is the whole
+    /// failure this unit exists to close, one level up.</para>
+    ///
+    /// <para>RED FIRST: the mission named <c>strategies/x.strategy</c> and nothing else, and the schema's
+    /// backtest entry described the command's arguments without ever naming the language they take.</para>
+    /// </summary>
+    [Fact]
+    public void The_mission_and_the_schema_name_the_reference_the_examples_and_the_first_backtest()
+    {
+        var mission = WorkspaceBuilder.Instructions(Context());
+
+        Assert.Contains($"`{ResearchLibrary.ReferencePath}`", mission);
+        Assert.Contains($"`{ResearchLibrary.ExamplesDir}/`", mission);
+        Assert.Contains($"trade backtest --strategy {ResearchLibrary.FirstExample} --dataset <id>", mission);
+        Assert.Contains("overwrit", mission);        // and that all of it is the app's, not the role's
+
+        var backtest = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Backtest);
+        Assert.Contains(ResearchLibrary.ReferencePath, backtest.Description);
+        Assert.Contains(ResearchLibrary.FirstExample, backtest.Description);
     }
 
     /// <summary>Build output rather than source: <c>bin/</c> and <c>obj/</c> hold the shipped copies.</summary>
