@@ -900,6 +900,19 @@ your own orders on it are untouched. **Withdraw this paper envelope** takes it b
 a confirm, and everything running under it stops at once. The grant ends on its own date and nothing
 renews it.
 
+*Running now* on the same card is what is actually being run, which is a different fact from what is
+allowed: a grant is a ceiling, and a deployment is TradeAgent running one frozen version forward on
+your practice account under it. Each line says the version, the instrument, the account, whether the
+run is **active**, **suspended** or **ended**, and the last minute every one of its orders was
+settled on. A run is *suspended* — sending nothing at all — whenever the platform, the mode or the
+account TradeAgent is operating is not the one the run was started on; it is never quietly pointed at
+the new one. If a line says an operation is **unresolved**, TradeAgent sent an order and cannot yet
+say what happened to it: it will not send that order again, and it will not start a replacement run
+until you or the platform settle it on the Dashboard. **Stop paper deployment** ends the run in one
+press plus a confirm — it cancels whatever that run has working, closes whatever it has open, and
+records why. It stops the *run* and not the grant: the envelope and the paper allocation stand, so
+TradeAgent may start a fresh run under them once the ended one is fully accounted for.
+
 ## If TradeAgent says your settings could not be read
 
 Everything you had set is stored together, and a version change or an interrupted write can leave

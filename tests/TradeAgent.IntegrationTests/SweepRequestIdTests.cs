@@ -1938,6 +1938,22 @@ public class ReplayedSweepSendsNothingTests
             if (op is Core.Ops.Modify) req.Args["limit"] = JsonSerializer.SerializeToElement("2");
             if (op is Core.Ops.Close) req.Args["symbol"] = JsonSerializer.SerializeToElement("ES");
 
+            // `deployment-stop` names a RUN rather than an order, so this iteration writes one for it
+            // to end. The ledger write is in-process, which is the only way a deployment is ever
+            // written — there is no verb that starts one. What must hold here is what holds for every
+            // other verb in this list: the second call under one request id leaves the book exactly
+            // as the first left it, and for this verb it is the ENDED state rather than the
+            // idempotency store that makes that true.
+            if (op is Core.Ops.DeploymentStop)
+            {
+                var run = gw.Deployments.Start(new StrategyDeploymentRow(
+                    "", $"version-{tag}", $"allocation-{tag}", $"envelope-{tag}",
+                    gw.Connector.Id, gw.ClosureAccountId, "ES", TradingMode.PAPER.ToString(),
+                    DeploymentState.Active, null, DateTimeOffset.UtcNow, null, null, null));
+                Assert.True(run.Ok, run.Why);
+                req.Args["id"] = JsonSerializer.SerializeToElement(run.Deployment!.Id);
+            }
+
             var one = await client.SendAsync(req).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.True(one.Ok, $"{op}: {Json.Write(one.Error)}");
             var book = conn.Broker.Orders.Select(o => $"{o.ConnectorOrderId}:{o.State}:{o.LimitPrice}").ToList();

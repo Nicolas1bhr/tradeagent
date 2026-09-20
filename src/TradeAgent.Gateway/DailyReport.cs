@@ -258,6 +258,21 @@ public sealed record ReportPerformance
     /// </summary>
     public IReadOnlyList<string> PaperAllocations { get; init; } = [];
 
+    /// <summary>
+    /// WHAT TRADEAGENT IS ACTUALLY RUNNING FORWARD, one line per deployment, beneath what it
+    /// allocated.
+    ///
+    /// <para>An allocation is a ceiling and a deployment is a RUN, and the owner needs both: "this
+    /// version may trade up to five" and "this version is trading right now, and one of its orders
+    /// has no answer" are different facts about their account. Every line says PAPER and says it
+    /// carries no live authority, for <see cref="PaperAllocations"/>'s reason.</para>
+    ///
+    /// <para>An ENDED run is listed rather than dropped whenever it still has an operation nobody can
+    /// account for — that is the line that most needs printing, because it is an order that may be
+    /// live at the platform. Empty is printed as <c>none</c> rather than omitted.</para>
+    /// </summary>
+    public IReadOnlyList<string> Deployments { get; init; } = [];
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -663,6 +678,9 @@ public static class DailyReportText
         // AND WHAT THE APP PUT ON PAPER ITSELF, on its own line beneath. See
         // ReportPerformance.PaperAllocations: it is not capital and it must not be read as any.
         List(b, "on paper (no capital)", r.Performance.PaperAllocations);
+        // AND WHAT IS ACTUALLY RUNNING, beneath what was allocated. See
+        // ReportPerformance.Deployments: a ceiling and a run are different facts about the account.
+        List(b, "running forward on paper", r.Performance.Deployments);
         Gaps(b, r.Performance.Missing);
 
         Section(b, "5. Execution health");

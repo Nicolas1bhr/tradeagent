@@ -382,6 +382,18 @@ public sealed record IntentDecision(
     public TimeSpan AgeAt(DateTimeOffset now) => now - BarClose;
 }
 
+/// <summary>
+/// ONE PAPER DEPLOYMENT, AS STATUS SAYS IT. Deliberately small: what is being run forward, where it
+/// has got to, and how much of it this app cannot yet account for.
+///
+/// <para><see cref="Unresolved"/> is the figure that matters to a caller planning anything — an
+/// operation with no answer is an order that may be live at the platform, nothing re-sends it, and no
+/// replacement run starts until it is settled.</para>
+/// </summary>
+public sealed record StatusDeployment(
+    string Id, string Version, string Symbol, string State, string? Why,
+    DateTimeOffset StartedAt, DateTimeOffset? CursorOpenTime, int Operations, int Unresolved);
+
 public sealed record GatewayStatus(
     string ProtocolVersion, string AppVersion, TradingMode Mode, bool AiTradingStopped, bool LiveActivated,
     bool ExecutionAvailable, string? ExecutionBlockedReason, string? ConnectorId, string? ConnectorName,
@@ -581,6 +593,20 @@ public sealed record GatewayStatus(
     /// it is null for a series that has attempts but no bars at all.</para>
     /// </summary>
     public ForwardDataStatus? ForwardData { get; init; }
+
+    /// <summary>
+    /// WHAT IS BEING RUN FORWARD ON PAPER RIGHT NOW, or ABSENT because nothing is.
+    ///
+    /// <para>Running and suspended runs, and any run that has ENDED with an operation still
+    /// unresolved — that last one is the line that most needs to be here, because it is an order this
+    /// app cannot account for and a fact about what the account may be holding. A finished, fully
+    /// settled run is not listed: it is history, and <c>deployment-list</c> serves it.</para>
+    ///
+    /// <para>ABSENT means nothing is deployed. It never means "TradeAgent could not look": a ledger
+    /// that would not read leaves this absent AND says so in the health section, exactly as every
+    /// other unreadable ledger on this status does.</para>
+    /// </summary>
+    public IReadOnlyList<StatusDeployment>? Deployments { get; init; }
 }
 
 /// <summary>

@@ -221,6 +221,24 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             return sub is "list" or "ls" ? (Ops.VenueList, a) : (null, a);
         }
 
+        // `trade deployment list` and `trade deployment stop --id <deployment>`. There is deliberately
+        // no `trade deployment start`: a deployment is written by the app's own policy inside the
+        // envelope the account owner pressed once, exactly as an allocation is, and an agent that
+        // could start one would be choosing what runs on the owner's practice account. Stopping is
+        // here because it only ever removes exposure.
+        case "deployment":
+        case "deployments":
+        {
+            var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
+            if (sub is "list" or "ls") return (Ops.DeploymentList, a);
+            if (sub is "stop" or "end")
+            {
+                a["id"] = flags.GetValueOrDefault("id") ?? pos.ElementAtOrDefault(1) ?? "";
+                return (Ops.DeploymentStop, a);
+            }
+            return (null, a);
+        }
+
         // `trade backtest --strategy strategies/x.strategy --dataset 3`. A READ as far as trading is
         // concerned: it places no order and grants nothing. The path is resolved inside the caller's
         // own role folder by the gateway, which refuses anything outside it.

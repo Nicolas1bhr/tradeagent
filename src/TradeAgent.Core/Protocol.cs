@@ -117,7 +117,28 @@ public static class Ops
     /// </summary>
     public const string Verdict = "verdict";
 
-    public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
+    /// <summary>
+    /// WHAT IS BEING RUN FORWARD ON PAPER RIGHT NOW — a READ, for every role, and it names no request
+    /// id. A deployment is written by the app's own policy inside the grant the account owner pressed
+    /// once; there is no operation here that starts one, widens one, points it somewhere else or moves
+    /// its cursor, and asking for one is not a thing this channel can do.
+    /// </summary>
+    public const string DeploymentList = "deployment-list";
+
+    /// <summary>
+    /// ENDS ONE PAPER DEPLOYMENT: its working orders are cancelled, what is open is closed through the
+    /// gateway's own close, and the reason is recorded.
+    ///
+    /// It IS in <see cref="Mutating"/>, because it sends orders to a platform — so it needs a role
+    /// that may place them. What makes it reachable from this channel at all, when starting one is
+    /// not, is that it only ever REMOVES exposure: the same reduction-only exception this product
+    /// already makes for <c>close</c> and <c>cancel</c>. It cannot restart a run, and the allocation
+    /// and the grant underneath it are untouched.
+    /// </summary>
+    public const string DeploymentStop = "deployment-stop";
+
+    public static readonly string[] Mutating =
+        [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll, DeploymentStop];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }
 

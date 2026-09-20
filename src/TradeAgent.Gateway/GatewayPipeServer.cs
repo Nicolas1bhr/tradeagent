@@ -333,6 +333,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
         new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
         new(Core.Ops.Verdict, TimeSpan.Zero, "the campaign and this role's own runs of the version, then the referee's holdout run over the same bars, in process"),
+        new(Core.Ops.DeploymentList, TimeSpan.Zero, "the deployment ledger and its operations, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -342,6 +343,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
         new(Core.Ops.Close, RiskReducingHandlerPath, "all of it inside the budget, plus ONE ordinary placement for a connector that ignores the close intent"),
         new(Core.Ops.CloseAll, CloseAllHandlerPath, "all of it inside the budget, plus ONE WAVE of placements, serialised, for a connector that ignores the close intent"),
+
+        // ENDING A DEPLOYMENT IS A CLOSE-ALL'S SHAPE, and it is budgeted as one: a cancel per working
+        // order this run placed and then one close through the same path `close` takes. `CloseAll`'s
+        // row is the conservative bound over both, and being IN this table is what makes the handler
+        // covered — see the note above the zero-path rows.
+        new(Core.Ops.DeploymentStop, CloseAllHandlerPath, "a cancel per working order of the run, then ONE close through the same path 'close' takes"),
     ];
 
     /// <param name="Handler">The IPC op, so a handler and its row cannot drift apart by name.</param>
@@ -1222,6 +1229,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
                 Core.Ops.Verdict      => VerdictFor(ctx, req, ct),
+                Core.Ops.DeploymentList => DeploymentList(),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -1229,6 +1237,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.CancelAll=> await CancelAll(ctx, rid, ct),
                 Core.Ops.Close    => await gateway.CloseAsync(ctx, rid, Require(req, "symbol"), ct),
                 Core.Ops.CloseAll => await CloseAll(ctx, rid, ct),
+                Core.Ops.DeploymentStop => await DeploymentStop(ctx, req, ct),
 
                 _ => throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"unknown operation '{req.Op}'")
             };
@@ -2927,6 +2936,76 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// An UNVERIFIED row is served, and it is served as unverified — never left out and never quietly
     /// promoted. A caller that needs a number nobody has checked can say so and declare its own.
     /// </summary>
+    /// <summary>
+    /// WHAT IS BEING RUN FORWARD ON PAPER, for every role, as a READ.
+    ///
+    /// <para>It carries no request id and no order: the ids in <c>deployment_op</c> are
+    /// <c>execution_request</c> ids and those rows belong to a session the pipe refuses as a name, so
+    /// a caller that could read them would be reading the app's own orders. What crosses is the run,
+    /// where it has got to, and how many of its operations this app cannot yet account for — which is
+    /// the fact an agent planning anything needs, and it is the app telling it something rather than
+    /// the other way about.</para>
+    ///
+    /// <para>There is deliberately no <c>deployment start</c>. A deployment is written by the app's
+    /// own policy inside the grant the account owner pressed once, like an envelope and like an
+    /// allocation; an agent that wanted one has nowhere to ask.</para>
+    /// </summary>
+    object DeploymentList() => new DeploymentListReply(
+        "A paper deployment is TradeAgent running a frozen strategy version forward on a practice "
+        + "account, inside the paper envelope the account owner granted once. It carries NO capital "
+        + "and NO live authority, its fills are simulated, and nothing it produces is execution "
+        + "evidence. You cannot start one, widen one, point it somewhere else or move its cursor; "
+        + "'deployment-stop' ends one, which only ever removes exposure.",
+        [.. gateway.DeploymentReadings().Select(d => new DeploymentListReplyRow(
+            d.Id, d.VersionId, d.Symbol, d.ConnectorId, d.AccountId, d.Mode, d.State, d.StartedAt,
+            d.CursorOpenTime, d.SuspendedReason, d.EndedAt, d.EndReason, d.Operations, d.Unresolved,
+            d.Line))]);
+
+    /// <summary>
+    /// ENDS ONE PAPER DEPLOYMENT. Cancels what it has working, closes what is open through the
+    /// gateway's own close, records the reason — and leaves the allocation and the grant exactly
+    /// where they were.
+    ///
+    /// <para>It is reachable from here, when starting one is not, because it only ever REMOVES
+    /// exposure. A caller that has to have a role that may place orders (it IS in
+    /// <c>Ops.Mutating</c>) can already send a <c>close</c>; this is that, plus the record saying the
+    /// run is over.</para>
+    ///
+    /// <para><paramref name="req"/>'s <c>id</c> is the deployment, and an id this installation does
+    /// not hold is a refusal rather than a no-op: "there is no such run" and "the run is now over"
+    /// prescribe different next steps.</para>
+    /// </summary>
+    async Task<object> DeploymentStop(AgentContext ctx, IpcRequest req, CancellationToken ct)
+    {
+        var id = Require(req, "id");
+        var who = ctx.Role is { Length: > 0 } role ? CouncilRoles.Title(role) : ctx.SessionId;
+
+        if (gateway.Deployments.ById(id) is null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"there is no deployment {Short(id)} on this installation. 'deployment-list' says "
+                + "what there is.");
+
+        var ended = await gateway.EndPaperDeploymentAsync(id, $"stopped by {who}", ct)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"deployment {Short(id)} could not be read back after being ended");
+
+        var reading = gateway.DeploymentReadings().FirstOrDefault(d => d.Id == ended.Id);
+        return new DeploymentListReplyRow(
+            ended.Id, ended.VersionId, ended.Symbol, ended.ConnectorId, ended.AccountId, ended.Mode,
+            ended.State, ended.StartedAt, ended.CursorOpenTime, ended.SuspendedReason, ended.EndedAt,
+            ended.EndReason, reading?.Operations ?? 0, reading?.Unresolved ?? 0,
+            reading?.Line ?? ended.State);
+    }
+
+    /// <summary>What <c>deployment-list</c> answers with. The sentence is part of the reply, not a doc comment.</summary>
+    sealed record DeploymentListReply(string WhatThisIs, IReadOnlyList<DeploymentListReplyRow> Deployments);
+
+    /// <inheritdoc cref="DeploymentListReply"/>
+    sealed record DeploymentListReplyRow(
+        string Id, string VersionId, string Symbol, string ConnectorId, string AccountId, string Mode,
+        string State, DateTimeOffset StartedAt, DateTimeOffset? CursorOpenTime, string? SuspendedReason,
+        DateTimeOffset? EndedAt, string? EndReason, int Operations, int Unresolved, string Says);
+
     object VenueList()
     {
         var venues = gateway.Venues.Venues();

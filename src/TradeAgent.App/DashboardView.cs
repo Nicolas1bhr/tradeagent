@@ -1072,8 +1072,10 @@ sealed class SafetyPage
     readonly NumericUpDown _envelopeDays = Ui.NumberField(30m);
     readonly TextBlock _envelopeValue = Ui.Body("");
     readonly TextBlock _envelopeNote = Ui.Micro("");
+    readonly TextBlock _deploymentValue = Ui.Body("");
     readonly Button _grantEnvelope;
     readonly Button _withdrawEnvelope;
+    readonly Button _stopDeployment;
 
     /// <summary>
     /// THE REVIEW-HOLD CARD. It is the unconfirmed-orders card's shape — a REQUIRED free-text note,
@@ -1377,6 +1379,30 @@ sealed class SafetyPage
         var b = Ui.Confirm(Labels.WithdrawEnvelope, Labels.WithdrawEnvelopeArmed, () =>
         {
             if (standing() is { Length: > 0 } id) apply(id);
+        });
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// THE PRESS THAT ENDS ONE PAPER RUN. ONE press plus a confirm, the withdrawal card's rule and
+    /// not the grant card's: this only ever removes exposure — the run's working orders are cancelled
+    /// and whatever it has open is closed through the gateway's own close — and no press anywhere in
+    /// this product takes that back.
+    ///
+    /// <para>It ends the RUN and not the grant. The paper allocation and the account owner's envelope
+    /// stand exactly as they did; what stops is the thing that was trading, which is why it is a
+    /// separate press from Withdraw beside it.</para>
+    ///
+    /// <para>Static and handed the two things it does, like the presses above it, so the rule a test
+    /// exercises is the rule the owner presses. Nothing happens on either press when there is no run
+    /// to end: a blank is not a guess at which one they meant.</para>
+    /// </summary>
+    internal static Button BuildDeploymentStopConfirm(Func<string?> running, Action<string> apply)
+    {
+        var b = Ui.Confirm(Labels.StopDeployment, Labels.StopDeploymentArmed, () =>
+        {
+            if (running() is { Length: > 0 } id) apply(id);
         });
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
@@ -1708,6 +1734,7 @@ sealed class SafetyPage
         _envelopeDays.ValueChanged += (_, _) => RelabelEnvelope();
         _grantEnvelope = BuildEnvelopeConfirm(ReadEnvelope, AccountCurrency, ApplyEnvelope);
         _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
+        _stopDeployment = BuildDeploymentStopConfirm(RunningDeploymentId, ApplyDeploymentStop);
 
         var envelope = Ui.Section("Paper experiments, with no capital", Ui.Col(Theme.S2,
             Ui.Muted("This grants no money and no real orders. It lets TradeAgent put a version its own "
@@ -1717,6 +1744,10 @@ sealed class SafetyPage
                 + "and its own, and TradeAgent must be in practice mode when you press."),
             Ui.Spacer(Theme.S2),
             Ui.KeyValueLive("Standing now", _envelopeValue),
+            // WHAT IS ACTUALLY RUNNING, beside what is merely allowed. A ceiling and a run are
+            // different facts about the owner's account, and this is the line that says an order of
+            // TradeAgent's own has no answer yet. Live rather than rebuilt, like every other reading.
+            Ui.KeyValueLive("Running now", _deploymentValue),
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.EnvelopeSymbol, _envelopeSymbol),
             Ui.FieldRow(Labels.EnvelopeQuantity, _envelopeQuantity),
@@ -1727,6 +1758,7 @@ sealed class SafetyPage
             Ui.Spacer(Theme.S2),
             _grantEnvelope,
             _withdrawEnvelope,
+            _stopDeployment,
             _envelopeNote,
             Ui.Micro("A paper allocation TradeAgent writes under this grant can never authorise an "
                 + "order in a real-money mode, on another platform or on another account — and no "
@@ -2434,6 +2466,47 @@ sealed class SafetyPage
         ShowEnvelopes();
     }
 
+    /// <summary>
+    /// The run the stop press is about: the one deployment on the platform and the account that are
+    /// connected right now which is not already over, or null because there is none. A ledger this
+    /// build cannot read answers null, so the press does nothing rather than guessing.
+    /// </summary>
+    string? RunningDeploymentId()
+    {
+        try
+        {
+            return _host.Gateway.DeploymentReadings()
+                .FirstOrDefault(d => d.State != DeploymentState.Ended
+                                     && d.ConnectorId == _host.Gateway.Connector.Id
+                                     && d.AccountId == _host.Gateway.ClosureAccountId)?.Id;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Takes the press. AWAITED rather than dropped, exactly as the grant is: ending a run cancels
+    /// orders and closes a position, and an outcome that disappeared into an unobserved task is one
+    /// the owner would never be told about.
+    /// </summary>
+    async void ApplyDeploymentStop(string id)
+    {
+        string said;
+        try
+        {
+            var ended = await _host.Gateway.EndPaperDeploymentAsync(id, "stopped by the account owner");
+            said = ended is null
+                ? "that deployment is no longer on this installation, so nothing was ended."
+                : _host.Gateway.DeploymentReadings().FirstOrDefault(d => d.Id == ended.Id)?.Line
+                  ?? $"the run is {ended.State}.";
+        }
+        catch (Exception ex) { said = ex.Message; }
+
+        _envelopeNote.Text = said;
+        _envelopeNote.Foreground = Theme.Caution;
+        _envelopeNote.IsVisible = true;
+        ShowEnvelopes();
+    }
+
     void ApplyEnvelopeWithdrawal(string id)
     {
         var result = _host.Gateway.WithdrawPaperEnvelope(id);
@@ -2473,6 +2546,27 @@ sealed class SafetyPage
             _withdrawEnvelope.IsEnabled = standing.Count > 0;
         }
         catch (Exception) { _envelopeValue.Text = "could not be read"; }
+
+        // AND WHAT IS ACTUALLY RUNNING. Its own try, so a deployment ledger that would not read
+        // leaves the grant line above it intact and says so on its own line rather than blanking
+        // both — the rule every other paired reading on these pages keeps.
+        try
+        {
+            var running = _host.Gateway.DeploymentReadings()
+                .Where(d => d.State != DeploymentState.Ended || d.Unresolved > 0)
+                .ToList();
+
+            _deploymentValue.Text = running.Count == 0
+                ? "nothing — TradeAgent is running no paper experiment right now"
+                : string.Join("; ", running.Select(d => d.Line));
+
+            _stopDeployment.IsEnabled = RunningDeploymentId() is not null;
+        }
+        catch (Exception)
+        {
+            _deploymentValue.Text = "could not be read";
+            _stopDeployment.IsEnabled = false;
+        }
     }
 }
 

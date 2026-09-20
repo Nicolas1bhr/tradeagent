@@ -370,6 +370,22 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                 + "a promoted version is not in this report"));
         }
 
+        // AND WHAT IS ACTUALLY RUNNING. Its own list and its own gap, for the reason the allocations
+        // have theirs: "nothing is deployed" and "TradeAgent could not look" are different facts, and
+        // an unresolved operation on an ended run is the line this section most needs to carry.
+        var deployments = new List<string>();
+        try
+        {
+            foreach (var reading in gateway.DeploymentReadings())
+                deployments.Add(reading.Line);
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("running forward on paper",
+                $"the deployment ledger could not be read ({ex.Message}), so what TradeAgent is "
+                + "running forward is not in this report"));
+        }
+
         var budget = gateway.Settings.Risk.MaxDailyLoss;
         // OFF THE RECORD, LIKE EVERY OTHER SURFACE. It costs no platform call — the closure is a row
         // this app wrote — so it belongs in a report that asks the platform nothing.
@@ -401,6 +417,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Closures = Cap(gateway.ClosureHistory(), ListShown, "closure"),
             Allocations = Cap(allocations, ListShown, "allocation"),
             PaperAllocations = Cap(paper, ListShown, "paper allocation"),
+            Deployments = Cap(deployments, ListShown, "deployment"),
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,
             SymbolsClosed = closed.Symbols,

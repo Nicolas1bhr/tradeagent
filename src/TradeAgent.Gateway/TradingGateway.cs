@@ -492,6 +492,98 @@ public sealed class TradingGateway : IAsyncDisposable
     const int DeploymentsLookedAt = 200;
 
     /// <summary>
+    /// ONE PAPER DEPLOYMENT AS EVERY SURFACE SAYS IT — <c>trade deployment list</c>,
+    /// <c>status.deployments</c>, section 4 of the owner's report and the Dashboard card.
+    ///
+    /// <para>Composed in ONE place for the reason the allocation line is: four surfaces describing the
+    /// same row in four sentences is four places for one of them to say something the ledger does not.
+    /// <see cref="Unresolved"/> is the count that matters most — an operation this app cannot account
+    /// for is an order that may be live at the platform, and it is what a replacement waits on.</para>
+    /// </summary>
+    public sealed record DeploymentReading(
+        string Id, string VersionId, string AllocationId, string EnvelopeId, string ConnectorId,
+        string AccountId, string Symbol, string Mode, string State, DateTimeOffset StartedAt,
+        DateTimeOffset? CursorOpenTime, string? SuspendedReason, DateTimeOffset? EndedAt,
+        string? EndReason, int Operations, int Unresolved, string Line);
+
+    /// <summary>
+    /// EVERY DEPLOYMENT THIS INSTALLATION HAS RECORDED, newest first — running, suspended and ended
+    /// alike.
+    ///
+    /// <para>Ended ones are LISTED rather than filtered out, for the reason a withdrawn allocation is:
+    /// an ended run with an unresolved operation is the single most important line on any of these
+    /// surfaces, and a reader shown only the live ones would be told the book is accounted for when it
+    /// is not.</para>
+    /// </summary>
+    public IReadOnlyList<DeploymentReading> DeploymentReadings(int limit = DeploymentsLookedAt) =>
+        [.. _deployments.All(limit).Select(d =>
+        {
+            var ops = _deployments.OpsOf(d.Id);
+            var unresolved = ops.Count(o => !o.IsSettled);
+            return new DeploymentReading(
+                d.Id, d.VersionId, d.AllocationId, d.EnvelopeId, d.ConnectorId, d.AccountId, d.Symbol,
+                d.Mode, d.State, d.StartedAt, d.CursorOpenTime, d.SuspendedReason, d.EndedAt,
+                d.EndReason, ops.Count, unresolved, DeploymentLine(d, ops.Count, unresolved));
+        })];
+
+    /// <summary>
+    /// The deployments the STATUS lists: everything that is not over, plus every ended run that still
+    /// has an operation nobody can account for. Null when there are none, and null when the ledger
+    /// could not be read — "nothing is deployed" and "TradeAgent could not look" are both absent here
+    /// and the second is said in the engineering log rather than guessed at on the wire.
+    /// </summary>
+    IReadOnlyList<StatusDeployment>? DeploymentsForStatus()
+    {
+        try
+        {
+            var shown = DeploymentReadings()
+                .Where(d => !string.Equals(d.State, DeploymentState.Ended, StringComparison.Ordinal)
+                            || d.Unresolved > 0)
+                .Select(d => new StatusDeployment(d.Id, Short(d.VersionId), d.Symbol, d.State,
+                    d.SuspendedReason ?? d.EndReason, d.StartedAt, d.CursorOpenTime, d.Operations,
+                    d.Unresolved))
+                .ToList();
+            return shown.Count == 0 ? null : shown;
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "deployment_ledger_not_read", "error", ex: ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The one sentence a deployment is described in. It says PAPER and says it carries no live
+    /// authority on every line, exactly as a paper allocation's does: "your money is behind this" and
+    /// "this is being watched on a practice account" are the two facts this product most needs never
+    /// to blur.
+    /// </summary>
+    static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved)
+    {
+        var line = $"{Short(d.VersionId)} in {d.Symbol} on account {d.AccountId} at {d.ConnectorId}, "
+                   + $"{d.State} since {d.StartedAt:yyyy-MM-dd HH:mm:ssK}, {operations} operation"
+                   + $"{(operations == 1 ? "" : "s")}"
+                   + (d.CursorOpenTime is { } cursor
+                       ? $", finished up to the bar opening {cursor:yyyy-MM-dd HH:mm:ssK}"
+                       : ", no bar finished yet")
+                   + " — PAPER — no live authority";
+
+        if (d.IsSuspended)
+            line += $". SUSPENDED and nothing is being sent: {d.SuspendedReason ?? "no reason recorded"}.";
+
+        if (d.IsEnded)
+            line += $". ENDED at {d.EndedAt:yyyy-MM-dd HH:mm:ssK}: {d.EndReason ?? "no reason recorded"}.";
+
+        if (unresolved > 0)
+            line += $" {unresolved} operation{(unresolved == 1 ? " is" : "s are")} UNRESOLVED — "
+                    + "TradeAgent cannot yet say what happened to "
+                    + (unresolved == 1 ? "it" : "them") + ", nothing is re-sent, and no replacement "
+                    + "run starts until that is settled.";
+
+        return line;
+    }
+
+    /// <summary>
     /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every standing paper allocation
     /// with no deployment gets ONE, while the envelope the owner granted has room. Answers how many it
     /// started.
@@ -2103,6 +2195,10 @@ public sealed class TradingGateway : IAsyncDisposable
             LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null,
             LossDayClosedAt = loss.DayClosedAt,
             LossSymbolsClosed = loss.SymbolsClosed.Count > 0 ? loss.SymbolsClosed : null,
+            // WHAT IS BEING RUN FORWARD, AND WHAT IS NOT ACCOUNTED FOR. Off the ledger, so it costs
+            // the platform nothing; a read that fails leaves it ABSENT rather than empty, which is
+            // this status's rule for every other figure it cannot get.
+            Deployments = DeploymentsForStatus(),
             LossFlatten = loss.FlattenState,
             LossReopensAt = loss.ReopensAt,
             LossReopenHeld = loss.ReopenHeld,

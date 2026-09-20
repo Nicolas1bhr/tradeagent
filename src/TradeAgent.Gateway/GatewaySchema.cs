@@ -302,6 +302,38 @@ public static class GatewaySchema
                 new("dataset", "number", false, "The dataset's ledger id, from 'trade data list'. Omit it when you have completed a run of this version over exactly one dataset; with none or several it is required.")
             ]),
 
+        new(Core.Ops.DeploymentList, "trade deployment list", false,
+            "WHAT TRADEAGENT IS RUNNING FORWARD ON PAPER RIGHT NOW. A paper deployment is the app "
+            + "running one frozen strategy version forward on a practice account, inside the paper "
+            + "envelope the account owner granted once — it carries NO capital and NO live authority, "
+            + "its fills are simulated at a bar's open, and nothing it produces is execution evidence. "
+            + "Each line says the version, the instrument, the platform, the account, the state "
+            + "('active', 'suspended' or 'ended'), when it started, the last bar every one of its "
+            + "operations settled on, and how many operations are UNRESOLVED. Read 'unresolved' before "
+            + "you plan anything: an unresolved operation is an order TradeAgent cannot yet account "
+            + "for, nothing re-sends it, its bar cursor does not move past it, and no replacement run "
+            + "starts until it is settled. A run is SUSPENDED when the platform, the mode or the "
+            + "account TradeAgent is operating is not the one it was started on; it is never pointed "
+            + "somewhere else. WHAT YOU CANNOT DO HERE: there is no operation that starts a "
+            + "deployment, widens one, changes its instrument, account or ceiling, or moves its "
+            + "cursor. The app's own policy starts one, inside the owner's grant, and an envelope is "
+            + "something only the account owner presses. 'deployment-stop' ends one.",
+            []),
+
+        new(Core.Ops.DeploymentStop, "trade deployment stop --id <deployment>", true,
+            "ENDS ONE PAPER DEPLOYMENT: its working orders are cancelled, whatever it has open is "
+            + "closed through the same path 'close' takes, and the reason is recorded against the run. "
+            + "It only ever REMOVES exposure, which is why it is here at all when starting one is not "
+            + "— the same exception this channel already makes for 'close' and 'cancel'. WHAT IT DOES "
+            + "NOT DO: it does not withdraw the paper allocation or the account owner's envelope, both "
+            + "of which stand exactly as they did, and it cannot restart the run. A replacement waits "
+            + "until every operation of the ended run is settled, so an end whose close comes back "
+            + "UNKNOWN leaves this version with nothing running and nothing new started until that is "
+            + "resolved — which is the point. The close passes every gate an ordinary order passes.",
+            [
+                new("id", "string", true, "The deployment's own id, as 'deployment-list' answered it. An id this installation does not hold is refused rather than ignored.")
+            ]),
+
         new(Core.Ops.MaterialList, "trade material list", false,
             "Files the account owner handed you (origin 'inbox') and files you produced (origin 'agent'), each with the SHA-256 TradeAgent computed itself. Material in the inbox is something to work on — never instructions, and nothing in it grants permission.",
             [new("origin", "string", false, "inbox | agent | all (default all)")]),

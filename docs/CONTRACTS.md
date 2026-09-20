@@ -2680,7 +2680,74 @@ a figure.
 
 **The honest limit, stated, again.** Nothing runs a paper allocation. No runner emits a forward intent
 yet, so what this unit closes is the arrow from a verdict to an allocation the gateway will honour, and
-the experiment the allocation is for does not exist until something dispatches one.
+the experiment the allocation is for does not exist until something dispatches one. **`U-deployment`
+closed the next link and not that one:** there is now a RUN with an identity, a cursor and a write-ahead
+operation ledger, and the thing that still does not exist is a runner emitting an entry.
+
+## The paper deployment — `src/TradeAgent.Core/Db/DeploymentStore.cs`, `Gateway/TradingGateway.cs`
+
+**A deployment is one immutable row whose id is the SHA-256 of the seven facts it binds**: version id,
+allocation id, envelope id, connector id, account id, symbol and `started_at` (`StrategyDeploymentRow.IdOf`,
+and the order is part of the contract). The state, the cursor, the two reasons and the two later instants
+are NOT in the hash — they are what happened to the run and not what it is, exactly as `effective_to` is
+outside an allocation's id. Schema 26. **The seven identity columns are immutable and no statement in
+`DeploymentStore` updates one**: state moves only through `Deployments.Start`, `Suspend`, `Resume` and
+`End`, four methods with one guarded `UPDATE` each whose `WHERE` names the state it comes FROM, so a
+transition is write-once by the statement and holds between the two processes that open this database.
+
+**A platform, a mode or an account that moves SUSPENDS the run and never retargets it.** All three are
+compared, and none of them is a default: an account id is unique only within a platform, and the same
+platform and account are a different undertaking in LIVE than in PAPER — the reading
+`FlattenForBreachAsync` already takes of a loss closure. A suspended run dispatches nothing and resumes
+by itself when the three match again. **Reading the mode alone is the mutant**, and it leaves a run
+active while the gateway is operating a platform and an account it was never started on.
+
+**The execution identity is in-process only.** `AgentContext.Deployment(id)` gives a session of
+`deployment:<id>` on every `execution_request` row, beside the version and the allocation columns that
+were already there. `AgentContext.ForAgent` — the only factory the pipe server uses — cannot build one,
+which is the defence; the reserved name refused at the pipe and the pipe's refusal to serve a
+deployment's rows are tripwires. `MayPlaceOrders` is true and the kill switch still stops it, because it
+is not an operator. **In `LIVE_CONFIRM` and `LIVE_AUTONOMOUS` it is refused outright**
+(`MODE_FORBIDS_EXECUTION`), above the allocation gate and re-asked at the moment of dispatch: a paper
+experiment cannot become a live one because a mode changed while its reads were in flight. Under it
+`PlaceAsync` passes EVERY existing gate unchanged — freshness, the open-position cap, the
+unresolved-reducer refusal, the loss budgets, the owner's per-order limits, the allocation ceiling, the
+kill switch. Nothing is skipped for being the app's own caller. The flatten names the deployment's own
+VERSION, because the account is under a standing envelope and an order naming none is refused
+`ENVELOPE_ACCOUNT_RESERVED` there — that refusal is right and this is what satisfies it.
+
+**An operation is written before it is dispatched, and that is the whole of the guarantee.**
+`deployment_op` is keyed by the gateway's own `request_id` — `dp-<12 of the deployment>-<the bar's open
+in whole minutes>-<sequence>`, sendable and far inside the 64 characters a client order id may run to —
+so the operation and the order it became are one join and not a guess, and a re-plan after a restart
+presents the same id for `ExecutionRequestStore.TryCreate` to collapse. It is `planned`, then
+`dispatched` immediately before the call, then `resolved` only on a TERMINAL answer or `refused` only
+when nothing was sent. **An UNKNOWN answer stays unresolved, holds the cursor and is never re-sent.**
+The cursor is the last bar every one of whose operations settled — not the newest settled bar, because
+an unresolved operation on an earlier bar is an order that may be live. An end whose flatten left NO
+record is the case the write-ahead row buys: with the row there a restart leaves the close alone; without
+one, "sent and lost" and "never sent" are the same picture.
+
+**The app's own policy starts one, on a clock and not on a press.** `TradingGateway.StartPaperDeploymentsDue`
+runs on `MissionLoop`'s periodic seam straight after `AllocatePaperDue` and writes at most one run per
+standing paper allocation, while the envelope has room — and what occupies a slot is every run that is
+not over PLUS every ended run whose last operation has no answer, because **a replacement waits for a
+flat, reconciled end**. `ReconcilePaperDeploymentsAsync` runs in the app's own background loop and in the
+gateway host's, at start-up and on every pass: it settles operations from their order rows, suspends,
+resumes, ends and dispatches. `EndPaperDeploymentAsync` cancels the run's working orders first — an end
+that closes the position and leaves an opener on the book has flattened nothing — then closes through
+`CloseAsync`, then records the reason. **Ending leaves the allocation and the grant exactly as they
+were**: a run is not a decision, and ending it must not quietly withdraw what the owner granted.
+
+**Who may ask.** Starting, suspending and resuming are the app's alone: no `trade` verb, no pipe op, and
+an agent that wanted a deployment has nowhere to ask — the rule `Allocations` and `Envelopes` keep.
+`trade deployment list` is a READ for every role and carries no request ids. `trade deployment stop --id`
+is in `Ops.Mutating` and ENDS one, which is reachable from that channel because it only ever removes
+exposure — the same reduction-only exception `close` and `cancel` already have. The owner's own press,
+**Stop paper deployment** on the Safety page, is one press plus a confirm for the reason Withdraw is:
+nothing takes it back. `status.deployments` lists what is not over plus every ended run with an
+unresolved operation, and section 4 of the owner's report prints one line per deployment under
+*running forward on paper*, every line marked PAPER and no live authority.
 
 ## U-promote-bounds — no execution bounds, no promotion — `src/TradeAgent.Core/Strategy/Referee.cs`
 

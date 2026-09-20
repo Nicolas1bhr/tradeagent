@@ -216,6 +216,16 @@ public static class Labels
     public const string WithdrawEnvelopeArmed =
         "Confirm: stop all paper experiments under this grant";
 
+    /// <summary>
+    /// ONE PRESS PLUS A CONFIRM, the withdrawal's rule and not the grant's: ending a paper deployment
+    /// only ever removes exposure — its working orders are cancelled and what is open is closed — and
+    /// nothing anywhere in the product takes a press like that back.
+    /// </summary>
+    public const string StopDeployment = "Stop paper deployment";
+
+    public const string StopDeploymentArmed =
+        "Confirm: cancel its orders, close what it has open, and end the run";
+
     /// <summary>What the second press will do, in full, with the figures the owner typed.</summary>
     public static string EnvelopeArmed(string symbol, string quantity, string? value, DateTimeOffset until) =>
         $"Confirm: TradeAgent may run paper experiments in {symbol}, up to {quantity} at a time"

@@ -70,6 +70,10 @@ public static class CliReplayContract
     {
         Ops.Buy or Ops.Sell =>
             "note: re-running with the same --request-id returns this same result; it will not place a second order.",
+        Ops.DeploymentStop =>
+            "note: the run is over. Re-running this ends nothing a second time — a deployment that has "
+            + "already ended is answered as it stands — and the paper allocation and the account "
+            + "owner's envelope are untouched.",
         _ when Ops.IsMutating(op) =>
             "note: keep this --request-id. Re-running it is NOT a replay for this command yet — it acts again on " +
             "the book as it is then, so check `trade orders` or `trade positions` first.",
