@@ -6675,3 +6675,37 @@ of: …` at `MaterialOverPipeTests.cs:210`); all put back. Manager's gate at `04
 **NOT done, NOT verified:** the CLI help line in `TradeCli/Program.cs` (another leg's file) still omits `app` — `--origin app` reaches the gateway regardless;
 `DailyReports.cs` has no material section and none was added; rows measured before this unit keep their old word (the reference and the examples correct
 themselves at the next start; a delivery already in `in/` stays `Agent`); no box, no provider, no venue, no order.
+
+## 2026-09-20 — U-runner landed: the frozen version runs forward on paper — closed bars in, the first production `PlaceIntent` from a `StrategyIntent` through every gate, protection by code, crash-safe replay
+
+The deployment → forward intents → fills arrows (`docs/PRINCIPLES.md`: "Frozen strategies execute through the app's deterministic runner and existing gateway"),
+built by one fresh Opus builder from the 40-line brief `docs/briefs/U-runner.md` (landed `636ea94`, amended `78394a2`), cut from the deployment tip, rebased onto
+`a2c05be` with no conflict. Merge `44a436c`, 5 commits (4 items + the report), 10 files, +1744/−12. No schema rung. MONEY PATH in PAPER: `ForwardRuns` is the first production producer of a `PlaceIntent`.
+
+- **Bars reach the connector and the runner:** `ForwardBarSource` binds `forward_bar` to the paper connector's `IPaperBarSource` (`Connectors.Create` builds it for
+  both hosts — the adapter's empty `MemoryBarSource` is gone from production); `ForwardRuns` replays the frozen program deterministically from the deployment's
+  start on every `BarClosed` and at start-up; a non-ascending bar is skipped with a note, never stepped twice; a sticky fault ENDS the deployment with the reason.
+- **Protection first, by code:** at the close of the bar reaching the maximum hold a `flatten` op closes at market BEFORE `Step` is asked, so the evaluator reads
+  a flat account; sizes rounded DOWN to the catalogue's verified increment, a size that rounds to nothing a recorded no-trade.
+- **Dispatch through every gate:** `StrategyIntent` → `IntentDecision.From` → `PlaceIntent` (version, decision) → `deployment_op` written `planned` →
+  `PlaceAsync(AgentContext.Deployment(id))` → the answer or the refusal code recorded (`DECISION_EXPIRED`, `ALLOCATION_EXCEEDED` included; a `CREATED` row and a
+  `GatewayDeniedException`'s code both recorded, nothing removed); on the entry fill the stop and the target rest at the venue from the price paid, the loser
+  cancelled; nothing is planned past the first bar the cursor has not reached. **Stated deviations:** a paper fill lands two bars after the signal bar, not one —
+  the minute in progress had already opened when the signal was seen, and the adapter fills at the first CLOSED bar that opened after the order (a real latency,
+  recorded, not hidden); a `stop`/`target` op resolves on the venue's acknowledgement rather than a terminal answer, or protection would stall the run.
+- **Feedback:** fills attributed to the version and the deployment through `execution_request`; a deployment's END and each UTC day-close raise one persisted wake
+  to Research with the figures (the role's own experiment, not holdout evidence); both hosts advance the runner; `CONTRACTS.md` "The runner" says what a paper
+  fill is and is not.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `44a436c` (rebased onto `a2c05be`), Release `--no-incremental`: 0
+warnings, 0 errors; Unit 1186 + Fault 399 + Integration 695 = 2280 passed, 0 failed, 1 skipped; `ForwardRunnerTests` 3× 7/7, `PaperDeploymentTests` 3× 6/6; names
+1931 → 1939, 0 removed. RED on the base, all six: (a)(b)(d)(e)(f) `Assert.Single() Failure: The collection was empty`; (c) `Assert.Equal() Failure … Expected: 1 /
+Actual: 0`. Mutant (i), the cursor advanced before the ops resolve: (e) `Assert.Single() Failure: The collection contained 2 items` — two working market sells
+`TA-dp-…-29830324-0`, `TA-dp-…-29830325-0` under a long 1, the duplicated exposure the test exists to catch; mutant (ii), the maximum hold checked after `Step`:
+(c) `Expected: 1 / Actual: 2`; both put back. Test (e), Astra's one pre-run insistence, is built on the max-hold flatten (the evaluator's pending guard already
+covers entries) and drives the shipped `ForwardBarSource`, not the memory one. Manager's gate at `44a436c` (the reported tip, 0 behind `main` `a2c05be`; `src`/`tests` identical to the code tip `0cb8b0f`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1186/1186 (25 s), Fault 399/399 (1 m 35 s), Integration 695/696, 1 skipped (11 m 6 s, its normal length, beside the fixer's work) → 0 failed. Names vs `main` (git objects): sets 1930 → 1938, 0 removed, 8 added. Scan clean; no
+trailers; `rev-list --count` → 0. CI at `44a436c`: recorded when complete.
+
+**NOT done, NOT verified:** no forward bar from the real host has driven a deployment — every bar in every test is canned; no real model; no `trade` verb or pipe
+op for the runner (none is wanted); `RunBooks.At`'s vestigial `ordinal` parameter left; no screen, no box, no ATAS, no venue, no real order. The two hosted-runner
+reds of the morning (`d9ae716` windows, `ed3b224` ubuntu; the same code green at neighbouring shas) are `U-runner-reds-3`'s, in flight.
