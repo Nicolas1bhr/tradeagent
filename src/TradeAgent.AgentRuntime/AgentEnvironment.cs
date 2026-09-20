@@ -18,8 +18,10 @@ namespace TradeAgent.AgentRuntime;
 ///
 /// What passes: the platform's own machinery (where the home directory is, where temp is, what the
 /// locale is, and on Windows the handful of variables without which ordinary programs misbehave),
-/// TradeAgent's own <c>TRADEAGENT_*</c>, and the variables the vendor's own CLI reads, which come
-/// from that runtime's manifest because vendor commands are data.
+/// where the app itself found .NET, because the child is relaunched through the app's own
+/// framework-dependent <c>trade</c> and that launcher cannot start without it, TradeAgent's own
+/// <c>TRADEAGENT_*</c>, and the variables the vendor's own CLI reads, which come from that runtime's
+/// manifest because vendor commands are data.
 ///
 /// It is NOT a sandbox and it protects nothing on disk: the agent runs as the same user and can read
 /// the same files. What it removes is one specific way for a secret to arrive somewhere nobody
@@ -42,6 +44,33 @@ public static class AgentEnvironment
         "LANG", "LC_ALL", "LC_CTYPE", "TZ"
     ];
 
+    /// <summary>
+    /// WHERE THE APP ITSELF FOUND .NET, because the child is relaunched through the app's OWN
+    /// framework-dependent <c>trade</c> and an apphost with no runtime beside it reads exactly these
+    /// four names before it gives up.
+    ///
+    /// Measured on the dev Mac on 2026-09-20, with .NET installed in <c>$HOME/.dotnet</c> rather than
+    /// the default location: a child started with the whitelist below minus these names printed "You
+    /// must install .NET to run this application … DOTNET_ROOT = &lt;not set&gt; … Default location:
+    /// /usr/local/share/dotnet" and exited 131 — the launcher, not the vendor CLI, which never ran.
+    /// The same command with <c>DOTNET_ROOT</c> set reached the CLI. Onboarding then sat at "Sign in
+    /// to your AI account" for as long as anybody watched it, with the CLI already signed in.
+    ///
+    /// ALL FOUR SPELLINGS AND ON EVERY PLATFORM. The architecture-qualified name is read FIRST — the
+    /// run above searched <c>DOTNET_ROOT_ARM64</c> before <c>DOTNET_ROOT</c> — so passing only the
+    /// plain one would leave a machine that sets only the qualified one exactly as broken; and the
+    /// packaged Windows build being self-contained is a fact about the build, not a reason for the
+    /// list to differ per platform when a developer build runs there too.
+    ///
+    /// NOT A SECRET AND NOT INVENTED. These are filesystem paths to a public runtime, and
+    /// <see cref="Apply"/> skips a name this process does not hold: on a machine whose .NET is where
+    /// the apphost already looks, nothing new crosses at all.
+    /// </summary>
+    static readonly string[] DotnetRoot =
+    [
+        "DOTNET_ROOT", "DOTNET_ROOT_X64", "DOTNET_ROOT_ARM64", "DOTNET_ROOT(x86)"
+    ];
+
     static readonly string[] WindowsOnly =
     [
         "SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT",
@@ -61,7 +90,7 @@ public static class AgentEnvironment
 
     /// <summary>Every name that may cross, on this platform, before the vendor's own are added.</summary>
     public static IReadOnlyList<string> PassThrough =>
-        [.. Common, .. OperatingSystem.IsWindows() ? WindowsOnly : UnixOnly];
+        [.. Common, .. DotnetRoot, .. OperatingSystem.IsWindows() ? WindowsOnly : UnixOnly];
 
     /// <summary>
     /// Replaces the inherited environment with the whitelist plus what TradeAgent hands over.

@@ -186,7 +186,14 @@ are the same code with different data. Runtime-specific awkwardness stays inside
   the child in TradeAgent's OWN group, and `setpgid` from the parent after exec fails as POSIX says.
 - **The environment is a whitelist**, `AgentEnvironment.PassThrough` plus the runtime manifest's
   `KeepEnvironment` plus TradeAgent's own — `psi.Environment.Clear()` first, because that dictionary
-  starts as a copy of the app's.
+  starts as a copy of the app's. **The launcher is the app's own framework-dependent `trade`, so the
+  child must be able to find the runtime the app found** (`U-launcher-env`, 2026-09-20): `DOTNET_ROOT`,
+  `DOTNET_ROOT_X64`, `DOTNET_ROOT_ARM64` and `DOTNET_ROOT(x86)` are on the list, on every platform.
+  Measured on a Mac with .NET in `$HOME/.dotnet`: without them the apphost printed "You must install
+  .NET to run this application … DOTNET_ROOT = \<not set\>" and exited 131 before the vendor CLI ran,
+  and every probe read that as the CLI's own answer. Those four names are the only addition, they are
+  paths to a public runtime and no secret is among them, and `Apply` passes a name **only when the app
+  itself holds it** — on a machine whose .NET is where the apphost already looks, nothing new crosses.
 - **The pipe knows which launch is calling.** One grant per launch (role, attempt id, expiry), minted
   in `AgentSession` and handed over in the child's environment ONLY, presented in `hello` beside the
   machine token, and stamped on `AgentContext.Role` / `AttemptId`. A grantless caller is authenticated
