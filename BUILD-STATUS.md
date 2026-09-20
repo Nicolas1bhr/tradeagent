@@ -6509,3 +6509,41 @@ on the base only as `CS0246` (the weak red it is, stated). Mutant (i), the close
 **NOT done, NOT verified:** the Market data card never rendered (`tools/mac-run.sh` not run); no run against the real host by the builder, no vendor call from any
 test (`SuiteReachesNoVendorTests` proves it); no order anywhere; nothing consumes the bars yet — no runner, no paper adapter wired to `IPaperBarSource`; no
 box, no ATAS, no money.
+
+## 2026-09-19 — U-paper-adapter landed: the app's own PAPER connector — real bars in, simulated fills out at the next open, a persistent idempotent book, no way to reach a venue
+
+The execution model of forward paper (`manager-prompt.md` § 5 "Actual market observation"; Astra 2026-09-19: "the adapter must possess only simulated execution
+capability"), built by one fresh Opus builder from the 40-line brief `docs/briefs/U-paper-adapter.md` (landed `3557e1e`) as the third parallel leg the owner
+allowed. Merge `1616de7`, 5 commits (4 items + the report), 23 files, +2262/−20, two new projects (`Connectors.Paper`, `Platforms`). No app schema rung: the book is the connector's own SQLite file. Not the live money path: the connector references no HTTP
+client and no venue SDK, and a test reflects over the assembly to say so.
+
+- **`TradeAgent.Connectors.Paper`** in the solution, referenced by the App and the GatewayHost as Fake is: `Id = "paper"`, `IsPaper`, `SupportsClientOrderId`,
+  `SupportsOrderHistory`, `SupportsModify`, `SupportsClosePosition` true (the first two TRUE because tests prove the round-trip and the reach-back — rules 1 and
+  2 of `CLAUDE.md`, literally), `SupportsStreaming` false; one simulated account `PAPER-1` (USDT, 10,000 declared at creation, then owned by the file);
+  instruments = the catalogue's VERIFIED non-simulator rows with their increments (the shipped catalogue → an empty list and a placement refused naming
+  `venues.json`); an injectable clock; `IPaperBarSource` with a `MemoryBarSource` for tests.
+- **The book, persistent and idempotent:** `state/paper-<account>.db`, `paper_meta.schema = 1` inside the file (a newer file is refused, not read); orders keyed by
+  client order id; `paper_fill UNIQUE (client_order_id, bar_open_time)`; average-cost positions; decimals as invariant text; every SDK read off the file, equity
+  = starting + realised − fees, unrealised off the last close and NULL with none.
+- **Settlement in the backtest's order:** a market order fills at the next CLOSED bar's open plus adverse slippage; a stop at that open on a gap-through, else at
+  its level; a limit at its level; a stop firing takes the bar from every limit on that instrument; the declared fee on every fill; sizes rounded DOWN;
+  FRICTIONLESS written on the fill row and in the status detail when no fee and no slippage are declared (`PaperFeeFraction`/`PaperSlippageFraction`, default 0).
+  `ConnectorRejectedException` only for an unverified symbol, a size below the increment, a modify or cancel of a non-WORKING order; a throwing bar source or
+  book I/O propagates (rule 3).
+- **`Platforms.Connectors.Create(id)`** replaces both hard-coded ternaries (`fake` | `atas` | `paper`) — a new one-file project `TradeAgent.Platforms`, because
+  the Gateway must stay unable to name a concrete connector (`PlaceRouteTests`) and both hosts need the factory; the picker offers "TradeAgent paper — real
+  prices, simulated fills" in one press. `CONTRACTS.md` "The paper connector"; `USER-GUIDE.md` one section. Deviation stated: the four commits split by test
+  file, the first carrying all three items' source, because the connector and its book do not compile in halves.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `01559f0` (rebased onto `636ea94`), Release `--no-incremental`: 19
+projects, 0 warnings, 0 errors; Unit 1156 + Fault 384 + Integration 678 = 2218 passed, 0 failed, 1 skipped (`PipeContractTests`'s `[Fact(Skip)]`, on `main`
+too); touched classes 3× → three Fault classes 10/10 each, `PaperGatewayTests` 1/1; names 1871 → 1882, 11 added, 0 removed. RED on the base (greenfield):
+`error CS0234: … 'Paper' does not exist in the namespace 'TradeAgent.Connectors'`. Mutant (i), fill at the placing bar's close: `Assert.Equal() Failure …
+Expected: 110.110 / Actual: 105.105`. Mutant (ii), the fills' UNIQUE key dropped: `Assert.Single() Failure: The collection contained 3 items` — it SURVIVED
+the first attempt because the execution id's PRIMARY KEY enforced the same fact; the id became a sequence so the named key is the only guard, then red.
+Rebased once over `U-forward-bars` (one conflict, `Trading.cs`: both units' settings kept, market data first, 0 deletions either side; `git diff 01559f0 1616de7 -- src tests` = forward-bars' own files and nothing else) and re-gated at `1616de7` on `f4d271b`, each suite alone: Unit 1168 + Fault 384 + Integration 686 = 2238 passed, 0 failed, 1 skipped; names 1889 → 1900, 11 added, 0 removed. Manager's gate at `1616de7` (the reported tip, 0 behind `main` `f4d271b`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1168/1168 (22 s); then CONTAMINATED — the rate-limit stoppage of 2026-09-19 evening left the detached gate running through the night beside another builder's suite: Fault 383/384 in 2 h 6 m, Integration 513/687 with 173 red in 11 h, the reds in the pipe and deadline `Timing` classes; re-run ALONE on the same build 2026-09-20 morning (`--no-build`): Integration 686/687, 1 skipped (11 m 5 s, its normal length), Fault 384/384 (1 m 28 s) → 0 failed, both runs quoted. Names vs `main` (git objects): sets 1888 → 1899, 0 removed, 11 added. Scan clean; no trailers; `rev-list --count` → 0. CI at `1616de7`: recorded when complete. Recorded now, GREEN on all four jobs each: `d8000fa` (run 35459469327), `e89a4cb` (35459470564), `636ea94` (35459703717), `6016fdd` (35460941975), `b715648` (35460943424), `f4d271b` (35461077856).
+
+**NOT done, NOT verified:** no live bar source is wired — `Connectors.Create` hands the paper connector an EMPTY `MemoryBarSource` until the runner unit binds
+`ForwardBarStore` to `IPaperBarSource`, so in the app it quotes nothing, fills nothing and says so; "a live mode refuses its account" is the installation's
+EXISTING `LIVE_NOT_ACTIVATED` gate quoted in the test — NO new gate was added (one refusing a simulated account in a live mode would redden every live-mode
+test against the simulator); the picker never rendered; no box, no ATAS, no venue, no real order.

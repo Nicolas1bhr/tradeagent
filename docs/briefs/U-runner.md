@@ -11,7 +11,8 @@ bars"; `StrategyEvaluator.cs:38-80,142-156,251-265,356`; `StrategyEvaluation.cs:
 `AccountReading`, `Step`, exit sizing, `RoundDown`); `GatewayTypes.cs:317-337` (`IntentDecision.From`); `TradingGateway.cs:4859-4893`, `:4200`;
 `ForwardBarStore.Since`/`Freshness`, `BarClosed`; `IPaperBarSource`, the paper fill semantics; `Deployments`, `deployment_op`, `AgentContext.Deployment`. Rebase first.
 Items, one commit each with a one-sentence message:
-1. `ForwardRuns` (Gateway, beside `Backtests.cs`): on each `BarClosed(symbol, open)` — and on start-up for every bar since the cursor — for each `active`
+1. Bind `ForwardBarStore` to the paper connector's `IPaperBarSource` in `Platforms.Connectors.Create` (the adapter left an empty `MemoryBarSource`). Then
+   `ForwardRuns` (Gateway, beside `Backtests.cs`): on each `BarClosed(symbol, open)` — and on start-up for every bar since the cursor — for each `active`
    deployment on that symbol, rebuild `EvaluationState` deterministically by replaying the forward bars from the deployment's start (`EvaluationState.Start`
    with the frozen program and the bar interval; `Step` per bar with the account reading recorded on that bar's op rows); a fault is sticky and ENDS the
    deployment with the reason; an out-of-order or duplicate bar is skipped with a recorded note, never stepped twice.
@@ -36,5 +37,4 @@ recorded_and_the_cursor_still_advances_with_nothing_at_the_wire`; (e) `A_crash_a
 wire_and_the_same_position` (the production path, both halves); (f) `A_second_runner_over_the_same_rows_reaches_the_same_state_and_the_gateway_refuses_its_
 duplicate_request_id`. Mutants to watch red and quote: (i) the cursor advanced before the ops resolve → (e) red; (ii) the maximum hold checked after `Step` →
 (c) red. Nothing removed or renamed.
-Gate and report as `docs/HOW-WE-BUILD.md` (`--no-incremental` Release 0 warnings; three suites 0 failed; classes 3×; names 0 removed; `## Report` ≤ 20 lines
-here). No push, no merge; touch nothing in `docs/briefs/` but this file.
+Gate and report as `docs/HOW-WE-BUILD.md` (`--no-incremental` Release 0 warnings; three suites 0 failed; classes 3×; names 0 removed; `## Report` ≤ 20 lines here).
