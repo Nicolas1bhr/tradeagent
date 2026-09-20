@@ -535,6 +535,12 @@ public sealed class AppHost : IAsyncDisposable
                 Forward = new ForwardBarCollector(_db,
                     () => Gateway.Settings.MarketDataPair,
                     () => Gateway.Settings.CollectLiveBars);
+
+                // AND THE PAPER CONNECTOR HEARS EVERY MINUTE THE COLLECTOR STORES. Through the one
+                // delegate rather than a direct subscription: a connector switch replaces what is
+                // listening and the collector goes on running through it. The collector already
+                // catches and records a subscriber that throws.
+                Forward.BarClosed += (symbol, open) => _forwardAnnounce?.Invoke(symbol, open);
                 Forward.Start();
             }
             catch (Exception ex)
@@ -686,11 +692,27 @@ public sealed class AppHost : IAsyncDisposable
     /// does, the connector quotes nothing and fills nothing and says exactly that in its status
     /// line, which is the honest shape and not a silent one.</para>
     /// </summary>
+    /// <summary>
+    /// WHOEVER IS LISTENING FOR "a minute closed", whatever platform is selected right now.
+    ///
+    /// <para>A field rather than a direct subscription because the two ends are built in the wrong
+    /// order for one: the connector is created before <see cref="Forward"/> exists, and a connector
+    /// switch replaces the connector while the collector goes on running. The collector raises this
+    /// one delegate and the delegate is what changes underneath it.</para>
+    /// </summary>
+    Action<string, DateTimeOffset>? _forwardAnnounce;
+
     ConnectorChoice PaperChoice() => new()
     {
         PaperFrictionNow = () => new PaperFriction(
             Gateway?.Settings.PaperFeeFraction ?? 0m,
-            Gateway?.Settings.PaperSlippageFraction ?? 0m)
+            Gateway?.Settings.PaperSlippageFraction ?? 0m),
+
+        // THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED. The store is
+        // handed over rather than a built source: `Connectors.Create` is the one place that decides
+        // what a platform id gets, and a host that built the adapter itself would be a second answer.
+        ForwardBars = _db is { } db ? new ForwardBarStore(db) : null,
+        SubscribeToBarClosed = announce => _forwardAnnounce = announce
     };
 
     public async Task SwitchConnectorAsync(string id)

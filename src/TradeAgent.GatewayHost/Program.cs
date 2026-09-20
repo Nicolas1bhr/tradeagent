@@ -26,8 +26,14 @@ var health = new HealthRegistry();
 
 // One place decides which platform an id names, shared with the desktop app: a host with its own
 // ternary agreed with the other by coincidence and would have disagreed about the third platform.
-ITradingConnector connector = Connectors.Create(connectorArg,
-    new ConnectorChoice { SimulatorAccountId = Arg("--account") });
+ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoice
+{
+    SimulatorAccountId = Arg("--account"),
+    // The same forward-bar ledger the app collects into. There is no collector in this host, so
+    // nothing announces a minute here and the connector settles by polling the rows — which is what
+    // `IPaperBarSource.SinceAsync` is for, and why an event that can be missed is never the path.
+    ForwardBars = new ForwardBarStore(db)
+});
 
 await using var gateway = new TradingGateway(db, connector, health);
 var token = IpcToken.Ensure();
