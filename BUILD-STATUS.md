@@ -6709,3 +6709,31 @@ trailers; `rev-list --count` → 0. CI at `44a436c`: recorded when complete.
 **NOT done, NOT verified:** no forward bar from the real host has driven a deployment — every bar in every test is canned; no real model; no `trade` verb or pipe
 op for the runner (none is wanted); `RunBooks.At`'s vestigial `ordinal` parameter left; no screen, no box, no ATAS, no venue, no real order. The two hosted-runner
 reds of the morning (`d9ae716` windows, `ed3b224` ubuntu; the same code green at neighbouring shas) are `U-runner-reds-3`'s, in flight.
+
+## 2026-09-20 — U-launcher-env landed: the contained child runs on the runtime the app runs on, and a launcher that fails is not "installed"
+
+The observed run's first refusal (below, this date: onboarding step 5 never advanced on this Mac although the CLI was signed in), reproduced from a shell and
+briefed the same hour; built by one fresh Opus builder from the 28-line brief `docs/briefs/U-launcher-env.md` (landed `52072f6`). Merge `b3582d7`, 3 commits
+(2 items + the report). No schema rung. Not the money path: the agent runtime's child environment and its install detection.
+
+- **The cause, RUN:** on Unix `ProcessContainment.Start` relaunches every child through the app's own framework-dependent `trade` (the containment launcher);
+  the child's whitelisted environment dropped `DOTNET_ROOT`, so on a machine whose .NET is not at the default location the launcher itself printed `You must
+  install .NET to run this application … DOTNET_ROOT = <not set>` and exited 131 before `codex login status` ran; the auth probe read the non-zero exit as
+  NotAuthenticated, silently, every 2 s — while step 4 had PASSED because `GetVersionAsync` returned the launcher's error text as the version.
+- **Item 1:** `DOTNET_ROOT`, `DOTNET_ROOT_X64`, `DOTNET_ROOT_ARM64` and `DOTNET_ROOT(x86)` join `AgentEnvironment.PassThrough` on every platform; `Apply` untouched,
+  so each crosses only when the app itself holds it; the whitelist gains nothing else; `CONTRACTS.md`'s containment section says why.
+- **Item 2:** a version comes only from an exit-0 run; a program that will not start is `Installed = false` with the first line it printed as
+  `RuntimeDetection.Reason`, shown by the onboarding install step, the Doctor row and the `AgentRuntime` health row, and not re-downloaded. Stated deviations:
+  `RuntimeDetection.Reason` added inert before the red run so the test could compile against the base; `CONTRACTS.md` also gained an `IAgentRuntime` paragraph.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `b3582d7` (on `52072f6`), Release `--no-incremental`: 0 warnings, 0
+errors; Unit 1189 + Fault 399 + Integration 695 = 2283 passed, 0 failed, 1 skipped; touched classes 3× → 6/6; names 1939 → 1942, 0 removed. RED on the base: (a)
+`DOTNET_ROOT was set in TradeAgent's own environment and did not reach the child`; (b) `a program that exits 131 without running was reported as an installed
+runtime`; (c) `An_exit_zero_run_is_the_version` GREEN on the base — a guard checked. Mutant (the exit code ignored in the version probe): (b) red on the same line;
+restored. Measured through the real launcher: `trade --spawn-contained /bin/echo` under `env -i` → `You must install .NET to run this application.`, exit 131;
+with `DOTNET_ROOT=$HOME/.dotnet` → `the vendor CLI ran`, exit 0. Manager's gate at `b3582d7` (the reported tip, 0 behind `main` `52072f6`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1189/1189 (25 s), Fault 399/399 (1 m 31 s), Integration 695/696, 1 skipped (11 m 34 s, beside the fixer's work) → 0 failed. Names vs `main` (git objects): sets 1938 → 1941, 0 removed, 3 added. Scan clean; no trailers; `rev-list
+--count` → 0. CI at `b3582d7`: recorded when complete.
+
+**NOT done, NOT verified:** "step 5 advances by itself" in the running app — the builder could not relaunch the bundle without killing the manager's parked run;
+verified or refuted by the manager's own relaunch on the landed build, recorded in the observed-run section; Windows untouched (its apphost finds the shared
+framework by the registry, which is why the box never showed this); no box, no money.
