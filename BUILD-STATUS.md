@@ -6547,3 +6547,38 @@ Rebased once over `U-forward-bars` (one conflict, `Trading.cs`: both units' sett
 `ForwardBarStore` to `IPaperBarSource`, so in the app it quotes nothing, fills nothing and says so; "a live mode refuses its account" is the installation's
 EXISTING `LIVE_NOT_ACTIVATED` gate quoted in the test — NO new gate was added (one refusing a simulated account in a live mode would redden every live-mode
 test against the simulator); the picker never rendered; no box, no ATAS, no venue, no real order.
+
+## 2026-09-20 — U-paper-envelope landed: the owner grants bounded paper experimentation ONCE, and eligible versions are allocated to paper by app policy — never to live
+
+The paper-authority arrow (`manager-prompt.md` § 5 "Paper authority"; `docs/PRINCIPLES.md` § boundary: live allocations keep their deliberate owner confirmation),
+built by one fresh Opus builder from the 36-line brief `docs/briefs/U-paper-envelope.md` (landed `d123e91`), cut from the paper-verdict tip, stalled once by the
+rate-limit stoppage mid-gate and resumed with one message, rebased over forward-bars and the adapter. Merge `add2671`, 5 commits (4 items + the report), 24 files, +2447/−64. **Schema 25.** MONEY PATH:
+`AllocationCeilingOrThrow` inside dispatch and every reader of `strategy_allocation`.
+
+- **`paper_envelope`:** one immutable row per grant (connector, account, symbol, currency, ceilings, max_deployments, granted_at, expires_at, reason; `withdrawn_at`
+  write-once), written ONLY by a two-press Dashboard card, refused unless BOTH witnesses call the account simulated (`AccountInfo.IsSimulated` AND
+  `Capabilities.IsPaper`, stricter than the PAPER-mode check's `||`) and the mode is PAPER at the press; withdrawal one press plus confirm; `Envelopes.Standing`.
+- **A scoped allocation:** five nullable columns on `strategy_allocation` (`scope`, connector, mode, account, envelope), NULL read as LIVE — an owner's press is never
+  a paper grant; a paper row's id hashes the seven facts PLUS the scope facts (`PaperIdOf`; live ids unchanged); `StandingForLive` / `StandingForPaper` /
+  `PaperStanding` / `InEnvelope`; `RecordPaper` refuses unless the standing is `paper_eligible` or `promoted`, the envelope stands, the ceiling fits and the
+  envelope has room; the live press refuses a paper scope and still asks `IsPromoted` alone.
+- **Dispatch splits on the gateway's own (connector, mode, account):** a paper row authorises nothing in `LIVE_*`, categorically; on an envelope's account in PAPER
+  only a paper row matching the pair authorises; an AGENT order naming no version on an envelope account is `ENVELOPE_ACCOUNT_RESERVED` (the owner's press
+  unaffected). **Deviation kept, stated in `CONTRACTS.md`:** off an envelope account, PAPER mode still reads LIVE rows — the literal brief would have removed the
+  owner's ceiling from every practice order and reddened eight existing money-path tests; the protected property (paper never authorises live) holds either way.
+- **App policy:** `AllocatePaperDue` on the `ApplyBoundaryDeadlines` seam and after each verdict delivery writes the paper allocation at the envelope's ceiling with
+  one persisted note-and-wake to Research keyed by the allocation; report section 4 lists paper allocations apart ("PAPER — no live authority"); `PromotedLine`
+  gained the paper clause and (the manager's added item) its stale `_` arm now names `trade verdict`, the budget, and a verdict-and-reason-class-only reply.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `56eac76` (rebased onto `78394a2`; rebase conflicts: forward-bars in
+`Database.cs`/`Versioning.cs` only, ladder 23 → 24 → 25 with the constant at 25; the adapter none; `git diff e006439 56eac76 -- src tests` = the adapter's own
+files and nothing else), Release `--no-incremental`: 0 warnings, 0 errors; Unit 1177 + Fault 393 + Integration 686 = 2256 passed, 0 failed, 1 skipped (11 m 6 s);
+touched classes 3× → Unit 44, Fault 23; names 1900 → 1914, 0 removed. RED: `error CS1061: 'TradingGateway' does not contain a definition for
+'GrantPaperEnvelopeAsync'` / `'RecordPaper'` / `'AllocatePaperDue'`; (e) `Expected start: "ok" / while it stood: ALLOCATION_NONE — strategy version 6b52acd9f0d5 has no
+capital allocated…`; (g) `Expected start: "ENVELOPE_ACCOUNT_RESERVED" / agent, envelope: ok — FILLED`; (d) GREEN on the base — a guard checked, not a RED. Mutant (i),
+live rows read in PAPER mode: `A_paper_allocation_never_authorises_a_live_dispatch: Expected start: "ALLOCATION_NONE" / outcome: ok — FILLED` and `another platform:
+ok — FILLED / another account: ok — FILLED`; mutant (ii), the scope facts dropped from the id: `Assert.NotEqual() Failure: Strings are equal / first id
+10174625b9d8… / second id 10174625b9d8…`; both put back. Manager's gate at `71dd3a9` (the reported tip; landed as `add2671` after a docs-only rebase over `1031fcd`, `src`/`tests` identical), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1177/1177 (28 s), Fault 393/393 (1 m 36 s), Integration 686/687, 1 skipped (11 m 6 s, its normal length, beside one builder's work) → 0 failed. Names vs `main` (git objects): sets 1899 → 1913, 0 removed, 14 added. Scan clean; no trailers; `rev-list --count` → 0. CI at `add2671`: recorded when complete.
+
+**NOT done, NOT verified:** nothing dispatches a paper allocation — no deployment, no runner (`U-deployment` cut from this tip); the envelope card never rendered;
+no real model has been allocated to paper; no box, no ATAS, no venue, no real order.
