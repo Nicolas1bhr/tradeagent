@@ -4,7 +4,16 @@ namespace TradeAgent.AgentRuntime;
 
 public enum AuthState { Unknown, NotAuthenticated, InProgress, Authenticated, Failed }
 
-public sealed record RuntimeDetection(bool Installed, string? Path, string? Version, bool Managed);
+/// <summary>
+/// What was found, and — when nothing usable was — WHY, in the failing program's own words.
+///
+/// <paramref name="Reason"/> is the first line the program printed when it would not run. It exists
+/// because "not installed" was the only thing the screens could say about a runtime whose file is
+/// right there and whose launcher exits 131, which sent the owner looking for a download that was
+/// already on the disk. Null whenever <paramref name="Installed"/> is true.
+/// </summary>
+public sealed record RuntimeDetection(bool Installed, string? Path, string? Version, bool Managed,
+    string? Reason = null);
 public sealed record RuntimeCapabilities(bool CanInstallItself, bool BrowserAuth, bool CanRunHeadlessTask, bool SelfContained);
 
 /// <summary>

@@ -172,6 +172,12 @@ CreateEnvironment · Start · Stop · Restart · ExecuteTask · GetHealth · Cap
 `CliAgentRuntime` implements all of it from a `RuntimeManifest`, so OpenCode, Codex and anything later
 are the same code with different data. Runtime-specific awkwardness stays inside the manifest.
 
+**`Installed` means it RAN** (`U-launcher-env`, 2026-09-20). A version comes only from an exit-0 run;
+a program that will not start is `Installed = false` and carries the first line it printed as
+`RuntimeDetection.Reason` — the launcher's own message when it is the launcher that failed. The
+onboarding install step, the Doctor row and the `AgentRuntime` health row show that reason, and a
+program that is on the disk and will not run is not downloaded again.
+
 ## Containment — `src/TradeAgent.AgentRuntime/Containment.cs`, `src/TradeAgent.Security/AgentGrants.cs`
 
 `U-containment` (2026-09-12). Four properties, and what each does NOT cover:

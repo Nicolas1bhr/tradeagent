@@ -110,7 +110,11 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             var d = await runtime.DetectAsync(ct);
             if (!d.Installed)
             {
-                r.Add(CheckResult.Warn($"{manifest.DisplayName}", "not installed",
+                // WHAT THE PROGRAM SAID WHEN IT IS ON THE DISK AND WILL NOT RUN. "Not installed" is
+                // the truth only when nothing was found; for a launcher that exits 131 it is the one
+                // sentence that hides the answer, and this row is where somebody goes looking.
+                r.Add(CheckResult.Warn($"{manifest.DisplayName}",
+                    d.Path is null ? "not installed" : $"found at {d.Path} but it would not run: {d.Reason}",
                     $"Only needed if you chose {manifest.DisplayName}.", ErrorCode.AI_RUNTIME_NOT_FOUND, true));
                 continue;
             }

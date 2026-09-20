@@ -659,7 +659,13 @@ public sealed class OnboardingView
             {
                 Stage("Checking whether it is already on this computer.");
                 var found = await rt.DetectAsync();
-                if (!found.Installed) found = await rt.InstallAsync(new Progress<string>(Stage));
+
+                // A PROGRAM THAT IS ON THE DISK AND WILL NOT RUN IS NOT A MISSING DOWNLOAD.
+                // Installing it again fetches the same file and fails the same way; the only useful
+                // thing anybody has is the sentence the program itself printed, so the else below
+                // shows that instead of inventing a story about the internet connection.
+                if (!found.Installed && found.Path is null)
+                    found = await rt.InstallAsync(new Progress<string>(Stage));
 
                 if (found.Installed)
                 {
@@ -668,7 +674,7 @@ public sealed class OnboardingView
                 }
                 else
                 {
-                    Settle($"TradeAgent finished the download but could not find {rt.DisplayName} afterwards.", null);
+                    Settle(found.Reason ?? $"TradeAgent finished the download but could not find {rt.DisplayName} afterwards.", null);
                 }
             }
             catch (TradeAgentException ex)

@@ -60,7 +60,12 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,
-                detection.Installed ? $"{manifest.DisplayName} {detection.Version}" : $"{manifest.DisplayName} is not installed");
+                detection.Installed
+                    ? $"{manifest.DisplayName} {detection.Version}"
+                    // The program's own words where there are any: a runtime whose file is on the
+                    // disk and whose launcher will not start is not "not installed", and this row is
+                    // the only thing the owner sees about it.
+                    : detection.Reason ?? $"{manifest.DisplayName} is not installed");
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
             var homes = WorkspaceBuilder.BuildAll(ctx);

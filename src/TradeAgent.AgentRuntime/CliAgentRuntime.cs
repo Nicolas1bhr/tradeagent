@@ -199,24 +199,69 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         return window;
     }
 
+    /// <summary>
+    /// INSTALLED MEANS IT RAN, not that a file with the right name is on the disk.
+    ///
+    /// The file existing was the whole test until 2026-09-20, and here is what that cost: on a Mac
+    /// whose .NET is not in the default location, the app's own launcher — which every agent process
+    /// is relaunched through — exited 131 with "You must install .NET to run this application" before
+    /// the vendor CLI ran. `Installed` was true because <see cref="ResolveExecutable"/> had found the
+    /// CLI, so setup walked past "Installing the AI assistant" and then sat on "Sign in to your AI
+    /// account" for as long as anybody watched, with the CLI already signed in — and the launcher's
+    /// complaint, which says exactly what is wrong, was never shown to anybody.
+    ///
+    /// So a runtime that would not run is NOT installed, and it carries the first line the failing
+    /// program printed as its <see cref="RuntimeDetection.Reason"/>. That is the launcher's own
+    /// message when it is the launcher that failed, and the vendor's own when it is the vendor's.
+    /// </summary>
     public async Task<RuntimeDetection> DetectAsync(CancellationToken ct = default)
     {
         var exe = ResolveExecutable();
-        if (exe is null) return new RuntimeDetection(false, null, null, false);
-        var version = await GetVersionAsync(ct);
-        return new RuntimeDetection(true, exe, version, exe.StartsWith(Paths.Tools, StringComparison.Ordinal));
+        if (exe is null)
+            return new RuntimeDetection(false, null, null, false,
+                $"{manifest.DisplayName} is not on this computer");
+
+        var managed = exe.StartsWith(Paths.Tools, StringComparison.Ordinal);
+        var (version, refused) = await ProbeVersionAsync(exe, ct);
+        return version is null
+            ? new RuntimeDetection(false, exe, null, managed, refused)
+            : new RuntimeDetection(true, exe, version, managed);
     }
 
     public async Task<string?> GetVersionAsync(CancellationToken ct = default)
     {
         var exe = ResolveExecutable();
         if (exe is null) return null;
+        return (await ProbeVersionAsync(exe, ct)).Version;
+    }
+
+    /// <summary>
+    /// The version probe, and what the program said instead when there is no version to report.
+    ///
+    /// A VERSION IS A VERSION ONLY FROM AN EXIT-0 RUN. It used to be enough for the program to print
+    /// something on stdout, whatever its exit code, which turns a program that failed loudly into a
+    /// program that is installed and has a strange version number.
+    /// </summary>
+    async Task<(string? Version, string? Refused)> ProbeVersionAsync(string exe, CancellationToken ct)
+    {
         var r = await Run(exe, manifest.VersionArgs, TimeSpan.FromSeconds(20), ct, agentWork: false);
-        if (r.ExitCode != 0 && string.IsNullOrWhiteSpace(r.StdOut)) return null;
+        if (r.ExitCode != 0)
+            return (null, FirstLine(r.StdErr) ?? FirstLine(r.StdOut)
+                ?? $"{Path.GetFileName(exe)} exited {r.ExitCode} without saying why");
+
         var text = string.IsNullOrWhiteSpace(r.StdOut) ? r.StdErr : r.StdOut;
         var m = Regex.Match(text, @"\d+\.\d+(\.\d+)?");
-        return m.Success ? m.Value : text.Trim().Split('\n').FirstOrDefault()?.Trim();
+        return (m.Success ? m.Value : text.Trim().Split('\n').FirstOrDefault()?.Trim(), null);
     }
+
+    /// <summary>
+    /// The first thing the program said, with the terminal renderer's colour codes taken off — the
+    /// same treatment the auth probe gives, and for the same reason: these CLIs write through a
+    /// renderer even when nobody is looking at a terminal.
+    /// </summary>
+    static string? FirstLine(string text) =>
+        Ansi.Strip(text).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(l => l.Length > 0);
 
     // ---- installation --------------------------------------------------------------------------
 
@@ -263,8 +308,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         progress?.Report($"Checking {manifest.DisplayName} runs");
         var detected = await DetectAsync(ct);
         if (!detected.Installed)
-            throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
-                $"{manifest.DisplayName} was installed but the program could not be found afterwards");
+            // THE PROGRAM'S OWN WORDS WHERE THERE ARE ANY. "Could not be found afterwards" is the
+            // wrong sentence for a file that is right there and will not start, and it sends the
+            // owner looking for a download they already have.
+            throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED, detected.Path is null
+                ? $"{manifest.DisplayName} was installed but the program could not be found afterwards"
+                : $"{manifest.DisplayName} was installed but would not run: {detected.Reason}");
 
         progress?.Report($"{manifest.DisplayName} {detected.Version} is ready");
         return detected;
