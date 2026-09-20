@@ -1463,6 +1463,29 @@ public class BridgeRoundTripTests
         await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
         Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
 
+        // THE SNAPSHOT IS TAKEN AFTER THE REFUSAL HAS FINISHED, NOT IN THE MIDDLE OF IT.
+        //
+        // The refusal raises ConnectionChanged(FAILED) TWICE and `seen` counts that event: once in
+        // the hello branch, and once in Drop when the read loop ends. The wait above returns on
+        // `_incompatible`, which NoteIncompatible sets BEFORE either — so `before` was read from
+        // inside the connector's own two events and the assertion below compared a count taken
+        // half-way through them with one taken after. Nothing about the refused BRIDGE is involved.
+        //
+        // MEASURED on draft PR #23 (runs 35504722157 and 35513092386), 20 rounds per runner, the
+        // wait spun rather than polled every 50 ms — which is what that poll is worth on a runner
+        // that preempts the connector right there, and the substitution U-peer-row-ubuntu measured
+        // the same way: `before` came back 0 (once 1, mid-way between the two events) against a
+        // settled 2 in 5 and 7 of 20 rounds on ubuntu-latest, 9 and 6 on macos-latest and 9 and 9 on
+        // windows-latest, which is `Assert.Equal() Failure: Values differ` — ubuntu-latest's red at
+        // `ed3b224`. The window is 0.1-0.3 ms wide, which is why the poll steps over it 19 times in
+        // 20 when it is a poll at all.
+        //
+        // The hand-over closes it with no clock in it: the connector's accept loop runs Drop in its
+        // `finally` and disposes the pipe instance immediately after, so this peer's own read
+        // reaching end-of-stream means every event the refusal raises has already been invoked. In
+        // all 20 rounds on all three runners the count at that instant was the settled one.
+        await bridge.Ended.WaitAsync(TimeSpan.FromSeconds(10));
+
         // One branch gates all six event kinds, so two of them settle it — and these two are the
         // ones that need no record shape to be built by hand.
         var before = Volatile.Read(ref seen);
