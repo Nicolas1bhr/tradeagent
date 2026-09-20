@@ -49,6 +49,155 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
         return (gw, conn, db, clock);
     }
 
+    // ===================== PROBE (U-runner-reds-3, throwaway; reverted before the fix) ===========
+    // A gateway exactly like Ready()'s but over a simulator whose EMERGENCY BUDGET this probe
+    // chooses. The budget is a REAL wall clock (Environment.TickCount64, FakeConnector's default is
+    // 2 s) and the data-loss exit runs its cancel-then-close inside one, so it is the only quantity
+    // in this fixture the runner can spend.
+    static async Task<(TradingGateway Gw, FakeConnector Conn, TradeAgent.Core.Db.Database Db, TestClock Clock)>
+        ProbeReady(TimeSpan emergency, decimal exitAfterMinutes = 1m)
+    {
+        var clock = new TestClock(Noon);
+        var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker(), null) { EmergencyBudget = emergency };
+        var gw = new TradingGateway(db, conn, new TradeAgent.Core.HealthRegistry(), new GatewayOptions { Clock = clock });
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxDailyLoss = 1_000m;
+            s.Risk.ValuationLossExitMinutes = exitAfterMinutes;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        return (gw, conn, db, clock);
+    }
+
+    /// <summary>The gateway's own account of what it did, in its own words.</summary>
+    static List<string> Engineering(TradeAgent.Core.Db.Database db)
+    {
+        var rows = new List<string>();
+        using var c = db.Cmd("SELECT event,severity FROM engineering_log WHERE component='Gateway' ORDER BY id");
+        using var r = c.ExecuteReader();
+        while (r.Read()) rows.Add($"{r.GetString(0)}/{r.GetString(1)}");
+        return rows;
+    }
+
+    /// <summary>
+    /// PROBE: the fixture's schedule, per step, against the 2 s emergency budget it runs inside —
+    /// and the same fixture with that budget cut, to see whether a spent budget is what removes the
+    /// exit line the runner's red says is missing.
+    /// </summary>
+    [Fact]
+    public async Task Probe_valuation_exit_schedule()
+    {
+        var said = new List<string>();
+        // (budget the exit's cancel-then-close runs inside, which pass — if any — the runner loses)
+        foreach (var (budget, lose) in new[]
+                 {
+                     (TimeSpan.FromSeconds(2), -1), (TimeSpan.FromMilliseconds(1), -1),
+                     (TimeSpan.FromSeconds(2), 0), (TimeSpan.FromSeconds(2), 1),
+                     (TimeSpan.FromSeconds(2), 2), (TimeSpan.FromSeconds(2), 3)
+                 })
+        {
+            var (gw, conn, db, clock) = await ProbeReady(budget);
+            using var _1 = db;
+            await using var _2 = gw;
+
+            var wall = System.Diagnostics.Stopwatch.StartNew();
+            await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
+            var placed = wall.Elapsed.TotalMilliseconds;
+            clock.Advance(Tick);
+            await gw.RefreshHealthAsync();
+            var first = wall.Elapsed.TotalMilliseconds;
+
+            conn.Faults.QuoteAge = Silent;
+            var steps = new List<double>();
+            var episodes = new List<string>();
+            for (var i = 0; i < 4; i++)
+            {
+                var at = wall.Elapsed.TotalMilliseconds;
+                clock.Advance(Tick);
+                // A LOST PASS, which is what a health refresh that throws amounts to: the catch at
+                // the bottom of RefreshHealthAsync swallows it and the loss watch never runs.
+                conn.Faults.Disconnected = i == lose;
+                await gw.RefreshHealthAsync();
+                conn.Faults.Disconnected = false;
+                steps.Add(wall.Elapsed.TotalMilliseconds - at);
+                var row = db.KvStartingWith("valuation_unavailable:").FirstOrDefault();
+                episodes.Add(row.Value is null ? "(no episode)"
+                    : $"since={Json.Read<System.Text.Json.JsonElement>(row.Value).GetProperty("since").GetString()}");
+            }
+
+            var text = DailyReportText.Render(gw.Reports.Compose(clock.GetUtcNow()));
+            var exited = text.Contains("VALUATION_LOST", StringComparison.Ordinal);
+            var line = text.Split('\n').First(l => l.Contains("closed because nothing could value it", StringComparison.Ordinal));
+
+            var one =
+                $"PROBE valuation budget={budget.TotalMilliseconds:0} ms lost-pass={lose} | place {placed:0.#} ms | first refresh "
+                + $"{first - placed:0.#} ms | the four unvaluable refreshes {string.Join(", ", steps.Select(s => $"{s:0.#}"))} ms "
+                + $"| total {wall.Elapsed.TotalMilliseconds:0.#} ms | episode after each: {string.Join(" ", episodes)} "
+                + $"| VALUATION_LOST in the report: {exited} | line: {line.Trim()[..Math.Min(140, line.Trim().Length)]} "
+                + $"| engineering: {string.Join(", ", Engineering(db))}";
+            log.WriteLine(one);
+            said.Add(one);
+        }
+
+        // A PROBE IS NOT A TEST. It fails on purpose so the measurement is printed by the runner's
+        // own step log, which is the only place a draft PR's numbers can be read from.
+        Assert.Fail(string.Join("\n", said));
+    }
+
+    /// <summary>
+    /// PROBE: the proposed fixture — drive the health pass until the product has RECORDED the exit,
+    /// bounded, instead of assuming the fourth pass is the one — under every lost pass in turn.
+    /// </summary>
+    [Fact]
+    public async Task Probe_valuation_exit_driven_to_the_record()
+    {
+        var said = new List<string>();
+        foreach (var lose in new[] { -1, 0, 1, 2, 3, 4 })
+        {
+            var (gw, conn, db, clock) = await ProbeReady(TimeSpan.FromSeconds(2));
+            using var _1 = db;
+            await using var _2 = gw;
+
+            var wall = System.Diagnostics.Stopwatch.StartNew();
+            await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
+            clock.Advance(Tick);
+            await gw.RefreshHealthAsync();
+
+            conn.Faults.QuoteAge = Silent;
+            var passes = 0;
+            string text;
+            do
+            {
+                clock.Advance(Tick);
+                conn.Faults.Disconnected = passes == lose;
+                await gw.RefreshHealthAsync();
+                conn.Faults.Disconnected = false;
+                passes++;
+                text = DailyReportText.Render(gw.Reports.Compose(clock.GetUtcNow()));
+            }
+            while (passes < 12 && !text.Contains("VALUATION_LOST", StringComparison.Ordinal));
+
+            var one = $"PROBE valuation-driven lost-pass={lose} | passes {passes} | wall {wall.Elapsed.TotalMilliseconds:0.#} ms "
+                       + $"| VALUATION_LOST in the report: {text.Contains("VALUATION_LOST", StringComparison.Ordinal)}";
+            log.WriteLine(one);
+            said.Add(one);
+        }
+
+        // A PROBE IS NOT A TEST. It fails on purpose so the measurement is printed by the runner's
+        // own step log, which is the only place a draft PR's numbers can be read from.
+        Assert.Fail(string.Join("\n", said));
+    }
+    // =================== end PROBE ==============================================================
+
     /// <summary>
     /// THE REPORT SAYS THE BUDGET IS A THRESHOLD AND NOT A MAXIMUM LOSS (item 3).
     ///

@@ -729,6 +729,89 @@ public class SweepRequestIdTests
         }
     }
 
+    // ===================== PROBE (U-runner-reds-3, throwaway; reverted before the fix) ===========
+    /// <summary>
+    /// PROBE: what the RUNNER spends inside one cancel-all — D in the fixture above, which is
+    /// everything charged to the operation budget that is not the injected latency: the composite
+    /// row's insert, the book read's own SQL, each leg's write-ahead row, all durable SQLite
+    /// commits at <c>synchronous=FULL</c>.
+    ///
+    /// Measured directly rather than inferred: the SAME fixture, the same two orders, the same
+    /// sweep — with the latency at zero and a budget nothing can reach, so the wall time of the
+    /// reply IS D. Three rounds, because the outlier is what decides this.
+    /// </summary>
+    [Fact]
+    public async Task Probe_what_the_runner_spends_inside_one_sweep()
+    {
+        var said = new List<string>();
+
+        for (var round = 0; round < 3; round++)
+        {
+            var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromMinutes(5));
+            using var _1 = db;
+            var pipe = NewPipe();
+            await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+            server.Start();
+            await using var client = new PipeClient();
+            await client.ConnectAsync(10_000, pipe);
+
+            var placeWall = Stopwatch.StartNew();
+            foreach (var sym in new[] { "ES", "NQ" })
+                Assert.True((await client.SendAsync(Buy($"probe-{round}-{sym}", sym)).WaitAsync(TimeSpan.FromSeconds(30))).Ok);
+            placeWall.Stop();
+
+            var sweepWall = Stopwatch.StartNew();
+            var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = $"probe-sweep-{round}" })
+                .WaitAsync(TimeSpan.FromSeconds(120));
+            sweepWall.Stop();
+            var data = (JsonElement)reply.Data!;
+            var words = data.GetProperty("outcomes").EnumerateArray()
+                .Select(l => l.GetProperty("outcome").GetString()!).ToList();
+
+            said.Add($"PROBE sweep D round {round}: two places {placeWall.Elapsed.TotalMilliseconds:0} ms | "
+                     + $"the whole cancel-all with latency 0 and a 5-minute budget = D = "
+                     + $"{sweepWall.Elapsed.TotalMilliseconds:0} ms | words [{string.Join(", ", words)}] | "
+                     + $"attempted={data.GetProperty("attempted").GetInt32()} not_sent={data.GetProperty("not_sent").GetInt32()}");
+        }
+
+        // AND THE SHIPPED FIXTURE ITSELF, whose room for D is B - 2L = 5000 ms.
+        for (var round = 0; round < 2; round++)
+        {
+            const int B = 17_000, L = 6_000;
+            var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromMilliseconds(B));
+            using var _1 = db;
+            var pipe = NewPipe();
+            await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+            server.Start();
+            await using var client = new PipeClient();
+            await client.ConnectAsync(10_000, pipe);
+
+            foreach (var sym in new[] { "ES", "NQ" })
+                Assert.True((await client.SendAsync(Buy($"probe-b{round}-{sym}", sym)).WaitAsync(TimeSpan.FromSeconds(30))).Ok);
+
+            conn.Faults.LatencyMs = L;
+            var wall = Stopwatch.StartNew();
+            var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = $"probe-shipped-{round}" })
+                .WaitAsync(TimeSpan.FromSeconds(120));
+            wall.Stop();
+            var data = (JsonElement)reply.Data!;
+            var words = data.GetProperty("outcomes").EnumerateArray()
+                .Select(l => l.GetProperty("outcome").GetString()!).ToList();
+            var errors = data.GetProperty("outcomes").EnumerateArray()
+                .Select(l => l.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "").ToList();
+
+            said.Add($"PROBE sweep shipped B={B} L={L} round {round}: wall {wall.Elapsed.TotalMilliseconds:0} ms "
+                     + $"(D is this minus the 2L=12000 ms of reads that sleep and the clip at the deadline) | "
+                     + $"words [{string.Join(", ", words)}] | sent-not-confirmed "
+                     + $"{words.Count(w => w == "sent-not-confirmed")} | errors [{string.Join(" ~ ", errors)}]");
+        }
+
+        // A PROBE IS NOT A TEST. It fails on purpose so the measurement is printed by the runner's
+        // own step log, which is the only place a draft PR's numbers can be read from.
+        Assert.Fail(string.Join("\n", said));
+    }
+    // =================== end PROBE ==============================================================
+
     // ------------------------------------- the per-leg vocabulary is 1:1 with the record (round 9, F1)
 
     /// <summary>

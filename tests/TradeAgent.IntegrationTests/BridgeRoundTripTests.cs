@@ -1476,6 +1476,83 @@ public class BridgeRoundTripTests
         Assert.False(connector.Capabilities.SupportsClientOrderId);
     }
 
+    // ===================== PROBE (U-runner-reds-3, throwaway; reverted before the fix) ===========
+    /// <summary>
+    /// PROBE: where the `before` snapshot of the test above falls inside the connector's refusal.
+    ///
+    /// The refusal raises ConnectionChanged(FAILED) TWICE — once in the hello branch, right after
+    /// NoteIncompatible sets the field the test's Wait polls for, and once in Drop when the read
+    /// loop ends. `before` is read between the poll and those two, so a runner that puts the poll
+    /// in the gap counts the connector's own two events as events the refused bridge raised.
+    /// Measured here as: the counter when Wait returns, against the counter once the peer's own
+    /// transport has seen end-of-stream, over 20 rounds.
+    /// </summary>
+    [Fact]
+    public async Task Probe_when_the_refusals_own_events_arrive()
+    {
+        var said = new List<string>();
+        var raced = 0;
+        var gaps = new List<double>();
+
+        for (var round = 0; round < 20; round++)
+        {
+            var pipe = NewPipe();
+            var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+            await connector.ConnectAsync();
+            await using var _1 = connector;
+
+            var seen = 0;
+            connector.QuoteChanged += _ => Interlocked.Increment(ref seen);
+            connector.ConnectionChanged += _ => Interlocked.Increment(ref seen);
+            connector.OrderChanged += _ => Interlocked.Increment(ref seen);
+
+            await using var bridge = new StubBridge(pipe, new BridgeHello
+            {
+                BridgeProtocolVersion = 2,
+                BridgeVersion = "0.1.1", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+                SupportsClientOrderId = true, SupportsOrderHistory = true
+            });
+            await bridge.ConnectAsync();
+
+            var wall = System.Diagnostics.Stopwatch.StartNew();
+            // HALF THE ROUNDS SPIN, which is what the shipped 50 ms poll amounts to on a runner
+            // where the connector's own refusal is the thing that loses the CPU (U-peer-row-ubuntu
+            // measured the same substitution). The other half poll exactly as the fixture does.
+            if (round % 2 == 0)
+                while (connector.Incompatible is null && wall.Elapsed < TimeSpan.FromSeconds(10)) { }
+            else
+                await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+            var atPoll = wall.Elapsed.TotalMilliseconds;
+            var whenWaitReturned = Volatile.Read(ref seen);
+
+            // THE HAND-OVER: the peer's own transport says the connector has let it go, and Drop
+            // runs before the dispose that produces it.
+            await bridge.Ended.WaitAsync(TimeSpan.FromSeconds(10));
+            var atEnded = wall.Elapsed.TotalMilliseconds;
+            var whenDropped = Volatile.Read(ref seen);
+
+            await Task.Delay(300);
+            var settled = Volatile.Read(ref seen);
+
+            if (whenWaitReturned != settled) raced++;
+            gaps.Add(atEnded - atPoll);
+            if (round < 6 || whenWaitReturned != settled)
+                said.Add($"PROBE bridge round {round} ({(round % 2 == 0 ? "spun" : "polled")}): seen when the wait returned = {whenWaitReturned} "
+                         + $"(at {atPoll:0.#} ms), when the peer saw end-of-stream = {whenDropped} "
+                         + $"(at {atEnded:0.#} ms), after a further 300 ms = {settled}"
+                         + (whenWaitReturned != settled ? "  <-- THE RED: before != after" : ""));
+        }
+
+        said.Insert(0, $"PROBE bridge: the poll-to-end-of-stream gap min/median/max = "
+                       + $"{gaps.Min():0.#}/{gaps.Order().ElementAt(gaps.Count / 2):0.#}/{gaps.Max():0.#} ms; "
+                       + $"the snapshot raced the refusal's own events in {raced} of 20 rounds");
+
+        // A PROBE IS NOT A TEST. It fails on purpose so the measurement is printed by the runner's
+        // own step log, which is the only place a draft PR's numbers can be read from.
+        Assert.Fail(string.Join("\n", said));
+    }
+    // =================== end PROBE ==============================================================
+
     /// <summary>
     /// A bridge speaking the wrong protocol version is still allowed to say which version it is —
     /// and still allowed nothing else.
