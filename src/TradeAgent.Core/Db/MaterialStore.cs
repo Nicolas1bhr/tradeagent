@@ -39,6 +39,19 @@ public sealed class MaterialStore(Database db)
     /// and saw something arrive; saying so, and re-measuring, is the honest record of both events.
     /// </summary>
     public (bool Added, long Id) Observe(string relPath, MaterialOrigin origin, long size,
+        DateTimeOffset modifiedAt, bool runnable, DateTimeOffset now) =>
+        Observe(relPath, () => origin, size, modifiedAt, runnable, now);
+
+    /// <summary>
+    /// The same, with the origin decided only if a row is actually written.
+    ///
+    /// <para><b>This is what keeps "open only what changed" true.</b> Deciding whether the app wrote
+    /// a file means reading its bytes, and the whole ledger is built around not hashing everything on
+    /// every pass. A sighting of an unchanged file touches <c>last_seen_at</c> and asks nothing; the
+    /// question is asked once, for the row that is about to exist. It is also the safer moment for
+    /// the inbox's attestation, which can only get stricter as time passes.</para>
+    /// </summary>
+    public (bool Added, long Id) Observe(string relPath, Func<MaterialOrigin> origin, long size,
         DateTimeOffset modifiedAt, bool runnable, DateTimeOffset now)
     {
         return db.Write(_ =>
@@ -69,7 +82,7 @@ public sealed class MaterialStore(Database db)
                 INSERT INTO material(rel_path, origin, sha256, size_bytes, modified_at, first_seen_at, last_seen_at, removed_at, runnable, version)
                 VALUES($p,$o,NULL,$s,$m,$now,$now,NULL,$r,$v) RETURNING id
                 """,
-                ("$p", relPath), ("$o", origin.ToString()), ("$s", size), ("$m", Sql.T(modifiedAt)),
+                ("$p", relPath), ("$o", origin().ToString()), ("$s", size), ("$m", Sql.T(modifiedAt)),
                 ("$now", Sql.T(now)), ("$r", runnable ? 1 : 0), ("$v", version));
             return (true, Convert.ToInt64(ins.ExecuteScalar()));
         });

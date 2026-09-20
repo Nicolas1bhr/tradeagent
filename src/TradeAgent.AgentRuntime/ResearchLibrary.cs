@@ -1,3 +1,5 @@
+using TradeAgent.Core;
+
 namespace TradeAgent.AgentRuntime;
 
 /// <summary>
@@ -84,11 +86,18 @@ public static class ResearchLibrary
     /// <para>The programs are copied BYTE FOR BYTE — no line-ending normalisation, no banner. Each is
     /// pinned to a <c>StrategyId</c> computed over its text, and an example whose id is not the pinned
     /// one is an example whose recorded runs belong to no version anybody can name.</para>
+    ///
+    /// <para><b>Every file written here is recorded in <paramref name="appFiles"/> as it is written</b>,
+    /// under <paramref name="homeDir"/> — the home's name under the workspace, which is the form the
+    /// material ledger records paths in. That record is the whole of what makes these files measurable
+    /// as <see cref="MaterialOrigin.App"/> rather than as the role's own work; a write that did not
+    /// land is not recorded, and measures as the role's.</para>
     /// </summary>
-    public static void Write(string home)
+    public static void Write(string home, string homeDir, AppFileManifest appFiles)
     {
         if (Reference() is { } reference)
-            WriteFile(Path.Combine(home, "research", ReferenceFile), text: reference);
+            WriteFile(Path.Combine(home, "research", ReferenceFile), text: reference,
+                record: () => appFiles.Record(homeDir, ReferencePath, reference));
 
         var examples = Path.Combine(home, "strategies", "examples");
         Directory.CreateDirectory(examples);
@@ -97,7 +106,9 @@ public static class ResearchLibrary
         {
             var from = Path.Combine(Shipped, "Strategies", name);
             if (!File.Exists(from)) continue;
-            WriteFile(Path.Combine(examples, name), bytes: ReadAll(from));
+            var bytes = ReadAll(from);
+            WriteFile(Path.Combine(examples, name), bytes: bytes,
+                record: () => appFiles.Record(homeDir, $"{ExamplesDir}/{name}", bytes!));
         }
     }
 
@@ -113,7 +124,7 @@ public static class ResearchLibrary
     /// <c>WorkspaceBuilder.MoveOlderLayout</c> takes of a file somebody has open. The next start
     /// writes it again.
     /// </summary>
-    static void WriteFile(string path, string? text = null, byte[]? bytes = null)
+    static void WriteFile(string path, string? text = null, byte[]? bytes = null, Action? record = null)
     {
         if (text is null && bytes is null) return;
         try
@@ -122,7 +133,12 @@ public static class ResearchLibrary
             if (text is not null) File.WriteAllText(path, text);
             else File.WriteAllBytes(path, bytes!);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { return; }
+        catch (UnauthorizedAccessException) { return; }
+
+        // AFTER the bytes are on disk, never before: the manifest says what the app wrote, and a
+        // write that threw wrote nothing. Claiming it here would hand the next pass an App origin
+        // for whatever is at that path — including what the role left there.
+        record?.Invoke();
     }
 }

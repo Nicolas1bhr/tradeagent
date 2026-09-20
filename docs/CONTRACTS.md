@@ -1786,9 +1786,29 @@ files under it) or `ENDED` (all of it landed) — never an `ENDED` attempt whose
 never a wake answered by a turn the ledger did not close.
 
 **The material pass walks every role's home** (`MaterialScanner.RolePaths`): each role's tracked
-folders plus `in/` and `out/`, all under one `agent` origin so `MarkMissing` never invents a deletion.
+folders plus `in/` and `out/`, all in ONE origin group — `Agent` and `App`, the two words that walk
+can produce — so `MarkMissing` never invents a deletion and never leaves a deleted app file standing.
 What a role was handed and what it published are measured facts in `material`, which the agent cannot
 edit, beside the relay's own record of the same artifacts.
+
+**A file in that walk is the app's when, and only when, the app wrote down that it wrote it.**
+`AppFileManifest` (`state/app-files.tsv` — outside the workspace, beside `data/` and `reports/`, with
+no verb and no pipe op that writes there) carries one entry per file the app puts in a role's home:
+the path relative to that home, and the sha256 of the bytes. It is written by `WorkspaceBuilder`,
+`ResearchLibrary` and `CouncilRelay.Deliver` at the moment of the write, and by nothing else — the
+quarantine move is deliberately not recorded, because those are the role's own bytes and the app only
+moved them aside. The scanner records `App` only when the path AND the hash both match: a manifested
+path holding other bytes is `Agent` (the role changed it), and a path the manifest never named cannot
+become the app's whatever it holds — a role may copy an app file anywhere inside its home and the copy
+is its own. Both halves are load-bearing, and dropping either is a mutant the tests kill. Paths are
+relative because `TRADEAGENT_HOME` can move an install. The origin is decided once, as the row is
+written (`MaterialStore.Observe(Func<MaterialOrigin>, …)`), so the bytes are read only for a path the
+app has written down and a re-sighting of an unchanged file still costs a directory listing and
+nothing else. **No schema rung**: `material.origin` is text with no CHECK, so the new word is a new
+value in it. **Everything here fails closed** — an entry that could not be written, a manifest that
+could not be read, a file swapped between the walk and the read: each measures as the agent's, never
+as the app's. The inbox attestation is untouched; `Inbox` and `InboxUnattested` still come from agent
+process liveness and nothing else.
 
 **Two roles' turns may overlap, and three leases are what keeps that honest.** A turn lease per role in
 `MissionLoop` (a second `TurnAsync` for a role already turning is refused in words, never queued, and a

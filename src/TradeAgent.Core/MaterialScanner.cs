@@ -22,11 +22,18 @@ namespace TradeAgent.Core;
 /// something a directory listing cannot show. Defaults to the process-wide
 /// <see cref="AgentPresence.Shared"/>; tests pass their own so nothing races through shared state.
 /// </param>
-public sealed class MaterialScanner(Database db, string? workspaceRoot = null, Func<DateTimeOffset, bool>? noAgentSince = null)
+public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
+    Func<DateTimeOffset, bool>? noAgentSince = null, AppFileManifest? appFiles = null)
 {
     readonly string _root = workspaceRoot ?? Paths.Workspace;
     readonly MaterialStore _store = new(db);
     readonly Func<DateTimeOffset, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
+
+    /// <summary>
+    /// WHAT THE APP WROTE INTO A ROLE'S HOME AND WHAT IT PUT IN IT, recorded by the app at the moment
+    /// it wrote each file. The only thing <see cref="MaterialOrigin.App"/> is measured against.
+    /// </summary>
+    readonly AppFileManifest _appFiles = appFiles ?? AppFileManifest.Shared;
 
     /// <summary>
     /// THE REGISTER THIS PASS ATTESTS OVER, so that "the scanner and the agent are looking at the
@@ -127,17 +134,22 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
         // is no previous one, and MinValue is the honest window: "since before anything happened".
         var since = Sql.TimeN(db.GetKv(LastScanKey)) ?? DateTimeOffset.MinValue;
 
-        // ONE GROUP PER ORIGIN, and every role's home inside the agent group. `present` and
+        // ONE GROUP PER PLACE, and every role's home inside the second group. `present` and
         // MarkMissing are per GROUP, so the roles have to be walked together: marking missing after
         // one role's walk would delete the other role's rows on every pass.
+        //
+        // A GROUP CARRIES EVERY WORD ITS WALK CAN PRODUCE, which is why the role group names
+        // App as well as Agent: MarkMissing sweeps by origin, and a group that named only Agent
+        // would leave a deleted app file standing in the ledger forever.
         foreach (var (origins, paths) in new (MaterialOrigin[], (string Home, string Dir)[])[]
                  {
                      ([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested], [("", InboxDir)]),
-                     ([MaterialOrigin.Agent], [.. RolePaths()])
+                     ([MaterialOrigin.Agent, MaterialOrigin.App], [.. RolePaths()])
                  })
         {
             var present = new List<long>();
             var complete = true;
+            var isInbox = origins[0] == MaterialOrigin.Inbox;
 
             foreach (var (home, dir) in paths)
             {
@@ -155,11 +167,21 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
                     catch (UnauthorizedAccessException) { skipped++; continue; }
 
                     var rel = Relative(file);
-                    // Asked HERE, per sighting, rather than once for the pass: an agent that starts
-                    // while this walk is running must not be attested away by a question asked
-                    // before it existed. `origins[0]` is the attested word, `[^1]` the weaker one,
-                    // and for the agent's own tree they are the same word.
-                    var origin = _noAgentSince(since) ? origins[0] : origins[^1];
+                    // ONE QUESTION PER GROUP, ASKED PER SIGHTING and only for a row that is about to
+                    // be written (see the Func overload of Observe).
+                    //
+                    // The inbox's is attestation: an agent that starts while this walk is running
+                    // must not be attested away by a question asked before it existed, and asking
+                    // later can only make the answer stricter.
+                    //
+                    // A ROLE'S HOME IS A DIFFERENT QUESTION, and it is measured rather than assumed:
+                    // the app writes down every file IT puts in a home, and a file whose path and
+                    // bytes both match that record is the app's. Anything else in there is the
+                    // agent's, which is what this used to say about all of it — including the
+                    // language reference the app writes and the briefs the relay delivers.
+                    Func<MaterialOrigin> origin = isInbox
+                        ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
+                        : () => WeWroteIt(rel, file) ? MaterialOrigin.App : MaterialOrigin.Agent;
                     var (isNew, id) = _store.Observe(rel, origin, info.Length,
                         new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero),
                         RunnableExts.Contains(info.Extension), now);
@@ -196,6 +218,25 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
         var hashed = HashPending(ct);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated);
     }
+
+    /// <summary>
+    /// DID THE APP PUT THIS FILE HERE? Both halves, and in this order.
+    ///
+    /// <para>The path is asked first because it is a dictionary lookup and the hash costs a read of
+    /// the file — so the bytes are read only for the handful of paths the app has written down,
+    /// never for the workspace at large. That is the budget this whole class is shaped by.</para>
+    ///
+    /// <para><b>Path alone would not be a measurement.</b> It would say "the app wrote something
+    /// here once", and a role that rewrote the file would inherit the app's name for its own text.
+    /// <b>Hash alone would be worse</b>: every file the app writes into a home is readable by the
+    /// role, so the agent could copy one anywhere and be recorded as TradeAgent.</para>
+    ///
+    /// <para>The bytes are read here rather than taken from the row's later hash because the origin
+    /// is written WITH the row. A file swapped between the walk and this read is measured as the
+    /// agent's — the weaker word, which is the direction this must fail in.</para>
+    /// </summary>
+    bool WeWroteIt(string rel, string full) =>
+        _appFiles.Names(rel) && _appFiles.Wrote(rel, Sha256Hex.OfFile(full));
 
     /// <summary>
     /// Fills in hashes for rows that do not have one yet. Separated from the walk so a slow disk

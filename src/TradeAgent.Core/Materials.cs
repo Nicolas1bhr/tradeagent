@@ -23,7 +23,23 @@ public enum MaterialOrigin
     InboxUnattested,
 
     /// <summary>It appeared under the agent's own working directories, so the agent produced it.</summary>
-    Agent
+    Agent,
+
+    /// <summary>
+    /// TradeAgent itself put it there — the strategy language reference and the worked programs it
+    /// writes into every role's home, and every report or brief the relay delivers into <c>in/</c>.
+    ///
+    /// It is a MEASUREMENT and not a label: the scanner says this only when the path AND the sha256
+    /// both match what the app wrote down in <see cref="AppFileManifest"/> at the moment it wrote
+    /// the file. A role's edit of one changes the bytes, so the next sighting is
+    /// <see cref="Agent"/> — which is the point. Nothing the agent does can move a file INTO this
+    /// word: it cannot write the manifest, and a path the manifest never named is what it always
+    /// was.
+    ///
+    /// Last in this enum deliberately: the values are stored as their own names, and a word inserted
+    /// above another one would renumber it for everything that reads the order rather than the text.
+    /// </summary>
+    App
 }
 
 /// <summary>

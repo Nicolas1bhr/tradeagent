@@ -88,9 +88,17 @@ public sealed class CouncilRelay
     /// </summary>
     readonly LiveAttempts _live;
 
+    /// <summary>
+    /// The app's record of what IT wrote into a role's home. A delivery is one of the two things the
+    /// app puts in a role's tracked folders, and without this the ledger measures the brief a role
+    /// was HANDED as something the role produced. See <see cref="Deliver"/>.
+    /// </summary>
+    readonly AppFileManifest _appFiles;
+
     public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null,
-        LiveAttempts? live = null, CouncilBoundaries? boundaries = null)
+        LiveAttempts? live = null, CouncilBoundaries? boundaries = null, AppFileManifest? appFiles = null)
     {
+        _appFiles = appFiles ?? AppFileManifest.Shared;
         _db = db;
         _live = live ?? LiveAttempts.Shared;
         _store = new PublicationStore(db);
@@ -529,6 +537,12 @@ public sealed class CouncilRelay
     /// Writes every committed delivery into its recipient's <c>in/</c> and only then marks it
     /// delivered. The content comes from the publication row, never from the publishing role's file:
     /// that file is the agent's and may be gone.
+    ///
+    /// <para><b>The copy is recorded in <see cref="AppFileManifest"/> as the app's own</b>, right
+    /// after the bytes land and before anything is marked delivered, so the material pass measures a
+    /// brief a role was HANDED as <see cref="MaterialOrigin.App"/> and not as that role's work. The
+    /// quarantine move above is deliberately NOT recorded: those are the role's own bytes and the
+    /// app only moved them aside, so they stay the role's.</para>
     /// </summary>
     internal void Deliver()
     {
@@ -553,6 +567,8 @@ public sealed class CouncilRelay
                 var into = Path.Combine(_homeOf(d.Recipient), WorkspaceBuilder.InDir);
                 Directory.CreateDirectory(into);
                 File.WriteAllText(Path.Combine(into, $"{p.Id}.md"), p.Content);
+                _appFiles.Record(CouncilRoles.HomeDir(d.Recipient),
+                    $"{WorkspaceBuilder.InDir}/{p.Id}.md", p.Content);
             }
             catch (Exception) { continue; }          // the next pass tries again; nothing is claimed
 

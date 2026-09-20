@@ -26,6 +26,10 @@ public static class Sha256Hex
     public static string Of(string text) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
+    /// <summary>The hash of a block of bytes exactly as they were handed over.</summary>
+    public static string Of(ReadOnlySpan<byte> bytes) =>
+        Convert.ToHexStringLower(SHA256.HashData(bytes));
+
     /// <summary>The hash of everything left in a stream, read from where it is.</summary>
     public static string Of(Stream stream) =>
         Convert.ToHexStringLower(SHA256.HashData(stream));

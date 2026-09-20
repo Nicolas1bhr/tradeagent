@@ -59,9 +59,16 @@ public static class WorkspaceBuilder
     /// own, because the mission this writes is a function of the WHOLE context — the role decides
     /// which section it gets, and the rest of the context decides what that section can truthfully
     /// say about the platform, the account and the limits.
+    ///
+    /// <paramref name="appFiles"/> is the app's record of what IT wrote into the home
+    /// (<see cref="AppFileManifest"/>), and it is written here rather than inferred later: what the
+    /// material ledger can measure as the app's own file is exactly what this pass wrote down at the
+    /// moment it wrote the bytes. Tests pass their own so that one assembly's runs cannot record
+    /// over each other's.
     /// </summary>
-    public static string Build(WorkspaceContext ctx, string? root = null)
+    public static string Build(WorkspaceContext ctx, string? root = null, AppFileManifest? appFiles = null)
     {
+        var files = appFiles ?? AppFileManifest.Shared;
         var ws = root ?? Paths.Workspace;
         Directory.CreateDirectory(ws);
         Directory.CreateDirectory(Path.Combine(ws, MaterialScanner.InboxDir));
@@ -81,17 +88,21 @@ public static class WorkspaceBuilder
         Directory.CreateDirectory(Path.Combine(home, OutDir));
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
 
-        File.WriteAllText(Path.Combine(home, "AGENTS.md"), Instructions(ctx));
+        var homeDir = CouncilRoles.HomeDir(ctx.Role);
+        var mission = Instructions(ctx);
+        File.WriteAllText(Path.Combine(home, "AGENTS.md"), mission);
+        files.Record(homeDir, "AGENTS.md", mission);
         // THE LANGUAGE AND ITS WORKED PROGRAMS, app-owned exactly as the mission file above is. A role
         // that has to write a strategy has no other source for the grammar: there is no terminal here.
-        ResearchLibrary.Write(home);
+        ResearchLibrary.Write(home, homeDir, files);
         File.WriteAllText(Path.Combine(home, ".tradeagent", "context.json"), Json.Write(ctx, pretty: true));
         return home;
     }
 
     /// <summary>Builds every role's home in one pass and returns them by role.</summary>
-    public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null) =>
-        CouncilRoles.All.ToDictionary(r => r, r => Build(ctx with { Role = r }, root));
+    public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
+        AppFileManifest? appFiles = null) =>
+        CouncilRoles.All.ToDictionary(r => r, r => Build(ctx with { Role = r }, root, appFiles));
 
     /// <summary>
     /// Carries an install built before the agent's home moved. Its work sat directly in the
