@@ -47,8 +47,8 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
     /// default is two seconds. Inside it are durable SQLite commits at <c>synchronous=FULL</c>.</para>
     ///
     /// <para><b>MEASURED, on draft PR #23 (runs 35504722157 and 35513092386), by a throwaway probe
-    /// that timed each health pass of the exit fixture, two runs each:</b> the pass that fires the
-    /// exit spent 29-33 ms on ubuntu-latest, 17-19 ms on macos-latest and <b>833-1258 ms on
+    /// that timed each health pass of the exit fixture, three runs each:</b> the pass that fires
+    /// the exit spent 29-33 ms on ubuntu-latest, 17-19 ms on macos-latest and <b>833-1258 ms on
     /// windows-latest</b> — of 2000. A windows job whose Unit suite runs 19 m 14 s against the usual
     /// ~40 s has nothing like that left, and the SAME probe with the budget cut to 1 ms reproduced
     /// the runner's red exactly on all three runners, in both runs: the valuation CANCEL press does not resolve, so
