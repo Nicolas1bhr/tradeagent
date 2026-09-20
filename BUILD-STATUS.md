@@ -6646,3 +6646,32 @@ put back. Manager's gate at `dae8605` (the reported tip, 0 behind `main` `374677
 **NOT done, NOT verified:** no runner emits an intent — the `entry`/`exit`/`stop`/`target` kinds are writable and never produced; the only ops this build
 dispatches are an end's `flatten` and a `cancel` per working order (`U-runner` cut from this tip); the Safety card never rendered; no real model; no box, no ATAS,
 no venue, no real order.
+
+## 2026-09-20 — U-material-origin landed: a file the app writes into a role's home is measured as the app's, by path and hash, never as the agent's
+
+The follow-up `U-language-in-home` flagged (the scanner measured every file under a role's tracked directories as `MaterialOrigin.Agent`, the shipped reference,
+the three programs and the relay's deliveries included — a false origin in the one table the agent cannot edit), built by one fresh Opus builder from the 24-line
+brief `docs/briefs/U-material-origin.md` (landed `d9ae716`) beside the deployment and runner legs. Merge `659eb5b`, 3 commits (2 items + the report), 15 files, +647/−34. No schema rung (`material.origin` is
+TEXT with no CHECK). Not the money path; the evidence zone's measurement.
+
+- **`MaterialOrigin.App` and the manifest:** `AppFileManifest` at `state/app-files.tsv` — outside the workspace, no verb and no pipe op writes there; `WorkspaceBuilder`,
+  `ResearchLibrary` and `CouncilRelay.Deliver` record path-in-home + sha256 AFTER the bytes land; the scanner records `App` only when path AND hash match, a
+  file at a manifested path with another hash is the agent's, an unmanifested path is what it was. `MaterialStore.Observe` gained a `Func<MaterialOrigin>`
+  overload so bytes are read only for a row about to be written. The inbox attestation untouched.
+- **Said everywhere the word appears:** `material-list` takes and prints `origin: app` with "written by TradeAgent … never counted as your work" in its note;
+  `trade schema` says the same; `AGENTS.md` names the three words in one line; the owner's Inbox page prints "written by TradeAgent" instead of "the AI made
+  this". The JSON field stays the machine word `app` (a deviation stated); `CONTRACTS.md`'s origin vocabulary also gained `inbox-unattested`, which the handler
+  already accepted.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `f02b917` (rebased onto `3746774`; the cherry-picked
+brief commit dropped by patch-id as expected), Release `--no-incremental`: 19 projects, 0 warnings, 0 errors; Unit 1186 + Fault 393 + Integration 688 = 2267
+passed, 0 failed, 1 skipped (11 m 7 s); touched classes 3× → `MaterialAppOriginTests` 5, `MaterialOverPipeTests` 6; names 1919 → 1925, 0 removed. RED on the base
+(enum and manifest present, scanner unwired): `Expected: App / Actual: Agent` at `:73`, `:103`, `:195`; (c) GREEN on the base — a guard checked, not a RED. The
+brief's mutant, the hash check dropped: `Expected: Agent / Actual: App` at `MaterialAppOriginTests.cs:110`; two more of the builder's own — the path half dropped
+(`:147`, `:198` red) and the item-2 arm removed (`Expected: "written by TradeAgent" / Actual: "the AI made this"` `:220`; over the pipe `origin 'app' is not one
+of: …` at `MaterialOverPipeTests.cs:210`); all put back. Manager's gate at `04018d0` (the reported tip `3dea0b1` rebased by the manager over `U-deployment`, `git merge-tree` having predicted no conflict and the unit's own files identical across it; landed as `659eb5b` after a docs-only rebase over `90e6185`, `src`/`tests` identical), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1186/1186 (25 s), Fault 399/399 (1 m 27 s), Integration 688/689, 1 skipped (11 m 7 s, its normal length, beside the runner's work) → 0 failed. Names vs `main` (git objects): sets 1918 → 1924, 0 removed, 6 added. Scan clean; no trailers; `rev-list --count`
+→ 0. CI at `659eb5b`: recorded when complete.
+
+**NOT done, NOT verified:** the CLI help line in `TradeCli/Program.cs` (another leg's file) still omits `app` — `--origin app` reaches the gateway regardless;
+`DailyReports.cs` has no material section and none was added; rows measured before this unit keep their old word (the reference and the examples correct
+themselves at the next start; a delivery already in `in/` stays `Agent`); no box, no provider, no venue, no order.
