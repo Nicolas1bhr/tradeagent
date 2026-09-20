@@ -10,9 +10,10 @@ namespace TradeAgent.Tests.Unit;
 /// <para>COUNCIL's round-3 specification ends with a test rather than a feature list: "Day one must
 /// express: a moving-average crossover with fixed sizing and stop; an opening-range breakout with ATR
 /// risk sizing and a time stop; an RSI mean reversion with a profit exit and a maximum holding time."
-/// Those three are the fixtures beside this file, they are the same bytes that
-/// `docs/STRATEGY-LANGUAGE.md` shows a model — asserted below, because a specification and an example
-/// that drift apart teach the wrong language — and each is pinned to a `StrategyId`.</para>
+/// Those three are the files the app SHIPS — `src/TradeAgent.AgentRuntime/Strategies/`, written into
+/// every role's home on every start — they are the same bytes that `docs/STRATEGY-LANGUAGE.md` shows a
+/// model — asserted below, because a specification and an example that drift apart teach the wrong
+/// language — and each is pinned to a `StrategyId`.</para>
 ///
 /// <para><b>What a pinned id buys.</b> Results, a trial budget and a lineage attach to an id
 /// (`docs/COUNCIL.md`, the referee), so the identity of a program has to be stable across builds, not
@@ -23,26 +24,18 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class DayOneStrategyTests
 {
-    static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
-        Assert.NotNull(dir);
-        return dir.FullName;
-    }
+    static string RepoRoot() => DayOnePrograms.RepoRoot();
 
     /// <summary>
-    /// READ WITH LF, WHATEVER THE CHECKOUT WROTE. `.gitattributes` now pins `*.strategy` to LF, so this
-    /// is belt as well as braces — but the two assertions that use these bytes are the reason both are
-    /// needed: one compares them to a `.md` file, the other splits them on a bare '\n'. A fixture
-    /// carrying '\r' fails both while spelling exactly the same program, which makes the failure a
-    /// report about the checkout rather than about the language. CI run 34719212649 is what that looks
-    /// like: windows-latest only (its `core.autocrlf=true`), three cases of one theory, `Sub-string not
-    /// found`, with ubuntu and macos green on the same tree.
+    /// THE SHIPPED FILE, AND NOT A COPY OF IT. These three used to sit beside this file as fixtures,
+    /// which made them test material: the role that has to WRITE a program never saw one. They are now
+    /// content of <c>TradeAgent.AgentRuntime</c> — <c>src/TradeAgent.AgentRuntime/Strategies/</c>,
+    /// written into every role's home on every start — and what is asserted below is the same bytes the
+    /// product ships. <c>DayOnePrograms</c> holds that path once so a second copy cannot appear.
+    ///
+    /// <para>Read with LF, whatever the checkout wrote: see <c>DayOnePrograms.Text</c>.</para>
     /// </summary>
-    static string Fixture(string name) =>
-        File.ReadAllText(Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "Strategies", name))
-            .ReplaceLineEndings("\n");
+    static string Fixture(string name) => DayOnePrograms.Text(name);
 
     static StrategyProgram Parsed(string name)
     {
@@ -62,9 +55,10 @@ public class DayOneStrategyTests
     const string MeanReversionId = "16d6192f798908637d3ae246056f4e2d65e0231531604202204783e62760b624";
 
     /// <summary>
-    /// THE FIXTURES AND THE DOCUMENT ARE THE SAME BYTES. The document is what a model is shown; these
-    /// files are what is proven to parse. If they can drift, the language that is specified and the
-    /// language that works are two languages, and only one of them has tests.
+    /// THE SHIPPED PROGRAMS AND THE DOCUMENT ARE THE SAME BYTES. Both reach a role's home on every
+    /// start — the document as `research/STRATEGY-LANGUAGE.md`, these as `strategies/examples/` — so if
+    /// they can drift, the language that is specified and the language that works are two languages,
+    /// and only one of them has tests.
     /// </summary>
     [Theory]
     [InlineData("ma-crossover.strategy")]

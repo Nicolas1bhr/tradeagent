@@ -165,8 +165,12 @@ constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONT
 
 ## The three day-one programs
 
-`docs/COUNCIL.md` requires the language to express these three on day one. They are the fixtures under
-`tests/TradeAgent.UnitTests/Strategies/`, byte for byte, each pinned to a `StrategyId`.
+`docs/COUNCIL.md` requires the language to express these three on day one. They are the files the app
+ships — `src/TradeAgent.AgentRuntime/Strategies/`, written into every role's home as
+`strategies/examples/` on every start — byte for byte, each pinned to a `StrategyId`. That is the one
+copy: the parser tests read those same bytes, so the programs a role is given and the programs the
+tests prove are one set of files. Run the first of them with
+`trade backtest --strategy strategies/examples/ma-crossover.strategy --dataset <id>`.
 
 `ma-crossover.strategy`
 ```

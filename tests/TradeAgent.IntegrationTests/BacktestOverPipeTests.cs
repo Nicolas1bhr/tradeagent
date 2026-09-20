@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -506,5 +507,66 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         // A read it may still do: the refusal is about what this caller can be recorded AS, not about
         // whether it may speak.
         Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "nobody" })).Ok);
+    }
+
+    /// <summary>
+    /// THE EXAMPLE THE APP SHIPPED RUNS, FROM THE HOME THE APP BUILT, UNDER A RESEARCH GRANT.
+    ///
+    /// <para>This is the whole claim of <c>U-language-in-home</c> end to end: <c>WorkspaceBuilder</c>
+    /// writes the three worked programs into the role's own <c>strategies/examples/</c>, the path
+    /// <c>AGENTS.md</c> prints is the path the gateway resolves, the bytes parse, and what comes back is
+    /// a run id and a version id the app computed. A role's first backtest therefore needs nothing
+    /// written by the role — which is the difference between a language a model can use on its first
+    /// turn and one it has to reconstruct from refusals.</para>
+    ///
+    /// <para>RED FIRST, before the examples were shipped: <c>there is no file at
+    /// 'strategies/examples/ma-crossover.strategy' in the Research Director's folder</c>.</para>
+    ///
+    /// <para>The version id is asserted against the id of the bytes IN THE HOME rather than against a
+    /// constant, so this test says "the program that ran is the file that is there" and leaves the
+    /// pinning of that id to <c>DayOneStrategyTests</c>, where it belongs.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_shipped_example_backtests_through_the_pipe_under_a_research_grant()
+    {
+        var (gw, db, client, server, _) = await Connected(CouncilRoles.Research, "attempt-example");
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+        var set = GivenData(db);
+
+        // The home exactly as a start builds it: nothing written by the test, and nothing by the role.
+        var home = WorkspaceBuilder.Build(new WorkspaceContext(
+            "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["BTCUSDT"] },
+            ConnectorIsBuiltInSimulator: false, Role: CouncilRoles.Research));
+
+        const string path = "strategies/examples/ma-crossover.strategy";
+        var shipped = Path.Combine(home, "strategies", "examples", "ma-crossover.strategy");
+        Assert.True(File.Exists(shipped), $"the Research home has no worked program at {shipped}");
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = "shipped-example-1",
+            // The increment is DECLARED throughout this class: its fixture dataset records no venue
+            // and TradeAgent will not invent one (`VenueIncrementTests`).
+            Args = Args(("strategy", path), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
+                ("increment", "1"))
+        });
+
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var data = Data(reply);
+        log.WriteLine(Json.Write(reply.Data));
+
+        Assert.Equal("COMPLETED", data.GetProperty("outcome").GetString());
+        Assert.Equal(CouncilRoles.Research, data.GetProperty("role").GetString());
+        Assert.Equal("BTCUSDT", data.GetProperty("pair").GetString());
+        Assert.Equal(StrategyParser.Parse(File.ReadAllText(shipped)).Program!.StrategyId,
+            data.GetProperty("version_id").GetString());
+
+        var runId = data.GetProperty("run_id").GetString()!;
+        Assert.Equal(64, runId.Length);
+        Assert.NotNull(gw.Strategies.RunById(runId));
+        Assert.True(data.GetProperty("metrics").GetProperty("bars").GetInt64() > 0);
     }
 }

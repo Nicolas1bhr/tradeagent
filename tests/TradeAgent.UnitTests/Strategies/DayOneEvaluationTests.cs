@@ -23,19 +23,15 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class DayOneEvaluationTests
 {
-    static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
-        Assert.NotNull(dir);
-        return dir.FullName;
-    }
-
+    /// <summary>
+    /// THE SHIPPED FILE, from the one path <c>DayOnePrograms</c> holds:
+    /// <c>src/TradeAgent.AgentRuntime/Strategies/</c>, which is what the app writes into every role's
+    /// <c>strategies/examples/</c> on every start. What these tests pin is therefore what a role is
+    /// actually given, and not a fixture that agrees with it today.
+    /// </summary>
     static StrategyProgram Parsed(string name)
     {
-        var text = File.ReadAllText(
-            Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "Strategies", name));
-        var parse = StrategyParser.Parse(text);
+        var parse = StrategyParser.Parse(DayOnePrograms.Text(name));
         Assert.True(parse.Ok, $"{name} did not parse: {parse.Why}");
         return parse.Program!;
     }
