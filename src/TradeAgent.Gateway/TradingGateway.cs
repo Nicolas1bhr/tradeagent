@@ -971,6 +971,11 @@ public sealed class TradingGateway : IAsyncDisposable
         _deployments.End(deployment.Id, reason, Now);
 
         var ended = _deployments.ById(deployment.Id);
+
+        // AND RESEARCH IS TOLD WHAT THE RUN DID. One wake, keyed by this deployment and the word
+        // "end", so an end recorded twice by two processes over one database buys one turn.
+        if (ended is not null) TellResearchAboutARun(ended, "end", reason);
+
         _log.Activity($"TradeAgent ended the PAPER deployment of strategy version "
                       + $"{Short(deployment.VersionId)} on account {deployment.AccountId}: {reason}.");
         _log.TryEngineering("Gateway", "deployment_ended",
@@ -1095,6 +1100,78 @@ public sealed class TradingGateway : IAsyncDisposable
                 _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
 
             return true;
+        }
+    }
+
+    /// <summary>
+    /// WHAT A FORWARD RUN DID, TOLD TO RESEARCH ONCE PER OCCASION — the run's end, and each UTC day
+    /// that closed over it.
+    ///
+    /// <para><b>Keyed by the deployment and the occasion</b>, so a pass that re-reads the same week
+    /// raises ids the table already holds and buys nobody a second paid turn — the shape
+    /// <see cref="TellResearch(AllocationRow, PaperEnvelopeRow, DateTimeOffset)"/> has, keyed by the
+    /// allocation.</para>
+    ///
+    /// <para><b>The figures may cross, and that is the point.</b> A paper result is the ROLE'S OWN
+    /// EXPERIMENT — the allocation was written for it, the bars post-date every freeze on this
+    /// installation, and no verdict is ever taken over them — so it is not holdout evidence and the
+    /// disclosure boundary that keeps a held-back month's numbers away from Research does not apply.
+    /// What the note must never do is let the two read as the same kind of fact, which is why every
+    /// figure here is said to be a DECLARED SIMULATION at the next open.</para>
+    /// </summary>
+    public void TellResearchAboutARun(StrategyDeploymentRow deployment, string occasion,
+        string why, DateTimeOffset? at = null)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+        var now = at ?? Now;
+
+        try
+        {
+            var requests = _deployments.OpsOf(deployment.Id)
+                .Select(o => o.RequestId).ToHashSet(StringComparer.Ordinal);
+            var fills = _fills.Scoped(deployment.ConnectorId, deployment.AccountId).Fills
+                .Where(f => f.RequestId is { Length: > 0 } r && requests.Contains(r))
+                .ToList();
+
+            var fees = fills.Sum(f => f.Fee ?? 0m);
+            var net = fills.Sum(f =>
+                string.Equals(f.Side, OrderSide.Sell.ToString(), StringComparison.OrdinalIgnoreCase)
+                    ? f.Quantity * f.Price
+                    : -f.Quantity * f.Price) - fees;
+
+            var content =
+                $"Forward paper run {StrategyDeploymentRow.Short(deployment.Id)} of version "
+                + $"{Short(deployment.VersionId)} in {deployment.Symbol}: {why}. "
+                + $"{fills.Count} simulated fill{(fills.Count == 1 ? "" : "s")}, "
+                + $"net {AllocationRow.Num(net)} after "
+                + (fees > 0m ? $"{AllocationRow.Num(fees)} in declared costs" : "costs of nothing")
+                + $". The run is {deployment.State}"
+                + (deployment.EndReason is { Length: > 0 } end ? $" — {end}" : "")
+                + ". EVERY FIGURE HERE IS A DECLARED SIMULATION AT THE NEXT OPEN: the price existed "
+                + "at the open of a bar and nothing else is established — no fill, no queue position, "
+                + "no intrabar ordering"
+                + (fees > 0m ? "" : ", and a cost of nothing was MODELLED rather than measured")
+                + ". It is this role's own experiment and never holdout evidence: no verdict is taken "
+                + "over forward bars, so these numbers may be compared with the run's own and with "
+                + "nothing that was held back.";
+
+            new PublicationStore(_db).Commit(new Publication
+            {
+                Id = Publication.IdOf(PaperAllocatorRole, PublicationKind.Note, content),
+                Role = PaperAllocatorRole,
+                Kind = PublicationKind.Note,
+                Recipients = CouncilRoles.Research,
+                Classification = PublicationClass.Council,
+                CreatedAt = now,
+                Content = content
+            }, now, MissionEventIds.PaperRun(deployment.Id, occasion));
+        }
+        catch (Exception ex)
+        {
+            // THE RUN IS UNAFFECTED. A note nobody could publish is a turn nobody is bought, which is
+            // the fail-safe direction: the operations are on the table and the owner's report has them.
+            _log.TryEngineering("Gateway", "paper_run_note_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { deployment = deployment.Id, occasion }));
         }
     }
 

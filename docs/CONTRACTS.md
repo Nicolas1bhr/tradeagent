@@ -2776,6 +2776,67 @@ nothing takes it back. `status.deployments` lists what is not over plus every en
 unresolved operation, and section 4 of the owner's report prints one line per deployment under
 *running forward on paper*, every line marked PAPER and no live authority.
 
+## The runner — `src/TradeAgent.Gateway/ForwardRuns.cs`, `src/TradeAgent.Platforms/ForwardBarSource.cs`
+
+**A closed forward bar drives the frozen program, and what comes out is an ordinary order.** `ForwardRuns`
+replays the forward bars from the deployment's start into `EvaluationState`, steps the evaluator once per bar,
+and turns each `StrategyIntent` into a `PlaceIntent` dispatched through `TradingGateway.PlaceAsync` under
+`AgentContext.Deployment`. **No model is called for any signal and none for protection** — there is no model
+client, no prompt and no text in that file, which is `docs/PRINCIPLES.md`'s "no model call is required for each
+signal or for emergency protection" enforced by what the assembly can reach rather than by a promise.
+
+**THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED.** `Connectors.Create` binds
+`ForwardBarStore` to `IPaperBarSource` through `ForwardBarSource`; before it the paper connector was handed an
+empty `MemoryBarSource` and quoted nothing on an installation that had been collecting for a week. The adapter
+reads and converts and does nothing else: no fetch, no interpolation, no carry-forward, and every gap still a
+gap. The app wires the collector's `BarClosed` to `Announce`; the gateway host has no collector and settles by
+polling `SinceAsync`, because an event can be missed and a query cannot.
+
+**NOTHING IN THE RUNNER'S PROCESS SURVIVES A RESTART, BECAUSE NOTHING NEEDS TO.** The evaluator's windows are a
+function of the bars; the position, the average price, the bars held and the pending order are read back out of
+the run's own `deployment_op` rows joined to `execution_request` and `fill` by request id — the run's OWN
+executions and never the account's total, because the owner's own position on that account belongs to nobody
+else's sizing. Which bar a fill landed on is two recorded facts and no guess: the floor is the first bar
+strictly after the operation's own bar (the connector's declared rule), and above it the last bar that had
+CLOSED when the execution was stamped.
+
+**PROTECTION RUNS BY CODE, IN THE BACKTEST'S ORDER, BEFORE THE EVALUATOR IS ASKED.** The resting stop and target
+are the venue's business — real orders, placed the moment the entry fills, at the DISTANCES the program declared
+measured from the price actually paid, and when one fills the other is cancelled. The maximum hold is the
+runner's, because no venue has an order for "this many bars": at the close of the bar that reaches the limit the
+position is closed at market and the evaluator then reads a FLAT account. Asked the other way round it decides
+from a position this app had already said must not survive the bar — the mutant `ForwardRunnerTests` measures.
+
+**THE CURSOR IS THE FRONTIER.** Nothing is planned past the first bar the deployment's cursor has not reached,
+and the cursor is the last bar every one of whose operations resolved or was refused. An UNKNOWN answer
+therefore stops the run where it is and is never re-sent; a refusal is an answer and moves it on. A re-plan
+after a restart presents the same `dp-<12>-<bar>-<seq>` id — a function of the deployment, the bar and the
+sequence and of nothing else — so the operation row and `ExecutionRequestStore.TryCreate` collapse it rather
+than sending a second order. **A `stop` or `target` operation is resolved when the venue ACKNOWLEDGES the
+resting order**, and that is a judgement this unit makes and states: the operation is "put protection on the
+book" and it is done, where an `entry`, `exit` or `flatten` is over only on a terminal answer because its whole
+purpose is to move the position now. Left unresolved, protection would stop the program it protects.
+
+**EVERY GATE, AND NOTHING SKIPPED FOR BEING THE APP'S OWN CALLER.** The decision's freshness bounds, the
+allocation ceiling, the loss budgets, the owner's per-order limits, the open-position cap, the
+unresolved-reducer refusal and the kill switch all stand. A program that declares NO execution bounds
+(`IntentDecision.From` answers null) ENDS the deployment rather than trading unbounded — the referee already
+refuses such a program a promotion, and a version that reached a run without one was judged before that rule.
+Sizes are rounded **DOWN** to the venue catalogue's VERIFIED increment and a size that rounds to nothing is a
+recorded no-trade with its reason, never a minimum this software invented. The refusal code is recorded on the
+operation — `DECISION_EXPIRED`, `ALLOCATION_EXCEEDED` — and a request row still `CREATED` when a gate threw is
+`refused`, because `DISPATCHING` is durable before the wire and a `CREATED` row provably never left the process.
+
+**WHAT THE RECORD MAY CLAIM: forward paper observation under declared bar-fill assumptions, and nothing more.**
+The price existed at the open of a bar. No executability, no queue position, no intrabar ordering, and
+protection judged at BAR granularity — a stop is checked against a bar's low and not against the path inside it.
+Fills reach the fill ledger scoped to the paper connector and account and attributed to the version, the
+allocation and the deployment through `execution_request`, so `pnl` and the owner's report show them like any
+other. A deployment's END and each UTC day that closed over it raise ONE persisted wake to Research, keyed by
+the deployment and the occasion. **These figures MAY cross the disclosure boundary the held-back months have**:
+a paper run is the role's own experiment, the bars post-date every freeze on this installation and no verdict is
+ever taken over them — the note says in words that every figure in it is a declared simulation at the next open.
+
 ## U-promote-bounds — no execution bounds, no promotion — `src/TradeAgent.Core/Strategy/Referee.cs`
 
 `docs/COUNCIL.md`:96-97 says a **promoted** strategy declares its timeframe, its required data

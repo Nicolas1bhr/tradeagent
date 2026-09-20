@@ -702,6 +702,18 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     Action<string, DateTimeOffset>? _forwardAnnounce;
 
+    ForwardRuns? _forwardRunner;
+
+    /// <summary>
+    /// THE FORWARD RUNNER, ON THE APP'S OWN CLOCK. Built lazily because a connector switch replaces
+    /// <see cref="Gateway"/>, and a runner holding the old one would dispatch onto a platform the
+    /// owner has moved off.
+    /// </summary>
+    ForwardRuns ForwardRunner =>
+        _forwardRunner is { } held && ReferenceEquals(held.Gateway, Gateway)
+            ? held
+            : _forwardRunner = new ForwardRuns(Gateway, _db!);
+
     ConnectorChoice PaperChoice() => new()
     {
         PaperFrictionNow = () => new PaperFriction(
@@ -891,6 +903,12 @@ public sealed class AppHost : IAsyncDisposable
                 // on the APP's clock rather than the AI's because none of it is a turn and a paused
                 // AI must not leave an order this gateway cannot account for.
                 await Gateway.ReconcilePaperDeploymentsAsync(ct: ct);
+
+                // AND THE RUNS THEMSELVES, over whatever has closed since. The runner rebuilds each
+                // deployment's evaluator from the forward bars and dispatches what the frozen program
+                // decided — on the app's clock, for the reason above: a strategy running forward is
+                // not a turn, and a paused AI or an exhausted ceiling must not stop protection.
+                await ForwardRunner.AdvanceAsync(ct);
                 Gateway.Log.Rotate();
 
                 var pass = tick++;

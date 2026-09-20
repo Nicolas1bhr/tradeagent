@@ -46,7 +46,7 @@ await gateway.RefreshHealthAsync();
 server.Start();
 
 using var stopping = new CancellationTokenSource();
-var loop = Task.Run(() => Background(gateway, stopping.Token));
+var loop = Task.Run(() => Background(gateway, new ForwardRuns(gateway, db), stopping.Token));
 
 Console.WriteLine($"READY pipe={server.PipeName} connector={connector.Id} home={Paths.Home}");
 Console.Out.Flush();
@@ -122,7 +122,7 @@ static bool Fault(ITradingConnector c, string[] p)
 /// One slow timer, not a busy loop. On a low-spec laptop this must stay invisible in Task Manager:
 /// a health poll every few seconds, and reconciliation attempted only while something is unconfirmed.
 /// </summary>
-static async Task Background(TradingGateway gateway, CancellationToken ct)
+static async Task Background(TradingGateway gateway, ForwardRuns runner, CancellationToken ct)
 {
     var backoff = TimeSpan.FromSeconds(2);
     while (!ct.IsCancellationRequested)
@@ -140,6 +140,10 @@ static async Task Background(TradingGateway gateway, CancellationToken ct)
             // The same pass the desktop app runs: this host drives the same gateway over the same
             // database, and a deployment whose operations nobody settles is a run that never finishes.
             await gateway.ReconcilePaperDeploymentsAsync(ct: ct);
+
+            // And the runs themselves. The same pass the desktop app runs, over the same database:
+            // a deployment whose bars nobody steps is a run that decides nothing.
+            await runner.AdvanceAsync(ct);
 
             gateway.Log.Rotate();
         }

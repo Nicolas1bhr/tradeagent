@@ -270,6 +270,22 @@ public static class MissionEventIds
         $"{PublicationKind.Note}:paper-allocation:{allocationId}";
 
     /// <summary>
+    /// THE FORWARD-RUN WAKE, KEYED BY THE DEPLOYMENT AND THE OCCASION — a UTC day that closed over it,
+    /// or the run's end.
+    ///
+    /// <para>The deployment is the ENTITY and the occasion is what there is to say about it, so a run
+    /// that spans a week buys one turn a day and one at the end, and a pass that re-reads the same
+    /// week raises ids the table already holds. Keyed by the deployment alone it would say the same
+    /// thing once and never again; keyed by the sweep it would say it every five seconds.</para>
+    /// </summary>
+    public static string PaperRun(string deploymentId, string occasion) =>
+        $"{PublicationKind.Note}:paper-run:{deploymentId}:{occasion}";
+
+    /// <summary>The <paramref name="day"/> a forward run's figures are for, in UTC. See <see cref="PaperRun"/>.</summary>
+    public static string DayOf(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>
     /// THE BOUNDARY WAKE, KEYED BY THE BOUNDARY — whose own id is already the entity and the revision
     /// (<see cref="BoundaryIds.Of"/>). Wrapped per role by <see cref="ForRole"/>, so the pair is still a
     /// function of the fact and a repeat of either is still free.

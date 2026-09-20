@@ -527,6 +527,56 @@ public class ForwardRunnerTests(ITestOutputHelper log)
             second.Gw.Deployments.OpById(flattenRequest)!.State);
     }
 
+    // ---------------------------------------------------------------- feedback
+
+    [Fact]
+    public async Task A_runs_fills_reach_the_ledger_attributed_to_the_version_and_the_deployment_and_its_end_wakes_Research_once()
+    {
+        await using var rig = await ReadyAsync(ProgramText());
+
+        rig.Bar(1, 99m, 101m, 98m, 101m);
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(2, 102m, 103m, 101m, 102m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(3, 104m, 105m, 103m, 104m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+
+        // THE FILL IS IN THE LEDGER, SCOPED TO THIS PLATFORM AND ACCOUNT, and it carries the request
+        // id — which is the join to `execution_request`, and so to the version and the allocation.
+        var entry = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id),
+            o => o.Kind == DeploymentOpKind.Entry);
+        var scoped = rig.Gw.Fills.Scoped(PaperConnector.ConnectorId, PaperConnector.TheAccount);
+        var fill = Assert.Single(scoped.Fills);
+        log.WriteLine($"{fill.Symbol} {fill.Side} {fill.Quantity} at {fill.Price} request={fill.RequestId}");
+        Assert.Equal(entry.RequestId, fill.RequestId);
+        Assert.Equal(0, scoped.Unattributed);
+
+        var request = rig.Gw.Requests.Get(fill.RequestId!)!;
+        Assert.Equal(rig.Deployment.VersionId, request.StrategyVersionId);
+        Assert.Equal(rig.Deployment.AllocationId, request.AllocationId);
+
+        // AND THE END WAKES RESEARCH ONCE, with the figures and the sentence that says what they are.
+        var id = rig.Deployment.Id;
+        await rig.Gw.EndPaperDeploymentAsync(id, "test: the owner stopped it");
+        await rig.Gw.EndPaperDeploymentAsync(id, "test: and pressed it again");
+
+        // Research's own copy of the id: `Commit` wraps it per recipient, so a fact that wakes two
+        // roles is still one id per role and a repeat of either is still free.
+        var wake = MissionEventIds.ForRole(MissionEventIds.PaperRun(id, "end"), CouncilRoles.Research);
+        var raised = new MissionEventStore(rig.Db).Get(wake);
+        log.WriteLine($"wake {raised?.Id} {raised?.Kind} for {raised?.For}");
+        Assert.NotNull(raised);
+
+        var note = Assert.Single(new PublicationStore(rig.Db).By(TradingGateway.PaperAllocatorRole),
+            n => n.Content.Contains($"Forward paper run {StrategyDeploymentRow.Short(id)}"));
+        log.WriteLine(note.Content);
+        Assert.Contains("DECLARED SIMULATION AT THE NEXT OPEN", note.Content);
+        Assert.Contains("never holdout evidence", note.Content);
+        Assert.Equal(CouncilRoles.Research, note.Recipients);
+    }
+
     // ---------------------------------------------------------------- (f)
 
     [Fact]

@@ -67,6 +67,9 @@ public sealed class ForwardRuns
         _now = now ?? (() => DateTimeOffset.UtcNow);
     }
 
+    /// <summary>The gateway this runner dispatches through. A host that switched platforms builds a new one.</summary>
+    public TradingGateway Gateway => _gateway;
+
     /// <summary>How many deployments one pass looks at. The ledger is small; this is a bound.</summary>
     public const int RunsLookedAt = 200;
 
@@ -173,6 +176,13 @@ public sealed class ForwardRuns
                     }));
                 continue;
             }
+
+            // A UTC DAY THAT CLOSED OVER THIS RUN IS ONE THING TO SAY, ONCE. The boundary is the first
+            // bar of a new UTC date, and the note is about the day that ended — keyed by the
+            // deployment and that date, so replaying the week raises ids the queue already holds.
+            if (last is { } before && before.UtcDateTime.Date != bar.OpenTime.UtcDateTime.Date)
+                _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(before),
+                    $"the UTC day {MissionEventIds.DayOf(before)} closed over it", _now());
 
             last = bar.OpenTime;
             account = books.At(i, bar);
