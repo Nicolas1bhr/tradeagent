@@ -26,3 +26,24 @@ Installed true, the message as the version); (c) `An_exit_zero_run_is_the_versio
 Gate and report as `docs/HOW-WE-BUILD.md` (`--no-incremental` Release 0 warnings; three suites 0 failed; classes 3×; names 0 removed; `## Report` ≤ 20 lines
 here). Off-limits: the test files `U-runner-reds-3` owns (`SweepRequestIdTests`, `ValuationLossSurfacesTests`, `BridgeRoundTripTests`, `CouncilLoopTests`).
 No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Code tip `57afb55`; this report is the commit above it.** Rebase onto `main` was a no-op — `main` had not moved from `52072f6`, no conflicts.
+Gate, Release `--no-incremental`: **0 warnings, 0 errors**. Unit **1189 / 0 / 0**, Fault **399 / 0 / 0**, Integration **695 / 0 / 1** (passed/failed/skipped;
+the one skip is pre-existing). Test names vs `main`: 1939 → 1942, **0 removed**, 3 added. `AgentEnvironmentTests` + `RuntimeDetectionTests` 3×: 6/6 each run.
+1. **DONE** `8ac0a7b` — `DOTNET_ROOT`, `DOTNET_ROOT_X64`, `DOTNET_ROOT_ARM64` and `DOTNET_ROOT(x86)` join `PassThrough` on every platform. `Apply` is untouched,
+   so each crosses only when the app itself holds it and the whitelist is still a list of names; `CONTRACTS.md`'s containment section names the four, says no
+   secret is among them, and quotes the measurement.
+2. **DONE** `57afb55` — a version comes only from an exit-0 run; a program that will not start is `Installed = false` carrying the first line it printed as
+   `RuntimeDetection.Reason`, which the onboarding install step, the Doctor row and the `AgentRuntime` health row show. Such a program is not downloaded again:
+   re-fetching the same file fails the same way, and what the owner needs is the sentence the program printed.
+RED on the base, quoted: (a) "DOTNET_ROOT was set in TradeAgent's own environment and did not reach the child; the child is relaunched through TradeAgent's own
+framework-dependent `trade`, which cannot start without the runtime location the app itself was given"; (b) "a program that exits 131 without running was
+reported as an installed runtime; setup then advances past the install step and the owner is never told what the program said". (c)
+`An_exit_zero_run_is_the_version` was GREEN on the base — recorded as a guard checked, not a RED. Mutant, the exit code ignored in the version probe → (b) red
+on that same line; put back, 6/6 green.
+Also measured through the real launcher, not only the stub: `env -i PATH=… HOME=… trade --spawn-contained /bin/echo` → "You must install .NET to run this
+application.", exit 131; the same with `DOTNET_ROOT=$HOME/.dotnet` → "the vendor CLI ran", exit 0.
+Deviations: `RuntimeDetection.Reason` was added inert (always null) before the red run so (b) could compile against base behaviour; `CONTRACTS.md` also gained
+an `IAgentRuntime` paragraph for item 2, which the brief did not ask for. **NOT DONE:** the observed run itself — `tools/mac-bundle.sh` would have killed the
+manager's parked app and dev home, so "step 5 advances by itself" is NOT VERIFIED here. No box, no vendor call, no order, no push, no merge.
