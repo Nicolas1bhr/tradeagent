@@ -131,6 +131,10 @@ static async Task Background(TradingGateway gateway, CancellationToken ct)
             }
             else backoff = TimeSpan.FromSeconds(2);
 
+            // The same pass the desktop app runs: this host drives the same gateway over the same
+            // database, and a deployment whose operations nobody settles is a run that never finishes.
+            await gateway.ReconcilePaperDeploymentsAsync(ct: ct);
+
             gateway.Log.Rotate();
         }
         catch (OperationCanceledException) { return; }

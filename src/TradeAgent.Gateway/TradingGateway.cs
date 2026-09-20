@@ -30,6 +30,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly CampaignStore _campaigns;
     readonly Allocations _allocations;
     readonly Envelopes _envelopes;
+    readonly Deployments _deployments;
     readonly Core.Strategy.Referee _referee;
     readonly CouncilBoundaries _boundaries;
     readonly HealthRegistry _health;
@@ -473,6 +474,550 @@ public sealed class TradingGateway : IAsyncDisposable
         return result;
     }
 
+    // ---------------------------------------- the paper deployment (app-owned policy)
+
+    /// <summary>
+    /// THE DEPLOYMENT LEDGER, FOR READING. What is being run forward, and every operation each run
+    /// wrote down before dispatching it.
+    ///
+    /// <para><b>The app's own policy is the only thing that starts one</b>, on its own clock, inside a
+    /// grant the owner pressed once — the rule <see cref="Allocations"/> and <see cref="Envelopes"/>
+    /// keep. There is no <c>trade</c> verb and no pipe op that starts, suspends or resumes a
+    /// deployment, and an agent that wanted one has nowhere to ask. The ONE thing reachable from the
+    /// agent-facing side is ENDING one, which only ever removes exposure.</para>
+    /// </summary>
+    public Deployments Deployments => _deployments;
+
+    /// <summary>How many deployments a sweep looks at. The ledger is small; this is a bound, not a filter.</summary>
+    const int DeploymentsLookedAt = 200;
+
+    /// <summary>
+    /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every standing paper allocation
+    /// with no deployment gets ONE, while the envelope the owner granted has room. Answers how many it
+    /// started.
+    ///
+    /// <para><b>This is the arrow.</b> <see cref="AllocatePaperDue"/> turned a verdict into an
+    /// allocation; nothing turned an allocation into a RUN, so "the deployment this gate ceilings does
+    /// not exist" was the honest limit <c>docs/CONTRACTS.md</c> recorded twice. This is the record that
+    /// makes a run a thing with an identity, a cursor and unresolved operations — which is what
+    /// <c>manager-prompt.md</c> § 5 asks for so that "restart, replay, replacement or cancellation
+    /// cannot duplicate exposure".</para>
+    ///
+    /// <para><b>The bound is the ENVELOPE'S <c>max_deployments</c> and is never a constant in here.</b>
+    /// What occupies a slot is every deployment in the grant that is not over — and every deployment
+    /// that IS over but whose last operation has no answer, because "a replacement waits for a flat,
+    /// reconciled end": an order that may be live at the platform is precisely what a second run would
+    /// be started on top of.</para>
+    ///
+    /// <para><b>It never throws.</b> It runs on the mission loop's periodic seam, after
+    /// <see cref="AllocatePaperDue"/>, and a sweep that could not run must leave the ledger alone
+    /// rather than take a turn down with it.</para>
+    /// </summary>
+    public int StartPaperDeploymentsDue(DateTimeOffset? at = null)
+    {
+        try { return StartPaperDeploymentsDueCore(at ?? Now); }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "paper_deployment_sweep_failed", "error", ex: ex);
+            return 0;
+        }
+    }
+
+    int StartPaperDeploymentsDueCore(DateTimeOffset now)
+    {
+        // PAPER, AND THE WORD ON THE SETTINGS RATHER THAN "not live". A mode this build does not know
+        // is not PAPER, and starting an experiment under one would be the software guessing.
+        if (Settings.Mode != TradingMode.PAPER) return 0;
+        if (ClosureAccountId is not { Length: > 0 } account) return 0;
+        if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
+
+        var occupied = _deployments.ForEnvelope(envelope.Id)
+            .Count(d => !d.IsEnded || !_deployments.IsReconciled(d.Id));
+        var started = 0;
+
+        foreach (var standing in _allocations.PaperStanding(now))
+        {
+            if (occupied + started >= envelope.MaxDeployments) break;
+
+            var allocation = standing.Allocation;
+            if (!string.Equals(allocation.EnvelopeId, envelope.Id, StringComparison.Ordinal)) continue;
+            if (!string.Equals(allocation.ConnectorId, Connector.Id, StringComparison.Ordinal)) continue;
+            if (!string.Equals(allocation.AccountId, account, StringComparison.Ordinal)) continue;
+
+            // THE VERDICT AND THE GRANT, AT THIS INSTANT, from their own ledgers. `Authorises` is the
+            // same question the dispatch gate asks of an order, so a version whose evidence has been
+            // withdrawn since is not deployed on the strength of a row that was written before.
+            if (!standing.Authorises) continue;
+
+            // ALREADY RUNNING, OR STILL BEING ACCOUNTED FOR. Both are "not now": the first would be a
+            // second run of one allocation, and the second is the replacement waiting for a flat end.
+            if (_deployments.ForAllocation(allocation.Id)
+                .Any(d => !d.IsEnded || !_deployments.IsReconciled(d.Id))) continue;
+
+            var result = _deployments.Start(new StrategyDeploymentRow(
+                "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,
+                envelope.Symbol, TradingMode.PAPER.ToString(), DeploymentState.Active,
+                null, now, null, null, null));
+
+            if (!result.Ok || result.Deployment is not { } row) continue;
+
+            started++;
+            _log.Activity($"TradeAgent started a PAPER deployment of strategy version "
+                          + $"{Short(row.VersionId)} on account {account} in {envelope.Symbol}, inside "
+                          + "the paper envelope you granted. No capital and no live authority came "
+                          + "with it.");
+        }
+
+        return started;
+    }
+
+    /// <summary>
+    /// WHAT EVERY DEPLOYMENT NEEDS DOING, at start-up and on every tick: settle what has an answer,
+    /// suspend what has moved, end what is no longer authorised, dispatch what was written down, and
+    /// advance the cursor over bars that are finished. Answers how many things it changed.
+    ///
+    /// <para><b>UNKNOWN is never permission to retry.</b> An operation whose <c>execution_request</c>
+    /// has no terminal state stays unresolved, blocks its bar's cursor, and is never re-sent under its
+    /// id — <c>docs/PRINCIPLES.md</c> § boundary, verbatim, and the one rule this whole ledger exists
+    /// to make keepable.</para>
+    ///
+    /// <para><b>It never throws</b>, for <see cref="StartPaperDeploymentsDue"/>'s reason, except on
+    /// cancellation.</para>
+    /// </summary>
+    public async Task<int> ReconcilePaperDeploymentsAsync(DateTimeOffset? at = null,
+        CancellationToken ct = default)
+    {
+        try { return await ReconcilePaperDeploymentsCoreAsync(at ?? Now, ct); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "paper_deployment_reconcile_failed", "error", ex: ex);
+            return 0;
+        }
+    }
+
+    async Task<int> ReconcilePaperDeploymentsCoreAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var changed = 0;
+
+        foreach (var head in _deployments.All(DeploymentsLookedAt))
+        {
+            ct.ThrowIfCancellationRequested();
+            var row = _deployments.ById(head.Id);
+            if (row is null) continue;
+
+            changed += SettleDeploymentOps(row, now);
+            row = _deployments.ById(head.Id) ?? row;
+
+            if (row.IsEnded)
+            {
+                // AN END WHOSE FLATTEN LEFT NO RECORD HAS FLATTENED NOTHING. With the write-ahead row
+                // there, this does nothing at all — which is the point: the row is how a restart tells
+                // "sent and lost" from "never sent", and without it the only safe reading of an ended
+                // deployment would be to close again over a position the first close may have taken.
+                if (await FinishAnEndWithNoRecordAsync(row, now, ct)) changed++;
+                continue;
+            }
+
+            // THE PLATFORM, THE MODE AND THE ACCOUNT, ALL THREE. See DeploymentMovedFrom.
+            if (DeploymentMovedFrom(row) is { Length: > 0 } moved)
+            {
+                if (_deployments.Suspend(row.Id, moved))
+                {
+                    changed++;
+                    _log.TryEngineering("Gateway", "deployment_suspended", "warn",
+                        metadataJson: Json.Write(new { deployment = row.Id, why = moved }));
+                }
+                continue;   // NOTHING is dispatched, and NOTHING is retargeted.
+            }
+
+            if (row.IsSuspended && _deployments.Resume(row.Id))
+            {
+                changed++;
+                row = _deployments.ById(head.Id) ?? row;
+                _log.TryEngineering("Gateway", "deployment_resumed",
+                    metadataJson: Json.Write(new { deployment = row.Id }));
+            }
+
+            // IS THE RUN STILL AUTHORISED AT ALL? Asked of the two ledgers at this instant, never off
+            // a copy kept beside the deployment — which is what makes one press on the withdrawal card
+            // stop every run underneath it.
+            if (DeploymentEndReason(row, now) is { Length: > 0 } why)
+            {
+                await EndPaperDeploymentAsync(row.Id, why, ct);
+                changed++;
+                continue;
+            }
+
+            changed += await DispatchPlannedDeploymentOpsAsync(row, ct);
+            if (AdvanceDeploymentCursor(row)) changed++;
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// WHICH OF THE THREE MOVED, in the owner's words, or null because none did.
+    ///
+    /// <para><b>All three, and none of them is a default.</b> An account id is unique only within a
+    /// platform, and the same platform and the same account are a DIFFERENT UNDERTAKING in LIVE than
+    /// in PAPER — the reading <see cref="FlattenForBreachAsync"/> takes of a loss closure, arrived at
+    /// from the other side. Reading the mode alone leaves a deployment active while the gateway is
+    /// operating a platform and an account it was never started on, which is a run whose fills belong
+    /// to nobody.</para>
+    /// </summary>
+    string? DeploymentMovedFrom(StrategyDeploymentRow deployment)
+    {
+        var mode = Settings.Mode.ToString();
+        var account = ClosureAccountId;
+        if (deployment.PointedAt(Connector.Id, mode, account)) return null;
+
+        var moved = new List<string>();
+        if (!string.Equals(deployment.ConnectorId, Connector.Id, StringComparison.Ordinal))
+            moved.Add($"TradeAgent is on {Connector.Id} and this run was started on {deployment.ConnectorId}");
+        if (!string.Equals(deployment.Mode, mode, StringComparison.Ordinal))
+            moved.Add($"the mode is {mode} and this run was started in {deployment.Mode}");
+        if (!string.Equals(deployment.AccountId, account, StringComparison.Ordinal))
+            moved.Add($"the account is {(account.Length == 0 ? "none" : account)} and this run was "
+                      + $"started on {deployment.AccountId}");
+
+        return string.Join("; ", moved);
+    }
+
+    /// <summary>
+    /// WHY THIS RUN IS OVER, or null because it is not. Four reasons, each read from its own ledger at
+    /// this instant: the grant withdrawn or expired, no paper allocation standing, the allocation
+    /// superseded by a later one, and a verdict that no longer stands.
+    /// </summary>
+    string? DeploymentEndReason(StrategyDeploymentRow deployment, DateTimeOffset now)
+    {
+        if (_envelopes.ById(deployment.EnvelopeId) is not { } envelope || !envelope.StandsAt(now))
+            return "the paper envelope it was started under has been withdrawn or has expired";
+
+        var standing = _allocations.StandingForPaper(
+            deployment.VersionId, deployment.ConnectorId, deployment.AccountId, now);
+
+        if (standing is null)
+            return "the paper allocation it was started under no longer stands";
+
+        if (!string.Equals(standing.Allocation.Id, deployment.AllocationId, StringComparison.Ordinal))
+            return "the paper allocation it was started under has been superseded by a later one";
+
+        if (!standing.Authorises)
+            return "the version's verdict no longer stands as promoted or paper-eligible";
+
+        return null;
+    }
+
+    /// <summary>
+    /// TAKES EVERY UNSETTLED OPERATION'S ANSWER OFF ITS OWN <c>execution_request</c> ROW, and takes
+    /// nothing from a row that has no answer.
+    ///
+    /// <para>A terminal state is an outcome and settles the operation. UNKNOWN, DISPATCHING and
+    /// RECONCILING are not outcomes: they are left exactly as they are, they hold the cursor where it
+    /// is, and nothing re-sends them. An operation with NO row at all is the other case — a gate
+    /// refused it before the record existed, so nothing was sent and it is <c>refused</c> rather than
+    /// left hanging.</para>
+    /// </summary>
+    int SettleDeploymentOps(StrategyDeploymentRow deployment, DateTimeOffset now)
+    {
+        var settled = 0;
+
+        foreach (var op in _deployments.OpsOf(deployment.Id))
+        {
+            if (op.IsSettled) continue;
+
+            var request = _requests.Get(op.RequestId);
+
+            if (request is null)
+            {
+                // PLANNED AND NOT YET SENT is not a refusal while the run is live — it is dispatched
+                // below. On a run that is over, or one this gateway is not pointed at, it never will
+                // be, and saying so is what keeps the cursor honest.
+                if (op.IsPlanned && !deployment.IsActive
+                    && _deployments.Refuse(op.RequestId,
+                        "the deployment was no longer running when this would have been dispatched; "
+                        + "nothing was sent", now)) settled++;
+                else if (op.IsDispatched
+                         && _deployments.Refuse(op.RequestId,
+                             "a gate refused it before any record was written; nothing was sent", now))
+                    settled++;
+                continue;
+            }
+
+            if (op.IsPlanned) _deployments.MarkDispatched(op.RequestId);
+
+            // UNKNOWN IS NOT TERMINAL AND NEVER WILL BE UNTIL SOMETHING SETTLES IT. This is the whole
+            // of the rule: no branch below reads a missing answer as a no.
+            if (!OrderStateMachine.IsTerminal(request.State)) continue;
+
+            if (_deployments.Resolve(op.RequestId,
+                    request.LastError is { Length: > 0 } e
+                        ? $"{request.State} — {e}" : request.State.ToString(), now))
+                settled++;
+        }
+
+        return settled;
+    }
+
+    /// <summary>
+    /// DISPATCHES EVERY OPERATION THAT WAS WRITTEN DOWN AND HAS NO ORDER BEHIND IT YET, ONCE.
+    ///
+    /// <para>Once, and the id is what enforces it: the request id is a function of the deployment, the
+    /// bar and the sequence, so a second pass over the same operation presents the same id and
+    /// <c>ExecutionRequestStore.TryCreate</c> collapses it onto the row that is already there rather
+    /// than sending a second order.</para>
+    /// </summary>
+    async Task<int> DispatchPlannedDeploymentOpsAsync(StrategyDeploymentRow deployment, CancellationToken ct)
+    {
+        var sent = 0;
+
+        foreach (var op in _deployments.OpsOf(deployment.Id))
+        {
+            if (!op.IsPlanned || _requests.Get(op.RequestId) is not null) continue;
+            ct.ThrowIfCancellationRequested();
+
+            var intent = TryReadIntent(op);
+            if (intent is null)
+            {
+                _deployments.Refuse(op.RequestId,
+                    "TradeAgent could not read what this operation was for, so nothing was sent", Now);
+                sent++;
+                continue;
+            }
+
+            await RunDeploymentOpAsync(deployment, op.RequestId,
+                rid => PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct)!, ct);
+            sent++;
+        }
+
+        return sent;
+    }
+
+    /// <summary>The intent a planned operation was written with, or null because this build cannot read it.</summary>
+    static PlaceIntent? TryReadIntent(DeploymentOpRow op)
+    {
+        try { return Json.Read<PlaceIntent>(op.IntentJson); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// THE CURSOR IS THE LAST BAR EVERY ONE OF WHOSE OPERATIONS SETTLED, and it stops at the first bar
+    /// that still carries one that did not.
+    ///
+    /// <para>Not "the newest settled bar": an unresolved operation on an earlier bar is an order that
+    /// may be live at the platform, and a cursor past it would be this software deciding that an
+    /// answer nobody has is a no.</para>
+    /// </summary>
+    bool AdvanceDeploymentCursor(StrategyDeploymentRow deployment)
+    {
+        DateTimeOffset? upTo = null;
+
+        foreach (var bar in _deployments.OpsOf(deployment.Id).GroupBy(o => o.BarOpenTime).OrderBy(g => g.Key))
+        {
+            if (!bar.All(o => o.IsSettled)) break;
+            upTo = bar.Key;
+        }
+
+        return upTo is { } to && _deployments.AdvanceCursor(deployment.Id, to);
+    }
+
+    /// <summary>
+    /// ENDS ONE PAPER DEPLOYMENT: cancels what is working, flattens what is open through this
+    /// gateway's own close mechanics under the deployment's own identity, and records the reason.
+    ///
+    /// <para><b>Cancelling comes first and it is not tidiness.</b> An end that closes the position and
+    /// leaves a working opener on the book has flattened nothing, because the opener fills a moment
+    /// later into a run that is over — the order <see cref="FlattenForBreachAsync"/> takes, for the
+    /// same reason.</para>
+    ///
+    /// <para><b>The close is an ordinary order.</b> It goes through <see cref="CloseAsync"/> and
+    /// therefore through <see cref="PlaceAsync"/> and every gate this gateway has: freshness, the
+    /// open-position cap, the unresolved-reducer refusal, the loss budgets, the owner's per-order
+    /// limits, the allocation ceiling and the kill switch. Nothing is skipped for being the app's own
+    /// caller, and a close and a reduce pass the ceiling exactly as they always have.</para>
+    ///
+    /// <para><b>It refuses on a platform, a mode or an account that is not the deployment's</b>, and
+    /// suspends instead. A flatten sent where the run was not started is an order on somebody else's
+    /// book.</para>
+    ///
+    /// <para><b>Who may ask.</b> The owner's one press plus a confirm, the app's own policy when the
+    /// grant or the verdict goes, and the version's own role over the pipe — ending only ever REMOVES
+    /// exposure, which is the same exception this product already makes for <c>close</c> and
+    /// <c>cancel</c>. Nothing here can start one, widen one or move it somewhere else.</para>
+    /// </summary>
+    public async Task<StrategyDeploymentRow?> EndPaperDeploymentAsync(string id, string reason,
+        CancellationToken ct = default)
+    {
+        if (_deployments.ById(id) is not { } deployment) return null;
+        if (deployment.IsEnded) return deployment;
+
+        if (DeploymentMovedFrom(deployment) is { Length: > 0 } moved)
+        {
+            _deployments.Suspend(deployment.Id, moved);
+            _log.TryEngineering("Gateway", "deployment_end_not_this_platform", "warn",
+                metadataJson: Json.Write(new { deployment = deployment.Id, why = moved }));
+            return _deployments.ById(deployment.Id);
+        }
+
+        var ctx = AgentContext.Deployment(deployment.Id);
+        var bar = DeploymentBar(Now);
+
+        foreach (var op in _deployments.OpsOf(deployment.Id))
+        {
+            if (_requests.Get(op.RequestId) is not
+                { State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } working) continue;
+            if (working.ConnectorOrderId is not { Length: > 0 } order) continue;
+
+            await RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
+                rid => CancelAsync(ctx, rid, order, ct)!, ct,
+                DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = order }));
+        }
+
+        await FlattenDeploymentAsync(deployment, bar, ct);
+
+        _deployments.End(deployment.Id, reason, Now);
+
+        var ended = _deployments.ById(deployment.Id);
+        _log.Activity($"TradeAgent ended the PAPER deployment of strategy version "
+                      + $"{Short(deployment.VersionId)} on account {deployment.AccountId}: {reason}.");
+        _log.TryEngineering("Gateway", "deployment_ended",
+            metadataJson: Json.Write(new { deployment = deployment.Id, reason }));
+        StateChanged?.Invoke();
+        return ended;
+    }
+
+    /// <summary>
+    /// The one close an end sends, written down before it goes. <see cref="CloseAsync"/> answers null
+    /// on a book that is already flat, and the operation records that rather than inventing an order:
+    /// "there was nothing to close" is an outcome and it settles the bar.
+    /// </summary>
+    Task<bool> FlattenDeploymentAsync(StrategyDeploymentRow deployment, DateTimeOffset bar,
+        CancellationToken ct) =>
+        RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
+            rid => CloseAsync(AgentContext.Deployment(deployment.Id), rid, deployment.Symbol, ct,
+                deployment.VersionId),
+            ct, DeploymentOpKind.Flatten, bar, Json.Write(new { close = deployment.Symbol }));
+
+    /// <summary>
+    /// AN END WHOSE FLATTEN LEFT NO RECORD HAS FLATTENED NOTHING — so the flatten is written and sent
+    /// now, once, and the record is what stops it happening twice.
+    ///
+    /// <para>This is the recovery the write-ahead row buys. With the operation on disk a restart can
+    /// see that a close was attempted and can leave it alone while its answer is missing; without one,
+    /// "sent and lost" and "never sent" are the same picture, and the only readings available are to
+    /// close again over a position the first close may have taken, or to walk away from a position the
+    /// owner was told had been closed.</para>
+    /// </summary>
+    async Task<bool> FinishAnEndWithNoRecordAsync(StrategyDeploymentRow deployment, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (_deployments.OpsOf(deployment.Id)
+            .Any(o => string.Equals(o.Kind, DeploymentOpKind.Flatten, StringComparison.Ordinal)))
+            return false;
+
+        if (DeploymentMovedFrom(deployment) is { Length: > 0 }) return false;
+
+        return await FlattenDeploymentAsync(deployment, DeploymentBar(now), ct);
+    }
+
+    /// <summary>
+    /// WRITES ONE OPERATION DOWN AND THEN DISPATCHES IT — in that order, which is the whole of the
+    /// guarantee — and records what came back.
+    ///
+    /// <para>The op is <c>planned</c> before the gateway is asked and <c>dispatched</c> immediately
+    /// before the call, so a process killed anywhere inside leaves a row saying the wire may have been
+    /// touched. It is <c>resolved</c> only on a TERMINAL answer and <c>refused</c> only when nothing
+    /// was sent; an ambiguous failure with a record behind it is left exactly as it is, unresolved,
+    /// holding the cursor, and never re-sent — which is what <c>UNKNOWN</c> means everywhere else in
+    /// this product.</para>
+    ///
+    /// <para>An operation that already exists and is past <c>planned</c> is NOT run again: the insert
+    /// and the read are how a second pass over the same work is stopped, rather than a flag a caller
+    /// remembers to check.</para>
+    /// </summary>
+    async Task<bool> RunDeploymentOpAsync(StrategyDeploymentRow deployment, string requestId,
+        Func<string, Task<ExecutionRequest?>> dispatch, CancellationToken ct,
+        string? kind = null, DateTimeOffset? bar = null, string? intentJson = null)
+    {
+        var existing = _deployments.OpById(requestId);
+
+        if (existing is null)
+        {
+            if (kind is null || bar is not { } open || intentJson is null) return false;
+            if (!_deployments.Plan(new DeploymentOpRow(requestId, deployment.Id, open, kind,
+                    intentJson, DeploymentOpState.Planned, null, Now, null)))
+                return false;
+        }
+        else if (!existing.IsPlanned) return false;
+
+        _deployments.MarkDispatched(requestId);
+
+        try
+        {
+            var request = await dispatch(requestId);
+
+            if (request is null)
+            {
+                _deployments.Refuse(requestId, "there was nothing to send", Now);
+                return true;
+            }
+
+            if (OrderStateMachine.IsTerminal(request.State))
+                _deployments.Resolve(requestId, request.State.ToString(), Now);
+
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // WHICH OF THE TWO IT WAS IS A QUESTION FOR THE STORE, NOT A GUESS. No row at all means no
+            // gate let it past and nothing was sent. A row with a terminal state is an outcome. A row
+            // with anything else is an order this gateway cannot account for, and the one thing that
+            // must not be written over it is "refused".
+            var row = _requests.Get(requestId);
+
+            if (row is null)
+                _deployments.Refuse(requestId,
+                    $"nothing was sent: {(ex is TradeAgentException t ? $"{t.Code} — {t.Message}" : ex.Message)}",
+                    Now);
+            else if (OrderStateMachine.IsTerminal(row.State))
+                _deployments.Resolve(requestId, row.State.ToString(), Now);
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// THE BAR AN OPERATION BELONGS TO: the instant, floored to a whole minute in UTC. The forward
+    /// series this product collects is one-minute closed bars (<c>U-forward-bars</c>), so a minute is
+    /// what a cursor can be a cursor over.
+    /// </summary>
+    static DateTimeOffset DeploymentBar(DateTimeOffset at) =>
+        new(at.UtcDateTime.Date.AddHours(at.UtcDateTime.Hour).AddMinutes(at.UtcDateTime.Minute),
+            TimeSpan.Zero);
+
+    /// <summary>
+    /// The next free sequence for this deployment on this bar, so two operations of one bar never
+    /// present one id. Off the ROWS, because the rows are what survives a restart.
+    /// </summary>
+    string NextDeploymentOpId(StrategyDeploymentRow deployment, DateTimeOffset bar)
+    {
+        var taken = _deployments.OpsOf(deployment.Id)
+            .Where(o => o.BarOpenTime == bar)
+            .Select(o => o.RequestId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        for (var seq = 0; seq < 1000; seq++)
+        {
+            var id = Deployments.RequestIdFor(deployment.Id, bar, seq);
+            if (!taken.Contains(id)) return id;
+        }
+
+        return Deployments.RequestIdFor(deployment.Id, bar, 999);
+    }
+
+
     /// <summary>
     /// WHAT THE OWNER'S ONE PRESS DOES: the cutoff, and the campaign that cutoff is the subject of, in
     /// ONE transaction.
@@ -781,6 +1326,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _boundaries = new CouncilBoundaries(db);
         _allocations = new Allocations(db);
         _envelopes = new Envelopes(db);
+        _deployments = new Deployments(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());
@@ -6062,7 +6608,16 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception) { /* judged without a grid; PriceVerdict says Unknowable rather than guessing */ }
     }
 
-    public async Task<ExecutionRequest?> CloseAsync(AgentContext ctx, string requestId, string symbol, CancellationToken ct = default)
+    /// <param name="strategyVersionId">
+    /// WHICH VERSION IS CLOSING, or null because no strategy is — the default, and what every caller
+    /// before <c>U-deployment</c> means. It is the same claim <see cref="PlaceIntent.StrategyVersionId"/>
+    /// carries and it grants nothing: the gateway still asks the ledgers what that version stands on.
+    /// A paper deployment names its own version here because its account is under a standing envelope,
+    /// where an order naming none is refused <see cref="ErrorCode.ENVELOPE_ACCOUNT_RESERVED"/> — and
+    /// that refusal is right: on that account, what may trade is what the grant allows.
+    /// </param>
+    public async Task<ExecutionRequest?> CloseAsync(AgentContext ctx, string requestId, string symbol,
+        CancellationToken ct = default, string? strategyVersionId = null)
     {
         AuthorizeOrThrow(ctx);
         var accountId = await RequireAccountId(ct);
@@ -6079,7 +6634,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
         return await PlaceAsync(ctx, requestId, new PlaceIntent(symbol,
             side, OrderType.Market, Math.Abs(pos.Quantity),
-            null, null, TimeInForce.Day, "close position") { Intent = OrderIntent.Close }, ct);
+            null, null, TimeInForce.Day, "close position")
+            { Intent = OrderIntent.Close, StrategyVersionId = strategyVersionId }, ct);
     }
 
     async Task<string> ResolveConnectorOrderId(string reference, CancellationToken ct)

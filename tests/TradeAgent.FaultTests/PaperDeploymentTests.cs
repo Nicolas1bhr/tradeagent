@@ -138,6 +138,258 @@ public class PaperDeploymentTests(ITestOutputHelper log)
         Assert.Contains(conn.Broker.Positions, p => p.Symbol == "BTCUSDT" && p.Quantity != 0m);
     }
 
+    // ---- item 3: the policy ---------------------------------------------------------------------
+
+    /// <summary>
+    /// (a) ONE STANDING PAPER ALLOCATION STARTS ONE DEPLOYMENT, AND A SECOND WAITS WHILE THE
+    /// ENVELOPE'S <c>max_deployments</c> IS FULL.
+    ///
+    /// <para>Three claims. The sweep starts ONE and running it again starts none — a policy on a clock
+    /// that started a second run every tick would duplicate exposure by design. The envelope's own
+    /// number is what bounds it, not a constant in this build. And an ENDED deployment whose last
+    /// operation has no answer still occupies its slot: "a replacement waits for a flat, reconciled
+    /// end", because an order that may be live at the platform is exactly what a second run would be
+    /// placed on top of.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_standing_paper_allocation_starts_one_deployment_and_a_second_waits_while_max_deployments_is_full()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+
+        var (envelope, version) = await Allocated(gw, db);
+
+        var first = gw.StartPaperDeploymentsDue(At);
+        var again = gw.StartPaperDeploymentsDue(At);
+        var open = gw.Deployments.Open();
+
+        Assert.Equal(1, first);
+        Assert.Equal(0, again);
+        Assert.Single(open);
+        Assert.Equal(version, open[0].VersionId);
+        Assert.Equal(envelope.Id, open[0].EnvelopeId);
+        Assert.Equal(DeploymentState.Active, open[0].State);
+        Assert.Null(open[0].CursorOpenTime);
+
+        // END IT, LEAVING THE FLATTEN WITH NO ANSWER — the one outcome that is neither a fill nor a
+        // refusal, and the one a replacement must wait on.
+        await SeedAPosition(gw, conn);
+        conn.Faults.DropBeforeBrokerAccept = 1;
+        await gw.EndPaperDeploymentAsync(open[0].Id, "test: the owner stopped it");
+
+        clock.At = At.AddMinutes(5);
+        var whileUnreconciled = gw.StartPaperDeploymentsDue(clock.At);
+
+        // NOW SETTLE IT, the way a person confirming on the Dashboard does, and the slot is free.
+        var unresolved = gw.Deployments.OpsOf(open[0].Id).Single(o => !o.IsSettled);
+        gw.ForceResolve(unresolved.RequestId, ExecutionState.CANCELLED, "the owner confirmed nothing landed");
+        await gw.ReconcilePaperDeploymentsAsync(clock.At);
+
+        clock.At = At.AddMinutes(10);
+        var afterAFlatEnd = gw.StartPaperDeploymentsDue(clock.At);
+
+        log.WriteLine($"first sweep          : {first}, second {again}");
+        log.WriteLine($"while unreconciled   : {whileUnreconciled}");
+        log.WriteLine($"after a flat end     : {afterAFlatEnd}");
+        foreach (var d in gw.Deployments.All())
+            log.WriteLine($"deployment           : {StrategyDeploymentRow.Short(d.Id)} {d.State} — {d.EndReason ?? "-"}");
+
+        Assert.Equal(0, whileUnreconciled);
+        Assert.Equal(1, afterAFlatEnd);
+        Assert.Equal(2, gw.Deployments.All().Count);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (b) AN OPERATION IS WRITTEN BEFORE IT IS DISPATCHED, AND A KILL BETWEEN THE WRITE AND THE
+    /// ANSWER RESOLVES ON RESTART WITH NO SECOND ORDER AT THE WIRE.
+    ///
+    /// <para><b>The mutant.</b> Write the op AFTER the dispatch and this goes red: the restart finds no
+    /// record of the flatten, cannot tell "sent and lost" from "never sent", and sends a second market
+    /// order over a position the first one may already have closed. The write-ahead row is the whole
+    /// of the difference, which is the reading <c>OpenPressRow</c> takes of an emergency press.</para>
+    ///
+    /// <para>UNKNOWN is never permission to retry. The op stays unresolved, the cursor does not move
+    /// past its bar, and nothing is re-sent under its id.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_operation_written_before_dispatch_resolves_on_restart_with_no_second_order_at_the_wire()
+    {
+        var (gw, conn, db, _) = await Ready();
+        using var _1 = db;
+
+        await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var deployment = gw.Deployments.Open().Single();
+
+        await SeedAPosition(gw, conn);
+        var placesBefore = conn.Places;
+
+        // THE KILL. The process stops INSIDE the connector call, between the write-ahead row and the
+        // answer — which is the one window a record written afterwards would not cover. Nothing below
+        // the wire call in this process runs again.
+        var killed = new TaskCompletionSource();
+        conn.Holds = RecordingConnector.HeldCall.Place;
+        conn.Hold = killed.Task;
+        var inFlight = gw.EndPaperDeploymentAsync(deployment.Id, "test: ended");
+        await conn.Reached.Task;
+
+        var flatten = gw.Deployments.OpsOf(deployment.Id)
+            .Where(o => o.Kind == DeploymentOpKind.Flatten).ToList();
+        var atTheWire = conn.Places - placesBefore;
+
+        // THE RESTART: another gateway over the same database and the same book, with its own wire.
+        var second = new RecordingConnector(new FakeConnector(conn.Broker));
+        var (restarted, _, _, _) = await Ready(db: db, conn: second);
+        var resolved = await restarted.ReconcilePaperDeploymentsAsync(At);
+        var after = restarted.Deployments.OpsOf(deployment.Id)
+            .Where(o => o.Kind == DeploymentOpKind.Flatten).ToList();
+
+        log.WriteLine($"written before the wire: {flatten.Count} — {(flatten.Count == 1 ? flatten[0].State : "none")}");
+        log.WriteLine($"orders at the wire   : {atTheWire} then {second.Places}");
+        log.WriteLine($"after the restart    : {(after.Count == 1 ? after[0].State : "none")}, "
+                      + $"resolved_at {(after.Count == 1 ? after[0].ResolvedAt?.ToString("O", CultureInfo.InvariantCulture) ?? "none" : "none")}");
+        log.WriteLine($"request state        : {(after.Count == 1 ? restarted.GetRequest(after[0].RequestId)?.State.ToString() ?? "no row" : "none")}");
+        log.WriteLine($"position             : {conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "BTCUSDT")?.Quantity ?? 0m}");
+        log.WriteLine($"cursor               : {restarted.Deployments.ById(deployment.Id)!.CursorOpenTime?.ToString("O", CultureInfo.InvariantCulture) ?? "none"}");
+
+        // THE RECORD EXISTS BEFORE THE ANSWER DOES. This is the whole claim.
+        Assert.Single(flatten);
+        Assert.Equal(DeploymentOpState.Dispatched, flatten[0].State);
+
+        Assert.Equal(1, atTheWire);
+        Assert.Equal(0, second.Places);
+        Assert.Single(after);
+        Assert.Equal(ExecutionState.UNKNOWN, restarted.GetRequest(after[0].RequestId)!.State);
+        Assert.False(after[0].IsSettled);
+        Assert.Null(after[0].ResolvedAt);
+        Assert.Null(restarted.Deployments.ById(deployment.Id)!.CursorOpenTime);
+        Assert.Equal(0, resolved);
+
+        // AND NO REPLACEMENT WHILE IT IS UNRESOLVED. An operation nobody can account for is an order
+        // that may be live, and a second run would be started on top of it.
+        Assert.Equal(0, restarted.StartPaperDeploymentsDue(At.AddMinutes(5)));
+
+        killed.SetResult();
+        try { await inFlight; } catch (Exception) { /* the process this models did not come back */ }
+        await restarted.DisposeAsync();
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (c) A CONNECTOR, MODE OR ACCOUNT SWITCH SUSPENDS THE DEPLOYMENT AND NEVER RETARGETS IT.
+    ///
+    /// <para>Three arms, because an account id is unique only within a platform and the same platform
+    /// and account are a different undertaking in LIVE than in PAPER — the reading
+    /// <c>FlattenForBreachAsync</c> takes of a loss closure, arrived at from the other side. The
+    /// identity columns are unchanged on every arm and nothing is sent on any of them.</para>
+    ///
+    /// <para><b>The mutant.</b> Read the MODE alone and the first and third arms go red: the
+    /// deployment stays active while the gateway is operating a different platform and a different
+    /// account, which is a run whose fills belong to nobody.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_connector_mode_or_account_switch_suspends_and_never_retargets()
+    {
+        // --- the account moved ---
+        var (gw, conn, db, _) = await Ready();
+        using var _1 = db;
+        await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var started = gw.Deployments.Open().Single();
+
+        gw.Update(s => s.SelectedAccountId = "SIM-OTHER");
+        await gw.ReconcilePaperDeploymentsAsync(At);
+        var onAnotherAccount = gw.Deployments.ById(started.Id)!;
+
+        // and back again: a deployment resumes when the three match once more.
+        gw.Update(s => s.SelectedAccountId = conn.Broker.AccountId);
+        await gw.ReconcilePaperDeploymentsAsync(At);
+        var resumed = gw.Deployments.ById(started.Id)!;
+
+        // --- the mode moved ---
+        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        await gw.ReconcilePaperDeploymentsAsync(At);
+        var inALiveMode = gw.Deployments.ById(started.Id)!;
+        gw.Update(s => s.Mode = TradingMode.PAPER);
+
+        // --- the platform moved ---
+        await gw.DisposeAsync();
+        var (elsewhere, other, _, _) = await Ready(db: db, connectorId: "other-sim");
+        await elsewhere.ReconcilePaperDeploymentsAsync(At);
+        var onAnotherPlatform = elsewhere.Deployments.ById(started.Id)!;
+
+        log.WriteLine($"another account      : {onAnotherAccount.State} — {onAnotherAccount.SuspendedReason}");
+        log.WriteLine($"back again           : {resumed.State}");
+        log.WriteLine($"a live mode          : {inALiveMode.State} — {inALiveMode.SuspendedReason}");
+        log.WriteLine($"another platform     : {onAnotherPlatform.State} — {onAnotherPlatform.SuspendedReason}");
+        log.WriteLine($"identity unchanged   : {onAnotherPlatform.ConnectorId}/{onAnotherPlatform.AccountId}/{onAnotherPlatform.Symbol}");
+        log.WriteLine($"mutations            : {conn.Mutations} here, {other.Mutations} there");
+
+        Assert.Equal(DeploymentState.Suspended, onAnotherAccount.State);
+        Assert.Equal(DeploymentState.Active, resumed.State);
+        Assert.Equal(DeploymentState.Suspended, inALiveMode.State);
+        Assert.Equal(DeploymentState.Suspended, onAnotherPlatform.State);
+
+        // NEVER RETARGETED. The seven identity facts are what the id is a hash of, and they are the
+        // same seven the run started on.
+        Assert.Equal(started.ConnectorId, onAnotherPlatform.ConnectorId);
+        Assert.Equal(started.AccountId, onAnotherPlatform.AccountId);
+        Assert.Equal(started.Symbol, onAnotherPlatform.Symbol);
+        Assert.Equal(started.Mode, onAnotherPlatform.Mode);
+        Assert.Equal(started.Id, onAnotherPlatform.ComputedId);
+
+        Assert.Equal(0, conn.Mutations);
+        Assert.Equal(0, other.Mutations);
+        await elsewhere.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (d) ENDING CANCELS, FLATTENS THROUGH THE GATEWAY AND RECORDS THE REASON — WHILE THE ALLOCATION
+    /// ROW SURVIVES.
+    ///
+    /// <para>The flatten is an ordinary <c>execution_request</c> placed under the deployment's own
+    /// identity, so it passed every gate this gateway has rather than a shorter list kept for the
+    /// app's own caller. And the ALLOCATION is untouched: a deployment is a run, an allocation is a
+    /// decision, and ending the run must not quietly withdraw the owner's grant underneath it.</para>
+    /// </summary>
+    [Fact]
+    public async Task Ending_cancels_flattens_through_the_gateway_and_records_the_reason_while_the_allocation_row_survives()
+    {
+        var (gw, conn, db, _) = await Ready();
+        using var _1 = db;
+
+        var (envelope, version) = await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var started = gw.Deployments.Open().Single();
+
+        await SeedAPosition(gw, conn);
+        var ended = await gw.EndPaperDeploymentAsync(started.Id, "test: the owner stopped it");
+
+        var flatten = gw.Deployments.OpsOf(started.Id).Single(o => o.Kind == DeploymentOpKind.Flatten);
+        var request = gw.GetRequest(flatten.RequestId)!;
+        var standing = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At);
+
+        log.WriteLine($"state                : {ended!.State} — {ended.EndReason}");
+        log.WriteLine($"flatten op           : {flatten.RequestId} {flatten.State} — {flatten.Answer}");
+        log.WriteLine($"the order it became  : {request.State}, session {request.AgentSessionId}");
+        log.WriteLine($"position now         : {conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "BTCUSDT")?.Quantity ?? 0m}");
+        log.WriteLine($"allocation survives  : {standing is not null}");
+
+        Assert.Equal(DeploymentState.Ended, ended.State);
+        Assert.Equal("test: the owner stopped it", ended.EndReason);
+        Assert.NotNull(ended.EndedAt);
+        Assert.Equal(DeploymentOpState.Resolved, flatten.State);
+        Assert.Equal(ExecutionState.FILLED, request.State);
+        Assert.Equal($"deployment:{started.Id}", request.AgentSessionId);
+        Assert.Equal(0m, conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "BTCUSDT")?.Quantity ?? 0m);
+
+        // THE ALLOCATION ROW SURVIVES, and so does the grant it was written under.
+        Assert.NotNull(standing);
+        Assert.NotNull(gw.Envelopes.ById(envelope.Id));
+        await gw.DisposeAsync();
+    }
+
     // ---- item 2: the identity -------------------------------------------------------------------
 
     /// <summary>

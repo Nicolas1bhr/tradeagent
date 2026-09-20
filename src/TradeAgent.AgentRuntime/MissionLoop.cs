@@ -242,6 +242,20 @@ public interface IMissionHost
     void AllocatePaperDue(DateTimeOffset now) { }
 
     /// <summary>
+    /// STARTS THE PAPER DEPLOYMENTS THAT ARE DUE, on the same seam and immediately after
+    /// <see cref="AllocatePaperDue"/> — an allocation with no run is the arrow half closed, and a
+    /// policy that waited for an agent to be woken would be a policy with the agent's clock in it.
+    ///
+    /// <para>It is NOT a turn: no wake is consumed, no inference is bought and NOTHING is dispatched.
+    /// Starting a deployment writes one ledger row inside the envelope the owner granted; the orders
+    /// a run sends are the gateway's own reconcile pass, which is on the app's clock and not on
+    /// this one.</para>
+    ///
+    /// <para>A default of nothing, so a host with no gateway behind it keeps working.</para>
+    /// </summary>
+    void StartPaperDeploymentsDue(DateTimeOffset now) { }
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -1855,6 +1869,12 @@ public sealed class MissionLoop
         // allocates nothing and is tried again on the next tick.
         try { _host.AllocatePaperDue(_now()); }
         catch (Exception) { /* nothing was allocated; the next tick tries again */ }
+
+        // AND THE DEPLOYMENT POLICY, immediately after it and on the same seam: an allocation with no
+        // run is the arrow half closed. It dispatches nothing — see `IMissionHost.StartPaperDeploymentsDue`
+        // — and a sweep that could not run starts nothing and is tried again on the next tick.
+        try { _host.StartPaperDeploymentsDue(_now()); }
+        catch (Exception) { /* nothing was started; the next tick tries again */ }
     }
 
     /// <summary>The earliest deadline still to come, or null — the other thing the loop may sleep until.</summary>

@@ -861,6 +861,14 @@ public sealed class AppHost : IAsyncDisposable
                 // unconfirmed work the moment it outlives a dispatch, and reconciling is what turns
                 // it into a flagged row the rest of the screen can see.
                 if (Gateway.HasUnconfirmedWork()) await Gateway.ReconcileAsync(ct);
+
+                // AND EVERY PAPER DEPLOYMENT, at start-up and on every pass. This is where a run's
+                // own operations are settled from their order rows, where a platform, mode or account
+                // that moved suspends one, where a grant or a verdict that has gone ends one, and
+                // where an operation that was written down and never sent is dispatched — once. It is
+                // on the APP's clock rather than the AI's because none of it is a turn and a paused
+                // AI must not leave an order this gateway cannot account for.
+                await Gateway.ReconcilePaperDeploymentsAsync(ct: ct);
                 Gateway.Log.Rotate();
 
                 var pass = tick++;
@@ -1084,6 +1092,14 @@ public sealed class AppHost : IAsyncDisposable
         /// deduplicated note the gateway publishes; it dispatches nothing and touches no capital.
         /// </summary>
         public void AllocatePaperDue(DateTimeOffset now) => host.Gateway.AllocatePaperDue(now);
+
+        /// <summary>
+        /// The app's own paper-deployment policy, on the same seam and straight after the allocation
+        /// one. It writes at most one deployment row per standing paper allocation, inside the
+        /// envelope the owner granted, and it dispatches nothing at all: the orders a run sends go
+        /// out of the gateway's own reconcile pass in <c>BackgroundAsync</c>.
+        /// </summary>
+        public void StartPaperDeploymentsDue(DateTimeOffset now) => host.Gateway.StartPaperDeploymentsDue(now);
 
         /// <summary>
         /// The launch record and its reservation, written before the CLI starts, together with the
