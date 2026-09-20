@@ -1475,8 +1475,8 @@ public class BridgeRoundTripTests
         // wait spun rather than polled every 50 ms — which is what that poll is worth on a runner
         // that preempts the connector right there, and the substitution U-peer-row-ubuntu measured
         // the same way: `before` came back 0 (once 1, mid-way between the two events) against a
-        // settled 2 in 5 and 7 of 20 rounds on ubuntu-latest, 9 and 6 on macos-latest and 9 and 9 on
-        // windows-latest, which is `Assert.Equal() Failure: Values differ` — ubuntu-latest's red at
+        // settled 2 in 5/7/9 of 20 rounds over three runs on ubuntu-latest, 9/6/7 on macos-latest
+        // and 9/9/6 on windows-latest, `Assert.Equal() Failure: Values differ` — ubuntu-latest's red at
         // `ed3b224`. The window is 0.1-0.3 ms wide, which is why the poll steps over it 19 times in
         // 20 when it is a poll at all.
         //

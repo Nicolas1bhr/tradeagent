@@ -698,8 +698,8 @@ public class SweepRequestIdTests
     /// write-ahead row, all durable SQLite commits at <c>synchronous=FULL</c> — was measured
     /// directly on draft PR #23 (runs 35504722157 and 35513092386) by running THIS sweep on THIS
     /// fixture with the latency at zero and a five-minute budget, so that the reply's wall time IS
-    /// D. Three rounds per runner and two runs each: ubuntu-latest 5-10 ms, macos-latest 2-6 ms,
-    /// windows-latest 172-254 ms. Against 5000 ms of room that is 20x on the worst healthy runner —
+    /// D. Three rounds per runner over three runs: ubuntu-latest 4-10 ms, macos-latest 2-6 ms,
+    /// windows-latest 31-254 ms. Against 5000 ms of room that is 20x on the worst windows reading —
     /// and the job that went red was running 29x slow by its own suite's clock.</para>
     ///
     /// <para><b>Why not simply buy more room.</b> The room is <c>B - 2L</c> and the cancel must not
@@ -1100,10 +1100,10 @@ public class SweepRequestIdTests
     /// sentence this asserts is reached only while the operation's deadline is still open when each
     /// leg is issued — the workflow's second clause, word for word — and the room that has to hold
     /// is 3000 ms against the 5000 ms that windows-latest went through at `d9ae716`. MEASURED beside
-    /// it on draft PR #23 (runs 35504722157 and 35513092386, three rounds per runner per run, this
-    /// sweep with the latency at zero and a five-minute budget so the reply's wall time IS the
-    /// runner's spend): ubuntu-latest 5-10 ms, macos-latest 2-6 ms, windows-latest 172-254 ms. That
-    /// is a margin of 12-17x here against 20x there, and there was not enough. Membership is this
+    /// it on draft PR #23 (runs 35504722157 and 35513092386, three rounds per runner over three
+    /// runs, this sweep with the latency at zero and a five-minute budget so the reply's wall time
+    /// IS the runner's spend): ubuntu-latest 4-10 ms, macos-latest 2-6 ms, windows-latest 31-254 ms.
+    /// That is a margin of 12x here against 20x there, and there was not enough. Membership is this
     /// measurement and not the red: this fixture has never failed on a runner.
     /// </summary>
     [Fact]
