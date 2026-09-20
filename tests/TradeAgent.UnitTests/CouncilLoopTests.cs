@@ -388,12 +388,18 @@ public class CouncilLoopTests
         // legitimately admitted — it is not two turns at once, which is the property this test is
         // about — and it writes a second `ai_attempt` row for a wake already spent.
         //
-        // MEASURED on draft PR #23 (runs 35504722157 and 35513092386), 30 rounds per row: the
-        // winner's whole TurnAsync is 3.3 ms (min 3.3, median 3.7 on this Mac), and with 20 ms of
+        // MEASURED on draft PR #23 (run 35513092386, twice), 30 rounds per row: with 20 ms of
         // preemption on ONE of the two callers out of the barrier — nothing else changed, which is
-        // all a starved runner does to a thread — the shipped body recorded TWO launches in 30 of
-        // 30 rounds: `Expected: 1 / Actual: 2`, macos-latest's red at `659eb5b` (run 35503895941).
-        // With this hand-over and the same preemption: one launch in 30 of 30.
+        // all a starved runner does to a thread — the shipped body recorded TWO launches in 25 and
+        // 30 of 30 rounds on ubuntu-latest, 29 and 30 of 30 on macos-latest and 30 of 30 on this
+        // Mac: `Expected: 1 / Actual: 2`, which is macos-latest's red at `659eb5b` (run
+        // 35503895941). With this hand-over and the same preemption: one launch in 30 of 30, on
+        // every runner and in both runs, and one in 30 of 30 with no preemption at all.
+        //
+        // windows-latest recorded 0 of 30 both times and was GREEN at `659eb5b` for the same
+        // reason: its winner's whole TurnAsync measured 107-189 ms against this Mac's 3.3-3.7 ms,
+        // so 20 ms of preemption never outlasts the lease there. A fixture that depends on the
+        // runner's disk being slow enough is the defect, not the evidence.
         //
         // IT CANNOT HIDE THE DEFECT IT IS HERE FOR. If both callers were admitted, both would run a
         // turn, both would wait here for an answer that is not coming, and the wait fails by name.
