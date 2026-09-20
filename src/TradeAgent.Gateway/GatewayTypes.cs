@@ -185,22 +185,61 @@ public sealed class AgentContext
     /// <summary>The session name the operator's own context carries. Reserved on the wire.</summary>
     public const string OperatorSessionId = "operator";
 
+    /// <summary>
+    /// WHAT A PAPER DEPLOYMENT'S SESSION IS CALLED: <c>deployment:&lt;id&gt;</c>. Reserved on the wire
+    /// for <see cref="OperatorSessionId"/>'s reason and with the same standing — the refusal at the
+    /// pipe is a tripwire, and the fact that <see cref="ForAgent"/> cannot build one is the defence.
+    /// </summary>
+    public const string DeploymentSessionPrefix = "deployment:";
+
     /// <summary>The one and only operator context. In-process callers pass this; nothing can forge it.</summary>
     public static readonly AgentContext Operator = new(OperatorSessionId, isOperator: true);
 
     /// <summary>An ordinary caller. Cannot be an operator, whatever the session is called.</summary>
     public AgentContext(string sessionId) : this(sessionId, isOperator: false) { }
 
-    AgentContext(string sessionId, bool isOperator, string? role = null, string? attemptId = null)
+    AgentContext(string sessionId, bool isOperator, string? role = null, string? attemptId = null,
+        string? deploymentId = null)
     {
         SessionId = sessionId;
         IsOperator = isOperator;
         Role = role;
         AttemptId = attemptId;
+        DeploymentId = deploymentId;
     }
 
     public string SessionId { get; }
     public bool IsOperator { get; }
+
+    /// <summary>
+    /// THE PAPER DEPLOYMENT THIS CALLER IS, or null because it is not one.
+    ///
+    /// <para>It is an APP-OWNED EXECUTION IDENTITY (<c>manager-prompt.md</c> § 5): the app running a
+    /// frozen version forward on a practice account, in its own process, with the deployment's lineage
+    /// on every row it writes. It is NOT an operator — the kill switch stops it, exactly as it stops
+    /// an agent — and it is not a council role, because nothing here is a turn anybody took.</para>
+    ///
+    /// <para><b>It exists only in process.</b> <see cref="ForAgent"/> is the only factory the pipe
+    /// server uses and it cannot set this field, so a caller on the wire cannot present a deployment
+    /// identity however it names its session. That is <see cref="Operator"/>'s own defence and it is
+    /// here for the sharper reason: a deployment's orders are placed with no agent asking, so an agent
+    /// that could BE one would have found a way to place orders nothing it did is charged for.</para>
+    /// </summary>
+    public string? DeploymentId { get; }
+
+    /// <summary>Whether this caller is a paper deployment of this app's own policy.</summary>
+    public bool IsDeployment => DeploymentId is { Length: > 0 };
+
+    /// <summary>
+    /// THE IDENTITY ONE PAPER DEPLOYMENT PLACES UNDER. In-process callers build this; nothing on the
+    /// pipe can, and <c>TradingGateway.TryAuthorizeExecution</c> refuses it outright in
+    /// <c>LIVE_CONFIRM</c> and <c>LIVE_AUTONOMOUS</c> with <c>MODE_FORBIDS_EXECUTION</c>.
+    /// </summary>
+    public static AgentContext Deployment(string deploymentId) =>
+        string.IsNullOrWhiteSpace(deploymentId)
+            ? throw new ArgumentException("a deployment identity names a deployment", nameof(deploymentId))
+            : new(DeploymentSessionPrefix + deploymentId, isOperator: false, role: null,
+                attemptId: null, deploymentId: deploymentId);
 
     /// <summary>
     /// THE COUNCIL ROLE THIS CALLER PROVED IT IS, or null because it proved nothing.
@@ -221,11 +260,14 @@ public sealed class AgentContext
     /// Whether this caller may place, change or cancel an order.
     ///
     /// The operator always may — that is the owner at the keyboard, in-process, and nothing on the
-    /// pipe can forge it. Otherwise it is the ROLE's answer, and a caller with no role has none:
-    /// Research submits hypotheses and reads, and the doctrine gives it no order permission
-    /// (<c>docs/COUNCIL.md</c>).
+    /// pipe can forge it. A PAPER DEPLOYMENT may too, and for the same structural reason: it is this
+    /// app running a frozen version forward in its own process, it cannot be presented from the wire,
+    /// and <c>TradingGateway.TryAuthorizeExecution</c> refuses it in every live mode. It is not an
+    /// operator: the kill switch stops it exactly as it stops an agent. Otherwise it is the ROLE's
+    /// answer, and a caller with no role has none: Research submits hypotheses and reads, and the
+    /// doctrine gives it no order permission (<c>docs/COUNCIL.md</c>).
     /// </summary>
-    public bool MayPlaceOrders => IsOperator || CouncilRoles.MayPlaceOrders(Role);
+    public bool MayPlaceOrders => IsOperator || IsDeployment || CouncilRoles.MayPlaceOrders(Role);
 
     /// <summary>
     /// The context for a caller on the other side of the fence, named by whatever session string it
@@ -236,7 +278,10 @@ public sealed class AgentContext
         new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!, isOperator: false, role, attemptId);
 
     public override string ToString() =>
-        IsOperator ? "operator (in-process)" : Role is { Length: > 0 } r ? $"{SessionId} ({r})" : SessionId;
+        IsOperator ? "operator (in-process)"
+        : DeploymentId is { Length: > 0 } d
+            ? $"paper deployment {d[..Math.Min(12, d.Length)]} (in-process)"
+        : Role is { Length: > 0 } r ? $"{SessionId} ({r})" : SessionId;
 }
 
 /// <summary>

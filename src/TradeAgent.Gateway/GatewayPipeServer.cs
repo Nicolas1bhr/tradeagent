@@ -1007,14 +1007,28 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     IpcResponse? ReservedSessionRefusal(IpcRequest req)
     {
-        if (!string.Equals(req.Session?.Trim(), AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
-            return null;
+        var session = req.Session?.Trim();
+
+        // AND THE PAPER DEPLOYMENT'S OWN NAME, on the same tripwire and with the same standing. A
+        // deployment identity is minted in process by `AgentContext.Deployment` and `ForAgent` cannot
+        // build one, so this refusal is not what makes the claim true either — but an agent naming
+        // itself `deployment:<something>` is probing for the one identity in this product that places
+        // orders with nobody asking, and a probe nobody can see afterwards is not evidence.
+        var reserved =
+            string.Equals(session, AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase)
+                ? AgentContext.OperatorSessionId
+            : session is { Length: > 0 }
+              && session.StartsWith(AgentContext.DeploymentSessionPrefix, StringComparison.OrdinalIgnoreCase)
+                ? AgentContext.DeploymentSessionPrefix
+                : null;
+
+        if (reserved is null) return null;
 
         gateway.Log.Engineering("Ipc", "operator_session_refused", "warn",
             session: req.Session, requestId: req.RequestId ?? req.Id,
-            metadataJson: Json.Write(new { op = req.Op }));
+            metadataJson: Json.Write(new { op = req.Op, reserved }));
         return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-            $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
+            $"'{reserved}' is a reserved session name and is not available on this channel");
     }
 
     /// <summary>
@@ -1306,6 +1320,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     static bool MayRead(AgentContext ctx, ExecutionRequest r)
     {
         if (string.Equals(r.AgentSessionId, AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // AND A PAPER DEPLOYMENT'S ROWS ARE NEVER ON THIS CHANNEL EITHER, for the operator's reason
+        // exactly: the session that wrote them is minted in process and the pipe refuses the name
+        // before a hello can adopt it, so no caller here can match it. `trade deployment list` is
+        // where a role reads what is deployed, and it carries no request ids.
+        if (r.AgentSessionId is { Length: > 0 } wrote
+            && wrote.StartsWith(AgentContext.DeploymentSessionPrefix, StringComparison.OrdinalIgnoreCase))
             return false;
 
         return !r.RequestId.StartsWith(MintedIdPrefix, StringComparison.OrdinalIgnoreCase)

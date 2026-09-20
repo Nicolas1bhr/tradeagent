@@ -1811,6 +1811,29 @@ public sealed class TradingGateway : IAsyncDisposable
             return false;
         }
 
+        // A PAPER DEPLOYMENT IS A PAPER EXPERIMENT AND CANNOT BECOME A LIVE ONE BY A MODE CHANGING.
+        //
+        // The identity is minted by the app's own policy, in process, with nobody in the room — which
+        // is exactly what makes it safe on a practice account the owner proved is simulated and
+        // exactly what would make it unsafe anywhere else. A version put on paper by
+        // `AllocatePaperDue` was never confirmed per version by anybody (`docs/PRINCIPLES.md`
+        // § boundary keeps that confirmation for "new live authority and live capital allocations"),
+        // so the one thing that must not happen is for the owner switching to LIVE_CONFIRM to turn a
+        // running experiment into a real one.
+        //
+        // It is refused HERE rather than left to the allocation gate, although that gate would also
+        // refuse it (`Allocations.StandingForPaper` is not read at all in a live mode). Two reasons:
+        // this refusal is about the IDENTITY and not about what it happens to be carrying, so it holds
+        // for a flatten and a cancel as well as for an entry; and it is re-asked at the moment of
+        // dispatch by `ReauthorizeAtDispatchOrThrow`, so a mode moved while the awaited reads were in
+        // flight stops the order it was moved to stop.
+        if (ctx.IsDeployment && Settings.ModeIsLive)
+        {
+            (reason, code) = ($"this is a paper deployment and the mode is {Settings.Mode}, so it "
+                              + "places nothing at all", ErrorCode.MODE_FORBIDS_EXECUTION);
+            return false;
+        }
+
         if (Settings.ModeIsLive)
         {
             if (!Settings.LiveActivated)
