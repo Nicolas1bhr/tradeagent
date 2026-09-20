@@ -3066,16 +3066,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // very claim it declines to make.
             "inbox-unattested" => MaterialOrigin.InboxUnattested,
             "agent" => MaterialOrigin.Agent,
+            // Files TradeAgent itself wrote into the role's home. A separate word for the same
+            // reason `inbox-unattested` is one: folding them into `agent` would have the ledger
+            // credit the AI with the app's own reference, examples and deliveries.
+            "app" => MaterialOrigin.App,
             null or "" or "all" => null,
             var other => throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"origin '{other}' is not one of: inbox, inbox-unattested, agent, all")
+                $"origin '{other}' is not one of: inbox, inbox-unattested, agent, app, all")
         };
 
         var items = gateway.Materials.Present(origin);
         return new
         {
             count = items.Count,
-            note = "sha is the first 12 characters of sha256, and is what the material commands accept. A shorter prefix works only while it names exactly one file; one that names two is refused rather than guessed at.",
+            note = "sha is the first 12 characters of sha256, and is what the material commands accept. A shorter prefix works only while it names exactly one file; one that names two is refused rather than guessed at. "
+                + "origin 'app' reads: written by TradeAgent — the strategy language reference, the worked programs, and anything delivered into in/. It is measured by path and hash, it is never counted as your work, and editing one of those files makes the new version 'agent', which is yours.",
             items = items.Select(m => new
             {
                 path = m.RelPath,

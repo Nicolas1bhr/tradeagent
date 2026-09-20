@@ -210,7 +210,8 @@ sealed class InboxPage
     {
         var store = _host.Gateway.Materials;
         // What the owner handed over reads first — it is the half they are looking for, and the
-        // half they can act on. What the AI produced follows underneath.
+        // half they can act on. What the AI produced follows underneath, and what TradeAgent itself
+        // wrote into the folders comes last (the enum's order): it is nobody's work to judge.
         var items = store.Present().OrderBy(m => m.Origin).ThenByDescending(m => m.FirstSeenAt).ToList();
         var notes = store.RecentNotes(25);
 
@@ -265,17 +266,24 @@ sealed class InboxPage
     };
 
     /// <summary>
-    /// The three things the ledger can honestly say about where a file came from, in the owner's
-    /// words. <see cref="MaterialOrigin.InboxUnattested"/> gets its own sentence rather than being
+    /// The things the ledger can honestly say about where a file came from, in the owner's words.
+    /// <see cref="MaterialOrigin.InboxUnattested"/> gets its own sentence rather than being
     /// rounded up to "you gave this to the AI": it is in the drop folder, and the AI was running
     /// while it appeared, so nobody can show who put it there (REVIEW 2026-09-05b finding 5). It is
-    /// rounded DOWN in one place only — the sort order below keeps it with the rest of the inbox,
+    /// rounded DOWN in one place only — the sort order above keeps it with the rest of the inbox,
     /// because it is still the folder the owner is looking in.
+    ///
+    /// <see cref="MaterialOrigin.App"/> is the fourth, and it is the one that stops this page
+    /// overstating what the AI did: the strategy language reference, the worked programs and every
+    /// brief delivered into a role's <c>in/</c> are files TRADEAGENT wrote, and until they had a
+    /// word of their own they fell through to "the AI made this". They sort last, because they are
+    /// the least interesting thing on the page and the only ones nobody has to account for.
     /// </summary>
-    static string Origin(Material m) => m.Origin switch
+    internal static string Origin(Material m) => m.Origin switch
     {
         MaterialOrigin.Inbox => "you gave this to the AI",
         MaterialOrigin.InboxUnattested => "in your inbox, but the AI was running when it appeared — TradeAgent cannot say who put it there",
+        MaterialOrigin.App => "written by TradeAgent",
         _ => "the AI made this"
     };
 

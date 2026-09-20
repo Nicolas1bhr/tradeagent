@@ -159,4 +159,63 @@ public class MaterialOverPipeTests
         Assert.Contains(Ops.MaterialList, text);
         Assert.Contains(Ops.MaterialNote, text);
     }
+
+    /// <summary>
+    /// WHAT TRADEAGENT WROTE INTO A ROLE'S HOME IS LISTED AS THE APP'S, over the wire the agent
+    /// actually reads, and asking for the agent's own work does not return it.
+    ///
+    /// <para>This is the half of the origin the AI reads. The other half — the account owner's page —
+    /// is in the unit suite. Both used to say the same wrong thing about the same files: that the
+    /// language reference the app writes and every brief the relay delivers were produced by the AI.
+    /// A `--origin agent` that answered with them is a ledger padding the agent's own record.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_file_TradeAgent_wrote_is_listed_as_the_apps_and_is_not_returned_as_the_agents()
+    {
+        var (gw, db, client, server, root) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var home = CouncilRoles.HomeDir(CouncilRoles.Research);
+        var files = new AppFileManifest(Path.Combine(TestEnv.Home, $"app-files-{Guid.NewGuid():n}.tsv"));
+
+        // One file the app delivered, written down as the app wrote it; one the role produced.
+        Drop(root, $"{home}/in/12.md", "what you asked for");
+        files.Record(home, "in/12.md", "what you asked for");
+        Drop(root, $"{home}/out/report-turn-a.md", "what I found");
+        new MaterialScanner(db, root, null, files).Scan();
+
+        var all = await client.SendAsync(new IpcRequest { Op = Ops.MaterialList });
+        Assert.True(all.Ok, Json.Write(all.Error));
+        Assert.Equal("app", OriginOf(all.Data, $"{home}/in/12.md"));
+        Assert.Equal("agent", OriginOf(all.Data, $"{home}/out/report-turn-a.md"));
+        Assert.Contains("written by TradeAgent",
+            JsonDocument.Parse(Json.Write(all.Data)).RootElement.GetProperty("note").GetString());
+
+        var mine = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.MaterialList,
+            Args = GatewayThroughPipeTests.Args(("origin", "agent"))
+        });
+        Assert.True(mine.Ok, Json.Write(mine.Error));
+        Assert.Null(OriginOf(mine.Data, $"{home}/in/12.md"));
+        Assert.Equal("agent", OriginOf(mine.Data, $"{home}/out/report-turn-a.md"));
+
+        var theirs = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.MaterialList,
+            Args = GatewayThroughPipeTests.Args(("origin", "app"))
+        });
+        Assert.True(theirs.Ok, Json.Write(theirs.Error));
+        Assert.Equal("app", OriginOf(theirs.Data, $"{home}/in/12.md"));
+        Assert.Null(OriginOf(theirs.Data, $"{home}/out/report-turn-a.md"));
+    }
+
+    /// <summary>The origin one path is listed under in a material-list reply, or null if it is absent.</summary>
+    static string? OriginOf(object? data, string path) =>
+        JsonDocument.Parse(Json.Write(data)).RootElement.GetProperty("items").EnumerateArray()
+            .Where(i => i.GetProperty("path").GetString() == path)
+            .Select(i => i.GetProperty("origin").GetString())
+            .FirstOrDefault();
 }

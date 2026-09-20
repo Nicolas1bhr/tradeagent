@@ -493,6 +493,12 @@ public static class WorkspaceBuilder
     TradeAgent already writes down every file that appears in the inbox and in your tracked
     folders: its name, size, SHA-256 and the moment it showed up. You do not have to do that part.
 
+    Each one carries where it came from, and there are three words for it: **inbox** — the owner
+    handed it over; **app** — written by TradeAgent into your folder (`{ResearchLibrary.ReferencePath}`,
+    `{ResearchLibrary.ExamplesDir}/`, anything delivered into `{InDir}/`), never counted as your work;
+    and **agent** — yours, everything else in your folders. TradeAgent measures that by path and
+    hash and you cannot set it: edit one of its files and the new version is recorded as yours.
+
     What it cannot see is **what you did and why**, and without that the workspace becomes a pile of
     files nobody can account for in a fortnight. So record it as you go:
 

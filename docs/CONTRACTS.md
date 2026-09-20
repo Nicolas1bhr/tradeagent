@@ -295,8 +295,8 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
 - **Every enumerated field accepts exactly its named values, and an unrecognised one is refused.** The
   closed vocabularies the frame carries are `tif` (`buy`/`sell`: `Day`, `GoodTillCancel`,
   `ImmediateOrCancel`, `FillOrKill` — case-insensitive, **default `Day` when absent**), `all`
-  (`orders`: `true`/`false`, **default `false`**), `origin` (`material-list`: `inbox`, `agent`, `all`,
-  **default `all`**) and `kind` (`material-note`: `ran`, `used`, `derived`, `note`, **default
+  (`orders`: `true`/`false`, **default `false`**), `origin` (`material-list`: `inbox`,
+  `inbox-unattested`, `agent`, `app`, `all`, **default `all`**) and `kind` (`material-note`: `ran`, `used`, `derived`, `note`, **default
   `note`**). A field that is present and unrecognised is `INVALID_REQUEST` naming the field and the
   accepted values, with zero connector calls; only an ABSENT field takes a default. `tif` used to be
   `Enum.TryParse` with a `Day` fallback, which failed open twice over: a misspelling became a resting
@@ -1809,6 +1809,13 @@ value in it. **Everything here fails closed** — an entry that could not be wri
 could not be read, a file swapped between the walk and the read: each measures as the agent's, never
 as the app's. The inbox attestation is untouched; `Inbox` and `InboxUnattested` still come from agent
 process liveness and nothing else.
+
+**And every surface says so.** `material-list` takes `origin: app`, prints the word `app` and reads it
+out in its note as *written by TradeAgent … never counted as your work*; `trade schema` says the same
+in the op's own description; `AGENTS.md` names the three words in one line and says the role cannot
+set them; and the owner's Inbox page prints "written by TradeAgent" instead of falling through to "the
+AI made this", which is what it did for every app file before this. An `app` row is not in
+`Present(MaterialOrigin.Agent)`, so nothing that counts the agent's work counts it.
 
 **Two roles' turns may overlap, and three leases are what keeps that honest.** A turn lease per role in
 `MissionLoop` (a second `TurnAsync` for a role already turning is refused in words, never queued, and a

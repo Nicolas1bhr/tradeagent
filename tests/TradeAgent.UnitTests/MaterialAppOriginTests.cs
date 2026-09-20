@@ -1,6 +1,8 @@
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -197,5 +199,37 @@ public class MaterialAppOriginTests
         // And the file the role itself wrote, in the same pass, is still the role's.
         Assert.Equal(MaterialOrigin.Agent,
             Row(db, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/{WorkspaceBuilder.OutDir}/{named}").Origin);
+    }
+
+    /// <summary>
+    /// ITEM 2: the word reaches both readers in their own language, and neither one reads an app
+    /// file as the AI's work.
+    ///
+    /// <para>The owner's page had a catch-all — anything that was not the inbox was "the AI made
+    /// this" — so the reference the app writes and every brief the relay delivers were shown to the
+    /// account owner as work their AI had produced. The role reads the same fact through
+    /// <c>trade schema</c>, which is the only description of the op it ever sees.</para>
+    /// </summary>
+    [Fact]
+    public void An_app_file_reads_as_written_by_TradeAgent_and_never_as_the_agents_work()
+    {
+        var at = DateTimeOffset.UtcNow;
+        var file = new Material(1, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/{ResearchLibrary.ReferencePath}",
+            MaterialOrigin.App, null, 10, at, at, at, null, false);
+
+        Assert.Equal("written by TradeAgent", InboxPage.Origin(file));
+        Assert.Equal("the AI made this", InboxPage.Origin(file with { Origin = MaterialOrigin.Agent }));
+
+        var op = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.MaterialList);
+        Assert.Contains("written by TradeAgent", op.Description);
+        Assert.Contains("not your work", op.Description);
+        Assert.Contains("app", Assert.Single(op.Args, a => a.Name == "origin").Description);
+
+        // And the mission file names the three words, so a role knows which of its files are its own
+        // before it goes looking for them.
+        var mission = WorkspaceBuilder.Instructions(Context(CouncilRoles.Research));
+        Assert.Contains("written by TradeAgent", mission);
+        Assert.Contains($"`{ResearchLibrary.ReferencePath}`", mission);
+        Assert.Contains("never counted as your work", mission);
     }
 }
