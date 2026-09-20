@@ -1177,10 +1177,20 @@ public class SweepRequestIdTests
     /// <c>B = 7 s, L = 4 s</c>: the read costs 4 of the 7, so the composite commit has 3000 ms —
     /// the worst bare one-row commit U-press-win-3 measured on windows-latest is 2234 ms — and the
     /// resolution cannot fit whatever happens, since at most 3000 ms can be left against the 4000 it
-    /// declares. Not `Timing`: no stopwatch is read here, and the one runner-dependent quantity is
-    /// stated above with the measurement that covers it.
+    /// declares.
+    ///
+    /// AND IT IS `Timing` FOR ITS CLASSMATE'S REASON, WITH LESS ROOM THAN THE CLASSMATE HAD. The
+    /// sentence this asserts is reached only while the operation's deadline is still open when each
+    /// leg is issued — the workflow's second clause, word for word — and the room that has to hold
+    /// is 3000 ms against the 5000 ms that windows-latest went through at `d9ae716`. MEASURED beside
+    /// it on draft PR #23 (runs 35504722157 and 35513092386, three rounds per runner per run, this
+    /// sweep with the latency at zero and a five-minute budget so the reply's wall time IS the
+    /// runner's spend): ubuntu-latest 5-10 ms, macos-latest 2-6 ms, windows-latest 172-254 ms. That
+    /// is a margin of 12-17x here against 20x there, and there was not enough. Membership is this
+    /// measurement and not the red: this fixture has never failed on a runner.
     /// </summary>
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task A_leg_that_failed_before_the_wire_reads_not_sent_and_writes_no_record()
     {
         const int B = 7_000;   // the operation budget
