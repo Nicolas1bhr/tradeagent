@@ -6582,3 +6582,33 @@ ok — FILLED / another account: ok — FILLED`; mutant (ii), the scope facts dr
 
 **NOT done, NOT verified:** nothing dispatches a paper allocation — no deployment, no runner (`U-deployment` cut from this tip); the envelope card never rendered;
 no real model has been allocated to paper; no box, no ATAS, no venue, no real order.
+
+## 2026-09-20 — U-language-in-home landed: the strategy language and its three worked programs reach every Research home, app-owned, regenerated every start
+
+The obstruction the observed-run survey found (read-only, 2026-09-20 morning: nothing in `src/` put the grammar or an example program where a Research turn
+could read it — `AGENTS.md` named `trade backtest` once, `trade schema` described arguments only, the three day-one programs were test fixtures), built by one
+fresh Opus builder from the 24-line brief `docs/briefs/U-language-in-home.md` (landed `1031fcd`) as the second leg beside the envelope. Merge `ed3b224`, 4
+commits (3 items + the report). No schema rung. Not the money path.
+
+- **The reference ships:** `docs/STRATEGY-LANGUAGE.md` is `Content` of `TradeAgent.AgentRuntime` (present after `dotnet publish -r win-x64 --self-contained`, what
+  the installer stages); `ResearchLibrary.Write`, from `WorkspaceBuilder.Build`, writes `<roleHome>/research/STRATEGY-LANGUAGE.md` on every start, body IDENTICAL
+  to the doc (`diff`), the first line stating app ownership. One source of the grammar; no copy in code.
+- **The three programs ship, and move:** `tests/TradeAgent.UnitTests/Strategies/*.strategy` → `src/TradeAgent.AgentRuntime/Strategies/*.strategy` (`git mv`,
+  recorded as renames), written to `<roleHome>/strategies/examples/` byte for byte on every start; the parser tests read the shipped files through
+  `tests/Shared/DayOnePrograms.cs`, whose name list IS `ResearchLibrary.Programs`; no app-owned banner inside a program (byte-for-byte wins), ownership stated
+  in the reference's first line, `AGENTS.md` and `trade schema` instead — a deviation stated.
+- **The role is told:** three lines in `AGENTS.md` (the reference, the examples, `trade backtest --strategy strategies/examples/ma-crossover.strategy --dataset
+  <id>` as the first thing to run) and the reference path in `GatewaySchema`'s backtest entry, all interpolated from `ResearchLibrary`; one guard beyond the
+  brief (`The_mission_and_the_schema_name_the_reference_the_examples_and_the_first_backtest`, RED first).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `df94d08` (the product tip, rebased onto `c17d5c1`, no conflict; the
+report commit `d28d7da` docs-only), Release `--no-incremental`: 19 projects, 0 warnings, 0 errors; Unit 1181 + Fault 393 + Integration 687 = 2261 passed, 0 failed,
+1 skipped (11 m 8 s); touched classes 3× → 55 Unit, 11 `BacktestOverPipeTests`; names 1914 → 1919, 0 removed. RED on the base: `the Research home has no language
+reference at …/research/STRATEGY-LANGUAGE.md`; `Expected: ["src/TradeAgent.AgentRuntime/Strategies/ma-crossove"···] Actual: ["tests/TradeAgent.UnitTests/
+Strategies/ma-crossover"···]`; `the Research home has no worked program at …/strategies/examples/ma-crossover.strategy`. Mutant (the examples written once, never
+refreshed): `Assert.Equal() Failure: Collections differ` at `ResearchLibraryTests.cs:106`; put back. Manager's gate at `d28d7da` (the reported tip; landed as `ed3b224` after a docs-only rebase over `d9ae716`, `src`/`tests` identical), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1181/1181 (24 s); Integration 687/688, 1 skipped (11 m 7 s, its normal length); the Fault run of that gate wrote NO output (a one-line log holding only its exit code 0, finished in the same second as Unit) and is not counted — Fault re-run alone on the same build: 393/393 (1 m 27 s) → 0 failed. Names vs `main` (git objects):
+sets 1913 → 1918, 0 removed, 5 added. Scan clean; no trailers; `rev-list --count` → 0. CI at `ed3b224`: recorded when complete.
+
+**NOT done, NOT verified:** no real model has read the reference; the box, the installer's actual staging on Windows (the publish was run on this Mac); noted
+and NOT fixed, a one-item follow-up: `MaterialScanner` walks `research/` and `strategies/`, so these app-written files record as `MaterialOrigin.Agent` — the
+reading it already applies to the app-owned `in/`.
