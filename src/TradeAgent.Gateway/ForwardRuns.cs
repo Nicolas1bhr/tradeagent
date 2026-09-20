@@ -1,3 +1,4 @@
+using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -154,6 +155,28 @@ public sealed class ForwardRuns
 
             last = bar.OpenTime;
             account = books.At(i, bar);
+            var live = bar.OpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue);
+            var seq = 0;
+
+            // PROTECTION FIRST, BY CODE, IN THE BACKTEST'S ORDER — AND BEFORE THE EVALUATOR IS ASKED
+            // ANYTHING. `docs/PRINCIPLES.md`: "no model call is required for each signal or for
+            // emergency protection", and `Backtest.Over` step 2 is the order this follows: the bar's
+            // own protection is answered on the bar's own range, and only then is the program asked
+            // what it wants to do from the account that leaves.
+            //
+            // The resting stop and the target are the VENUE'S business — they are orders, placed
+            // when the entry filled. The MAXIMUM HOLD is the runner's own, because no venue has an
+            // order for "this many bars": at the close of the bar that reaches the limit the position
+            // is closed at market, and the evaluator then reads a FLAT account. Asked the other way
+            // round it would decide from a position this app had already said must not survive the
+            // bar, and its own `max_hold_bars` exit would arrive one whole bar later.
+            if (live && account.Position == PositionSide.Long
+                && program.MaxHoldBars is { } hold && account.BarsSinceEntry >= hold)
+            {
+                await FlattenAsync(deployment, bar, account, seq++,
+                    $"max_hold_bars {hold} reached at this bar's close", ct);
+                account = RunBooks.Flat(account);
+            }
 
             var outcome = StrategyEvaluator.Step(state, bar, account);
             replayed++;
@@ -171,6 +194,84 @@ public sealed class ForwardRuns
 
         return new ForwardRunState(deployment, state, replayed, skipped, last, null) { Account = account };
     }
+
+    /// <summary>
+    /// THE MAXIMUM HOLD, ENFORCED: one market close of exactly what this run is holding, written
+    /// down before it is sent and dispatched under the run's own identity.
+    ///
+    /// <para>It names the VERSION, because the account is under a standing paper envelope and an
+    /// order naming none is refused <c>ENVELOPE_ACCOUNT_RESERVED</c> there — that refusal is right
+    /// and this is what satisfies it. <c>OrderIntent.Close</c>, because it is one: the gateway's
+    /// unresolved-reducer refusal and its stale-close read are gates a close must pass, and a
+    /// protection order that dodged them by calling itself an opening trade would be dodging them on
+    /// the one path where being wrong costs a position.</para>
+    /// </summary>
+    async Task<bool> FlattenAsync(StrategyDeploymentRow deployment, KlineBar bar,
+        AccountReading account, int seq, string why, CancellationToken ct)
+    {
+        if (Sized(deployment, bar, account.Quantity, "the maximum hold's close") is not { } quantity)
+            return false;
+
+        var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, OrderType.Market, quantity,
+            null, null, TimeInForce.Day, $"deployment:{deployment.Id} {why}")
+        {
+            Intent = OrderIntent.Close,
+            StrategyVersionId = deployment.VersionId
+        };
+
+        return await _gateway.RunDeploymentIntentAsync(deployment,
+            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
+            DeploymentOpKind.Flatten, bar.OpenTime, intent, ct);
+    }
+
+    /// <summary>
+    /// A SIZE ROUNDED **DOWN** TO THE INSTRUMENT'S VERIFIED INCREMENT, or null because there is no
+    /// order to place — and the reason is recorded rather than swallowed.
+    ///
+    /// <para>Down, never to the nearest: a size rounded up is a position larger than the program
+    /// asked for, on money the allocation ceiling was computed against. A size that rounds to nothing
+    /// is a real answer and a NO-TRADE with a reason, exactly as it is in the backtest — not a fault,
+    /// not a retry, and not a minimum order the app invented.</para>
+    ///
+    /// <para><b>The increment comes off the venue catalogue's VERIFIED rows and nowhere else</b>,
+    /// which is <c>Backtests.Increment</c>'s judgement applied to the same number: an increment
+    /// nobody confirmed against the venue's own definition would make every simulated position one
+    /// that could not have been taken. Out of the box that list is empty, so a run on an installation
+    /// whose owner has recorded no venue row places nothing and says why.</para>
+    /// </summary>
+    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what)
+    {
+        if (Increment(deployment.Symbol) is not { } step)
+        {
+            NoTrade(deployment, bar, quantity,
+                $"this installation's venue catalogue holds no VERIFIED instrument '{deployment.Symbol}', "
+                + "so there is no quantity increment to round a size down to");
+            return null;
+        }
+
+        var sized = quantity <= 0m ? 0m : decimal.Truncate(quantity / step) * step;
+        if (sized > 0m) return sized;
+
+        NoTrade(deployment, bar, quantity,
+            $"{what} came to {quantity}, which rounds down to nothing at the venue's quantity "
+            + $"increment of {step}");
+        return null;
+    }
+
+    /// <summary>The verified quantity increment for this instrument, or null because no row confirms one.</summary>
+    decimal? Increment(string symbol) =>
+        _venues.Instruments()
+            .FirstOrDefault(i => i.Verified
+                                 && string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+            ?.QuantityIncrement;
+
+    /// <summary>A size that produced no order, recorded with its reason. Nothing is retried on it.</summary>
+    void NoTrade(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string why) =>
+        _gateway.Log.TryEngineering("Gateway", "forward_run_no_trade", "warn",
+            metadataJson: Json.Write(new
+            {
+                deployment = deployment.Id, bar = bar.OpenTime, quantity, why
+            }));
 
     /// <summary>The frozen program of this run's version, re-parsed, or null because it no longer parses.</summary>
     StrategyProgram? Frozen(StrategyDeploymentRow deployment)
@@ -318,6 +419,21 @@ public sealed class ForwardRuns
                 capital, equity, quantity > 0m ? PositionSide.Long : PositionSide.Flat,
                 quantity, quantity > 0m ? average : 0m, pending, held);
         }
+
+        /// <summary>
+        /// THE SAME READING WITH THE POSITION CLOSED — what the evaluator is handed on a bar the
+        /// app's own protection closed at the close. Not a fresh read of the ledger: the close has
+        /// been SENT and has not filled, and reading the book again here would hand the program back
+        /// the position it was just told is over.
+        /// </summary>
+        public static AccountReading Flat(AccountReading account) => account with
+        {
+            Position = PositionSide.Flat,
+            Quantity = 0m,
+            AverageFillPrice = 0m,
+            BarsSinceEntry = 0,
+            OrderPending = true
+        };
 
         /// <summary>
         /// HOW MANY BARS THIS POSITION HAS BEEN HELD, counted in the run's own bar interval. Whole

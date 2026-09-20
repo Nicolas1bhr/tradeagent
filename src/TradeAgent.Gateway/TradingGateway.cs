@@ -1068,16 +1068,81 @@ public sealed class TradingGateway : IAsyncDisposable
             // with anything else is an order this gateway cannot account for, and the one thing that
             // must not be written over it is "refused".
             var row = _requests.Get(requestId);
+            var why = ex is TradeAgentException t ? $"{t.Code} — {t.Message}" : ex.Message;
 
             if (row is null)
-                _deployments.Refuse(requestId,
-                    $"nothing was sent: {(ex is TradeAgentException t ? $"{t.Code} — {t.Message}" : ex.Message)}",
-                    Now);
+                _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
             else if (OrderStateMachine.IsTerminal(row.State))
                 _deployments.Resolve(requestId, row.State.ToString(), Now);
 
+            // AND A ROW STILL IN `CREATED` IS A THIRD CASE, NOT AN AMBIGUOUS ONE. `DISPATCHING` is
+            // written durably before the wire is touched (`DispatchPlaceAsync`), so a record that is
+            // still CREATED when the call threw is a gate that refused BETWEEN the write-ahead row
+            // and the wire — DECISION_EXPIRED is the one this runner meets — and nothing left this
+            // process. Reading it as unresolved would hold the cursor forever over an order that
+            // provably does not exist.
+            else if (row.State == ExecutionState.CREATED)
+                _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
+
             return true;
         }
+    }
+
+    /// <summary>
+    /// THE RUNNER'S ONE WAY ONTO THE MONEY PATH — <see cref="ForwardRuns"/>, and nothing else calls
+    /// it.
+    ///
+    /// <para>It is <see cref="RunDeploymentOpAsync"/> with <see cref="PlaceAsync"/> as the dispatch,
+    /// which is the same shape <see cref="DispatchPlannedDeploymentOpsAsync"/> uses: the operation is
+    /// <c>planned</c> on disk BEFORE the gateway is asked, <c>dispatched</c> immediately before the
+    /// call, and settled only on an answer. <b>Nothing is skipped for being the app's own caller</b>
+    /// — the identity is <see cref="AgentContext.Deployment"/>, which is refused outright in both
+    /// live modes and passes every gate this gateway has in PAPER.</para>
+    ///
+    /// <para>An operation that already exists and is past <c>planned</c> is not run again, which is
+    /// what makes a replay of the same bar after a restart send nothing.</para>
+    /// </summary>
+    public Task<bool> RunDeploymentIntentAsync(StrategyDeploymentRow deployment, string requestId,
+        string kind, DateTimeOffset bar, PlaceIntent intent, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+        ArgumentNullException.ThrowIfNull(intent);
+
+        return RunDeploymentOpAsync(deployment, requestId,
+            rid => PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct)!,
+            ct, kind, bar, Json.Write(intent));
+    }
+
+    /// <summary>
+    /// THE RUNNER'S CANCEL: the loser of a stop/target pair, or the protection a flatten is about to
+    /// make pointless. Reduction only — a cancel cannot add exposure, which is why it is the one verb
+    /// this product lets a non-operator reach at all.
+    /// </summary>
+    public Task<bool> CancelDeploymentOrderAsync(StrategyDeploymentRow deployment, string requestId,
+        DateTimeOffset bar, string connectorOrderId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+
+        return RunDeploymentOpAsync(deployment, requestId,
+            rid => CancelAsync(AgentContext.Deployment(deployment.Id), rid, connectorOrderId, ct)!,
+            ct, DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = connectorOrderId }));
+    }
+
+    /// <summary>
+    /// WHAT HAS AN ANSWER, TAKEN OFF ITS OWN ORDER ROW, AND THE CURSOR MOVED OVER THE BARS THAT ARE
+    /// FINISHED — the two halves of <see cref="ReconcilePaperDeploymentsAsync"/> that involve no wire
+    /// call, so the runner can ask them at the start of its own pass.
+    ///
+    /// <para>UNKNOWN is untouched here exactly as it is there: an operation with no terminal answer
+    /// stays unresolved, holds the cursor where it is, and is never re-sent.</para>
+    /// </summary>
+    public int SettleAndAdvance(StrategyDeploymentRow deployment, DateTimeOffset? at = null)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+
+        var settled = SettleDeploymentOps(deployment, at ?? Now);
+        if (AdvanceDeploymentCursor(deployment)) settled++;
+        return settled;
     }
 
     /// <summary>
