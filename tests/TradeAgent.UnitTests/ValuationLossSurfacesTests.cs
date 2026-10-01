@@ -46,12 +46,13 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
     /// an absolute <see cref="Environment.TickCount64"/> deadline, and the simulator's shipped
     /// default is two seconds. Inside it are durable SQLite commits at <c>synchronous=FULL</c>.</para>
     ///
-    /// <para><b>MEASURED, on draft PR #23 (runs 35504722157 and 35513092386), by a throwaway probe
-    /// that timed each health pass of the exit fixture, three runs each:</b> the pass that fires
-    /// the exit spent 29-33 ms on ubuntu-latest, 17-19 ms on macos-latest and <b>833-1258 ms on
-    /// windows-latest</b> — of 2000. A windows job whose Unit suite runs 19 m 14 s against the usual
-    /// ~40 s has nothing like that left, and the SAME probe with the budget cut to 1 ms reproduced
-    /// the runner's red exactly on all three runners, in both runs: the valuation CANCEL press does not resolve, so
+    /// <para><b>MEASURED, on draft PR #23 (runs 35504722157 and 35513092386, the second run twice),
+    /// by a throwaway probe that timed each health pass of the exit fixture, three runs each:</b> the
+    /// pass that fires the exit spent 26.8-32.8 ms on ubuntu-latest, 16.5-22.4 ms on macos-latest and
+    /// <b>712.5-1258 ms on windows-latest</b> — of 2000. A windows job whose Unit suite runs 19 m 14 s
+    /// against the usual ~40 s has nothing like that left, and the SAME probe with the budget cut to
+    /// 1 ms reproduced the runner's red exactly on all three runners, in all three runs: the valuation
+    /// CANCEL press does not resolve, so
     /// <c>ExitLostValuationAsync</c> refuses to send a second press of its own kind
     /// (<c>valuation_cancel_press_already_open</c>, <c>valuation_exit_press_already_open</c> in the
     /// engineering log), no exit row is written, and the report's list prints its honest
@@ -87,9 +88,10 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
     /// MEASURED on the same probe: losing the FIRST unvaluable pass opens the episode 20 seconds
     /// late and the exit never fires inside four passes (<c>VALUATION_LOST in the report: False</c>
     /// on all three runners), and losing the pass that would fire the exit does the same; driving to
-    /// the record instead took 4 passes normally and 5 with a pass lost, on every runner and at
-    /// every lost index. Twelve is three times the four this fixture needs, and it is a bound rather
-    /// than a wait: nothing here sleeps, the clock is the test's own.</para>
+    /// the record instead reached the exit in every case, on every runner and in every run — in 4
+    /// passes with none lost or with the second, third or fifth lost, and in 5 with the first or the
+    /// fourth lost. Twelve is three times the four this fixture needs, and it is a bound rather than
+    /// a wait: nothing here sleeps, the clock is the test's own.</para>
     /// </summary>
     const int Passes = 12;
 

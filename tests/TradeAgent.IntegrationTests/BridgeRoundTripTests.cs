@@ -1471,19 +1471,20 @@ public class BridgeRoundTripTests
         // inside the connector's own two events and the assertion below compared a count taken
         // half-way through them with one taken after. Nothing about the refused BRIDGE is involved.
         //
-        // MEASURED on draft PR #23 (runs 35504722157 and 35513092386), 20 rounds per runner, the
-        // wait spun rather than polled every 50 ms — which is what that poll is worth on a runner
-        // that preempts the connector right there, and the substitution U-peer-row-ubuntu measured
-        // the same way: `before` came back 0 (once 1, mid-way between the two events) against a
-        // settled 2 in 5/7/9 of 20 rounds over three runs on ubuntu-latest, 9/6/7 on macos-latest
-        // and 9/9/6 on windows-latest, `Assert.Equal() Failure: Values differ` — ubuntu-latest's red at
-        // `ed3b224`. The window is 0.1-0.3 ms wide, which is why the poll steps over it 19 times in
-        // 20 when it is a poll at all.
+        // MEASURED on draft PR #23 (runs 35504722157 and 35513092386, the second run twice), 20
+        // rounds per runner per run, ten of them with the wait spun rather than polled every 50 ms —
+        // which is what that poll is worth on a runner that preempts the connector right there, and
+        // the substitution U-peer-row-ubuntu measured the same way: `before` came back 0 (1, mid-way
+        // between the two events, in 4 of the 67) against a settled 2 in 5/7/9 of the ten spun
+        // rounds over three runs on ubuntu-latest, 9/6/7 on macos-latest and 9/9/6 on windows-latest,
+        // `Assert.Equal() Failure: Values differ` — ubuntu-latest's red at `ed3b224`. The polled
+        // rounds raced in 0 of 90: the widest poll-to-end-of-stream gap was 0.1-0.3 ms per run and
+        // once 1.6 ms (macos-latest), against a poll that looks every 50 ms.
         //
         // The hand-over closes it with no clock in it: the connector's accept loop runs Drop in its
         // `finally` and disposes the pipe instance immediately after, so this peer's own read
         // reaching end-of-stream means every event the refusal raises has already been invoked. In
-        // all 20 rounds on all three runners the count at that instant was the settled one.
+        // every round of every run on all three runners the count at that instant was the settled one.
         await bridge.Ended.WaitAsync(TimeSpan.FromSeconds(10));
 
         // One branch gates all six event kinds, so two of them settle it — and these two are the
