@@ -223,6 +223,13 @@ public sealed record TurnContext
     /// </summary>
     public string? Ended { get; init; }
 
+    /// <summary>
+    /// THE VENDOR'S OWN WORDS, where it refused the turn for its usage limit, or null. On the row because
+    /// the row is the record: a turn charged nothing has to say why, and a turn the limit cut after it
+    /// had worked says what stopped it. See <see cref="VendorLimit"/>.
+    /// </summary>
+    public string? Refused { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -593,7 +600,7 @@ public sealed class TurnMeter
     /// </param>
     public void Record(AgentTurnEnded ended, string? role = null)
     {
-        var price = CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
+        var price = Charge(ended, role);
         var record = new TurnRecord
         {
             Started = ended.At - ended.Duration,
@@ -613,7 +620,7 @@ public sealed class TurnMeter
             Unpriced = price.Unpriced,
             Estimated = price.Estimated,
             PricedByOwner = price.ByOwner,
-            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(role), ended.Usage, ended.Outcome)
+            Context = ContextOf(ended, PromptCharsOfOpenAttempt(role))
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
@@ -647,6 +654,46 @@ public sealed class TurnMeter
 
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// WHAT ONE TURN IS CHARGED, and the one place a turn the vendor refused is told apart from a turn
+    /// that went silent. Three branches, each reading only what the session parsed out of the turn's own
+    /// stream (<see cref="AgentTurnEnded.Usage"/>, <see cref="AgentTurnEnded.Limit"/>):
+    ///
+    /// <list type="number">
+    /// <item><b>Usage reported</b> — priced as it always was. A refusal beside it changes nothing: what
+    /// the vendor said it used is what it billed.</item>
+    /// <item><b>No usage, and the vendor refused before any work</b> — ZERO, with the vendor's sentence on
+    /// the row. It reads three things: <c>Limit</c> (the manifest's own pattern matched the stream's error
+    /// event), <c>Limit.BeforeAnyWork</c> (no item of any kind, no text and no usage had arrived when the
+    /// refusal did) and <c>Usage</c> null. Codex 0.153.4 refused the observed turn at its first request; a
+    /// turn the vendor did not run is not one it billed, and charging it the reservation was charging the
+    /// owner for the vendor's refusal.</item>
+    /// <item><b>No usage otherwise</b> — unknown, and <see cref="AiAttemptStore.End"/> charges the
+    /// reservation, as before: a turn that showed work, or whose stream said nothing recognisable, may
+    /// have been billed for requests nothing measured, and unknown is never zero.</item>
+    /// </list>
+    /// </summary>
+    TurnPrice Charge(AgentTurnEnded ended, string? role) =>
+        ended.Usage is null && ended.Limit is { BeforeAnyWork: true }
+            ? new TurnPrice(0m, Currency(), null)
+            : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
+
+    /// <summary>The currency a zero is written in: the price list's, or none where it cannot be read.</summary>
+    static string Currency()
+    {
+        try { return CostCatalog.Read().Costs?.Currency ?? ""; }
+        catch (Exception) { return ""; }
+    }
+
+    /// <summary>
+    /// WHAT THE APP COULD SEE OF THE TURN, from the stream it kept — and, for a turn the vendor refused,
+    /// how it ended and the vendor's own words, on both cost branches.
+    /// </summary>
+    static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars) =>
+        TurnContext.Read(ended.Raw, promptChars, ended.Usage,
+            ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
+        with { Refused = ended.Limit?.Message };
 
     /// <summary>
     /// COMMITS THE HELD CLOSE, inside whatever transaction is open on this thread. Returns whether
@@ -868,7 +915,7 @@ public sealed class TurnMeter
     {
         // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
         // TurnContext: what the stream does not show is named rather than divided up.
-        var context = Json.Write(TurnContext.Read(ended.Raw, promptChars, ended.Usage, ended.Outcome));
+        var context = Json.Write(ContextOf(ended, promptChars));
 
         if (id is null)
         {

@@ -1902,6 +1902,20 @@ zero is not a charge and such a row stays unpriced. `AiSpendToday.UnreportedTurn
 `Spent` is never read as a bill: an unpriced turn means the real figure is HIGHER, one of these means
 that part of it is the most it could have been.
 
+**Except a turn the vendor refused before any work** (`U-vendor-limit`). The runtime's manifest says how
+its vendor refuses a turn for its own usage limit (`RuntimeManifest.UsageLimit`, data: codex's is the
+sentence recorded on 2026-10-01, "You've hit your usage limit … try again at 10:30 PM."). When the
+stream's error event matches it and NOTHING had arrived before it — no item of any kind, no text, no
+usage — the row is ENDED at cost 0, `unpriced_reason` null, with `context.ended` = `VENDOR_USAGE_LIMIT`
+and the vendor's sentence in `context.refused`. A turn the limit cut after any of those keeps its
+reservation as above; a turn that reported usage is charged its usage. No column: `context` is already
+the app's account of how a turn ended. The mission loop then holds every launch on that runtime
+(`IMissionHost.RuntimeFor`; every role where the host cannot say) until the END of the minute the vendor
+named — it prints minutes in the machine's local zone, read here in `TimeZoneInfo.Local`, an hour the
+clock passes twice read as the later instant — or its own backoff where it named none. Held roles are
+stepped over like turning ones, so their wakes stay due; the owner's chat and Pause are not held. The
+hold is in memory: a restart forgets it, and the first turn after one is refused again at no cost.
+
 `TurnMeter` holds one open attempt PER ROLE — one conversation per role, and the owner can type into
 the chair's while another role's turn is in flight — and `Close` writes the row it opened, by id. The
 close of a turn the MISSION LOOP opened is held for that turn's one committed transition
