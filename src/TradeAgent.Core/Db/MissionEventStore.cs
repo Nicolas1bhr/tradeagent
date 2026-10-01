@@ -13,7 +13,11 @@ public static class MissionEventKind
     /// <summary>The owner typed something while the AI was working. See <see cref="MissionOwnerMessage"/>.</summary>
     public const string Owner = "owner";
 
-    /// <summary>A scan pass recorded material that was not there before.</summary>
+    /// <summary>
+    /// A scan pass recorded material that ARRIVED in the owner's <c>inbox/</c>
+    /// (<see cref="ScanResult.Arrived"/>). Never a role's own write and never the app's own file, so
+    /// the words a turn is told — "new material arrived in <c>../inbox</c>" — are true by construction.
+    /// </summary>
     public const string Inbox = "inbox";
 
     /// <summary>

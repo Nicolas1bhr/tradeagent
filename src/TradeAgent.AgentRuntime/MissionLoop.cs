@@ -1444,9 +1444,9 @@ public sealed class MissionLoop
         // while it runs.
         if (_host.InboxChangedSinceLastPass) await PassAsync(ct);
 
-        // That pass may have recorded material, which raises a wake of its own. Taking it NOW rather
-        // than leaving it for the next turn is what keeps "the owner dropped a file" one turn: the
-        // turn about to run is the one that should be told about it.
+        // That pass may have recorded material that ARRIVED, which raises a wake of its own. Taking
+        // it NOW rather than leaving it for the next turn is what keeps "the owner dropped a file"
+        // one turn: the turn about to run is the one that should be told about it.
         if (events is not null)
         {
             wake = events.DueFor(role, _now());
@@ -1957,6 +1957,8 @@ public sealed class MissionLoop
     static string Reason(string kind) => kind switch
     {
         MissionEventKind.Owner => "your owner typed something",
+        // TRUE BY CONSTRUCTION: the app raises this kind only for rows that arrived in the owner's
+        // inbox (ScanResult.Arrived). A role's own plan and journal never raise it.
         MissionEventKind.Inbox => "new material arrived in `../inbox`",
         MissionEventKind.Data => "TradeAgent collected and validated a dataset — the Data line below "
                                  + "names it, and `trade data list` has its provenance",

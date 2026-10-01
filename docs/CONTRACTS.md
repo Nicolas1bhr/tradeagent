@@ -1842,6 +1842,10 @@ set them; and the owner's Inbox page prints "written by TradeAgent" instead of f
 AI made this", which is what it did for every app file before this. An `app` row is not in
 `Present(MaterialOrigin.Agent)`, so nothing that counts the agent's work counts it.
 
+**A pass wakes the AI only for what ARRIVED** (`ScanResult.Arrived`): a new `Inbox` or `InboxUnattested`
+row raises one `inbox:` wake counting those rows; a new `Agent` row (a role's own write) or `App` row (the
+app's files and deliveries, which wake by their own `task:`) is recorded as before and wakes nobody.
+
 **Two roles' turns may overlap, and three leases are what keeps that honest.** A turn lease per role in
 `MissionLoop` (a second `TurnAsync` for a role already turning is refused in words, never queued, and a
 role that is turning is stepped over when the next turn's role is chosen); one open attempt, one staged
