@@ -6875,3 +6875,34 @@ the same tuple; restored. Manager's gate at `a5166e7` (the reported tip, 0 behin
 an `InboxUnattested` row can also be a role's own write into `../inbox`, which still wakes the chair (no new power — a role can already ask for a `self` wake);
 the observable in the running app (the manager's relaunch, recorded with the observed run); the ubuntu flake `CouncilLoopTests.A_file_dropped_between_turns…`
 (`Actual: InboxUnattested`, run 36891262990 attempt 1) is untouched by this unit and not briefed; no box.
+
+## 2026-10-01 — U-runner-reds-3 landed: four hosted-runner reds measured on all three runners, three fixed at the fixture and one argued into `Timing`; test-only
+
+The honesty of the CI record (`docs/HOW-WE-BUILD.md` step 6), from the brief `docs/briefs/U-runner-reds-3.md` (landed `a2c05be`, amended `faef463`): a first
+leg measured and fixed on draft PR #23 and was stopped on 2026-09-20 14:28Z by `Your organization has disabled Claude subscription access for Claude Code` with
+nine commits and no report; a fresh finisher (2026-10-01) verified every item from the branch, corrected two comments and reported. Merge `896eaae`, 12
+commits (the first leg's nine incl. its probes and their removal, the finisher's two comment fixes, the report), 6 test files. `src/` untouched.
+
+- **1 `SweepRequestIdTests.Every_sent_not_confirmed_…`** (red `d9ae716` windows, `Assert.NotEmpty()`): the disk's spend inside one sweep measured at latency
+  0, 3 rounds × 3 runs — ubuntu 4–10 ms, macos 2–6, windows 31–254 against 5000 ms of room (20×), and room costs three times itself in wall time →
+  `Category=Timing` with the numbers at the test (`6ecc493`); nothing loosened.
+- **2 `ValuationLossSurfacesTests.An_exit_is_reported_…`** (same run, `Assert.Contains()`): the exit pass took 26.8–32.8 / 16.5–22.4 / 712.5–1258 ms
+  (ubuntu/macos/windows) of the shipped 2 s emergency budget; a 1 ms budget reproduced the red in all 9 jobs → a 20 s budget and the passes driven to the
+  product's own exit record, bounded at 12 (4–5 needed) instead of a fixed count of 3 or 4 (`77b8922`).
+- **3 `BridgeRoundTripTests.A_bridge_speaking_the_previous_protocol_…`** (red `ed3b224` and `b3582d7` ubuntu, `Assert.Equal()`): the event snapshot fell
+  inside the refusal's own two events in 5/7/9, 9/6/7, 9/9/6 of 10 spun rounds (ubuntu/macos/windows), 0/90 polled → read after the peer's end-of-stream
+  (`90b59ef`). **4 `CouncilLoopTests.A_second_turn_…`** (red `659eb5b` macos, `Assert.Equal()`): a 20 ms preemption gave 2 launches in 25–30/30 on ubuntu and
+  macos, 0/30 on windows (its turn ≥ 100.9 ms) → the winner holds its lease until the loser is answered, 1 launch in 30/30 everywhere (`06c1e65`).
+- **(c) Siblings:** `A_leg_that_failed_before_the_wire_…` moved into `Timing` (3000 ms room, 12×, `e41831f`); NOT moved and unmeasured, named in the report:
+  `A_leg_refused_before_the_wire_…` (the SAME 5000 ms room as item 1), `The_simulators_two_latencies_…`, `A_five_order_sweep_…`, the 2 s-budget presses in
+  the `Loss*SurfacesTests`, `PipeContractTests`, `An_authenticated_peer_…`, the `Barrier` races in three ledger classes. **A correction:** the brief's
+  "~40 s normal" windows Unit time was wrong — the green windows jobs either side of `d9ae716` took 12–15 min, so the red one was 1.25–1.56× slow, not 29×.
+
+**Verified by running (the finisher, quoted; then the manager's gate):** finisher's gate at the code tip `a24c083` (on `516376c`), Release `--no-incremental`: 0
+warnings, 0 errors; Unit 1189/0/0 (26 s), Fault 399/0/0 (1 m 27 s), Integration 695/0/1 (11 m 4 s); 3×, 0 failed every run: Council 11, Valuation 5, Bridge
+41, Sweep 44. CI on the PR: run 36896121229 at `a24c083` — ubuntu, windows, macos, package GREEN, `Timing` passed first time in all three test jobs (its windows
+job 1.45–2.0× its usual time); green also at 36888851400, 35515899143, 35515732610 on the same fixture code. PR #23 closed unmerged. Manager's gate at `37e2106` (the report tip `3e066ab` rebased by the manager onto `f8a7500` — over U-peer-unix and U-self-wake — with no conflict, the branch's patch-id identical before and after, `78a14fd86190`; landed as `896eaae` after a docs-only rebase over `2fd0318`, `src`/`tests` identical), Release: build `--no-incremental` → 0 warnings, 0 errors; Unit 1192/1192 (27 s), Fault 399/399 (1 m 29 s), Integration 699/700, 1 skipped (11 m 8 s, its normal length) → 0 failed.
+Names vs `main` (git objects): sets 1948 → 1948, 0 removed, 0 added. Scan clean; no trailers; `rev-list --count` → 0. CI at `896eaae`: recorded when complete. The four red shas (`d9ae716`, `ed3b224`, `659eb5b`,
+`b3582d7`) stay red in the record; this landing is what was owed for them.
+
+**NOT done, NOT verified:** the unmoved siblings above are unmeasured; the probes' "this Mac" figures were taken while the observed run was going; no box.
