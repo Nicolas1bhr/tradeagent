@@ -95,6 +95,30 @@ public sealed record MaterialNote(
 /// <summary>What one scan pass did. Small enough to log on every pass without becoming noise.</summary>
 public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, int Skipped, bool HashBudgetSpent)
 {
+    /// <summary>
+    /// <see cref="Added"/>, BY THE WORD EACH NEW ROW WAS WRITTEN WITH — counted by the scanner as it
+    /// answered the store, so a row and its count cannot carry different origins. An origin that added
+    /// nothing in this pass is absent.
+    /// </summary>
+    public IReadOnlyDictionary<MaterialOrigin, int> AddedBy { get; init; } = new Dictionary<MaterialOrigin, int>();
+
+    /// <summary>
+    /// WHAT ARRIVED: the additions no role authored — the owner's <c>inbox/</c>, attested
+    /// (<see cref="MaterialOrigin.Inbox"/>) or not (<see cref="MaterialOrigin.InboxUnattested"/>, the
+    /// word a drop gets when an agent was alive anywhere in its window — a file dropped while a turn
+    /// is running, for one). The one count the inbox wake reads.
+    ///
+    /// <para><b>Never <see cref="MaterialOrigin.Agent"/>.</b> A role's own write is something that role
+    /// already knows: waking it for its rewritten plan and journal told the next turn "new material
+    /// arrived in <c>../inbox</c>" when nothing had, eight turns in eight minutes in the observed run of
+    /// 2026-10-01. <b>Never <see cref="MaterialOrigin.App"/>.</b> The app's own files are not news, and a
+    /// relay delivery wakes its recipient through its own <c>task:</c> event, written in the same
+    /// transaction as the publication. Both are still recorded, under the word they always had: this
+    /// narrows what buys a turn, not what the ledger sees.</para>
+    /// </summary>
+    public int Arrived =>
+        AddedBy.GetValueOrDefault(MaterialOrigin.Inbox) + AddedBy.GetValueOrDefault(MaterialOrigin.InboxUnattested);
+
     public bool Changed => Added > 0 || Removed > 0 || Hashed > 0;
     public override string ToString() =>
         $"seen={Seen} added={Added} hashed={Hashed} removed={Removed} skipped={Skipped}" +

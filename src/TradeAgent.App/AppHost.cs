@@ -1010,15 +1010,32 @@ public sealed class AppHost : IAsyncDisposable
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
 
-        // ADDED, NOT CHANGED. A pass that only hashed files it had already recorded, or watched one
-        // go, has told the AI nothing it did not know — and this is a paid turn. The id is the
-        // instant the pass began, so the same pass reported twice is one reason to wake.
-        if (result.Added > 0)
-            RaiseWake(MissionEventIds.Inbox(at), MissionEventKind.Inbox,
-                Json.Write(new { added = result.Added, seen = result.Seen }));
+        if (InboxWake(result, at) is { } wake)
+            RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload);
 
         return result;
     }
+
+    /// <summary>
+    /// THE INBOX WAKE ONE PASS RAISES, OR NONE. It buys a paid turn, so it is owed only for material
+    /// that ARRIVED (<see cref="ScanResult.Arrived"/>): a file in the owner's <c>inbox/</c>, attested
+    /// or not.
+    ///
+    /// <para><b>Arrived, not added.</b> A role's own write is an addition that role already knows
+    /// about, and the app's own files and deliveries are no news either — a delivery wakes its
+    /// recipient through its own <c>task:</c> event. Waking on every addition woke the Operations
+    /// Director once a minute for its own plan and journal (BUILD-STATUS.md, U-self-wake). All of
+    /// them are still recorded; the ledger is the scanner's and nothing here touches it.</para>
+    ///
+    /// <para><b>Added, not changed.</b> A pass that only hashed files it had already recorded, or
+    /// watched one go, has told the AI nothing it did not know. The id is the instant the pass
+    /// began, so the same pass reported twice is one reason to wake, and the payload counts what
+    /// arrived — the files the wake's words are about.</para>
+    /// </summary>
+    internal static (string Id, string Payload)? InboxWake(ScanResult result, DateTimeOffset at) =>
+        result.Arrived > 0
+            ? (MissionEventIds.Inbox(at), Json.Write(new { added = result.Arrived, seen = result.Seen }))
+            : null;
 
     // ---- the mission ---------------------------------------------------------------------------
 

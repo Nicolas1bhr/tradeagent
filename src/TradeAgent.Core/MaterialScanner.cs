@@ -128,6 +128,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     {
         var now = DateTimeOffset.UtcNow;
         int seen = 0, added = 0, removed = 0, skipped = 0;
+        var addedBy = new Dictionary<MaterialOrigin, int>();
         var truncated = false;
 
         // The window every Inbox claim in this pass is measured over. On the very first pass there
@@ -182,13 +183,23 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     Func<MaterialOrigin> origin = isInbox
                         ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
                         : () => WeWroteIt(rel, file) ? MaterialOrigin.App : MaterialOrigin.Agent;
-                    var (isNew, id) = _store.Observe(rel, origin, info.Length,
+
+                    // THE WORD THE NEW ROW WENT IN WITH, kept as the store is answered so the pass
+                    // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
+                    // The store asks only for a row it is about to write, so this is set exactly
+                    // when `isNew` is, and nothing about the row changes by being counted.
+                    MaterialOrigin? written = null;
+                    var (isNew, id) = _store.Observe(rel, () => (written = origin()).Value, info.Length,
                         new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero),
                         RunnableExts.Contains(info.Extension), now);
 
                     present.Add(id);
                     seen++;
-                    if (isNew) added++;
+                    if (isNew)
+                    {
+                        added++;
+                        if (written is { } word) addedBy[word] = addedBy.GetValueOrDefault(word) + 1;
+                    }
                 }
 
                 if (!complete) break;
@@ -216,7 +227,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         if (!truncated) db.SetKv(LastScanKey, Sql.T(now));
 
         var hashed = HashPending(ct);
-        return new ScanResult(seen, added, hashed, removed, skipped, truncated);
+        return new ScanResult(seen, added, hashed, removed, skipped, truncated) { AddedBy = addedBy };
     }
 
     /// <summary>
