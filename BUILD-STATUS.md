@@ -6776,3 +6776,39 @@ package): `d123e91` (35456163772), `413c6de` (35456865118), `0ab526f` (354568670
 its_own_line_and_says_no_budget_was_reached`; `ed3b224` (35501981449) and `b3582d7` (35515252973) ubuntu — `BridgeRoundTripTests.A_bridge_speaking_the_previous_
 protocol_raises_no_events_into_the_application` (`Assert.Equal() Failure: Values differ`); `659eb5b` (35503895941) macos — `CouncilLoopTests.A_second_turn_for_
 a_role_already_turning_is_refused_and_never_launched` (`Assert.Equal() Failure: Values differ`). All four are `U-runner-reds-3`'s; each sha stays red until it lands.
+
+## 2026-10-01 — the observed run, attempt 2, first part: set up through the app, a real model working, and the second refusal — no `trade` call on macOS; docs only
+
+`docs/briefs/U-observed-loop.md` (in flight), run by the manager through the app's UI (background AXPress; the wheel and keyboard under full-screen control,
+approved by the owner 15:3xZ). A checkpoint, not the record: the milestone is NOT claimed. Every line is a press, a database read or a quote as it printed.
+
+- **Build, home, runtime:** `tools/mac-bundle.sh` (Debug) at `faef463` (`git diff --quiet b3582d7 faef463 -- src tests`), home `~/Projects/ai-trading-software-for-
+  mihael-worktrees/observed-run-home` (outside `$TMPDIR`, created empty 15:33:23Z), pid 80252; codex-cli 0.153.4, `codex login status` exit 0.
+- **Onboarding, 15:34–15:35Z:** Get started; OpenAI Codex CLI; step 5 "Sign in … — done" 15:34:25Z BY ITSELF (U-launcher-env holding); Practice simulator;
+  SIM-001; Create it; Start the AI; Finish. **Settings:** "Use TradeAgent paper" (15:35:20Z `Trading platform set to paper`); "Use this account" PAPER-1
+  (15:39:56Z); "Download 12 months" → `dataset` 1 ACCEPTED 15:40:50Z: BTCUSDT 1m v1, 11 of 12 months (`2026-09` not yet published), 482,400 bars,
+  2025-10-01 → 2026-08-31T23:59, 0 gaps; holdout From typed `2026-06-01`, two presses → campaign 1 opened 15:41:24Z (trials 200, verdicts 3, exploration 50,
+  scoring sha 227cce19f0bc, paper policy v1 489fcd999eb5); live bars `forward_bar` 1,005 before the download (the collector's first fetch reaches back).
+- **First refusal of the day, in words (Dashboard, 15:42Z):** "Cost today: 0 USD of 5 USD — but one turn can cost up to 6.4 USD, which is more than the whole
+  limit, so the AI cannot start a turn at all. Raise the limit, or choose a cheaper model above." The default gpt-5.6-sol reserves 1.2 M input at the 5.00
+  cache-write rate + 20 k output at 20.00 = 6.4 USD > the 5 USD default cap. **The model chosen (brief step 7):** gpt-5.6-luna, 0.324 USD reserved a turn —
+  reached BY KEYBOARD (Tab ×4, Space; 15:46:17Z `The AI now runs on gpt-5.6-luna`): both model rows are one row of pills wider than the window, terra and luna
+  clipped past its edge, no scroll reaches them (a UI defect). Cap 5 USD, split 50 %, wake 30 min — defaults kept.
+- **A gap found by reading before any order:** `TradingGateway.cs:2707` refuses every `PlaceIntent` whose symbol is not in "Instruments it may touch", empty on
+  a fresh home, and the envelope card does not say so → 15:46:59Z "Save limits" with BTCUSDT, armed `Confirm: widen "Instruments it may touch"`, confirmed
+  (a ninth press, through the app's own two-press grant). **The envelope (Safety page, not the Dashboard as the brief said):** BTCUSDT, 0.05, 5000, 7 days,
+  two presses → 15:47:46Z `paper_envelope` 8429f62e…, PAPER-1, max_quantity 0.05, max_notional 5000, one deployment, until 2026-10-08. UI defect: the quantity
+  field is integer-formatted and SHOWS "0" while holding 0.05 (the armed label and the row prove the value).
+- **Bounds stated before the start:** window 15:48Z → at most 21:48Z; AI spend ≤ the 5 USD daily cap (list-price equivalent; the codex CLI is billed to the
+  owner's ChatGPT plan); paper exposure ≤ the envelope. "Let the AI work on its own", two presses → 15:48:32Z `The AI was set to work on its own`.
+- **A real model at work:** attempt 1, operations, gpt-5.6-luna, `codex exec … --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-luna`, ENDED exit 0 at
+  15:50:16Z — 167,264 input (141,568 cached), 4,336 output, 0.0132 USD — and published a bounded brief to Research (quoted, the agent's words): "Backtest
+  `strategies/examples/ma-crossover.strategy` once, with `--fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000` … Set `--to` strictly before
+  `holdout_from`; do not read or infer the holdout … Do not request a verdict". Five turns by 15:54Z, 0.037 USD in all.
+- **The second refusal, in words (Research's report, quoted):** `trade data list --json` → `IPC_UNAUTHENTICATED` "this connection presented a launch grant, and
+  the operating system would not say which program is holding this connection, so the caller could not be identified at all" — every `trade` call of both
+  roles (`engineering_log` `Ipc grant_rejected`). Cause (source): `PeerImage.ClientPath` answers on Windows only and `AppHost.cs:575/:759` apply the peer rule
+  on every platform since `faf892f` (2026-09-12) — no CLI turn off Windows has reached `trade` with its grant since. Briefed `U-peer-unix` (`aea4379`); the AI
+  left running meanwhile, its turns blocked and cheap.
+- **Evidence limitation, stated:** the CLI runs unsandboxed as this Mac's user (survey table 4, rows 69/71/87), so the holdout bars in `state/` are readable by
+  it and no verdict of this run will be claimed as protected evidence; no live authority is reachable through the app.
