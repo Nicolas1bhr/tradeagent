@@ -250,9 +250,10 @@ public class MissionControlsTests
         Assert.DoesNotContain("Ui.Button(LetTheAiWork", dashboard);
 
         Assert.Contains("switch (DecideOnStart(Gateway.Settings))", host);
-        Assert.Contains("case MissionOnStart.Resume: Mission.Start(); break;", host);
         Assert.Contains("case MissionOnStart.ForgetItWasWorking:", host);
-        Assert.Contains("ResumeMissionIfItWasWorking();", host);
+        // What each arm of the resume DOES is driven through the host's own composition in
+        // ResumeOnStartTests; this is the one line those cannot reach — StartAsync calling it.
+        Assert.Contains("await ResumeOnStartAsync();", host);
     }
 
     /// <summary>The repository root, found from the test assembly rather than assumed.</summary>

@@ -1071,11 +1071,10 @@ public sealed class OnboardingView
             Theme.Positive),
         Ui.Primary("Start the AI", Act(async () =>
         {
-            // Require, not Find: "no manifest for 'codex'" and "runtimes.json could not be read"
-            // are different mornings and only one of them has a repair the owner can perform.
-            var manifest = RuntimeCatalog.Require(_host.Gateway.Settings.SelectedRuntimeId ?? "opencode");
-            await _host.Agent.PrepareAsync(manifest, _host.WorkspaceContext());
-            await _host.Agent.StartAsync();
+            // The host's one start path, the same the Dashboard's press and a restart take: the
+            // chosen runtime through Require rather than Find, prepare, start. A refusal reaches Act,
+            // which says it on this screen, and the step stays unfinished.
+            await _host.StartTheAiAsync();
             Done(OnboardingStep.AGENT_READY);
         })));
 }

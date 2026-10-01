@@ -19,8 +19,15 @@ namespace TradeAgent.AgentRuntime;
 /// The model the OWNER chose, or null for the manifest's default. A function rather than a value
 /// because it lives in the settings and can change while this runtime is alive.
 /// </param>
+/// <param name="presence">
+/// The register every process this runtime starts reports to: its conversations' turns, the sign-in,
+/// the probes that count as agent work and a manifest's background process. Null is the process-wide
+/// one and is what the product passes; a test that starts the AI through the app's own start path
+/// passes its own, for the reason <see cref="Presence"/> gives.
+/// </param>
 public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
-    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null) : IAgentRuntime
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
+    AgentPresence? presence = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -424,7 +431,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         var contained = ProcessContainment.Start(psi);
         var process = contained.Process;
         _login = contained;
-        Presence(process);
+        Presence(process, presence);
 
         var transcript = new StringBuilder();
         var urlFound = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -544,7 +551,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
             using var held = ProcessContainment.Start(psi);
             var p = held.Process;
-            using var alive = Presence(p);
+            using var alive = Presence(p, presence);
             await p.StandardInput.WriteLineAsync(key);
             p.StandardInput.Close();
 
@@ -642,7 +649,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
-            model: () => RequestedModel, role: CouncilRoles.Operations,
+            presence: presence, model: () => RequestedModel, role: CouncilRoles.Operations,
             attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal);
 
     /// <summary>
@@ -664,7 +671,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // would have to know which runtime is prepared, which is the one thing this interface
             // exists to keep out of the app.
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
-                model: () => ModelFor(model()), role: role,
+                presence: presence, model: () => ModelFor(model()), role: role,
                 attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal);
             _roleConversations[role] = session;
             return session;
@@ -706,7 +713,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             SetCommand(psi, exe, manifest.InteractiveArgs);
             AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
             _session = ProcessContainment.Start(psi);
-            Presence(_session.Process);
+            Presence(_session.Process, presence);
         }
 
         var conversation = OpenConversation();
@@ -785,7 +792,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         using var held = ProcessContainment.Start(psi);
         var p = held.Process;
-        using var alive = agentWork ? Presence(p) : null;
+        using var alive = agentWork ? Presence(p, presence) : null;
         try { p.StandardInput.Close(); } catch (Exception) { /* already gone */ }
         using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timer.CancelAfter(timeout);

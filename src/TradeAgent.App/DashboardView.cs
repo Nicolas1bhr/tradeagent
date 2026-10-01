@@ -357,7 +357,7 @@ sealed class DashboardPage
             : !spend.CanPrice ? Theme.Caution
             : Theme.TextFaint;
 
-        _missionState.Text = MissionSentence(status);
+        _missionState.Text = MissionSentence(status, _host.AiNotStarted);
         _missionState.Foreground = status.State switch
         {
             MissionState.Working => Theme.Positive,
@@ -383,20 +383,27 @@ sealed class DashboardPage
     /// quiet card is the ordinary state of a quiet day — and an owner cannot tell that from a broken
     /// one without being told which. "waiting until 14:32 for the next scheduled look" is the whole
     /// difference.
+    ///
+    /// AND A STOPPED AI SAYS WHY, when a start was refused (<see cref="AppHost.AiNotStarted"/>). A
+    /// restart that could not start the AI pressed nothing, so there is no strip under the header to
+    /// show the refusal in — this line and the activity log are the only places the owner reads it.
     /// </summary>
-    internal static string MissionSentence(MissionStatus status) => Whose(status) + status.State switch
-    {
-        MissionState.Working => "working",
-        MissionState.Waiting => (status.NextTurnAt, status.WaitingFor) switch
+    internal static string MissionSentence(MissionStatus status, string? notStarted = null) =>
+        Whose(status) + status.State switch
         {
-            ({ } at, { } why) => $"waiting until {at.ToLocalTime():HH:mm} for {why}",
-            ({ } at, null) => $"waiting until {at.ToLocalTime():HH:mm}",
-            (null, { } why) => $"waiting for {why}",
-            _ => "waiting"
-        },
-        MissionState.Paused => "paused",
-        _ => "stopped — the AI has not been started"
-    };
+            MissionState.Working => "working",
+            MissionState.Waiting => (status.NextTurnAt, status.WaitingFor) switch
+            {
+                ({ } at, { } why) => $"waiting until {at.ToLocalTime():HH:mm} for {why}",
+                ({ } at, null) => $"waiting until {at.ToLocalTime():HH:mm}",
+                (null, { } why) => $"waiting for {why}",
+                _ => "waiting"
+            },
+            MissionState.Paused => "paused",
+            _ => notStarted is { Length: > 0 } refused
+                ? $"stopped — {refused}"
+                : "stopped — the AI has not been started"
+        };
 
     /// <summary>
     /// WHICH ROLES THE REST OF THE LINE IS ABOUT, as a prefix, or nothing at all where no council is

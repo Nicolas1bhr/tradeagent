@@ -20,8 +20,15 @@ namespace TradeAgent.AgentRuntime;
 /// The protected configuration's answer, asked at every launch: a sentence when no AI runtime may be
 /// started at all, null when one may. Handed to every runtime this supervisor prepares.
 /// </param>
+/// <param name="presence">
+/// The register the processes of every runtime this supervisor prepares report to. Null is the
+/// process-wide one, which is the only value the product passes; a test that drives the app's own
+/// start path passes its own, because the shared register is sticky — see
+/// <c>CliAgentRuntime.Presence</c>.
+/// </param>
 public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
-    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null)
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
+    AgentPresence? presence = null)
 {
     readonly SemaphoreSlim _gate = new(1, 1);
     IAgentRuntime? _runtime;
@@ -56,7 +63,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal);
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence);
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,
@@ -96,6 +103,20 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         {
             Running = false;
             health.Set(Components.AgentProcess, HealthState.FAILED, ex.Message);
+
+            // A RUNTIME THAT WOULD NOT START IS NOT KEPT. Left here it would still answer Current,
+            // and the app reads its conversation off Current: the mission loop would go on launching
+            // turns through a runtime that was just refused — each one refused again at the launch,
+            // and each one recorded as a launch held against the day's ceiling — while the card read
+            // anything but "stopped". Stopped before it is dropped, so nothing it began before it
+            // threw outlives it.
+            var refused = _runtime;
+            _runtime = null;
+            if (refused is not null)
+            {
+                try { await refused.StopAsync(CancellationToken.None); }
+                catch (Exception) { /* it did not start; there is nothing of it left to stop */ }
+            }
             throw;
         }
         finally { _gate.Release(); }

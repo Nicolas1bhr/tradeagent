@@ -679,18 +679,16 @@ public sealed class MainWindow : Window
     /// Starting the AI opens a conversation, not a console. The page switch is the whole point of
     /// this method living on the shell: the user pressed a button that means "let me talk to it",
     /// so the thing they talk to it in has to be what they are looking at when it comes up.
+    ///
+    /// The start itself is the host's, the one path setup and a restart take as well — see
+    /// <see cref="AppHost.StartTheAiAsync"/>. A refusal propagates to the button, which puts it in the
+    /// strip under the header, and the page stays where it was.
     /// </summary>
     async Task StartOrStopAgentAsync()
     {
         if (_host.Agent.Running) { await _host.Agent.StopAsync(); return; }
 
-        var id = _host.Gateway.Settings.SelectedRuntimeId ?? "opencode";
-        // Require, not Find: an unreadable runtimes.json yields no manifests at all rather than the
-        // built-ins, so this is the call that turns "the file the owner wrote cannot be read" into
-        // a refusal in their own words instead of a different program starting quietly.
-        var manifest = AgentRuntime.RuntimeCatalog.Require(id);
-        await _host.Agent.PrepareAsync(manifest, _host.WorkspaceContext());
-        await _host.Agent.StartAsync();
+        await _host.StartTheAiAsync();
 
         Select(Page.Chat);
         _chat?.Update();

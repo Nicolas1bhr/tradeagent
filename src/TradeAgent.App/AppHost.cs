@@ -33,6 +33,12 @@ public sealed class AppHost : IAsyncDisposable
     GatewayPipeServer? _server;
     CancellationTokenSource? _loop;
 
+    /// <summary>
+    /// The register the AI's processes report to. The process-wide one, always, in the product; only
+    /// <see cref="Composed"/> — a test's host — is handed another.
+    /// </summary>
+    AgentPresence _presence = AgentPresence.Shared;
+
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
     public HealthRegistry Health { get; } = new();
@@ -576,76 +582,7 @@ public sealed class AppHost : IAsyncDisposable
             _server.Start();
             Health.Set(Components.Gateway, HealthState.READY);
 
-            // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
-            // page while the agent is running, and the next turn is the one that has to obey.
-            Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
-                // The attempt the meter opened for the launch about to happen. A function, because
-                // the launch is minutes away from this line and the attempt it belongs to does not
-                // exist yet.
-                attemptId: role => Meter?.OpenAttemptIdFor(role),
-                // THE PROTECTED CONFIGURATION. Read at every launch rather than captured, because
-                // the owner arms real money on the Dashboard while the AI is working.
-                launchRefusal: () => Containment.RefusalToLaunch(
-                    Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated));
-            Meter = new TurnMeter(_db,
-                cap: () => Gateway.Settings.AiDailyCostCap,
-                session: () => (Conversation as AgentSession)?.ThreadId,
-                runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
-                owner: () => OwnerPrice.From(Gateway.Settings),
-                model: () => RequestedModel,
-                allowance: () => TurnAllowance.From(
-                    Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens),
-                // The council's two: a role's slice of the owner's ceiling, and the model that role
-                // runs on. Both are read through a function for the same reason the model above is —
-                // the owner changes them while the AI is working.
-                share: role => Gateway.Settings.ShareForRole(role),
-                roleModel: RequestedModelFor,
-                // A PRICE IS LOOKED UP BY (RUNTIME, MODEL), so a role on the app-owned harness has to
-                // be priced against the harness's catalogue. Priced against the chair's, a model only
-                // the harness offers falls back to the dearest entry and the row reads as an estimate
-                // when the app knows exactly what it asked for.
-                roleRuntime: RuntimeForRole);
-            Meter.Changed += () => Changed?.Invoke();
-
-            Wakes = new MissionEventStore(_db);
-            Boundaries = new CouncilBoundaries(_db);
-
-            // THE APP CARRYING WORK BETWEEN THE ROLES, AND THE ONLY THING THAT MAY. A role writes a
-            // file into its own `out/`; nothing it can do publishes, delivers or creates a task.
-            // Composed here, beside the gateway, and reachable from the loop only through
-            // IMissionHost.Relay — there is no pipe op and no `trade` verb that touches it.
-            Relay = new CouncilRelay(_db, HomeFor, boundaries: Boundaries)
-            {
-                Rejected = text => Gateway.Log.Activity(text, "warn"),
-                Quarantined = text => Gateway.Log.Activity(text, "warn")
-            };
-            Relay.Revisions.Rejected = text => Gateway.Log.Activity(text, "warn");
-
-            Mission = new MissionLoop(new MissionHost(this),
-                new MissionOptions
-                {
-                    TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
-                    ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes))
-                });
-            Mission.Changed += () => Changed?.Invoke();
-
-            // A TURN THAT WAS NOT STARTED, WRITTEN DOWN. The engineering log rather than the
-            // activity log: a second caller refused because that role is already turning is the
-            // council working as designed, not something the owner has to do anything about — and a
-            // refusal nobody records is a turn that silently did not happen.
-            Mission.Refused += why =>
-            {
-                try { Gateway.Log.Engineering("Mission", "turn_refused", "info", metadataJson: Json.Write(new { why })); }
-                catch (Exception) { /* a log line is never worth a turn */ }
-            };
-
-            // THE TWO FACTS THE GATEWAY OWNS AND NOBODY ELSE CAN SEE ARRIVE. A fill and an order
-            // reaching a final state are the events the AI most needs to be woken for, and both are
-            // known first inside the gateway's own event handling. The sink is a delegate rather
-            // than a reference to this host, so nothing reachable from it can change a mode, lift
-            // the kill switch or approve anything.
-            Gateway.RaiseMissionWake = RaiseWake;
-            ReportAiToTheGateway();
+            ComposeTheAi(_db);
 
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
@@ -664,7 +601,7 @@ public sealed class AppHost : IAsyncDisposable
             try { Relay.Reconcile(); }
             catch (Exception ex) { Gateway.Log.Engineering("Council", "relay_start_failed", "warn", ex: ex); }
 
-            ResumeMissionIfItWasWorking();
+            await ResumeOnStartAsync();
             return true;
         }
         catch (Exception ex)
@@ -672,6 +609,111 @@ public sealed class AppHost : IAsyncDisposable
             StartupProblem = ex is TradeAgentException t ? t.Info.UserMessage : ex.Message;
             return false;
         }
+    }
+
+    /// <summary>
+    /// EVERYTHING ABOVE THE GATEWAY THAT THE AI WORKS THROUGH: the supervisor, the meter, the wake
+    /// queue, the boundaries, the relay and the loop, wired to each other and to the gateway.
+    ///
+    /// <para>One method rather than a block inside <see cref="StartAsync"/> so that
+    /// <see cref="Composed"/> builds the same objects the same way, and a test drives this host's own
+    /// start path and its own resume rather than a reconstruction of them that could drift.</para>
+    /// </summary>
+    void ComposeTheAi(Database db)
+    {
+        // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
+        // page while the agent is running, and the next turn is the one that has to obey.
+        Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
+            // The attempt the meter opened for the launch about to happen. A function, because
+            // the launch is minutes away from this line and the attempt it belongs to does not
+            // exist yet.
+            attemptId: role => Meter?.OpenAttemptIdFor(role),
+            // THE PROTECTED CONFIGURATION. Read at every launch rather than captured, because
+            // the owner arms real money on the Dashboard while the AI is working.
+            launchRefusal: () => Containment.RefusalToLaunch(
+                Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
+            presence: _presence);
+        Meter = new TurnMeter(db,
+            cap: () => Gateway.Settings.AiDailyCostCap,
+            session: () => (Conversation as AgentSession)?.ThreadId,
+            runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
+            owner: () => OwnerPrice.From(Gateway.Settings),
+            model: () => RequestedModel,
+            allowance: () => TurnAllowance.From(
+                Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens),
+            // The council's two: a role's slice of the owner's ceiling, and the model that role
+            // runs on. Both are read through a function for the same reason the model above is —
+            // the owner changes them while the AI is working.
+            share: role => Gateway.Settings.ShareForRole(role),
+            roleModel: RequestedModelFor,
+            // A PRICE IS LOOKED UP BY (RUNTIME, MODEL), so a role on the app-owned harness has to
+            // be priced against the harness's catalogue. Priced against the chair's, a model only
+            // the harness offers falls back to the dearest entry and the row reads as an estimate
+            // when the app knows exactly what it asked for.
+            roleRuntime: RuntimeForRole);
+        Meter.Changed += () => Changed?.Invoke();
+
+        Wakes = new MissionEventStore(db);
+        Boundaries = new CouncilBoundaries(db);
+
+        // THE APP CARRYING WORK BETWEEN THE ROLES, AND THE ONLY THING THAT MAY. A role writes a
+        // file into its own `out/`; nothing it can do publishes, delivers or creates a task.
+        // Composed here, beside the gateway, and reachable from the loop only through
+        // IMissionHost.Relay — there is no pipe op and no `trade` verb that touches it.
+        Relay = new CouncilRelay(db, HomeFor, boundaries: Boundaries)
+        {
+            Rejected = text => Gateway.Log.Activity(text, "warn"),
+            Quarantined = text => Gateway.Log.Activity(text, "warn")
+        };
+        Relay.Revisions.Rejected = text => Gateway.Log.Activity(text, "warn");
+
+        Mission = new MissionLoop(new MissionHost(this),
+            new MissionOptions
+            {
+                TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
+                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes))
+            });
+        Mission.Changed += () => Changed?.Invoke();
+
+        // A TURN THAT WAS NOT STARTED, WRITTEN DOWN. The engineering log rather than the
+        // activity log: a second caller refused because that role is already turning is the
+        // council working as designed, not something the owner has to do anything about — and a
+        // refusal nobody records is a turn that silently did not happen.
+        Mission.Refused += why =>
+        {
+            try { Gateway.Log.Engineering("Mission", "turn_refused", "info", metadataJson: Json.Write(new { why })); }
+            catch (Exception) { /* a log line is never worth a turn */ }
+        };
+
+        // THE TWO FACTS THE GATEWAY OWNS AND NOBODY ELSE CAN SEE ARRIVE. A fill and an order
+        // reaching a final state are the events the AI most needs to be woken for, and both are
+        // known first inside the gateway's own event handling. The sink is a delegate rather
+        // than a reference to this host, so nothing reachable from it can change a mode, lift
+        // the kill switch or approve anything.
+        Gateway.RaiseMissionWake = RaiseWake;
+        ReportAiToTheGateway();
+    }
+
+    /// <summary>
+    /// THE COMPOSITION <see cref="StartAsync"/> BUILDS, WITHOUT THE MACHINE IT RUNS ON — so a test can
+    /// drive this host's own start path and its own resume.
+    ///
+    /// <para><see cref="ComposeTheAi"/> is the same method <see cref="StartAsync"/> calls, run over a
+    /// database and a connector the caller owns. Left out is what one test assembly cannot share: the
+    /// instance lock and the pipe server (one per home and one per pipe name), the collectors, the
+    /// background loop and the relay's start-up reconcile over every role's home. The AI's processes
+    /// report to <paramref name="presence"/> rather than to the process-wide register, which is sticky:
+    /// one agent process entered there would weaken every inbox sighting the rest of the assembly
+    /// records.</para>
+    /// </summary>
+    internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence)
+    {
+        var host = new AppHost { _db = db, _presence = presence };
+        host.Onboarding = new OnboardingStore(db);
+        host.Connector = connector;
+        host.Gateway = new TradingGateway(db, connector, host.Health);
+        host.ComposeTheAi(db);
+        return host;
     }
 
     /// <summary>
@@ -1037,6 +1079,78 @@ public sealed class AppHost : IAsyncDisposable
             ? (MissionEventIds.Inbox(at), Json.Write(new { added = result.Arrived, seen = result.Seen }))
             : null;
 
+    // ---- starting the AI -----------------------------------------------------------------------
+
+    /// <summary>
+    /// STARTS THE AI, AND IS THE ONE THING THAT DOES. The Start the AI press, the last screen of
+    /// setup and a restart that resumes a working AI all come here, so none of them can skip a check
+    /// another makes: the runtime chosen in settings, <see cref="RuntimeCatalog.Require"/> rather than
+    /// <c>Find</c>, then prepare, then start — and the start is where the protected configuration
+    /// refuses with <c>CONTAINMENT_REQUIRED</c>, in the runtime, exactly as it always has.
+    ///
+    /// <para><b>A start that throws is said, never swallowed.</b> The owner's own words go on the card
+    /// (<see cref="AiNotStarted"/>) and into the activity log with the code beside them, the detail
+    /// into the engineering log, and the exception goes on to the caller: a press shows it in the strip
+    /// under the header as it always did, and the resume has nobody to show it to but these two. The AI
+    /// is left stopped — the supervisor keeps no runtime that would not start, so nothing can launch a
+    /// turn through it.</para>
+    ///
+    /// <para>It switches no page. The press does that itself, afterwards, because the owner pressed
+    /// something that means "let me talk to it"; a restart pressed nothing.</para>
+    /// </summary>
+    public async Task StartTheAiAsync()
+    {
+        try
+        {
+            // Require, not Find: an unreadable runtimes.json yields no manifests at all rather than
+            // the built-ins, so this is the call that turns "the file the owner wrote cannot be read"
+            // into a refusal in their own words instead of a different program starting quietly — and
+            // "no manifest for 'codex'" and "runtimes.json could not be read" are different mornings,
+            // only one of which has a repair the owner can perform.
+            var manifest = RuntimeCatalog.Require(Gateway.Settings.SelectedRuntimeId ?? "opencode");
+            await Agent.PrepareAsync(manifest, WorkspaceContext());
+            await Agent.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            var why = InTheOwnersWords(ex);
+            AiNotStarted = why;
+            try
+            {
+                Gateway.Log.Activity(ex is TradeAgentException t
+                    ? $"The AI was not started: {why} ({t.Code})"
+                    : $"The AI was not started: {why}", "warn");
+                Gateway.Log.Engineering("Agent", "not_started", "warn", ex: ex);
+            }
+            catch (Exception) { /* the log is the database; the card and the caller still have it */ }
+            Changed?.Invoke();
+            throw;
+        }
+
+        AiNotStarted = null;
+
+        // THE CONVERSATION IS OPENED HERE, on the thread that started the AI, and metered once. The
+        // getter makes it on first use and is not safe to race: a resumed loop asks for it from its
+        // own thread the moment it starts while the window asks from the UI thread, and two first
+        // uses at once could open two sessions or attach the meter twice.
+        _ = Conversation;
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// WHY THE LAST START DID NOT HAPPEN, in the owner's words, or null when it did. Cleared by the next
+    /// start that works; the Dashboard card says it while the AI is stopped.
+    /// </summary>
+    public string? AiNotStarted { get; private set; }
+
+    /// <summary>
+    /// The sentence the owner reads about a failure: what happened and what to do, never a stack trace.
+    /// The same words the strip under the header shows for a failed press (<c>Ui.Report</c>), so a
+    /// start refused on a restart reads exactly as the same start refused on the button.
+    /// </summary>
+    internal static string InTheOwnersWords(Exception ex) =>
+        ex is TradeAgentException t ? $"{t.Info.UserMessage} {t.Info.Repair}".Trim() : ex.Message;
+
     // ---- the mission ---------------------------------------------------------------------------
 
     /// <summary>
@@ -1053,7 +1167,8 @@ public sealed class AppHost : IAsyncDisposable
         // nothing happens until the next scheduled review — half an hour of a card reading
         // "waiting", which reads exactly like a button that did not work. Deliberately raised HERE
         // and not in MissionLoop.Start: a restart that resumes a mission the owner had already
-        // started is not a new instruction, and must launch nothing on its own.
+        // started is not a new instruction — it takes the wakes that are already due and raises
+        // none of its own.
         RaiseWake(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review,
             Json.Write(new { because = "the owner set the AI to work on its own" }));
         Changed?.Invoke();
@@ -1101,12 +1216,38 @@ public sealed class AppHost : IAsyncDisposable
         s.ResumeAiOnStart ? MissionOnStart.Resume :
         MissionOnStart.ForgetItWasWorking;
 
-    void ResumeMissionIfItWasWorking()
+    /// <summary>
+    /// WHAT <see cref="StartAsync"/> DOES LAST: acts on <see cref="DecideOnStart"/>.
+    ///
+    /// <para><b>Resuming starts the AI as well as the loop.</b> The loop alone takes no turn: with no
+    /// runtime there is no conversation, so every look it takes ends without one and the card reads
+    /// "the AI has not been started" until somebody presses the button — measured in the observed run
+    /// of 2026-10-01, and the morning an autonomous product exists not to have. So the AI is started
+    /// first, through <see cref="StartTheAiAsync"/> and only through it, so the restart meets every
+    /// check the press meets and is refused in the same words; then the loop, so its first look
+    /// already has a conversation to take the next due wake with.</para>
+    ///
+    /// <para><b>Only once setup is finished.</b> Before that the last screen of setup is where the AI
+    /// is started, by the owner. And a start that is refused still resumes the loop, exactly as before:
+    /// the owner's choice stands, the loop takes nothing while the AI is stopped, and the press that
+    /// starts it later is all the owner has to do.</para>
+    ///
+    /// <para>A start that fails does not fail the app's own start. It has already said why on the card
+    /// and in the activity log, and an app that would not open because the AI would not start has
+    /// turned a refusal into an outage.</para>
+    /// </summary>
+    internal async Task ResumeOnStartAsync()
     {
         switch (DecideOnStart(Gateway.Settings))
         {
-            case MissionOnStart.Resume: Mission.Start(); break;
-            case MissionOnStart.ForgetItWasWorking: Gateway.Update(s => s.AiWorksOnItsOwn = false); break;
+            case MissionOnStart.Resume:
+                try { if (Onboarding.IsComplete()) await StartTheAiAsync(); }
+                catch (Exception) { /* said on the card and in the activity log by StartTheAiAsync */ }
+                Mission.Start();
+                break;
+            case MissionOnStart.ForgetItWasWorking:
+                Gateway.Update(s => s.AiWorksOnItsOwn = false);
+                break;
         }
     }
 
