@@ -6935,3 +6935,35 @@ Names vs `main` (git objects): sets 1948 → 1948, 0 removed, 0 added. Scan clea
   AI paused (one press, nothing running). Briefed `U-vendor-limit` (`d2c5b66`). Spend today 1.9397 USD of the 5 USD cap (four turns charged reservations).
 - **Interventions so far, all through the app:** the presses listed in both parts, two pauses (15:58Z: the self-wake churn on a blocked `trade`; ~18:20Z: the
   vendor limit), two relaunches on landed builds (17:26Z, 18:00Z). Nothing seeded; no row written by hand.
+
+## 2026-10-01 — U-resume-agent landed: a restart that resumes a working mission also starts the AI it needs, through the one start path a press takes
+
+Found in the observed run (attempt 2, second part, above: after a relaunch the mission flag resumed but the runtime did not — "stopped — the AI has not
+been started" — until the owner pressed "Start the AI"). Built by one fresh Opus builder from the 28-line brief `docs/briefs/U-resume-agent.md` (landed
+`2fd0318`), rebased onto `2dab37f` with no conflict. Merge `e06e187`, 4 commits (3 items + the report), 11 files, +657/−113. No schema rung. Not the money path:
+the launch path; `CONTAINMENT_REQUIRED` and every launch check unchanged.
+
+- **(a) One start:** `AppHost.StartTheAiAsync` (`SelectedRuntimeId` → `RuntimeCatalog.Require` → `Agent.PrepareAsync` → `Agent.StartAsync`) is what the press
+  (`MainWindow`, which still switches to Chat), setup's last screen and the restart all call; `ResumeOnStartAsync`, awaited last in `StartAsync`, calls it only
+  when `DecideOnStart` says `Resume` and setup is complete, then `Mission.Start()`. A start that throws puts the press's words on the card ("stopped — …"), a
+  `warn` activity line "The AI was not started: … (CODE)" and an engineering line; the resume swallows it, the press rethrows as before.
+- **(b) `ResumeOnStartTests` (6)** drive the host's own composition (`ComposeTheAi`, extracted verbatim, over a test database) with a real `CliAgentRuntime`
+  over a one-line probe: working + resuming → the runtime runs and the next due wake is taken without a press; paused → nothing; resuming off → nothing and
+  the flag written back; setup unfinished → nothing; armed live and uncontained → `CONTAINMENT_REQUIRED` in the same words, no runtime; the press, setup and
+  the restart through one method. **(c)** `CONTRACTS.md` and `docs/USER-GUIDE.md` ("It picks up where it left off"), one sentence each.
+- **Deviations kept, judged at landing:** a runtime whose start threw is now stopped and dropped (kept, its conversation let the resumed loop launch turns
+  refused at the launch, each holding a reservation) — so a refused PRESS no longer leaves a dead conversation; the press gains the card and activity lines;
+  an optional `AgentPresence` seam (the product passes none); the conversation opens on its own thread; `StartAsync` awaits the start, so a RESUMING app first
+  paints after the CLI's version probe (NOT measured; a follow-up candidate: start after first paint). One existing source assertion in
+  `MissionControlsTests` now pins `await ResumeOnStartAsync();` instead of the old arm's text — its behavioural content moved into (b), name unchanged.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `bb64295`, Release `--no-incremental`: 19 projects, 0
+warnings, 0 errors; Unit 1198 + Fault 399 + Integration 699 = 2296 passed, 0 failed, 1 skipped; `ResumeOnStartTests` + `MissionControlsTests` 3× 20/20. RED on
+the base: `:62 the restart resumed the loop and left the AI it needs stopped`; `:160 Assert.Single() Failure: The collection did not contain any matching items
+… Collection: []`; `:216 … Not found: "await _host.StartTheAiAsync();"`; the paused, resuming-off and setup-unfinished tests GREEN on the base (guards).
+Mutant, the start removed from the resume: `:62` red with the same line; restored. Manager's gate at `e06e187` (the reported tip, 0 behind `main` `2dab37f`; `src`/`tests` identical to the code tip `bb64295`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1198/1198 (29 s), Fault 399/399 (1 m 28 s), Integration 699/700, 1 skipped (11 m 9 s, its normal length) → 0 failed. Names vs `main` (git objects): sets 1948 → 1954, 0
+removed, 6 added. Scan: `CancellationToken` and `AiTurnAllowance(Input|Output)Tokens` excluded by name, otherwise clean; no trailers; `rev-list --count` → 0.
+CI at `e06e187`: recorded when complete.
+
+**NOT done, NOT verified:** the observable in the running app (the manager's relaunch, recorded with the observed run); the whole `StartAsync` is not run in a
+test (its call to the resume is a source assertion); Windows, where the test's probe runs through `powershell -File`; the first-paint delay; no box.
