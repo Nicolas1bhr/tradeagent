@@ -6847,3 +6847,31 @@ GREEN on all four jobs (ubuntu, windows, macos, package).
 **NOT done, NOT verified:** the observable in the running app (the manager's relaunch, recorded with the observed run); the same-user gap is stated, not closed —
 a process may connect, keep the socket in a child and exec the real `trade` (`U-contain-2`); the Doctor's no-recorded-hash sentence still reads "not checked"
 though such a caller is refused; Linux seen only through CI's ubuntu runner; no box, no money.
+
+## 2026-10-01 — U-self-wake landed: a role's own writes no longer wake it — the inbox wake fires for material that ARRIVED, not for the AI's own journal
+
+Found in the observed run (attempt 2, first part, above: each Operations turn rewrote its own `trading/PLAN.md` and `JOURNAL.md`, the next scan raised
+`inbox:<instant>` `{"added":2,"seen":20}`, and the chair woke about once a minute to find, in its own words, "Inbox and `in/` contained no new material").
+Built by one fresh Opus builder from the 26-line brief `docs/briefs/U-self-wake.md` (landed `516376c`), cut from `u-peer-unix`'s tip, rebased onto `88a23a2`
+with no conflict. Merge `a5166e7`, 4 commits (3 items + the report), 8 files, +298/−13. No schema rung. Not the money path: the paid-turn trigger.
+
+- **(a) Count what arrived:** `ScanResult.AddedBy` (additions by the origin each new row was written with, counted where `MaterialStore.Observe` answers) and
+  `ScanResult.Arrived` = `Inbox` + `InboxUnattested`; `AppHost.ScanMaterials` raises what `AppHost.InboxWake` returns — a wake only when `Arrived > 0`, its
+  `added` counting arrivals. `Agent` (a role's own write) and `App` (the app's files; relay deliveries wake through their own `task:` events) never wake.
+  The ledger is unchanged: `MaterialStore` and the hashing untouched, rows and origins asserted beside every wake.
+- **(b) `InboxWakeTests`** on the real scanner, the app's `InboxWake` and the real queue: a role's own plan and journal raise no inbox wake; a file dropped in
+  `inbox/` still raises one; a relay delivery wakes its recipient by its `task:` and raises no inbox wake. **(c)** `MissionEventKind.Inbox`'s summary, the
+  `Reason` arm and one sentence in `CONTRACTS.md` say why "new material arrived in `../inbox`" is now true by construction.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `f5fe843`, Release `--no-incremental`: 19 projects, 0
+warnings, 0 errors; Unit 1192 + Fault 399 + Integration 699 = 2290 passed, 0 failed, 1 skipped; `InboxWakeTests` 3× 3/3; `CouncilLoopTests` 3× 11/11. RED on
+the base (the old `result.Added > 0` trigger moved unchanged into the seam): `:100 Assert.Null() Failure … Actual: Tuple ("inbox:2026-10-01T17:28:04.365Z",
+"{\"added\":2,\"seen\":2}")`; `:196 Assert.Single() Failure: The collection contained 2 items` (the relay's `task:` report wake plus an inbox wake); the drop
+test's wake half GREEN on the base (a guard), its count half red `:148`. Mutant, the origin filter removed (`Arrived => AddedBy.Values.Sum()`): `:100` red with
+the same tuple; restored. Manager's gate at `a5166e7` (the reported tip, 0 behind `main` `88a23a2`; `src`/`tests` identical to the code tip `f5fe843`; run through the builder's own gate script — the manager's had been overwritten in the shared scratchpad, same commands), Release: build `--no-incremental` → 0 warnings, 0 errors; Unit 1192/1192 (23 s), Fault 399/399 (1 m 28 s), Integration 699/700, 1 skipped (11 m 5 s, its normal length) → 0 failed. Names vs `main` (git objects): sets 1945 → 1948, 0 removed, 3 added. Scan clean, no exclusions; no trailers;
+`rev-list --count` → 0. CI at `a5166e7`: recorded when complete.
+
+**Deviations kept:** the wake payload's `added` now counts arrivals only; the engineering `scan` line gains `added_by` and `arrived`. **NOT done, NOT verified:**
+an `InboxUnattested` row can also be a role's own write into `../inbox`, which still wakes the chair (no new power — a role can already ask for a `self` wake);
+the observable in the running app (the manager's relaunch, recorded with the observed run); the ubuntu flake `CouncilLoopTests.A_file_dropped_between_turns…`
+(`Actual: InboxUnattested`, run 36891262990 attempt 1) is untouched by this unit and not briefed; no box.
