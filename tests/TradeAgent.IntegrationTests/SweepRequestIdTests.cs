@@ -691,7 +691,9 @@ public class SweepRequestIdTests
     /// confirmed` is what the cancel reads WHILE something is left of the operation deadline when
     /// its turn comes; with nothing left the product answers `not-sent`, which is honest, correct,
     /// and the reply that fails <c>Assert.NotEmpty</c>. That is run 35501396212's red at
-    /// <c>d9ae716</c>, on a windows job whose Unit suite took 19 m 14 s against the usual ~40 s.</para>
+    /// <c>d9ae716</c>, where this test took 34 s, on a windows job whose three suites ran 1.25-1.56x
+    /// as long as on the green windows jobs either side of it (Unit 19 m 14 s against 12 m 22 s to
+    /// 15 m 26 s at <c>8636204</c>, <c>c17d5c1</c> and <c>3746774</c>).</para>
     ///
     /// <para><b>MEASURED, and this is what decides it rather than the red.</b> D — everything the
     /// RUNNER spends inside the operation, the composite row, the book read's own SQL and each leg's
@@ -699,15 +701,16 @@ public class SweepRequestIdTests
     /// directly on draft PR #23 (runs 35504722157 and 35513092386) by running THIS sweep on THIS
     /// fixture with the latency at zero and a five-minute budget, so that the reply's wall time IS
     /// D. Three rounds per runner over three runs: ubuntu-latest 4-10 ms, macos-latest 2-6 ms,
-    /// windows-latest 31-254 ms. Against 5000 ms of room that is 20x on the worst windows reading —
-    /// and the job that went red was running 29x slow by its own suite's clock.</para>
+    /// windows-latest 31-254 ms. Against 5000 ms of room that is 20x on the worst windows reading, on
+    /// a job only 1.25-1.56x slow by its suites' clocks — so the runner spent more than the whole
+    /// room inside that one sweep, a stall no suite clock shows and nothing here can size.</para>
     ///
     /// <para><b>Why not simply buy more room.</b> The room is <c>B - 2L</c> and the cancel must not
     /// fit in it, so <c>L > B - 2L</c> and the room can never exceed a third of the budget — while
     /// the sweep's wall time IS the budget. Room costs three times itself in seconds, every run, on
-    /// every platform: covering 29x of the healthy windows figure needs B = 22 s, and the 39.52x
-    /// this repository has already measured for windows file IO needs more. Buying a factor that
-    /// the next starved job beats is what the category exists instead of. Nothing is loosened to
+    /// every platform: the 5000 ms that was not enough already costs the 17 s this sweep takes, and a
+    /// stall with no measured size gives no factor to buy. Buying a factor that the next stalled
+    /// sweep beats is what the category exists instead of. Nothing is loosened to
     /// get in: B, L and every assertion are byte-identical to the U-sweep-latency-win tip.</para>
     /// </summary>
     [Fact]
