@@ -6967,3 +6967,35 @@ CI at `e06e187`: recorded when complete.
 
 **NOT done, NOT verified:** the observable in the running app (the manager's relaunch, recorded with the observed run); the whole `StartAsync` is not run in a
 test (its call to the resume is a source assertion); Windows, where the test's probe runs through `powershell -File`; the first-paint delay; no box.
+
+## 2026-10-01 — U-vendor-limit landed: when the AI's own plan runs out, the app says so in the vendor's words, waits until the stated minute, and a turn refused before any work costs nothing
+
+Found in the observed run (attempt 2, second part, above: the owner's codex plan ran out; the card showed stderr's first line, a turn refused at the first
+request was charged its whole reservation, and the loop planned its next look inside the limit). Built by one fresh Opus builder from the 30-line brief
+`docs/briefs/U-vendor-limit.md` (landed `d2c5b66`), rebased over U-resume-agent (one conflict, `MissionSentence`: main's arm kept, the hold's added). Merge
+`c56540e`, 5 commits (4 items + the report), 11 files, +1151/−23. No schema rung (the refusal rides in `ai_attempt.context`). The paid-turn trigger and the
+cost record; not the money path.
+
+- **The capture, RUN once at 18:20:07Z** (codex-cli 0.153.4, the owner's plan limited): exit 1 in 4 s; stdout `thread.started`, `turn.started`, `error` "You've
+  hit your usage limit. … try again at 10:30 PM.", `turn.failed` (the same sentence); stderr only "Reading additional input from stdin...". Kept verbatim in
+  `VendorLimitTests` with the thread id zeroed (read by the manager before the push: no account, address or credential in it). The dated form and "try again
+  later." come from `strings` of the binary — NOT VERIFIED in a stream.
+- **(a) Recognised as data:** `RuntimeManifest.UsageLimit` (codex: pattern, retry regex, five formats; OpenCode none); the turn ends with
+  `AgentTurnEnded.Limit` (vendor, sentence, retry instant, `BeforeAnyWork` fixed at the refusal) and the vendor's sentence as the last line the card shows.
+- **(b) Waited out:** launches on the refusing runtime are held until the END of the named minute (codex drops the seconds), else now + the existing backoff;
+  held roles are stepped over with their wakes kept due; the card reads "…: OpenAI Codex CLI's usage limit is reached — the AI waits until 22:31" and the
+  activity log carries that plus the vendor's sentence, once. "10:30 PM" is read in the machine's zone on the local date of the event (the CLI is the app's own
+  child, so both read one zone — NOT VERIFIED on Windows). **Deviation kept:** the hold is per runtime, so a role on the harness, billed elsewhere, works on.
+- **(c) Charged honestly:** a turn with usage → as before; NO usage and the refusal before any item, text, tool or usage → cost 0, `context.refused` with
+  `ended: VENDOR_USAGE_LIMIT`; any other turn without usage → the reservation, unchanged (the turn cut mid-work keeps 1.28 in the test, as the rule says).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `a39ca4f` (on `89328a0`), Release `--no-incremental`: 19
+projects, 0 warnings, 0 errors; Unit 1212 + Fault 399 + Integration 699 = 2310 passed, 0 failed, 1 skipped; touched classes 3× 72/72. RED on the base
+(`d2c5b66`, again `89328a0`): no launch `Assert.Single() Failure: The collection contained 2 items`; refused-before-work `Expected: 0 / Actual: 1.28`; last line
+`Actual: "OpenAI Codex CLI did not finish: Reading "…`; the typed reason `error CS0246: … 'UsageLimitPlan' could not be found`. Mutant, the hold removed: the
+no-launch test red with the same line; restored. Manager's gate at `6431da2` (the reported tip, 0 behind `main` `89328a0`; landed as `c56540e` after a docs-only rebase over `1b504fe`, `src`/`tests` identical), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1212/1212 (29 s), Fault 399/399 (1 m 28 s), Integration 699/700, 1 skipped (11 m 9 s, its normal length) → 0 failed. Names vs `main` (git objects): sets 1954 → 1969, 0 removed, 15 added. Scan: `CancellationToken`,
+`_cts.Token`, `input_tokens`, `output_tokens` excluded by name, otherwise clean; no trailers; `rev-list --count` → 0. CI at `c56540e`: recorded when complete.
+
+**NOT done, NOT verified:** the hold lives in memory (after a restart the next turn is refused again, now at cost 0); the owner's own chat neither records nor
+lifts it; the refused turn's wakes settle `failed`; no signature for OpenCode or the harness; the AppHost wiring never ran in the app (attempt 3's first step);
+Windows; no box.
