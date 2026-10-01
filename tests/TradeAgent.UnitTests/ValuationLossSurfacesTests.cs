@@ -49,9 +49,10 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
     /// <para><b>MEASURED, on draft PR #23 (runs 35504722157 and 35513092386, the second run twice),
     /// by a throwaway probe that timed each health pass of the exit fixture, three runs each:</b> the
     /// pass that fires the exit spent 26.8-32.8 ms on ubuntu-latest, 16.5-22.4 ms on macos-latest and
-    /// <b>712.5-1258 ms on windows-latest</b> — of 2000. A windows job whose Unit suite runs 19 m 14 s
-    /// against the usual ~40 s has nothing like that left, and the SAME probe with the budget cut to
-    /// 1 ms reproduced the runner's red exactly on all three runners, in all three runs: the valuation
+    /// <b>712.5-1258 ms on windows-latest</b> — of 2000, and the windows job that went red at
+    /// <c>d9ae716</c> ran its three suites 1.25-1.56x as long as the green windows jobs either side of
+    /// it (Unit 19 m 14 s against 12 m 22 s to 15 m 26 s). The SAME probe with the budget cut to 1 ms
+    /// reproduced the runner's red exactly on all three runners, in all three runs: the valuation
     /// CANCEL press does not resolve, so
     /// <c>ExitLostValuationAsync</c> refuses to send a second press of its own kind
     /// (<c>valuation_cancel_press_already_open</c>, <c>valuation_exit_press_already_open</c> in the
