@@ -7,10 +7,11 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// WHO MAY PRESENT A LAUNCH GRANT, as a rule rather than as a kernel call.
 ///
-/// Separated from the call for the reason the ATAS bridge separates its own peer rule: the call runs
-/// only on Windows, the rule decides, and a rule that can only be exercised on one platform is a rule
-/// nobody exercises. The call is checked by <c>LaunchGrantTests</c> against a stand-in and by the
-/// hosted Windows runner against the real thing.
+/// Separated from the call for the reason the ATAS bridge separates its own peer rule: the call asks
+/// the kernel, the rule decides, and a rule is exercised best where any answer can be arranged. The
+/// call is checked by <c>LaunchGrantTests</c> against the real kernel on all three platforms, with the
+/// real trade command on the other end, and against a stand-in for the answers that are awkward to
+/// arrange for real.
 /// </summary>
 public class PeerImageRuleTests
 {

@@ -29,18 +29,19 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>
     /// WHAT A PEER MUST BE TO PRESENT A GRANT, or null to check nothing.
     ///
-    /// Null is the honest default rather than a hole: off Windows the kernel will not say who is
-    /// holding a pipe at all (<see cref="Security.PeerImage.ClientPath"/> returns null there), so a
-    /// rule applied everywhere would refuse every caller on two of the three platforms this builds
-    /// on. The app configures it where it can be answered, and the Doctor's containment row says in
-    /// the owner's words whether it is configured — an unchecked peer is a fact about the
-    /// installation, not a silence.
+    /// The app configures it on every platform, because the kernel answers on every platform:
+    /// <see cref="Security.PeerImage.ClientPath"/> names the program holding the connection on
+    /// Windows, macOS and Linux, and where the kernel will not say, a caller presenting a grant is
+    /// refused rather than waved through. Null is for a gateway built without the app — a test's —
+    /// and the Doctor's containment row says in the owner's words whether the installation recorded
+    /// what to check against.
     /// </summary>
     public Security.PeerRule? Peer { get; init; }
 
     /// <summary>
-    /// How the image of the peer is read. Overridable so the RULE can be tested where the kernel
-    /// call cannot run; the product never sets it.
+    /// How the image of the peer is read. Overridable so the RULE can be tested against an answer
+    /// that is awkward to arrange for real; the product never sets it, and <c>LaunchGrantTests</c>
+    /// asks the real kernel as well.
     /// </summary>
     public Func<NamedPipeServerStream, string?> PeerImagePath { get; init; } = Security.PeerImage.ClientPath;
 
@@ -751,8 +752,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     // A frame with no grant is authenticated and roleless: it may read, and every
                     // rule that asks which role is calling answers "none". A frame WITH a grant is
                     // making the strong claim, so it gets the strong checks — the register must know
-                    // the token, the turn must not be over, and on a platform where the kernel will
-                    // say, the program holding the handle must be TradeAgent's own trade command.
+                    // the token, the turn must not be over, and the program holding the handle must
+                    // be TradeAgent's own trade command, as the kernel names it on every platform; a
+                    // kernel that will not say is a refusal.
                     if (GrantRefusal(pipe, req, out grant) is { } grantRefusal)
                     {
                         gateway.Log.Engineering("Ipc", "grant_rejected", "warn", session: req.Session,
@@ -1050,9 +1052,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// into a gateway that is misbehaving.
     ///
     /// The image is checked only for a connection that PRESENTS a grant, and only where a rule was
-    /// configured. Off Windows the kernel does not answer the question at all, so a rule applied
-    /// there would refuse everything; that is a gap, it belongs to the platform, and the Doctor says
-    /// so rather than this method pretending otherwise.
+    /// configured — which the app does on every platform. The kernel answers on all three; where it
+    /// will not, the verdict is "could not be identified" and the grant is refused: the kernel's
+    /// silence is a refusal, never a pass.
     /// </summary>
     IpcResponse? GrantRefusal(NamedPipeServerStream pipe, IpcRequest req, out Security.AgentGrant? grant)
     {

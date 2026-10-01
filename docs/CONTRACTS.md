@@ -205,10 +205,22 @@ program that is on the disk and will not run is not downloaded again.
   machine token, and stamped on `AgentContext.Role` / `AttemptId`. A grantless caller is authenticated
   and **roleless**: it may read and `Ops.IsMutating` is refused `ROLE_MAY_NOT_TRADE`. Research's grant
   is refused the same way. A grant that is unknown or expired is refused at `hello`, one chance per
-  connection. Where a `PeerRule` is configured, a caller PRESENTING a grant must also be the app's own
-  `trade` under `Paths.Bin` with the hash `ToolDeployer` recorded, and never under `Paths.Tools` or
-  `Paths.Workspace` — the two folder clauses come FIRST, ahead of the recorded path, so a runtime that
-  rewrote the record cannot satisfy it.
+  connection. A caller PRESENTING a grant must also be the app's own `trade` under `Paths.Bin` with
+  the hash `ToolDeployer` recorded, and never under `Paths.Tools` or `Paths.Workspace` — the two
+  folder clauses come FIRST, ahead of the recorded path, so a runtime that rewrote the record cannot
+  satisfy it. The app configures that `PeerRule` on every platform and **the kernel answers on all
+  three** (`U-peer-unix`): Windows `GetNamedPipeClientProcessId` → `QueryFullProcessImageName`, macOS
+  `getsockopt(SOL_LOCAL, LOCAL_PEERPID)` on the accepted socket → `proc_pidpath`, Linux
+  `getsockopt(SOL_SOCKET, SO_PEERCRED)` → `/proc/<pid>/exe`. **Where the kernel will not say, the
+  caller is refused** ("could not be identified at all") — which until 2026-10-01 was every CLI turn's
+  `trade` on macOS and Linux, because the rule was applied everywhere and answered only on Windows.
+  Off Windows the kernel reports a resolved path (a home under macOS `$TMPDIR` is `/var/…` and comes
+  back `/private/var/…`), so the recorded folders are compared resolved too — `bin`'s folder only,
+  the two forbidden folders whole — and the kernel's own answer is never re-resolved. It closes the
+  cheap attack, a program of the agent's own presenting the grant; it does not close the same-user
+  one: a process that connects, keeps the socket in a child and then execs the real `trade` can be
+  named `trade` while the child speaks, as a Windows process can duplicate a handle out of a real
+  `trade.exe`. That is `U-contain-2`'s.
 - **The protected configuration.** While `ModeIsLive && LiveActivated` and no OS sandbox reports OK
   (none can: `Containment.Sandbox()` returns `NONE` on every platform), no AI runtime is started at
   all — `CONTAINMENT_REQUIRED`, said on the Doctor's `AI containment` row and in `docs/USER-GUIDE.md`.

@@ -26,9 +26,12 @@ public sealed record PeerRule(string? ExpectedPath, string? ExpectedHash, string
 /// though it is byte-identical, because the agent can rewrite a file it owns and cannot rewrite one
 /// under the app's bin.
 ///
-/// The verdict is a pure function so it can be tested on any platform; the kernel call is Windows
-/// only, and off Windows the caller gets null and must treat it as "not identified" rather than
-/// "fine" — which is why the rule is only ENFORCED where a <see cref="PeerRule"/> was configured.
+/// The verdict is one function so it can be tested on any platform. The kernel is asked on all three
+/// — Windows names the pipe's client process, macOS and Linux the peer of the accepted Unix-domain
+/// socket — and wherever it will not say, the caller gets null, which the verdict refuses as "not
+/// identified" rather than reading as "fine". The app configures a <see cref="PeerRule"/> on every
+/// platform. Off Windows the verdict resolves the RECORDED folders through the file system, never
+/// the kernel's answer (see <c>Same</c>).
 /// </summary>
 public static class PeerImage
 {
@@ -78,8 +81,9 @@ public static class PeerImage
     }
 
     /// <summary>
-    /// The image path of the process that dialled in, as the kernel reports it. Null off Windows and
-    /// null when the query fails — both of which the caller must read as "not identified".
+    /// The image path of the process that dialled in, as the kernel reports it, on Windows, macOS and
+    /// Linux alike. Null when the kernel will not say or the query fails — which the caller must read
+    /// as "not identified", and refuse.
     /// </summary>
     public static string? ClientPath(NamedPipeServerStream pipe)
     {
@@ -98,9 +102,10 @@ public static class PeerImage
     /// process; null at every step that does not answer, so a kernel that will not say is refused.
     ///
     /// What the pid is, said rather than implied: macOS answers with the last process to use the
-    /// far end's socket, Linux with the process that called connect. A process of the same user can
-    /// still hand a connected socket to a program of its choosing, exactly as a Windows process can
-    /// duplicate a pipe handle — the same-user gap <c>U-contain-2</c> exists for, not one this closes.
+    /// far end's socket, Linux with the process that called connect. So a process of the same user
+    /// can still be named as a program it is not — connect, keep the socket in a child, exec the real
+    /// trade — exactly as a Windows process can duplicate a pipe handle out of a real trade.exe: the
+    /// same-user gap <c>U-contain-2</c> exists for, not one this closes.
     /// </summary>
     static string? UnixClientPath(NamedPipeServerStream pipe)
     {

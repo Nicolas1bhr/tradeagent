@@ -83,10 +83,11 @@ public static class Containment
                 ? "a session of its own, so cancelling a turn kills its whole process group"
                 : "nothing: TradeAgent's own trade command is not installed, so no session can be started";
 
+        // The same sentence on every platform: the kernel names the program on the other end on
+        // Windows, macOS and Linux alike (PeerImage.ClientPath), and a caller it will not name is
+        // refused.
         var peer = rule.ExpectedHash is { Length: 64 }
-            ? OperatingSystem.IsWindows()
-                ? "the program on the other end of the AI's pipe is checked against the trade command this app installed"
-                : "recorded, but only Windows will say which program holds a pipe, so it is not checked here"
+            ? "the program on the other end of the AI's pipe is checked against the trade command this app installed"
             : "not checked: TradeAgent has not recorded which trade command it installed";
 
         return new ContainmentFacts(
