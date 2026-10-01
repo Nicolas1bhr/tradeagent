@@ -6906,3 +6906,32 @@ Names vs `main` (git objects): sets 1948 → 1948, 0 removed, 0 added. Scan clea
 `b3582d7`) stay red in the record; this landing is what was owed for them.
 
 **NOT done, NOT verified:** the unmoved siblings above are unmeasured; the probes' "this Mac" figures were taken while the observed run was going; no box.
+
+## 2026-10-01 — the observed run, attempt 2, second part: a real model authors, backtests and iterates in the running app; two fixes verified there; the owner's codex plan runs out; docs only
+
+`docs/briefs/U-observed-loop.md` (in flight), same home and bounds as the first part (above). A checkpoint, not the record: the milestone is NOT claimed.
+
+- **U-peer-unix verified in the running app:** bundle rebuilt at `88a23a2` on the same home (17:26Z; the AI had been paused, nothing cut); `Start the AI`
+  and `Let the AI work on its own` (two presses) again, the pause having survived the restart as designed; from 17:27Z no `grant_rejected` in
+  `engineering_log`.
+- **The first arrow, observed:** 17:28:19Z the Operations Director froze the shipped `ma-crossover` program unchanged (`3b3364734ea9…`, `size fixed 1`) and ran
+  `trade backtest` over dataset 1 up to 2026-05-31T23:59 (before the holdout, as its own brief said) → FAULTED, refused in words: "this window holds more
+  than the 200000 bars one run may trace (about 138 days of one-minute bars) … Ask for a shorter window with --from and --to; a year is four runs of a
+  quarter each." The same turn, 17:29:18Z, its own modification `7773a62ea8ef…` (`size fixed 0.05`, the envelope's ceiling; "A capital-consistent …") over
+  2025-10-01 → 2025-12-31: COMPLETED, 132,480 bars, 321 trades, 74 wins, gross −2,212.24, fees 3,597.03, net −5,809.27, max drawdown 5,819.67 on 10,000.
+- **Two roles, one experiment each:** Operations briefed Research to review that run; Research's report (the agent's words): "Independent review … Primary
+  diagnosis: turnover/friction. Fees are 61.92% of …"; 17:37:04Z Operations' third candidate `fe6a070d2404…` "A lower-turnover moving-average crossover"
+  (`fast 20 → 50`, `slow 50 → 200`) over 2025-10-01 → 2026-02-16T21:19: 410 trades, 100 wins, gross −2,647.37, fees 4,027.32, net −6,674.69. Three versions,
+  three runs, all by the model, all app-computed, no verdict requested (the chair's plan: "Do not spend a verdict until a candidate has a recorded backtest
+  and a clear rationale").
+- **U-self-wake verified in the running app:** rebuilt at `f8a7500` at 18:00:34Z — deliberately WITHOUT pausing, as restart evidence: the running turn went
+  `LOST` "the turn was launched and never reported its usage; the reservation stands" (0.324 kept as cost); after it, scans logged `"added_by":{"Agent":…},
+  "arrived":0` and raised no wake; the AI waited for its next scheduled look. Before the fix landed the churn had reached 46 turns.
+- **A third gap, in the restart:** the mission flag resumed (`ResumeAiOnStart`) but the runtime did not — "stopped — the AI has not been started", Agent
+  runtime "unknown" — until the owner pressed "Start the AI" (18:01:5xZ); then the next turn came by itself (18:02:09Z). Briefed `U-resume-agent` (`2fd0318`).
+- **A fourth gap: the owner's codex plan ran out.** Attempts `…1802091` (20 command items) and `…1808061` (0 items, 2.9 s) exited 1 with no usage, each
+  charged its 0.324 reservation; codex's session log, the vendor's words: "You've hit your usage limit … try again at 10:30 PM." (`usage_limit_exceeded`);
+  the card showed "OpenAI Codex CLI did not finish: Reading additional input from stdin..." and the loop planned its next look inside the limit. ~18:20Z the
+  AI paused (one press, nothing running). Briefed `U-vendor-limit` (`d2c5b66`). Spend today 1.9397 USD of the 5 USD cap (four turns charged reservations).
+- **Interventions so far, all through the app:** the presses listed in both parts, two pauses (15:58Z: the self-wake churn on a blocked `trade`; ~18:20Z: the
+  vendor limit), two relaunches on landed builds (17:26Z, 18:00Z). Nothing seeded; no row written by hand.
