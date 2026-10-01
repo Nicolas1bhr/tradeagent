@@ -28,8 +28,20 @@ internal static class AgentRuntimeProbe
     /// started asserts the file's absence, which is evidence about the operating system rather than
     /// about this class's own bookkeeping.
     /// </param>
+    /// <param name="stderr">
+    /// What the child prints on its standard ERROR before its stream, or nothing. A recorded run is
+    /// both of its streams: codex 0.153.4 prints "Reading additional input from stdin..." there on
+    /// every run, and the app used to put that line on the card as the reason a turn failed.
+    /// </param>
+    /// <param name="exitCode">The code the child exits with. A recorded failure exits as it did.</param>
+    /// <param name="manifest">
+    /// The manifest the session is driven with, built around the script's path — a vendor's SHIPPED
+    /// manifest pointed at the canned stream, so what is under test is the vendor's own data rather
+    /// than a copy of it written into the test. Null is the plain probe runtime below.
+    /// </param>
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
         int sleepSeconds = 0, Func<string?>? model = null, string? marker = null,
+        string? stderr = null, int exitCode = 0, Func<string, RuntimeManifest>? manifest = null,
         [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
@@ -38,6 +50,9 @@ internal static class AgentRuntimeProbe
         var payload = Path.Combine(dir, "stream.txt");
         File.WriteAllText(payload, stream.Replace("\r\n", "\n") + "\n");
 
+        var errors = Path.Combine(dir, "stderr.txt");
+        if (stderr is not null) File.WriteAllText(errors, stderr.Replace("\r\n", "\n") + "\n");
+
         string script;
         if (OperatingSystem.IsWindows())
         {
@@ -45,20 +60,24 @@ internal static class AgentRuntimeProbe
             // exactly how every child here is started.
             var wait = sleepSeconds > 0 ? $"ping -n {sleepSeconds + 1} 127.0.0.1 > nul\r\n" : "";
             var touch = marker is null ? "" : $"type nul > \"{marker}\"\r\n";
+            var err = stderr is null ? "" : $"type \"{errors}\" 1>&2\r\n";
+            var exit = exitCode == 0 ? "" : $"exit /b {exitCode}\r\n";
             script = Path.Combine(dir, "runtime.cmd");
-            File.WriteAllText(script, $"@echo off\r\n{touch}{wait}type \"{payload}\"\r\n");
+            File.WriteAllText(script, $"@echo off\r\n{touch}{wait}{err}type \"{payload}\"\r\n{exit}");
         }
         else
         {
             var wait = sleepSeconds > 0 ? $"sleep {sleepSeconds}\n" : "";
             var touch = marker is null ? "" : $": > \"{marker}\"\n";
+            var err = stderr is null ? "" : $"cat \"{errors}\" 1>&2\n";
+            var exit = exitCode == 0 ? "" : $"exit {exitCode}\n";
             script = Path.Combine(dir, "runtime.sh");
-            File.WriteAllText(script, $"#!/bin/sh\n{touch}{wait}cat \"{payload}\"\n");
+            File.WriteAllText(script, $"#!/bin/sh\n{touch}{wait}{err}cat \"{payload}\"\n{exit}");
             File.SetUnixFileMode(script,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        var manifest = new RuntimeManifest
+        var built = manifest?.Invoke(script) ?? new RuntimeManifest
         {
             Id = "probe",
             DisplayName = "Probe runtime",
@@ -73,7 +92,7 @@ internal static class AgentRuntimeProbe
         // before it — so a child started here under the shared register would permanently downgrade
         // every inbox sighting in this assembly to InboxUnattested. Measured: it turned three of
         // MaterialLedgerTests red while both classes passed alone.
-        return new AgentSession(manifest, () => script, () => dir, () => new Dictionary<string, string>(),
+        return new AgentSession(built, () => script, () => dir, () => new Dictionary<string, string>(),
             presence: new AgentPresence(), model: model);
     }
 }
