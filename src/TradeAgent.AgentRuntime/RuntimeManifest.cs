@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using TradeAgent.Core;
 
 namespace TradeAgent.AgentRuntime;
@@ -63,6 +65,125 @@ public sealed class ApiKeyPlan
 
     /// <summary>The file's contents. "{key}" is replaced with the key, JSON-escaped.</summary>
     public string? FileTemplate { get; set; }
+}
+
+/// <summary>
+/// HOW THIS VENDOR SAYS IT HAS REFUSED A TURN FOR ITS OWN USAGE LIMIT, AND WHEN IT SAYS TO TRY AGAIN.
+///
+/// <para>Data, like every other vendor behaviour in a manifest: the sentence is the vendor's, it changes
+/// on the vendor's schedule, and a wrong pattern has to be a one-line fix in <c>runtimes.json</c> rather
+/// than a rebuild. A manifest with none recognises nothing, and every such turn stays the failed turn it
+/// always was — which is the honest default for a vendor whose refusal nobody has recorded.</para>
+///
+/// <para><b>The retry time is the vendor's wall clock.</b> Codex prints it in the zone of the machine it
+/// runs on, and the app reads it in <see cref="TimeZoneInfo.Local"/> of the same machine: the CLI is the
+/// app's own child, so both are asking one operating system the same question.</para>
+/// </summary>
+public sealed class UsageLimitPlan
+{
+    /// <summary>Regex matched against the message of the stream's error event. A match IS the refusal.</summary>
+    public string Pattern { get; set; } = "";
+
+    /// <summary>
+    /// Regex whose group <c>at</c> captures the retry time out of the same message, or null for a vendor
+    /// that never states one. A message it does not match states no time.
+    /// </summary>
+    public string? RetryAtPattern { get; set; }
+
+    /// <summary>
+    /// Exact formats for that capture, in the invariant culture. A format with no date in it is a time on
+    /// the machine's current local date, which is how a vendor says "later today".
+    /// </summary>
+    public string[] RetryAtFormats { get; set; } = [];
+
+    /// <summary>The patterns are owner-editable data, so a pathological one costs a second, never the turn.</summary>
+    static readonly TimeSpan MatchTimeout = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// THE REFUSAL THIS MESSAGE IS, or null because it is not one. Never throws: an override whose pattern
+    /// does not compile, or runs away, recognises nothing, and the turn is the failed turn it was.
+    /// </summary>
+    /// <param name="message">The error event's message, as the stream carried it.</param>
+    /// <param name="observedAt">When the event was read — which local date a time with no date is on.</param>
+    /// <param name="zone">The machine's zone; <see cref="TimeZoneInfo.Local"/> unless a test names one.</param>
+    public VendorLimit? Read(string? message, DateTimeOffset observedAt, TimeZoneInfo? zone = null)
+    {
+        if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(Pattern)) return null;
+        try
+        {
+            if (!Regex.IsMatch(message, Pattern, RegexOptions.CultureInvariant, MatchTimeout)) return null;
+            return new VendorLimit(message.Trim(), RetryAt(message, observedAt, zone ?? TimeZoneInfo.Local));
+        }
+        catch (ArgumentException) { return null; }
+        catch (RegexMatchTimeoutException) { return null; }
+    }
+
+    /// <summary>
+    /// THE FIRST INSTANT AT WHICH THE TIME THE VENDOR NAMED HAS CERTAINLY PASSED, or null where it named
+    /// none this can read.
+    ///
+    /// <para><b>The END of the minute it printed.</b> Every format here stops at the minute and the vendor
+    /// drops the seconds, so at HH:MM:00 its limit can still have 59 seconds to run — and a turn launched
+    /// into them is refused, with the wakes it was answering spent on nothing.</para>
+    ///
+    /// <para><b>A wall-clock time the zone passes twice</b> — the hour a clock goes back — is read as the
+    /// LATER of the two instants: the earlier one could be before the limit ends, and the cost of the
+    /// later one is an hour of waiting once a year. A time the zone skips cannot be printed by a vendor
+    /// converting a real instant, and is moved forward past the gap rather than refused.</para>
+    /// </summary>
+    DateTimeOffset? RetryAt(string message, DateTimeOffset observedAt, TimeZoneInfo zone)
+    {
+        if (string.IsNullOrWhiteSpace(RetryAtPattern)) return null;
+
+        var m = Regex.Match(message, RetryAtPattern, RegexOptions.CultureInvariant, MatchTimeout);
+        if (!m.Success || m.Groups["at"] is not { Success: true } at) return null;
+
+        if (!DateTime.TryParseExact(at.Value.Trim(), RetryAtFormats, CultureInfo.InvariantCulture,
+                DateTimeStyles.NoCurrentDateDefault | DateTimeStyles.AllowWhiteSpaces, out var stated))
+            return null;
+
+        // No date in the text is the vendor's "today": the local date of the moment the event was read.
+        var local = stated.Date == DateTime.MinValue.Date
+            ? TimeZoneInfo.ConvertTime(observedAt, zone).Date + stated.TimeOfDay
+            : stated;
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+
+        if (zone.IsInvalidTime(local)) local = local.AddHours(1);
+        var offset = zone.IsAmbiguousTime(local)
+            ? zone.GetAmbiguousTimeOffsets(local).Min()     // the smaller offset is the later instant
+            : zone.GetUtcOffset(local);
+
+        return new DateTimeOffset(local, offset).AddMinutes(1);
+    }
+}
+
+/// <summary>
+/// A VENDOR'S REFUSAL OF ONE TURN FOR ITS OWN USAGE LIMIT, as that turn's stream said it — the typed
+/// reason a turn ended, where the only other evidence is an exit code of 1.
+/// </summary>
+/// <param name="Message">
+/// The vendor's sentence, verbatim. It is what the conversation shows last, and the card with it: the
+/// observed run's card showed stderr's first line instead, which codex prints on every run.
+/// </param>
+/// <param name="RetryAt">
+/// When the limit has certainly ended — see <see cref="UsageLimitPlan"/> — or null where the vendor named
+/// no time, and then the mission loop waits its own backoff exactly as it does after any failed turn.
+/// </param>
+public sealed record VendorLimit(string Message, DateTimeOffset? RetryAt)
+{
+    /// <summary>Who refused, as the owner knows them: the runtime's display name.</summary>
+    public string Vendor { get; init; } = "";
+
+    /// <summary>
+    /// TRUE WHEN THE REFUSAL ARRIVED BEFORE THE STREAM HAD SHOWN ANY WORK: no item of any kind — a
+    /// message, reasoning, a command, a tool — no text and no usage. Decided by the session at the moment
+    /// of the refusal, from the stream it had parsed so far, and the one fact that lets a turn be charged
+    /// nothing: a turn that did any of those may have been billed, and unknown is never zero.
+    /// </summary>
+    public bool BeforeAnyWork { get; init; }
+
+    /// <summary>The word <c>ai_attempt.context</c> carries as <c>ended</c> for a turn that ended this way.</summary>
+    public const string Ended = "VENDOR_USAGE_LIMIT";
 }
 
 /// <summary>
@@ -174,6 +295,12 @@ public sealed class RuntimeManifest
 
     /// <summary>How this runtime takes a pasted key, or null if it signs in another way.</summary>
     public ApiKeyPlan? ApiKey { get; set; }
+
+    /// <summary>
+    /// How this vendor refuses a turn for its own usage limit, or null where nobody has recorded it. See
+    /// <see cref="UsageLimitPlan"/>.
+    /// </summary>
+    public UsageLimitPlan? UsageLimit { get; set; }
 
     /// <summary>
     /// ENVIRONMENT VARIABLE NAMES THIS VENDOR'S CLI READS, and the only names outside TradeAgent's
@@ -447,6 +574,36 @@ public static class RuntimeCatalog
             // only ever mean a session TradeAgent itself started.
             ResumeArgs = ["exec", "resume", "--last", "{prompt}"],
             JsonFlag = "--json",
+            // THE VENDOR'S OWN REFUSAL, RECORDED. codex-cli 0.153.4 on macOS, 2026-10-01T18:20:07Z, run
+            // once in a scratch folder while the owner's plan was limited:
+            //
+            //   codex exec --json --skip-git-repo-check "reply ok"     -> exit 1 after 4 s; stdout
+            //     {"type":"thread.started","thread_id":"…"}
+            //     {"type":"turn.started"}
+            //     {"type":"error","message":"You've hit your usage limit. Upgrade to Pro
+            //       (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to
+            //       purchase more credits or try again at 10:30 PM."}
+            //     {"type":"turn.failed","error":{"message":"<the same sentence>"}}
+            //   and on stderr only "Reading additional input from stdin...".
+            //
+            // No item and no usage: the first request was refused. "10:30 PM" was the machine's own
+            // wall clock — 22:30 CEST, 20:30Z — so the CLI prints the reset in the local zone. The rest
+            // is the binary's own text, read out of that executable with `strings`, not seen in a
+            // stream: every refusal it can print opens "You've hit your usage limit"; the suffixes are
+            // " or try again at " and " or try again later."; the time is "%-I:%M %p" on the same
+            // local date and "%b %-d" + st/nd/rd/th + ", %Y %-I:%M %p" on another one. The dated form
+            // is therefore in the formats below and has NOT been seen in a stream.
+            UsageLimit = new UsageLimitPlan
+            {
+                Pattern = "You've hit your usage limit",
+                RetryAtPattern = @"try again at (?<at>.+?)\.?\s*$",
+                RetryAtFormats =
+                [
+                    "h:mm tt",
+                    "MMM d'st', yyyy h:mm tt", "MMM d'nd', yyyy h:mm tt",
+                    "MMM d'rd', yyyy h:mm tt", "MMM d'th', yyyy h:mm tt"
+                ]
+            },
             // --skip-git-repo-check because the agent's workspace is not a git repository and Codex
             // refuses to run outside one by default.
             //

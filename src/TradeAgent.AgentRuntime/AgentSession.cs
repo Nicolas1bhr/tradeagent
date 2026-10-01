@@ -413,6 +413,7 @@ public sealed class AgentSession(
         var exitCode = -1;
         var raw = "";
         TurnUsage? usage = null;
+        VendorLimit? limit = null;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -427,7 +428,7 @@ public sealed class AgentSession(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, raw, usage) = await RunTurnAsync(exe, message, _cts.Token);
+            (exitCode, raw, usage, limit) = await RunTurnAsync(exe, message, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -456,12 +457,16 @@ public sealed class AgentSession(
                 // of the turn rather than re-derived from Raw by whoever prices it, because the
                 // stream is parsed once, here, and a second parser somewhere else would be a second
                 // thing to keep correct as these CLIs change their event shapes.
-                Usage = usage
+                Usage = usage,
+                // And the vendor's refusal, for the same reason: one reading of the stream, carried
+                // to the loop that has to wait for it and the meter that has to price it.
+                Limit = limit
             });
         }
     }
 
-    async Task<(int ExitCode, string Raw, TurnUsage? Usage)> RunTurnAsync(string exe, string message, CancellationToken ct)
+    async Task<(int ExitCode, string Raw, TurnUsage? Usage, VendorLimit? Limit)> RunTurnAsync(string exe, string message,
+        CancellationToken ct)
     {
         // REFUSED BEFORE ANYTHING IS STARTED, AND THIS IS THE ONLY PLACE A TURN BEGINS.
         //
@@ -550,7 +555,7 @@ public sealed class AgentSession(
         var errorText = (await stderr).Trim();
 
         FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
-        return (process.ExitCode, raw.ToString(), state.Usage);
+        return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
     }
 
     /// <summary>
@@ -572,25 +577,31 @@ public sealed class AgentSession(
             var text = raw.Trim();
             if (text.Length > 0) AppendAi(text);
         }
-        else if (!state.ProducedAnyMessage)
+        else if (!state.ProducedAnyMessage && state.Limit is null)
         {
             // Streaming was asked for but nothing recognisable arrived — a flag the runtime does not
             // have, or an event shape that changed. Showing the raw output is worse than useless
-            // only if it is empty, so show it when it is not.
+            // only if it is empty, so show it when it is not. A refusal the manifest recognised IS
+            // something recognisable, and its raw events are not words the AI said.
             var text = raw.Trim();
             if (text.Length > 0) AppendAi(text);
         }
 
-        if (exitCode != 0)
+        // THE VENDOR'S OWN WORDS, AND LAST. The card shows the last thing the conversation said, and
+        // for a refused turn that used to be "did not finish: Reading additional input from stdin..." —
+        // stderr's first line, which codex prints on every run and which says nothing about why this
+        // one ended. The sentence that does say, and says until when, is the vendor's.
+        if (state.Limit is { } limit)
+        {
+            Append(new ChatTurn(ChatRole.System, limit.Message, DateTimeOffset.UtcNow));
+        }
+        else if (exitCode != 0)
         {
             var detail = errorText.Length > 0 ? Tail(errorText) : $"it stopped with code {exitCode}";
             Append(new ChatTurn(ChatRole.System, $"{manifest.DisplayName} did not finish: {detail}", DateTimeOffset.UtcNow));
         }
-        else
-        {
-            _sessionExists = true;
-        }
 
+        if (exitCode == 0) _sessionExists = true;
         if (_threadId is not null) _sessionExists = true;
     }
 
@@ -614,6 +625,18 @@ public sealed class AgentSession(
         public TurnUsage? Usage { get; private set; }
 
         public void Add(TurnUsage usage) => Usage = Usage is null ? usage : Usage.Plus(usage);
+
+        /// <summary>Item events of every kind the stream has carried — a message, reasoning, a command, a tool.</summary>
+        public int Items { get; set; }
+
+        /// <summary>
+        /// WHETHER THE STREAM HAS SHOWN ANY WORK AT ALL: an item of any kind, text, a tool or usage. A
+        /// turn with none of them when the vendor refused it is a turn whose first request was refused.
+        /// </summary>
+        public bool Worked => Items > 0 || ProducedAnyMessage || AnnouncedTools.Count > 0 || Usage is not null;
+
+        /// <summary>The vendor's refusal of this turn for its usage limit, or null. The first one stands.</summary>
+        public VendorLimit? Limit { get; set; }
 
         readonly List<string> _pending = [];
 
@@ -675,6 +698,18 @@ public sealed class AgentSession(
         if (type.Contains("error", StringComparison.OrdinalIgnoreCase))
         {
             var msg = Text(e, "message") ?? Text(e, "error") ?? FindText(e, 3) ?? "the AI reported an error";
+
+            // THE VENDOR REFUSING THE TURN FOR ITS OWN USAGE LIMIT, recognised by the manifest's data and
+            // never by a sentence written here. Held rather than shown now, so that it is the LAST thing
+            // the turn says (FinishTurn). Whether any work came before it is settled HERE, at the moment
+            // of the refusal, from what the stream had shown so far — the meter charges a turn nothing on
+            // that answer, so it must not be read off anything that arrived afterwards.
+            if (manifest.UsageLimit?.Read(msg, DateTimeOffset.UtcNow) is { } limit)
+            {
+                state.Limit ??= limit with { Vendor = manifest.DisplayName, BeforeAnyWork = !state.Worked };
+                return;
+            }
+
             Append(new ChatTurn(ChatRole.System, msg, DateTimeOffset.UtcNow));
             return;
         }
@@ -682,6 +717,7 @@ public sealed class AgentSession(
         // Codex: every unit of work arrives as an "item" with its own type.
         if (e.TryGetProperty("item", out var item) && item.ValueKind == JsonValueKind.Object)
         {
+            state.Items++;
             HandleItem(type, item, state);
             return;
         }

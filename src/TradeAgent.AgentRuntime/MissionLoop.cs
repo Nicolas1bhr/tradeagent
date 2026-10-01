@@ -151,6 +151,18 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// working from a paraphrase of the first one's experience.</para>
     /// </summary>
     public string? Cut { get; init; }
+
+    /// <summary>
+    /// THE VENDOR'S OWN REFUSAL OF THIS TURN FOR ITS USAGE LIMIT, recognised in the turn's stream by the
+    /// runtime's manifest (<see cref="RuntimeManifest.UsageLimit"/>), or null.
+    ///
+    /// <para>A vendor CLI ends a refused turn with exit code 1, the same code as a crash, and the one place
+    /// the difference is written down is the sentence in its stream. Read once, by the session that parsed
+    /// that stream, and carried out here so the two readers act on the same reading: the mission loop holds
+    /// its launches until <see cref="VendorLimit.RetryAt"/>, and the meter charges a turn refused before any
+    /// work nothing.</para>
+    /// </summary>
+    public VendorLimit? Limit { get; init; }
 }
 
 /// <summary>
