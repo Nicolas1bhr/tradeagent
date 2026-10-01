@@ -6812,3 +6812,38 @@ approved by the owner 15:3xZ). A checkpoint, not the record: the milestone is NO
   left running meanwhile, its turns blocked and cheap.
 - **Evidence limitation, stated:** the CLI runs unsandboxed as this Mac's user (survey table 4, rows 69/71/87), so the holdout bars in `state/` are readable by
   it and no verdict of this run will be claimed as protected evidence; no live authority is reachable through the app.
+
+## 2026-10-01 — U-peer-unix landed: the agent pipe asks the kernel who is calling on macOS and Linux too, so a CLI turn's `trade` is served there and a copy still is not
+
+The observed run's second refusal (section above: every `trade` call of both roles' codex turns refused `IPC_UNAUTHENTICATED`), built by one fresh Opus builder
+from the 29-line brief `docs/briefs/U-peer-unix.md` (landed `aea4379`), rebased once. Merge `bedd218`, 4 commits (3 items + the report), 7 files, +503/−33.
+No schema rung. MONEY PATH: the gateway pipe's authentication of a launch grant.
+
+- **The cause, SOURCE:** `PeerImage.ClientPath` answered on Windows only while `AppHost.cs:575/:759` configured the peer rule on every platform since `faf892f`
+  (2026-09-12), so off Windows every caller PRESENTING a grant was refused — against the intent written at `GatewayPipeServer.cs:29-38`; the 2026-09-13
+  record's "the Doctor row saying the rule is unenforced elsewhere" was wrong in the other direction. No CLI turn off Windows reached `trade` with its grant.
+- **(a) The kernel answers on Unix:** macOS `getsockopt(SOL_LOCAL 0, LOCAL_PEERPID 2)` on the accepted socket → `proc_pidpath`; Linux `SO_PEERCRED` (`SOL_SOCKET`
+  1, 17) → `/proc/<pid>/exe`, on generic-number architectures only (powerpc, mips, alpha, sparc, parisc refused rather than misread); any failure → null →
+  refused; Windows unchanged; recorded paths compared through `realpath(3)`, so a home under `$TMPDIR` (`/var` → `/private/var`) is not refused for a symlink.
+  Sources cited at the code: MacOSX15.5.sdk `sys/un.h:85,89`, `sys/proc_info.h:743-744`, `libproc.h:102`, `sys/socket.h:716`; xnu `uipc_usrreq.c`,
+  `libproc.c`; man7 `unix(7)`, `socket(7)`, `proc_pid_exe(5)`, `realpath(3)`; Linux `uapi/asm-generic/socket.h`.
+- **(b) Four tests on the real kernel and the real `trade`** (`LaunchGrantTests`): this process is named as its own resolved path; `ToolDeployer`'s `trade`
+  presenting a grant under `PeerRuleNow()` is SERVED; a byte-identical copy elsewhere is refused BY NAME; a copy inside the workspace is refused by that clause
+  (the builder's addition: the only test that catches the new folder resolution being dropped). **(c)** the stale comments, the Doctor sentence and
+  `CONTRACTS.md` now say the rule is answered on all three platforms and a caller the kernel will not name is refused.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `22b424d` (on `516376c`), Release `--no-incremental`: 0
+warnings, 0 errors; Unit 1189 + Fault 399 + Integration 699 = 2287 passed, 0 failed, 1 skipped (11 m 6 s); `LaunchGrantTests` 3× 10/10, `PeerImageRuleTests` 3×
+8/8. RED on the base (macOS) `Failed: 4, Passed: 6`: admission `(exit 1): IPC_UNAUTHENTICATED: this connection presented a launch grant, and the operating system
+would not say which program is holding this connection, so the caller could not be identified at all`; identity `Expected: "/Users/nicolasbeeckman/.dotnet/
+dotnet" Actual: null`. Mutant (`if (!OperatingSystem.IsWindows()) return null;` put back): the admission test red with the same refusal; restored. Draft PR #24
+(closed unmerged): run 36891262990 at `22b424d` — attempt 1 ubuntu red on `CouncilLoopTests.A_file_dropped_between_turns…` (`Actual: InboxUnattested`, not
+this unit's code, first sighting), attempt 2 green on all three; the new tests passed in all six trx. Manager's gate at `bedd218` (the reported tip, 0 behind `main` `516376c`; `src`/`tests` identical to the code tip `22b424d`), Release: build `--no-incremental` → 0 warnings, 0 errors; Unit 1189/1189 (26 s), Fault 399/399 (1 m 29 s), Integration 699/700, 1 skipped (11 m 7 s, its normal length) → 0 failed. Names vs `main` (git objects): sets
+1941 → 1945, 0 removed, 4 added. Scan: judged false positives excluded by name (`IpcToken`, `research.Token`, `CancellationTokenSource`, `cts.Token`, "machine
+token", "the token, the turn must not be over", "Secret-scan exclusions by name"), otherwise clean; no trailers; `rev-list --count` → 0. CI at `bedd218`:
+recorded when complete. Docs-only shas of the day: `faef463` (36885086416), `aea4379` (36887875562), `59f53d2` (36888058887), `516376c` (36888302768) — each
+GREEN on all four jobs (ubuntu, windows, macos, package).
+
+**NOT done, NOT verified:** the observable in the running app (the manager's relaunch, recorded with the observed run); the same-user gap is stated, not closed —
+a process may connect, keep the socket in a child and exec the real `trade` (`U-contain-2`); the Doctor's no-recorded-hash sentence still reads "not checked"
+though such a caller is refused; Linux seen only through CI's ubuntu runner; no box, no money.
