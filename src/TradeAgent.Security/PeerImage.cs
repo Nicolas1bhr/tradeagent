@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace TradeAgent.Security;
@@ -82,10 +83,45 @@ public static class PeerImage
     /// </summary>
     public static string? ClientPath(NamedPipeServerStream pipe)
     {
-        if (!OperatingSystem.IsWindows()) return null;
+        if (!OperatingSystem.IsWindows()) return UnixClientPath(pipe);
         try
         {
             return GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var pid) ? ImagePathOf(pid) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// The same question on macOS and Linux, where .NET's named pipe is a Unix-domain socket and the
+    /// handle of a connected server stream is the ACCEPTED socket's descriptor — the one the kernel
+    /// keeps the peer's identity on. The process id comes off that socket and the image off that
+    /// process; null at every step that does not answer, so a kernel that will not say is refused.
+    ///
+    /// What the pid is, said rather than implied: macOS answers with the last process to use the
+    /// far end's socket, Linux with the process that called connect. A process of the same user can
+    /// still hand a connected socket to a program of its choosing, exactly as a Windows process can
+    /// duplicate a pipe handle — the same-user gap <c>U-contain-2</c> exists for, not one this closes.
+    /// </summary>
+    static string? UnixClientPath(NamedPipeServerStream pipe)
+    {
+        try
+        {
+            int? pid = null;
+            var handle = pipe.SafePipeHandle;
+            var held = false;
+            try
+            {
+                handle.DangerousAddRef(ref held);
+                var socket = (int)handle.DangerousGetHandle();
+                if (OperatingSystem.IsMacOS()) pid = Darwin.PeerPid(socket);
+                else if (OperatingSystem.IsLinux()) pid = LinuxPeer.PeerPid(socket);
+            }
+            finally { if (held) handle.DangerousRelease(); }
+
+            if (pid is not { } p) return null;
+            if (OperatingSystem.IsMacOS()) return Darwin.ImagePathOf(p);
+            if (OperatingSystem.IsLinux()) return LinuxPeer.ImagePathOf(p);
+            return null;
         }
         catch (Exception) { return null; }
     }
@@ -145,17 +181,178 @@ public static class PeerImage
 
     static string Norm(string p) => p.Trim().Replace('\\', '/').TrimEnd('/');
 
-    static bool Same(string a, string b) =>
+    /// <summary>
+    /// Whether the program the kernel named is the one the rule recorded.
+    ///
+    /// Off Windows the kernel names a program by its RESOLVED path — no symbolic link in it, so on
+    /// macOS a home under <c>$TMPDIR</c> (<c>/var/folders/…</c>) comes back as <c>/private/var/…</c> —
+    /// while the rule holds the path the app was given. So the recorded path is also tried with its
+    /// FOLDER resolved. Only the folder: a <c>trade</c> that is itself a link to somewhere else is a
+    /// program somewhere else, and the kernel's own answer is never re-resolved, because a link made
+    /// after the kernel answered could otherwise make any path read as the recorded one.
+    /// </summary>
+    static bool Same(string actual, string expected)
+    {
+        if (Equal(actual, expected)) return true;
+        if (OperatingSystem.IsWindows()) return false;
+        var folder = Path.GetDirectoryName(expected);
+        return !string.IsNullOrEmpty(folder) && RealPath(folder) is { } real
+               && Equal(actual, Path.Combine(real, Path.GetFileName(expected)));
+    }
+
+    /// <summary>
+    /// Whether the program the kernel named runs from inside a forbidden folder — the folder as
+    /// recorded, or as resolved, for the reason <see cref="Same"/> gives. A forbidden folder is
+    /// resolved WHOLE: its own last component being a link changes nothing about what runs inside it.
+    /// </summary>
+    static bool Inside(string path, string dir) =>
+        Under(path, dir) || (!OperatingSystem.IsWindows() && RealPath(dir) is { } real && Under(path, real));
+
+    static bool Equal(string a, string b) =>
         string.Equals(Norm(a), Norm(b),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-    static bool Inside(string path, string dir)
+    static bool Under(string path, string dir)
     {
         var d = Norm(dir);
         if (d.Length == 0) return false;
         var p = Norm(path);
         var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return p.StartsWith(d + "/", cmp);
+    }
+
+    /// <summary>
+    /// The path with every symbolic link in it resolved, or null when it cannot be (it does not
+    /// exist, or this is Windows, where nothing here asks).
+    ///
+    /// realpath(3) into a caller's buffer, which both variants of it accept: macOS's man page asks for
+    /// "a buffer capable of storing at least PATH_MAX characters" and Linux's stores "up to a maximum
+    /// of PATH_MAX bytes". PATH_MAX is 1024 on macOS (sys/syslimits.h) and 4096 on Linux
+    /// (include/uapi/linux/limits.h), so one buffer of 4096 covers both.
+    /// </summary>
+    static string? RealPath(string path)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        try
+        {
+            var buffer = new byte[4096];
+            if (realpath(path, buffer) == IntPtr.Zero) return null;
+            var end = Array.IndexOf(buffer, (byte)0);
+            return end > 0 ? Encoding.UTF8.GetString(buffer, 0, end) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    static extern IntPtr realpath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] resolved);
+
+    /// <summary>
+    /// macOS: <c>getsockopt(SOL_LOCAL, LOCAL_PEERPID)</c> on the accepted socket, then
+    /// <c>proc_pidpath</c>. Every constant and signature below is from the SDK's headers on the
+    /// build Mac (MacOSX15.5.sdk) and agrees with Apple's open-source xnu (apple-oss-distributions/xnu).
+    /// "libc" is libSystem on macOS, which re-exports libsystem_kernel, where both calls live.
+    /// </summary>
+    [SupportedOSPlatform("macos")]
+    static class Darwin
+    {
+        /// <summary>sys/un.h: <c>#define SOL_LOCAL 0</c> — "Level number of get/setsockopt for local domain sockets".</summary>
+        const int SOL_LOCAL = 0;
+
+        /// <summary>sys/un.h: <c>#define LOCAL_PEERPID 0x002 /* retrieve peer pid */</c>.</summary>
+        const int LOCAL_PEERPID = 0x002;
+
+        /// <summary>
+        /// sys/proc_info.h: <c>PROC_PIDPATHINFO_MAXSIZE (4*MAXPATHLEN)</c>, and MAXPATHLEN is PATH_MAX,
+        /// 1024 (sys/param.h, sys/syslimits.h). proc_pidpath refuses a buffer smaller than
+        /// PROC_PIDPATHINFO_SIZE or larger than this (xnu libsyscall/wrappers/libproc/libproc.c).
+        /// </summary>
+        const int PROC_PIDPATHINFO_MAXSIZE = 4 * 1024;
+
+        /// <summary>
+        /// The pid on the other end, or null. xnu answers LOCAL_PEERPID with the far socket's
+        /// <c>last_pid</c>, or ENOTCONN once that end has gone (bsd/kern/uipc_usrreq.c).
+        /// </summary>
+        internal static int? PeerPid(int socket)
+        {
+            var length = (uint)sizeof(int);     // pid_t is __int32_t (sys/_types.h)
+            return getsockopt(socket, SOL_LOCAL, LOCAL_PEERPID, out var pid, ref length) == 0
+                   && length == sizeof(int) && pid > 0
+                ? pid
+                : null;
+        }
+
+        /// <summary>The image of a process, or null. proc_pidpath returns the path's length, 0 on failure.</summary>
+        internal static string? ImagePathOf(int pid)
+        {
+            var buffer = new byte[PROC_PIDPATHINFO_MAXSIZE];
+            var length = proc_pidpath(pid, buffer, (uint)buffer.Length);
+            return length > 0 && length <= buffer.Length ? Encoding.UTF8.GetString(buffer, 0, length) : null;
+        }
+
+        /// <summary>sys/socket.h: <c>int getsockopt(int, int, int, void * __restrict, socklen_t * __restrict)</c>; socklen_t is __uint32_t.</summary>
+        [DllImport("libc", SetLastError = true)]
+        static extern int getsockopt(int socket, int level, int option, out int value, ref uint length);
+
+        /// <summary>libproc.h: <c>int proc_pidpath(int pid, void * buffer, uint32_t buffersize)</c>.</summary>
+        [DllImport("libc", SetLastError = true)]
+        static extern int proc_pidpath(int pid, byte[] buffer, uint buffersize);
+    }
+
+    /// <summary>
+    /// Linux: <c>getsockopt(SOL_SOCKET, SO_PEERCRED)</c> on the accepted socket, then
+    /// <c>/proc/&lt;pid&gt;/exe</c>. unix(7): SO_PEERCRED "returns the credentials of the peer process
+    /// connected to this socket … those that were in effect at the time of the call to connect(2)",
+    /// and these options "are specified with a SOL_SOCKET type even though they are AF_UNIX specific".
+    /// </summary>
+    [SupportedOSPlatform("linux")]
+    static class LinuxPeer
+    {
+        /// <summary>
+        /// include/uapi/asm-generic/socket.h: <c>#define SOL_SOCKET 1</c>, <c>#define SO_PEERCRED 17</c>.
+        /// The GENERIC values, which x86, arm, arm64, riscv, loongarch and s390 use. powerpc, mips,
+        /// alpha, sparc and parisc define their own (powerpc's SO_PEERCRED is 21, and 17 there is
+        /// SO_SNDLOWAT), so on those the caller is not identified rather than identified wrongly.
+        /// </summary>
+        const int SOL_SOCKET = 1;
+        const int SO_PEERCRED = 17;
+
+        static bool GenericSocketNumbers => RuntimeInformation.ProcessArchitecture is
+            Architecture.X64 or Architecture.X86 or Architecture.Arm64 or Architecture.Arm or Architecture.Armv6
+            or Architecture.RiscV64 or Architecture.LoongArch64 or Architecture.S390x;
+
+        /// <summary>The pid on the other end, or null — including a peer whose pid this namespace cannot see (0).</summary>
+        internal static int? PeerPid(int socket)
+        {
+            if (!GenericSocketNumbers) return null;
+            var length = (uint)Marshal.SizeOf<UCred>();
+            return getsockopt(socket, SOL_SOCKET, SO_PEERCRED, out var cred, ref length) == 0
+                   && length == Marshal.SizeOf<UCred>() && cred.Pid > 0
+                ? cred.Pid
+                : null;
+        }
+
+        /// <summary>
+        /// proc(5): /proc/pid/exe is "a symbolic link containing the actual pathname of the executed
+        /// command". An unlinked one reads back with " (deleted)" appended, which matches no rule and
+        /// is refused; one this process may not read throws, and that is null too.
+        /// </summary>
+        internal static string? ImagePathOf(int pid) => new FileInfo($"/proc/{pid}/exe").LinkTarget;
+
+        /// <summary>
+        /// unix(7): <c>struct ucred { pid_t pid; uid_t uid; gid_t gid; }</c> — three 32-bit fields, as
+        /// the kernel's own include/linux/socket.h spells them (<c>__u32</c> each).
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        struct UCred
+        {
+            public int Pid;
+            public uint Uid;
+            public uint Gid;
+        }
+
+        /// <summary>getsockopt(2): <c>int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen)</c>.</summary>
+        [DllImport("libc", SetLastError = true)]
+        static extern int getsockopt(int socket, int level, int option, out UCred value, ref uint length);
     }
 
     /// <summary>A path on its way to a refusal message: one line, printable, and short.</summary>
