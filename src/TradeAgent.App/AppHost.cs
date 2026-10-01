@@ -1186,6 +1186,14 @@ public sealed class AppHost : IAsyncDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// THE ACTIVITY LINE FOR A VENDOR'S USAGE LIMIT: the card's own sentence, and then the vendor's words,
+    /// which are the part that says what the owner can do about it. Static, so the words can be read back
+    /// without a running app.
+    /// </summary>
+    internal static string VendorLimitLine(VendorHold hold, DateTimeOffset now) =>
+        $"{hold.Sentence(now)}. {hold.Vendor} said: {hold.Message}";
+
     /// <summary>What a restart does about an AI that was working when the app last closed.</summary>
     internal enum MissionOnStart
     {
@@ -1372,6 +1380,22 @@ public sealed class AppHost : IAsyncDisposable
                       + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety "
                       + "page to let it carry on.",
                 "warn");
+            host.Changed?.Invoke();
+        }
+
+        /// <summary>
+        /// The runtime one role's turns run on — the same rule the reservation is priced by — so a
+        /// vendor's usage limit holds the roles that vendor would refuse and no others.
+        /// </summary>
+        public string? RuntimeFor(string role) => host.RuntimeForRole(role);
+
+        /// <summary>
+        /// The one activity line the owner gets when their AI tool's own plan runs out — see
+        /// <see cref="VendorLimitLine"/> — written where they already look for what the software did.
+        /// </summary>
+        public void VendorLimitReached(string role, VendorHold hold)
+        {
+            host.Gateway.Log.Activity(VendorLimitLine(hold, DateTimeOffset.Now), "warn");
             host.Changed?.Invoke();
         }
 
