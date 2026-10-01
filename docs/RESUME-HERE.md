@@ -10,41 +10,41 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session state at 2026-10-01 ~16:00 UTC (a checkpoint written at the restart after an eleven-day stoppage): `main` is clean and pushed; every product unit of the
-paper line is landed; `docs/briefs/` holds two briefs, both in flight.** Restart in this order:
+**Session state at 2026-10-01 ~20:00 UTC, the session's close: `main` is clean and pushed at the commit carrying this block (its parent `dbc7bf2` records the last landing); no worktree; `docs/briefs/` holds ONE brief,
+`U-observed-loop` (the milestone; attempt 3 is next). The TradeAgent dev app was quit with its AI paused; its home persists.** Restart in this order:
 
 1. **Read `manager-prompt.md`, `docs/PRINCIPLES.md` in full, `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `docs/INSPECTION-2026-09-19.md` (the survey, 87 lines), and the
    sections dated 2026-09-19 and later at the end of `BUILD-STATUS.md`.** Nothing else is a read-gate.
-2. **Landed since the survey, in landing order, each with its ≤ 40-line record:** `U-verdict-op` (`413c6de`, `trade verdict --version <hash>`); `U-paper-verdict`
-   (`d8000fa`, schema 23, `paper-eligible`); `U-forward-bars` (`6016fdd`, 24, closed one-minute bars the app collects from `data-api.binance.vision`);
-   `U-paper-adapter` (`1616de7`, the app's own paper connector); `U-paper-envelope` (`add2671`, 25, the owner's one-time grant, app-policy paper allocations);
-   `U-language-in-home` (`ed3b224`); `U-deployment` (`dae8605`, 26, `strategy_deployment`/`deployment_op`, `trade deployment list/stop`); `U-material-origin`
-   (`659eb5b`); `U-runner` (`44a436c`, `ForwardRuns`: the first production `PlaceIntent` from a `StrategyIntent`); `U-launcher-env` (`b3582d7`, the observed
-   run's first refusal). Next free schema number: 27. One Astra consult was taken after the survey (its answer sent to the owner, out of the repo).
-3. **In flight — the milestone, `docs/briefs/U-observed-loop.md`:** attempt 1 (its record: `BUILD-STATUS.md`, 2026-09-20 → 2026-10-01) passed onboarding, paper,
-   the 12-month download and the holdout, then was lost to the stoppage — the OS emptied its home under `$TMPDIR`. Attempt 2 replays the brief's eight steps on
-   a home OUTSIDE `$TMPDIR` (`TRADEAGENT_HOME=~/Projects/ai-trading-software-for-mihael-worktrees/observed-run-home`), its evidence checkpointed into
-   `BUILD-STATUS.md` as it goes. Owner-only prerequisites: the codex CLI signed in on this Mac (`codex login status` exit 0 on 2026-10-01) and the owner's
-   approval of full-screen control (the Settings page scrolls only by the wheel).
-4. **In flight — `docs/briefs/U-runner-reds-3.md` (test-only):** the first leg ended on an access error with its work on the branch (`u-runner-reds-3`, tip
-   `9f48bb8`, CI green on all four jobs, draft PR #23, no report); a finisher verifies, gates, reports and closes the PR, then the manager lands it. The four
-   hosted-runner reds (`d9ae716`, `ed3b224`, `659eb5b`, `b3582d7`) stay recorded red until it lands.
-5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; up to three
-   heavy legs at once by the owner's allowance; ONE manager gate at a time (`gate.sh`: `nohup` build + three suites to files, a waiter on DONE, ~13 min); a gate
-   that spans a sleep or a stoppage is contaminated (2026-09-19: Fault 2 h, Integration 11 h, 173 reds in the `Timing` classes) — re-run each suite alone on the
-   same build and quote both; a suite whose log holds only its exit code did not run — re-run it alone; a test-name diff from git objects with both set sizes; the
-   secret scan as a gate with judged false positives excluded BY NAME (`CancellationToken`, `IpcToken`, `string token`, `.Token`, "token on every frame", "no
-   passwords", the scan's own name); `--ff-only` with its exit checked; `rev-list --count` 0; the record ≤ 40 lines measured; the brief deleted; the worktree
-   removed; CI recorded per sha. Schema numbers assigned at dispatch in landing order; a conflict the manager's trial rebase hits goes back to the builder by one
-   `SendMessage` (`git merge-tree --write-tree a b` predicts it first).
-6. **What is proven and what is not:** the paper line's mechanics are proven by automated checks over the simulator, the paper connector and canned bars behind
-   `TestEnv.Ready()` on this Mac; in the running app only onboarding, the paper connector's selection, the archive download, the app's own live-bar collection
-   and the holdout press have been seen (attempt 1). No real model has authored, backtested or submitted anything; no forward bar has driven a deployment; no
-   paper fill; no box, no ATAS, no money. Over completed-month archives a version frozen today can be `paper-eligible`, never `promoted`.
-7. **Machine facts:** a wifi drop or a rate-limit stoppage stalls every leg with "no progress for 600s" — `nohup` watchers survive and finish, one `SendMessage`
-   per live leg resumes it; a leg from an ended session cannot be messaged — re-brief from the file and read its branch first. **The OS removes files left
-   untouched for days under `$TMPDIR` and `/private/tmp`** (2026-09-24 and 09-30): the scratchpad is not a checkpoint and a dev home there is not durable. A
-   builder 240–460k tokens, 35–75 min; a rebase-and-regate resume ~15 min; the Mac must be quiet for a gate.
+2. **The paper line is built and landed, each with its ≤ 40-line record:** `U-verdict-op` (`413c6de`), `U-paper-verdict` (`d8000fa`, schema 23),
+   `U-forward-bars` (`6016fdd`, 24), `U-paper-adapter` (`1616de7`), `U-paper-envelope` (`add2671`, 25), `U-language-in-home` (`ed3b224`), `U-deployment`
+   (`dae8605`, 26), `U-material-origin` (`659eb5b`), `U-runner` (`44a436c`), `U-launcher-env` (`b3582d7`). **Landed 2026-10-01, each from a gap the observed run
+   surfaced in the running app:** `U-peer-unix` (`bedd218`: off Windows the pipe refused every CLI turn's `trade` since 2026-09-12 — now the kernel names the
+   caller on macOS and Linux), `U-self-wake` (`a5166e7`: a role's own journal woke it once a minute), `U-resume-agent` (`e06e187`: a restart now starts the AI
+   it resumes), `U-vendor-limit` (`c56540e`: a vendor usage limit is named, waited out and a refused turn costs 0); and the test-only `U-runner-reds-3`
+   (`896eaae`, four hosted-runner reds). Next free schema number: 27 (no rung was taken on 2026-10-01).
+3. **The milestone (`docs/briefs/U-observed-loop.md`, with its "For attempt 3" paragraph — read it before touching the app).** Attempts 1–2 proved, in the
+   running app on this Mac: onboarding with the codex CLI, the paper connector, the 12-month archive, the holdout and campaign, the envelope, the model under
+   the cap; and the loop's first arrows — a real model (gpt-5.6-luna) froze three versions of its own, ran the app's backtest, met the app's bound in words,
+   adapted, and two roles iterated on a diagnosis (friction). NOT yet seen: a `trade verdict` request, a paper-eligible verdict, an allocation, a deployment,
+   a forward fill, a decision on fills. Attempt 2 ended at the owner's Codex plan limit (a legitimate boundary). First steps of attempt 3: relaunch on the
+   SAME home, verify `U-resume-agent` and `U-vendor-limit` in the running app (both NOT VERIFIED there), resume the AI, observe inside stated bounds.
+4. **Owner-only:** the ChatGPT Codex plan's allowance (2026-10-01's was exhausted in ~2.5 h; a larger plan, or a harness API key the owner pastes in the app,
+   is the owner's call); full-screen control approval for the wheel scroll; a daily cap above 5 USD only if the owner wants a dearer model (sol reserves 6.4).
+5. **Open, not briefed (judge before briefing):** the first paint waits for the CLI's version probe on a resuming start (`U-resume-agent`'s kept deviation);
+   paper is not offered at onboarding; Market data reads "degraded" on the paper connector (closed 1-minute bars are always >30 s old); a paused AI after a
+   restart reads "stopped — the AI has not been started"; seven daily reports written at a fresh home's first start for days before it existed; the
+   `CouncilLoopTests.A_file_dropped_between_turns…` ubuntu flake (one sighting); `SweepRequestIdTests.A_leg_refused_before_the_wire_…` has the 5000 ms room
+   item 1 had; the Doctor's "not checked" sentence for an install with no recorded hash; the same-user pipe gap (`U-contain-2`).
+6. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; up to three
+   heavy legs by the owner's allowance; ONE manager gate at a time (`gate.sh`: `nohup` build + three suites to files, a waiter on DONE, ~13 min); a gate that
+   spans a sleep or a stoppage is contaminated — re-run each suite alone and quote both; a test-name diff from git objects with both set sizes; the scan as a
+   gate with judged false positives excluded BY NAME; `--ff-only` with its exit checked; `rev-list --count` 0; the record ≤ 40 lines measured; the brief
+   deleted; the worktree removed; CI recorded per sha. **Legs share the session scratchpad:** keep the manager's helpers in `scratchpad/mgr/` and tell each leg
+   to use its own subfolder (a builder overwrote the manager's `gate.sh` on 2026-10-01). A leg from an ended session cannot be messaged — re-brief a finisher
+   from the file and its branch.
+7. **Machine facts:** the OS empties untouched files under `$TMPDIR` and `/private/tmp` after days (the scratchpad is not a checkpoint; a dev home there is
+   not durable — lost scratch notes are recoverable from the session transcript); the app's day (cap, renewal) turns at LOCAL midnight; a wifi drop or a
+   rate-limit stoppage stalls every leg with "no progress for 600s" — one `SendMessage` per live leg resumes it; a builder 300–550k tokens, 35–75 min.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 

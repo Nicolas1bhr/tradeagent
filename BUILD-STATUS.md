@@ -6999,3 +6999,25 @@ no-launch test red with the same line; restored. Manager's gate at `6431da2` (th
 **NOT done, NOT verified:** the hold lives in memory (after a restart the next turn is refused again, now at cost 0); the owner's own chat neither records nor
 lifts it; the refused turn's wakes settle `failed`; no signature for OpenCode or the harness; the AppHost wiring never ran in the app (attempt 3's first step);
 Windows; no box.
+
+## 2026-10-01 — the observed run, attempt 2, end: paused at the owner's Codex plan limit; five landings from what it surfaced; the session's close; docs only
+
+`docs/briefs/U-observed-loop.md` stays in flight: the milestone is NOT claimed. Attempt 2 ends at a legitimate boundary — the AI's allowance, the owner's
+ChatGPT Codex plan, exhausted at 18:08Z ("You've hit your usage limit … try again at 10:30 PM", the vendor's words) — inside the bounds stated before the start.
+
+- **End state, database read only (19:2xZ):** 48 turns — Operations 43 (1.5065 USD), Research 5 (0.4332 USD) — 1.9397 USD of the 5 USD cap, four of them
+  charged their 0.324 reservation (two cut by a pause or a restart, two refused or cut by the vendor's limit); 3 `strategy_version` and 3 `strategy_run`, all
+  the Operations Director's (FAULTED on the app's 200,000-bar bound, then −5,809.27 and −6,674.69 net); 0 `strategy_promotion` (no `trade verdict` request),
+  0 allocations, 0 deployments, 0 `deployment_op`, 0 fills; `forward_bar` 1,222. The AI PAUSED since ~18:20Z; the app quit at the close; the home persists.
+- **Interventions, all through the app:** the setup presses of the first part (onboarding, paper, PAPER-1, the download, the holdout, the model by keyboard,
+  the instrument allowlist, the envelope, the start — two presses each where the control asks two); two pauses (15:58Z the self-wake churn on a refused
+  `trade`; 18:18Z the vendor limit); two relaunches on landed builds (17:26Z paused; 18:00Z working, on purpose); "Start the AI" after each relaunch (the
+  second is the gap `U-resume-agent` closes); "Let the AI work on its own" once after the first. Nothing seeded; no row written by hand; no file handed over.
+- **What the run turned into code the same day:** `U-peer-unix` and `U-self-wake` — both VERIFIED in the running app (no `grant_rejected` after the relaunch;
+  scans logging `"arrived":0` raise no wake); `U-resume-agent` and `U-vendor-limit` — landed, NOT verified in the running app (attempt 3's first step).
+- **What did NOT happen:** a verdict request, a paper-eligible verdict, a paper allocation or deployment, a forward fill, a decision on fills; no box, no ATAS,
+  no venue, no real order. **Evidence limitation, unchanged:** the CLI runs unsandboxed as this Mac's user — no verdict of this run is protected evidence.
+
+**CI, every `main` sha of 2026-10-01 so far** (run id; GREEN on all four jobs — ubuntu, windows, macos, package — unless said): `faef463` (36885086416),
+`aea4379` (36887875562), `59f53d2` (36888058887), `516376c` (36888302768), `bedd218` (36899296050), `88a23a2` (36899327748), `a5166e7` (36903561380), `f8a7500`
+(36903588024), `2fd0318` (36903963568), `896eaae` (36905610297), `f32e8a3` (36905633488), `d2c5b66` (36905966992), `2dab37f` (36906065106); `e06e187` (36911732026), `89328a0` (36911737559). Pending at the close, for the next manager to record: `1b504fe`, `c56540e` (the `U-vendor-limit` merge), `dbc7bf2` and this commit.
