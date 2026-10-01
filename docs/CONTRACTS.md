@@ -1861,6 +1861,14 @@ across proven quiescence of every managed agent). `_sessionTurns`, the run of co
 the cap notice are per role, because each is a fact about one conversation. What is NOT concurrent is
 the money path: only the Operations Director places orders and the gateway's dispatch gate is a mutex.
 
+**A restart resumes the AI as well as the loop** (`AppHost.ResumeOnStartAsync`, `U-resume-agent`): with
+the mission working, `ResumeAiOnStart` on and setup finished, it starts the runtime through
+`AppHost.StartTheAiAsync` — the one start path the Start the AI press and setup's last screen also take
+(the chosen runtime, `RuntimeCatalog.Require`, prepare, start), so `CONTAINMENT_REQUIRED` and every
+launch check refuse it in the press's words, written to the activity log with the code and onto the
+card, with no runtime kept that would not start — and only then starts the loop, so its first look can
+take the next due wake; paused stays paused, and resuming off writes `AiWorksOnItsOwn` back to false.
+
 ## The AI's spending — `src/TradeAgent.Core/Db/AiAttemptStore.cs`
 
 One `ai_attempt` row per launch of the agent CLI, written by the app only — the rule `material`,

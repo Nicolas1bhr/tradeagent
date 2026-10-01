@@ -392,8 +392,10 @@ Underneath: how many turns it has taken, how many of the recent ones ended in an
 first line of the last thing it said. If the error count is climbing, that line is usually why.
 
 **It picks up where it left off after a restart.** If it was working when TradeAgent closed, it is
-working when TradeAgent opens. If you had paused it, it is still paused — a pause is never undone
-for you.
+working when TradeAgent opens: TradeAgent starts the AI itself, exactly as the **Start the AI** button
+would and with the same checks, so nothing needs pressing — and if it cannot start it (while real-money
+trading is switched on, for example), the card says why after the word **stopped**, and so does the
+**Activity** log. If you had paused it, it is still paused — a pause is never undone for you.
 
 ### What it costs you, and the daily limit
 
