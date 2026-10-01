@@ -20,3 +20,8 @@ numbers written at the test — never loosen an assertion, never delete or renam
 NOT move. Report ≤ 20 lines appended here: the PR number, the numbers per runner, the red-on-runner evidence and the green after, one line per test.
 Gate as `docs/HOW-WE-BUILD.md` (`--no-incremental` Release 0 warnings; three suites 0 failed on this Mac; touched classes 3×; names 0 removed). Close the
 draft PR after the proof (never merge it); no `Co-Authored-By`; no push to `main`; touch nothing in `docs/briefs/` but this file.
+**Resumed 2026-10-01 — the branch is the handoff; read it first.** The first leg ended on an access error (`Your organization has disabled Claude subscription
+access for Claude Code`) after nine commits: tip `9f48bb8`, on `309f389`, CI GREEN on all four jobs (run 35515899143), draft PR #23 open, no report. At the
+manager's message it had taken a fourth red: `659eb5b`, macos-latest, run 35503895941, `CouncilLoopTests.A_second_turn_for_a_role_already_turning_is_refused_and_
+never_launched` → `Assert.Equal() Failure: Values differ`; and item 2's test went red again at `b3582d7`, ubuntu-latest, run 35515252973. The finisher: rebase onto
+`main`, check every commit against items (a)–(c) for all four tests, take the per-runner numbers from the PR's runs, run the gate, write the report, close #23.

@@ -6737,3 +6737,42 @@ with `DOTNET_ROOT=$HOME/.dotnet` → `the vendor CLI ran`, exit 0. Manager's gat
 **NOT done, NOT verified:** "step 5 advances by itself" in the running app — the builder could not relaunch the bundle without killing the manager's parked run;
 verified or refuted by the manager's own relaunch on the landed build, recorded in the observed-run section; Windows untouched (its apphost finds the shared
 framework by the registry, which is why the box never showed this); no box, no money.
+
+## 2026-09-20 → 2026-10-01 — the observed run, attempt 1: set up through the holdout, never started, lost to an eleven-day stoppage; docs only
+
+`docs/briefs/U-observed-loop.md` (landed `c17d5c1`), run by the manager through the app's own UI on this Mac with screen control. The milestone is NOT claimed;
+the brief stays in flight for attempt 2. Every line is from the manager's notes taken at the time (the scratchpad copy was lost, see below, and recovered from the
+session transcript) or a database read quoted as it printed.
+
+- **Build, home, runtime:** `tools/mac-bundle.sh` (Debug, bundle `dev.tradeagent.mac`) at `34ec647` on an emptied `$TMPDIR/tradeagent-dev` (onboarding replays),
+  relaunched at `b3582d7` on the same home (pid 48188); the codex CLI 0.153.4, `codex login status` → `Logged in using ChatGPT`, exit 0.
+- **The first refusal:** step 5 "Sign in to your AI account" never advanced (13:12Z) — the contained child's launcher exited 131 without `DOTNET_ROOT`, reproduced
+  from a shell, briefed and landed as `U-launcher-env` (section above). **Verified in the running app at `b3582d7`: step 5 ADVANCED BY ITSELF, no press.**
+- **Every press, all in the app's UI:** Get started; OpenAI Codex CLI; Practice simulator (paper is offered in Settings only); SIM-001; Create it; Start the AI;
+  Finish (main screen 14:05Z, "OpenAI Codex CLI is ready"); Settings → "Use TradeAgent paper" (activity 14:06:35Z `Trading platform set to paper`); "Use this
+  account" (14:11:42Z `You chose the simulated account TradeAgent paper account (PAPER-1)`, 10,000.00 USDT); "Download 12 months" (14:12Z); the holdout's From
+  typed `2026-06-01`, "Hold these bars back", its armed confirm (`Confirm: bars from 2026-06-01 00:00 UTC on are evidence the research process…`).
+- **Database, read only:** 14:14:47Z `dataset` 1 — BTCUSDT 1m v1 ACCEPTED, 525,600 bars, 12 of 12 months, 2025-09-01T00:00 → 2026-08-31T23:59, research, 12
+  files; live bars collected by the app since 10:40Z — `forward_bar` 1,212 at 14:14Z (newest open 14:12Z), `forward_fetch` 154 (151 HTTP 200); 14:28:09Z
+  `holdout_from` = `2026-06-01T00:00:00.0000000Z`, `strategy_campaign` 1 row. A second arm-and-confirm at the same date, pressed 14:28:10Z: effect NOT VERIFIED.
+- **The stoppage:** at 14:28:15Z the session (and the fixer leg) ended on `Your organization has disabled Claude subscription access for Claude Code`; resumed
+  2026-10-01 15:23Z. The app was not running (when it exited: NOT VERIFIED — its log did not survive); the home, the bundle and the manager's scratchpad held 0
+  files, directories kept, the home's `state/` and `bin/` last changed 2026-09-24 06:53 local — the pattern of the OS's cleanup of untouched temporary files;
+  which process removed them is NOT VERIFIED.
+- **What did NOT happen:** the envelope press, the Research model choice, "Let the AI work on its own"; no model turn, backtest, verdict, allocation, deployment,
+  order or fill. Nothing was seeded at any point.
+- **Findings, not briefed:** paper is not offered at onboarding's platform step; the Settings page resets its scroll on the five-second refresh (against the "tree
+  built once" convention) — reaching the holdout card took the wheel and the press in one breath; the holdout's From field shows a watermark that reads as a
+  value, and the button arms only once a date is typed; one `Ipc accept_failed` warning at start (SocketException 22 in `NamedPipeServerStream.ConfigureSocket`)
+  while `trade status` answered. **Changed for attempt 2:** the home lives outside `$TMPDIR`; the evidence is checkpointed into this file as the run goes.
+
+**CI, every `main` sha since `a617486` that ran** (the run id; a push's intermediate commits run nothing). GREEN on all four jobs (ubuntu, windows, macos,
+package): `d123e91` (35456163772), `413c6de` (35456865118), `0ab526f` (35456867007), `3557e1e` (35457433377), `d8000fa` (35459469327), `e89a4cb` (35459470564),
+`636ea94` (35459703717), `6016fdd` (35460941975), `b715648` (35460943424), `f4d271b` (35461077856), `1616de7` (35498520780), `78394a2` (35498522879), `1031fcd`
+(35498905744), `add2671` (35499906593), `8636204` (35499908559), `c17d5c1` (35500011788), `3746774` (35501982713), `dae8605` (35503269775), `c66bd41`
+(35503271284), `90e6185` (35503310940), `761bd7b` (35503896856), `a2c05be` (35504025940), `44a436c` (35505686709), `34ec647` (35505688619), `52072f6`
+(35513213180), `309f389` (35515295131). RED on one hosted runner each, the same code green next door, package skipped: `d9ae716` (35501396212) windows —
+`SweepRequestIdTests.Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled` and `ValuationLossSurfacesTests.An_exit_is_reported_under_
+its_own_line_and_says_no_budget_was_reached`; `ed3b224` (35501981449) and `b3582d7` (35515252973) ubuntu — `BridgeRoundTripTests.A_bridge_speaking_the_previous_
+protocol_raises_no_events_into_the_application` (`Assert.Equal() Failure: Values differ`); `659eb5b` (35503895941) macos — `CouncilLoopTests.A_second_turn_for_
+a_role_already_turning_is_refused_and_never_launched` (`Assert.Equal() Failure: Values differ`). All four are `U-runner-reds-3`'s; each sha stays red until it lands.

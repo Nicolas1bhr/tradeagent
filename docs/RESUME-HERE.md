@@ -10,40 +10,41 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session state at 2026-09-20 ~10:00 UTC (a checkpoint written mid-session): `main` is `c66bd41`, clean and pushed; ONE builder in flight (`u-runner`) and one
-unit in the manager's gate (`u-material-origin`); `docs/briefs/` holds three briefs.** Restart in this order:
+**Session state at 2026-10-01 ~16:00 UTC (a checkpoint written at the restart after an eleven-day stoppage): `main` is clean and pushed; every product unit of the
+paper line is landed; `docs/briefs/` holds two briefs, both in flight.** Restart in this order:
 
 1. **Read `manager-prompt.md`, `docs/PRINCIPLES.md` in full, `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `docs/INSPECTION-2026-09-19.md` (the survey, 87 lines), and the
-   `## 2026-09-19` and `## 2026-09-20` sections at the end of `BUILD-STATUS.md`.** Nothing else is a read-gate.
-2. **Landed since the survey, in landing order, each with its ≤ 40-line record and CI green on all four jobs where recorded:** `U-verdict-op` (`413c6de`, `trade
-   verdict --version <hash>`); `U-paper-verdict` (`d8000fa`, schema 23, `paper-eligible`); `U-forward-bars` (`6016fdd`, 24, closed one-minute bars the app collects
-   from `data-api.binance.vision`); `U-paper-adapter` (`1616de7`, the app's own paper connector, `Platforms.Connectors.Create`); `U-paper-envelope` (`add2671`, 25,
-   the owner's one-time grant, app-policy paper allocations scoped by connector/mode/account); `U-language-in-home` (`ed3b224`, the language reference and the
-   three programs in every Research home); `U-deployment` (`dae8605`, 26, `strategy_deployment`/`deployment_op`, `AgentContext.Deployment`, `trade deployment
-   list/stop`). One Astra consult was taken after the survey (its answer sent to the owner, out of the repo).
-3. **In flight (the branch is the handoff; read it first, judge uncommitted files on their merits):** `u-runner` — `U-runner`, the last product unit before the
-   observed loop: `ForwardRuns` replays the frozen program over forward bars, produces the first production `PlaceIntent` from a `StrategyIntent` under the
-   deployment identity through every gate, places the stop and target as resting orders, closes at max-hold before the evaluator is asked, and must pass a
-   crash-after-acceptance recovery test through the production path (Astra's one insistence); cut from `dae8605`. `u-material-origin` — built green, rebased to
-   `04018d0` over the deployment, in the manager's gate; lands next (no schema).
-4. **Then the milestone, `docs/briefs/U-observed-loop.md`:** the autonomous paper loop observed in the running app on this Mac with a real model, through the
-   app's own UI (the eight presses listed there, nothing seeded), evidence quoted from read-only verbs and the database, the record honest about what did not
-   happen. Owner-only prerequisites: the archive download press, one holdout cutoff press, the envelope press, a runtime for Research (the codex CLI is signed
-   in on this Mac, `codex login status` exit 0 on 2026-09-20; or a harness key), `AiDailyCostCap` non-zero (5 by default).
+   sections dated 2026-09-19 and later at the end of `BUILD-STATUS.md`.** Nothing else is a read-gate.
+2. **Landed since the survey, in landing order, each with its ≤ 40-line record:** `U-verdict-op` (`413c6de`, `trade verdict --version <hash>`); `U-paper-verdict`
+   (`d8000fa`, schema 23, `paper-eligible`); `U-forward-bars` (`6016fdd`, 24, closed one-minute bars the app collects from `data-api.binance.vision`);
+   `U-paper-adapter` (`1616de7`, the app's own paper connector); `U-paper-envelope` (`add2671`, 25, the owner's one-time grant, app-policy paper allocations);
+   `U-language-in-home` (`ed3b224`); `U-deployment` (`dae8605`, 26, `strategy_deployment`/`deployment_op`, `trade deployment list/stop`); `U-material-origin`
+   (`659eb5b`); `U-runner` (`44a436c`, `ForwardRuns`: the first production `PlaceIntent` from a `StrategyIntent`); `U-launcher-env` (`b3582d7`, the observed
+   run's first refusal). Next free schema number: 27. One Astra consult was taken after the survey (its answer sent to the owner, out of the repo).
+3. **In flight — the milestone, `docs/briefs/U-observed-loop.md`:** attempt 1 (its record: `BUILD-STATUS.md`, 2026-09-20 → 2026-10-01) passed onboarding, paper,
+   the 12-month download and the holdout, then was lost to the stoppage — the OS emptied its home under `$TMPDIR`. Attempt 2 replays the brief's eight steps on
+   a home OUTSIDE `$TMPDIR` (`TRADEAGENT_HOME=~/Projects/ai-trading-software-for-mihael-worktrees/observed-run-home`), its evidence checkpointed into
+   `BUILD-STATUS.md` as it goes. Owner-only prerequisites: the codex CLI signed in on this Mac (`codex login status` exit 0 on 2026-10-01) and the owner's
+   approval of full-screen control (the Settings page scrolls only by the wheel).
+4. **In flight — `docs/briefs/U-runner-reds-3.md` (test-only):** the first leg ended on an access error with its work on the branch (`u-runner-reds-3`, tip
+   `9f48bb8`, CI green on all four jobs, draft PR #23, no report); a finisher verifies, gates, reports and closes the PR, then the manager lands it. The four
+   hosted-runner reds (`d9ae716`, `ed3b224`, `659eb5b`, `b3582d7`) stay recorded red until it lands.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; up to three
    heavy legs at once by the owner's allowance; ONE manager gate at a time (`gate.sh`: `nohup` build + three suites to files, a waiter on DONE, ~13 min); a gate
    that spans a sleep or a stoppage is contaminated (2026-09-19: Fault 2 h, Integration 11 h, 173 reds in the `Timing` classes) — re-run each suite alone on the
    same build and quote both; a suite whose log holds only its exit code did not run — re-run it alone; a test-name diff from git objects with both set sizes; the
    secret scan as a gate with judged false positives excluded BY NAME (`CancellationToken`, `IpcToken`, `string token`, `.Token`, "token on every frame", "no
-   passwords", "secret scan"); `--ff-only` with its exit checked; `rev-list --count` 0; the record ≤ 40 lines measured; the brief deleted; the worktree removed;
-   CI recorded per sha. Schema numbers assigned at dispatch in landing order (next free: 27); a unit cut before its predecessor landed writes no block for the
-   missing rung and rebases over it at the end; a conflict the manager's trial rebase hits goes back to the builder by one `SendMessage` (`git merge-tree
-   --write-tree a b` predicts it first).
-6. **What is proven and what is not:** everything is the simulator or the paper connector's in-memory bars behind `TestEnv.Ready()` on this Mac — no real model
-   has asked for a verdict, no forward bar has been consumed by a runner, no paper fill has happened in the app, no screen rendered, no box, no ATAS, no money.
-   Over completed-month archives a version frozen today can be `paper-eligible`, never `promoted` (the freeze clause stands for live).
-7. **Machine facts:** a wifi drop or a rate-limit stoppage stalls every leg with "no progress for 600s" — nothing on disk is lost, `nohup` watchers survive and
-   finish, one `SendMessage` per leg resumes it; a builder 240–460k tokens, 35–75 min; a rebase-and-regate resume ~15 min; the Mac must be quiet for a gate.
+   passwords", the scan's own name); `--ff-only` with its exit checked; `rev-list --count` 0; the record ≤ 40 lines measured; the brief deleted; the worktree
+   removed; CI recorded per sha. Schema numbers assigned at dispatch in landing order; a conflict the manager's trial rebase hits goes back to the builder by one
+   `SendMessage` (`git merge-tree --write-tree a b` predicts it first).
+6. **What is proven and what is not:** the paper line's mechanics are proven by automated checks over the simulator, the paper connector and canned bars behind
+   `TestEnv.Ready()` on this Mac; in the running app only onboarding, the paper connector's selection, the archive download, the app's own live-bar collection
+   and the holdout press have been seen (attempt 1). No real model has authored, backtested or submitted anything; no forward bar has driven a deployment; no
+   paper fill; no box, no ATAS, no money. Over completed-month archives a version frozen today can be `paper-eligible`, never `promoted`.
+7. **Machine facts:** a wifi drop or a rate-limit stoppage stalls every leg with "no progress for 600s" — `nohup` watchers survive and finish, one `SendMessage`
+   per live leg resumes it; a leg from an ended session cannot be messaged — re-brief from the file and read its branch first. **The OS removes files left
+   untouched for days under `$TMPDIR` and `/private/tmp`** (2026-09-24 and 09-30): the scratchpad is not a checkpoint and a dev home there is not durable. A
+   builder 240–460k tokens, 35–75 min; a rebase-and-regate resume ~15 min; the Mac must be quiet for a gate.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 
