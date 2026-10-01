@@ -392,6 +392,10 @@ sealed class DashboardPage
         Whose(status) + status.State switch
         {
             MissionState.Working => "working",
+            // THE VENDOR'S LIMIT OUTRANKS THE NEXT LOOK. The look is only when the loop checks the hold
+            // again; the hold is when the AI can work, and it is a fact about the owner's plan rather
+            // than about this app — so the card names whose limit it is.
+            MissionState.Waiting when status.Held is { } held => held.Sentence(DateTimeOffset.Now),
             MissionState.Waiting => (status.NextTurnAt, status.WaitingFor) switch
             {
                 ({ } at, { } why) => $"waiting until {at.ToLocalTime():HH:mm} for {why}",

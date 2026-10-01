@@ -62,6 +62,38 @@ public sealed record MissionStatus(
     /// reads exactly as <see cref="Role"/> always did.
     /// </summary>
     public IReadOnlyList<string> Roles { get; init; } = [];
+
+    /// <summary>
+    /// THE VENDOR'S USAGE LIMIT HOLDING THE ROLE THE CARD DESCRIBES, or null where none is.
+    ///
+    /// <para>On the card because "waiting until 18:38" over a limit that runs to 22:30 is the reading the
+    /// observed run gave, and it is wrong twice: the loop was not going to wait, and an owner told nothing
+    /// cannot tell a plan that ran out from an app that stopped. It outranks the next look, which is only
+    /// when the loop checks the hold again.</para>
+    /// </summary>
+    public VendorHold? Held { get; init; }
+}
+
+/// <summary>
+/// A VENDOR'S USAGE LIMIT, HOLDING EVERY LAUNCH ON ITS RUNTIME UNTIL <see cref="Until"/> — what the
+/// loop obeys and what the card and the activity log say.
+/// </summary>
+/// <param name="Vendor">The runtime's display name, e.g. "OpenAI Codex CLI".</param>
+/// <param name="Message">The vendor's own sentence, verbatim.</param>
+/// <param name="Until">The end of the minute the vendor named, or the mission's backoff where it named none.</param>
+public sealed record VendorHold(string Vendor, string Message, DateTimeOffset Until)
+{
+    /// <summary>
+    /// THE OWNER'S SENTENCE, one formatter for the card and the log so the two cannot say different
+    /// things. The time is the owner's wall clock, with the date as well when it is not today — a weekly
+    /// limit that read "until 22:31" would be read as tonight.
+    /// </summary>
+    public string Sentence(DateTimeOffset now)
+    {
+        var until = Until.ToLocalTime();
+        var when = until.Date == now.ToLocalTime().Date ? $"{until:HH:mm}" : $"{until:yyyy-MM-dd HH:mm}";
+        return $"{Vendor}'s usage limit is reached — the AI waits until {when}";
+    }
 }
 
 /// <summary>
@@ -297,6 +329,24 @@ public interface IMissionHost
     /// owns the words and the log.
     /// </summary>
     void SpendCapReached(AiSpendToday spend) { }
+
+    /// <summary>
+    /// WHICH RUNTIME ONE ROLE'S TURNS RUN ON, so a vendor's usage limit holds exactly the roles that
+    /// vendor would refuse. A role on the app-owned harness is billed on another account entirely, and
+    /// holding it for a CLI subscription's limit would be the app idling work nobody refused.
+    ///
+    /// <para>Null where the host cannot say, and then every role is one runtime: one limit holds every
+    /// launch. That is the conservative reading — holding a role that could have worked costs a wait,
+    /// launching one into a limit costs a refused turn and the wakes it consumed.</para>
+    /// </summary>
+    string? RuntimeFor(string role) => null;
+
+    /// <summary>
+    /// Told once per refusal: a vendor refused a turn for its usage limit and the loop holds that
+    /// runtime's launches until <see cref="VendorHold.Until"/>. The loop knows the transition; the
+    /// host owns the words and the log, exactly as it does for <see cref="SpendCapReached"/>.
+    /// </summary>
+    void VendorLimitReached(string role, VendorHold hold) { }
 
     /// <summary>
     /// OPENS THE DURABLE RECORD OF THE TURN ABOUT TO RUN AND COMMITS ITS COST — called by the loop
@@ -1077,6 +1127,27 @@ public sealed class MissionLoop
     /// </summary>
     readonly Dictionary<string, string> _cutLastTurn = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// THE VENDOR LIMITS IN FORCE, keyed by the runtime each one holds (<see cref="IMissionHost.RuntimeFor"/>,
+    /// "" where the host cannot say), each until the end of the minute its vendor named.
+    ///
+    /// <para>The observed run woke into a limit that had four hours to run: every look launched a turn,
+    /// every turn was refused at its first request and every one of them consumed the wakes it was
+    /// answering. A held role is stepped over the way a turning one is, so its wakes stay due and
+    /// unconsumed until the vendor will take a turn again.</para>
+    ///
+    /// <para>In memory, like the loop's other knowledge of its own recent turns. A restart forgets it,
+    /// and the first turn after one is refused again and records it again — at no cost, because a turn
+    /// refused before any work is charged nothing.</para>
+    /// </summary>
+    readonly Dictionary<string, VendorHold> _holds = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The runtime each role was last found on, so the card can say whether the role it describes is held
+    /// without calling into the host while it holds this loop's lock.
+    /// </summary>
+    readonly Dictionary<string, string> _runtimeOf = new(StringComparer.Ordinal);
+
     public MissionLoop(IMissionHost host, MissionOptions? options = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
@@ -1203,6 +1274,7 @@ public sealed class MissionLoop
             // this loop's lock across a call into it is how two locks that never met become a
             // deadlock in the next unit that adds one.
             var hasAgent = _host.Conversation is not null;
+            var now = _now();
 
             lock (_gate)
             {
@@ -1227,12 +1299,20 @@ public sealed class MissionLoop
                     ? [.. CouncilRoles.All.Where(_turning.Contains)]
                     : _role is { Length: > 0 } r ? [r] : [];
 
+                // THE LIMIT HOLDING THE ROLE THIS CARD DESCRIBES, from what the loop last learned about
+                // that role's runtime — never by asking the host from inside this lock.
+                var card = whose.FirstOrDefault() ?? _role;
+                var held = card is not null && _runtimeOf.TryGetValue(card, out var key)
+                           && _holds.TryGetValue(key, out var hold) && hold.Until > now
+                    ? hold : null;
+
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
                     _turns, Errors(whose.FirstOrDefault() ?? _role), _lastFirstLine)
                 {
                     WaitingFor = state == MissionState.Waiting ? _waitingFor : null,
                     Role = whose.FirstOrDefault() ?? _role,
-                    Roles = whose
+                    Roles = whose,
+                    Held = held
                 };
             }
         }
@@ -1413,10 +1493,19 @@ public sealed class MissionLoop
             var free = due.Where(r => !Turning(r)).ToList();
             if (free.Count == 0) return _options.BusyRetry;
 
-            // The first role whose own share AND the owner's ceiling both have room for a turn.
-            var affordable = free.FirstOrDefault(r => Spend(r).AdmitsAnotherTurn);
-            if (affordable is null)
+            // The roles whose own share AND the owner's ceiling both have room for a turn.
+            var affordable = free.Where(r => Spend(r).AdmitsAnotherTurn).ToList();
+
+            // THE FIRST OF THEM WHOSE VENDOR WILL TAKE A TURN. A role whose vendor has refused for its
+            // usage limit is stepped over until the time the vendor named, exactly as a turning role
+            // is: its wakes stay due and unconsumed, and a role on another runtime keeps working.
+            var open = affordable.FirstOrDefault(r => HeldFor(r) is null);
+            if (open is null)
             {
+                // Every role that could be afforded is held: nothing is launched, and the card says
+                // whose limit and until when.
+                if (affordable.Count > 0) return Holding(affordable[0]);
+
                 // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it.
                 // The message stays unconsumed and is still owed a turn; this is the standing reason
                 // it has not had one, and recording it costs nothing — which is the point, because
@@ -1425,7 +1514,7 @@ public sealed class MissionLoop
                                            + "be taken until it resets");
                 return CappedUntilMidnight(Spend(free[0])) ?? _options.BusyRetry;
             }
-            role = affordable;
+            role = open;
         }
 
         // ---- the day's ceiling -------------------------------------------------------------------
@@ -1437,6 +1526,12 @@ public sealed class MissionLoop
         // Asked again here rather than only above, because a host with no wake queue never reached
         // the block above at all and this is the only gate it has.
         if (CappedUntilMidnight(Spend(role)) is { } untilMidnight) return untilMidnight;
+
+        // ---- the vendor's own limit --------------------------------------------------------------
+        // Asked again here for the same reason the ceiling is: a host with no wake queue never reached
+        // the block above, and a turn launched into a limit the vendor has already named is refused at
+        // its first request.
+        if (HeldFor(role) is not null) return Holding(role);
 
         var conversation = _host.ConversationFor(role);
         if (conversation is null) return _options.BusyRetry;
@@ -1653,7 +1748,90 @@ public sealed class MissionLoop
         }
         Changed?.Invoke();
 
+        // THE VENDOR REFUSED THIS TURN FOR ITS USAGE LIMIT: every launch on its runtime waits until the
+        // time it named — or, where it named none, the backoff any failed turn gets. The wait is the
+        // HOLD's and not a sleep's, so a wake that arrives meanwhile finds it too.
+        if (ended?.Limit is { } limit)
+        {
+            Hold(role, limit, errors);
+            return Holding(role);
+        }
+
         return failed ? Backoff(errors) : NextWait(events, attemptId, role);
+    }
+
+    /// <summary>
+    /// THE RUNTIME THIS ROLE'S TURNS RUN ON, as a hold is keyed. Never throws: a host that cannot say is
+    /// one runtime for every role, which holds more rather than less.
+    /// </summary>
+    string RuntimeKey(string role)
+    {
+        string key;
+        try { key = _host.RuntimeFor(role) ?? ""; }
+        catch (Exception) { key = ""; }
+        lock (_gate) _runtimeOf[role] = key;
+        return key;
+    }
+
+    /// <summary>
+    /// THE VENDOR LIMIT HOLDING THIS ROLE'S NEXT LAUNCH, or null when nothing is. A hold whose minute is
+    /// over is forgotten here, so the first look after it launches.
+    /// </summary>
+    VendorHold? HeldFor(string role)
+    {
+        var key = RuntimeKey(role);
+        var now = _now();
+        lock (_gate)
+        {
+            if (!_holds.TryGetValue(key, out var hold)) return null;
+            if (hold.Until > now) return hold;
+            _holds.Remove(key);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// RECORDS THE VENDOR'S LIMIT AGAINST THE RUNTIME THE REFUSED TURN RAN ON, and tells the host once.
+    ///
+    /// <para>Until the time the vendor named. Where it named none — or named one already behind us, which
+    /// says no more — until the mission's own backoff, which is what this turn would have waited anyway:
+    /// the hold then only adds that every role on the same runtime waits it too.</para>
+    /// </summary>
+    void Hold(string role, VendorLimit limit, int errors)
+    {
+        var now = _now();
+        var until = limit.RetryAt is { } at && at > now ? at : now + Backoff(errors);
+        var hold = new VendorHold(limit.Vendor, limit.Message, until);
+        var key = RuntimeKey(role);
+        lock (_gate) _holds[key] = hold;
+
+        try { _host.VendorLimitReached(role, hold); }
+        catch (Exception) { /* the log is the host's; the hold stands either way */ }
+    }
+
+    /// <summary>
+    /// NOTHING IS LAUNCHED BECAUSE THE VENDOR SAID NOT YET. The card is left on the hold, and the loop
+    /// comes back at its end — sooner for a boundary's deadline, and at least every
+    /// <see cref="MissionOptions.MaxDelay"/>, because the sweeps at the top of <see cref="TurnAsync"/>
+    /// are the app's own and must not wait out a vendor's limit that can run for days.
+    /// </summary>
+    TimeSpan Holding(string role)
+    {
+        if (HeldFor(role) is not { } hold) return _options.BusyRetry;   // it ended between the look and here
+
+        lock (_gate)
+        {
+            _role = role;
+            _waitingFor = $"{hold.Vendor}'s usage limit to reset";
+        }
+        Changed?.Invoke();
+
+        var next = hold.Until;
+        if (NextBoundaryDeadline() is { } deadline && deadline < next) next = deadline;
+        var wait = next - _now();
+        return wait <= TimeSpan.Zero ? _options.BusyRetry
+            : wait > _options.MaxDelay ? _options.MaxDelay
+            : wait;
     }
 
     /// <summary>
