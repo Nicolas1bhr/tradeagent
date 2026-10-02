@@ -1,4 +1,6 @@
+using Avalonia.Controls;
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Security;
@@ -222,6 +224,115 @@ public class HarnessKeyOriginTests : IDisposable
         var store = new AiAttemptStore(db);
         return [.. ids.Select(id => store.Get(id)!)];
     }
+
+    // ---- the box ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// AN ADDRESS THAT IS NOT TRADEAGENT'S OWN IS SAID PLAINLY AND TAKES A SECOND PRESS IN THIS WINDOW —
+    /// and nothing about that press is written anywhere.
+    ///
+    /// <para>The override is written to <c>runtimes.json</c> the way an agent would write it — the built-in
+    /// row's id, another address, and every flag that could be read as "trusted" — and it still needs the
+    /// second press: nothing in a file the AI's program can write pre-confirms an address. The first press
+    /// takes nothing and names the address; the second takes the key, bound to exactly that address. A new
+    /// box, as a restart builds, asks again. The built-in row takes the key in one press. And neither the
+    /// key nor the address reached any file during the test, apart from the override the test wrote itself.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_non_built_in_origin_needs_the_in_window_tick_and_nothing_is_written_to_disk()
+    {
+        var started = DateTime.UtcNow.AddSeconds(-1);
+        using var provider = new FakeProvider();
+
+        var forged = PointedAt(provider);
+        forged.Verified = true;
+        forged.Recommended = true;
+        RuntimeCatalog.SaveOverrides([forged]);
+        var harness = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        Assert.Equal(provider.BaseUrl, harness.BaseUrl);
+
+        var to = SafetyPage.HarnessKeyDestination(harness);
+        var origin = KeyOrigin.Of(provider.BaseUrl)!;
+        Assert.Equal(origin, to.Origin);
+        Assert.False(to.BuiltIn);
+        var line = Labels.HarnessKeyDestination(to.Origin, to.BuiltIn, to.BuiltInOrigin);
+        Assert.Contains(origin, line, StringComparison.Ordinal);
+        Assert.Contains("not TradeAgent's built-in address", line, StringComparison.Ordinal);
+        Assert.Contains(to.BuiltInOrigin!, line, StringComparison.Ordinal);
+
+        var holder = new HarnessKey();
+        var pressed = new List<bool>();
+        var save = SafetyPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
+
+        Press(save);
+        Assert.False(holder.Held);
+        Assert.Empty(pressed);
+        Assert.True(Ui.IsArmed(save));
+        Assert.Equal(Labels.SendHarnessKeyArmed(origin), save.Content);
+
+        Press(save);
+        Assert.True(holder.Held);
+        Assert.Equal(origin, holder.Origin);
+        Assert.Equal([true], pressed);
+        Assert.False(Ui.IsArmed(save));
+
+        var fresh = new HarnessKey();
+        var again = SafetyPage.BuildSaveHarnessKey(fresh, () => _pasted, () => to, _ => { });
+        Press(again);
+        Assert.False(fresh.Held);
+        Assert.True(Ui.IsArmed(again));
+
+        var shipped = SafetyPage.HarnessKeyDestination(
+            RuntimeCatalog.BuiltIn().Single(m => m.Id == ApiAgentRuntime.RuntimeId));
+        Assert.True(shipped.BuiltIn);
+        Assert.DoesNotContain("not TradeAgent's built-in address",
+            Labels.HarnessKeyDestination(shipped.Origin, shipped.BuiltIn, shipped.BuiltInOrigin), StringComparison.Ordinal);
+        var builtIn = new HarnessKey();
+        Press(SafetyPage.BuildSaveHarnessKey(builtIn, () => _pasted, () => shipped, _ => { }));
+        Assert.True(builtIn.Held);
+        Assert.Equal(shipped.Origin, builtIn.Origin);
+
+        Assert.Empty(provider.Requests);
+        var found = new List<string>();
+        foreach (var file in Directory.GetFiles(Paths.Home, "*", SearchOption.AllDirectories))
+        {
+            if (Path.GetFullPath(file) == Path.GetFullPath(RuntimeCatalog.OverridePath)) continue;
+            string text;
+            try { text = File.ReadAllText(file); }
+            catch (Exception) { continue; }          // a database mid-write is not evidence either way
+            if (text.Contains(_pasted, StringComparison.Ordinal)) found.Add($"{file} (the key)");
+            if (File.GetLastWriteTimeUtc(file) >= started && text.Contains(origin, StringComparison.Ordinal))
+                found.Add($"{file} (the address)");
+        }
+        Assert.True(found.Count == 0, "written to disk:\n  " + string.Join("\n  ", found));
+    }
+
+    /// <summary>
+    /// AND A CONFIRMATION IS OF ONE ADDRESS. Armed against one, pressed against another — the address
+    /// moved between the two presses — and the key is not taken at all: the owner confirmed what they
+    /// were shown, not whatever is there by the time the second press lands.
+    /// </summary>
+    [Fact]
+    public void A_confirmation_armed_for_one_address_takes_no_key_for_another()
+    {
+        using var first = new FakeProvider();
+        using var second = new FakeProvider();
+        var to = SafetyPage.HarnessKeyDestination(PointedAt(first));
+        var holder = new HarnessKey();
+        var pressed = new List<bool>();
+        var save = SafetyPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
+
+        Press(save);
+        Assert.True(Ui.IsArmed(save));
+        to = SafetyPage.HarnessKeyDestination(PointedAt(second));
+        Press(save);
+
+        Assert.False(holder.Held);
+        Assert.Equal([false], pressed);
+    }
+
+    static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
 
     // ---- presence is not a send ------------------------------------------------------------------
 

@@ -305,6 +305,39 @@ public static class Labels
     public const string HarnessKey = "API key for TradeAgent's own worker";
 
     /// <summary>
+    /// WHERE A KEY PASTED INTO THE BOX WILL GO, said beside the box before anything is pasted
+    /// (<c>U-key-host-pin</c>).
+    ///
+    /// <para>The address is the origin of the harness's OWN manifest — the one it was built from and sends
+    /// to — and the key is bound to exactly that. An address that is not the built-in row's is said
+    /// plainly, with the built-in one beside it to compare, because the file that can change it is one the
+    /// AI's own program can write; the press then asks twice. <paramref name="origin"/> null is a harness
+    /// with no address a key could go to, and then nothing pasted is taken.</para>
+    /// </summary>
+    public static string HarnessKeyDestination(string? origin, bool builtIn, string? builtInOrigin) =>
+        origin is null
+            ? "TradeAgent's own worker has no address a key could be sent to, so a key pasted here is not taken."
+            : builtIn
+                ? $"A key pasted here is sent only to {origin}, TradeAgent's built-in address for its own worker."
+                : $"A key pasted here would be sent only to {origin} — not TradeAgent's built-in address"
+                  + (builtInOrigin is null ? "" : $", which is {builtInOrigin}")
+                  + ". Something on this computer has changed where TradeAgent's own worker sends its "
+                  + "requests. If that was not you, do not paste your key here.";
+
+    /// <summary>
+    /// What the press asks the second time when the address is not TradeAgent's built-in one. It names the
+    /// address, so the confirmation is of THAT address and of nothing a file could say later; the line
+    /// above the box already says, in caution colour, that it is not the built-in one, and a button label
+    /// is kept short enough to stay on its card.
+    /// </summary>
+    public static string SendHarnessKeyArmed(string origin) => $"Confirm: send this key to {origin}";
+
+    /// <summary>What the page says when a press did not take the key, and what to do about it.</summary>
+    public const string HarnessKeyNotTaken =
+        "The key was not taken: the address above is not one TradeAgent can send it to, or not the one you "
+        + "confirmed. Read the address again, then paste the key again.";
+
+    /// <summary>
     /// WHY THE KEY IS NOT SAVED, said beside the box rather than in a document nobody opens. It is the
     /// round-4 rule in the owner's words: a key is "not retained beside an unsandboxed CLI process
     /// until containment lands", and `Containment.Sandbox()` still says NONE on every platform this
@@ -323,9 +356,13 @@ public static class Labels
 
     public const string ForgetHarnessKey = "Forget the key";
 
-    /// <summary>What the page says about the key it is holding. Never any part of the key itself.</summary>
-    public static string HarnessKeyState(bool held) => held
-        ? "A key is held for this session. TradeAgent has not written it down; it is gone when the app closes."
+    /// <summary>
+    /// What the page says about the key it is holding — and, when it is held, the one address it is held
+    /// for. Never any part of the key itself.
+    /// </summary>
+    public static string HarnessKeyState(bool held, string? origin = null) => held
+        ? (origin is null ? "A key is held for this session." : $"A key is held for this session, for {origin} only.")
+          + " TradeAgent has not written it down; it is gone when the app closes."
         : "No key is held, so TradeAgent's own worker will not start a turn.";
 
     /// <summary>
