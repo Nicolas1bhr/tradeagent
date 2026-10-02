@@ -336,7 +336,7 @@ owner's surface, and confirmed or changed with two presses:
 | holdout, scorer and ledgers out of reach | hard for app paths | advisory | hard |
 
 "Hard by design" means no real provider call has exercised it yet (`RuntimeManifest.cs:671-672`, R17 #34). `R-containment` sits on the organisation's
-critical path: every organisation figure is labelled "unconfined seats" until it lands, and M-org2 waits for its first enforcement unit.
+critical path: every organisation figure is labelled "unconfined seats" until it lands, and M-org1 waits for its first enforcement unit (§ 16).
 
 ## 15. Build plan — two lanes
 
@@ -363,7 +363,8 @@ lane waits on the other's number; the gate checks the ladder is contiguous (R17 
 | `U-org-chief` | the root's head seat, appointed by an owner press; the liaison seat; divisions chartered by the chief | O6, O7 | CARD |
 | `U-org-scorecards` (O8) | scoring against the base rate; scorecards; the rules-then-contribution split; cut-rule review events | O5–O7 | CARD |
 | `U-harness-responses` · `U-harness-anthropic` | GPT-6 tools on the harness (and Sign in with ChatGPT, if admitted); a second vendor for the watcher and audit | `U-key-host-pin` | CARD |
-| `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `R-containment`'s record | CARD |
+| `U-contain-seats` | `R-containment`'s chosen route applied to CLI seats: a confined seat cannot read `state/` or the owner's login; confined seats sit outside the unconfined ceiling | `R-containment`'s record | CARD — before M-org1 |
+| `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `U-contain-seats` | CARD — the first before M-org1 |
 | `U-org-parallel` (O9) · `U-org-router` · `U-seat-shadow` · `U-org-templates` | concurrent turns; System One in shadow; seats evolving with models; templates | per § 8, § 11 | CARD |
 
 **Waves** — this table is the only copy (R12 § 5 and R18 § 3 conflict matrices; re-check at dispatch; M0 depends on lane A only, factory-plan Law 10,
@@ -384,8 +385,9 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 | W8 | `U-org-assignments` (next rung) | `U-language-v2a` (CARD) | `U-billing-classes` (CARD; after `U-decision-port`, R18 § 3) |
 | W9 | `U-org-verbs` | `U-org-watcher` | `U-org-packets` |
 | W10 | `U-org-surface` | `U-harness-responses` | `U-org-seats` (CARD; lands before any API-key seat) |
-| W11 | `U-org-chief` | a lane-A CARD (`U-universe` or `U-paper-books`) | — |
-| **M-org1** | the observed organisation | | |
+| W11 | `U-org-chief` | `U-contain-seats` (CARD, from `R-containment`'s record) | — |
+| W12 | `U-execution-environment` (CARD) | a lane-A CARD (`U-universe` or `U-paper-books`) | — |
+| **M-org1** | the observed organisation — its team head and executors on confined seats (the owner's answers, § 16) | | |
 
 **The chief appears at W11** — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
 
@@ -393,11 +395,11 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 - **M-org0 — the substrate is invisible:** the legacy pair runs a short observed session on positions, envelopes and wakes; behaviour, costs and refusals
   match attempt 3's. Claim ceiling: no regression on the stated build.
 - **M-org1 — the observed organisation:** the chief, appointed by the owner's press, charters a team inside a division; the team head issues typed
-  assignments to two executors (harness seats on a key, or CLI seats inside the owner's raised ceiling); one is accepted by the app's checks and one rejected
+  assignments to two executors on confined seats (the owner's answers, § 16); one is accepted by the app's checks and one rejected
   by a failed check; decision records with forecasts are written and at least one resolves; the watcher's digest is produced on no app path the organisation
   can reach (unconfined seats could read it); a restart mid-assignment resumes from durable state; costs and interventions are recorded. Claim ceiling: the
-  mechanics on the stated build and accounts, on unconfined seats — not profit, not containment.
-- **M-org2 — the organisation improves, confined:** after `R-containment`'s first enforcement unit: a worker replaced from position memory; a seat shadowed
+  mechanics on the stated build and plan, with the legacy pair and the chief still unconfined — not profit, not full containment.
+- **M-org2 — the organisation improves:** a worker replaced from position memory; a seat shadowed
   and decided by its scorecard; a cut-rule review event fired and answered; at least 50 scored forecasts per manager; the flat-versus-headed paired run.
 - **M-org3 — the organisation at scale:** at least three divisions and twelve positions, event-driven on an API budget, one System One question out of
   shadow, the effective number of independent teams reported, the watcher's model layer on a second vendor.
@@ -408,21 +410,23 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 quota"; risk — the AI proposes the ceiling, the owner confirms; one chief plus an invisible watcher; managers grow the chart; plans now, prepared for keys and
 local models.
 
-**Asked now** (defaults in brackets apply until he answers):
-1. **Size and cost:** on the plan alone, about four strong managers sharing roughly six strong-model turns every five hours; the organisation he described
-   (about 25 agents) is about $20 a day on API keys, about 60 agents about $50 a day (§ 10). Which size, and from when? [the plan alone until M-org1]
-2. **Unconfined seats:** each extra AI on the plan is a program with full access to his Windows account, his ChatGPT login included, until containment is
-   built. How many may run? [3: the legacy pair and the chief]
-3. **The plan-capacity ceiling:** today's $5 counts list prices even on the plan, where it is not money, and one strong-manager turn reserves $3.20. A
-   separate plan-capacity ceiling, keeping $5 as the real-money cap for API keys? [plan capacity at the equivalent of $40 a day]
-4. **His ChatGPT plan tier** (Settings › Usage) and whether other Codex use shares it.
-5. **The watcher's own key:** while it shares the plan with the organisation it cannot be secret or independent; an API key (another company's model is best)
-   with a small separate budget gives it a model layer. [code detectors and a code-composed digest only]
-6. **Chat:** talk to the chief (each message costs about a sixth of a plan window) or to a cheap liaison that forwards to it? [the liaison]
-7. **"Sign in with ChatGPT":** may the manager prepare OpenAI's interest form for him to send? It would run the plan inside the app's own harness, with a
-   per-app weekly cap.
-8. **Automatic halving of a live allocation at the first cut step** — app-owned risk reduction like a loss limit — confirmed once (R14 § 4.2).
-9. **Belgium** (R16 § 4): written answers from Kraken and OKX on perpetuals for a Belgian retail client; whether elective professional status is wanted (the
+**Answered later the same day (2026-10-02, the four that change the build):** unconfined seats — **3** (the legacy pair and the chief); AI limits — **a
+separate plan-capacity ceiling at the equivalent of $40 a day**, with $5 kept as the real-money cap for API keys (`U-billing-classes`); the watcher — **code
+checks only for now** (layer 1 and a code-composed digest, no model layer, no key); scale — **stay on the plan until M-org1 works**, then decide with its
+measured cost and output.
+
+**What those answers mean together:** with three unconfined seats, no key and no budget beyond the plan before M-org1, M-org1's team head and executors can
+only run CONFINED — so `R-containment`'s first enforcement unit (`U-contain-seats`: the chosen route applied to CLI seats, so a confined seat cannot read
+`state/` or the owner's login) and `U-execution-environment` move before M-org1 (§ 15). If `R-containment` finds no route that confines a CLI seat, M-org1
+needs a raised ceiling or a small API budget, and the owner is asked then.
+
+**Still asked** (defaults in brackets apply until he answers):
+1. **His ChatGPT plan tier** (Settings › Usage) and whether other Codex use shares it — it sizes everything in § 10.
+2. **Chat:** talk to the chief (each message costs about a sixth of a plan window) or to a cheap liaison that forwards to it? [the liaison]
+3. **"Sign in with ChatGPT":** may the manager prepare OpenAI's interest form for him to send? It would run the plan inside the app's own harness, with a
+   per-app weekly cap — a confined route for plan seats that does not depend on Windows containment.
+4. **Automatic halving of a live allocation at the first cut step** — app-owned risk reduction like a loss limit — confirmed once (R14 § 4.2).
+5. **Belgium** (R16 § 4): written answers from Kraken and OKX on perpetuals for a Belgian retail client; whether elective professional status is wanted (the
    only lawful route to a short side on perpetuals); an accountant's view, ideally an advance ruling, on 10% versus 33% versus professional income.
 
 **Defaults stated, his to change:** `operations` moves only by his presses; the audit line has its own small owner-set budget outside the chief's control;

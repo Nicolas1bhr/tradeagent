@@ -427,7 +427,7 @@ aggregate ceilings) → `U-cme-archive` and `U-rulebooks` if the prop path is ch
 **Phase 7 — moat extensions** (owner decisions): a local outcome-card format; an opt-in pooled outcome network after legal review.
 
 **Dispatch waves — superseded 2026-10-02 by `docs/ORGANISATION.md` § 15**, whose waves table is the only copy (two lanes, two heavy builders and a
-light third; M0 after W4b on lane A only; M-org0 after W7; M-org1 after W11). The earlier pairings are kept in git history.
+light third; M0 after W4b on lane A only; M-org0 after W7; M-org1 after W12, on confined seats). The earlier pairings are kept in git history.
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule: **M0** the observed paper loop · **M1** the tape has
 recorded seven days with gaps accounted, and its endpoints are verified from the owner's laptop · **M2** three or more non-price

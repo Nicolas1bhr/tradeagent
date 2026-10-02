@@ -23,23 +23,24 @@ paused.** What this session added: the owner's organisation direction and answer
 2. **Two lanes, two heavy builders and a light third — `docs/ORGANISATION.md` § 15's waves table is the only copy.** In short: W1 `U-key-host-pin` ∥
    `U-cost-model` (27) · light `R-containment` (the Windows spike, factory plan § 9.3), `U-price-rows` (serialise the three builders' gates on this Mac); W2–W4b
    finish lane A with `U-org-ledger` (inert, next free rung) and the tape's light units beside it; then M0; then lane B (`U-org-principals`, `U-org-rights`,
-   `U-org-envelopes`, `U-org-wakes`, …) paired with lane A's CARDs; M-org0 after W7; the chief at W11; M-org1. Rungs land contiguous, in landing order, each
+   `U-org-envelopes`, `U-org-wakes`, …) paired with lane A's CARDs; M-org0 after W7; the chief at W11; containment's first enforcement unit and the execution environment before M-org1 (W11–W12). Rungs land contiguous, in landing order, each
    rung's undo lines appended to the two roll-back tests (R18 § 2). Dispatch = re-check the brief's pointers against `main`, `git mv docs/queue/<unit>.md
    docs/briefs/`, a worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. `U-key-host-pin` first: an agent can redirect the owner's pasted
    key through `runtimes.json` (R10 #6, manager-checked).
 3. **M0 — the observed loop, attempt 3, after W4b — lane A only** (factory-plan Law 10; `docs/briefs/U-observed-loop.md`, "For attempt 3"; verify
    `U-resume-agent` and `U-vendor-limit` in the running app first), the legacy pair on the owner's plan; GPT-6 seats need `U-price-rows`. **M-org0** after W7
-   (the legacy pair on the new substrate, no regression); **M-org1** after W11 (the observed organisation; claim ceiling "mechanics on unconfined seats").
+   (the legacy pair on the new substrate, no regression); **M-org1** after W12 (the observed organisation, its team head and executors on confined seats; claim ceiling: the mechanics on the stated build).
 4. **Then brief the CARDs by dependency:** lane B per `docs/ORGANISATION.md` § 15 (orders, verbs, watcher, surface, chief, scorecards, parallel turns, router,
    seat shadowing, templates, the Responses-API harness, the contained execution environment after `R-containment`); lane A per `docs/EDGE-FACTORY.md` § 9
    (tape archive, events, chain, integrity; features, language v2a, universe, archive depth, paper books; trial returns, referee v2, canaries, experiments op,
    forward standing, incubator; `U-mission-v2`, now written for the organisation).
-5. **Owner-only — ask NOW (`docs/ORGANISATION.md` § 16):** his ChatGPT plan tier (Settings › Usage) and whether other Codex use shares it; whether the manager
-   may prepare OpenAI's "Sign in with ChatGPT" interest form for him to send; an Anthropic API key for the watcher (optional, another vendor than the chief);
-   confirming once that the app may halve a live allocation at the first cut step; Belgium — written answers from Kraken and OKX on perpetuals for a Belgian
-   retail client, whether elective professional status is wanted, an accountant's view (10% vs 33%). ANSWERED 2026-10-02 (do not re-ask): horizon
-   indefinite; Belgium; prop firms yes as one small channel; paper runs "as many as we know won't melt the quota"; the AI proposes the risk ceiling and he
-   confirms; one chief + an invisible watcher; managers grow the chart; plans now, prepared for keys and local models.
+5. **Owner-only — ask NOW (`docs/ORGANISATION.md` § 16 "Still asked"):** his ChatGPT plan tier (Settings › Usage) and whether other Codex use shares it;
+   chat with the chief or a cheap liaison [liaison]; may the manager prepare OpenAI's "Sign in with ChatGPT" interest form for him to send; confirming once
+   that the app may halve a live allocation at the first cut step; Belgium — written answers from Kraken and OKX on perpetuals for a Belgian retail client,
+   elective professional status or not, an accountant's view (10% vs 33%). ANSWERED 2026-10-02 (do not re-ask): horizon indefinite; Belgium; prop firms one
+   small channel; paper runs "as many as we know won't melt the quota"; the AI proposes the risk ceiling and he confirms; one chief + an invisible watcher;
+   managers grow the chart; plans now, prepared for keys and local; unconfined seats 3; a plan-capacity ceiling at the equivalent of $40/day beside the $5
+   real-money cap; the watcher code-only for now; stay on the plan until M-org1 works — hence M-org1's executors run CONFINED, after `U-contain-seats`.
 6. **Open, not briefed (judge before briefing):** the first paint waits for the CLI's version probe on a resuming start (`U-resume-agent`'s kept deviation);
    paper is not offered at onboarding; a paused AI after a restart reads "stopped — the AI has not been started"; seven daily reports written at a fresh home's
    first start for days before it existed; the `CouncilLoopTests.A_file_dropped_between_turns…` ubuntu flake (one sighting);
