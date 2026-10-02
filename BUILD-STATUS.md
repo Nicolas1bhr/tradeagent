@@ -7093,3 +7093,40 @@ Kraken's Belgian page disagree, R16); every "red at base" in the new briefs (R18
 **CI, recorded the same day (`gh run view`):** `a98f6f1` (37004472348) and `c80f422` (37004803635) — windows-latest RED on the same `ResumeOnStartTests` test
 [24–25 s], ubuntu and macos green, package skipped: five reds in six runs on unchanged `src/` and `tests/`. Briefed as `docs/queue/U-fix-resume-on-start.md`
 (W0, before W1's first gate), and `R-containment` briefed READY for W1; the queue holds nineteen. CI for the commit carrying this line: the next manager records it.
+
+## 2026-10-02 — U-price-rows landed: the GPT-6 models a seat can be set to are priced from OpenAI's page as read on 2026-10-02, not at the dearest row
+
+Built by one fresh Opus builder under build-fleet seat P from `docs/briefs/U-price-rows.md` (dispatched `8344192`), rebased onto `73cfaca` and again onto
+`ca12eb9` (docs only on `main`'s side), no conflict. Merge `1baf168` (ff-only), 3 commits (items 2+3, item 4, the report), 7 files, +215/−33. No schema
+rung. Spend accounting (the reservation that must stay a ceiling under the cap); no money-path file in HOW-WE-BUILD's list.
+
+- **Rows (items 1–2):** `ListPrices.cs` gains gpt-6.1-sol 2.00 / 0.10 / 2.50 / 10.00, gpt-6-luna 0.10 / 0.01 / 0.125 / 0.50, gpt-6-sol 2.00 / 0.20 / 2.50 /
+  10.00 (per M: input / cached / cache write / output; Standard tier, short context), read on 2026-10-02 from `developers.openai.com/api/docs/pricing` by
+  direct fetch; `CodexModels` 9 → 12 ids as `learn.chatgpt.com/docs/models` lists them; the harness catalogue still equals opencode's (21 rows each).
+- **ReadOn (item 3):** 2026-09-06 → 2026-10-02 after every existing row was re-read that day; no figure moved (all 18 quoted old = new in the builder's
+  report). The figures tests pin stand; the cache-write dictionary gains 2.50 / 0.125 / 2.50.
+- **Docs (item 4):** `docs/USER-GUIDE.md` (the GPT-6 models; the dearest now at least a hundred times the cheapest) and `docs/RESEARCH-REQUIRED.md` § D.
+- **Item 5, the figure:** an UNIDENTIFIED turn still reserves at the dearest row — codex gpt-6-astra 1.2 M × 12.50 + 20 k × 50 = $16.00; opencode and the
+  harness gpt-5.5-pro 1.2 M × 30 + 20 k × 180 = $39.60 — before and after (`Cheaper_rows_leave_the_estimate_for_an_unidentified_turn_where_it_was`).
+- **Deviations, judged at landing:** items 2 and 3 share one commit (every row carries `ReadOn`; split, one commit dates rows falsely) — accepted.
+  `gpt-5.6-sol`, the `codex` default: the builder read the page as printing only 4.00 / 0.40 / 5.00 / 20.00, marked promotional at least through
+  2026-11-21, with no standard figure; the row keeps that figure (the same as on 2026-09-06) with a comment, not one derived from the stated reduction
+  (5.00 / 0.50 / 6.25 / 30.00; the default reservation would go $6.40 → $8.10). Accepted: it is what the vendor bills today and the file takes no
+  estimate. The risk is an under-charge once the promotion ends, so **a re-read of that row is owed before 2026-11-21** (§ D and the guide name it).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 0 warnings, 0 errors; Unit 1218, Fault 399, 0
+failed; 9 touched classes 3× 78/78. RED on the base `73cfaca` with the new test file alone: `A_gpt_6_luna_turn_reserves_at_its_own_rate_not_the_dearest_row`
+→ `Expected: 0.160 / Actual: 16.00`, the Theory 3/3 red, both guards green (4 failed / 2 passed). Mutant, the `gpt-6-luna` row deleted: `Expected: 0.160 /
+Actual: 16.00`; restored (`cmp` identical). Manager's gate at `1baf168` (the reported tip, 0 behind `main` `ca12eb9`), Release: build `--no-incremental`,
+19 projects → 0 warnings, 0 errors; Unit 1218/1218 (29 s), Fault 399/399 (1 m 26 s), Integration 699/700, 1 skipped (11 m 5 s; the fleet's clean baseline
+is 11 m 6 s) → 0 failed. Names vs `main` (git objects): sets 1969 → 1973, 0 removed, 4 added. Scan: `token counts` and `ApiKeyPlan` (prose about model
+token usage; a type name) excluded by name, otherwise clean; no trailers; `rev-list --count` → 0 both ways.
+**CI:** branch run 37019128845 at `84a2432` (`src`/`tests` identical to `1baf168`): ubuntu-latest and macos-latest success; windows-latest failure in
+`ResumeOnStartTests` only — `A_restart_with_the_ai_working_…` ("left the AI it needs stopped") and `A_restart_in_the_armed_live_configuration_is_refused_…`
+(its log holds only "The AI was not started: Signing in took too long…", `AI_AUTH_TIMEOUT`): the start-path timeout `U-fix-resume-on-start` is fixing,
+from a diff that cannot reach the start path. Landed under the fleet's widened known-red rule (`ca12eb9`) — a judgement. CI at the merge: recorded when
+complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** `RuntimeManifest.cs:635-637` ("mid-priced") and `:678-681` (the harness's "cheapest current model") are stale comments, left out
+of `U-key-host-pin`'s hunks — owed once it lands; `docs/ORGANISATION.md:277` still says the table lacks the GPT-6 rows; no default model changed; the
+running app (the Safety page's model buttons) not seen; no real turn on a GPT-6 model; whether a harness turn on one can call tools (`U-harness-responses`).
