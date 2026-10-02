@@ -7324,3 +7324,39 @@ macos-latest (16 min), windows-latest (40 min), package (4 min). U-runner-forwar
 **NOT done, NOT verified:** the app was not run (its collector would poll the real host), so the Settings card is unseen and no row has come from the
 real host — `O-LIVE` is proved at store level only; Binance's API terms and rate limits not re-read; the 5-minute series' publication delay unmeasured;
 the item commits not built one by one (the tip was); no box. The recording lasts only while the app runs (the keep-awake press is a later unit).
+
+## 2026-10-02 — U-evidence-identity landed: evidence is bound to what the evaluator means, so an app release that changes no semantics withdraws nothing
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-evidence-identity.md` (dispatched `4ce671f`); the builder rebased onto
+`8a51a16` (after U-runner-forward), the manager onto `a912261` (U-tape-store) and `be91995` (docs), src+tests patch-id identical. Merge `527b901` (ff-only), 5 commits (4 items + the report),
+18 files, +2719/−45. No schema rung. Protects rule 9 of `docs/COUNCIL.md` (a changed assumption invalidates the evidence on it) while removing the
+false positive that ended every paper run at every self-update.
+
+- **Item 1 (`5461407`):** `Invalidation` withdraws standing when the promotion's `evaluator_version` ≠ `Referee.EvaluatorVersion` or the version row's
+  `manifest` ≠ `StrategyVersions.Manifest`, and no longer compares `interpreter_build` (kept as provenance and as a hashed fact of the promotion id);
+  `ForwardRuns.Frozen` ends a run whose re-parsed program id ≠ `deployment.VersionId`. `PromotionLedgerTests.A_promotion_from_another_interpreter_or
+  _another_policy_does_not_stand` rewritten in place, name kept (evaluator, then manifest, then policy). The cost model's canonical text still enters the id.
+- **Item 2 (`ec94b68`):** `CONTRACTS.md` defines "the interpreter build" of the V1 / PaperV1 texts (unedited, their shas still checked) as `EvaluatorVersion`
+  plus the language manifest, names the protected property and shows item 1 keeps it.
+- **Item 3 (`f8b237d`):** 15 golden vectors, each with an explicit execution model, over `tests/TradeAgent.UnitTests/Golden/evaluation-bars.json`; trace and
+  metrics shas pinned beside `EvaluatorVersion` and the manifest; changed output with both unchanged fails, saying "bump `Referee.EvaluatorVersion` (or the
+  manifest) and re-pin in the same commit". Beyond the brief: 17 real evaluator changes tried, each moving at least one pin.
+- **Item 4 (`4a2fc09`):** `trade verdict` on a withdrawn standing answers "WITHDRAWN on <date> because the evaluation semantics changed from X to Y", that
+  nothing may trade on it and that re-judging is not available yet (`U-rejudge`); a standing verdict is answered as it stands. CONTRACTS, USER-GUIDE.
+- **Judged:** (1) the runner's end message (`ForwardRuns.cs:123-125`) also names a re-identified run, since "no longer parses" was false for it — accepted.
+  (2) No withdrawal date existed (standing is computed at read), so the gateway records each semantics' first instant write-once in `kv` at construction;
+  the date is the first other semantics recorded after the verdict, else "a date this installation did not record" — accepted by the orchestrator: it
+  decides no standing, it dates words. (3) Tests in two places — accepted by the orchestrator.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `64f2876` (on `8a51a16`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1249/1249, Fault 405/405 (under `suite.sh`); five classes 3×, all green. RED before, base `Invalidation`/`Frozen` restored: "Expected:
+paper_eligible Actual: invalidated"; "Expected: 0 Actual: 3" bars stepped; the base verdict reply: "Assert.NotNull() Failure: Value is null". Mutants: (i)
+the `interpreter_build` compare restored ⇒ (a) red; (ii) one golden sha edited ⇒ (b) red, "1 golden vector(s) produced output other than what was pinned …";
+(iii) the manifest compare removed ⇒ (d) red. Manager's gate at `f6f4855`, carried to `527b901`, build tree identical, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1261/1261 (31 s), Fault 405/405 (1 m 38 s), Integration 704/705, 1 skipped (11 m 9 s) → 0 failed.
+Names vs `main` (git objects): 2019 → 2029, 0 removed, 10 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37055031758 at `64f2876` (on `8a51a16`; U-tape-store landed after it, covered by the gate and the merge's run): success on
+ubuntu-latest (12 min), macos-latest (14 min), windows-latest (31 min), package (3 min). U-tape-store's landing push `a912261`: run 37059730081 success on all three (windows 38 min).
+
+**NOT done, NOT verified:** Integration run locally only for the touched classes (in full on CI and the manager's gate); no box run; re-judging
+(`U-rejudge`) not built; a few evaluator fault texts format a decimal in the machine's culture (division by zero, sizing), so such a trace can differ by
+machine — a must-fix before M0 per the orchestrator (`U-invariant-traces`, which also bumps `EvaluatorVersion`); the date exists only from this build on.
