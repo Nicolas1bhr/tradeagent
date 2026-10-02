@@ -320,6 +320,21 @@ against; the verdict on whether a strategy is any good is taken over the frozen,
 and over the months you chose to hold back. The AI can read the live bars and everything recorded about
 where they came from; it cannot collect, change or delete any of it.
 
+**Holding months back.** The card below, *Private evaluation evidence*, is where you draw a line across
+the history: every bar from that date on becomes evidence the AI never sees, and TradeAgent alone uses it
+to judge a finished strategy. It is two presses, because the date can only ever move later. The card also
+says what a judgement there is **judged under**: the costs TradeAgent fixed for those months at the moment
+you pressed — the venue's own published fee on every fill (for Binance spot its standard 0.1%, recorded
+with where and when TradeAgent read it), a slippage of 0.02% a fill that is TradeAgent's own assumption
+and is labelled as one, the instrument's confirmed size step, and the amount the judge pretends to start
+with (10,000). The AI cannot choose any of it, and nothing you change later moves it for months already
+held back. Bars that record no venue are judged with no costs at all, and the card says *no venue
+recorded*. **If TradeAgent has not confirmed that instrument's size step, the press is refused and says
+so**, and nothing is held back: a judge that guessed the step would be judging a different strategy.
+Months you held back with an earlier version say their costs are *fixed at the next judgement* — if a
+judgement was already taken over them, the no-cost judge it was taken under stays; otherwise the venue's
+costs are fixed then.
+
 If the line reads **"not being collected"** or shows a last look that failed, TradeAgent is still running
 normally — a public price service having a bad afternoon is an ordinary Tuesday. It keeps trying, more
 slowly, up to once every five minutes, and picks up where it left off.
@@ -957,9 +972,16 @@ An unreadable `venues.json` behaves like the others: nothing is served from it, 
 do **not** quietly stand in for it, and every backtest that does not name its own step is refused
 until the file is corrected or deleted.
 
-TradeAgent does **not** keep venue fees or minimum order sizes. Fees are something each backtest
-states for itself and are part of what makes that test's result what it is; a fee taken from a table
-nobody checked would look like a measurement and would not be one.
+TradeAgent does **not** keep venue fees or minimum order sizes in that list. Fees are something each
+backtest states for itself and are part of what makes that test's result what it is; a fee taken from a
+table nobody checked would look like a measurement and would not be one. The one exception is
+TradeAgent's own judge, which charges the venue's **published** standard fee: that is written into
+TradeAgent itself, with the page it was read from and the day, and not into a file anybody can edit (see
+*Holding months back*).
+
+A strategy also has to be about the instrument its data is of. One that says it trades `ES` is neither
+tested nor judged on Binance's BTCUSDT bars: TradeAgent refuses, names both instruments, and charges
+nothing for the attempt.
 
 ## If TradeAgent names runtimes.json, atas.json or costs.json
 

@@ -2177,6 +2177,13 @@ figure in the result a measurement of a position that could not have been taken.
 came from is NOT hashed.** The number is, exactly as a declared one is; its provenance is recorded beside
 the run in `strategy_run.increment_source`, so adding it moved no run id this installation had written.
 
+**A program is measured on bars of the instrument it names** (`U-cost-model`, `InstrumentMatch`). When the
+dataset records an `instrument_symbol` and the program's `instrument` line differs from it (ordinal — the
+symbol is the exact key the step is looked up by), the run is **REFUSED before the trial look, the run and
+the trial**, in words naming both and the two repairs; nothing is recorded and nothing is charged. A
+dataset that records no instrument is not refused for this. The referee asks the same question of the
+same helper before a verdict is charged.
+
 **Signals fill at the next bar's open. Protection fills where protection fires.** A signal is computed
 from a bar's CLOSE, so the earliest price it can be acted on is the next bar's open plus adverse
 slippage, with a fee on every fill. A stop or a target is not a decision taken at a close — it is an
@@ -2247,7 +2254,10 @@ are the same four `FakeBroker.Instruments` serves, which a test holds them to. B
 
 **What the catalogue does NOT hold: no fee and no minimum notional.** `docs/COUNCIL.md` is silent on a
 fee table and :155 keeps fees DECLARED per backtest and part of that run's identity, so a fee read out of
-a table nobody measured would read as a measurement. It holds no session table either: `calendar_kind`
+a table nobody measured would read as a measurement. The one fee table in the product is the REFEREE's —
+`VenueCostModel.PublishedFees`, in code, each row a venue's published standard taker rate with its source
+sentence and the day it was read — and it is neither in `venue`/`venue_instrument` nor overridable by a
+file (see the campaign section below). It holds no session table either: `calendar_kind`
 is `continuous` for a venue that never closes and `sessioned` means "this one closes and TradeAgent
 cannot tell you when", which is a refusal to guess rather than a calendar.
 
@@ -2257,7 +2267,8 @@ edited next month must not restate what last month's evidence was collected from
 so removing a venue cannot dangle a dataset. Rows written before schema 17 are backfilled to
 `binance-spot` and the pair, which is what every one of them was. `data-list` and section 8 of the
 owner's daily report carry both, null included. A run's increment is looked up by THAT pair and never by
-the instrument named in the program, which is a line an agent types.
+the instrument named in the program, which is a line an agent types — and a program whose line names a
+different instrument than the dataset records is refused outright (see the backtest section above).
 
 ## Candle sources — `src/TradeAgent.Core/Data/CandleSource.cs`, `CandleSourceCatalog.cs`, `Provisioning/CandleSourceClient.cs`
 
@@ -2429,8 +2440,8 @@ campaign would have given itself an unlimited supply of attempts.
 
 **What bounds the one that is reachable, so that it is not "searching the holdout by asking".** The
 frame carries a version and at most a dataset: the months are the campaign's own, the scorer is
-`ScoringPolicyV1` bound to the sha fixed at open, and the execution model is the judge's default — none
-of the three is a parameter. The supply is the **verdict budget counted across the whole renewal
+`ScoringPolicyV1` bound to the sha fixed at open, and the execution model is the cost model the campaign
+pinned when the owner pressed — none of the three is a parameter. The supply is the **verdict budget counted across the whole renewal
 lineage** (three by default), charged by `RequestVerdict` before anything reads a bar. And what crosses
 back is `RefereeFeedback.Text`, which reads the promotion row alone: the verdict and a reason class from
 a closed vocabulary, no metric, no trace hash and no bar. The gateway adds two bounds of its own: a role
@@ -2463,6 +2474,34 @@ that is the one backfill this rung makes**, and it is the 17 and 21 reading rath
 campaign written before the rung fixed a second standard because none existed for any of them to fix, so
 the build's own is the truth about those rows, while an empty column would refuse a paper verdict on
 every campaign of every installation that upgrades.
+
+**A campaign also pins the cost model its verdicts are judged under** (schema **27**, `U-cost-model`):
+`strategy_campaign.cost_model_canonical` and `.cost_model_sha`, a `VenueCostModel` text and its SHA-256,
+written in the opening transaction and never updated. The model is one, app-owned, and comes from the
+**dataset's** recorded venue at the owner's existing press — there is no picker and nothing the judged
+party chose: the fee is the venue's published standard **taker** rate from a table in code
+(`VenueCostModel.PublishedFees`; Binance spot 0.100%, read 2026-10-02 from the venue's own schedule —
+`docs/RESEARCH-REQUIRED.md` C6), slippage is 0.0002 a fill labelled **TradeAgent's assumption**, the
+quantity step is the instrument's **verified** catalogue row and nothing else, and the capital is the
+owner's `JudgeCapital` (10,000; zero or less reads as 10,000). The text is versioned (`TradeAgent venue
+cost model v1`), names its judge, carries the four numbers in `ExecutionModel.Canonical`'s own spelling
+and where each came from; `VenueCostModel.Read` gives it back only when the sha is its own, the header,
+judge and numbers are ones v1 writes — otherwise the referee refuses rather than substituting another.
+**`Renew` copies the pin, null included**, and a later edit to the fee table, the catalogue or the
+setting moves no open campaign. **A dataset that records no venue pins `ExecutionModel.Frictionless`
+exactly, labelled "no venue recorded"**, so every run id over such bars is the one it always was. **A
+recorded venue whose instrument row is unverified (or absent), or whose fee this build has never read,
+REFUSES the press in words** — "BTCUSDT's quantity step is not confirmed against the venue's own
+definition; a judge that guessed it would judge a different strategy" — and the press writes nothing: the
+model is settled before the cutoff, because `Database.Write` rolls back only on an exception. That is the
+state BTCUSDT ships in until something verifies its row. **Campaigns written before rung 27 are not
+backfilled.** At their next verdict request, inside the charge's transaction: a lineage that already
+charged a verdict is pinned `ExecutionModel.Frictionless` labelled "legacy frictionless judge" — every such
+verdict was judged frictionless, and its promotions are untouched — and one that never charged one is
+pinned from its dataset's venue there and then, or refused **before** anything is charged when the step
+is unconfirmed. A pin lands only with a charge that was taken. The holdout card on the Data page shows the
+pin as "Judged under". **Not modelled by v1:** a minimum notional, fee tiers other than the standard one,
+rebates, funding, and impact beyond the assumed slippage.
 
 **A trial is one registered research run, keyed `(campaign, version, run)` and by nothing an agent
 chooses.** There is deliberately **no role and no attempt column** — `HoldoutLedgerTests` asserts the
@@ -2549,10 +2588,13 @@ holdout read in process, the figures come from the app's own trace, and the clau
 implements. **The holdout run is recorded under `Referee.RunRole` (`referee`, which `CouncilRoles.IsKnown`
 rejects) and is NOT charged as a research trial**: it is the evaluation the verdict budget already paid
 for, and charging it would spend the submitter's allowance on the referee's own work. The **execution
-model is the judge's**, a parameter of the call defaulting to `ExecutionModel.Frictionless`, hashed into
-the promotion so a verdict under one declaration cannot read as a verdict under another — a choice, and
-one the row states rather than hides. A *refusal* is a verdict and is recorded; a referee that could not
-judge at all writes nothing.
+model is the judge's**: with no caller model — which is how `trade verdict` calls it — it is the
+`VenueCostModel` the campaign pinned, carried out of the charge's own transaction (`VerdictCharge.Judge`,
+internal like the audience); the in-process parameter stays the owner's. Either way its four numbers are
+hashed into the promotion, so a verdict under one model cannot read as a verdict under another. Before
+anything is charged, `RequestVerdict` refuses a version whose program names a different instrument than
+the holdout dataset records. A *refusal* is a verdict and is recorded; a referee that could not judge at
+all writes nothing.
 
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
 **after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
