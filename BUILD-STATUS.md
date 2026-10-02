@@ -7171,3 +7171,41 @@ when complete (`fleet/ci-ledger.md`, then the next record).
 **NOT done, NOT verified:** the Safety page was not run or looked at (its controls were pressed in tests only); no real provider; no box run. Seen, not
 changed (source-read, not run): an admitted no-key turn also sends nothing yet keeps its reservation as cost (`AiAttemptStore.End:333-338`); no page
 shows the Research conversation, so on screen a refusal reads only as the Safety page's "No key is held".
+
+## 2026-10-02 — U-fix-resume-on-start landed: a version probe that outlasts its deadline is a failed probe, so a restart whose AI program is slow to first answer starts it instead of saying "Signing in took too long"
+
+W0 of the build fleet: one fresh Opus fixer under seat P from `docs/briefs/U-fix-resume-on-start.md` (dispatched `6025a50`), rebased onto `73cfaca`, then at
+landing onto `36934e9` (U-price-rows, U-key-host-pin) with the `src`+`tests` patch-id identical (`aaf29d01c06e`). Merge `c5ce2af` (ff-only), 3 commits (2 items
++ the report), 5 files, +155/−10. No schema rung. Not the money path (the AI's launch path); `CONTAINMENT_REQUIRED` and every launch check unchanged.
+
+- **Item 1, the cause, from windows-latest** (diagnostic run 37017805967, job 110872924285, at a temporary `7743fe1` — prints and a narrowed `build.yml` —
+  dropped before the proving runs; `git diff 73cfaca..0d5b157 -- .github` empty): `restarted=4853ms resume=20077ms`; card "Signing in took too long and was
+  cancelled. Press Sign in again."; activity `warn` "The AI was not started: … (AI_AUTH_TIMEOUT)"; engineering "TradeAgentException: powershell.exe did not finish
+  within 20s" at `CliAgentRuntime.Run` :810 ← `ProbeVersionAsync` :254 ← `DetectAsync` :232 ← `AgentSupervisor.PrepareAsync` :67 ← `StartTheAiAsync` :1111.
+  PowerShell's first launch beside the full suite missed the version probe's 20 s deadline (re-measured at once: 6.5 s, then 0.2 s; the class alone passed).
+  The second red seat P found on `u-price-rows` (run 37019128845, `A_restart_in_the_armed_live_configuration_…`) is the same: its one activity line is that
+  sentence, thrown before the containment check.
+- **Item 2, the fix, in the PRODUCT:** `ProbeVersionAsync` answers its deadline as a failed probe — not installed, found at its path, reason "<exe> did not
+  answer within N seconds when asked for its version" — so the start goes on as it already did after any failed probe; a cancellation the caller asked for
+  still throws. An internal `VersionDeadline` seam (product 20 s; 1 s in the two new tests). **Manager-read at landing:** `PrepareAsync` sets the runtime row
+  FAILED with the reason and prepares the workspace (`AgentSupervisor.cs:77-97`); no version comparison gates anything (grep: none); onboarding re-downloads
+  only when no path was found (`OnboardingView.cs:667`), so a slow program is not fetched again; the Doctor (`Doctor.cs:110`) and the install step
+  (`CliAgentRuntime.cs:343`) now say the reason instead of the sign-in sentence. Test diff: 8 lines removed, all helper signatures and probe scripts made
+  parameterised (`slowVersion = false` keeps the old fast probe); no assertion removed.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer: Release `--no-incremental` 19 projects, 0 warnings, 0 errors; Unit 1214/1214, Fault
+399/399; `ResumeOnStartTests` + `RuntimeDetectionTests` 3× 10/10. RED before the fix (this Mac): `ResumeOnStartTests.cs:106 a version answer slower than its
+deadline kept the AI stopped on a restart`; `RuntimeDetectionTests.cs:83 TradeAgentException : slow-to-answer.sh did not finish within 1s`. Mutant, the resume
+calling the loop only: `:62 the restart resumed the loop and left the AI it needs stopped` (also `:106`, `:198`, `:264`); restored → 7/7. Manager's gate at
+`c5ce2af` (the reported tip rebased, 0 behind `main` `36934e9`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1226/1226 (31 s),
+Fault 399/399 (1 m 26 s), Integration 699/700, 1 skipped (11 m 6 s, the clean baseline's length) → 0 failed. Names vs `main` (git objects): sets 1979 → 1981,
+0 removed, 2 added. Scan: `cts.Token` (prose naming a cancellation token's property) excluded by name, otherwise clean; no trailers; `rev-list --count` → 0.
+**CI:** three proving runs on `0d5b157`, the workflow unmodified — 37021009822, 37021014270, 37021021599: ubuntu, macos, windows and package success in each;
+windows Unit 1213/1213; all 7 `ResumeOnStartTests` green each time (`A_restart_in_the_armed_live_configuration_…` 4.5 / 3.1 / 5.7 s;
+`A_restart_with_the_ai_working_…` 21.2 / 15.0 / 41.6 s). `main` before it, same tree, windows: RED on the known test at `b4c17d6`, `1260a23`, `6025a50`,
+`5571328` (and the five the brief lists), green at `2a766b2`, `73cfaca`, `85262d7`, `8344192`. **The fleet's known-red rule ends with this landing**: a
+`ResumeOnStartTests` red on windows from here is a red. CI at the merge: recorded when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** whether any proving run reached the 20 s deadline (no prints; 41.6 s in run 3); a real CLI's first launch on an owner's machine,
+not measured; the turn's own PowerShell cold start still runs on the test's 60 s patience; Integration only on CI for the fixer; no box; the running app not
+observed; the first paint still waits for the version probe on a resuming start (`docs/RESUME-HERE.md` item 6).
