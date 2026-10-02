@@ -274,7 +274,7 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
   executors wake only for assignments; a dormant position costs nothing (R12 § 4; R17 #10).
 - **Priority when the allowance is short:** app protection and reconciliation (never AI-dependent) → the owner's words → unblocking an eligible deployment or
   required data → the chief's strategy → research → housekeeping. **At a plan limit** that runtime holds to the stated minute (`U-vendor-limit`, landed).
-- **Prices are dated data:** the shipped table (read 2026-09-06) lacks the GPT-6 rows (R15 § 4.4); `U-price-rows` fixes it before the first cheap seat.
+- **Prices are dated data:** `U-price-rows` (landed 2026-10-02, record `492ae79`) priced gpt-6.1-sol, gpt-6-luna and gpt-6-sol from OpenAI's page as read that day; the codex default gpt-5.6-sol carries a promotional figure, re-read owed before 2026-11-21.
 
 ## 11. The nervous system — routing and triage
 
