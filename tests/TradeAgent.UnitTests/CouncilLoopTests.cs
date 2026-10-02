@@ -205,6 +205,13 @@ public class CouncilLoopTests
         public bool InboxChangedSinceLastPass =>
             Presence is not null && MissionInbox.ChangedSince(Root, _lastPassAt);
 
+        /// <summary>
+        /// THE BOUNDARY, POSED RATHER THAN WAITED FOR: this host's record of when its last pass began,
+        /// moved to the tick after a file's own time — the state a filesystem that stamps files a tick
+        /// behind the pass's clock produces (see <c>MissionLoopTests.FakeHost</c>, run 37051859960).
+        /// </summary>
+        public void LastPassBeganJustAfter(DateTimeOffset stamp) => _lastPassAt = stamp.AddTicks(1);
+
         public Task ScanAsync(CancellationToken ct)
         {
             if (Presence is null) return Task.CompletedTask;
@@ -746,6 +753,58 @@ public class CouncilLoopTests
             "the owner's document");
 
         // ---- and the other role tries to launch INSIDE the pass that is recording it -----------
+        Wake(CouncilRoles.Operations, 2);
+        Wake(CouncilRoles.Research, 3);
+
+        using var scanning = new ManualResetEventSlim();
+        using var tried = new ManualResetEventSlim();
+        host.WhileScanning = () =>
+        {
+            if (!scanning.IsSet) { scanning.Set(); Assert.True(tried.Wait(TimeSpan.FromSeconds(30))); }
+        };
+
+        Together(
+            () => loop.TurnAsync().GetAwaiter().GetResult(),
+            () =>
+            {
+                Assert.True(scanning.Wait(TimeSpan.FromSeconds(30)), "no pass ever started");
+                loop.TurnAsync().GetAwaiter().GetResult();
+                tried.Set();
+            });
+
+        var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
+        Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// THE SAME, AT THE BOUNDARY HOSTED UBUNTU KEPT HITTING — RED FIRST, AND DETERMINISTIC: the
+    /// owner's file carries times earlier than the start of the pass behind the first turn, which
+    /// never saw it. The yield read those times as "nothing new", launched the chair's second turn
+    /// with no pass before it, and the file was recorded behind that turn, unattested — the test
+    /// above red in 56 of 300 repeats on ubuntu-latest in run 37051859960, every one of them that way.
+    /// </summary>
+    [Fact]
+    public async Task A_file_stamped_before_the_pass_that_missed_it_is_still_the_owners_when_another_role_tries_to_launch()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new CouncilHost(db, root, new Concurrency(), presence);
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        void Wake(string role, int n) => host.Events!.Raise(
+            MissionEventIds.ForRole($"{MissionEventKind.Review}:{n}", role),
+            MissionEventKind.Review, earlier.AddSeconds(n), role: role);
+
+        Wake(CouncilRoles.Operations, 1);
+        await loop.TurnAsync();
+
+        var file = Path.Combine(root, MaterialScanner.InboxDir, "broker-statement.pdf");
+        File.WriteAllText(file, "the owner's document");
+        host.LastPassBeganJustAfter(new DateTimeOffset(
+            new[] { File.GetLastWriteTimeUtc(file), File.GetCreationTimeUtc(file) }.Max(), TimeSpan.Zero));
+
         Wake(CouncilRoles.Operations, 2);
         Wake(CouncilRoles.Research, 3);
 

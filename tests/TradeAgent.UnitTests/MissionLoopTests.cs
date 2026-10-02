@@ -156,6 +156,19 @@ public class MissionLoopTests
 
         public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Root, _lastPassAt);
 
+        /// <summary>
+        /// THE BOUNDARY, POSED RATHER THAN WAITED FOR: this host's record of when its last pass began,
+        /// moved to the tick after <paramref name="stamp"/> — a file's own time.
+        ///
+        /// <para>Hosted ubuntu's ext4 stamps a file from the kernel's coarse clock, which advances once
+        /// a millisecond and runs behind the clock a pass is stamped with: in run 37051859960 all 3,000
+        /// files written straight after a <c>DateTime.UtcNow</c> read carried times earlier than that
+        /// read, by up to 1.3 ms. So a file that lands just after a pass began, and that the pass never
+        /// saw, can carry times from before the pass's start. This is that state on every platform and
+        /// every run, rather than in 16 to 56 drops in 300 on one runner.</para>
+        /// </summary>
+        public void LastPassBeganJustAfter(DateTimeOffset stamp) => _lastPassAt = stamp.AddTicks(1);
+
         public Task ScanAsync(CancellationToken ct)
         {
             // Captured BEFORE the walk, so this host's idea of the last pass is never later than the
@@ -179,6 +192,14 @@ public class MissionLoopTests
 
     static void Drop(string root, string name, string content) =>
         File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, name), content);
+
+    /// <summary>The later of a dropped file's two times, exactly as the filesystem stamped them.</summary>
+    static DateTimeOffset Stamp(string root, string name)
+    {
+        var file = Path.Combine(root, MaterialScanner.InboxDir, name);
+        var latest = new[] { File.GetLastWriteTimeUtc(file), File.GetCreationTimeUtc(file) }.Max();
+        return new DateTimeOffset(latest, TimeSpan.Zero);
+    }
 
     /// <summary>
     /// The heartbeat OFF, so that every turn in the wake tests below has a named cause. With it on,
@@ -230,6 +251,100 @@ public class MissionLoopTests
 
         var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
         Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// THE SAME DROP AT THE BOUNDARY HOSTED UBUNTU KEPT HITTING — RED FIRST, AND DETERMINISTIC. The
+    /// file lands after the pass behind the first turn began, that pass never saw it, and the
+    /// filesystem stamps it a tick behind the clock the pass was stamped with, so both of its times
+    /// read EARLIER than the pass's start.
+    ///
+    /// <para>The yield asked exactly those times whether they were newer than the last pass, heard
+    /// no, and launched the second turn without recording the file; the pass behind that turn then
+    /// recorded it across a window with the turn's process in it, and the owner's file read
+    /// <see cref="MaterialOrigin.InboxUnattested"/> for good. Run 37051859960 on ubuntu-latest: 72 of
+    /// 680 drops between turns, every one with the yield answering no and the file's times 4 to
+    /// 894 µs before the start of the pass it was written 0.8 to 1.7 ms after; every drop the yield
+    /// answered yes for read Inbox.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_file_stamped_before_the_pass_that_missed_it_is_still_recorded_as_theirs()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence));
+        var loop = new MissionLoop(host);
+
+        await loop.TurnAsync();
+        Drop(root, "broker-statement.pdf", "the owner's document");
+        host.LastPassBeganJustAfter(Stamp(root, "broker-statement.pdf"));
+        await loop.TurnAsync();
+
+        var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
+        Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// A FILE THE OWNER MOVES INTO THE DROP FOLDER — RED FIRST, with no seam at all. A move on one
+    /// disk, which is what a drag in Explorer or Finder is, keeps the file's own times: a statement
+    /// downloaded before the first turn carries times older than every pass. The yield read those
+    /// times, heard "nothing new", and the file was recorded only behind the next turn, unattested —
+    /// red on macOS and on hosted ubuntu. What has to answer is whether the folder holds a file no
+    /// pass has recorded, and no clock can say that.
+    /// </summary>
+    [Fact]
+    public async Task A_file_the_owner_moves_in_between_turns_is_still_recorded_as_theirs()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence));
+        var loop = new MissionLoop(host);
+
+        var downloads = Path.Combine(root, "downloads");
+        Directory.CreateDirectory(downloads);
+        File.WriteAllText(Path.Combine(downloads, "broker-statement.pdf"), "the owner's document");
+
+        await loop.TurnAsync();
+        File.Move(Path.Combine(downloads, "broker-statement.pdf"),
+            Path.Combine(root, MaterialScanner.InboxDir, "broker-statement.pdf"));
+        await loop.TurnAsync();
+
+        var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
+        Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// AND A DROP FOLDER THAT HOLDS NOTHING UNRECORDED COSTS ONE PASS A TURN, exactly as an empty one
+    /// does: a file the ledger already holds at its path, size and time is nothing new, and neither
+    /// is one the scanner never records — a package cache dropped inside a project folder. Green on
+    /// the base as well, and kept as the guard on the other side: a comparison that drifted from the
+    /// scanner's own walk or its own spelling of a path or a time would read those files as new and
+    /// run the walk twice a turn for ever.
+    /// </summary>
+    [Fact]
+    public async Task A_drop_folder_holding_nothing_unrecorded_costs_one_pass_a_turn()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence));
+        var loop = new MissionLoop(host);
+
+        Drop(root, "broker-statement.pdf", "the owner's document");
+        Directory.CreateDirectory(Path.Combine(root, MaterialScanner.InboxDir, "project", "node_modules", "pad"));
+        Drop(root, Path.Combine("project", "backtest.py"), "print('hi')");
+        Drop(root, Path.Combine("project", "node_modules", "pad", "index.js"), "module.exports = 1;");
+
+        await loop.TurnAsync();                     // records the two the scanner tracks
+        var before = host.Passes;
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+
+        var recorded = new MaterialStore(db).Present().Select(m => m.RelPath).Order();
+        Assert.Equal(["inbox/broker-statement.pdf", "inbox/project/backtest.py"], recorded);
+        Assert.Equal($"then {2}", $"then {host.Passes - before}");
     }
 
     /// <summary>
