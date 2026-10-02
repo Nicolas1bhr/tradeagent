@@ -1,6 +1,7 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
 
 namespace TradeAgent.Gateway;
 
@@ -595,6 +596,18 @@ public sealed record GatewayStatus(
     public ForwardDataStatus? ForwardData { get; init; }
 
     /// <summary>
+    /// WHAT A FILL ON TRADEAGENT'S PAPER PLATFORM PAYS RIGHT NOW, AND WHERE EACH NUMBER CAME FROM
+    /// (<c>U-paper-friction</c>) — whichever platform is selected, because it is a fact about the paper
+    /// platform's simulation, and an agent judging what a paper result is worth needs it whether or not
+    /// it is on paper yet.
+    ///
+    /// <para>Composed from the owner's settings through the one rule the connector reads at each fill
+    /// (<c>FrictionInForce.ForPaper</c>), so it cannot describe a friction the fills are not paying.
+    /// There is no verb and no op that changes it: the override is the account owner's, on a screen.</para>
+    /// </summary>
+    public PaperFrictionStatus? PaperFriction { get; init; }
+
+    /// <summary>
     /// WHAT IS BEING RUN FORWARD ON PAPER RIGHT NOW, or ABSENT because nothing is.
     ///
     /// <para>Running and suspended runs, and any run that has ENDED with an operation still
@@ -608,6 +621,32 @@ public sealed record GatewayStatus(
     /// </summary>
     public IReadOnlyList<StatusDeployment>? Deployments { get; init; }
 }
+
+/// <summary>
+/// THE PAPER PLATFORM'S FRICTION AS THE STATUS REPORTS IT: the two fractions, where they came from,
+/// and the venue cost model by id and sha whenever a number was taken from it.
+/// </summary>
+/// <param name="Source">
+/// <c>owner</c>, <c>venue_model</c> or <c>none</c> when both numbers came from one place, and
+/// <c>fee-source/slippage-source</c> — <c>owner/venue_model</c>, say — when they did not.
+/// </param>
+/// <param name="Fee">A FRACTION of each fill's notional: <c>0.001</c> is ten basis points.</param>
+/// <param name="Slippage">A FRACTION of the price, adverse, on a market order's fill.</param>
+public sealed record PaperFrictionStatus(string Source, decimal Fee, decimal Slippage)
+{
+    /// <summary>The venue cost model a number was taken from, or ABSENT because both are the owner's.</summary>
+    public PaperFrictionModel? Model { get; init; }
+
+    /// <summary>The friction in force, as the status carries it.</summary>
+    public static PaperFrictionStatus Of(FrictionInForce friction) =>
+        new(friction.Source, friction.Fee, friction.Slippage)
+        {
+            Model = friction.Model is { } m ? new PaperFrictionModel(m.Id, m.Sha256) : null
+        };
+}
+
+/// <summary>A venue cost model as a source names it: which model and which venue, and the sha of its text.</summary>
+public sealed record PaperFrictionModel(string Id, string Sha256);
 
 /// <summary>
 /// THE FORWARD SERIES AS THE STATUS REPORTS IT — the one line an agent needs before it decides

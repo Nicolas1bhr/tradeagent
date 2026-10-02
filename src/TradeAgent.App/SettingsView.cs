@@ -55,6 +55,15 @@ sealed class SettingsPage
     readonly Button _atasButton;
     bool _switching;
 
+    // ---- what a paper fill pays ----
+    /// <summary>The friction in force on the paper platform, in the owner's words. Updated in place on the tick.</summary>
+    readonly TextBlock _paperFrictionValue = Ui.Mono("—");
+    readonly TextBox _paperFee;
+    readonly TextBox _paperSlippage;
+    readonly TextBlock _paperFrictionNote = Ui.Muted("");
+    readonly Button _paperFrictionSave;
+    readonly Button _paperFrictionClear;
+
     // ---- account ----
     readonly TextBlock _accountValue = Ui.Mono("—");
     readonly TextBlock _accountNote = Ui.Muted("");
@@ -141,6 +150,18 @@ sealed class SettingsPage
         _atasInUse.IsVisible = false;
         _switchBusy.IsVisible = false;
 
+        // WHAT A PAPER FILL PAYS, AND THE OWNER'S OVERRIDE OF IT (`U-paper-friction`). ONE press to set
+        // and one to clear, like the paper platform's own button: the two numbers only make the
+        // simulation dearer or cheaper, and move no money, change no limit and grant nothing. The boxes
+        // open on the override in force — empty where there is none — and are never rewritten by the
+        // tick, which would take a number out from under the owner's typing.
+        _paperFee = Ui.TextField(PercentText(host.Gateway.Settings.PaperFeeOverride), "venue's");
+        _paperSlippage = Ui.TextField(PercentText(host.Gateway.Settings.PaperSlippageOverride), "assumed");
+        _paperFrictionSave = Ui.Secondary("Use my numbers", SavePaperFriction);
+        _paperFrictionClear = Ui.Ghost("Clear my numbers", ClearPaperFriction);
+        _paperFrictionValue.TextWrapping = TextWrapping.Wrap;
+        _paperFrictionNote.IsVisible = false;
+
         var platform = Ui.Section("Trading platform", Ui.Col(Theme.S4,
             Ui.KeyValueLive("Platform in use", _platformValue),
             _platformNote,
@@ -156,6 +177,7 @@ sealed class SettingsPage
                 + "is still moving. A fill here is a simulation, never proof that the price could "
                 + "have been traded.",
                 _paperButton),
+            PaperFrictionRow(),
             Ui.Divider(),
             Option("ATAS", null, _atasInUse,
                 "Your real trading platform. TradeAgent connects to it and stays inside the limits you set.",
@@ -346,11 +368,115 @@ sealed class SettingsPage
             grid));
 
         EnsureAccounts();
+        ApplyPaperFriction();
         ApplyMarketData();
         RelabelHoldout();
         ApplyHoldoutValue();
         ApplyUpdates();
     }
+
+    /// <summary>
+    /// THE PAPER ROW'S FRICTION: what every fill pays, said with its source, and the two boxes that
+    /// override it. Under the paper option rather than on the Safety page because it is not a risk
+    /// limit — it is how the simulation is priced, and the place an owner reads about the simulation.
+    /// </summary>
+    Control PaperFrictionRow() => Ui.Col(Theme.S2,
+        Ui.KeyValueLive("Fills pay", _paperFrictionValue),
+        Ui.FieldRow("Your fee per fill, in %", _paperFee,
+            "Leave it empty to pay the venue's published standard fee — what TradeAgent's own judge charges."),
+        Ui.FieldRow("Your slippage per fill, in %", _paperSlippage,
+            "Leave it empty to use TradeAgent's assumption of two basis points, which is not a measurement."),
+        Ui.Wrap(Theme.S2, _paperFrictionSave, _paperFrictionClear),
+        _paperFrictionNote,
+        Ui.Micro("Your numbers are used exactly, 0 included, and each one on its own: a fee with the slippage "
+                 + "left empty pays your fee and TradeAgent's slippage. Every paper fill records whose numbers "
+                 + "it paid. This makes the simulation dearer or cheaper; it moves no money and allows nothing."));
+
+    /// <summary>The friction in force, read off the settings by the rule the connector reads at each fill.</summary>
+    void ApplyPaperFriction() =>
+        _paperFrictionValue.Text = Core.Strategy.FrictionInForce.ForPaper(_host.Gateway.Settings).Line;
+
+    /// <summary>
+    /// The owner's one press. Each box is its own override: empty is "none", a number is used exactly,
+    /// zero included. Refused in words rather than saved when a box does not hold a percentage, or holds
+    /// more than any venue charges — the bound a backtest's declaration has, said in percent.
+    /// </summary>
+    void SavePaperFriction()
+    {
+        if (!TryPercent(_paperFee.Text, Core.Strategy.ExecutionModel.MaxFeeRate, "fee", out var fee, out var why)
+            || !TryPercent(_paperSlippage.Text, Core.Strategy.ExecutionModel.MaxSlippageRate, "slippage", out var slippage, out why))
+        {
+            PaperFrictionNote(Theme.Caution, why!);
+            return;
+        }
+
+        _host.Gateway.Update(s =>
+        {
+            s.PaperFeeOverride = fee;
+            s.PaperSlippageOverride = slippage;
+        });
+        ApplyPaperFriction();
+        var line = _paperFrictionValue.Text;
+        _host.Gateway.Log.Activity($"Paper fills now pay {line}");
+        PaperFrictionNote(Theme.TextMuted, $"Saved. Paper fills now pay {line}.");
+    }
+
+    /// <summary>One press clears both numbers, and the venue cost model is what every fill pays again.</summary>
+    void ClearPaperFriction()
+    {
+        _host.Gateway.Update(s =>
+        {
+            s.PaperFeeOverride = null;
+            s.PaperSlippageOverride = null;
+        });
+        _paperFee.Text = "";
+        _paperSlippage.Text = "";
+        ApplyPaperFriction();
+        var line = _paperFrictionValue.Text;
+        _host.Gateway.Log.Activity($"Paper fills pay TradeAgent's venue cost model again: {line}");
+        PaperFrictionNote(Theme.TextMuted, $"Cleared. Paper fills now pay {line}.");
+    }
+
+    void PaperFrictionNote(IBrush tone, string text)
+    {
+        _paperFrictionNote.IsVisible = true;
+        _paperFrictionNote.Foreground = tone;
+        _paperFrictionNote.Text = text;
+    }
+
+    /// <summary>
+    /// A box's percentage as the FRACTION the setting holds, or null for an empty box, or a refusal. A
+    /// comma is read as the decimal point, because that is how a Belgian keyboard writes one.
+    /// </summary>
+    internal static bool TryPercent(string? text, decimal max, string name, out decimal? fraction, out string? why)
+    {
+        fraction = null;
+        why = null;
+        var typed = (text ?? "").Trim().TrimEnd('%').Trim().Replace(',', '.');
+        if (typed.Length == 0) return true;
+
+        if (!decimal.TryParse(typed, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var percent))
+        {
+            why = $"\u201c{text}\u201d is not a {name} TradeAgent can use: write a percentage such as 0.1 for a "
+                  + "tenth of a per cent, or leave the box empty.";
+            return false;
+        }
+
+        if (percent / 100m > max)
+        {
+            why = $"A {name} of {percent.ToString(CultureInfo.InvariantCulture)}% is more than any venue charges — "
+                  + $"at most {(max * 100m).ToString("0.##", CultureInfo.InvariantCulture)}%. It reads like a number "
+                  + "meant in basis points; 0.1 is a tenth of a per cent.";
+            return false;
+        }
+
+        fraction = percent / 100m;
+        return true;
+    }
+
+    /// <summary>An override as the box shows it, in percent; empty for none.</summary>
+    static string PercentText(decimal? fraction) =>
+        fraction is { } f ? (f * 100m).ToString("0.############", CultureInfo.InvariantCulture) : "";
 
     /// <summary>
     /// One platform, as a heading, a sentence and its button. Deliberately the same shape as an
@@ -697,6 +823,8 @@ sealed class SettingsPage
     public void Update(GatewayStatus status)
     {
         ApplyPlatform(status.ConnectorId, Ui.PlatformLabel(status));
+        // The VALUE only — never the two boxes, which hold whatever the owner is typing.
+        ApplyPaperFriction();
         EnsureAccounts();
         ApplyAccountSelection();
         ApplyMarketData();

@@ -2392,6 +2392,9 @@ public sealed class TradingGateway : IAsyncDisposable
             LossReleasedAt = loss.ReleasedAt,
             LossClosureRule = loss.ClosureRule,
             ForwardData = ForwardStatus(),
+            // WHAT A PAPER FILL PAYS, by the rule the connector reads at the fill — so the agent is never
+            // told a friction the fills are not paying (U-paper-friction).
+            PaperFriction = PaperFrictionStatus.Of(Core.Strategy.FrictionInForce.ForPaper(Settings)),
             LossValuationLost = loss.ValuationLost.Count > 0 ? loss.ValuationLost : null,
             LossValuationExit = loss.ValuationExits.Count > 0 ? loss.ValuationExits : null,
             AiModel = ai.Model

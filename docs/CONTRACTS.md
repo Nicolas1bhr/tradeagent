@@ -137,8 +137,15 @@ taken from the model names the model by id and by the sha of its text (`venue-co
 the venue's fee is never called the owner's. An override of zero is **FRICTIONLESS** by the owner's own
 declaration and says so. **The connector's own default is unchanged:** built with nothing handed to it,
 it charges nothing and writes FRICTIONLESS on every fill and in its status line; the venue model is the
-HOST's choice (`AppHost.PaperChoice`, and the headless gateway host by the same rule). Sizes are rounded
-**DOWN** to the instrument's quantity increment and a size that rounds to nothing is refused.
+HOST's choice (`AppHost.PaperChoice`, and the headless gateway host by the same rule). **The friction in
+force is named on every surface, by that one rule:** the paper option row of the Trading platform card
+reads *Fills pay 0.1% + 0.02% (assumption) — Binance spot standard taker, 2026-10-02*, with the owner's
+two boxes beside it (percent, each its own override, one press to set and one to clear both); `status`
+carries `paper_friction` — `source` (`owner`, `venue_model`, `none`, or `fee-source/slippage-source` when
+the two differ), `fee`, `slippage` and `model` {`id`, `sha256`}, absent when no number came from the
+model — whichever platform is selected, with no op that changes it; and section 4 of the daily report
+prints *paper fills pay* in the owner's words. Sizes are rounded **DOWN** to the instrument's quantity
+increment and a size that rounds to nothing is refused.
 
 **The old fields are read and no longer consulted.** `PaperFeeFraction` and `PaperSlippageFraction` were
 non-nullable and saved as explicit zeros (the row omits only nulls), and `git grep` over `src/` and

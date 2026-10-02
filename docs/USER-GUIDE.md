@@ -198,10 +198,17 @@ On the Settings page, between the practice simulator and ATAS, there is a third 
 is one press to switch to, like the simulator, because there is nothing at stake. What it is for is
 the question a backtest cannot answer — how a strategy behaves on a market that is still moving —
 without putting money on the answer. An order is accepted straight away and fills at the opening price
-of the next completed minute, with whatever fee and slippage you have declared (both are zero unless
-you set them, and TradeAgent then says **FRICTIONLESS** on every fill rather than letting a cost of
-nothing look like a measurement). **A fill here is a simulation and never proof that the price could
-have been traded** — it says the price existed, not that your order would have got it. Out of the box
+of the next completed minute, and it pays roughly what a real fill there would cost: unless you set your
+own numbers, the exchange's **published standard fee** (for Binance spot 0.1%, recorded with where and
+when TradeAgent read it) and a slippage of **0.02%** that is TradeAgent's own assumption and is labelled
+as one — the same costs TradeAgent's judge charges when it decides whether a strategy is any good. The
+line **Fills pay** under TradeAgent paper on the Settings page says what is in force. Beneath it are two
+boxes for your own fee and slippage, in percent: each is used exactly as you write it, 0 included, an
+empty box keeps TradeAgent's number, and one press of *Clear my numbers* puts both back. A 0 there is
+said as **FRICTIONLESS** on every fill rather than looking like an exchange that charges nothing. Every
+fill records whose numbers it paid, and the daily report repeats the line. **A fill here is a simulation
+and never proof that the price could have been traded** — it says the price existed, not that your order
+would have got it. Out of the box
 TradeAgent paper trades nothing at all, because it will not size an order against a step size nobody
 has confirmed; the same `venues.json` line described under *If a backtest says it will not guess an
 instrument's size step* is what opens it.

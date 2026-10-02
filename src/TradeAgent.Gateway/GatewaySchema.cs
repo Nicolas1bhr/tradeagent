@@ -131,7 +131,18 @@ public static class GatewaySchema
             + "or has no confirmed outcome, an order would not cancel, or a position still reads open — and "
             + "while it stands every order of yours is refused anyway, because the records behind it are "
             + "flagged for the account owner. ABSENT means nothing has been flattened. There is no command "
-            + "here that starts, stops or undoes it.", []),
+            + "here that starts, stops or undoes it. "
+            + "paper_friction is what a fill on TradeAgent's paper platform pays right now, whichever "
+            + "platform is selected: fee and slippage as FRACTIONS (0.001 is ten basis points) — the fee on "
+            + "every fill, the slippage adverse on a market order's fill at the open — and source saying "
+            + "where they came from: owner (the account owner's own numbers, 0 included, used exactly), "
+            + "venue_model (TradeAgent's venue cost model for the venue the paper prices are of: that "
+            + "venue's published standard taker fee and two basis points of slippage that are TradeAgent's "
+            + "assumption, the same table the referee judges a verdict with and a backtest charges for a "
+            + "number you leave out), none (nothing modelled — FRICTIONLESS), or fee-source/slippage-source "
+            + "when the two differ. model names that venue cost model by id and sha256, and is ABSENT when "
+            + "no number came from it. Every paper result is net of exactly these numbers, every paper fill "
+            + "records them in words, and there is no operation here that changes them.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),
