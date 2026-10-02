@@ -293,9 +293,13 @@ public static class GatewaySchema
             + "none or several, TradeAgent asks you to name it rather than choose which holdout to "
             + "spend. ASKING TWICE ABOUT ONE VERSION IS ONE JUDGEMENT: the recorded answer is returned "
             + "as it stands and nothing is re-run, so waiting for the data to grow and asking again buys "
-            + "no second look. WHAT IT IS NOT: it reads no bar for you, it moves no holdout cutoff, it "
-            + "opens, renews and re-budgets no campaign, it registers no trial, and it grants no "
-            + "authority to trade anything. The execution model is the JUDGE'S and is not yours to pass. "
+            + "no second look. A RECORDED VERDICT THAT NO LONGER STANDS — its dataset rejected or collected "
+            + "again, or the evaluation semantics changed under a new build of TradeAgent — comes back as "
+            + "recorded with 'why' saying it was WITHDRAWN, when and why; nothing may trade on it, and "
+            + "re-judging it is not available yet. WHAT IT IS NOT: it reads no bar for you, it moves no "
+            + "holdout cutoff, it opens, renews and re-budgets no campaign, it registers no trial, and it "
+            + "grants no authority to trade anything. The execution model is the JUDGE'S and is not yours "
+            + "to pass. "
             + "One at a time per role.",
             [
                 new("version", "string", true, "The version's own hash, exactly as 'backtest' answered it. A version this installation never accepted, or one you have never completed a run of over this dataset, is refused."),

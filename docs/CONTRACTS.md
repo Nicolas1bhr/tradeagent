@@ -2537,6 +2537,22 @@ must already have COMPLETED a registered trial of that exact version over that d
 nobody measured buys nothing; and a promotion already recorded for (version, campaign) is answered **as
 it stands with nothing re-run**, so asking again once the dataset has grown buys no second peek.
 
+**"As it stands" is the STANDING, not only the row** (`U-evidence-identity`). `Promotions.Standing(version,
+campaign)` is asked of that campaign's verdict; one that still stands is answered exactly as before, `why` null.
+One that no longer stands comes back with `verdict`, `reason` and `text` unchanged — the record of what the
+referee answered is not rewritten — and `why` saying it was **WITHDRAWN**, when and why, that nothing may trade
+on it, and that re-judging is not available yet: asking again charges nothing and runs nothing, and judging a
+withdrawn verdict again is `U-rejudge`'s, because the `strategy_verdict` key (campaign, version) is already
+charged. A version a manifest bump re-identified is told to backtest the program again, which gives it a new id
+and a fresh verdict charged like any other. **The date is a recorded fact, never the moment of asking.** A
+standing computed at read time cannot know when it changed, so the gateway records, write-once in `kv`
+(`evaluation_semantics_since:<evaluator> with manifest <manifest>`, at construction, guarded like the venue
+sync), the first instant this installation evaluated under each pair; the withdrawal is dated by the earliest
+recorded pair other than the verdict's that came after the verdict (`EvaluationSemantics.WithdrawnAt`), and the
+reply says "on a date this installation did not record" when there is none. Withdrawals for any other reason —
+a dataset rejected, collected again or reclassified, a policy edited — carry their reason and no date. No new
+field crosses: the reply keeps its eight keys and the withdrawal is words in `why`.
+
 **A campaign is opened by the app when the owner sets a holdout, one per holdout dataset.**
 `TradingGateway.SetHoldout` writes the cutoff and opens the campaign in ONE transaction, so months held
 back always have something counting the attempts made against them. The scoring policy **text and its

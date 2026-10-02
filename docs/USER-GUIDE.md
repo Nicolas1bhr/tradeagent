@@ -122,9 +122,16 @@ later — and so "did I press that again?" is a question with an answer. The aut
 is the one thing that does not repeat itself in the log: the same refusal, over and over, would fill
 the page four times a day, so it is recorded the first time and again whenever the reason changes.
 
-Three more things worth knowing:
+Four more things worth knowing:
 
 - **An update never touches your records, your settings or ATAS.** It replaces the program only.
+- **An update leaves your strategies' verdicts standing and your paper experiments running — unless it
+  changes how TradeAgent judges a strategy.** A verdict belongs to the way TradeAgent measured and judged the
+  strategy and to what the strategy's text means, not to the app's version number, and most updates change
+  neither. One that does change them says so: the verdicts measured the old way are withdrawn, nothing may
+  trade on them any more, a paper experiment running one of those strategies ends with that reason written on
+  its line under *Running now*, and when your AI asks about such a verdict it is told it was withdrawn, on
+  which date and why. Judging a withdrawn strategy again is not available yet.
 - **Your AI cannot update TradeAgent.** It cannot check, download or install anything — the same rule
   that keeps it away from the mode switch and the kill switch.
 - **The check needs the internet, and that is all it needs it for.** If your machine is offline the
