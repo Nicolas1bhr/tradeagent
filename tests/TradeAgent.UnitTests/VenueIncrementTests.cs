@@ -34,6 +34,14 @@ public class VenueIncrementTests(ITestOutputHelper log)
         entry when close > 103
         """;
 
+    /// <summary>The same program about ETHUSDT, for the datasets of ETHUSDT below.</summary>
+    const string Ether = """
+        instrument ETHUSDT
+        size fixed 1
+        exit when close < 97
+        entry when close > 103
+        """;
+
     static AgentContext Caller(string role = CouncilRoles.Operations, string attempt = "attempt-1") =>
         AgentContext.ForAgent(role, role, attempt);
 
@@ -214,8 +222,10 @@ public class VenueIncrementTests(ITestOutputHelper log)
         GivenConfirmed(db);                                   // BTCUSDT is confirmed; ETHUSDT is not in it
         var set = GivenData(db, symbol: "ETHUSDT");
 
+        // The program names the dataset's own instrument: one that names another is refused before the
+        // catalogue is asked anything (`InstrumentMatchTests`), and this test is about the catalogue.
         var refused = Assert.Throws<GatewayDeniedException>(
-            () => gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id)));
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(text: Ether), set.Id)));
 
         log.WriteLine(refused.Message);
         Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Info.Code);
@@ -286,7 +296,7 @@ public class VenueIncrementTests(ITestOutputHelper log)
         GivenConfirmed(db);
         var set = GivenData(db, symbol: "ETHUSDT");
 
-        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Increment: 0.001m));
+        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(text: Ether), set.Id, Increment: 0.001m));
 
         Assert.Equal(0.001m, ran.Result.Request.Model.QuantityIncrement);
         Assert.Contains("declared", gw.Strategies.RunById(ran.Result.RunId)!.IncrementSource!,
@@ -294,12 +304,18 @@ public class VenueIncrementTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE INSTRUMENT IS THE DATASET'S, NOT THE PROGRAM'S.
+    /// THE INSTRUMENT IS THE DATASET'S, NOT THE PROGRAM'S — and since <c>U-cost-model</c> the two agree.
     ///
     /// <para>A program names an instrument on its first line, and that line is something the agent
     /// types. Reading the increment from it would let a caller run over BTCUSDT bars under a futures
     /// contract's step of 1 by writing one word — renaming the source of its own evidence. The lookup
-    /// is by the row the collector wrote beside the bytes.</para>
+    /// is by the row the collector wrote beside the bytes: the dataset's VENUE and instrument, the venue
+    /// being a fact the program cannot even state.</para>
+    ///
+    /// <para>Rewritten in place, name kept. This used to run a program saying <c>instrument ES</c> over
+    /// these BTCUSDT bars and assert the step was still BTCUSDT's; that run is now refused before
+    /// anything is charged (<c>InstrumentMatchTests</c>), so the program names the dataset's own
+    /// instrument and the step is still read off the dataset's row — the row the run records.</para>
     /// </summary>
     [Fact]
     public async Task The_increment_is_looked_up_by_the_datasets_instrument_and_not_the_programs()
@@ -309,13 +325,11 @@ public class VenueIncrementTests(ITestOutputHelper log)
         GivenConfirmed(db);
         var set = GivenData(db);
 
-        // The program says ES; the bars are BTCUSDT and the ledger says so.
-        var program = GivenProgram(text: Text.Replace("instrument BTCUSDT", "instrument ES", StringComparison.Ordinal));
-        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(program, set.Id));
+        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id));
 
-        Assert.Equal("ES", ran.Program.Instrument);
+        Assert.Equal(set.InstrumentSymbol, ran.Program.Instrument);
         Assert.Equal(0.00001m, ran.Result.Request.Model.QuantityIncrement);
-        Assert.Contains("BTCUSDT", gw.Strategies.RunById(ran.Result.RunId)!.IncrementSource!,
-            StringComparison.Ordinal);
+        Assert.Contains($"{VenueCatalog.BinanceSpot}/{set.InstrumentSymbol}",
+            gw.Strategies.RunById(ran.Result.RunId)!.IncrementSource!, StringComparison.Ordinal);
     }
 }
