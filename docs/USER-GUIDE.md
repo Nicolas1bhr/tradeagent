@@ -472,7 +472,7 @@ counts the AI assistant reports at the end of each turn, and a price per million
 
 The prices it ships with are **the supplier's own published list prices, copied from the supplier's
 own page on a stated day** — OpenAI's pricing page, <https://developers.openai.com/api/docs/pricing>,
-read on **2026-09-06**, together with the list of models Codex can be set to from
+read on **2026-10-02**, together with the list of models Codex can be set to from
 <https://learn.chatgpt.com/docs/models> read the same day. Both AI assistants TradeAgent offers are
 billed by OpenAI under the sign-in TradeAgent sets up for them, which is why one page covers both.
 Every price carries that page and that date with it, and the Safety page shows you both.
@@ -1084,7 +1084,7 @@ down" is not a state this can end up in.
 - One of the two AI assistants has never been tested at all; only the other one has.
 - **The daily spending limit is enforced against the supplier's published list prices, not against
   your bill.** Nobody has reconciled a day of TradeAgent's figures with an invoice from OpenAI. The
-  prices were read from the supplier's page on 2026-09-06 and go stale on their schedule; a turn
+  prices were read from the supplier's page on 2026-10-02 and go stale on their schedule; a turn
   whose model the assistant did not name is charged at the dearest one and labelled as an estimate.
   If you know your real rate, the two boxes on the Safety page beat all of it. See *What it costs
   you, and the daily limit*.

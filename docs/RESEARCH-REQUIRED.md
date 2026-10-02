@@ -206,7 +206,7 @@ costs nothing and an exclusive one loses no bar either — but it has not been m
 
 ---
 
-## D — AI list prices (read 2026-09-06 from OpenAI's own pages; re-read before every release)
+## D — AI list prices (read 2026-10-02 from OpenAI's own pages; re-read before every release)
 
 **File:** `src/TradeAgent.AgentRuntime/ListPrices.cs` — the whole catalogue, in `costs.json`'s shape.
 Overridable at runtime by `%LOCALAPPDATA%\TradeAgent\costs.json`, and beaten outright by the two
