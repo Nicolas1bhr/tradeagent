@@ -9923,6 +9923,26 @@ public sealed class TradingGateway : IAsyncDisposable
 
     // ---------------------------------------------------------------- health
 
+    /// <summary>
+    /// HOW OLD THE MARKET DATA ROW LETS A PRICE BE ON A CONNECTOR WITHOUT STREAMING QUOTES: one bar,
+    /// the collector's look offset, and the order gates' own <see cref="GatewayOptions.MaxQuoteAge"/>
+    /// on top — 60 + 2 + 30 = 92 seconds as shipped (<c>U-runner-forward</c>).
+    ///
+    /// <para>Such a price moves when a bar closes and at no other time, and the collector looks
+    /// <c>ForwardBars.LookOffset</c> past each minute, so a healthy feed's price is up to a minute
+    /// and two seconds old just before the next one lands. Held to the thirty seconds a streaming
+    /// quote is held to, the row read "degraded" for half of every minute on a feed that was fine —
+    /// and a row that is wrong half the time is a row nobody reads. Past this bound something really
+    /// is late: a look that failed, a host that has stopped publishing, a settle that did not run.</para>
+    ///
+    /// <para><b>The order path is not this.</b> Both quote gates still refuse a price older than
+    /// <see cref="GatewayOptions.MaxQuoteAge"/>, which on a bar-fed connector means an order is
+    /// priced in the first half-minute after a bar lands or not at all — the runner acts on "a minute
+    /// closed", which is why the collector's looks are aligned.</para>
+    /// </summary>
+    TimeSpan BarFedQuoteBound =>
+        Core.Data.ForwardBars.BarLength + Core.Data.ForwardBars.LookOffset + _opt.MaxQuoteAge;
+
     public async Task RefreshHealthAsync(CancellationToken ct = default)
     {
         _health.Set(Components.Gateway, HealthState.READY);
@@ -9956,10 +9976,23 @@ public sealed class TradingGateway : IAsyncDisposable
             if (symbol is not null)
             {
                 var q = await Connector.GetQuoteAsync(symbol, ct);
-                var stale = q is not null && q.IsStale(_opt.MaxQuoteAge, Now);
+
+                // A FEED THAT MOVES ONLY WHEN A BAR CLOSES IS JUDGED BY HOW OFTEN IT MOVES — keyed on
+                // the capability, not on IsPaper, because the practice simulator says IsPaper too and
+                // streams. See BarFedQuoteBound. It is a row and only a row: health does not gate
+                // execution, and the order path's quote gates keep MaxQuoteAge exactly as they were.
+                var streams = Connector.Capabilities.SupportsStreaming;
+                var bound = streams ? _opt.MaxQuoteAge : BarFedQuoteBound;
+                var stale = q is not null && q.IsStale(bound, Now);
                 _health.Set(Components.MarketData,
                     q is null ? HealthState.FAILED : stale ? HealthState.DEGRADED : HealthState.READY,
-                    q is null ? "no quote" : stale ? $"last price is older than {_opt.MaxQuoteAge.TotalSeconds:0}s" : "");
+                    q is null ? "no quote"
+                    : stale ? $"last price is older than {bound.TotalSeconds:0}s"
+                              + (streams ? "" : ", and a price here moves only when a bar closes")
+                    : streams ? ""
+                    : $"a price here moves only when a bar closes, so it reads as current up to "
+                      + $"{bound.TotalSeconds:0}s old; an order still needs one newer than "
+                      + $"{_opt.MaxQuoteAge.TotalSeconds:0}s");
             }
 
             // An unrecognised mode is in here rather than only in LoadSettings, because this method

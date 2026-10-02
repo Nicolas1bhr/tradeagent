@@ -239,4 +239,74 @@ public class QuoteClockTests(ITestOutputHelper log)
 
         await gw.DisposeAsync();
     }
+
+    // ---------------------------------------------------------------- (g) the health row
+
+    /// <summary>
+    /// A BAR-FED FEED IS NOT DEGRADED ONE BAR AFTER ITS CLOSE, AND THE ROW SAYS WHY.
+    ///
+    /// <para>The paper connector's price moves when a bar closes and at no other time, and the
+    /// collector looks two seconds past each minute — so a healthy feed's price is up to a minute and
+    /// two seconds old just before the next one lands. Held to the thirty seconds a streaming quote is
+    /// held to, that read DEGRADED for half of every minute. The bound for a connector without
+    /// streaming quotes is one tick plus the offset plus those thirty seconds, 92 s, stated on the
+    /// row; the ORDER gates keep their thirty, and the practice simulator — which is <c>IsPaper</c>
+    /// too, and streams — keeps its thirty on this row.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_bar_fed_feed_is_not_degraded_one_bar_after_its_close()
+    {
+        var close = new DateTimeOffset(2026, 9, 19, 12, 1, 0, TimeSpan.Zero);
+        await using var rig = await PaperReady(close.AddSeconds(2));
+        rig.Source.Add("BTCUSDT", Flat(close.AddMinutes(-1), 100m));   // closed 12:01, collected 12:01:02
+
+        await rig.Gw.RefreshHealthAsync();
+        var landed = rig.Health.Get(Components.MarketData);
+        log.WriteLine($"2 s after the close  : {landed.State} — {landed.Detail}");
+        Assert.Equal(HealthState.READY, landed.State);
+
+        // ONE BAR AFTER ITS CLOSE. The next minute has closed and is not collected until 12:02:02.
+        rig.Clock.At = close.AddMinutes(1);
+        await rig.Gw.RefreshHealthAsync();
+        var row = rig.Health.Get(Components.MarketData);
+        log.WriteLine($"60 s after the close : {row.State} — {row.Detail}");
+        Assert.Equal(HealthState.READY, row.State);
+        Assert.Contains("92", row.Detail, StringComparison.Ordinal);
+
+        // AND THE ORDER GATE IS STILL THIRTY SECONDS: a price sixty seconds old sizes nothing.
+        var refused = await SwallowAsync(rig.Gw.PlaceAsync(new AgentContext("a"), "bar-fed-60s", Buy()));
+        log.WriteLine($"an order at 60 s     : {refused}");
+        Assert.StartsWith(ErrorCode.MARKET_DATA_UNAVAILABLE.ToString(), refused, StringComparison.Ordinal);
+
+        // PAST ONE LOOK AND THE ALLOWANCE, A BAR-FED FEED IS DEGRADED, and the row names the bound.
+        rig.Clock.At = close.AddSeconds(93);
+        await rig.Gw.RefreshHealthAsync();
+        var late = rig.Health.Get(Components.MarketData);
+        log.WriteLine($"93 s after the close : {late.State} — {late.Detail}");
+        Assert.Equal(HealthState.DEGRADED, late.State);
+        Assert.Contains("92", late.Detail, StringComparison.Ordinal);
+
+        // THE BOUND IS KEYED ON STREAMING, NOT ON IsPaper. The practice simulator says IsPaper and
+        // streams; a quote of its forty seconds old is degraded exactly as it always was.
+        var simClock = new TestClock(DateTimeOffset.UtcNow);
+        var sim = new RecordingConnector(new FakeConnector(new FakeBroker()));
+        sim.Faults.QuoteAge = TimeSpan.FromSeconds(40);
+        Assert.True(sim.Capabilities.IsPaper);
+        Assert.True(sim.Capabilities.SupportsStreaming);
+        using var simDb = TestEnv.NewDb();
+        var simHealth = new HealthRegistry();
+        await using var simGw = new TradingGateway(simDb, sim, simHealth, new GatewayOptions { Clock = simClock });
+        simGw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = sim.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = ["ES"];
+        });
+        await sim.ConnectAsync();
+        await simGw.RefreshHealthAsync();
+        var simRow = simHealth.Get(Components.MarketData);
+        log.WriteLine($"simulator at 40 s    : {simRow.State} — {simRow.Detail}");
+        Assert.Equal(HealthState.DEGRADED, simRow.State);
+        Assert.Contains("30s", simRow.Detail, StringComparison.Ordinal);
+    }
 }
