@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -251,10 +252,11 @@ public interface IMissionHost
     string HomeFor(string role) => AgentHome;
 
     /// <summary>
-    /// Something is in the owner's drop folder that no complete scan pass has recorded yet. Answered
+    /// Something is in the owner's drop folder that no scan pass has recorded yet — a file the ledger
+    /// has no row for, asked of the ledger and never of a clock (<see cref="MissionInbox"/>). Answered
     /// conservatively: an unreadable folder, or a pass that has never run, both read as changed,
-    /// because the cost of a spurious yield is one scan and the cost of a missed one is a row that
-    /// says the owner handed something over when nobody can show that.
+    /// because the cost of a spurious yield is one scan and the cost of a missed one is the owner's
+    /// file recorded behind the next turn as <see cref="MaterialOrigin.InboxUnattested"/>, for good.
     /// </summary>
     bool InboxChangedSinceLastPass { get; }
 
@@ -980,40 +982,35 @@ public sealed record MissionDelivery(string Id, string Kind, string From, string
 public sealed record MissionNext(double? AfterSeconds);
 
 /// <summary>
-/// Whether the owner's drop folder holds anything a complete scan pass has not seen yet.
+/// Whether the owner's drop folder holds anything no scan pass has recorded yet.
 ///
-/// Deliberately a directory read rather than a query against the ledger: the question is "is there
-/// something the ledger does not know about", and asking the ledger cannot answer it. It errs
-/// towards yes — see <see cref="IMissionHost.InboxChangedSinceLastPass"/> — because a wrong yes
-/// costs one scan pass and a wrong no costs an attestation.
+/// A directory read held against the LEDGER, never against a clock: the question is "is there a file
+/// here the ledger has no row for", and the scanner answers it with its own walk and its own identity
+/// (<see cref="MaterialScanner.InboxHoldsUnrecorded"/>). It used to compare the files' own times with
+/// the instant the last pass began, and a filesystem's clock is not the process's — on hosted ubuntu a
+/// file that landed just after a pass began carried times from before it, and a file moved in on one
+/// disk keeps whatever times it had — so a file nobody had recorded read as old news, the next turn
+/// launched first, and the owner's file was recorded behind it, unattested, for good. It errs towards
+/// yes — see <see cref="IMissionHost.InboxChangedSinceLastPass"/> — because a wrong yes costs one scan
+/// pass and a wrong no costs the owner the one word in the ledger that says the file is theirs.
 /// </summary>
 public static class MissionInbox
 {
-    /// <summary>Entries walked before the answer is simply yes. A drop bigger than this needs a pass anyway.</summary>
-    public const int Limit = 5_000;
-
-    public static bool ChangedSince(string workspaceRoot, DateTimeOffset? lastPassAt)
+    /// <param name="workspaceRoot">The workspace the drop folder is in.</param>
+    /// <param name="lastPassAt">
+    /// When this host's last pass began, or null for none yet. Only its absence is read: a host that
+    /// has run no pass answers yes, as it always has. Its value is compared with nothing.
+    /// </param>
+    /// <param name="ledger">The database the scanner records into — the one the next pass would write.</param>
+    public static bool HoldsUnrecorded(string workspaceRoot, DateTimeOffset? lastPassAt, Database ledger)
     {
         if (lastPassAt is null) return true;
-        var inbox = Path.Combine(workspaceRoot, MaterialScanner.InboxDir);
 
-        try
-        {
-            if (!Directory.Exists(inbox)) return false;
-            var seen = 0;
-            foreach (var file in Directory.EnumerateFiles(inbox, "*", SearchOption.AllDirectories))
-            {
-                if (++seen > Limit) return true;
-                // Creation as well as last write: a file COPIED into the folder keeps the source's
-                // write time, which is routinely older than the last pass, and that is the ordinary
-                // way material arrives here.
-                if (File.GetLastWriteTimeUtc(file) >= lastPassAt.Value.UtcDateTime) return true;
-                if (File.GetCreationTimeUtc(file) >= lastPassAt.Value.UtcDateTime) return true;
-            }
-            return false;
-        }
+        try { return new MaterialScanner(ledger, workspaceRoot).InboxHoldsUnrecorded(); }
         catch (IOException) { return true; }
         catch (UnauthorizedAccessException) { return true; }
+        // A ledger that cannot be read cannot say a file is recorded.
+        catch (DbException) { return true; }
     }
 }
 

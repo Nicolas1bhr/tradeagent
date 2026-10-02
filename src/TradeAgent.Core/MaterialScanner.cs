@@ -295,17 +295,76 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         fs.Length == m.SizeBytes &&
         new DateTimeOffset(File.GetLastWriteTimeUtc(fs.SafeFileHandle), TimeSpan.Zero) == m.ModifiedAt;
 
+    /// <summary>
+    /// DOES THE OWNER'S DROP FOLDER HOLD A FILE NO PASS HAS RECORDED — one whose (path, size, mtime)
+    /// has no live row, which is exactly a sighting the next pass would write a NEW row for? The
+    /// mission loop asks this before every turn, and takes a pass first when the answer is yes.
+    ///
+    /// <para><b>Why the ledger and not a clock.</b> This used to be asked of the files' own times —
+    /// "is either newer than the instant the last pass began?" — and those come from two different
+    /// clocks. A filesystem stamps a file from its own: hosted ubuntu's ext4 from the kernel's coarse
+    /// clock, which advances once a millisecond and ran up to 1.3 ms behind
+    /// <see cref="DateTimeOffset.UtcNow"/> in run 37051859960, so a file that landed just after a pass
+    /// began, and that the pass never saw, read as older than the pass. A move on one disk keeps a
+    /// file's times whatever they are, so a statement downloaded yesterday and dragged in today read
+    /// as older than every pass. Either way the loop heard "nothing new", launched the next turn
+    /// first, and the file was recorded behind that turn as <see cref="MaterialOrigin.InboxUnattested"/>
+    /// — for good, because a row is written once. The ledger has no clock in it: a file is recorded or
+    /// it is not.</para>
+    ///
+    /// <para><b>The same walk and the same identity as <see cref="Scan"/></b>: the same skipped
+    /// directories, depth and budget, the same relative spelling, and the tuple
+    /// <see cref="MaterialStore.Observe"/> matches. A file the scanner never records — inside a
+    /// package cache — is not news, or every turn would pay for a walk that cannot record it. A file
+    /// past the budget, a folder that cannot be read and a file that cannot be stat'ed are all
+    /// answered yes: a spurious pass costs a walk, and a missed one costs the owner the word.</para>
+    ///
+    /// <para>It writes nothing and asks the presence register nothing. Whether a sighting is the
+    /// owner's is still decided by the pass, at the sighting, exactly as before; this only decides
+    /// whether the loop takes that pass before the turn or leaves the file for the pass behind it.</para>
+    /// </summary>
+    public bool InboxHoldsUnrecorded(CancellationToken ct = default)
+    {
+        var inbox = Path.Combine(_root, InboxDir);
+        if (!Directory.Exists(inbox)) return false;
+
+        int skipped = 0, unreadable = 0;
+        var files = new List<string>();
+        Collect(inbox, 0, files, ref skipped, ref unreadable, ct);
+        if (unreadable > 0 || files.Count >= FileLimit) return true;
+
+        var recorded = _store.Live([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested]);
+        foreach (var file in files)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            FileInfo info;
+            try { info = new FileInfo(file); if (!info.Exists) continue; }
+            catch (IOException) { return true; }
+            catch (UnauthorizedAccessException) { return true; }
+
+            var tuple = (Relative(file), info.Length, Sql.T(new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero)));
+            if (!recorded.Contains(tuple)) return true;
+        }
+        return false;
+    }
+
     IEnumerable<string> Walk(string dir, int depth, ref int skipped, CancellationToken ct)
     {
         // Recursion is written out rather than using EnumerateFiles(SearchOption.AllDirectories)
         // because that overload cannot skip a subtree — it would walk every node_modules it found
         // and only then let us discard the results.
         var files = new List<string>();
-        Collect(dir, depth, files, ref skipped, ct);
+        var unreadable = 0;
+        Collect(dir, depth, files, ref skipped, ref unreadable, ct);
         return files;
     }
 
-    void Collect(string dir, int depth, List<string> into, ref int skipped, CancellationToken ct)
+    /// <param name="unreadable">
+    /// Directories that could not be listed, counted apart from the ones skipped on purpose:
+    /// <see cref="InboxHoldsUnrecorded"/> answers yes for the first and no for the second.
+    /// </param>
+    void Collect(string dir, int depth, List<string> into, ref int skipped, ref int unreadable, CancellationToken ct)
     {
         if (depth > DepthLimit) { skipped++; return; }
         ct.ThrowIfCancellationRequested();
@@ -316,8 +375,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             entries = Directory.GetFiles(dir);
             subs = Directory.GetDirectories(dir);
         }
-        catch (IOException) { skipped++; return; }
-        catch (UnauthorizedAccessException) { skipped++; return; }
+        catch (IOException) { skipped++; unreadable++; return; }
+        catch (UnauthorizedAccessException) { skipped++; unreadable++; return; }
 
         into.AddRange(entries);
         // Stop collecting, not just stop consuming. Enumerating a hundred thousand paths into a list
@@ -328,7 +387,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         {
             var name = Path.GetFileName(sub);
             if (NoiseDirs.Contains(name) || name.StartsWith('.')) { skipped++; continue; }
-            Collect(sub, depth + 1, into, ref skipped, ct);
+            Collect(sub, depth + 1, into, ref skipped, ref unreadable, ct);
             if (into.Count >= FileLimit) return;
         }
     }

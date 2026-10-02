@@ -154,7 +154,7 @@ public class MissionLoopTests
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) => Task.FromResult(Next);
 
-        public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Root, _lastPassAt);
+        public bool InboxChangedSinceLastPass => MissionInbox.HoldsUnrecorded(Root, _lastPassAt, _db);
 
         /// <summary>
         /// THE BOUNDARY, POSED RATHER THAN WAITED FOR: this host's record of when its last pass began,
@@ -165,14 +165,15 @@ public class MissionLoopTests
         /// files written straight after a <c>DateTime.UtcNow</c> read carried times earlier than that
         /// read, by up to 1.3 ms. So a file that lands just after a pass began, and that the pass never
         /// saw, can carry times from before the pass's start. This is that state on every platform and
-        /// every run, rather than in 16 to 56 drops in 300 on one runner.</para>
+        /// every run, rather than in 16 to 56 drops in 300 on one runner. The yield asks the ledger
+        /// now and reads only whether a pass has run, so nothing compares the value this sets — which
+        /// is the point: a yield that compared clocks again would go red here at once.</para>
         /// </summary>
         public void LastPassBeganJustAfter(DateTimeOffset stamp) => _lastPassAt = stamp.AddTicks(1);
 
         public Task ScanAsync(CancellationToken ct)
         {
-            // Captured BEFORE the walk, so this host's idea of the last pass is never later than the
-            // scanner's own. Erring early costs a spare pass; erring late costs an attestation.
+            // As the app records it: the yield reads only that a pass has run (MissionInbox).
             _lastPassAt = DateTimeOffset.UtcNow;
             Passes++;
             new MaterialScanner(_db, Root, Presence.NoneSince).Scan(ct);

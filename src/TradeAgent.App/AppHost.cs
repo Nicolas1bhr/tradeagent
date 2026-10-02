@@ -424,14 +424,16 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>
     /// The moment the last material pass began, as this process saw it, in UTC ticks — 0 for "no
-    /// pass yet". Read before the walk rather than after, so it is never later than the scanner's
-    /// own idea of the pass: erring early costs one spare pass and erring late costs an attestation.
+    /// pass yet". The mission loop's yield reads only whether it is 0: a process that has run no pass
+    /// takes one before its first turn. Its value is compared with nothing — whether the drop folder
+    /// holds something new is asked of the ledger (<see cref="MissionInbox"/>), because the files'
+    /// own times come from the filesystem's clock, not this one, and a file stamped a tick before
+    /// this instant had been skipped by the yield and recorded behind the next turn, unattested.
     ///
     /// A long through <see cref="Interlocked"/> rather than a <c>DateTimeOffset?</c>, because two
     /// threads write it — the background loop every thirty seconds and the mission loop after every
     /// turn — while the mission loop reads it, and a sixteen-byte struct is not read or written
-    /// atomically anywhere. A torn read landing in the future would answer "nothing new in the drop
-    /// folder" when there is, skip the yield, and cost the very attestation this field exists for.
+    /// atomically anywhere.
     /// </summary>
     long _lastScanAtTicks;
 
@@ -1280,7 +1282,8 @@ public sealed class AppHost : IAsyncDisposable
         /// <summary>One role's own folder, where its <c>next.json</c>, its <c>in/</c> and its <c>out/</c> are.</summary>
         public string HomeFor(string role) => host.HomeFor(role);
 
-        public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host.LastScanAt);
+        public bool InboxChangedSinceLastPass =>
+            MissionInbox.HoldsUnrecorded(Paths.Workspace, host.LastScanAt, host._db!);
 
         public AiSpendToday Spend => host.SpendToday;
 
