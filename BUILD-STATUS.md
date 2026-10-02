@@ -7249,3 +7249,41 @@ in `ResumeOnStartTests.A_restart_with_the_ai_working_…` ("left the AI it needs
 **NOT done, NOT verified:** the Binance fee page not re-opened by the builder (read 2026-10-02 by a research leg); no box run; the holdout card not
 seen on screen (`JudgeLine` unit-tested); agent-facing texts on the judge's friction unchanged; the research-run default (`U-paper-friction`), paper
 friction, minimum notional and verifying BTCUSDT (`U-venue-verify`) are later units. `9a63a69`'s own CI run was still running at this record.
+
+## 2026-10-02 — U-runner-forward landed: a paper deployment keeps acting past its first week, on quotes stamped at their bar's close and judged on one clock
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-runner-forward.md` (dispatched `a9c10c6`); the builder rebased onto
+`492ae79`, `ace127f` and `4ce671f` (after U-cost-model), the manager onto `77a8f0f` (docs), src+tests patch-id identical. Merge `aa11d5a` (ff-only), 5 commits
+(4 items + the report), 24 files, +960/−53. No schema rung. Money path: both order-path quote gates and the loss valuation in `TradingGateway.cs`.
+
+- **Item 1 (`54bb296`):** the runner pages `Since` from `StartedAt` on the last open time until a page comes back short (`EveryBarSince`) and hands every
+  bar to the replay and `RunBooks`; cursor, frontier and write-ahead ops unchanged. One pass over 50,000 bars (a temporary test under `suite.sh`, not
+  committed): 98–281 ms, 71.0–72.5 MiB allocated a pass, ≈ 590 B held per bar — measured while this Mac was swapping (5.57 of 7.17 GB, load ≈ 4), an
+  upper bound on this machine, not a property of the code; `CONTRACTS.md` states the O(age) time and memory cost.
+- **Item 2 (`94d637b`):** a healthy collector looks at the next tick boundary + 2 s through ONE public helper, `TickAlignment.WaitForNextLook` (Provisioning,
+  beside the collector; `U-tape-store` reuses it), `ForwardBars.LookOffset` in Core; the failure backoff and its test unchanged.
+- **Item 3 (`9417359`):** the paper quote is stamped `SettledThrough + BarLength` — the close of the bar it comes from, never `+ Interval` after a gap;
+  `QuoteInfo.IsStale(maxAge, now)`: both order-path gates and the loss valuation pass the gateway's clock (the one the decision gate reads), onboarding
+  passes `UtcNow` explicitly.
+- **Item 4 (`7ec88cc`):** the Market data row of a connector without streaming quotes allows bar + offset + 30 s = 92 s, stated on the row (keyed on the
+  capability, so the streaming simulator keeps 30 s); the 30 s order gates are unchanged; `CONTRACTS.md` and `USER-GUIDE.md` (Market data) say so.
+- **Judged at landing:** (1) `IPaperBarSource` gains `BarLength` because a bar's close needs its length (`PaperBook.Interval` and its meta write
+  removed) — accepted. (2) The one clock turned 10 Fault + 2 Unit tests red whose simulator quotes were stamped on the machine clock under an injected
+  gateway clock: `FakeConnector.QuoteClock` (default the system clock — the shipped simulator unchanged) is handed `options.Clock` by `TestEnv`; one
+  `DecisionFreshnessTests` fixture widens its quote bound to 10 min, argued at the test, so the gate under test answers rather than the quote gate (a
+  five-minute-old price is `QuoteClockTests`' to refuse) — accepted: no assertion moved, nothing renamed or removed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `6ec443a` (on `4ce671f`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1244/1244, Fault 402/402; ten classes 3×, all green; a full local Integration on items 1–3, 702 passed, 1 skipped. RED before (base
+`492ae79` + the new tests): (a) "replayed 10000" of 10,005, `Assert.Single() Failure … Collection: []`; (b) no flatten, `BarsSinceEntry = 9997`; (c)
+Expected [12:01:02, …] / Actual [12:01:37.5, …]; (d) Expected 15:36:00 / Actual 15:45:00; (e) "MARKET_DATA_UNAVAILABLE — no price newer than 30s for
+ES" where "ok" was expected; (g) DEGRADED. Mutants, each alone, restored identical: (i) paging removed ⇒ (a) red; (ii) alignment removed ⇒ (c) red; (iii)
+the `+ Interval` stamp restored ⇒ (d) Expected 16:01:00 / Actual 16:10:00; (iv) `:2830` back on `DateTimeOffset.UtcNow` ⇒ (e) red.
+Manager's gate at `aa11d5a`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1244/1244 (32 s), Fault 402/402 (1 m 28 s), Integration 702/703, 1 skipped (11 m 9 s) → 0 failed.
+Names vs `main` (git objects): 1997 → 2006, 0 removed, 9 added (8 tests, a rig helper). Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37033753438 at `6ec443a` (this unit on `4ce671f`, the `main` it lands on but for docs): success on ubuntu-latest (12 min),
+macos-latest (15 min), windows-latest (45 min), package (4 min). U-cost-model's landing push `afd1bb6`: run 37030536066 success on all three.
+
+**NOT done, NOT verified:** the paper connector's own settle still reads one 10,000-bar page per call, so a fresh book over an older ledger catches up
+over a few reads and refuses its stale price meanwhile (outside the brief; owed before M0 relies on an old ledger); the app was not run (the Settings
+card and the Dashboard dot unseen); the item commits were not built one by one (the tip was); no Windows box; no order placed anywhere.
