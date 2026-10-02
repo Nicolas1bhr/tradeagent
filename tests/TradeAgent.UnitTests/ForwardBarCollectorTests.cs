@@ -186,6 +186,101 @@ public class ForwardBarCollectorTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A HEALTHY COLLECTOR LOOKS <c>AlignOffset</c> AFTER EACH TICK BOUNDARY, NOT ONE TICK AFTER ITS
+    /// LAST LOOK (<c>U-runner-forward</c> item 2).
+    ///
+    /// <para>The wait after a successful look used to be the plain tick, so every look kept the
+    /// phase the app happened to start at: started at 12:00:37.5 it looked at :37.5 for ever, and a
+    /// minute that closed on the hour sat at the vendor for 37 seconds before this installation asked
+    /// for it — past the thirty seconds an order's price may be old, so the runner's market order on
+    /// that bar was refused for want of a price. The clock and the timer are injected; the clock
+    /// moves only by the waits the loop asks for, so every instant below is exact.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_collector_looks_align_offset_after_each_tick_boundary_when_healthy()
+    {
+        using var db = TestEnv.NewDb();
+        using var host = new FakeArchive();
+        host.PublishAt(Path, "[]");               // a healthy answer with nothing new in it
+
+        var minute = TimeSpan.FromMinutes(1);
+        var started = new DateTimeOffset(2026, 9, 19, 12, 0, 37, 500, TimeSpan.Zero);
+        var now = started;
+        var gate = new Lock();
+        var waits = new List<TimeSpan>();
+        var enough = new TaskCompletionSource();
+
+        await using var collector = new ForwardBarCollector(db, () => Symbol,
+            baseUrl: host.BaseUrl, requestTimeout: TimeSpan.FromSeconds(5), interval: minute,
+            now: () => { lock (gate) return now; },
+            delay: async (d, ct) =>
+            {
+                int count;
+                lock (gate) { waits.Add(d); now += d; count = waits.Count; }
+                if (count < 4) return;
+                enough.TrySetResult();
+                await Task.Delay(Timeout.Infinite, ct);
+            });
+
+        collector.Start();
+        await enough.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var looks = new ForwardBarStore(db).Attempts(Symbol).Select(a => a.ReceivedAt).Order().ToList();
+        log.WriteLine("looks: " + string.Join(", ", looks.Select(l => l.ToString("HH:mm:ss.fff"))));
+        log.WriteLine("waits: " + string.Join(", ", waits.Select(w => w.TotalSeconds + " s")));
+
+        // THE FIRST LOOK IS THE MOMENT IT STARTED; EVERY ONE AFTER IT IS TWO SECONDS PAST A MINUTE.
+        Assert.Equal(4, looks.Count);
+        Assert.Equal(started, looks[0]);
+        Assert.Equal(
+            [new DateTimeOffset(2026, 9, 19, 12, 1, 2, TimeSpan.Zero),
+             new DateTimeOffset(2026, 9, 19, 12, 2, 2, TimeSpan.Zero),
+             new DateTimeOffset(2026, 9, 19, 12, 3, 2, TimeSpan.Zero)],
+            looks.Skip(1));
+
+        // SO THE FIRST WAIT IS WHAT IS LEFT OF THAT MINUTE PLUS THE OFFSET, AND THEN A WHOLE ONE.
+        Assert.Equal(TimeSpan.FromSeconds(24.5), waits[0]);
+        Assert.Equal(minute, waits[1]);
+        Assert.Equal(minute, waits[2]);
+        Assert.All(new ForwardBarStore(db).Attempts(Symbol), a => Assert.Null(a.Note));
+    }
+
+    /// <summary>
+    /// THE ONE HELPER EVERY TICKING COLLECTOR SHARES, AS ARITHMETIC: the first tick boundary plus the
+    /// offset that is strictly after now. Strictly, because a look that lands exactly on its instant
+    /// has had it; and the offset is a phase, so one longer than the tick keeps only its remainder.
+    /// </summary>
+    [Fact]
+    public void The_next_look_is_the_first_tick_boundary_plus_offset_strictly_after_now()
+    {
+        var minute = TimeSpan.FromMinutes(1);
+        var two = TimeSpan.FromSeconds(2);
+        DateTimeOffset At(int h, int m, double s) =>
+            new DateTimeOffset(2026, 9, 19, h, m, 0, TimeSpan.Zero).AddSeconds(s);
+
+        Assert.Equal(At(12, 1, 2), TickAlignment.NextLook(At(12, 0, 37.5), minute, two));
+        Assert.Equal(At(12, 0, 2), TickAlignment.NextLook(At(12, 0, 1), minute, two));
+        Assert.Equal(At(12, 1, 2), TickAlignment.NextLook(At(12, 0, 2), minute, two));     // on it: the next one
+        Assert.Equal(At(12, 1, 2), TickAlignment.NextLook(At(12, 0, 59.999), minute, two));
+        Assert.Equal(At(12, 1, 2), TickAlignment.NextLook(At(12, 0, 37.5), minute, minute + two));
+
+        // A FIVE-MILLISECOND TICK WITH THE DEFAULT OFFSET IS A FIVE-MILLISECOND GRID: two seconds is a
+        // whole number of them, so the phase is zero.
+        var five = TimeSpan.FromMilliseconds(5);
+        Assert.Equal(At(12, 0, 0.005), TickAlignment.NextLook(At(12, 0, 0.001), five, two));
+
+        // AND THE WAIT IS WHAT IS LEFT: never zero, never more than one tick.
+        Assert.Equal(TimeSpan.FromSeconds(24.5), TickAlignment.WaitForNextLook(At(12, 0, 37.5), minute, two));
+        Assert.Equal(minute, TickAlignment.WaitForNextLook(At(12, 0, 2), minute, two));
+        Assert.Throws<ArgumentOutOfRangeException>(() => TickAlignment.NextLook(At(12, 0, 0), TimeSpan.Zero, two));
+
+        // THE COLLECTOR'S OWN DEFAULTS ARE THE FORWARD SERIES' CADENCE: one bar, two seconds past it.
+        Assert.Equal(ForwardBars.BarLength, ForwardBarCollector.Interval);
+        Assert.Equal(ForwardBars.LookOffset, ForwardBarCollector.DefaultAlignOffset);
+        Assert.Equal(two, ForwardBars.LookOffset);
+    }
+
+    /// <summary>
     /// A HOST THAT NEVER ANSWERS IS A RECORDED FAILURE WITH NO STATUS, not an invented one: "the
     /// vendor said nothing" and "the vendor said 503" are different facts and the ledger keeps them
     /// apart. The request's own leash is what ends it, and it is seconds.

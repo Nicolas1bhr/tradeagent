@@ -38,6 +38,18 @@ public static class ForwardBars
     public static readonly TimeSpan BarLength = TimeSpan.FromMinutes(1);
 
     /// <summary>
+    /// HOW FAR PAST EACH MINUTE BOUNDARY A HEALTHY COLLECTOR LOOKS: two seconds, so the minute that
+    /// has just closed is closed at the vendor when it is asked for, and lands in the ledger within
+    /// seconds of its close rather than wherever in the next minute the app happened to start
+    /// (<c>U-runner-forward</c>).
+    ///
+    /// <para>It is here, beside <see cref="BarLength"/>, because two layers need the same number and
+    /// neither may reach the other: <c>ForwardBarCollector</c> looks on it, and the gateway's Market
+    /// data row allows for it when it judges a price that only moves when a bar closes.</para>
+    /// </summary>
+    public static readonly TimeSpan LookOffset = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// THE SENTENCE EVERY SURFACE PRINTS, spelled once. <c>data-list</c>, <c>data-bars</c>, the
     /// Settings card and the owner's report all say it, and four copies of a caveat are four
     /// wordings — the one that drifts is the one nobody re-reads (the rule

@@ -35,7 +35,13 @@ namespace TradeAgent.Provisioning;
 public sealed class ForwardBarCollector : IAsyncDisposable
 {
     /// <summary>One bar, one look. The interval this collector runs at when everything is working.</summary>
-    public static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+    public static readonly TimeSpan Interval = ForwardBars.BarLength;
+
+    /// <summary>
+    /// How far past each tick boundary a healthy look lands, unless a caller says otherwise:
+    /// <see cref="ForwardBars.LookOffset"/>, two seconds. See <see cref="TickAlignment"/>.
+    /// </summary>
+    public static readonly TimeSpan DefaultAlignOffset = ForwardBars.LookOffset;
 
     /// <summary>
     /// THE REQUEST'S OWN LEASH, AND IT IS SHORT ON PURPOSE. Ten seconds: this asks for at most a
@@ -88,6 +94,10 @@ public sealed class ForwardBarCollector : IAsyncDisposable
     /// Where to ask. Null means the catalogue row's, which is the vendor's. A test passes its
     /// loopback address here and nothing in this suite has ever passed anything else.
     /// </param>
+    /// <param name="alignOffset">
+    /// How far past each tick boundary a healthy look lands. Null means
+    /// <see cref="DefaultAlignOffset"/>. See <see cref="TickAlignment"/>.
+    /// </param>
     public ForwardBarCollector(
         Database db,
         Func<string?> symbol,
@@ -97,7 +107,8 @@ public sealed class ForwardBarCollector : IAsyncDisposable
         TimeSpan? interval = null,
         Func<DateTimeOffset>? now = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        CandleSourceEntry? entry = null)
+        CandleSourceEntry? entry = null,
+        TimeSpan? alignOffset = null)
     {
         ArgumentNullException.ThrowIfNull(db);
 
@@ -119,13 +130,21 @@ public sealed class ForwardBarCollector : IAsyncDisposable
         _baseUrl = (baseUrl ?? _entry.BaseUrl).TrimEnd('/');
         RequestTimeout = requestTimeout ?? DefaultRequestTimeout;
         Tick = interval ?? Interval;
+        AlignOffset = alignOffset ?? DefaultAlignOffset;
     }
 
     /// <inheritdoc cref="DefaultRequestTimeout"/>
     public TimeSpan RequestTimeout { get; }
 
-    /// <summary>How long between looks when nothing is failing. Injected so a test never waits a minute.</summary>
+    /// <summary>
+    /// The tick a healthy look is aligned to — one look per tick, landing <see cref="AlignOffset"/>
+    /// past each boundary — and what the failure backoff doubles from. Injected so a test never
+    /// waits a minute.
+    /// </summary>
     public TimeSpan Tick { get; }
+
+    /// <summary>How far past each <see cref="Tick"/> boundary a healthy look lands.</summary>
+    public TimeSpan AlignOffset { get; }
 
     /// <summary>The catalogue row this collector is driven by. Data, and the evidence of the endpoint.</summary>
     public CandleSourceEntry Entry => _entry;
@@ -151,7 +170,8 @@ public sealed class ForwardBarCollector : IAsyncDisposable
 
     /// <summary>
     /// THE NEXT WAIT, GIVEN <paramref name="failures"/> CONSECUTIVE FAILURES. Doubling from the tick
-    /// and capped at <see cref="MaxBackoff"/>.
+    /// and capped at <see cref="MaxBackoff"/>. With none it answers the tick itself, but a healthy
+    /// loop does not wait on it: it waits for the next aligned look (<see cref="TickAlignment"/>).
     ///
     /// <para>Static and public because it is arithmetic, and a backoff that can only be observed by
     /// waiting for it is a backoff nobody checks. Capped rather than unbounded: a vendor that comes
@@ -194,10 +214,21 @@ public sealed class ForwardBarCollector : IAsyncDisposable
                 LastError = ex.Message.ReplaceLineEndings(" ");
             }
 
-            try { await _delay(Backoff(Tick, _failures), ct); }
+            try { await _delay(NextWait(), ct); }
             catch (OperationCanceledException) { return; }
         }
     }
+
+    /// <summary>
+    /// HOW LONG UNTIL THE NEXT LOOK. After a failure, the backoff exactly as it always was — doubling
+    /// from the tick and capped — because a host having a bad afternoon is asked less often, not at a
+    /// sharper phase. After a success, the next tick boundary plus <see cref="AlignOffset"/>
+    /// (<see cref="TickAlignment"/>): a fixed tick after each look kept the phase the app started at
+    /// plus every request's own duration, so a minute could sit at the vendor for most of the next
+    /// one and reach the runner with its price already too old to size an order from.
+    /// </summary>
+    TimeSpan NextWait() =>
+        _failures > 0 ? Backoff(Tick, _failures) : TickAlignment.WaitForNextLook(_now(), Tick, AlignOffset);
 
     /// <summary>
     /// ONE LOOK: ask for everything after the newest bar held, store what has closed, record the
