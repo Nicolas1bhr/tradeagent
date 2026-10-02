@@ -376,25 +376,50 @@ public sealed class TradeAgentSettings
     public bool CollectLiveBars { get; set; } = true;
 
     /// <summary>
-    /// WHAT A FILL ON THE PAPER CONNECTOR IS CHARGED, as a FRACTION — <c>0.001</c> is ten basis
-    /// points, the same spelling a backtest's <c>--fees</c> uses and for the same reason.
+    /// THE ACCOUNT OWNER'S OVERRIDE OF WHAT A PAPER FILL IS CHARGED, as a FRACTION — <c>0.001</c> is
+    /// ten basis points, the spelling a backtest's <c>--fees</c> uses — or NULL, which is "no override":
+    /// the fill then pays TradeAgent's venue cost model for the venue the paper connector's prices are
+    /// of (<c>Strategy.FrictionInForce.ForPaper</c>, <c>U-paper-friction</c>).
     ///
-    /// <para><b>Zero by default, and zero is a DECLARATION.</b> Declared no fee and no slippage, the
-    /// paper connector is FRICTIONLESS and every fill it writes says so in those words — because a
-    /// zero that was allowed to read as a measurement of a venue charging nothing is the figure
-    /// <c>docs/CONTRACTS.md</c> will not let a run report.</para>
+    /// <para><b>Null and zero are two different answers.</b> Null is an owner who never chose, and gets
+    /// the venue's published fee — the cost model the referee judges with (<c>docs/EDGE-FACTORY.md</c>
+    /// § 4.5). Zero is an owner who chose a fill that costs nothing, and gets exactly that, said as
+    /// FRICTIONLESS by their own declaration. Nullable so the row can tell them apart: it is written with
+    /// nulls omitted (<c>Json.Options</c>), so an owner who never chose has no key at all, and a zero is
+    /// written and read back as one.</para>
+    ///
+    /// <para><b>Each of the two is its own override.</b> A fee set with the slippage left alone pays the
+    /// owner's fee and the venue model's slippage — the per-field rule a research run follows for the
+    /// friction it declares.</para>
     ///
     /// <para><b>It is not a risk limit and not a permission.</b> Nothing is refused by it, no cap
     /// moves with it and no order is allowed or denied because of it; it only makes the simulation
-    /// dearer or cheaper. So it does not ask twice on the Safety page, and
-    /// <see cref="SettingsDelta"/> does not count it as a widening.</para>
+    /// dearer or cheaper. So it is one press on the Settings page and does not ask twice.</para>
+    /// </summary>
+    public decimal? PaperFeeOverride { get; set; }
+
+    /// <inheritdoc cref="PaperFeeOverride"/>
+    /// <remarks>Applied ADVERSELY and only to a market order's fill at the bar's open: a buy pays up
+    /// and a sell gets less. A stop and a target fill where they fire, which is the backtest's rule
+    /// — protection is an order already resting, not a decision taken at a close.</remarks>
+    public decimal? PaperSlippageOverride { get; set; }
+
+    /// <summary>
+    /// THE OLD SPELLING OF THE PAPER FEE: STILL READ FROM THE ROW, NO LONGER CONSULTED
+    /// (<c>U-paper-friction</c>).
+    ///
+    /// <para>A non-nullable decimal defaulting to 0 and saved as an explicit 0, because the row omits
+    /// only nulls — so a stored 0 could never say whether the owner chose it, and nothing ever let them
+    /// choose: <c>git grep</c> over <c>src/</c> and <c>tests/</c> at <c>8a51a16</c> finds this
+    /// declaration, its sibling's, and one read each in <c>AppHost.PaperChoice</c>, and no writer at
+    /// all. Every stored value is therefore the default, and reading it as "the owner chose no friction"
+    /// would keep every paper fill frictionless for ever. The field stays so a row an older build wrote
+    /// loads as it always did and a rollback finds what it wrote; <see cref="PaperFeeOverride"/> is what
+    /// is read.</para>
     /// </summary>
     public decimal PaperFeeFraction { get; set; }
 
     /// <inheritdoc cref="PaperFeeFraction"/>
-    /// <remarks>Applied ADVERSELY and only to a market order's fill at the bar's open: a buy pays up
-    /// and a sell gets less. A stop and a target fill where they fire, which is the backtest's rule
-    /// — protection is an order already resting, not a decision taken at a close.</remarks>
     public decimal PaperSlippageFraction { get; set; }
 
     /// <summary>
