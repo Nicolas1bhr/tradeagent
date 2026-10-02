@@ -79,6 +79,44 @@ public class ResumeOnStartTests : IDisposable
         finally { await Close(host); }
     }
 
+    /// <summary>
+    /// A PROGRAM SLOW TO SAY ITS VERSION DOES NOT KEEP THE AI STOPPED, and its row says why.
+    ///
+    /// <para><b>What windows-latest showed</b> (run 37017805967, job 110872924285, the test above
+    /// with prints): 4.9 s to compose the restart, then 20.1 s inside <c>ResumeOnStartAsync</c> — the
+    /// whole of it the version probe's deadline, because PowerShell's first launch beside the full
+    /// suite did not answer <c>version</c> in 20 s (measured again at once: 6.5 s, then 0.2 s). The
+    /// deadline left the probe as <c>AI_AUTH_TIMEOUT</c> — "powershell.exe did not finish within 20s",
+    /// out of <c>DetectAsync</c> and <c>PrepareAsync</c> — so the card read "Signing in took too long
+    /// and was cancelled. Press Sign in again." on a restart that signs nothing in, and the AI stayed
+    /// stopped. A probe that FAILS already leaves the start going with the program's words on the row;
+    /// a slow one is a probe that failed. The deadline is a second here so that no machine is fast
+    /// enough to beat it: the program sleeps half a minute before it answers.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_restart_whose_runtime_is_slow_to_answer_its_version_still_starts_it_and_its_row_says_why()
+    {
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; },
+            slowVersion: true);
+        host.Agent.VersionDeadline = TimeSpan.FromSeconds(1);
+        try
+        {
+            await host.ResumeOnStartAsync();
+
+            Assert.True(host.Agent.Running, "a version answer slower than its deadline kept the AI stopped on a restart");
+            Assert.Equal(Probe, host.Agent.Current?.Id);
+            Assert.Null(host.AiNotStarted);
+            Assert.DoesNotContain(host.Gateway.Log.RecentActivity(),
+                a => a.Text.StartsWith("The AI was not started", StringComparison.Ordinal));
+            Assert.True(host.Mission.Running);
+
+            var row = host.Health.Get(Components.AgentRuntime);
+            Assert.Equal(HealthState.FAILED, row.State);
+            Assert.Contains("did not answer within 1 second", row.Detail, StringComparison.Ordinal);
+        }
+        finally { await Close(host); }
+    }
+
     // ---- 2. paused --------------------------------------------------------------------------------
 
     /// <summary>PAUSED SURVIVES A RESTART, and so does a stopped AI: nothing is started for it.</summary>
@@ -234,9 +272,9 @@ public class ResumeOnStartTests : IDisposable
     /// register handed back is the one the host's AI processes report to.
     /// </summary>
     static async Task<(AppHost Host, string DatabasePath, AgentPresence Presence)> Restarted(
-        Action<TradeAgentSettings> lastSession, bool setupFinished = true)
+        Action<TradeAgentSettings> lastSession, bool setupFinished = true, bool slowVersion = false)
     {
-        RuntimeCatalog.SaveOverrides([ProbeRuntime()]);
+        RuntimeCatalog.SaveOverrides([ProbeRuntime(slowVersion)]);
 
         var path = Path.Combine(TestEnv.Home, $"resume-{Guid.NewGuid():n}.db");
         var db = new Database(path);
@@ -263,9 +301,10 @@ public class ResumeOnStartTests : IDisposable
     /// A RUNTIME THAT RUNS, on every platform this suite runs on: it answers its version, and prints a
     /// line and exits 0 for any turn. Windows goes through <c>powershell -File</c> rather than a
     /// <c>.cmd</c>, because a <c>.cmd</c> is run by <c>cmd.exe</c>, which would parse the Situation the
-    /// turn is handed as a command line of its own.
+    /// turn is handed as a command line of its own. <paramref name="slowVersion"/> makes it sleep half a
+    /// minute before it answers its version, and answer a turn as quickly as ever.
     /// </summary>
-    static RuntimeManifest ProbeRuntime()
+    static RuntimeManifest ProbeRuntime(bool slowVersion = false)
     {
         var dir = Path.Combine(TestEnv.Home, $"resume-probe-{Guid.NewGuid():n}");
         Directory.CreateDirectory(dir);
@@ -273,8 +312,9 @@ public class ResumeOnStartTests : IDisposable
         if (OperatingSystem.IsWindows())
         {
             var script = Path.Combine(dir, "probe.ps1");
+            var wait = slowVersion ? "Start-Sleep -Seconds 30; " : "";
             File.WriteAllText(script,
-                "if ($args.Count -gt 0 -and $args[0] -eq 'version') { 'resume-probe 1.0.0'; exit 0 }\r\n"
+                $"if ($args.Count -gt 0 -and $args[0] -eq 'version') {{ {wait}'resume-probe 1.0.0'; exit 0 }}\r\n"
                 + "'Nothing needs doing this turn.'\r\nexit 0\r\n");
             string[] run = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
             return new RuntimeManifest
@@ -289,8 +329,9 @@ public class ResumeOnStartTests : IDisposable
         }
 
         var sh = Path.Combine(dir, "probe.sh");
+        var pause = slowVersion ? "sleep 30; " : "";
         File.WriteAllText(sh,
-            "#!/bin/sh\n[ \"$1\" = \"version\" ] && { echo 'resume-probe 1.0.0'; exit 0; }\n"
+            $"#!/bin/sh\n[ \"$1\" = \"version\" ] && {{ {pause}echo 'resume-probe 1.0.0'; exit 0; }}\n"
             + "echo 'Nothing needs doing this turn.'\n");
         File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return new RuntimeManifest

@@ -58,12 +58,22 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     public IReadOnlyDictionary<string, string> Workspaces { get; private set; } =
         new Dictionary<string, string>();
 
+    /// <summary>
+    /// The version probe's deadline for every runtime this supervisor prepares. The product never
+    /// sets it; a test of a program slower than the deadline sets it short — see
+    /// <see cref="CliAgentRuntime.VersionDeadline"/>.
+    /// </summary>
+    internal TimeSpan VersionDeadline { get; set; } = CliAgentRuntime.DefaultVersionDeadline;
+
     public async Task<IAgentRuntime> PrepareAsync(RuntimeManifest manifest, WorkspaceContext ctx, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence);
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence)
+            {
+                VersionDeadline = VersionDeadline
+            };
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,
