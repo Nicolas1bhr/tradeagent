@@ -7287,3 +7287,40 @@ macos-latest (15 min), windows-latest (45 min), package (4 min). U-cost-model's 
 **NOT done, NOT verified:** the paper connector's own settle still reads one 10,000-bar page per call, so a fresh book over an older ledger catches up
 over a few reads and refuses its stale price meanwhile (outside the brief; owed before M0 relies on an old ledger); the app was not run (the Settings
 card and the Dashboard dot unseen); the item commits were not built one by one (the tip was); no Windows box; no order placed anywhere.
+
+## 2026-10-02 — U-tape-store landed: the tape's clock starts — Binance USDⓈ-M context recorded as it arrives, append-only, each row classed by the app
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-tape-store.md` (dispatched `ec149ec`, on seat P's lent slot); the builder
+rebased onto `4ce671f` and `8a51a16` (after U-runner-forward), the manager onto `c44425a`, `aa77717` (docs), src+tests patch-id identical. Merge `c8fc2cc` (ff-only), 5 commits
+(4 items + the report), 20 files, +2761/−33. **Its own file and ladder: `state/tape.db` at version 1**; the main database is untouched
+(`DatabaseSchemaVersion` stays 27). Not the money path: nothing here places an order or holds a credential (the builder's report; no gateway file).
+
+- **Item 1 (`affe7e5`):** `TapeStore` (Core) is the only writer of `tape.db` — its own connection, WAL, `synchronous=FULL`, busy 5000; the version is read
+  BEFORE anything is written (a newer file is refused with an activity line, its tables and journal untouched); an `if (have < 1)` ladder; `tape_fetch`
+  (every fetch, its origin read off the URL) and `tape_obs` (payload as canonical JSON keeping the vendor's decimal strings, ≤ 64 KB); the same payload
+  writes nothing, a different one is revision + 1 with its own `received_at`; no REPLACE, no UPDATE; one transaction per fetch; `AsOf` takes a required audience.
+- **Item 3 (`aa7e471`, before item 2 — the class reads the rows):** `TapeSourceCatalog`: five built-in rows (premium/funding 60 s, open interest 60 s,
+  OI 5-minute and the ratios 300 s, settled funding 900 s) over BTC ETH SOL BNB XRP DOGE, each with cadence, terms note and doc URL; `tape-sources.json`
+  may only ADD up to 8 unkeyed rows (a built-in id, user-info, a query or a malformed series refused in words).
+- **Item 2 (`d1e9e36`):** the evidence class is computed by the store from recorded fields — `O-LIVE` only for a built-in row fetched from its built-in origin
+  and received within cadence + 30 s of its source time; everything else `O-ARCH` (loopback and file rows included); a revision never upgrades a class.
+- **Item 4 (`8d95fbb`):** `TapeCollector` — a loop per row on U-runner-forward's `TickAlignment.WaitForNextLook` (the builder's marked stand-in replaced and
+  deleted after the rebase), 10 s leash, 4 MB cap, backoff to 5 min, a 429/418 ends the look, no redirects, no backfill; started and stopped by
+  `AppHost`; "Record market context" beside the live-bars toggle (default ON, one press, the only control; no verb or pipe op); `fapi.binance.com` in
+  `SuiteReachesNoVendorTests`; `CONTRACTS.md` "The tape", `USER-GUIDE.md`, `docs/RESEARCH-REQUIRED.md` C5b.
+- **Judged at landing:** (1) the origin rule moved to `Core/UrlOrigin.cs` because Core cannot reference Security and § 6.10 makes it ONE rule —
+  `KeyOrigin.Of` now delegates; the manager compared the two bodies: byte-identical logic; HarnessKeyOrigin and HarnessRole tests 3× green — accepted.
+  (2) A file row may not replace a built-in id and an unreadable file stops only its own rows (the file is agent-writable) — accepted, stricter.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `9f23296`: Release `--no-incremental` 0 warnings, 0 errors; Unit
+1256/1256, Fault 402/402 (both under `suite.sh`); eleven classes 3×, 73/73 each run. Mutants, each alone, restored identical: (i) `INSERT OR REPLACE` ⇒
+(a) "Expected: Tuple (1, 0, 0, 1) / Actual: Tuple (1, 1, 0, 0)"; (ii) `AsOf` without `received_at <= $t` ⇒ (b) "Assert.Null() Failure … 12:10 r1
+102.000"; (iii) the origin dropped from the class ⇒ (d) "Expected: "O-ARCH" / Actual: "O-LIVE"". RUN: the brief's six keyless GETs once from this Mac
+at 15:28:27 UTC, HTTP 200 in 0.313–0.357 s (shapes in RESEARCH-REQUIRED C5b). Manager's gate at `a18d92a`, carried to `c8fc2cc`, build tree identical, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1256/1256 (31 s), Fault 402/402 (1 m 27 s), Integration 702/703, 1 skipped (11 m 7 s) → 0 failed.
+Names vs `main` (git objects): 2006 → 2019, 0 removed, 13 added (12 tests, a fixture helper). Scan: four cancellation members excluded by name (`_stopping`, `leash`), otherwise clean; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37053082404 at `9f23296` (this unit on `8a51a16`; `main` has since moved by docs only): success on ubuntu-latest (13 min),
+macos-latest (16 min), windows-latest (40 min), package (4 min). U-runner-forward's landing push `f7f0b09`: run 37051843228 success on all three (windows 34 min).
+
+**NOT done, NOT verified:** the app was not run (its collector would poll the real host), so the Settings card is unseen and no row has come from the
+real host — `O-LIVE` is proved at store level only; Binance's API terms and rate limits not re-read; the 5-minute series' publication delay unmeasured;
+the item commits not built one by one (the tip was); no box. The recording lasts only while the app runs (the keep-awake press is a later unit).
