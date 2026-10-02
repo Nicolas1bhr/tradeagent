@@ -16,8 +16,9 @@ build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/
 | **Builder · fixer · survey leg** (fresh Opus, spawned by a manager) | how to build its one unit: one brief, one worktree, one pass | anything outside its brief; `main` |
 
 Every agent is Opus (`model: "opus"`), by the owner's choice. A manager runs its builders itself (the Agent tool works one level down; two builders in
-one message run concurrently) and talks to the orchestrator by `SendMessage` to `main`. **A sub-agent is not woken by its own background work** (probed
-2026-10-02), so no manager or builder ends its turn while work is pending: it waits in foreground slices of at most nine minutes (`fleet/bin/wait-for.sh`,
+one message run concurrently) and talks to the orchestrator by `SendMessage` to `main`. **A sub-agent is never woken by a background child agent finishing**
+(that notice goes to the orchestrator), **and a background Bash wakes it only late** (probed 2026-10-02: 5 m 40 s after a 50 s command), so no manager or
+builder ends its turn while work is pending: it waits in foreground slices of at most nine minutes (`fleet/bin/wait-for.sh`,
 `ci-wait.sh … 9`). Live seats, agent ids and allotments: `fleet/BOARD.md`.
 
 **The `fleet/` directory** is `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` — outside the repo and outside `/tmp`, which the OS empties after
