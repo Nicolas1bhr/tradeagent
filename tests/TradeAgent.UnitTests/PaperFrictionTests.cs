@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
@@ -230,6 +231,86 @@ public class PaperFrictionTests(ITestOutputHelper log)
         Assert.DoesNotContain("paper_fee_override", saved, StringComparison.Ordinal);
         Assert.DoesNotContain("paper_slippage_override", saved, StringComparison.Ordinal);
         Assert.Null(Json.Read<TradeAgentSettings>(saved)!.PaperFeeOverride);
+    }
+
+    // ---- the surfaces: where an agent and an owner read the friction in force ------------------------
+
+    /// <summary>
+    /// THE FRICTION IN FORCE IS NAMED WHERE IT IS READ — <c>status</c> and its schema for the agent, the
+    /// daily report and the paper row's own line for the owner — by the rule the connector reads at the
+    /// fill, so no surface can describe a friction the fills are not paying.
+    /// </summary>
+    [Fact]
+    public async Task The_status_the_report_and_the_paper_row_name_the_friction_in_force()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var venue = VenueFriction.Of(VenueCatalog.BinanceSpot)!;
+
+        // NOTHING CHOSEN: the venue model, by id and sha, on the wire.
+        using (var wire = JsonDocument.Parse(Json.Write(await gw.StatusAsync())))
+        {
+            var paper = wire.RootElement.GetProperty("paper_friction");
+            log.WriteLine(paper.GetRawText());
+            Assert.Equal("venue_model", paper.GetProperty("source").GetString());
+            Assert.Equal(0.001m, paper.GetProperty("fee").GetDecimal());
+            Assert.Equal(0.0002m, paper.GetProperty("slippage").GetDecimal());
+            Assert.Equal("venue-cost-model-v1/binance-spot", paper.GetProperty("model").GetProperty("id").GetString());
+            Assert.Equal(venue.Sha256, paper.GetProperty("model").GetProperty("sha256").GetString());
+        }
+
+        var schema = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Status).Description;
+        Assert.Contains("paper_friction", schema, StringComparison.Ordinal);
+        Assert.Contains("venue_model", schema, StringComparison.Ordinal);
+
+        var report = DailyReportText.Render(gw.Reports.Compose(DateTimeOffset.UtcNow));
+        Assert.Contains("- paper fills pay: 0.1% + 0.02% (assumption) — Binance spot standard taker, 2026-10-02",
+            report, StringComparison.Ordinal);
+
+        // THE OWNER'S NUMBERS: the status says whose, the model is ABSENT rather than null, and the
+        // report says "your override".
+        gw.Update(s => { s.PaperFeeOverride = 0.0005m; s.PaperSlippageOverride = 0m; });
+        using (var wire = JsonDocument.Parse(Json.Write(await gw.StatusAsync())))
+        {
+            var paper = wire.RootElement.GetProperty("paper_friction");
+            log.WriteLine(paper.GetRawText());
+            Assert.Equal("owner", paper.GetProperty("source").GetString());
+            Assert.Equal(0.0005m, paper.GetProperty("fee").GetDecimal());
+            Assert.Equal(0m, paper.GetProperty("slippage").GetDecimal());
+            Assert.False(paper.TryGetProperty("model", out _));
+        }
+        Assert.Contains("- paper fills pay: 0.05% + 0% — your override",
+            DailyReportText.Render(gw.Reports.Compose(DateTimeOffset.UtcNow)), StringComparison.Ordinal);
+
+        // ONE OF EACH: the source names both, and the row says which number is whose.
+        gw.Update(s => s.PaperSlippageOverride = null);
+        Assert.Equal("owner/venue_model", (await gw.StatusAsync()).PaperFriction!.Source);
+        Assert.Equal("0.05% (your override) + 0.02% (assumption)", FrictionInForce.ForPaper(gw.Settings).Line);
+    }
+
+    /// <summary>
+    /// THE PAPER ROW'S TWO BOXES READ A PERCENTAGE, EMPTY AS "NONE" AND ZERO AS ZERO, a comma as the
+    /// decimal point a Belgian keyboard types — and refuse in words what is not a percentage or is more
+    /// than any venue charges, rather than saving it.
+    /// </summary>
+    [Fact]
+    public void The_paper_rows_boxes_read_a_percentage_and_refuse_what_no_venue_charges()
+    {
+        Assert.True(App.SettingsPage.TryPercent("0,075", 0.05m, "fee", out var bnb, out _));
+        Assert.Equal(0.00075m, bnb);
+        Assert.True(App.SettingsPage.TryPercent(" 0.1 % ", 0.05m, "fee", out var tenth, out _));
+        Assert.Equal(0.001m, tenth);
+        Assert.True(App.SettingsPage.TryPercent("0", 0.05m, "fee", out var zero, out _));
+        Assert.Equal(0m, zero);
+        Assert.True(App.SettingsPage.TryPercent("  ", 0.05m, "fee", out var none, out _));
+        Assert.Null(none);
+
+        Assert.False(App.SettingsPage.TryPercent("10", 0.05m, "fee", out _, out var tooMuch));
+        Assert.Contains("at most 5%", tooMuch, StringComparison.Ordinal);
+        Assert.False(App.SettingsPage.TryPercent("-0.1", 0.05m, "slippage", out _, out var negative));
+        Assert.Contains("not a slippage", negative, StringComparison.Ordinal);
+        Assert.False(App.SettingsPage.TryPercent("ten bp", 0.05m, "fee", out _, out var words));
+        Assert.Contains("not a fee", words, StringComparison.Ordinal);
     }
 
     // ---- research: the same table, for a number a backtest leaves out ------------------------------

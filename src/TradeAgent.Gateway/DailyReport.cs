@@ -273,6 +273,15 @@ public sealed record ReportPerformance
     /// </summary>
     public IReadOnlyList<string> Deployments { get; init; } = [];
 
+    /// <summary>
+    /// WHAT A PAPER FILL PAYS, IN THE OWNER'S WORDS (<c>U-paper-friction</c>): the fee and the slippage,
+    /// and where each came from — their own override, or TradeAgent's venue cost model with the venue and
+    /// the day its fee was read. Beside the paper lines, because every paper figure is net of exactly
+    /// this, and a paper result whose costs the owner cannot see is one they cannot weigh. Null only in a
+    /// report composed without it, and then printed as the dash.
+    /// </summary>
+    public string? PaperFriction { get; init; }
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -681,6 +690,8 @@ public static class DailyReportText
         // AND WHAT IS ACTUALLY RUNNING, beneath what was allocated. See
         // ReportPerformance.Deployments: a ceiling and a run are different facts about the account.
         List(b, "running forward on paper", r.Performance.Deployments);
+        // AND WHAT EVERY PAPER FILL PAYS, AND WHO SAID SO. See ReportPerformance.PaperFriction.
+        Kv(b, "paper fills pay", r.Performance.PaperFriction ?? Unknown);
         Gaps(b, r.Performance.Missing);
 
         Section(b, "5. Execution health");

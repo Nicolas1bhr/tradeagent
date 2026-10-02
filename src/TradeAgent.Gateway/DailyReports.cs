@@ -418,6 +418,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Allocations = Cap(allocations, ListShown, "allocation"),
             PaperAllocations = Cap(paper, ListShown, "paper allocation"),
             Deployments = Cap(deployments, ListShown, "deployment"),
+            // OFF THE OWNER'S SETTINGS, BY THE RULE THE CONNECTOR READS AT EACH FILL: no platform call.
+            PaperFriction = Core.Strategy.FrictionInForce.ForPaper(gateway.Settings).Line,
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,
             SymbolsClosed = closed.Symbols,
