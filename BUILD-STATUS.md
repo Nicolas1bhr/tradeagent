@@ -7138,16 +7138,16 @@ Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-key
 18 files, +883/−77. No schema rung (`DatabaseSchemaVersion` stays 26). Credentials (`CLAUDE.md`; `docs/EDGE-FACTORY.md` § 6.10) — not a money-path file
 in HOW-WE-BUILD's list; the brief's red-first tests and two mutants were run anyway.
 
-- **Item 1 (`bb7f37c`):** `HarnessKey.Set(key, pastedFor)` holds the key with its ORIGIN (new `Security/KeyOrigin.cs`: http/https only, scheme +
+- **Item 1 (`36a5d96`):** `HarnessKey.Set(key, pastedFor)` holds the key with its ORIGIN (new `Security/KeyOrigin.cs`: http/https only, scheme +
   `Uri.IdnHost` + a non-default port, user-info dropped). `Held` stays the presence check (KeyHeld, health, both `StartAsync`s) and clears nothing; only
   the send path calls `ReadFor(origin)`: an exact match gets the key, anything else clears it and gets a typed `KeyRefusal(PastedFor, PointsAt)`. A turn
   reads `manifest.Endpoint` once and posts every request there.
-- **Item 2 (`8515f44`):** the refusal names both origins (`Labels.HarnessKeyPastedForAnotherOrigin`) and ends the turn `key-origin-refused` before any
+- **Item 2 (`a25df77`):** the refusal names both origins (`Labels.HarnessKeyPastedForAnotherOrigin`) and ends the turn `key-origin-refused` before any
   request; `AgentTurnEnded.KeyWithheld` feeds a zero branch in `TurnMeter.Charge` beside the vendor-limit one: the turn costs nothing, its row reads `refused`.
-- **Item 3 (`138a1d1`):** the Safety page's box names the origin of the harness's OWN manifest; one that differs from `RuntimeCatalog.BuiltIn()`'s row
+- **Item 3 (`d5b0d51`):** the Safety page's box names the origin of the harness's OWN manifest; one that differs from `RuntimeCatalog.BuiltIn()`'s row
   reads "not TradeAgent's built-in address" in the caution colour, the built-in address beside it, and the key is taken only on a second press in the same
   window, bound to the address that press confirmed (refused if it moved between presses). Nothing is persisted.
-- **Item 4 (`2812aa8`):** `CONTRACTS.md` (the binding; NOT claimed: reads of this app's memory, keys handed to vendor CLIs at `OnboardingView.cs:779`,
+- **Item 4 (`d7aa8df`):** `CONTRACTS.md` (the binding; NOT claimed: reads of this app's memory, keys handed to vendor CLIs at `OnboardingView.cs:779`,
   which those agents can read until containment; every future keyed endpoint uses this holder rule) and `USER-GUIDE.md` (the box).
 - **Deviations, judged at landing:** (1) the origin comes from `KeyOrigin.Of`, not `GetLeftPart(Authority)`, which the builder measured on .NET 10.0.400
   keeping user-info (`https://<provider>@other.host` read as the provider) and Unicode look-alike hosts — accepted: stricter, and it fails closed. (2) The
