@@ -766,16 +766,6 @@ public sealed class AppHost : IAsyncDisposable
     /// and finished setup claiming success. A choice that is not applied is not a choice.
     /// </summary>
     /// <summary>
-    /// What the paper connector needs from this host: the declared friction, READ AT THE MOMENT OF
-    /// THE FILL rather than captured now. The connector is built before the gateway that loads the
-    /// settings exists, and the owner can change the two numbers while it is running — a fill has to
-    /// record what it was actually simulated under, not what the app was started with.
-    ///
-    /// <para>No bar source yet. The forward-bars ledger implements <c>IPaperBarSource</c>; until it
-    /// does, the connector quotes nothing and fills nothing and says exactly that in its status
-    /// line, which is the honest shape and not a silent one.</para>
-    /// </summary>
-    /// <summary>
     /// WHOEVER IS LISTENING FOR "a minute closed", whatever platform is selected right now.
     ///
     /// <para>A field rather than a direct subscription because the two ends are built in the wrong
@@ -797,11 +787,25 @@ public sealed class AppHost : IAsyncDisposable
             ? held
             : _forwardRunner = new ForwardRuns(Gateway, _db!);
 
+    /// <summary>
+    /// WHAT A PAPER FILL PAYS, RESOLVED FROM THE OWNER'S SETTINGS (<c>U-paper-friction</c>): an override
+    /// the owner set is theirs, zero included, and a number they never set is TradeAgent's venue cost
+    /// model's — the fee the referee judges with, not a zero nobody chose. The rule itself is
+    /// <see cref="Core.Strategy.FrictionInForce.ForPaper"/>, which the status, the daily report and the
+    /// Settings row read too; this only hands its answer to the connector in the connector's own type.
+    /// </summary>
+    internal static PaperFriction PaperFrictionFor(TradeAgentSettings? settings) =>
+        PaperFriction.Of(Core.Strategy.FrictionInForce.ForPaper(settings));
+
+    /// <summary>
+    /// What the paper connector needs from this host. The friction is READ AT THE MOMENT OF THE FILL
+    /// rather than captured now: the connector is built before the gateway that loads the settings
+    /// exists, and the owner can change the override while it is running — a fill has to record what it
+    /// was actually simulated under, not what the app was started with.
+    /// </summary>
     ConnectorChoice PaperChoice() => new()
     {
-        PaperFrictionNow = () => new PaperFriction(
-            Gateway?.Settings.PaperFeeFraction ?? 0m,
-            Gateway?.Settings.PaperSlippageFraction ?? 0m),
+        PaperFrictionNow = () => PaperFrictionFor(Gateway?.Settings),
 
         // THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED. The store is
         // handed over rather than a built source: `Connectors.Create` is the one place that decides

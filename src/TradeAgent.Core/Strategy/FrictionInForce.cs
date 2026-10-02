@@ -45,6 +45,27 @@ public sealed record FrictionInForce(
         new(0m, FrictionSource.None, 0m, FrictionSource.None, null);
 
     /// <summary>
+    /// THE VENUE A PAPER FILL'S PRICE IS ONE OF: the venue the forward collector's bars are recorded as
+    /// (<see cref="Data.ForwardBars.Source"/>'s row in the candle-source catalogue — Binance spot), because
+    /// those minutes are what the paper connector settles on. Read off the shipped row rather than spelled
+    /// a second time here, so the two cannot disagree; null only if this build shipped no forward row, and
+    /// then a paper fill has no venue to be charged as and says FRICTIONLESS.
+    /// </summary>
+    public static string? PaperVenue { get; } = Data.CandleSourceCatalog.BuiltIn()
+        .FirstOrDefault(s => string.Equals(s.Id, Data.ForwardBars.Source, StringComparison.Ordinal))?.VenueId;
+
+    /// <summary>
+    /// WHAT A PAPER FILL PAYS ON THIS INSTALLATION RIGHT NOW: the owner's override where they set one
+    /// (<see cref="TradeAgentSettings.PaperFeeOverride"/>, zero included), else the venue cost model of
+    /// <see cref="PaperVenue"/>. The one rule every surface reads — the connector at each fill, the
+    /// status, the daily report and the Settings row — so none of them can describe a friction the
+    /// fills are not paying. No settings at all (a host whose gateway is not built yet) is an owner who
+    /// never chose.
+    /// </summary>
+    public static FrictionInForce ForPaper(TradeAgentSettings? settings) =>
+        Resolve(settings?.PaperFeeOverride, settings?.PaperSlippageOverride, VenueFriction.Of(PaperVenue));
+
+    /// <summary>
     /// EACH NUMBER FROM ITS OWN SOURCE: the owner's override where there is one, zero included; else the
     /// venue cost model's; else zero, said as FRICTIONLESS. <see cref="Model"/> is kept only when a number
     /// was actually taken from it, so an owner who overrode both is never described as charged by a table

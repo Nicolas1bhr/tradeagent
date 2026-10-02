@@ -1,8 +1,10 @@
 using TradeAgent.ConnectorSdk;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Strategy;
+using TradeAgent.Gateway;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -123,5 +125,110 @@ public class PaperFrictionTests(ITestOutputHelper log)
 
         // And the connector's own status line carries the same words, not a second wording of them.
         Assert.Contains(sentence, status, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (a) AN INSTALLATION WHERE NOBODY EVER CHOSE A FRICTION PAYS THE VENUE'S FEE ON A PAPER FILL — the
+    /// rule the app itself hands the connector (<c>AppHost.PaperFrictionFor</c>, which
+    /// <c>PaperChoice</c> reads at every fill).
+    ///
+    /// <para>Red first: the app built the friction from two settings that defaulted to 0 and that nothing
+    /// wrote, so this fill was at the open and cost nothing. The mutant this class is watched against is
+    /// the venue-model branch of <c>FrictionInForce.Resolve</c> replaced by a zero.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_install_that_never_chose_friction_pays_the_venue_fee_on_a_paper_fill()
+    {
+        var (gw, _, db) = await TestEnv.Ready();          // a fresh installation: nothing about friction was set
+        using var _1 = db;
+
+        var (fill, sentence, _) = await OneFill(() => App.AppHost.PaperFrictionFor(gw.Settings));
+        log.WriteLine($"price {fill.Price}, fee {fill.Fee}: {sentence}");
+
+        Assert.Equal(110m * 1.0002m, fill.Price);
+        Assert.Equal(110m * 1.0002m * 0.001m, fill.Fee);
+        Assert.Contains(VenueFriction.Of(VenueCatalog.BinanceSpot)!.Sha256, sentence, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (b) AN OWNER WHO SETS ZERO GETS ZERO — NOT THE VENUE'S FEE, AND NOT A ZERO DRESSED AS A VENUE'S.
+    ///
+    /// <para>Null and zero are two answers: null is "never chose" and pays the venue model; zero is a
+    /// choice and is used exactly, with the sentence saying whose it was. The zero is WRITTEN into the
+    /// row and read back as a zero — the row omits only nulls, so a zero that went missing on the way
+    /// would turn the owner's choice back into the venue's fee at the next start. Either number may be
+    /// overridden alone: the other is still the venue model's.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_owner_override_of_zero_is_used_exactly()
+    {
+        var (gw, _, db) = await TestEnv.Ready(s =>
+        {
+            s.PaperFeeOverride = 0m;
+            s.PaperSlippageOverride = 0m;
+        });
+        using var _1 = db;
+
+        var row = db.GetKv("settings")!;
+        Assert.Contains("\"paper_fee_override\":0", row, StringComparison.Ordinal);
+        Assert.Contains("\"paper_slippage_override\":0", row, StringComparison.Ordinal);
+        var loaded = Json.Read<TradeAgentSettings>(row)!;
+        Assert.Equal(0m, loaded.PaperFeeOverride);
+        Assert.Equal(0m, loaded.PaperSlippageOverride);
+
+        var (fill, sentence, _) = await OneFill(() => App.AppHost.PaperFrictionFor(loaded));
+        log.WriteLine(sentence);
+        Assert.Equal(110m, fill.Price);                   // the open itself: the owner's zero slippage
+        Assert.Equal(0m, fill.Fee);                       // and the owner's zero fee
+        Assert.Contains("account owner", sentence, StringComparison.Ordinal);
+        Assert.Contains("FRICTIONLESS", sentence, StringComparison.Ordinal);
+        Assert.DoesNotContain("venue cost model", sentence, StringComparison.Ordinal);
+
+        // ONE NUMBER OVERRIDDEN, THE OTHER LEFT ALONE: the owner's fee, exactly, and the venue's slippage.
+        gw.Update(s => { s.PaperFeeOverride = 0.00075m; s.PaperSlippageOverride = null; });
+        var (mixed, said, _) = await OneFill(() => App.AppHost.PaperFrictionFor(gw.Settings));
+        log.WriteLine(said);
+        Assert.Equal(110m * 1.0002m, mixed.Price);
+        Assert.Equal(110m * 1.0002m * 0.00075m, mixed.Fee);
+        Assert.Contains("fee fraction 0.00075, declared by the account owner", said, StringComparison.Ordinal);
+        Assert.Contains("slippage fraction 0.0002 from TradeAgent's venue cost model", said, StringComparison.Ordinal);
+        Assert.DoesNotContain("paper_slippage_override", db.GetKv("settings")!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (e) A ROW WRITTEN BEFORE THIS UNIT READS AS "NEVER CHOSE", AND PAYS THE VENUE MODEL.
+    ///
+    /// <para>Every such row holds <c>"paper_fee_fraction":0</c> and <c>"paper_slippage_fraction":0</c>:
+    /// the settings are written whole with only nulls omitted, and no build ever wrote either field, so
+    /// those zeros are defaults and not choices. They are still READ — the row loads as it always did,
+    /// and a rollback finds what it wrote — and no longer consulted, even where a hand-edit put something
+    /// else there. A save by this build writes no override back: nothing was chosen, so nothing is
+    /// recorded as chosen.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_settings_file_from_before_this_unit_reads_as_unset()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("settings",
+            """{"mode":"PAPER","market_data_pair":"BTCUSDT","paper_fee_fraction":0,"paper_slippage_fraction":0.0007}""");
+        await using var gw = new TradingGateway(db, new FakeConnector(new FakeBroker()), new HealthRegistry());
+
+        Assert.False(gw.Settings.CouldNotBeRead);
+        Assert.Equal(0.0007m, gw.Settings.PaperSlippageFraction);        // read, as it always was
+        Assert.Null(gw.Settings.PaperFeeOverride);
+        Assert.Null(gw.Settings.PaperSlippageOverride);
+
+        var inForce = FrictionInForce.ForPaper(gw.Settings);             // and not consulted
+        Assert.Equal(FrictionSource.VenueModel, inForce.FeeSource);
+        Assert.Equal(FrictionSource.VenueModel, inForce.SlippageSource);
+        Assert.Equal(0.001m, inForce.Fee);
+        Assert.Equal(0.0002m, inForce.Slippage);
+        Assert.Equal("venue_model", inForce.Source);
+
+        gw.Update(_ => { });
+        var saved = db.GetKv("settings")!;
+        Assert.DoesNotContain("paper_fee_override", saved, StringComparison.Ordinal);
+        Assert.DoesNotContain("paper_slippage_override", saved, StringComparison.Ordinal);
+        Assert.Null(Json.Read<TradeAgentSettings>(saved)!.PaperFeeOverride);
     }
 }

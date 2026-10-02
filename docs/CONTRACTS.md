@@ -123,14 +123,32 @@ establishes **no actual fill, no queue position and nothing about whether an ord
 have been traded there** — the same sentence `docs/COUNCIL.md` puts on a backtest, for the same reason,
 and it does not become execution evidence because the bars were recent.
 
-**Friction is DECLARED and zero says so.** `TradeAgentSettings.PaperFeeFraction` and
-`PaperSlippageFraction` are fractions (`0.001` is ten basis points) and both default to 0. Declared
-neither, every fill the connector writes carries the word **FRICTIONLESS** and the sentence that a
-cost of nothing was modelled rather than measured, and the connector's status line repeats it. Slippage
-is adverse and applies only to a market order's fill at the open; protection fills where protection
-fires. Sizes are rounded **DOWN** to the instrument's quantity increment and a size that rounds to
-nothing is refused. Neither number is a risk limit: nothing is refused by them and no cap moves with
-them, so they ask once.
+**What a fill pays, and who said so** (`U-paper-friction`). A fill is charged two FRACTIONS (`0.001`
+is ten basis points): a fee on every fill, and slippage, adverse and only on a market order's fill at
+the open — protection fills where protection fires. Each number has a SOURCE, resolved at the moment of
+the fill by `FrictionInForce.ForPaper` from `TradeAgentSettings.PaperFeeOverride` and
+`PaperSlippageOverride`, nullable and each its own override: a number the owner set is used **exactly,
+zero included**; a number they never set is **TradeAgent's venue cost model** for the venue the paper
+connector's prices are of — the forward collector's, Binance spot — that is, its published standard
+taker fee (0.100%, read 2026-10-02) and the two basis points of slippage labelled TradeAgent's
+assumption, out of the table and in the words the referee's pin uses (`VenueFriction`,
+`docs/EDGE-FACTORY.md` § 4.5). Every fill records a sentence naming each number's source, and a number
+taken from the model names the model by id and by the sha of its text (`venue-cost-model-v1/binance-spot`);
+the venue's fee is never called the owner's. An override of zero is **FRICTIONLESS** by the owner's own
+declaration and says so. **The connector's own default is unchanged:** built with nothing handed to it,
+it charges nothing and writes FRICTIONLESS on every fill and in its status line; the venue model is the
+HOST's choice (`AppHost.PaperChoice`, and the headless gateway host by the same rule). Sizes are rounded
+**DOWN** to the instrument's quantity increment and a size that rounds to nothing is refused.
+
+**The old fields are read and no longer consulted.** `PaperFeeFraction` and `PaperSlippageFraction` were
+non-nullable and saved as explicit zeros (the row omits only nulls), and `git grep` over `src/` and
+`tests/` at `8a51a16` finds no writer of either — their declarations and one read each in
+`AppHost.PaperChoice`, nothing else — so every stored value was a default and none was a choice: a row
+written before this unit loads with no override and pays the venue model. **The override is the owner's
+in a narrower sense than the word suggests:** the Settings page is the app's only writer of it, but the
+row lives in `tradeagent.db`, which the vendor CLI agent — unconfined, running as the owner's user — can
+write until containment lands. Neither number is a risk limit: nothing is refused by them and no cap
+moves with them, so they ask once.
 
 **It trades the venue catalogue's VERIFIED rows and nothing else.** The instruments come from
 `VenueCatalog` — every venue but TradeAgent's own simulator — filtered to `verified = true`, which is

@@ -1,7 +1,9 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
+using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using TradeAgent.Platforms;
 using TradeAgent.Security;
@@ -26,16 +28,22 @@ var health = new HealthRegistry();
 
 // One place decides which platform an id names, shared with the desktop app: a host with its own
 // ternary agreed with the other by coincidence and would have disagreed about the third platform.
+TradingGateway? settingsOf = null;
 ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoice
 {
     SimulatorAccountId = Arg("--account"),
     // The same forward-bar ledger the app collects into. There is no collector in this host, so
     // nothing announces a minute here and the connector settles by polling the rows — which is what
     // `IPaperBarSource.SinceAsync` is for, and why an event that can be missed is never the path.
-    ForwardBars = new ForwardBarStore(db)
+    ForwardBars = new ForwardBarStore(db),
+    // THE SAME FRICTION RULE AS THE DESKTOP APP (`FrictionInForce.ForPaper`), read at each fill from
+    // this host's own settings. Left on the connector's frictionless default, the paper platform run
+    // headless would charge nothing where the app's charges the venue's fee, under the same name.
+    PaperFrictionNow = () => PaperFriction.Of(FrictionInForce.ForPaper(settingsOf?.Settings))
 });
 
 await using var gateway = new TradingGateway(db, connector, health);
+settingsOf = gateway;
 var token = IpcToken.Ensure();
 await using var server = new GatewayPipeServer(gateway, token);
 
