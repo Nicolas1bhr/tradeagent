@@ -16,7 +16,9 @@ build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/
 | **Builder · fixer · survey leg** (fresh Opus, spawned by a manager) | how to build its one unit: one brief, one worktree, one pass | anything outside its brief; `main` |
 
 Every agent is Opus (`model: "opus"`), by the owner's choice. A manager runs its builders itself (the Agent tool works one level down; two builders in
-one message run concurrently) and talks to the orchestrator by `SendMessage` to `main`. Live seats, agent ids and allotments: `fleet/BOARD.md`.
+one message run concurrently) and talks to the orchestrator by `SendMessage` to `main`. **A sub-agent is not woken by its own background work** (probed
+2026-10-02), so no manager or builder ends its turn while work is pending: it waits in foreground slices of at most nine minutes (`fleet/bin/wait-for.sh`,
+`ci-wait.sh … 9`). Live seats, agent ids and allotments: `fleet/BOARD.md`.
 
 **The `fleet/` directory** is `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` — outside the repo and outside `/tmp`, which the OS empties after
 about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.md`, `gates/<label>/`, `locks/`, `ci-ledger.md`, `BOARD.md`.
@@ -42,7 +44,7 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
 
 1. **The full suite runs on CI, on the builder's own branch.** The builder rebases on `main`; builds `-c Release --no-incremental` at 0 warnings; runs Unit
    and Fault locally and its touched classes 3×; then `fleet/bin/ci-dispatch.sh <worktree>` (scan-gated push of ITS branch + the workflow on all three
-   platforms) and `ci-wait.sh --run <id>` in the background (2-hour timeout; windows-latest takes 40–50 min). The report quotes the run id and every job's
+   platforms) and `ci-wait.sh --run <id> 9` in foreground slices until it stops answering TIMEOUT (windows-latest takes 40–50 min). The report quotes the run id and every job's
    verdict. *Why:* one full suite at a time is this Mac's bottleneck, and CI adds Windows — the target, which the Mac cannot prove. `gate.sh` stays available
    to a builder that needs a local full run, under the suite lock.
 2. **A builder may push its own branch, and only through `ci-dispatch.sh`.** Never `main`, never a merge.
@@ -55,8 +57,8 @@ its brief and committed on its branch (tip sha, gate counts, CI run and verdicts
 `lock.sh acquire land <seat>:<unit>` → `land.sh prep` (clean tree, tip = report, rebase on `main`; a conflict goes back to a builder) → the local gate
 (Release, full, detached; or "GATE CARRIES" when only `docs/`/`*.md` moved since this unit's last gate) → `land.sh check` (PASS) → the branch's CI read:
 green, or red ONLY on `ResumeOnStartTests.A_restart_with_the_ai_working_…` until W0 lands, named in the record → `land.sh merge` (ff-only) → `land.sh
-record` (≤ 40 lines measured; the brief retired; pushed with the merge) → release `land` → `ci-wait.sh <sha>` in the background, its verdict in the seat's
-next record and the ledger → `land.sh cleanup`. Red CI on `main` in the product: tell the orchestrator, then HOW-WE-BUILD step 6 (reset, force-with-lease,
+record` (≤ 40 lines measured; the brief retired; pushed with the merge) → release `land` → a detached `nohup ci-wait.sh <sha> 100 &`, whose verdict lands
+in `fleet/ci-ledger.md` and the seat's next record → `land.sh cleanup`. Red CI on `main` in the product: tell the orchestrator, then HOW-WE-BUILD step 6 (reset, force-with-lease,
 a fixer on the branch). A hosted-runner red is seat P's fixer. **Schema rungs** are assigned in landing order on the board; a collision at rebase is a conflict.
 
 The record is written from the builder's report and the gate: what was run with its output quoted, what is NOT VERIFIED, the rung, the CI line. The landing
