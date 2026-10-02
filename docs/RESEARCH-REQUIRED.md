@@ -206,6 +206,26 @@ costs nothing and an exclusive one loses no bar either — but it has not been m
 
 ---
 
+## C6 — Venue fees the referee judges with (read 2026-10-02 from the venue's own page; re-read before every release)
+
+**File:** `src/TradeAgent.Core/Strategy/VenueCostModel.cs`, `PublishedFees` — a table in CODE on purpose: the
+friction a verdict is scored under is a standard, so it is neither in the venue catalogue nor in an override file
+an agent could write. Each row is a venue's published standard **taker** rate (every fill the judge models takes
+liquidity), with its source sentence and the day it was read. A campaign copies the whole model onto its row when
+it opens, so correcting a row here changes the next campaign and never an open one.
+
+| Venue | Rate used | Source and what it said | Still open |
+|---|---|---|---|
+| `binance-spot` | 0.001 (0.100%) per fill | <https://www.binance.com/en/fee/schedule>: Regular tier spot, 0.100% maker / 0.100% taker, 0.075% when paid in BNB — read 2026-10-02 (`docs/research/2026-10-02/R04` § 7, DOC 78). This build's author did not re-open the page; the figure is the research leg's. | The BNB discount, VIP tiers and any promotion are not modelled; the owner's real tier may be cheaper. |
+| `revolut-x` | none | No fee page has been read for it. A campaign over its bars is REFUSED a model rather than given a neighbour's rate. | Read Revolut X's own published fee schedule and add the row with its date. |
+
+**Not a measurement, either of them:** the 0.0002 slippage beside the fee is TradeAgent's stated ASSUMPTION and is
+labelled as one in every pinned text; realised slippage against it is a paper-ledger measurement that does not exist
+yet. **The rule for whoever re-reads these** is the D rule below: the page, not this table; a venue the page does not
+price gets no row; and the read date changes on the same commit as any rate.
+
+---
+
 ## D — AI list prices (read 2026-10-02 from OpenAI's own pages; re-read before every release)
 
 **File:** `src/TradeAgent.AgentRuntime/ListPrices.cs` — the whole catalogue, in `costs.json`'s shape.
