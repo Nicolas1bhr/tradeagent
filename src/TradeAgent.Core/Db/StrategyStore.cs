@@ -154,6 +154,23 @@ public sealed record StrategyRunRow(
     /// that recording it moved no id this installation had already written.</para>
     /// </summary>
     public string? IncrementSource { get; init; }
+
+    /// <summary>
+    /// WHERE THIS RUN'S FEE AND SLIPPAGE CAME FROM, number by number (<c>U-paper-friction</c>) — declared
+    /// by the caller, or TradeAgent's venue cost model for the dataset's venue, named by id and sha — or
+    /// null because the run was recorded before a build that said.
+    ///
+    /// <para>The numbers are in <see cref="ExecutionModel"/> and in the run's id; this is who said so, for
+    /// the reason <see cref="IncrementSource"/> exists, and like it it is not hashed.</para>
+    ///
+    /// <para><b>Stored in the run's one provenance column, after the increment's sentence.</b> The unit
+    /// that added it allowed no schema change, and <c>strategy_run.increment_source</c> is the only column
+    /// a run's provenance has: the column holds the increment's sentence, then a line of its own beginning
+    /// <see cref="StrategyStore.FrictionMark"/>. <see cref="StrategyStore"/> writes both and reads them back
+    /// apart, so neither property ever carries the other's words, and a row written before this holds no
+    /// such line and reads back with this null.</para>
+    /// </summary>
+    public string? FrictionSource { get; init; }
 }
 
 /// <summary>
@@ -319,7 +336,7 @@ public sealed class StrategyStore(Database db)
             ("$net", run.NetPnl is { } n ? Sql.D(n) : null),
             ("$dd", run.MaxDrawdown is { } d ? Sql.D(d) : null),
             ("$trace", run.TraceSha256), ("$at", Sql.T(run.CreatedAt)),
-            ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", run.IncrementSource));
+            ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", Provenance(run)));
 
         if (insert.ExecuteNonQuery() == 0) return run.Id;
 
@@ -460,8 +477,39 @@ public sealed class StrategyStore(Database db)
                 r.GetString(21), Sql.Time(r.GetString(22)),
                 r.IsDBNull(23) ? null : r.GetString(23), r.IsDBNull(24) ? null : r.GetString(24))
             {
-                IncrementSource = r.IsDBNull(25) ? null : r.GetString(25)
+                IncrementSource = Increment(r.IsDBNull(25) ? null : r.GetString(25)),
+                FrictionSource = Friction(r.IsDBNull(25) ? null : r.GetString(25))
             });
         return rows;
     }
+
+    /// <summary>
+    /// WHAT OPENS THE FRICTION'S LINE IN THE RUN'S PROVENANCE COLUMN. See <see cref="StrategyRunRow.FrictionSource"/>.
+    /// A newline first, so it can only ever begin a line, and both sentences are written on one line
+    /// each, so neither can contain it.
+    /// </summary>
+    public const string FrictionMark = "\nfriction: ";
+
+    /// <summary>The column as written: the increment's sentence, then the friction's line when there is one.</summary>
+    static string? Provenance(StrategyRunRow run) =>
+        run.FrictionSource is { } friction
+            ? OneLine(run.IncrementSource ?? "") + FrictionMark + OneLine(friction)
+            : run.IncrementSource;
+
+    /// <summary>The increment's half of the column: everything before the friction's line, or the whole of a row written before it.</summary>
+    static string? Increment(string? stored)
+    {
+        if (stored is null) return null;
+        var at = stored.IndexOf(FrictionMark, StringComparison.Ordinal);
+        return at < 0 ? stored : at == 0 ? null : stored[..at];
+    }
+
+    /// <summary>The friction's half of the column, or null for a row that holds none.</summary>
+    static string? Friction(string? stored)
+    {
+        var at = stored?.IndexOf(FrictionMark, StringComparison.Ordinal) ?? -1;
+        return at < 0 ? null : stored![(at + FrictionMark.Length)..];
+    }
+
+    static string OneLine(string text) => text.ReplaceLineEndings(" ");
 }

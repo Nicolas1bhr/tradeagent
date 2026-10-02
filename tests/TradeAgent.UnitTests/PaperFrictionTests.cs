@@ -231,4 +231,94 @@ public class PaperFrictionTests(ITestOutputHelper log)
         Assert.DoesNotContain("paper_slippage_override", saved, StringComparison.Ordinal);
         Assert.Null(Json.Read<TradeAgentSettings>(saved)!.PaperFeeOverride);
     }
+
+    // ---- research: the same table, for a number a backtest leaves out ------------------------------
+
+    static AgentContext Researcher() => AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1");
+
+    static string GivenProgram(string text)
+    {
+        var dir = Path.Combine(Paths.RoleHome(CouncilRoles.Research), "strategies");
+        Directory.CreateDirectory(dir);
+        var file = $"friction-{Guid.NewGuid():n}.strategy";
+        File.WriteAllText(Path.Combine(dir, file), text);
+        return Path.Combine("strategies", file);
+    }
+
+    /// <summary>
+    /// (c) A NUMBER A RESEARCH RUN LEAVES OUT IS THE VENUE'S, A NUMBER IT DECLARES IS ITS OWN — PER
+    /// NUMBER — AND THE RUN RECORDS WHICH.
+    ///
+    /// <para>Red first: an undeclared fee was zero, so a run that declared only its slippage measured a
+    /// market where trading costs nothing but slippage, over Binance spot's bars, and was later judged
+    /// under Binance spot's 0.100%. The provenance is recorded with the run and comes back in the answer;
+    /// it is not part of the run's identity, and the increment's sentence stays the increment's.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_undeclared_research_friction_field_takes_the_venue_value_and_a_declared_one_wins()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var program = GivenProgram(CostModelPinTests.BtcProgram);
+        var venue = VenueFriction.Of(VenueCatalog.BinanceSpot)!;
+
+        // THE SLIPPAGE DECLARED, THE FEE LEFT OUT: the venue's fee and the caller's slippage.
+        var ran = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, w.Set.Id, Slippage: 0.0005m));
+        log.WriteLine($"{ran.Result.Request.Model.Canonical} — {ran.FrictionSource}");
+        Assert.Equal("fees=0.001;slippage=0.0005;increment=0.00001;capital=10000", ran.Result.Request.Model.Canonical);
+
+        var run = w.Gw.Strategies.RunById(ran.Result.RunId)!;
+        Assert.Equal(ran.FrictionSource, run.FrictionSource);
+        Assert.Contains($"fee 0.001 from {venue.Named}", run.FrictionSource, StringComparison.Ordinal);
+        Assert.Contains("slippage 0.0005 declared by the caller", run.FrictionSource, StringComparison.Ordinal);
+        Assert.Contains($"{VenueCatalog.BinanceSpot}/BTCUSDT", run.IncrementSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("slippage", run.IncrementSource!, StringComparison.Ordinal);
+
+        // THE FEE DECLARED AS ZERO, THE SLIPPAGE LEFT OUT: the caller's zero, exactly, and the venue's slippage.
+        var free = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, w.Set.Id, Fees: 0m));
+        log.WriteLine($"{free.Result.Request.Model.Canonical} — {free.FrictionSource}");
+        Assert.Equal("fees=0;slippage=0.0002;increment=0.00001;capital=10000", free.Result.Request.Model.Canonical);
+        Assert.Contains("fee 0 declared by the caller", free.FrictionSource, StringComparison.Ordinal);
+        Assert.Contains($"slippage 0.0002 from {venue.Named}", free.FrictionSource, StringComparison.Ordinal);
+
+        // NOTHING DECLARED: both numbers from the table — the very model the referee pins over these bars.
+        var none = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, w.Set.Id));
+        Assert.Equal(CostModelPinTests.VenueModel, none.Result.Request.Model.Canonical);
+        Assert.Contains(venue.Sha256, w.Gw.Strategies.RunById(none.Result.RunId)!.FrictionSource, StringComparison.Ordinal);
+        Assert.Equal(3, new[] { ran, free, none }.Select(r => r.Result.RunId).Distinct().Count());
+    }
+
+    /// <summary>
+    /// BARS WITH NO VENUE ARE CHARGED NOTHING AND SAY SO; A VENUE WHOSE FEE TRADEAGENT NEVER READ IS
+    /// REFUSED RATHER THAN CHARGED A GUESS — the two readings the cost model already gives the referee.
+    /// </summary>
+    [Fact]
+    public async Task Bars_with_no_venue_run_frictionless_and_say_so_and_a_venue_with_no_published_fee_is_refused()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var program = GivenProgram(CostModelPinTests.BtcProgram);
+
+        var bare = CostModelPinTests.Dataset(w.Gw, venue: null, symbol: null, 84_000m, 250m);
+        var ran = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, bare.Id, Increment: 0.00001m));
+        log.WriteLine($"{ran.Result.Request.Model.Canonical} — {ran.FrictionSource}");
+        Assert.Equal("fees=0;slippage=0;increment=0.00001;capital=10000", ran.Result.Request.Model.Canonical);
+        Assert.Contains("records no venue", ran.FrictionSource, StringComparison.Ordinal);
+        Assert.Contains("no venue recorded", ran.FrictionSource, StringComparison.Ordinal);
+
+        var unread = CostModelPinTests.Dataset(w.Gw, VenueCatalog.RevolutX, "BTCUSDT", 84_000m, 250m);
+        var refused = Assert.Throws<GatewayDeniedException>(() => w.Gw.Backtests.Run(
+            Researcher(), new BacktestAsk(program, unread.Id, Slippage: 0.0005m, Increment: 0.00001m)));
+        log.WriteLine(refused.Message);
+        Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Info.Code);
+        Assert.Contains("declared no fee", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(VenueCatalog.RevolutX, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("--fees", refused.Message, StringComparison.Ordinal);
+
+        // Declared, it runs: the refusal is only ever about a number nobody gave.
+        var declared = w.Gw.Backtests.Run(Researcher(),
+            new BacktestAsk(program, unread.Id, Fees: 0.0009m, Slippage: 0.0005m, Increment: 0.00001m));
+        Assert.Equal("fees=0.0009;slippage=0.0005;increment=0.00001;capital=10000",
+            declared.Result.Request.Model.Canonical);
+    }
 }

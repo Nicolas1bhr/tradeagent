@@ -997,12 +997,14 @@ An unreadable `venues.json` behaves like the others: nothing is served from it, 
 do **not** quietly stand in for it, and every backtest that does not name its own step is refused
 until the file is corrected or deleted.
 
-TradeAgent does **not** keep venue fees or minimum order sizes in that list. Fees are something each
-backtest states for itself and are part of what makes that test's result what it is; a fee taken from a
-table nobody checked would look like a measurement and would not be one. The one exception is
-TradeAgent's own judge, which charges the venue's **published** standard fee: that is written into
-TradeAgent itself, with the page it was read from and the day, and not into a file anybody can edit (see
-*Holding months back*).
+TradeAgent does **not** keep venue fees or minimum order sizes in that list; a fee taken from a table
+nobody checked would look like a measurement and would not be one. What it does keep is the venue's
+**published** standard fee, written into TradeAgent itself with the page it was read from and the day,
+and not into a file anybody can edit: its own judge charges it (see *Holding months back*), a fill on
+TradeAgent paper pays it unless you set your own numbers, and a backtest the AI runs pays it for any fee
+the AI did not state — with a slippage of 0.02% a fill that is TradeAgent's own assumption and is said to
+be one. A fee or slippage the AI states is used instead, and the record of the run says which numbers
+were the AI's and which were TradeAgent's.
 
 A strategy also has to be about the instrument its data is of. One that says it trades `ES` is neither
 tested nor judged on Binance's BTCUSDT bars: TradeAgent refuses, names both instruments, and charges

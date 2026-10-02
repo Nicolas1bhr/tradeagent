@@ -2319,18 +2319,23 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             result.RunId, result.VersionId, ran.Role, ran.Program.Instrument, ran.Program.WarmUpBars,
             result.Request.DatasetId, ran.Dataset.Pair, ran.Dataset.Interval, ran.Dataset.Version,
             result.Request.DatasetSha256, result.Request.From, result.Request.To,
-            result.Request.Model.Canonical, ran.IncrementSource, result.Outcome.ToString(), result.FaultReason,
+            result.Request.Model.Canonical, ran.IncrementSource, ran.FrictionSource, result.Outcome.ToString(),
+            result.FaultReason,
             "This is a measurement over BARS, and bars establish no actual fill, no queue position and "
             + "no intrabar ordering: what a run says is a reason to test something and never a record "
-            + "of a trade. Fills are modelled at the next bar's open plus the declared slippage, a fee "
-            + "is charged on every fill, a bar that touched both the stop and the target counts as the "
-            + "stop, and a size is rounded DOWN to the declared increment. Read the nulls and 'missing': "
-            + "a null is an UNKNOWN and never a zero. 'net_pnl' covers CLOSED trades only — a position "
-            + "still open at the last bar is in the equity the drawdown is measured on, not in it. "
+            + "of a trade. Fills are modelled at the next bar's open plus slippage and a fee is charged "
+            + "on every fill — each the number you declared or, where you declared none, TradeAgent's "
+            + "venue cost model's for this dataset's venue — a bar that touched both the stop and the "
+            + "target counts as the stop, and a size is rounded DOWN to the increment. Read the nulls "
+            + "and 'missing': a null is an UNKNOWN and never a zero. 'net_pnl' covers CLOSED trades only "
+            + "— a position still open at the last bar is in the equity the drawdown is measured on, not "
+            + "in it. "
+            // U-paper-friction: an undeclared fee is no longer zero, so the answer no longer says that
+            // leaving it out runs frictionless. It says what the run WAS charged, and who chose it.
             + (result.Request.Model.Frictionful
-                ? "This run declared friction: see 'execution_model'."
-                : "THIS RUN DECLARED NO FEE AND NO SLIPPAGE, so it is an upper bound on a frictionless "
-                  + "market — pass --fees and --slippage for a figure that is about a venue.")
+                ? "This run's fee and slippage are in 'execution_model', and who chose each in 'friction_source'."
+                : "THIS RUN WAS CHARGED NO FEE AND NO SLIPPAGE — 'friction_source' says why — so it is an "
+                  + "upper bound on a frictionless market and not a figure about any venue's costs.")
             // AND WHAT THESE BARS ARE. A run over midpoint-derived candles that reported like a run
             // over traded bars would be handing back a figure the caller cannot read correctly —
             // `docs/COUNCIL.md`:164-172, never trade evidence. The same sentence `data-list`,
@@ -2377,6 +2382,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // was yours or was read out of the venue catalogue, and from which row. Never dropped when
         // null: a run recorded before this build had the field is not a run that declared its own.
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? IncrementSource,
+        // AND WHO CHOSE THE FEE AND THE SLIPPAGE, number by number: yours, or TradeAgent's venue cost
+        // model for the dataset's venue, named by id and sha (U-paper-friction). Kept when null for
+        // the reason the increment's is.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FrictionSource,
         string Outcome,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FaultReason,
         string Note, BacktestReplyMetrics Metrics, IReadOnlyList<BacktestReplyGap> Missing,
