@@ -12,6 +12,11 @@ stay as they are — where a change touches one, name the protected property and
 keeps it. `docs/HOW-WE-BUILD.md` governs the build fleet; its roles and passes are not a design for the
 agent organisation inside the product. `manager-prompt.md` at the root is the fleet's handoff.
 
+**`docs/EDGE-FACTORY.md` is the target architecture and the build order** (2026-10-02, the owner's "too stiff, no moat"
+direction): the tape, perception, features, strategy language v2, the evidence cascade, selection, and the re-sequenced factory
+floor, with the protections each one touches and how they are kept. Ready briefs wait in `docs/queue/`; the research behind it,
+dated and sourced, is in `docs/research/2026-10-02/`.
+
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
 

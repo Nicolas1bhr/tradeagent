@@ -1,5 +1,9 @@
 # TradeAgent — final direction for the build fleet
 
+> **2026-10-02:** future sequencing now lives in `docs/EDGE-FACTORY.md` (the owner's "too stiff, no moat" direction; its
+> phase 0 fixes the paper line before the observed run's attempt 3). This handoff's mandate (§ 1), proof table (§ 6) and build
+> discipline (§ 7) stand; its § 5 slice is done.
+
 Prepared 2026-09-18 from the owner's original corrective draft, Fable's 2026-09-17 revision, and a source inspection of `main` at `bd7d9c2d6b9cfac74161abc4fc951d80a11b4ab8`. Revised 2026-09-19 in a last pass: every source claim in § 4 re-read at `90af8e4` (identical `src/` and `tests/` to `bd7d9c2`), the documentation landing of § 2 executed in the same commit as this revision, the principles moved to `docs/PRINCIPLES.md` as the single copy. This is the handoff to execute; preparing it implemented and verified none of the product changes below. Recheck implementation claims against the checkout you actually receive.
 
 ## 1. Your mandate and the destination

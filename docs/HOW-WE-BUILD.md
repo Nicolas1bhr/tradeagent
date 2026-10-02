@@ -37,7 +37,8 @@ unless the brief grants it, for code that compiles only there; otherwise the box
 
 **Pass 2 — land.** The manager, in the same session, runs the landing checklist below on the reported tip, writes a
 `BUILD-STATUS.md` section of at most 40 lines from the report, and deletes the brief. `docs/briefs/` holds only work
-in flight; empty means nothing is.
+in flight; empty means nothing is. `docs/queue/` holds READY briefs not yet dispatched: re-check each pointer against `main`,
+then `git mv` it into `docs/briefs/` to dispatch.
 
 There is no verify leg, no Codex leg, no bounce, no combination verify and no scribe between the two passes. A unit is
 built once and landed once.

@@ -7021,3 +7021,41 @@ ChatGPT Codex plan, exhausted at 18:08Z ("You've hit your usage limit … try ag
 **CI, every `main` sha of 2026-10-01 so far** (run id; GREEN on all four jobs — ubuntu, windows, macos, package — unless said): `faef463` (36885086416),
 `aea4379` (36887875562), `59f53d2` (36888058887), `516376c` (36888302768), `bedd218` (36899296050), `88a23a2` (36899327748), `a5166e7` (36903561380), `f8a7500`
 (36903588024), `2fd0318` (36903963568), `896eaae` (36905610297), `f32e8a3` (36905633488), `d2c5b66` (36905966992), `2dab37f` (36906065106); `e06e187` (36911732026), `89328a0` (36911737559). Pending at the close, for the next manager to record: `1b504fe`, `c56540e` (the `U-vendor-limit` merge), `dbc7bf2` and this commit.
+
+## 2026-10-02 — the edge factory: the owner's "too stiff, no moat" direction turned into a target architecture, research and eleven ready briefs; docs only
+
+**What happened.** The owner (2026-10-02): the software is "way too stiff" with "nothing in place that makes it a moat"; make it an evolving system that
+finds temporary or durable edges by itself; then, mid-session: "do not start the actual code implementation just yet … have everything bolted down".
+NO product code, test or build changed; the last gate figure stands (2310 passed at `c56540e`, above). Eight research legs, two read-only verification legs
+of the briefs against `main` and one adversarial review ran; the plan was rewritten once (v2) from the review. Landed: `docs/EDGE-FACTORY.md` v2;
+`docs/queue/` (READY: `U-key-host-pin`, `U-cost-model`, `U-paper-friction`, `U-runner-forward`, `U-evidence-identity`, `U-timeframe-a`, `U-timeframe-b`,
+`U-venue-verify`, `U-tape-store`, `U-tape-read`, `U-decision-port`); `docs/research/2026-10-02/` (R01–R11, every external claim labelled, two calc scripts);
+`docs/PRINCIPLES.md` amended; `docs/COUNCIL.md` rule 8 read precisely with three conditions; pointers in `CLAUDE.md`, `docs/HOW-WE-BUILD.md`
+(`docs/queue/`), `manager-prompt.md`; the resume block rewritten (waves of two; owner questions to ask now).
+
+**RUN on this Mac, 2026-10-02 (public endpoints, no key, nothing placed):** `fapi.binance.com` premiumIndex / openInterest / openInterestHist 5m /
+fundingRate / globalLongShortAccountRatio / takerlongshortRatio → HTTP 200, 0.31–0.37 s; `data-api.binance.vision` exchangeInfo BTCUSDT → 200, tickSize
+0.01, stepSize 0.00001, minNotional 5; `fapi` exchangeInfo → 528 USDT perpetuals trading (BTCUSDT tick 0.10, step 0.001, min notional 50);
+`data.binance.vision/…/futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-2026-09-30.zip` → 200; Hyperliquid info `metaAndAssetCtxs`, Deribit DVOL,
+DefiLlama stablecoins, alternative.me F&G → 200; Kalshi markets → 200; `gamma-api.polymarket.com` → connect refused (the resolver answers an ISP block
+address). Cointelegraph/CoinDesk RSS answer 200, but their terms forbid AI processing / robots (R03 § 5), so neither is a source.
+`python3 docs/research/2026-10-02/R04-calc/calc.py` → 200 zero-skill trials on 273–365 days: expected best annualised Sharpe 3.20–2.77.
+`python3 docs/research/2026-10-02/R10-calc/cascade_power.py` → P(DSR ≥ 0.95 | true Sharpe 2) 0.01–0.06 at one year and 0.52–0.82 at five; the
+learning tier needs a forward Sharpe of 1.88 over a year with no prior and 0.68 with a family prior of 0.3.
+
+**SOURCE, manager-checked at `0f47db7` (reading, NOT runtime):** `trade verdict` passes no model (`GatewayPipeServer.cs:2496`) so the judge is
+`Frictionless` = fee 0, slippage 0, increment 1, capital 10,000 (`Backtest.cs:76`, `Referee.cs:218`) and a BTCUSDT size rounds to nothing
+(`Backtest.cs:487-495`); BTCUSDT ships unverified (`VenueCatalog.cs:174-186`) and the observed-run home has no `venues.json`; provider keys are
+memory-only (`HarnessKey.cs`); an override in `runtimes.json` replaces a built-in runtime whole, `BaseUrl` included (`RuntimeManifest.cs:716-728`), the
+harness is built once per start from it (`AppHost.cs:128`) and posts the bearer key to its endpoint (`ApiConversation.cs:466-472`) — the route
+`U-key-host-pin` closes; `Referee.EvaluatorVersion` is `backtest=1;metrics=1;scoring=1` and promotions already record it (`PromotionStore.cs:258`).
+
+**NOT VERIFIED:** the six paper-line blockers of R01 § 0 and the key-redirect route at runtime (each brief's red-first test settles its own); every DOC or
+SECONDARY research claim beyond its label; Jev from this Mac (no key); any venue's account-level behaviour (Kraken Futures' history and key scopes need
+a probe with a real key); anything on Windows. CI for this commit: pending at the close — the next manager records it.
+
+**CI owed by the previous close, now recorded (gh run list/view, 2026-10-02):** `1b504fe` green on all four jobs (36915963680); `c56540e`
+(36917510177) and `dbc7bf2` (36917533373) RED on windows-latest only — `ResumeOnStartTests.A_restart_with_the_ai_working_starts_its_runtime_and_the_next
+_due_wake_is_taken_without_a_press` failed after 25 s with "the restart resumed the loop and left the AI it needs stopped" (`ResumeOnStartTests.cs:62,79`),
+Unit 1 failed / 1210 passed, ubuntu and macos green; `0f47db7`, the same `src/` and `tests/`, green on all four (36917611936). An intermittent hosted-Windows
+red outside `Timing`: recorded red; a fresh fixer is owed (resume block item 6).

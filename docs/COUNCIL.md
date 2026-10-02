@@ -6,6 +6,13 @@
 > the mandatory review policy) and the unbuilt machinery in "The shape" and "The unit order" are historical design
 > proposals to reassess against the principles, not an automatic backlog. Memory, accountability and delegation remain
 > product needs; the implementations prescribed here for them are not commitments. Everything below keeps its date.
+>
+> **Rule 8 read precisely, 2026-10-02.** A recorded perception measurement — an answer from a pinned decision model, recorded
+> by the app with its provenance and bound into the version's evidence like any other input — is data, not inference on the
+> signal path, on three conditions: evaluation is triggered only by a raw observation plus a declared fixed delay, never by a
+> model answer's arrival, so no model can time an order; only bounded-decision instruments and frozen artifacts may feed a
+> live-eligible version; a text-derived entry needs two independent sources or a per-item influence cap. The runner itself
+> never calls a model, and a missing answer is no decision. `docs/EDGE-FACTORY.md` § 6.1 names the protected property.
 
 **Doctrine from 2026-09-07.** The owner's direction that day: the mission "should NOT be a single agent, it should be a
 council of very smart top level manager agents with different tasks that run their own teams on cheaper models and with
