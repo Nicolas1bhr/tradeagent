@@ -2273,6 +2273,20 @@ the run actually fed on is copied onto the run row, so a rejection discovered la
 run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused rather than queued, and
 a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
 
+**Pinned by golden vectors, beside the semantics they were computed under** (`U-evidence-identity`).
+`EvaluationGoldenVectorTests` runs fifteen programs — every indicator, both crossings (each decided once from
+an exact equality the bar before), history references, every sizing, stop and target kind, sessions in two
+zones (London across the EU change to summer time), weekdays, entry windows, opening ranges, session exits,
+maximum holds, a 120-bar warm-up, gaps, no-trades and a fault — each under an explicit four-number execution
+model, over `tests/TradeAgent.UnitTests/Golden/evaluation-bars.json` (whose own hash is pinned), and pins each
+run's trace sha, the sha of its metrics and closed trades, and both policies' answers, beside
+`Referee.EvaluatorVersion` and `StrategyVersions.Manifest`. Output that changes while neither number moves fails
+the build and says to bump one and re-pin in the same commit; a bump that does not re-pin fails too. That is
+what makes the two numbers a declaration a promotion's standing can be withdrawn on (the campaign section)
+rather than a promise. **Its limit, stated:** a few evaluator fault texts format a decimal in the machine's
+culture, so a trace that contains one can differ between machines; no vector reaches one, and that
+formatting is not changed here.
+
 **It runs under the caller's own launch identity, and reads only that launch's folder.** The role and
 the attempt on the version and the run come from `AgentContext` — the launch grant the app minted for
 that process (`U-containment`) — and never from the folder a file happened to be in, which is something
@@ -2566,7 +2580,8 @@ of the two passes reaches it first. **What is no longer compared is the `interpr
 update withdrew every verdict and ended every paper run — a false positive on the money path, not a protection —
 and its language half is inside the manifest. It stays on the promotion as provenance and as one of the nine
 hashed facts of its id. The two numbers are the build's DECLARATION of its evaluation semantics, and moving one
-is a decision somebody makes, in the commit that changes the meaning.
+is a decision somebody makes, in the commit that changes the meaning — the golden vectors (the backtest section)
+are what fails the build when the meaning changes and neither number does.
 
 **A campaign also pins the cost model its verdicts are judged under** (schema **27**, `U-cost-model`):
 `strategy_campaign.cost_model_canonical` and `.cost_model_sha`, a `VenueCostModel` text and its SHA-256,

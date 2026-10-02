@@ -13,6 +13,9 @@ namespace TradeAgent.Core.Strategy;
 /// given set of bars and what that is judged to be worth. The release number decides none of it: it
 /// moves with every update whether or not anything a program means has moved, and binding standing to
 /// it withdrew every verdict, and ended every paper run, on every release.</para>
+///
+/// <para><b>What holds a build to the two numbers</b> is <c>EvaluationGoldenVectorTests</c>: output over
+/// fixed bars that changes while neither number moves fails the build and says to bump one.</para>
 /// </summary>
 public static class EvaluationSemantics
 {
