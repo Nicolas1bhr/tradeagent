@@ -79,6 +79,16 @@ public static class Paths
     public static string Reports { get; } = SubOf(State, "reports");
 
     public static string DatabaseFile => Path.Combine(State, "tradeagent.db");
+
+    /// <summary>
+    /// THE MARKET-CONTEXT TAPE, IN ITS OWN FILE (<c>U-tape-store</c>). Not a rung of
+    /// <see cref="DatabaseFile"/>'s schema and never one: it has its own version ladder inside the file,
+    /// its own connection and its own writer, <c>Db.TapeStore</c>, so recording the market's context
+    /// is never a migration of the database that holds orders, and a tape written by a newer build is
+    /// refused without the app's own records being touched. Under <see cref="State"/> and not under
+    /// <see cref="Workspace"/>, for the reason <see cref="Data"/> is.
+    /// </summary>
+    public static string TapeFile => Path.Combine(State, "tape.db");
     public static string IpcTokenFile => Path.Combine(State, "ipc.token");
     public static string InstanceLockFile => Path.Combine(State, "gateway.lock");
 
