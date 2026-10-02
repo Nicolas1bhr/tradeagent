@@ -203,12 +203,13 @@ public class CouncilLoopTests
         DateTimeOffset? _lastPassAt;
 
         public bool InboxChangedSinceLastPass =>
-            Presence is not null && MissionInbox.ChangedSince(Root, _lastPassAt);
+            Presence is not null && MissionInbox.HoldsUnrecorded(Root, _lastPassAt, _db);
 
         /// <summary>
         /// THE BOUNDARY, POSED RATHER THAN WAITED FOR: this host's record of when its last pass began,
         /// moved to the tick after a file's own time — the state a filesystem that stamps files a tick
-        /// behind the pass's clock produces (see <c>MissionLoopTests.FakeHost</c>, run 37051859960).
+        /// behind the pass's clock produces (see <c>MissionLoopTests.FakeHost</c>, run 37051859960). Nothing
+        /// compares the value any more; a yield that compared clocks again would go red at once.
         /// </summary>
         public void LastPassBeganJustAfter(DateTimeOffset stamp) => _lastPassAt = stamp.AddTicks(1);
 
@@ -216,8 +217,7 @@ public class CouncilLoopTests
         {
             if (Presence is null) return Task.CompletedTask;
 
-            // Captured BEFORE the walk, so this host's idea of the last pass is never later than the
-            // scanner's own. Erring early costs a spare pass; erring late costs an attestation.
+            // As the app records it: the yield reads only that a pass has run (MissionInbox).
             _lastPassAt = DateTimeOffset.UtcNow;
             Interlocked.Increment(ref Passes);
             WhileScanning?.Invoke();

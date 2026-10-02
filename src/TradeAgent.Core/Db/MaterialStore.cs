@@ -118,6 +118,29 @@ public sealed class MaterialStore(Database db)
         });
     }
 
+    /// <summary>
+    /// EVERY LIVE (path, size, mtime) THESE ORIGINS HOLD, spelled exactly as <see cref="Observe"/>
+    /// matches a sighting — so a caller can ask whether the next pass would write a NEW row for a
+    /// file without writing anything. The mtime is the stored text rather than a parsed instant:
+    /// that text is the identity, and a round trip through a parser is one more place for two
+    /// spellings of one time to disagree.
+    /// </summary>
+    public IReadOnlySet<(string RelPath, long Size, string ModifiedAt)> Live(IReadOnlyCollection<MaterialOrigin> origins)
+    {
+        var live = new HashSet<(string RelPath, long Size, string ModifiedAt)>();
+        if (origins.Count == 0) return live;
+        // The enum's own names, never anything a caller typed, exactly as MarkMissing builds them.
+        var names = string.Join(',', origins.Select(o => $"'{o}'"));
+        return db.Read(_ =>
+        {
+            using var c = db.Cmd(
+                $"SELECT rel_path, size_bytes, modified_at FROM material WHERE removed_at IS NULL AND origin IN ({names})");
+            using var r = c.ExecuteReader();
+            while (r.Read()) live.Add((r.GetString(0), r.GetInt64(1), r.GetString(2)));
+            return live;
+        });
+    }
+
     /// <summary>Everything on disk right now, newest sighting first.</summary>
     public IReadOnlyList<Material> Present(MaterialOrigin? origin = null) => db.Read(_ =>
     {
