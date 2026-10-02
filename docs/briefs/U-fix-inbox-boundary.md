@@ -38,3 +38,24 @@ Done: the red-first test red before and green after (quoted); the mutant red (qu
 any narrowed stress run quoted with its count; the gate. Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main`
 first; `--no-incremental` Release 0 warnings; Unit and Fault 0 failed; touched classes 3×; names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20
 lines appended here. No push to `main`, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Code tip `717c7ef`**, 2 commits on `8a51a16` (rebased after U-runner-forward landed; no conflict, no common file). **Gate, this Mac, Release:** build `--no-incremental` → 19 projects, `0 Warning(s)`, `0 Error(s)`;
+Unit `Passed! - Failed: 0, Passed: 1248, Skipped: 0, Total: 1248, Duration: 29 s`; Fault `Passed! - Failed: 0, Passed: 402, Skipped: 0, Total: 402, Duration: 1 m 27 s`; `MissionLoopTests` 3× 35/35, `CouncilLoopTests`
+3× 12/12; names vs `main`: sets 2006 → 2011, removed 0, added 5 (four tests and the hosts' seam method; [Fact] 1970 → 1974). **CI on `717c7ef`, workflow unmodified:** run 37055093743 — ubuntu, macos, windows (36 min),
+package: success; each Unit 1247 + 1, Fault 397 + 5, Integration 612 + 1 skipped + 90, 0 failed, timing green first time.
+- **Item 1 (`a45980d`), done — one cause, both tests, from ubuntu:** run 37051859960 (job 110986948031; kernel 6.17.0-1022-azure, `CONFIG_HZ=1000`, ext4): 3000/3000 files written straight after a `DateTime.UtcNow`
+  read had both times EARLIER than it (worst 1296 µs, 1000 µs steps); the drop tests repeated in-process: MissionLoop 16/300, council 56/300 `InboxUnattested`, and all 72 had the yield (`MissionInbox.ChangedSince`:
+  m or c `>=` last-pass start L) say no — times L−3.8…894.2 µs, file written L+0.8…1.7 ms — so turn 2 launched first and pass 3 behind it wrote the row with `lastAlive − since` +2.9…10.1 ms; all 608 yeses read Inbox.
+- **RED before, deterministic, at `a45980d`:** `MissionLoopTests.cs:285` (seam: last-pass instant one tick after the file's times), `:315` (`File.Move` keeps older times, no seam), `CouncilLoopTests.cs:828`; each
+  `Expected: Inbox / Actual: InboxUnattested`, 5/5 here, 3/3 on ubuntu (run 37053124660); guard (nothing unrecorded → one pass a turn) green both sides.
+- **Item 2 (`717c7ef`), done — PRODUCT:** the yield asks the ledger, never a clock: `MissionInbox.HoldsUnrecorded` → `MaterialScanner.InboxHoldsUnrecorded` (the scan's own walk and budget, `MaterialStore.Live` =
+  `Observe`'s tuple) says yes for an unrecorded inbox file, an unreadable folder, a drop past budget or an unreadable ledger; `AppHost.MissionHost` passes its db. Product, not harness: the app called the same
+  `ChangedSince` with the same pre-walk `UtcNow`, so a file landing in the filesystem clock's tick after a pass began, or moved in with older times, was recorded behind the next turn — scanner honest, yield wrong.
+- **Mutant** (`MaterialScanner.cs:347` `return true` → `continue`): `Failed: 5, Passed: 42` — the brief's two (`MissionLoopTests.cs:254`, `CouncilLoopTests.cs:776`), `:286`, `:316`, `CouncilLoopTests.cs:828`; restored 47/47.
+  **Protected:** the inbox's provenance (row written once; `Inbox` only across no live agent, rule 7): `AgentPresence`, `NoneSince` (unsure is false), `Observe` untouched; only yields added, inside `PassAsync`'s exclusion.
+- **Stress after the fix** (run 37053666824, same kernel): in-process 0/300 and 0/300 (212 of 680 drops hit the old miss, all Inbox); 40 fresh-process class loops 0 red after, and before: only the warm repeat reproduced.
+- **Temporary, dropped by reset:** `3eaf410`, `932e1b4`, `4e4a54c` (prints, repeats, probe; `build.yml` one ubuntu job) — runs 37051859960, 37053124660, 37053666824; `git diff main..717c7ef -- .github` empty. Run
+  37054773990 (`67869c1`) cancelled at once to correct three test comments to the measured ranges. Scan gated every commit and push; no `Co-Authored-By`.
+- **NOT done / NOT verified:** Windows NTFS stamps and a moved-in file there (box not granted); the host's one-line wiring is compiled, not tested. By reading only, pre-existing, not fixed: the 30 s background pass and the
+  Inbox page's scan skip the loop's `_passing`, so a role can launch beside them; a backward wall-clock step between an agent's exit and a pass's start would let `NoneSince` say yes across that agent.
