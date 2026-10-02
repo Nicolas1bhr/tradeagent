@@ -35,3 +35,20 @@ _keeps_the_labelled_frictionless_judge` (guard). Mutants to watch red and quote:
 removed ⇒ (e) red.
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+Tip `617a82a` (the CI-tested last code commit; 4 item commits on `73cfaca`). Schema 27.
+Build `-c Release --no-incremental`: "0 Warning(s) 0 Error(s)". Unit "Failed: 0, Passed: 1228"; Fault "Failed: 0, Passed: 399"; extra local Integration "Failed: 0, Passed: 699, Skipped: 1".
+3×, each run "Failed: 0, Passed: 42": VenueCostModelTests, CostModelPinTests, InstrumentMatchTests, VenueIncrementTests, VenueCatalogTests, PaperEligibleVerdictTests.
+CI run 37022783765 @617a82a: windows-latest success (40 min), ubuntu-latest success, macos-latest success, package success.
+Names vs main: sets base 1969 tip 1985; removed 0; added 16.
+1 done: `VenueCostModel` v1 (Core/Strategy): code table of published taker rates with source and date (binance-spot 0.001, read 2026-10-02), slippage 0.0002 labelled ASSUMPTION, verified-row step only, `JudgeCapital` 10,000 (≤0 reads 10,000); header, canonical text, `Sha256`; `Read` refuses any text that is not its sha's or not v1's.
+2 done: rung 27 adds two nullable columns, no backfill; the press pins from the dataset's venue in the opening tx, or refuses "BTCUSDT's quantity step is not confirmed…" writing nothing; `Renew` copies (null too); no venue ⇒ `Frictionless` "no venue recorded"; legacy decided inside the charge tx (lineage charged ⇒ "legacy frictionless judge", else pinned from the venue or refused before charging); `Verdict` judges `model ?? pinned.Model`; holdout card "Judged under"; both roll-back lists +2 lines.
+3 done: one `InstrumentMatch.Refusal`, called by `Backtests.Run` before increment, trial and run and by `Referee.RequestVerdict` before the charge; the brief's test rewritten in place, name kept. Deviation: two more `VenueIncrementTests` over ETHUSDT data now give their program `instrument ETHUSDT` (names and assertions kept), else the new rule refuses them first.
+4 done: CONTRACTS (backtest, catalogue, campaign, verdict sections), USER-GUIDE (holdout card; fees; instrument), RESEARCH-REQUIRED C6.
+RED before (on `73cfaca`): (a) "the holdout run took no trade: no-trade-on-the-holdout"; (d) expected "fees=0.001;…" actual "fees=0;slippage=0;increment=1…"; (e) "Assert.Throws() Failure: No exception was thrown"; (f) "the press opened a campaign over a step nobody confirmed"; the added legacy-unconfirmed test red too; (c), (g) green (guards); (b) fails to compile: "CS1061: 'TradeAgentSettings' does not contain a definition for 'JudgeCapital'".
+Mutants (reverted): (i) `model ?? ExecutionModel.Frictionless` ⇒ (a) "the holdout run took no trade: no-trade-on-the-holdout"; (ii) `InstrumentMatch.Refusal` short-circuited to null ⇒ (e) "Assert.Throws() Failure: No exception was thrown".
+Start path: reached only by rung 27's two `ALTER TABLE`s and the referee's construction moved after `LoadSettings`; no AI-runtime launch, sign-in or wake code touched.
+Judgements: legacy pins are written by the next verdict request, not a migration; a venue with no published fee (revolut-x) is refused like an unconfirmed step; the judge's label lives in the pinned text.
+NOT done/verified: the Binance fee page not re-opened by me (R04 § 7, DOC 78); no Windows-box run; holdout card not viewed on screen (`JudgeLine` unit-tested); agent-facing texts on the judge's friction unchanged; research-run default, paper friction, min notional, verifying BTCUSDT: later units.
+Rebased onto `36934e9` at seat A's request: one conflict, `docs/RESEARCH-REQUIRED.md` (main re-dated the § D heading; I had inserted C6 above it) resolved by keeping both, C6 intact above main's D. Post-rebase code tip `e0da92e`: build `--no-incremental` "0 Warning(s) 0 Error(s)", Unit "Failed: 0, Passed: 1240" (1224 + 16); CI not re-run (it tested `617a82a`).
