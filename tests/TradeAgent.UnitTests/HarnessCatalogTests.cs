@@ -24,7 +24,11 @@ public class HarnessCatalogTests
     /// <summary>The harness's runtime id, as the owner's settings and the ledger spell it.</summary>
     const string Harness = "openai-api";
 
-    /// <summary>The model the manifest defaults a worker to. Cheapest current entry on the list.</summary>
+    /// <summary>
+    /// The model the manifest defaults a worker to: the cheapest GPT-5.6 entry. <c>gpt-6-luna</c> is
+    /// cheaper since the 2026-10-02 rows, and on chat-completions it calls functions only at reasoning
+    /// <c>none</c> (its vendor model page), so a harness worker on it waits for <c>U-harness-responses</c>.
+    /// </summary>
     const string Worker = "gpt-5.6-luna";
 
     static void NoOverride()

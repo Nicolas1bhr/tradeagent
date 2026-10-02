@@ -566,9 +566,9 @@ public class ShippedListPriceTests : IDisposable
     /// so leaving it null on a model the vendor prices separately under-charges every cache write —
     /// the one direction that lets the daily limit be walked past.
     ///
-    /// Read from the standard table on <see cref="ListPrices.ReadOn"/>: the four Daybreak rows are
-    /// the only ones the page gives that column for, and the rows below them stay null because the
-    /// page gives them no such figure to carry.
+    /// Read from the standard table on <see cref="ListPrices.ReadOn"/>: the seven GPT-6 and GPT-5.6
+    /// rows are the only ones the page gives that column for, and the rows below them stay null
+    /// because the page gives them no such figure to carry.
     /// </summary>
     [Fact]
     public void The_rows_the_vendor_prices_cache_writes_for_carry_that_figure_and_the_rest_carry_none()
@@ -576,6 +576,9 @@ public class ShippedListPriceTests : IDisposable
         var published = new Dictionary<string, decimal>
         {
             ["gpt-6-astra"] = 12.50m,
+            ["gpt-6.1-sol"] = 2.50m,
+            ["gpt-6-luna"] = 0.125m,
+            ["gpt-6-sol"] = 2.50m,
             ["gpt-5.6-sol"] = 5.00m,
             ["gpt-5.6-terra"] = 2.50m,
             ["gpt-5.6-luna"] = 0.25m
@@ -620,8 +623,9 @@ public class ShippedListPriceTests : IDisposable
     }
 
     /// <summary>
-    /// A model the vendor's page does not price is left out. <c>gpt-5.3-codex-spark</c> is one of the
-    /// five models the Codex model page recommends and the pricing page has no row for it, so it is
+    /// A model the vendor's page does not price is left out. <c>gpt-5.3-codex-spark</c> was one of the
+    /// five models the Codex model page recommended on 2026-09-06 — it lists it as retired on
+    /// 2026-09-14 when re-read on 2026-10-02 — and the pricing page has no row for it, so it is
     /// absent — not estimated from the plain <c>gpt-5.3-codex</c> row that shares most of its name.
     /// </summary>
     [Fact]
@@ -747,7 +751,8 @@ public class UnknownModelIsPricedHighTests : IDisposable
 
     /// <summary>
     /// The dearest entry in <c>codex</c>'s shipped catalogue is <c>gpt-6-astra</c> at $10.00 input,
-    /// $1.00 cached and $50.00 output per million, read from OpenAI's pricing page on 2026-09-06.
+    /// $1.00 cached and $50.00 output per million, read from OpenAI's pricing page on 2026-09-06 and
+    /// unchanged when re-read on 2026-10-02.
     /// 4,304 uncached input + 12,928 cached + 6 output, the real measured turn.
     /// </summary>
     const decimal HighestOnCodex = (4304m * 10.00m + 12928m * 1.00m + 6m * 50.00m) / 1_000_000m;
