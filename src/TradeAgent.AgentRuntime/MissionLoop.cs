@@ -195,6 +195,18 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// work nothing.</para>
     /// </summary>
     public VendorLimit? Limit { get; init; }
+
+    /// <summary>
+    /// THE SENTENCE THE APP WITHHELD THE OWNER'S KEY IN, or null — and when it is not null, NO REQUEST OF
+    /// THIS TURN WAS SENT (<c>U-key-host-pin</c>).
+    ///
+    /// <para>Set by <see cref="ApiConversation"/> on one path only: the key it holds was pasted for another
+    /// origin than the one this turn's requests go to, so the holder refused it and forgot it, and the turn
+    /// returned before a request was built. It is the app's own measurement of its own act — not a vendor's
+    /// report — so it can carry money: <see cref="TurnMeter"/> charges such a turn nothing, because no
+    /// provider was asked for anything, and writes the sentence on the launch row as the reason.</para>
+    /// </summary>
+    public string? KeyWithheld { get; init; }
 }
 
 /// <summary>

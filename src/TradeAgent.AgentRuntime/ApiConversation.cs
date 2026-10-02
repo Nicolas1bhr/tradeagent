@@ -125,6 +125,13 @@ public sealed class ApiConversation(
     /// <inheritdoc cref="EndedCompleted"/>
     public const string EndedCancelled = "cancelled";
 
+    /// <summary>
+    /// The turn ended because the key held was pasted for another origin than the one this runtime's
+    /// requests go to, so the app withheld it, forgot it and sent NOTHING (<c>U-key-host-pin</c>). See
+    /// <see cref="AgentTurnEnded.KeyWithheld"/>, which is what the meter charges zero on.
+    /// </summary>
+    public const string EndedKeyRefused = "key-origin-refused";
+
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
@@ -246,12 +253,30 @@ public sealed class ApiConversation(
         // and every request below is posted to this same string: reading the manifest again per
         // request would let the address checked and the address used be two different things.
         var endpoint = manifest.Endpoint;
-        var released = key.ReadFor(KeyOrigin.Of(endpoint)).Key;
+        var release = key.ReadFor(KeyOrigin.Of(endpoint));
+
+        // WITHHELD, FORGOTTEN, AND REFUSED BEFORE ANY REQUEST. The key was pasted for another origin
+        // than this one — the address can be rewritten by a file an agent can write — so the holder
+        // has already cleared it and handed back both addresses instead. The owner is told in those
+        // words, the turn ends here with nothing sent, and the meter charges it nothing: no provider
+        // was asked for anything (U-key-host-pin).
+        if (release.Refusal is { } refused)
+        {
+            var said = Labels.HarnessKeyPastedForAnotherOrigin(refused.PastedFor, refused.PointsAt);
+            Append(new ChatTurn(ChatRole.System, said, _now()));
+            transcript.Note(said);
+            TurnEnded?.Invoke(new AgentTurnEnded(NotStarted, _now() - startedAt, transcript.Text, _now())
+            {
+                Outcome = EndedKeyRefused,
+                KeyWithheld = said
+            });
+            return;
+        }
 
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
         // it is a sentence in the conversation, and the turn still ends so the loop and the ledger
         // both account for it rather than losing a turn that vanished.
-        if (released is not { Length: > 0 })
+        if (release.Key is not { Length: > 0 } released)
         {
             Append(new ChatTurn(ChatRole.System, Labels.HarnessKeyNotHeld, _now()));
             transcript.Note("no key is held, so nothing was sent");

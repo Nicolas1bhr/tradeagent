@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Security;
 using Xunit;
 
@@ -136,6 +137,90 @@ public class HarnessKeyOriginTests : IDisposable
         Assert.Equal([ApiConversation.Completed, ApiConversation.Completed], ended.Select(e => e.ExitCode));
         Assert.Equal(2, provider.Keys.Count(k => k == Sent(_pasted)));
         Assert.True(holder.Held);
+    }
+
+    // ---- the refusal -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// A MISMATCH IS REFUSED BEFORE ANY REQUEST, CLEARS THE KEY AND CHARGES NOTHING — on the metered
+    /// path, admitted first, so the reservation is really committed before the refusal.
+    ///
+    /// <para>Nothing reached either listener: not the key and not the request, because a request is the
+    /// owner's Situation leaving the machine. The key is gone even for the origin it WAS pasted for —
+    /// something tried to send it elsewhere, and the owner looks again before it goes anywhere. And the
+    /// launch row is ENDED at ZERO with its reservation released: no provider was asked for anything, so
+    /// none can have billed. Take the withheld-key branch out of <c>TurnMeter.Charge</c> and the row is
+    /// charged its reservation (1.28) for a turn that never left the app.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_origin_mismatch_refuses_before_any_request_clears_the_key_and_charges_nothing()
+    {
+        using var db = TestEnv.NewDb();
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        // 1.20 M at 1.00 plus 20 k at 4.00 per million: a reservation of 1.28 a turn, well under the ceiling.
+        var meter = new TurnMeter(db, () => 50m, runtimeId: () => ApiAgentRuntime.RuntimeId,
+            recordPath: Path.Combine(_home, "turns.jsonl"), owner: () => new OwnerPrice(1m, 4m),
+            model: () => "gpt-5.6-luna", allowance: () => allowance, share: _ => 1m);
+
+        using var pastedFor = new FakeProvider();
+        using var elsewhere = new FakeProvider();
+        pastedFor.Answer(FakeProvider.Message("from the address the owner saw"));
+        elsewhere.Answer(FakeProvider.Message("from an address nobody showed the owner"));
+        var holder = pastedFor.Holding(_pasted);
+
+        using var runtime = new ApiAgentRuntime(PointedAt(elsewhere), holder, allowance: () => allowance,
+            requestTimeout: TimeSpan.FromSeconds(10));
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        await conversation.SendAsync("what is the plan?");
+
+        Assert.Empty(elsewhere.Requests);
+        Assert.Empty(pastedFor.Requests);
+        Assert.False(holder.Held);
+        Assert.Null(holder.ReadFor(pastedFor.BaseUrl).Key);
+
+        var row = Assert.Single(Attempts(db));
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(1.28m, row.ReservedCost);
+        Assert.Equal(0m, row.Cost);
+        var today = meter.TodayFor(CouncilRoles.Research);
+        Assert.Equal(0m, today.Spent);
+        Assert.Equal(0m, today.Reserved);
+        Assert.Equal(0, today.UnreportedTurns);
+
+        Assert.NotNull(ended);
+        Assert.Null(ended!.Usage);
+        Assert.Equal(ApiConversation.NotStarted, ended.ExitCode);
+        Assert.Equal(ApiConversation.EndedKeyRefused, ended.Outcome);
+
+        var said = Assert.Single(conversation.History,
+            t => t.Role == ChatRole.System && t.Text.Contains(KeyOrigin.Of(pastedFor.BaseUrl)!, StringComparison.Ordinal));
+        Assert.Equal(
+            Labels.HarnessKeyPastedForAnotherOrigin(KeyOrigin.Of(pastedFor.BaseUrl)!, KeyOrigin.Of(elsewhere.BaseUrl)),
+            said.Text);
+        Assert.Contains(KeyOrigin.Of(elsewhere.BaseUrl)!, said.Text, StringComparison.Ordinal);
+        Assert.Contains("paste it again on the Safety page if you meant that", said.Text, StringComparison.Ordinal);
+        Assert.Equal(said.Text, ended.KeyWithheld);
+
+        // AND THE ROW SAYS WHY IT COST NOTHING, in the same words: a zero with no reason is a zero nobody
+        // can check afterwards.
+        using var context = System.Text.Json.JsonDocument.Parse(row.Context!);
+        Assert.Equal(ApiConversation.EndedKeyRefused, context.RootElement.GetProperty("ended").GetString());
+        Assert.Equal(said.Text, context.RootElement.GetProperty("refused").GetString());
+    }
+
+    static IReadOnlyList<AiAttempt> Attempts(Database db)
+    {
+        var ids = new List<string>();
+        using (var c = db.Cmd("SELECT id FROM ai_attempt ORDER BY started_at, id"))
+        using (var r = c.ExecuteReader())
+            while (r.Read()) ids.Add(r.GetString(0));
+
+        var store = new AiAttemptStore(db);
+        return [.. ids.Select(id => store.Get(id)!)];
     }
 
     // ---- presence is not a send ------------------------------------------------------------------
