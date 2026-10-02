@@ -119,6 +119,40 @@ public class ForwardRunnerTests(ITestOutputHelper log)
             Source.Announce(Symbol, openTime);
         }
 
+        /// <summary>
+        /// MANY CLOSED MINUTES IN ONE ANSWER, the way the collector stores a stretch it is catching up
+        /// on: one fetch attempt and every bar in it, each flat at <paramref name="close"/>'s price,
+        /// and the clock moved to the last one's close. Nothing is announced — the runner and the
+        /// connector both read the ledger, which is the path that cannot be missed.
+        /// </summary>
+        public void Minutes(int from, int to, Func<int, decimal> close)
+        {
+            var klines = new List<ForwardBars.Kline>(to - from + 1);
+            for (var minute = from; minute <= to; minute++)
+            {
+                var openTime = Origin.AddMinutes(minute);
+                var price = close(minute);
+                klines.Add(new ForwardBars.Kline(openTime, price, price, price, price, 10m,
+                    openTime + ForwardBars.BarLength));
+            }
+
+            var last = klines[^1].CloseTime;
+            var append = Bars.Append(new ForwardFetchAttempt
+            {
+                Source = ForwardBars.Source,
+                Symbol = Symbol,
+                Url = "https://example.invalid/klines (this test wrote the rows; nothing was fetched)",
+                RequestedAt = last,
+                ReceivedAt = last.AddSeconds(1),
+                HttpStatus = 200
+            }, klines);
+
+            if (append.Stored != klines.Count)
+                throw new InvalidOperationException($"{append.Stored} of {klines.Count} bars were stored");
+
+            Clock.At = last.AddSeconds(1);
+        }
+
         public DateTimeOffset Origin { get; init; }
 
         public async ValueTask DisposeAsync()
@@ -611,5 +645,146 @@ public class ForwardRunnerTests(ITestOutputHelper log)
         log.WriteLine($"replay of {op.RequestId} answered {replay.State} / {replay.ClientOrderId}");
         Assert.Equal(TradingGateway.ClientOrderIdFor(op.RequestId), replay.ClientOrderId);
         Assert.Single(await Wire(rig));
+    }
+
+    // ---------------------------------------------------------------- U-runner-forward: past one page
+
+    /// <summary>
+    /// A DEPLOYMENT OLDER THAN ONE PAGE OF BARS STILL ACTS ON ITS NEWEST ONE (<c>U-runner-forward</c>
+    /// item 1).
+    ///
+    /// <para>The runner read <c>Since(symbol, StartedAt)</c> once, and that read answers at most ten
+    /// thousand bars, oldest first: about 6.9 days of minutes, after which nothing was stepped and a
+    /// deployment simply stopped deciding. Here the program is silent for 10,001 minutes and signals
+    /// on minute 10,002 — a bar that single read never reached.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_deployment_acts_on_a_bar_after_the_first_ten_thousand()
+    {
+        await using var rig = await ReadyAsync(ProgramText());
+
+        rig.Minutes(1, 10_005, m => m == 10_002 ? 101m : 100m);   // `entry when close > 100`: minute 10,002 only
+        var state = Assert.Single(await rig.Runner.AdvanceAsync());
+        Show(log, rig);
+        log.WriteLine($"replayed {state.BarsReplayed}, skipped {state.BarsSkipped}, last bar {state.LastBar:u}");
+
+        var entry = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id),
+            o => o.Kind == DeploymentOpKind.Entry);
+        Assert.Equal(rig.Origin.AddMinutes(10_002), entry.BarOpenTime);
+
+        var order = Assert.Single(await Wire(rig));
+        Assert.Equal(TradingGateway.ClientOrderIdFor(entry.RequestId), order.ClientOrderId);
+
+        // EVERY BAR WAS STEPPED, AND ONCE: the pages meet without a bar lost or read twice.
+        Assert.Equal(10_005, state.BarsReplayed);
+        Assert.Equal(0, state.BarsSkipped);
+        Assert.Equal(rig.Origin.AddMinutes(10_005), state.LastBar);
+    }
+
+    /// <summary>
+    /// THE MAXIMUM HOLD IS COUNTED ACROSS PAGES. The entry fills on minute 3 and the program declares
+    /// the language's own ceiling, <c>max_hold_bars 10000</c>, so the limit is reached on minute
+    /// 10,003 — past the ten thousand bars the single read ever handed the runner, which stopped
+    /// counting at 9,997 held and never closed a position its own protection said must not survive.
+    /// </summary>
+    [Fact]
+    public async Task Max_hold_flattens_after_ten_thousand_bars_of_deployment_age()
+    {
+        await using var rig = await ReadyAsync(ProgramText("max_hold_bars 10000\n"));
+
+        rig.Bar(1, 99m, 101m, 98m, 101m);             // the entry signals
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(2, 102m, 103m, 101m, 102m);           // the minute already in progress
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(3, 103m, 104m, 102m, 103m);           // the entry fills at this open, 103
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        Assert.Equal(1m, await Position(rig));
+
+        // A WEEK AND A HALF OF FLAT MINUTES: no entry (100 is not above 100) and no exit (nor below
+        // 90), so the maximum hold is the only thing that can end this position.
+        rig.Minutes(4, 10_003, _ => 100m);
+        var state = Assert.Single(await rig.Runner.AdvanceAsync());
+        Show(log, rig);
+        log.WriteLine($"replayed {state.BarsReplayed}; account at the last bar: {state.Account}");
+
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        var flatten = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Flatten);
+        Assert.Equal(rig.Origin.AddMinutes(10_003), flatten.BarOpenTime);    // held 10,000 bars: the limit
+        Assert.DoesNotContain(ops, o => o.Kind == DeploymentOpKind.Exit);
+
+        // THE APP'S OWN PROTECTION CLOSED IT, BEFORE THE EVALUATOR WAS ASKED: the account it read on
+        // that bar is flat, and the run emitted one intent in all — the entry.
+        Assert.Equal(PositionSide.Flat, state.Account!.Position);
+        Assert.Equal(1, state.State!.Counters.Intents);
+        Assert.Equal(10_003, state.BarsReplayed);
+
+        // AND THE CLOSE IS AT THE WIRE, under the run's own request id.
+        Assert.Contains(await Wire(rig), o =>
+            o.ClientOrderId == TradingGateway.ClientOrderIdFor(flatten.RequestId) && o.Side == OrderSide.Sell);
+    }
+
+    /// <summary>
+    /// A RESTART AFTER PAGING RESUMES FROM THE CURSOR AND SENDS NOTHING TWICE — the guard on the
+    /// paging. The entry on minute 10,002 is at the wire with no answer when the process stops; the
+    /// next process re-reads every page from the deployment's start, presents the same request id
+    /// for the same bar, holds the frontier where the unanswered operation is, and moves it only
+    /// when the order has filled. A page boundary that lost or repeated a bar would show here as a
+    /// different count, a skipped bar, or a second operation.
+    /// </summary>
+    [Fact]
+    public async Task A_restart_mid_run_resumes_from_the_cursor_without_a_duplicate_op_after_paging()
+    {
+        var db = TestEnv.NewDb();
+        var book = Path.Combine(TestEnv.Home, $"paper-paging-{Guid.NewGuid():n}.db");
+        var origin = new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+        var program = ProgramText();
+        string deploymentId, entryRequest;
+
+        // ---- the process that stopped, with an entry at the wire and no answer for it
+        {
+            await using var first = await ReadyAsync(program, book, db, origin);
+            deploymentId = first.Deployment.Id;
+
+            first.Minutes(1, 10_005, m => m == 10_002 ? 101m : 100m);
+            await first.Runner.AdvanceAsync();
+            Show(log, first);
+
+            var entry = Assert.Single(first.Gw.Deployments.OpsOf(deploymentId),
+                o => o.Kind == DeploymentOpKind.Entry);
+            entryRequest = entry.RequestId;
+            Assert.Equal(origin.AddMinutes(10_002), entry.BarOpenTime);
+            Assert.Equal(DeploymentOpState.Dispatched, entry.State);     // working at the venue, unanswered
+        }
+
+        // ---- a new process over the same database and the same book
+        await using var second = await ReadyAsync(program, book, db, origin);
+        second.Minutes(10_006, 10_006, _ => 100m);                     // a minute closed while it came up
+        var resumed = Assert.Single(await second.Runner.AdvanceAsync());
+        Show(log, second);
+
+        // THE SAME ONE OPERATION, THE SAME ONE ORDER, AND THE CURSOR STILL SHORT OF ITS BAR.
+        Assert.Equal(entryRequest, Assert.Single(second.Gw.Deployments.OpsOf(deploymentId)).RequestId);
+        Assert.Single(await Wire(second));
+        var cursor = second.Gw.Deployments.ById(deploymentId)!.CursorOpenTime;
+        Assert.True(cursor is null || cursor < origin.AddMinutes(10_002), $"the cursor moved to {cursor:u}");
+        Assert.Equal(10_006, resumed.BarsReplayed);
+        Assert.Equal(0, resumed.BarsSkipped);
+
+        // AND THE OTHER HALF: the order fills at the next open, the operation resolves, the cursor
+        // passes its bar — and still nothing was sent twice.
+        second.Minutes(10_007, 10_007, _ => 100m);
+        await second.Gw.RefreshHealthAsync();
+        await second.Gw.ReconcilePaperDeploymentsAsync(second.Clock.At);
+        var settled = Assert.Single(await second.Runner.AdvanceAsync());
+        Show(log, second);
+
+        Assert.Equal(1m, await Position(second));
+        Assert.Equal(DeploymentOpState.Resolved, second.Gw.Deployments.OpById(entryRequest)!.State);
+        Assert.Equal(origin.AddMinutes(10_002), second.Gw.Deployments.ById(deploymentId)!.CursorOpenTime);
+        Assert.Single(second.Gw.Deployments.OpsOf(deploymentId));
+        Assert.Single(await Wire(second));
+        Assert.Equal(10_007, settled.BarsReplayed);
     }
 }
