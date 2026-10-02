@@ -57,8 +57,8 @@ its brief and committed on its branch (tip sha, gate counts, CI run and verdicts
 
 `lock.sh acquire land <seat>:<unit>` → `land.sh prep` (clean tree, tip = report, rebase on `main`; a conflict goes back to a builder) → the local gate
 (Release, full, detached; or "GATE CARRIES" when only `docs/`/`*.md` moved since this unit's last gate) → `land.sh check` (PASS) → the branch's CI read:
-green, or — until W0 lands — red on windows-latest ONLY in `ResumeOnStartTests`, every failure carrying the start-path timeout (`AI_AUTH_TIMEOUT`,
-"Signing in took too long", or the "left the AI it needs stopped" assert), from a diff that cannot reach the start path; the run id named in the record → `land.sh merge` (ff-only) → `land.sh
+green on all three platforms (the W0 exception for `ResumeOnStartTests` ended when `U-fix-resume-on-start` landed at `c8d6642`: such a red is now a red);
+the run id named in the record → `land.sh merge` (ff-only) → `land.sh
 record` (≤ 40 lines measured; the brief retired; pushed with the merge) → release `land` → a detached `nohup ci-wait.sh <sha> 100 &`, whose verdict lands
 in `fleet/ci-ledger.md` and the seat's next record → `land.sh cleanup`. Red CI on `main` in the product: tell the orchestrator, then HOW-WE-BUILD step 6 (reset, force-with-lease,
 a fixer on the branch). A hosted-runner red is seat P's fixer. **Schema rungs** are assigned in landing order on the board; a collision at rebase is a conflict.
