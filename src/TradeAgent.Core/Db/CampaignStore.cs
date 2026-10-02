@@ -150,6 +150,26 @@ public sealed record CampaignRow(
 
     /// <summary>The SHA-256 of <see cref="PaperPolicy"/>, which is what the referee checks against.</summary>
     public string PaperPolicySha256 { get; init; } = "";
+
+    /// <summary>
+    /// THE COST MODEL THIS CAMPAIGN'S VERDICTS ARE JUDGED UNDER — a <c>Strategy.VenueCostModel</c> text,
+    /// pinned when the campaign opened and never updated — or null, because the campaign was opened
+    /// before schema 27 and has not been asked for a verdict since.
+    ///
+    /// <para>Pinned for the reason the two policies beside it are: a standard read from a table or a
+    /// setting at judging time could move between the hypothesis and the verdict. It comes from the
+    /// DATASET's recorded venue at the owner's press (<c>TradingGateway.SetHoldout</c>), so there is no
+    /// picker and nothing the judged party chose; a renewal carries it, so more attempts never come
+    /// with cheaper friction.</para>
+    ///
+    /// <para>Null is read by <c>Referee.RequestVerdict</c>, in the charge's own transaction: a lineage
+    /// that already charged a verdict keeps the frictionless judge every such verdict was taken under,
+    /// and one that never did is pinned from its dataset's venue there and then.</para>
+    /// </summary>
+    public string? CostModelCanonical { get; init; }
+
+    /// <summary>The SHA-256 of <see cref="CostModelCanonical"/>, or null beside a null text.</summary>
+    public string? CostModelSha256 { get; init; }
 }
 
 /// <summary>What opening or renewing a campaign did, or why it did nothing. A value, not an exception.</summary>
@@ -298,7 +318,9 @@ public sealed class CampaignStore(Database db)
         "id, name, scoring_policy, scoring_policy_sha256, trial_budget, verdict_budget, " +
         "holdout_dataset_id, holdout_from, opened_at, renewed_from, closed_at, " +
         // LAST, so every positional read above it keeps its index. See `CampaignRow.ExplorationBudget`.
-        "exploration_budget, paper_policy, paper_policy_sha256";
+        "exploration_budget, paper_policy, paper_policy_sha256, " +
+        // AND THE JUDGE'S COST MODEL AFTER THEM, for the same reason. See `CampaignRow.CostModelCanonical`.
+        "cost_model_canonical, cost_model_sha";
 
     /// <summary>
     /// Opens the campaign for a dataset the owner has just held back, or refuses in words.
@@ -307,9 +329,17 @@ public sealed class CampaignStore(Database db)
     /// COPIED onto the row, so a campaign's allowance is what it was opened with and not whatever the
     /// settings say today. A setting changed half way through a campaign would otherwise move the
     /// standard under evidence already collected, which is the same defect as an editable policy.</para>
+    ///
+    /// <para><b>The judge's cost model is pinned here too</b>, in this transaction, from the DATASET's
+    /// recorded venue — <c>Strategy.VenueCostModel.For</c> — with <paramref name="judgeCapital"/> as its
+    /// capital (the owner's setting; the shipped ten thousand when none is passed). A dataset that
+    /// records no venue pins the labelled frictionless judge; one whose step nobody confirmed REFUSES
+    /// the open in words, because a campaign whose every verdict would have to guess the step is a
+    /// campaign that can only judge strategies nobody submitted.</para>
     /// </summary>
     public CampaignOpened Open(string name, DatasetRecord holdout, int trialBudget, int verdictBudget,
-        DateTimeOffset at, string? policy = null, int? exploration = null) => db.Write(_ =>
+        DateTimeOffset at, string? policy = null, int? exploration = null, decimal? judgeCapital = null) =>
+        db.Write(_ =>
     {
         ArgumentNullException.ThrowIfNull(holdout);
 
@@ -322,6 +352,10 @@ public sealed class CampaignStore(Database db)
             return CampaignOpened.No(
                 $"campaign {already.Id} is already open over dataset {holdout.Id}. There is one campaign per "
                 + "holdout dataset: renew that one, which carries its holdout and its trial history forward.");
+
+        var judge = Strategy.VenueCostModel.For(holdout, new VenueStore(db),
+            judgeCapital ?? Strategy.VenueCostModel.DefaultCapital);
+        if (judge.Model is not { } costModel) return CampaignOpened.No(judge.Why);
 
         var text = policy ?? CampaignPolicy.V1;
         return CampaignOpened.Yes(Insert(new CampaignRow(
@@ -336,7 +370,12 @@ public sealed class CampaignStore(Database db)
             // also choose the paper standard would be a caller that could choose how little a paper
             // verdict has to prove.
             PaperPolicy = CampaignPolicy.PaperV1,
-            PaperPolicySha256 = CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1)
+            PaperPolicySha256 = CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1),
+
+            // AND THE FRICTION THE VERDICTS WILL BE SCORED UNDER — the dataset's venue's, never the
+            // submitter's and never a later setting's.
+            CostModelCanonical = costModel.Canonical,
+            CostModelSha256 = costModel.Sha256
         }));
     });
 
@@ -357,9 +396,10 @@ public sealed class CampaignStore(Database db)
     /// RENEWS A CAMPAIGN: the parent closes, a child opens with fresh ATTEMPTS and nothing else fresh.
     ///
     /// <para>The child carries the parent's holdout dataset, the parent's cutoff, the parent's scoring
-    /// policy text and its sha, and <c>renewed_from</c>. So renewal buys trials and nothing else — not a
-    /// new standard, not a different holdout, and not untouched holdout access, because
-    /// <c>Referee.RequestVerdict</c> counts verdicts across the whole lineage.</para>
+    /// policy text and its sha, the parent's pinned cost model, and <c>renewed_from</c>. So renewal buys
+    /// trials and nothing else — not a new standard, not cheaper friction, not a different holdout, and
+    /// not untouched holdout access, because <c>Referee.RequestVerdict</c> counts verdicts across the
+    /// whole lineage.</para>
     ///
     /// <para>It is BY CODE, as <c>docs/COUNCIL.md</c>:132 requires: there is no pipe op behind it. The
     /// only caller in this build is the owner's own window; a scheduled renewal is a later unit's, and it
@@ -393,7 +433,14 @@ public sealed class CampaignStore(Database db)
                 // buys attempts and never an easier standard, and there are now two standards for
                 // that sentence to be true of.
                 PaperPolicy = parent.PaperPolicy,
-                PaperPolicySha256 = parent.PaperPolicySha256
+                PaperPolicySha256 = parent.PaperPolicySha256,
+
+                // AND THE JUDGE'S COST MODEL IS THE PARENT'S, null included: a renewal buys attempts and
+                // never cheaper friction, and the owner's judge capital as it stands today is not a
+                // fact about this lineage. A parent that predates the model hands the child the same
+                // open question, which the child's next verdict request answers for the whole lineage.
+                CostModelCanonical = parent.CostModelCanonical,
+                CostModelSha256 = parent.CostModelSha256
             }));
         });
 
@@ -884,6 +931,25 @@ public sealed class CampaignStore(Database db)
     static string Ids(IReadOnlyList<long> ids) =>
         string.Join(',', ids.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
+    /// <summary>
+    /// PINS THE JUDGE'S COST MODEL ON A CAMPAIGN THAT HAS NONE — once, and never over one that is there.
+    ///
+    /// <para>The one writer is <c>Referee.RequestVerdict</c>, in the transaction that charges a legacy
+    /// campaign's next verdict; that is why this is <c>internal</c> to Core and why the statement is
+    /// guarded by <c>cost_model_canonical IS NULL</c>: a pin is a precommitment, and a second write that
+    /// could replace the first would be a standard rewritten after the evidence.</para>
+    /// </summary>
+    internal bool PinCostModel(long campaignId, Strategy.VenueCostModel model) => db.Write(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        using var c = db.Cmd("""
+            UPDATE strategy_campaign SET cost_model_canonical=$text, cost_model_sha=$sha
+             WHERE id=$id AND cost_model_canonical IS NULL
+            """, ("$text", model.Canonical), ("$sha", model.Sha256), ("$id", campaignId));
+        return c.ExecuteNonQuery() == 1;
+    });
+
     /// <summary>Closes a campaign. Renewal does this to the parent; nothing else calls it yet.</summary>
     public void Close(long id, DateTimeOffset at) => db.Write(_ =>
     {
@@ -901,15 +967,18 @@ public sealed class CampaignStore(Database db)
             INSERT INTO strategy_campaign(name, scoring_policy, scoring_policy_sha256, trial_budget,
                                           verdict_budget, holdout_dataset_id, holdout_from, opened_at,
                                           renewed_from, closed_at, exploration_budget,
-                                          paper_policy, paper_policy_sha256)
-            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL,$reserve,$paper,$papersha);
+                                          paper_policy, paper_policy_sha256,
+                                          cost_model_canonical, cost_model_sha)
+            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL,$reserve,$paper,$papersha,
+                   $cost,$costsha);
             SELECT last_insert_rowid();
             """,
             ("$name", row.Name), ("$policy", row.ScoringPolicy), ("$sha", row.ScoringPolicySha256),
             ("$trials", row.TrialBudget), ("$verdicts", row.VerdictBudget),
             ("$ds", row.HoldoutDatasetId), ("$cut", Sql.T(row.HoldoutFrom)), ("$at", Sql.T(row.OpenedAt)),
             ("$from", row.RenewedFrom), ("$reserve", row.ExplorationBudget),
-            ("$paper", row.PaperPolicy), ("$papersha", row.PaperPolicySha256));
+            ("$paper", row.PaperPolicy), ("$papersha", row.PaperPolicySha256),
+            ("$cost", row.CostModelCanonical), ("$costsha", row.CostModelSha256));
 
         return row with { Id = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) };
     });
@@ -927,7 +996,9 @@ public sealed class CampaignStore(Database db)
             {
                 ExplorationBudget = r.GetInt32(11),
                 PaperPolicy = r.GetString(12),
-                PaperPolicySha256 = r.GetString(13)
+                PaperPolicySha256 = r.GetString(13),
+                CostModelCanonical = r.IsDBNull(14) ? null : r.GetString(14),
+                CostModelSha256 = r.IsDBNull(15) ? null : r.GetString(15)
             });
         return rows;
     }

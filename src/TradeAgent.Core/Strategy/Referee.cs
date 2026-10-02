@@ -21,6 +21,13 @@ public sealed record VerdictCharge(bool Ok, string Why, int Spent, int Budget, l
     /// <summary>The referee's own audience, present only on a charge that was taken. See the type.</summary>
     internal BarAudience? Audience { get; init; }
 
+    /// <summary>
+    /// THE COST MODEL THIS CHARGE WAS TAKEN UNDER — the campaign's pin, or the one pinned in the charge's
+    /// own transaction — present exactly when <see cref="Audience"/> is. Internal for the reason the
+    /// audience is: what a verdict is scored under is the referee's, not a caller's.
+    /// </summary>
+    internal VenueCostModel? Judge { get; init; }
+
     internal static VerdictCharge No(long campaignId, string versionId, string why, int spent, int budget) =>
         new(false, why, spent, budget, campaignId, versionId);
 }
@@ -55,7 +62,7 @@ public sealed record VerdictCharge(bool Ok, string Why, int Spent, int Budget, l
 /// a held-back bar.</para>
 /// </summary>
 public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
-    CouncilBoundaries? boundaries = null)
+    CouncilBoundaries? boundaries = null, Func<decimal>? judgeCapital = null)
 {
     readonly CampaignStore _campaigns = new(db);
     readonly CouncilBoundaries _boundaries = boundaries ?? new CouncilBoundaries(db);
@@ -63,7 +70,15 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     readonly StrategyStore _strategies = new(db);
     readonly Promotions _promotions = new(db);
     readonly PublicationStore _publications = new(db);
+    readonly VenueStore _venues = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
+
+    /// <summary>
+    /// The owner's <c>JudgeCapital</c> as it stands NOW — read only when a campaign opened before schema
+    /// 27 is pinned at its first verdict. A campaign pinned at open carries its own capital and never
+    /// asks. The shipped ten thousand when the caller (a test) passes none.
+    /// </summary>
+    readonly Func<decimal> _judgeCapital = judgeCapital ?? (() => VenueCostModel.DefaultCapital);
 
     /// <summary>The promotion ledger this referee writes. Read-only for a caller: it has one writer.</summary>
     public Promotions Promotions => _promotions;
@@ -115,6 +130,15 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// <para>Asking twice for the same version is one verdict and one charge — the same version over the
     /// same holdout is the same answer — so a crash between this call and the run it authorises leaves
     /// the verdict obtainable rather than paid for and unreachable.</para>
+    ///
+    /// <para><b>The charge buys a judge, and the two are written together.</b> A campaign pinned its
+    /// cost model when it opened, and that pin is what the verdict is scored under. A campaign opened
+    /// before schema 27 pinned none, and the question is answered HERE, inside the charge's own
+    /// transaction so a concurrent first request cannot race it: a lineage that already charged a
+    /// verdict keeps the frictionless judge every such verdict was taken under (the
+    /// <see cref="VenueCostModel.LegacyJudge"/>), and one that never did is pinned from its dataset's
+    /// venue — or refused BEFORE anything is charged when that venue's step is unconfirmed. A pin this
+    /// build cannot read back is refused the same way, and never replaced by another model.</para>
     /// </summary>
     public VerdictCharge RequestVerdict(string versionId, long campaignId)
     {
@@ -133,15 +157,70 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 + "verdict is about a program TradeAgent has parsed and measured, named by the program's own "
                 + "hash.", _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
 
-        // THE CHARGE. Written here, in its own transaction, before the audience below exists.
-        var charged = _campaigns.ChargeVerdict(campaignId, versionId, _now());
-        if (!charged.Ok)
+        // THE CHARGE AND THE JUDGE IT BUYS. Written here, in one transaction, before the audience below
+        // exists — and the pin of a legacy campaign lands only with a charge that was taken.
+        var (charged, judge) = db.Write<(VerdictCharged, VenueCostModel?)>(_ =>
+        {
+            if (_campaigns.ById(campaignId) is not { } current)
+                return (new VerdictCharged(false, $"there is no campaign {campaignId}.", 0, 0), null);
+
+            var pinned = JudgeOf(current);
+            if (pinned.Model is not { } model)
+                return (new VerdictCharged(false, pinned.Why, _campaigns.VerdictsInLineage(campaignId),
+                    current.VerdictBudget), null);
+
+            var result = _campaigns.ChargeVerdict(campaignId, versionId, _now());
+            if (!result.Ok) return (result, null);
+
+            if (current.CostModelCanonical is null) _campaigns.PinCostModel(campaignId, model);
+            return (result, model);
+        });
+
+        if (!charged.Ok || judge is null)
             return VerdictCharge.No(campaignId, versionId, charged.Why, charged.Spent, charged.Budget);
 
         return new VerdictCharge(true, "", charged.Spent, charged.Budget, campaignId, versionId)
         {
-            Audience = BarAudience.Referee
+            Audience = BarAudience.Referee,
+            Judge = judge
         };
+    }
+
+    /// <summary>
+    /// THE COST MODEL A VERDICT OF THIS CAMPAIGN IS SCORED UNDER, or why there can be none. Asked inside
+    /// the charge's transaction; see <see cref="RequestVerdict"/>.
+    /// </summary>
+    VenueCostModelResolved JudgeOf(CampaignRow campaign)
+    {
+        // PINNED: the text on the row, read back as exactly what it was — or a refusal, never a substitute.
+        if (campaign.CostModelCanonical is { } text)
+            return VenueCostModel.Read(text, campaign.CostModelSha256) is { } pinned
+                ? VenueCostModelResolved.Yes(pinned)
+                : VenueCostModelResolved.No(
+                    $"campaign {campaign.Id} pinned a cost model for its judge that this build cannot read back "
+                    + $"as the one it pinned (sha {Short(campaign.CostModelSha256 ?? "none")}), and TradeAgent "
+                    + "will not score a verdict under any other. No verdict was charged.");
+
+        // OPENED BEFORE SCHEMA 27, AND A VERDICT WAS ALREADY CHARGED IN ITS LINEAGE: every such verdict
+        // was judged frictionless, so this one is too, and re-asking about the version already paid for
+        // cannot quietly re-score it under a different judge.
+        if (_campaigns.VerdictsInLineage(campaign.Id) > 0)
+            return VenueCostModelResolved.Yes(VenueCostModel.LegacyFrictionless);
+
+        // OPENED BEFORE SCHEMA 27 AND NEVER JUDGED: pinned now, from the dataset's own venue.
+        if (_datasets.ById(campaign.HoldoutDatasetId) is not { } set)
+            return VenueCostModelResolved.No(
+                $"the holdout dataset {campaign.HoldoutDatasetId} of campaign {campaign.Id} is no longer in "
+                + "this installation's ledger, so there is no venue to pin its judge's costs from. No verdict "
+                + "was charged.");
+
+        var resolved = VenueCostModel.For(set, _venues, _judgeCapital());
+        return resolved.Ok
+            ? resolved
+            : VenueCostModelResolved.No(
+                $"campaign {campaign.Id} was opened before TradeAgent pinned the judge's costs, and its first "
+                + $"verdict is where they are pinned — but {resolved.Why} No verdict was charged and nothing "
+                + "was pinned.");
     }
 
     /// <summary>
@@ -161,11 +240,13 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// evaluation the verdict budget already paid for. Charging it as research would spend the
     /// submitter's allowance on the referee's own work — the mutant this method was built against.</para>
     ///
-    /// <para><b>The execution model is the JUDGE'S, not the submission's.</b> It is a parameter of this
-    /// call — the owner's, in-process — and it is hashed into the promotion, so a verdict taken under
-    /// one declaration cannot be read as a verdict under another. The default is
-    /// <see cref="ExecutionModel.Frictionless"/>, which invents no fee nobody measured and says so on
-    /// the record it writes.</para>
+    /// <para><b>The execution model is the JUDGE'S, not the submission's.</b> With no
+    /// <paramref name="model"/> — which is how <c>trade verdict</c> calls it, and the only way an agent's
+    /// request arrives — it is the <see cref="VenueCostModel"/> the CAMPAIGN pinned: the venue's
+    /// published taker fee, TradeAgent's stated slippage assumption, the instrument's verified step and
+    /// the owner's judge capital, fixed when the owner pressed. The parameter stays in-process for the
+    /// owner's own use; either way the four numbers are hashed into the promotion, so a verdict taken
+    /// under one model cannot be read as a verdict under another.</para>
     ///
     /// <para><b>A refusal is a VERDICT, and a failure is not.</b> A version that does not meet the
     /// policy gets a recorded <c>refused</c> promotion with its reason class — that is an answer, and it
@@ -184,7 +265,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         // THE CHARGE COMES FIRST AND IT IS WHAT PRODUCES THE AUDIENCE. Nothing below can read a
         // held-back bar without it, because the audience is on the charge and is internal to Core.
         var charge = RequestVerdict(versionId, campaignId);
-        if (charge.Audience is not { } audience)
+        if (charge.Audience is not { } audience || charge.Judge is not { } pinned)
             return RefereeVerdict.No($"no verdict was authorised, so nothing was computed: {charge.Why}");
 
         if (_campaigns.ById(campaignId) is not { } campaign)
@@ -215,7 +296,10 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 $"the recorded source of version {versionId} parses to {program.StrategyId}, which is a "
                 + "different program. TradeAgent judges the program the id names and nothing else.");
 
-        var judged = model ?? ExecutionModel.Frictionless;
+        // THE CAMPAIGN'S PINNED MODEL, which the charge above carried out of its own transaction. Never a
+        // default chosen here: the frictionless fallback that stood on this line is what made every
+        // BTC-priced verdict a `no-trade` that still spent a judgement.
+        var judged = model ?? pinned.Model;
 
         // THE HOLDOUT WINDOW IS THE CAMPAIGN'S OWN: everything from its cutoff onwards, and no `to`,
         // because a verdict wants the whole of the data the research process never saw. The dataset is

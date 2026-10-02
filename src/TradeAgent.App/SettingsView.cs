@@ -84,6 +84,10 @@ sealed class SettingsPage
     // ---- the holdout ----
     readonly TextBox _holdoutFrom;
     readonly TextBlock _holdoutValue = Ui.Mono("—");
+
+    /// <summary>The cost model the open campaign's verdicts are scored under. See <see cref="JudgeLine"/>.</summary>
+    readonly TextBlock _judgeValue = Ui.Mono("—");
+
     readonly TextBlock _holdoutNote = Ui.Muted("");
     readonly Button _holdoutResearch;
     readonly Button _holdoutFixture;
@@ -237,8 +241,13 @@ sealed class SettingsPage
         _holdoutFrom.TextChanged += (_, _) => RelabelHoldout();
         _holdoutNote.IsVisible = false;
 
+        // A SENTENCE, NOT A FIGURE: the judge's model names its fee, its slippage, its step and its
+        // capital, and a value that ran off the card would hide the half that says which is assumed.
+        _judgeValue.TextWrapping = TextWrapping.Wrap;
+
         var holdout = Ui.Section("Private evaluation evidence", Ui.Col(Theme.S4,
             Ui.KeyValueLive("Held back", _holdoutValue),
+            Ui.KeyValueLive("Judged under", _judgeValue),
             _holdoutNote,
             Ui.Divider(),
             Ui.FieldRow("From", _holdoutFrom,
@@ -602,15 +611,43 @@ sealed class SettingsPage
         try
         {
             var newest = _host.Gateway.Datasets.All().FirstOrDefault();
-            if (newest?.HoldoutFrom is not { } at) { _holdoutValue.Text = "nothing"; return; }
+            if (newest?.HoldoutFrom is not { } at)
+            {
+                _holdoutValue.Text = "nothing";
+                _judgeValue.Text = JudgeLine(null);
+                return;
+            }
 
             var open = _host.Gateway.Campaigns.OpenForDataset(newest.Id);
             _holdoutValue.Text = $"{newest.Pair} from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on"
                 + (newest.EvaluationClass == EvaluationClass.Fixture ? ", fixture bars" : "")
                 + (open is { } c ? $", campaign {c.Id}" : "");
+            _judgeValue.Text = JudgeLine(open);
         }
-        catch (Exception) { _holdoutValue.Text = "could not be read"; }
+        catch (Exception)
+        {
+            _holdoutValue.Text = "could not be read";
+            _judgeValue.Text = "could not be read";
+        }
     }
+
+    /// <summary>
+    /// THE COST MODEL A CAMPAIGN'S VERDICTS ARE SCORED UNDER, as the owner reads it — the campaign's
+    /// pinned <c>VenueCostModel</c>, never today's fee table or today's setting.
+    ///
+    /// <para>A campaign opened before TradeAgent pinned one says so rather than guessing which it will
+    /// get: that is decided by its next verdict request, inside the charge, because it depends on
+    /// whether a verdict was already charged and on whether the instrument's step is confirmed then.
+    /// A pinned text this build cannot read back is said in those words; the referee refuses it.</para>
+    /// </summary>
+    internal static string JudgeLine(CampaignRow? campaign) => campaign switch
+    {
+        null => "—",
+        { CostModelCanonical: null } =>
+            "fixed at this campaign's next judgement — it opened before TradeAgent pinned the judge's costs",
+        _ => Core.Strategy.VenueCostModel.Read(campaign.CostModelCanonical, campaign.CostModelSha256)?.Describe()
+             ?? "a pinned cost model this version of TradeAgent cannot read; it will not judge under another"
+    };
 
     // ---- refresh -----------------------------------------------------------------------------
 

@@ -270,8 +270,16 @@ public static class Versions
     /// facts are immutable and hashed into the id; a platform, mode or account that moves suspends the
     /// deployment and never retargets it; and the cursor is the last bar whose operations ALL
     /// resolved, so an answer nobody has blocks it rather than being read as a no.</para>
+    ///
+    /// <para><b>27 — the judge's cost model, pinned by each campaign</b> (<c>U-cost-model</c>):
+    /// <c>strategy_campaign.cost_model_canonical</c> and <c>.cost_model_sha</c>, the
+    /// <c>VenueCostModel</c> text and its hash, copied at the owner's press from the DATASET's venue and
+    /// carried by <c>Renew</c>, exactly as the two policies are. Nullable and NOT backfilled: a campaign
+    /// that predates the rung keeps the frictionless judge if its lineage ever charged a verdict, and is
+    /// pinned at its first verdict otherwise — a rule <c>Referee.RequestVerdict</c> applies inside the
+    /// charge, because the second half depends on whether the instrument's step is confirmed THEN.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 26;
+    public const int DatabaseSchemaVersion = 27;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

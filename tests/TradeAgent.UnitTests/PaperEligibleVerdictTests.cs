@@ -261,6 +261,8 @@ public class PaperEligibleVerdictTests
             c.CommandText = """
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
+                ALTER TABLE strategy_campaign DROP COLUMN cost_model_canonical;
+                ALTER TABLE strategy_campaign DROP COLUMN cost_model_sha;
                 ALTER TABLE strategy_allocation DROP COLUMN scope;
                 ALTER TABLE strategy_allocation DROP COLUMN connector_id;
                 ALTER TABLE strategy_allocation DROP COLUMN mode;
