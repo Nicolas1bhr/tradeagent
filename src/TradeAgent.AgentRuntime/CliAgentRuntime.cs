@@ -257,10 +257,28 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// A VERSION IS A VERSION ONLY FROM AN EXIT-0 RUN. It used to be enough for the program to print
     /// something on stdout, whatever its exit code, which turns a program that failed loudly into a
     /// program that is installed and has a strange version number.
+    ///
+    /// <para><b>A program that did not answer in time is a probe that failed, and is said as one.</b>
+    /// The deadline used to leave here as <see cref="Run"/>'s <c>AI_AUTH_TIMEOUT</c>, and so out of
+    /// <see cref="DetectAsync"/> and every caller that reads a detection. On windows-latest (run
+    /// 37017805967) that refused a restart's start — PowerShell's first launch beside the full suite
+    /// took longer than 20 s to say its version — with "Signing in took too long and was cancelled.
+    /// Press Sign in again." on the card, on a start that signs nothing in; the AI stayed stopped until
+    /// somebody pressed. A probe that fails is a runtime that is not installed, found where it is, with
+    /// the reason: the start goes on as it always has for a failed probe, and the runtime's row and the
+    /// Doctor say why. A cancellation the CALLER asked for is not a slow program, and still ends it.</para>
     /// </summary>
     async Task<(string? Version, string? Refused)> ProbeVersionAsync(string exe, CancellationToken ct)
     {
-        var r = await Run(exe, manifest.VersionArgs, VersionDeadline, ct, agentWork: false);
+        ProcResult r;
+        try { r = await Run(exe, manifest.VersionArgs, VersionDeadline, ct, agentWork: false); }
+        catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_AUTH_TIMEOUT && !ct.IsCancellationRequested)
+        {
+            var seconds = VersionDeadline.TotalSeconds;
+            return (null, $"{Path.GetFileName(exe)} did not answer within {seconds:0} second{(seconds == 1 ? "" : "s")} " +
+                "when asked for its version");
+        }
+
         if (r.ExitCode != 0)
             return (null, FirstLine(r.StdErr) ?? FirstLine(r.StdOut)
                 ?? $"{Path.GetFileName(exe)} exited {r.ExitCode} without saying why");
