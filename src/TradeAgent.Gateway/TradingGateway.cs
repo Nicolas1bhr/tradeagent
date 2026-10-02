@@ -131,6 +131,15 @@ public sealed class TradingGateway : IAsyncDisposable
     public Promotions Promotions => _referee.Promotions;
 
     /// <summary>
+    /// WHEN A VERDICT TAKEN UNDER THESE SEMANTICS WAS WITHDRAWN BY OTHER ONES, or null because this
+    /// installation recorded no such moment — a read of what the constructor records
+    /// (<see cref="Core.Strategy.EvaluationSemantics.WithdrawnAt"/>), for the verdict op's words.
+    /// </summary>
+    internal DateTimeOffset? EvaluationSemanticsWithdrawnAt(
+        string evaluatorVersion, string manifest, DateTimeOffset judgedAt) =>
+        Core.Strategy.EvaluationSemantics.WithdrawnAt(_db, evaluatorVersion, manifest, judgedAt);
+
+    /// <summary>
     /// THE CAPITAL ALLOCATIONS — what the owner has put behind each promoted version, and the ceiling
     /// this class refuses orders against.
     ///
@@ -1576,6 +1585,13 @@ public sealed class TradingGateway : IAsyncDisposable
         // engineering log has to carry.
         try { _venues.Sync(Core.Data.VenueCatalog.Read()); }
         catch (Exception ex) { _log.TryEngineering("Gateway", "venue_catalogue_not_recorded", "error", ex: ex); }
+        // THE EVALUATION SEMANTICS THIS BUILD JUDGES UNDER, AND SINCE WHEN — written once per pair, the
+        // first time a build that has them opens this ledger (`U-evidence-identity`). It decides no
+        // standing; it is what lets `trade verdict` say WHEN a verdict was withdrawn by a build with
+        // other semantics, which a standing computed at read time cannot know. Guarded for the reason
+        // the catalogue is: a store that will not take a write must not stop the gateway existing.
+        try { Core.Strategy.EvaluationSemantics.RecordInForce(db, _opt.Clock.GetUtcNow()); }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "evaluation_semantics_not_recorded", "error", ex: ex); }
         _campaigns = new CampaignStore(db);
         // The council's boundary ledger, because a confirmed loss-budget breach is one of the four
         // consequential boundaries docs/COUNCIL.md:59 names. This class OPENS one and can do nothing

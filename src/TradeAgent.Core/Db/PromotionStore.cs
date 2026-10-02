@@ -387,10 +387,16 @@ public sealed class Promotions(Database db)
     /// actually opens the bars re-hashes them (<c>DatasetStore.Checked</c>, which is what writes the
     /// rejection down), and this answer is read on the money path where hashing tens of megabytes per
     /// order would be its own kind of wrong. `docs/CONTRACTS.md` says so.</para>
+    ///
+    /// <para><paramref name="campaignId"/>, when given, narrows the answer to the newest verdict taken
+    /// under THAT campaign — the question <c>trade verdict</c> asks, because it answers with that
+    /// campaign's row and must say whether that row still stands. Every caller on the money path names
+    /// none and gets the version's own standing, exactly as before.</para>
     /// </summary>
-    public PromotionStanding Standing(string versionId)
+    public PromotionStanding Standing(string versionId, long? campaignId = null)
     {
-        if (For(versionId).FirstOrDefault() is not { } promotion)
+        if (For(versionId).FirstOrDefault(p => campaignId is not { } only || p.CampaignId == only)
+            is not { } promotion)
             return new PromotionStanding(PromotionState.Unjudged,
                 $"no verdict has been recorded for version {Short(versionId)}. TradeAgent's referee has "
                 + "not been asked about it, which is a different thing from having answered no.", null);

@@ -1,3 +1,6 @@
+using System.Globalization;
+using TradeAgent.Core.Db;
+
 namespace TradeAgent.Core.Strategy;
 
 /// <summary>
@@ -28,4 +31,58 @@ public static class EvaluationSemantics
     /// </summary>
     public static string Of(string evaluatorVersion, string manifest) =>
         $"evaluator {evaluatorVersion} with manifest {manifest}";
+
+    /// <summary>
+    /// The <c>kv</c> key family <see cref="RecordInForce"/> writes: this prefix and then
+    /// <see cref="Of"/>'s spelling of one pair.
+    /// </summary>
+    public const string SinceKeyPrefix = "evaluation_semantics_since:";
+
+    /// <summary>
+    /// WHEN THIS INSTALLATION FIRST EVALUATED UNDER THIS BUILD'S SEMANTICS — written once per pair, the
+    /// first time a build that has them opens the ledger, and never moved after.
+    ///
+    /// <para><b>Why it is recorded at all.</b> A promotion's standing is computed at read time and nothing
+    /// is written when it is withdrawn, which is right: a withdrawal that depended on a sweep having run
+    /// would be the sweep that did not run. But it leaves "withdrawn WHEN" with no answer, and the only
+    /// true one is the moment the first build with other semantics began running here. This is that
+    /// moment, measured by the app at its own start — a fact about the installation, kept in the same
+    /// write-once way as every other one (<see cref="Database.AddKvOnce"/>), and read by
+    /// <see cref="WithdrawnAt"/> and by nothing that decides a standing.</para>
+    ///
+    /// <para>Answers whether this call is the one that wrote it.</para>
+    /// </summary>
+    public static bool RecordInForce(Database db, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return db.AddKvOnce(SinceKeyPrefix + Current, Sql.T(now));
+    }
+
+    /// <summary>
+    /// WHEN A VERDICT TAKEN UNDER THESE SEMANTICS WAS WITHDRAWN BY OTHER ONES: the earliest instant
+    /// <see cref="RecordInForce"/> recorded for a pair that is NOT the one it was judged under and that
+    /// came after the judgement — or null, because no such instant was recorded (a ledger opened only by
+    /// builds older than this record, or a judgement written after every recorded change).
+    ///
+    /// <para>The earliest and not the newest: across two bumps, a verdict was withdrawn by the first one,
+    /// and the second changed nothing more about it.</para>
+    /// </summary>
+    public static DateTimeOffset? WithdrawnAt(
+        Database db, string evaluatorVersion, string manifest, DateTimeOffset judgedAt)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var judgedUnder = Of(evaluatorVersion, manifest);
+        DateTimeOffset? first = null;
+
+        foreach (var (key, value) in db.KvStartingWith(SinceKeyPrefix))
+        {
+            if (string.Equals(key[SinceKeyPrefix.Length..], judgedUnder, StringComparison.Ordinal)) continue;
+            if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var since)) continue;
+            if (since <= judgedAt) continue;
+            if (first is null || since < first) first = since;
+        }
+
+        return first;
+    }
 }

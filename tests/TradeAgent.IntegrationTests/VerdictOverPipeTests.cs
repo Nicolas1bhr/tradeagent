@@ -510,6 +510,120 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
         Assert.Equal(0, RefereeRuns(w));
     }
 
+    // ---- a recorded verdict, standing or withdrawn (U-evidence-identity item 4) --------------------
+
+    /// <summary>One promotion row restated past the store, for the two tests below. The ledger has no such writer.</summary>
+    static void Restate(World w, string promotionId, string column, string value)
+    {
+        var written = w.Db.Write(_ =>
+        {
+            using var c = w.Db.Cmd($"UPDATE strategy_promotion SET {column}=$v WHERE id=$id",
+                ("$v", value), ("$id", promotionId));
+            return c.ExecuteNonQuery();
+        });
+        Assert.Equal(1, written);
+    }
+
+    /// <summary>
+    /// (c) AN EVALUATOR VERSION BUMP WITHDRAWS STANDING, AND THE VERDICT REPLY SAYS WHY — AND WHEN.
+    ///
+    /// <para>The verdict is taken over the wire as usual, and its row is then put in the state an
+    /// EARLIER build leaves it in: judged under that build's evaluator, before this build first ran here.
+    /// That is two columns written past the store, because the ledger has no writer that restates a
+    /// promotion — the arrangement <c>PromotionLedgerTests</c> makes for a dataset collected again. Asked
+    /// again, the record comes back as the referee wrote it — <c>promoted</c>, untranslated — and
+    /// <c>why</c> says it was WITHDRAWN on the instant this installation first evaluated under this build's
+    /// semantics (what the gateway recorded when it opened), because the evaluation semantics changed from
+    /// the old evaluator to this one; that re-judging is not available yet; and nothing was charged or
+    /// run for asking.</para>
+    ///
+    /// <para><b>RED on the base</b> (<c>GatewayPipeServer.cs:2484</c>): the row was answered as though it
+    /// still stood, with <c>why</c> null.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_evaluator_version_bump_withdraws_standing_and_the_verdict_reply_says_why()
+    {
+        await using var w = await Given();
+        var version = await GivenMeasuredVersion(w);
+
+        var first = await AskVerdict(w.Client, version, rid: "v-first");
+        Assert.True(first.Ok, Json.Write(first.Error));
+        var promotion = Assert.Single(w.Gw.Promotions.For(version));
+        Assert.True(promotion.IsPromoted, promotion.Reason);
+
+        // THE ROW AS AN EARLIER BUILD WROTE IT: under its own evaluator, before this build first ran here.
+        const string earlier = "backtest=0;metrics=1;scoring=1";
+        Restate(w, promotion.Id, "evaluator_version", earlier);
+        Restate(w, promotion.Id, "at", Bar0.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+
+        var recorded = w.Db.GetKv(EvaluationSemantics.SinceKeyPrefix + EvaluationSemantics.Current);
+        Assert.NotNull(recorded);
+        var since = DateTimeOffset.Parse(recorded!, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+
+        var again = await AskVerdict(w.Client, version, rid: "v-again");
+        log.WriteLine(Json.Write(again.Error ?? (object)Data(again), pretty: true));
+        Assert.True(again.Ok, Json.Write(again.Error));
+
+        var data = Data(again);
+        var why = data.GetProperty("why").GetString();
+        Assert.NotNull(why);
+        Assert.StartsWith(
+            $"WITHDRAWN on {since:u} because the evaluation semantics changed from evaluator {earlier} with "
+            + $"manifest {StrategyVersions.Manifest} to {EvaluationSemantics.Current}", why, StringComparison.Ordinal);
+        Assert.Contains("Re-judging a withdrawn verdict is not available yet", why, StringComparison.Ordinal);
+
+        // THE RECORD, UNTRANSLATED, AND NOTHING CHARGED OR RUN FOR ASKING.
+        Assert.Equal(PromotionVerdict.Promoted, data.GetProperty("verdict").GetString());
+        Assert.Equal(PromotionReason.Met, data.GetProperty("reason").GetString());
+        Assert.Equal(1, data.GetProperty("verdicts_spent").GetInt32());
+        Assert.Equal(1, RefereeRuns(w));
+        Assert.Single(w.Gw.Promotions.For(version));
+        Assert.Equal(PromotionState.Invalidated, w.Gw.Promotions.Standing(version).State);
+
+        // AND THE SAME EIGHT KEYS: a withdrawal is words in `why`, never a new field a figure could ride in.
+        Assert.Equal(
+            new[] { "campaign", "reason", "text", "verdict", "verdicts_budget", "verdicts_spent", "version", "why" },
+            data.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// (e) A STANDING VERDICT IS ANSWERED AS IT STANDS — including one an earlier RELEASE wrote (guard).
+    ///
+    /// <para>Asked twice, the second answer is the first: the same verdict, the same note, <c>why</c>
+    /// null. Then the row is given an earlier release's <c>interpreter_build</c> — what every promotion on
+    /// an installation that has updated since looks like — and asked again: still standing, <c>why</c>
+    /// still null, because a release that changed nothing a program means changed nothing this evidence
+    /// rested on.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_standing_verdict_is_answered_as_it_stands()
+    {
+        await using var w = await Given();
+        var version = await GivenMeasuredVersion(w);
+
+        var first = await AskVerdict(w.Client, version, rid: "v-first");
+        Assert.True(first.Ok, Json.Write(first.Error));
+        var promotion = Assert.Single(w.Gw.Promotions.For(version));
+
+        var second = await AskVerdict(w.Client, version, rid: "v-second");
+        Assert.True(second.Ok, Json.Write(second.Error));
+        Assert.Equal(PromotionVerdict.Promoted, Data(second).GetProperty("verdict").GetString());
+        Assert.Equal(JsonValueKind.Null, Data(second).GetProperty("why").ValueKind);
+        Assert.Equal(RefereeFeedback.Text(promotion), Data(second).GetProperty("text").GetString());
+
+        Restate(w, promotion.Id, "interpreter_build", "app=0.0.1;language=1");
+
+        var third = await AskVerdict(w.Client, version, rid: "v-third");
+        log.WriteLine(Json.Write(third.Error ?? (object)Data(third), pretty: true));
+        Assert.True(third.Ok, Json.Write(third.Error));
+        Assert.Equal(PromotionVerdict.Promoted, Data(third).GetProperty("verdict").GetString());
+        Assert.Equal(JsonValueKind.Null, Data(third).GetProperty("why").ValueKind);
+        Assert.Equal(1, Data(third).GetProperty("verdicts_spent").GetInt32());
+        Assert.Equal(1, RefereeRuns(w));
+        Assert.True(w.Gw.Promotions.Standing(version).IsPromoted, w.Gw.Promotions.Standing(version).Why);
+    }
+
     // ---- what the owner's report tells an agent about a verdict (U-referee-2 item 5) --------------
 
     /// <summary>

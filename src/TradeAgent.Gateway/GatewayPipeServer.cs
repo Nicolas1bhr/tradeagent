@@ -2480,9 +2480,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 + " --to <before the cutoff>' first. A run that LOST is admission enough — the clause is "
                 + "that the hypothesis was tested, not that it worked.");
 
-        // ALREADY JUDGED: answered as it stands, and nothing runs. See the summary.
-        if (gateway.Promotions.For(version).FirstOrDefault(p => p.CampaignId == campaign.Id) is { } standing)
-            return Answered(campaign, version, standing, null);
+        // ALREADY JUDGED: answered as it stands, and nothing runs. See the summary. "As it stands" is the
+        // STANDING and not only the row: a recorded verdict whose evidence no longer holds is answered
+        // with the record unchanged and `why` saying it was WITHDRAWN, when and why — read back bare, a
+        // withdrawn promotion was a "promoted" with nothing beside it to say it no longer was.
+        if (gateway.Promotions.For(version).FirstOrDefault(p => p.CampaignId == campaign.Id) is { } judged)
+            return Answered(campaign, version, judged, Withdrawn(version, campaign.Id, judged));
 
         if (!_judging.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -2510,6 +2513,47 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             _judging.TryRemove(role, out _);
         }
+    }
+
+    /// <summary>
+    /// WHY THIS RECORDED VERDICT NO LONGER STANDS, in words — or null, because it does
+    /// (<c>U-evidence-identity</c>).
+    ///
+    /// <para>The standing is <c>Promotions.Standing</c>'s, asked of this campaign's verdict, and its reason
+    /// is carried whole. When what moved is the evaluation semantics, the reply also says WHEN: the
+    /// first instant this installation evaluated under semantics other than the ones the verdict was
+    /// taken under (<c>EvaluationSemantics.WithdrawnAt</c>), and says so when no such instant was
+    /// recorded rather than putting another date in its place. Then what can be done about it, which
+    /// today is nothing through this op: asking again answers this same record and charges nothing,
+    /// because re-judging a withdrawn verdict is a later unit's (<c>U-rejudge</c>), and a version the new
+    /// manifest re-identified is a new program with an id of its own.</para>
+    /// </summary>
+    string? Withdrawn(string version, long campaignId, PromotionRow judged)
+    {
+        var standing = gateway.Promotions.Standing(version, campaignId);
+        if (standing.State != PromotionState.Invalidated || standing.Promotion?.Id != judged.Id) return null;
+
+        var manifest = gateway.Strategies.VersionById(version)?.Manifest;
+        var evaluatorMoved = !string.Equals(
+            judged.EvaluatorVersion, Core.Strategy.Referee.EvaluatorVersion, StringComparison.Ordinal);
+        var manifestMoved = manifest is not null
+            && !string.Equals(manifest, Core.Strategy.StrategyVersions.Manifest, StringComparison.Ordinal);
+
+        var when = "";
+        if ((evaluatorMoved || manifestMoved) && manifest is not null)
+            when = gateway.EvaluationSemanticsWithdrawnAt(judged.EvaluatorVersion, manifest, judged.At) is { } at
+                ? $" on {at:u}"
+                : ", on a date this installation did not record,";
+
+        return $"WITHDRAWN{when} because {standing.Why} The 'verdict', 'reason' and 'text' in this answer are "
+            + "the record of what TradeAgent's referee answered, and a record is not rewritten; the verdict no "
+            + "longer stands, so nothing may trade on it — no allocation authorises an order under it, no paper "
+            + "run starts, and one already going is ended. Re-judging a withdrawn verdict is not available yet: "
+            + "asking again answers this same record, charges nothing and runs nothing."
+            + (manifestMoved
+                ? " Under this build's manifest the same program text is a different version with its own id: "
+                  + "backtest it again and ask about that id, which is a fresh verdict charged like any other."
+                : "");
     }
 
     /// <summary>
