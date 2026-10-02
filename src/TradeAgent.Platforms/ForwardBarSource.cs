@@ -34,6 +34,9 @@ public sealed class ForwardBarSource(ForwardBarStore store, string source = Forw
     /// <summary>The series this source serves. One row of <c>forward_bar</c>'s <c>source</c> column.</summary>
     public string Source => source;
 
+    /// <summary>A forward bar is one closed minute: <see cref="ForwardBars.BarLength"/>.</summary>
+    public TimeSpan BarLength => ForwardBars.BarLength;
+
     public Task<IReadOnlyList<KlineBar>> SinceAsync(
         string symbol, DateTimeOffset openTimeExclusive, CancellationToken ct = default)
     {

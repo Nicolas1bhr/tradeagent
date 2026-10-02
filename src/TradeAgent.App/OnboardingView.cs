@@ -437,7 +437,9 @@ public sealed class OnboardingView
             var first = (await _host.Gateway.InstrumentsAsync()).FirstOrDefault();
             if (first is null) return false;
             var q = await _host.Gateway.QuoteAsync(first.Symbol);
-            return q is not null && !q.IsStale(TimeSpan.FromMinutes(1));
+            // A SCREEN'S QUESTION, ON THE MACHINE'S CLOCK, SAID OUT LOUD: is a price arriving at all.
+            // The order path measures ages on the gateway's clock; nothing here sizes an order.
+            return q is not null && !q.IsStale(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow);
         },
 
         OnboardingStep.ORDER_ACCESS_VERIFIED => async () =>

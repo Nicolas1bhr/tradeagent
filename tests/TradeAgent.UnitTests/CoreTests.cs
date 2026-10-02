@@ -404,10 +404,15 @@ public class ProtocolTests
     [Fact]
     public void A_stale_quote_knows_it_is_stale()
     {
-        var fresh = new QuoteInfo("ES", 1, 2, 1.5m, null, null, DateTimeOffset.UtcNow);
-        var old = new QuoteInfo("ES", 1, 2, 1.5m, null, null, DateTimeOffset.UtcNow.AddMinutes(-5));
-        Assert.False(fresh.IsStale(TimeSpan.FromSeconds(30)));
-        Assert.True(old.IsStale(TimeSpan.FromSeconds(30)));
+        var now = DateTimeOffset.UtcNow;
+        var fresh = new QuoteInfo("ES", 1, 2, 1.5m, null, null, now);
+        var old = new QuoteInfo("ES", 1, 2, 1.5m, null, null, now.AddMinutes(-5));
+        Assert.False(fresh.IsStale(TimeSpan.FromSeconds(30), now));
+        Assert.True(old.IsStale(TimeSpan.FromSeconds(30), now));
+
+        // AND THE AGE IS MEASURED AT THE INSTANT THE CALLER NAMES, never off the machine's clock: the
+        // same quote five minutes earlier was a price (U-runner-forward).
+        Assert.False(old.IsStale(TimeSpan.FromSeconds(30), now.AddMinutes(-5)));
     }
 }
 

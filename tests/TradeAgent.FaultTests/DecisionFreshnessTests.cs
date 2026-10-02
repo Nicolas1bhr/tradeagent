@@ -40,12 +40,21 @@ public class DecisionFreshnessTests(ITestOutputHelper log)
         public void Advance(TimeSpan by) => _now += by;
     }
 
-    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready()
+    /// <param name="maxQuoteAge">
+    /// The quote gate's bound, or null for the shipped thirty seconds. Both quote gates read the same
+    /// clock as the decision gate (<c>U-runner-forward</c>), so a fixture that ages a decision by
+    /// moving that clock ages the price the risk check took by the same amount — and the quote gate,
+    /// which sits first, would answer instead of the gate under test. Only that fixture widens it.
+    /// </param>
+    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
+        TimeSpan? maxQuoteAge = null)
     {
         var clock = new TestClock(DateTimeOffset.UtcNow);
         var db = TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
-        var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()) { QuoteClock = clock });
+        var options = new GatewayOptions { Clock = clock };
+        if (maxQuoteAge is { } bound) options.MaxQuoteAge = bound;
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
@@ -115,7 +124,10 @@ public class DecisionFreshnessTests(ITestOutputHelper log)
     [Fact]
     public async Task An_intent_that_ages_past_its_bound_during_the_reads_is_still_refused()
     {
-        var (gw, conn, db, clock) = await Ready();
+        // The five minutes below age the PRICE the risk check took as well, on the one clock; ten
+        // minutes of quote age keeps the quote gate out of this, which is about the decision gate.
+        // That a five-minute-old price is refused at dispatch is QuoteClockTests' (U-runner-forward).
+        var (gw, conn, db, clock) = await Ready(maxQuoteAge: TimeSpan.FromMinutes(10));
         using var _1 = db;
 
         var aged = 0;

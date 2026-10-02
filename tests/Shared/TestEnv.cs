@@ -66,6 +66,12 @@ public static class TestEnv
         var conn = emergencyBudget is { } budget
             ? new FakeConnector(new FakeBroker(), faults) { EmergencyBudget = budget }
             : new FakeConnector(new FakeBroker(), faults);
+
+        // THE SIMULATOR'S PRICES ON THE CLOCK THE GATEWAY IS GIVEN. The gateway measures a quote's age
+        // on its own clock (U-runner-forward), so a fixture that substitutes that clock stamps the
+        // quotes on it too — or a quote is months old, or months in the future, by accident.
+        if (options is not null) conn.QuoteClock = options.Clock;
+
         var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {

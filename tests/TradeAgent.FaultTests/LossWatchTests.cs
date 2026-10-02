@@ -44,7 +44,10 @@ public class LossWatchTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
+
+        // THE SIMULATOR'S QUOTES ON THE GATEWAY'S CLOCK: the watch measures a quote's age on that
+        // clock (U-runner-forward), so a backdated quote is backdated from the instant it reads.
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()) { QuoteClock = clock });
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {

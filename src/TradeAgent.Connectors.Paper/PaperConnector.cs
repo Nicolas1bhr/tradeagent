@@ -253,12 +253,18 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     /// manufactured a spread around a close would be handing the gateway's value checks a number the
     /// venue never showed. <see cref="QuoteInfo.At"/> is the bar's CLOSE time, so a stale bar reads
     /// as a stale quote rather than a fresh one.
+    ///
+    /// <para><b>The close is the bar's open plus the SOURCE's declared bar length</b>
+    /// (<see cref="IPaperBarSource.BarLength"/>, <c>U-runner-forward</c>). It used to be the open plus
+    /// the spacing of the last two bars settled, which is the bar length only while no minute is
+    /// missing: on the first bar after a ten-minute gap the price was dated nine minutes after its
+    /// own close, in the future, and four minutes later it still passed every age check there is.</para>
     /// </summary>
     public async Task<QuoteInfo?> GetQuoteAsync(string symbol, CancellationToken ct = default)
     {
         await SettleAsync(symbol, ct);
         if (Book.LastClose(symbol) is not { } close) return null;
-        var at = Book.SettledThrough(symbol) + (Book.Interval(symbol) ?? TimeSpan.Zero);
+        var at = Book.SettledThrough(symbol) + _source.BarLength;
         var quote = new QuoteInfo(symbol, null, null, close, null, null, at);
         QuoteChanged?.Invoke(quote);
         return quote;
