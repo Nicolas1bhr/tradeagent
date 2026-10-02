@@ -7130,3 +7130,44 @@ complete (`fleet/ci-ledger.md`, then the next record).
 **NOT done, NOT verified:** `RuntimeManifest.cs:635-637` ("mid-priced") and `:678-681` (the harness's "cheapest current model") are stale comments, left out
 of `U-key-host-pin`'s hunks — owed once it lands; `docs/ORGANISATION.md:277` still says the table lacks the GPT-6 rows; no default model changed; the
 running app (the Safety page's model buttons) not seen; no real turn on a GPT-6 model; whether a harness turn on one can call tools (`U-harness-responses`).
+
+## 2026-10-02 — U-key-host-pin landed: the owner's pasted key goes only to the origin it was pasted for, never to one an agent wrote into a file
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-key-host-pin.md` (dispatched `5571328`); rebased by the manager onto `492ae79`
+(seat P's U-price-rows) and `ec149ec` (docs only), src+tests patch-id identical, no conflict. Merge `3065e39` (ff-only), 5 commits (4 items + the report),
+18 files, +883/−77. No schema rung (`DatabaseSchemaVersion` stays 26). Credentials (`CLAUDE.md`; `docs/EDGE-FACTORY.md` § 6.10) — not a money-path file
+in HOW-WE-BUILD's list; the brief's red-first tests and two mutants were run anyway.
+
+- **Item 1 (`bb7f37c`):** `HarnessKey.Set(key, pastedFor)` holds the key with its ORIGIN (new `Security/KeyOrigin.cs`: http/https only, scheme +
+  `Uri.IdnHost` + a non-default port, user-info dropped). `Held` stays the presence check (KeyHeld, health, both `StartAsync`s) and clears nothing; only
+  the send path calls `ReadFor(origin)`: an exact match gets the key, anything else clears it and gets a typed `KeyRefusal(PastedFor, PointsAt)`. A turn
+  reads `manifest.Endpoint` once and posts every request there.
+- **Item 2 (`8515f44`):** the refusal names both origins (`Labels.HarnessKeyPastedForAnotherOrigin`) and ends the turn `key-origin-refused` before any
+  request; `AgentTurnEnded.KeyWithheld` feeds a zero branch in `TurnMeter.Charge` beside the vendor-limit one: the turn costs nothing, its row reads `refused`.
+- **Item 3 (`138a1d1`):** the Safety page's box names the origin of the harness's OWN manifest; one that differs from `RuntimeCatalog.BuiltIn()`'s row
+  reads "not TradeAgent's built-in address" in the caution colour, the built-in address beside it, and the key is taken only on a second press in the same
+  window, bound to the address that press confirmed (refused if it moved between presses). Nothing is persisted.
+- **Item 4 (`2812aa8`):** `CONTRACTS.md` (the binding; NOT claimed: reads of this app's memory, keys handed to vendor CLIs at `OnboardingView.cs:779`,
+  which those agents can read until containment; every future keyed endpoint uses this holder rule) and `USER-GUIDE.md` (the box).
+- **Deviations, judged at landing:** (1) the origin comes from `KeyOrigin.Of`, not `GetLeftPart(Authority)`, which the builder measured on .NET 10.0.400
+  keeping user-info (`https://<provider>@other.host` read as the provider) and Unicode look-alike hosts — accepted: stricter, and it fails closed. (2) The
+  brief's "tick" is the page's existing two-press `Ui.ConfirmIf`, whose armed sentence names the address (no check box in this code-built UI; Fluent's
+  paints the OS accent, not a `Theme.cs` colour) — accepted: in the window, naming the origin, never persisted, which is what the brief protects.
+- **Start path:** the builder judged the diff does not reach it (the harness is built lazily; `ResumeOnStartTests` starts a CLI probe runtime and reads
+  only `HarnessKey.Held`, unchanged); the manager read the `AppHost` and `MissionLoop` hunks (the latter adds one property) and agrees.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `1eda5a3`: Release `--no-incremental` 0 warnings, 0 errors; Unit
+1218/1218, Fault 399/399; eight touched classes 3× 66/66. RED before, on `73cfaca` against today's API: "the listener on port 51085 received 1
+request(s), 1 of them carrying the key pasted for the listener on port 51084 (same host, 127.0.0.1)"; before the zero branch `Expected: 0 / Actual:
+1.28`. Mutants on item 1 (pre-rebase `2b7e503`), each turning that test red with the leak line: the origin comparison removed; `ReadFor` comparing
+`.Host`. Manager's gate at `b4fac3c` (carried to `3065e39`, build tree identical), Release: build `--no-incremental` 0 warnings, 0 errors; Unit
+1224/1224 (29 s), Fault 399/399 (1 m 28 s), Integration 699/700, 1 skipped (11 m 4 s; clean baseline 11 m 6 s) → 0 failed. Names vs `main` (git
+objects): 1973 → 1979, 0 removed, 6 added. Scan: four judged names excluded (a type name, a cancellation member, the box's mask property, a test
+helper formatting the pretend key's header), otherwise clean; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37020700007 at `1eda5a3` (this unit on `73cfaca`, before U-price-rows landed — the combination is covered by the manager's gate above
+and the merge's own run): success on ubuntu-latest (12 min), macos-latest (14 min), windows-latest (28 min), package (4 min). CI at the merge: recorded
+when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** the Safety page was not run or looked at (its controls were pressed in tests only); no real provider; no box run. Seen, not
+changed (source-read, not run): an admitted no-key turn also sends nothing yet keeps its reservation as cost (`AiAttemptStore.End:333-338`); no page
+shows the Research conversation, so on screen a refusal reads only as the Safety page's "No key is held".
