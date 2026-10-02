@@ -8,6 +8,7 @@ using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 
 namespace TradeAgent.App;
 
@@ -1027,10 +1028,12 @@ sealed class SafetyPage
     /// <summary>
     /// THE KEY BOX FOR THE APP-OWNED HARNESS, MASKED, and the note that says what became of the paste.
     ///
-    /// <c>PasswordChar</c> because the owner may be sharing a screen; the value is read on the press and
-    /// the box is emptied, so the control holds no credential between presses. The sentence beside it is
-    /// <c>Labels.HarnessKeyHint</c> and it says WHY the key is not saved, which is the one question an
-    /// owner asked to paste it again after every restart is entitled to an answer to.
+    /// <c>PasswordChar</c> because the owner may be sharing a screen; the value is read on the press that
+    /// takes it and the box is emptied, so the control holds no credential after it. The one exception is
+    /// the gap between the two presses an address that is not TradeAgent's own asks for: the paste waits
+    /// in the masked box for the second one. The sentence beside it is <c>Labels.HarnessKeyHint</c> and it
+    /// says WHY the key is not saved, which is the one question an owner asked to paste it again after
+    /// every restart is entitled to an answer to.
     /// </summary>
     readonly TextBox _harnessKey = BuildHarnessKeyField();
 
@@ -1048,6 +1051,25 @@ sealed class SafetyPage
         });
 
     readonly TextBlock _harnessKeyNote = Ui.Micro("");
+
+    /// <summary>
+    /// WHERE A KEY PASTED INTO THE BOX WILL GO (<c>U-key-host-pin</c>): the origin of the harness's own
+    /// manifest, beside the box, before anything is pasted — in caution colour, with the built-in address
+    /// beside it, when it is not TradeAgent's own. Updated in place on the five-second pass.
+    /// </summary>
+    readonly TextBlock _harnessKeyOrigin = Ui.Muted("");
+
+    /// <summary>The press that takes the paste. Kept so the pass can disarm it if the address moves.</summary>
+    readonly Button _saveHarnessKey;
+
+    /// <summary>The address <see cref="_harnessKeyOrigin"/> last showed; a change disarms a half-made press.</summary>
+    string? _harnessKeyOriginShown;
+
+    /// <summary>
+    /// Why the last press did not take the key, until the next press. Held here rather than written once,
+    /// so the five-second pass does not wipe the reason while the owner is reading it.
+    /// </summary>
+    string? _harnessKeyNotTaken;
 
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
@@ -1554,6 +1576,10 @@ sealed class SafetyPage
         _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
 
         _researchRuntimeRow = BuildRuntimeRow(id => ChooseRoleRuntime(CouncilRoles.Research, id));
+        // THE HARNESS'S OWN MANIFEST, through the host's one harness object — never a fresh read of the
+        // catalogue, which is a file an agent can write (U-key-host-pin).
+        _saveHarnessKey = BuildSaveHarnessKey(_host.HarnessKey, () => _harnessKey.Text,
+            () => HarnessKeyDestination(_host.Harness?.Manifest), AfterHarnessKeyPress);
         _researchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency,
             m => ChooseRoleModel(CouncilRoles.Research, m));
         _researchShare = Ui.NumberField(
@@ -1638,9 +1664,12 @@ sealed class SafetyPage
                 + "cannot run a shell, install anything or reach the internet. It needs a key, below."),
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.HarnessKey, _harnessKey, Labels.HarnessKeyHint),
+            _harnessKeyOrigin,
             Ui.Spacer(Theme.S2),
-            Ui.Row(Theme.S3,
-                BuildSaveHarnessKey(SaveHarnessKey),
+            // A ROW THAT WRAPS: armed, the press says the whole address, and a plain row would push the
+            // button beside it off the card.
+            Ui.Wrap(Theme.S3,
+                _saveHarnessKey,
                 Ui.Button(Labels.ForgetHarnessKey, ForgetHarnessKey)),
             _harnessKeyNote,
             Ui.Spacer(Theme.S2),
@@ -1990,29 +2019,93 @@ sealed class SafetyPage
     }
 
     /// <summary>
-    /// THE PRESS THAT TAKES THE PASTED KEY. Emphasised, one press, and the box is emptied by the handler
-    /// — a control still holding a credential after the press is a credential on a screen.
+    /// WHERE A PASTED KEY WILL GO, AND WHETHER THAT IS TRADEAGENT'S OWN ADDRESS (<c>U-key-host-pin</c>).
     /// </summary>
-    internal static Button BuildSaveHarnessKey(Action save)
+    /// <param name="Origin">The origin of the harness's own endpoint, or null where it has none.</param>
+    /// <param name="BuiltIn">Whether that is the origin of the BUILT-IN row for the same id.</param>
+    /// <param name="BuiltInOrigin">The built-in row's origin, for the owner to compare against.</param>
+    internal sealed record KeyDestination(string? Origin, bool BuiltIn, string? BuiltInOrigin);
+
+    /// <summary>
+    /// THE ADDRESS THE BOX BINDS A KEY TO, read off the manifest the harness was BUILT from and sends
+    /// to, and compared with the built-in row compiled into this build — never with anything on disk.
+    ///
+    /// <para>The built-in side is <see cref="RuntimeCatalog.BuiltIn"/>, the code list, because the file
+    /// that overrides a row is one the AI's own program can write: comparing against the catalogue as
+    /// read would let that file declare its own address built in.</para>
+    /// </summary>
+    internal static KeyDestination HarnessKeyDestination(RuntimeManifest? harness)
     {
-        var b = Ui.Button(Labels.SaveHarnessKey, save, emphasised: true);
+        var origin = harness is null ? null : KeyOrigin.Of(harness.Endpoint);
+        var row = RuntimeCatalog.BuiltIn().FirstOrDefault(m => m.Id == (harness?.Id ?? ApiAgentRuntime.RuntimeId));
+        var shipped = row is null ? null : KeyOrigin.Of(row.Endpoint);
+        return new(origin, origin is not null && string.Equals(origin, shipped, StringComparison.Ordinal), shipped);
+    }
+
+    /// <summary>
+    /// THE PRESS THAT TAKES THE PASTED KEY, FOR THE ADDRESS THE OWNER WAS SHOWN (<c>U-key-host-pin</c>).
+    ///
+    /// <para><b>One press for TradeAgent's built-in address; two for any other.</b> The second press is
+    /// the page's own two-press confirmation, and its sentence NAMES the address — so what the owner
+    /// confirms is that address, in this window, now. The key is then bound to the address the sentence
+    /// named and to nothing else: if the address moved between the two presses the key is not taken at
+    /// all, and if anything later sends to another one the holder refuses it.</para>
+    ///
+    /// <para><b>Nothing about the confirmation is persisted.</b> It lives in this control and this closure
+    /// for the length of one press, and a new page — a restart — starts unconfirmed: a file an agent can
+    /// write must never be able to say "the owner already agreed to this address".</para>
+    ///
+    /// <para>An empty box is a clear, as it always was, in one press. Static and handed what it does, like
+    /// the other presses on this page, so a test presses the control the owner sees.</para>
+    /// </summary>
+    /// <param name="pressed">Told whether the press took effect, so the page can empty the box and say why.</param>
+    internal static Button BuildSaveHarnessKey(HarnessKey holder, Func<string?> typed,
+        Func<KeyDestination> destination, Action<bool> pressed)
+    {
+        // THE ADDRESS THE ARMED SENTENCE NAMED, and only for the press that follows it.
+        string? confirmed = null;
+
+        var b = Ui.ConfirmIf(Labels.SaveHarnessKey,
+            () =>
+            {
+                confirmed = null;
+                var to = destination();
+                if (string.IsNullOrWhiteSpace(typed()) || to.Origin is null || to.BuiltIn) return null;
+                confirmed = to.Origin;
+                return Labels.SendHarnessKeyArmed(to.Origin);
+            },
+            () =>
+            {
+                var to = destination();
+                var shown = to.Origin is not null
+                            && (to.BuiltIn || string.Equals(to.Origin, confirmed, StringComparison.Ordinal));
+                confirmed = null;
+
+                var pasted = typed();
+                if (string.IsNullOrWhiteSpace(pasted)) { holder.Clear(); pressed(true); return; }
+                if (!shown) { pressed(false); return; }
+
+                holder.Set(pasted, to.Origin);
+                pressed(true);
+            },
+            "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
 
     /// <summary>
-    /// Takes the paste, empties the box, and says what happened WITHOUT naming any part of the key.
-    /// Nothing is written to disk and nothing is logged but the fact that a key is now held.
+    /// Empties the box and says what happened WITHOUT naming any part of the key. Nothing is written to
+    /// disk and nothing is logged but the fact that a key is, or is not, now held — not the address and
+    /// not the confirmation, which are this window's and this press's.
     /// </summary>
-    void SaveHarnessKey()
+    void AfterHarnessKeyPress(bool taken)
     {
-        // FOR THE HARNESS'S OWN ADDRESS — the manifest it was built from and sends to, never a fresh
-        // read of the catalogue, which is a file an agent can write (U-key-host-pin).
-        _host.HarnessKey.Set(_harnessKey.Text, _host.Harness?.Manifest.Endpoint);
         _harnessKey.Text = "";
-        _host.Gateway.Log.Activity(_host.HarnessKey.Held
-            ? "A key for TradeAgent's own worker is held for this session"
-            : "No key for TradeAgent's own worker is held");
+        _harnessKeyNotTaken = taken ? null : Labels.HarnessKeyNotTaken;
+        if (taken)
+            _host.Gateway.Log.Activity(_host.HarnessKey.Held
+                ? "A key for TradeAgent's own worker is held for this session"
+                : "No key for TradeAgent's own worker is held");
         Refresh();
     }
 
@@ -2020,6 +2113,7 @@ sealed class SafetyPage
     {
         _host.HarnessKey.Clear();
         _harnessKey.Text = "";
+        _harnessKeyNotTaken = null;
         _host.Gateway.Log.Activity("The key for TradeAgent's own worker was forgotten");
         Refresh();
     }
@@ -2063,9 +2157,21 @@ sealed class SafetyPage
             if (_researchRuntimeRow.Children[1] is Button own) Ui.Emphasise(own, harness);
         }
 
+        // WHERE A PASTE WOULD GO, from the harness's own manifest. A press half-made against one address
+        // is disarmed the moment the page shows another: a confirmation armed against one sentence must
+        // not be completable against a different one.
+        var to = HarnessKeyDestination(_host.Harness?.Manifest);
+        if (!string.Equals(to.Origin, _harnessKeyOriginShown, StringComparison.Ordinal))
+        {
+            Ui.DisarmConfirm(_saveHarnessKey);
+            _harnessKeyOriginShown = to.Origin;
+        }
+        _harnessKeyOrigin.Text = Labels.HarnessKeyDestination(to.Origin, to.BuiltIn, to.BuiltInOrigin);
+        _harnessKeyOrigin.Foreground = to.BuiltIn ? Theme.TextMuted : Theme.Caution;
+
         var held = _host.HarnessKey.Held;
-        _harnessKeyNote.Text = Labels.HarnessKeyState(held);
-        _harnessKeyNote.Foreground = held || !harness ? Theme.TextMuted : Theme.Caution;
+        _harnessKeyNote.Text = _harnessKeyNotTaken ?? Labels.HarnessKeyState(held, _host.HarnessKey.Origin);
+        _harnessKeyNote.Foreground = _harnessKeyNotTaken is null && (held || !harness) ? Theme.TextMuted : Theme.Caution;
     }
 
     /// <summary>
