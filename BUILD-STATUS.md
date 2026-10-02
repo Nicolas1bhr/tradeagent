@@ -7360,3 +7360,39 @@ ubuntu-latest (12 min), macos-latest (14 min), windows-latest (31 min), package 
 **NOT done, NOT verified:** Integration run locally only for the touched classes (in full on CI and the manager's gate); no box run; re-judging
 (`U-rejudge`) not built; a few evaluator fault texts format a decimal in the machine's culture (division by zero, sizing), so such a trace can differ by
 machine — a must-fix before M0 per the orchestrator (`U-invariant-traces`, which also bumps `EvaluatorVersion`); the date exists only from this build on.
+
+## 2026-10-03 — U-fix-inbox-boundary landed: the loop asks the ledger, not a clock, whether the owner's drop folder holds an unrecorded file, so a file dropped or moved in at a turn boundary is recorded as the owner's
+
+One fresh Opus fixer under build-fleet seat P from `docs/briefs/U-fix-inbox-boundary.md` (queued `926be6e`, amended `72b26f9` to both tests, dispatched
+`77a8f0f`), rebased onto `8a51a16`, then at landing onto `923fb28` with the `src`+`tests` patch-id identical (`7aa7d245b872`). Merge `16af7c4` (ff-only),
+3 commits (2 items + the report), 7 files, +322/−44. No schema rung. No money-path file; a `CLAUDE.md` protection — the inbox's provenance (the `material`
+row is the scanner's measurement, written once; `Inbox` only across a window with no live agent, `docs/COUNCIL.md` rule 7).
+
+- **Item 1, the cause — one for both tests, from ubuntu** (diagnostic run 37051859960, job 110986948031; kernel 6.17.0-1022-azure, `CONFIG_HZ=1000`, ext4):
+  3000/3000 files written straight after a `DateTime.UtcNow` read carried both times EARLIER than it (worst 1296 µs, 1000 µs steps). The drop tests repeated
+  in-process: MissionLoop 16/300 and council 56/300 `InboxUnattested`; in all 72 the yield before the turn (`MissionInbox.ChangedSince`: write or change time
+  ≥ the last pass's start) said no, the next turn launched first, and the pass behind it recorded the file with that turn inside its window; all 608 yeses
+  read `Inbox`. A file MOVED into the inbox keeps its older times, so the same miss happens on any OS (red with no seam on macOS and ubuntu).
+- **Item 2, the fix, in the PRODUCT:** the yield asks the ledger — `MissionInbox.HoldsUnrecorded` → `MaterialScanner.InboxHoldsUnrecorded` (the scan's own
+  walk, skip rules and budget; identity = `MaterialStore.Live`, `Observe`'s path, size and write-time tuple) says yes for an unrecorded inbox file, an
+  unreadable folder, a drop past the budget or an unreadable ledger; `AppHost.MissionHost` passes its db. `AgentPresence`, `NoneSince` ("unsure is false")
+  and `Observe` are untouched: only the yield's question changed, inside `PassAsync`'s exclusion.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer: Release `--no-incremental` 19 projects, 0 warnings, 0 errors; Unit 1248/1248,
+Fault 402/402; `MissionLoopTests` 3× 35/35, `CouncilLoopTests` 3× 12/12. RED before, deterministic, at `a45980d`: `MissionLoopTests.cs:285` (seam: the
+last pass begins one tick after the file's times), `:315` (`File.Move` keeps older times; no seam), `CouncilLoopTests.cs:828` — each "Expected: Inbox /
+Actual: InboxUnattested", 5/5 on this Mac, 3/3 on ubuntu (run 37053124660); the guard (nothing unrecorded → one pass a turn) green on both sides. Mutant
+(`MaterialScanner.cs:347` `return true` → `continue`): 5 failed / 42 passed, the brief's two among them; restored 47/47. Stress after the fix (run
+37053666824, same kernel): in-process 0/300 and 0/300 (212 of 680 drops hit the old miss, all `Inbox`); 40 fresh-process class loops 0 red. Temporary
+diagnostics `3eaf410`, `932e1b4`, `4e4a54c` (prints, repeats, a narrowed `build.yml`) dropped by reset; `git diff main..717c7ef -- .github` empty.
+Manager's gate at `16af7c4` (the reported tip rebased, 0 behind `main` `923fb28`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors;
+Unit 1265/1265 (37 s), Fault 405/405 (1 m 38 s), Integration 704/705, 1 skipped (11 m 5 s, the clean baseline's length) → 0 failed. Names vs `main` (git
+objects): sets 2029 → 2034, 0 removed, 5 added. Scan clean; no trailers; `rev-list --count` → 0 both ways.
+**CI:** branch run 37055093743 at `717c7ef`, the workflow unmodified: ubuntu, macos, windows and package success. `main` before it, ubuntu red on the pair:
+`a9c10c6` (37024865144), `926be6e` (37030431278), `4ce671f` (37030558283); first sighting 36891262990 at `22b424d`. **The fleet's judged exception for the
+two dropped-file tests ends with this landing.** CI at the merge: recorded when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** NTFS write times and a moved-in file on Windows (no box); the host's one-line wiring (`AppHost.MissionHost` passes its db)
+compiled, not run in a test. Read-only findings of the fixer, pre-existing, NOT fixed, sent to the orchestrator: (1) a BACKWARD wall-clock step between an
+agent's exit and a pass's start would let `NoneSince` say "no agent" across that agent — the false claim rule 7 exists to forbid; (2) the 30 s background
+pass and the Inbox page's scan do not take the loop's `_passing`, so a role can launch beside them (the weaker word on an owner's file, not a false claim).
