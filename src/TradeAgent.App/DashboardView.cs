@@ -2006,7 +2006,9 @@ sealed class SafetyPage
     /// </summary>
     void SaveHarnessKey()
     {
-        _host.HarnessKey.Set(_harnessKey.Text);
+        // FOR THE HARNESS'S OWN ADDRESS — the manifest it was built from and sends to, never a fresh
+        // read of the catalogue, which is a file an agent can write (U-key-host-pin).
+        _host.HarnessKey.Set(_harnessKey.Text, _host.Harness?.Manifest.Endpoint);
         _harnessKey.Text = "";
         _host.Gateway.Log.Activity(_host.HarnessKey.Held
             ? "A key for TradeAgent's own worker is held for this session"

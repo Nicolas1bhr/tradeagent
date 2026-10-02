@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Security;
 
 namespace TradeAgent.Tests.Unit;
 
@@ -136,6 +137,19 @@ public sealed class FakeProvider : IDisposable
 
     /// <summary>What this server received and what it did about it, oldest first.</summary>
     public IReadOnlyList<string> Marks => [.. _marks];
+
+    /// <summary>
+    /// A KEY HOLDER WITH <paramref name="key"/> PASTED FOR THIS SERVER'S ORIGIN — what the Safety page
+    /// does when the harness points here — or holding nothing when the key is null. The harness releases
+    /// a key only for the origin it was pasted for (<c>U-key-host-pin</c>), so a test that wants its
+    /// requests to carry one pastes it for the address they go to, exactly as the owner would.
+    /// </summary>
+    public HarnessKey Holding(string? key)
+    {
+        var holder = new HarnessKey();
+        holder.Set(key, BaseUrl);
+        return holder;
+    }
 
     /// <summary>Queues one canned response, as the raw JSON body.</summary>
     public FakeProvider Answer(string json)

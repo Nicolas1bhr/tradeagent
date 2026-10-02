@@ -128,9 +128,11 @@ public sealed class AppHost : IAsyncDisposable
                 var manifest = RuntimeCatalog.Find(ApiAgentRuntime.RuntimeId);
                 if (manifest is null) return null;
                 return _harness = new ApiAgentRuntime(manifest,
-                    // READ AT EVERY TURN, never captured: pasting a key mid-session is obeyed by the
-                    // next turn and clearing one stops the next turn.
-                    apiKey: HarnessKey.Read,
+                    // ASKED AT EVERY TURN, never captured: pasting a key mid-session is obeyed by the
+                    // next turn and clearing one stops the next turn. The holder itself, not a reader
+                    // of it: a turn asks for the key FOR the origin its requests go to, and nothing
+                    // else here can ask for it at all (U-key-host-pin).
+                    key: HarnessKey,
                     tools: ToolsFor,
                     selectedModel: () => Gateway.Settings.SelectedModelId,
                     attemptId: role => Meter?.OpenAttemptIdFor(role),

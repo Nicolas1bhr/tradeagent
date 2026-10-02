@@ -106,7 +106,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
                 roleModel: role => role == CouncilRoles.Research ? manifest.DefaultModel : null,
                 roleRuntime: role => role == CouncilRoles.Research ? ApiAgentRuntime.RuntimeId : "codex");
 
-            _runtime = new ApiAgentRuntime(manifest, () => key, tools: ToolsFor,
+            _runtime = new ApiAgentRuntime(manifest, provider.Holding(key), tools: ToolsFor,
                 attemptId: role => Meter.OpenAttemptIdFor(role),
                 allowance: () => allowance, requestTimeout: TimeSpan.FromSeconds(10));
 

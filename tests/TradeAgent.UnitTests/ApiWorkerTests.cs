@@ -47,7 +47,7 @@ public class ApiWorkerTests : IDisposable
     ApiAgentRuntime Runtime(FakeProvider provider, string? key = Pretend,
         Func<string, IWorkerTools>? tools = null, TurnAllowance? allowance = null,
         TimeSpan? timeout = null) =>
-        new(Manifest(provider), () => key, tools,
+        new(Manifest(provider), provider.Holding(key), tools,
             allowance: () => allowance ?? TurnAllowance.Default,
             requestTimeout: timeout ?? TimeSpan.FromSeconds(10));
 

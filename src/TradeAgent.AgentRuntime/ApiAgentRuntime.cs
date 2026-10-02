@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -31,10 +32,12 @@ namespace TradeAgent.AgentRuntime;
 /// chat-completions ones, which is what <see cref="RuntimeManifest.CompletionsPath"/> names; nothing
 /// here claims to have been measured against the vendor.</para>
 /// </summary>
-/// <param name="apiKey">
-/// The key the owner pasted, read at every turn rather than captured, so pasting one mid-session is
-/// obeyed by the next turn and clearing one stops the next turn. Null answers "no key is held", and
-/// then a turn on this runtime starts nothing at all.
+/// <param name="key">
+/// The holder of the key the owner pasted, asked at every turn rather than captured, so pasting one
+/// mid-session is obeyed by the next turn and clearing one stops the next turn. Nothing held answers
+/// "no key is held", and then a turn on this runtime starts nothing at all. Only a turn's request path
+/// asks it for the key, and only for the origin that request goes to (<c>U-key-host-pin</c>); every
+/// other member here asks <see cref="HarnessKey.Held"/>, which never clears anything.
 /// </param>
 /// <param name="tools">
 /// The tool surface one role's turns are granted, by role. Default deny: a role this function has no
@@ -46,7 +49,7 @@ namespace TradeAgent.AgentRuntime;
 /// </param>
 public sealed class ApiAgentRuntime(
     RuntimeManifest manifest,
-    Func<string?> apiKey,
+    HarnessKey key,
     Func<string, IWorkerTools>? tools = null,
     Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null,
@@ -71,8 +74,11 @@ public sealed class ApiAgentRuntime(
     public string Id => manifest.Id;
     public string DisplayName => manifest.DisplayName;
 
-    /// <summary>Whether a key is held right now. Never the key itself, and never written down.</summary>
-    public bool KeyHeld => apiKey() is { Length: > 0 };
+    /// <summary>
+    /// Whether a key is held right now — PRESENCE, never a send, so asking it never clears the key.
+    /// Never the key itself, and never written down.
+    /// </summary>
+    public bool KeyHeld => key.Held;
 
     /// <inheritdoc />
     public string? RequestedModel
@@ -168,7 +174,7 @@ public sealed class ApiAgentRuntime(
         lock (_gate)
         {
             if (_conversations.TryGetValue(role, out var existing)) return existing;
-            var conversation = new ApiConversation(manifest, role, workspace, apiKey,
+            var conversation = new ApiConversation(manifest, role, workspace, key,
                 model: () => ModelFor(model()),
                 tools: () => tools?.Invoke(role) ?? WorkerTools.None,
                 attempt: () => attemptId?.Invoke(role),
@@ -210,7 +216,7 @@ public sealed class ApiAgentRuntime(
     /// </summary>
     public async Task<string> ExecuteTaskAsync(string prompt, CancellationToken ct = default)
     {
-        var probe = new ApiConversation(manifest, CouncilRoles.Operations, () => _workspace, apiKey,
+        var probe = new ApiConversation(manifest, CouncilRoles.Operations, () => _workspace, key,
             model: () => RequestedModel, tools: () => WorkerTools.None, attempt: () => null,
             allowance: allowance, requestTimeout: requestTimeout ?? DefaultRequestTimeout,
             transport: transport);

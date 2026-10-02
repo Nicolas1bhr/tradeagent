@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -31,7 +32,12 @@ namespace TradeAgent.AgentRuntime;
 /// stands).</para>
 /// </summary>
 /// <param name="workspace">The role's own home, read at every turn: a prepare may have rebuilt it.</param>
-/// <param name="apiKey">The pasted key, read at every turn. Null starts nothing at all.</param>
+/// <param name="key">
+/// The holder of the pasted key, asked at every turn. Nothing held starts nothing at all. The turn asks
+/// it for the key ONCE, for the origin of the endpoint this turn's requests go to, and every request of
+/// the turn goes to that same endpoint (<c>U-key-host-pin</c>); the status line asks only whether one is
+/// held, which never clears it.
+/// </param>
 /// <param name="tools">
 /// The tool surface for this turn, asked for per turn rather than captured, because the owner's
 /// choices and the role's grants can change between turns. Default deny lives in the surface itself.
@@ -44,7 +50,7 @@ public sealed class ApiConversation(
     RuntimeManifest manifest,
     string role,
     Func<string> workspace,
-    Func<string?> apiKey,
+    HarnessKey key,
     Func<string?> model,
     Func<IWorkerTools> tools,
     Func<string?> attempt,
@@ -164,7 +170,7 @@ public sealed class ApiConversation(
     {
         Directory.CreateDirectory(workspace());
         Append(new ChatTurn(ChatRole.System,
-            apiKey() is { Length: > 0 }
+            key.Held
                 ? $"{manifest.DisplayName} is ready."
                 : Labels.HarnessKeyNotHeld,
             _now()));
@@ -236,11 +242,16 @@ public sealed class ApiConversation(
         // saying so to the next turn would be inventing a reason. See AgentTurnEnded.Cut.
         string? cut = null;
 
+        // WHERE THIS TURN'S REQUESTS GO, READ ONCE. The key is released for this endpoint's origin
+        // and every request below is posted to this same string: reading the manifest again per
+        // request would let the address checked and the address used be two different things.
+        var endpoint = manifest.Endpoint;
+        var released = key.ReadFor(KeyOrigin.Of(endpoint)).Key;
+
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
         // it is a sentence in the conversation, and the turn still ends so the loop and the ledger
         // both account for it rather than losing a turn that vanished.
-        var key = apiKey();
-        if (key is not { Length: > 0 })
+        if (released is not { Length: > 0 })
         {
             Append(new ChatTurn(ChatRole.System, Labels.HarnessKeyNotHeld, _now()));
             transcript.Note("no key is held, so nothing was sent");
@@ -255,7 +266,7 @@ public sealed class ApiConversation(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, usage, outcome, cut) = await RunRequestsAsync(key, message, transcript, _cts.Token);
+            (exitCode, usage, outcome, cut) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -306,7 +317,7 @@ public sealed class ApiConversation(
     /// worker was shown.
     /// </summary>
     async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut)> RunRequestsAsync(
-        string key, string message, Transcript transcript, CancellationToken ct)
+        string endpoint, string key, string message, Transcript transcript, CancellationToken ct)
     {
         var bound = allowance?.Invoke() ?? TurnAllowance.Default;
         var surface = tools();
@@ -342,7 +353,7 @@ public sealed class ApiConversation(
             // figures above are the provider's own and are never derived from these.
             transcript.Request(requests, Encoding.UTF8.GetByteCount(body), attempt());
 
-            var answer = await PostAsync(key, body, ct);
+            var answer = await PostAsync(endpoint, key, body, ct);
             if (answer.Usage is { } reported) total = total is null ? reported : total.Plus(reported);
 
             if (answer.Text is { Length: > 0 } text)
@@ -463,9 +474,9 @@ public sealed class ApiConversation(
         return Json.Write(body);
     }
 
-    async Task<ProviderAnswer> PostAsync(string key, string body, CancellationToken ct)
+    async Task<ProviderAnswer> PostAsync(string endpoint, string key, string body, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, manifest.Endpoint)
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };

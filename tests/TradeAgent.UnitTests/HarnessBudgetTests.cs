@@ -57,7 +57,7 @@ public class HarnessBudgetTests : IDisposable
 
     ApiAgentRuntime Runtime(FakeProvider provider, TurnAllowance allowance, string? key = Pretend,
         Func<string, IWorkerTools>? tools = null) =>
-        new(Manifest(provider), () => key, tools, allowance: () => allowance,
+        new(Manifest(provider), provider.Holding(key), tools, allowance: () => allowance,
             requestTimeout: TimeSpan.FromSeconds(10));
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>
