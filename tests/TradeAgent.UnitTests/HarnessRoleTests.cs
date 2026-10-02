@@ -30,6 +30,13 @@ public class HarnessRoleTests : IDisposable
 {
     readonly HarnessKey _key = new();
 
+    /// <summary>
+    /// The address the two key tests below paste for. Loopback, and never contacted: neither test sends
+    /// a request — they are about what the holder keeps, not where it goes (that is
+    /// <c>HarnessKeyOriginTests</c>).
+    /// </summary>
+    const string PastedFor = "http://127.0.0.1:9/v1";
+
     public void Dispose()
     {
         if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath);
@@ -106,7 +113,7 @@ public class HarnessRoleTests : IDisposable
         using var provider = new FakeProvider();
         var manifest = RuntimeCatalog.Require(Harness);
         manifest.BaseUrl = provider.BaseUrl;
-        using var runtime = new ApiAgentRuntime(manifest, _key.Read);
+        using var runtime = new ApiAgentRuntime(manifest, _key);
 
         Assert.False(_key.Held);
         Assert.True((await runtime.DetectAsync()).Installed);
@@ -117,7 +124,7 @@ public class HarnessRoleTests : IDisposable
         Assert.Equal(ErrorCode.AI_AUTH_REQUIRED, refused.Info.Code);
         Assert.Equal(Labels.HarnessKeyNotHeld, refused.Message);
 
-        _key.Set("not-a-real-credential");
+        _key.Set("not-a-real-credential", provider.BaseUrl);
         Assert.Equal(AuthState.Authenticated, await runtime.GetAuthenticationStateAsync());
         Assert.Equal(HealthState.READY, await runtime.GetHealthAsync());
         await runtime.StartAsync();
@@ -135,10 +142,10 @@ public class HarnessRoleTests : IDisposable
     {
         // A value no other test could have written, so finding it anywhere is proof rather than noise.
         var pasted = $"not-a-real-credential-{Guid.NewGuid():n}";
-        _key.Set($"  {pasted}  ");
+        _key.Set($"  {pasted}  ", PastedFor);
 
         Assert.True(_key.Held);
-        Assert.Equal(pasted, _key.Read());
+        Assert.Equal(pasted, _key.ReadFor(PastedFor).Key);
 
         var found = new List<string>();
         foreach (var file in Directory.GetFiles(Paths.Home, "*", SearchOption.AllDirectories))
@@ -152,7 +159,7 @@ public class HarnessRoleTests : IDisposable
 
         _key.Clear();
         Assert.False(_key.Held);
-        Assert.Null(_key.Read());
+        Assert.Null(_key.ReadFor(PastedFor).Key);
     }
 
     /// <summary>Whitespace only is a clear, not a credential of spaces the provider would refuse.</summary>
@@ -162,11 +169,11 @@ public class HarnessRoleTests : IDisposable
     [InlineData("   ")]
     public void A_box_with_nothing_in_it_holds_no_key(string? typed)
     {
-        _key.Set("not-a-real-credential");
-        _key.Set(typed);
+        _key.Set("not-a-real-credential", PastedFor);
+        _key.Set(typed, PastedFor);
 
         Assert.False(_key.Held);
-        Assert.Null(_key.Read());
+        Assert.Null(_key.ReadFor(PastedFor).Key);
     }
 
     /// <summary>
