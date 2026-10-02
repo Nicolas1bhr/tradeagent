@@ -27,6 +27,15 @@ public static class TapeClass
 
     /// <summary>Built with hindsight. Never written by the tape's own collector.</summary>
     public const string Hind = "O-HIND";
+
+    /// <summary>
+    /// THE ORDER "NEVER UPGRADED" IS MEASURED IN: live above a checked print above archive above
+    /// hindsight. A word this build does not know ranks lowest, so it can only ever pull a class down.
+    /// </summary>
+    static int Rank(string? c) => c switch { Live => 3, Pit => 2, Arch => 1, _ => 0 };
+
+    /// <summary>The lower of two classes — the most a later revision of a datum may be.</summary>
+    public static string Lower(string a, string b) => Rank(a) <= Rank(b) ? a : b;
 }
 
 /// <summary>

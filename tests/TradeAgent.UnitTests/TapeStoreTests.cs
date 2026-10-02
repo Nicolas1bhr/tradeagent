@@ -178,6 +178,84 @@ public class TapeStoreTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE CLASS IS THE STORE'S, FROM WHAT IT RECORDED. Live only for a built-in row, fetched from that
+    /// row's built-in origin, arriving within its cadence plus thirty seconds of its source time; archive
+    /// for a late reading, for the same reading from another origin, and for a row a file added even at
+    /// the built-in address. A later revision is never above the one before it.
+    ///
+    /// <para>The built-in address below is never asked anything: the store makes no request, and a
+    /// fetch here is only the record of one.</para>
+    /// </summary>
+    [Fact]
+    public void A_late_row_or_an_override_origin_is_arch_and_an_on_time_built_in_row_is_live()
+    {
+        using var store = new TapeStore(NewFile());
+
+        var premium = TapeSourceCatalog.BuiltIn().Single(r => r.Id == TapeSourceCatalog.Premium);
+        Assert.Equal(60, premium.CadenceSeconds);
+        var series = premium.Series[0].Id;
+        var builtInUrl = premium.Series[0].UrlShape.Replace("{base}", premium.BaseUrl, StringComparison.Ordinal);
+        const string elsewhereUrl = "http://127.0.0.1:9/fapi/v1/premiumIndex";
+
+        TapeFetch At(DateTimeOffset receivedAt, string url, string source = TapeSourceCatalog.Premium) =>
+            Fetch(receivedAt, url, source, series);
+
+        static TapeItem Mark(string symbol, DateTimeOffset time, string price) => new(symbol, time,
+            $$"""{"markPrice":"{{price}}","symbol":"{{symbol}}","time":{{Ms(time)}}}""");
+
+        var received = Noon.AddSeconds(2);
+        var builtIn = store.Append(At(received, builtInUrl),
+        [
+            Mark("BTCUSDT", Noon, "85495.82186232"),                // two seconds old
+            Mark("ETHUSDT", received.AddSeconds(-90), "4000.00"),   // exactly cadence + 30 s old: the bound is inclusive
+            Mark("SOLUSDT", received.AddSeconds(-91), "200.00"),    // one second past it
+            Mark("BNBUSDT", received.AddSeconds(1), "600.00")       // the vendor's clock a second ahead of this machine's
+        ]);
+        var elsewhere = store.Append(At(received, elsewhereUrl), [Mark("XRPUSDT", Noon, "0.50")]);
+        var added = store.Append(At(received, builtInUrl, source: "my-premium"), [Mark("DOGEUSDT", Noon, "0.10")]);
+
+        string Class(long fetchId, string symbol) =>
+            store.ObservationsOf(fetchId).Single(o => o.Subject == symbol).EvidenceClass;
+
+        foreach (var (fetch, symbol) in new[] { (builtIn, "BTCUSDT"), (builtIn, "ETHUSDT"), (builtIn, "SOLUSDT"),
+                     (builtIn, "BNBUSDT"), (elsewhere, "XRPUSDT"), (added, "DOGEUSDT") })
+            log.WriteLine($"{symbol}: {Class(fetch.FetchId, symbol)}");
+
+        Assert.Equal(TapeClass.Live, Class(builtIn.FetchId, "BTCUSDT"));
+        Assert.Equal(TapeClass.Live, Class(builtIn.FetchId, "ETHUSDT"));
+        Assert.Equal(TapeClass.Arch, Class(builtIn.FetchId, "SOLUSDT"));
+        Assert.Equal(TapeClass.Live, Class(builtIn.FetchId, "BNBUSDT"));
+
+        // ON TIME, BUILT-IN SOURCE, ANOTHER ORIGIN: ARCHIVE. This is the line that would read live if the
+        // class ignored where a reading came from.
+        Assert.Equal(TapeClass.Arch, Class(elsewhere.FetchId, "XRPUSDT"));
+
+        // A ROW A FILE ADDED IS ARCHIVE AT ANY ADDRESS — even the built-in one, on time.
+        Assert.Equal(TapeClass.Arch, Class(added.FetchId, "DOGEUSDT"));
+
+        // THE ORIGIN ON EACH FETCH ROW IS THE ONE ITS CLASS WAS DECIDED BY, read off its URL.
+        var fetches = store.Fetches(TapeSourceCatalog.Premium);
+        Assert.Equal(UrlOrigin.Of(TapeSourceCatalog.BinanceUmBaseUrl), fetches.Single(f => f.Id == builtIn.FetchId).Origin);
+        Assert.Equal("http://127.0.0.1:9", fetches.Single(f => f.Id == elsewhere.FetchId).Origin);
+
+        // A LATER REVISION NEVER UPGRADES: XRPUSDT's point re-published from the built-in origin twenty
+        // seconds later — on time on its own — stays archive, because its first reading was.
+        store.Append(At(Noon.AddSeconds(20), builtInUrl), [Mark("XRPUSDT", Noon, "0.51")]);
+        Assert.Equal([TapeClass.Arch, TapeClass.Arch],
+            store.Revisions(TapeSourceCatalog.Premium, series, TapeStore.NaturalKey("XRPUSDT", Noon)).Select(o => o.EvidenceClass));
+
+        // AND A LIVE DATUM'S LATE REVISION IS ARCHIVE.
+        store.Append(At(Noon.AddMinutes(5), builtInUrl), [Mark("BTCUSDT", Noon, "85500.00000000")]);
+        Assert.Equal([TapeClass.Live, TapeClass.Arch],
+            store.Revisions(TapeSourceCatalog.Premium, series, TapeStore.NaturalKey("BTCUSDT", Noon)).Select(o => o.EvidenceClass));
+
+        // AND NOTHING A CALLER HANDS THE STORE CAN CARRY A CLASS: there is no member to put one in.
+        Assert.DoesNotContain(typeof(TapeItem).GetProperties(), p => p.Name.Contains("Class", StringComparison.Ordinal));
+        Assert.DoesNotContain(typeof(TapeFetch).GetProperties(), p => p.Name.Contains("Class", StringComparison.Ordinal)
+                                                                     || p.Name.Contains("Origin", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// ITS OWN FILE AND ITS OWN LADDER, AND A NEWER FILE IS LEFT AS IT WAS FOUND. The version is read
     /// BEFORE anything is migrated — a newer tape gets no table of this build's added to it, and keeps
     /// its journal mode — and the app is told in the activity log, in words.

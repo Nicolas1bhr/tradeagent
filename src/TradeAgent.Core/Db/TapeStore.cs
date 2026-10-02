@@ -251,7 +251,7 @@ public sealed class TapeStore : IDisposable
                     : held.Sha == item.Sha ? held.Revision
                     : held.Revision + 1;
 
-                var evidence = TapeClass.Arch;
+                var evidence = ClassOf(fetch.Source, origin, item.SourceTime, fetch.ReceivedAt, latest?.Class);
 
                 using var c = Cmd("""
                     INSERT INTO tape_obs(source, series, subject, source_time, received_at, fetch_id,
@@ -274,6 +274,35 @@ public sealed class TapeStore : IDisposable
 
             return new TapeAppend(fetchId, prepared.Count, stored, revised, unchanged);
         });
+    }
+
+    /// <summary>
+    /// THE EVIDENCE CLASS OF ONE NEW ROW, from fields this store recorded and from THIS BUILD'S rows —
+    /// never from a caller, never from <c>tape-sources.json</c>.
+    ///
+    /// <para><c>O-LIVE</c> iff all three: the fetch's source is a BUILT-IN row
+    /// (<see cref="TapeSourceCatalog.BuiltInLiveRule"/>); the fetch's origin — read off its own URL — is
+    /// that row's built-in origin; and this reading arrived within the row's cadence plus
+    /// <see cref="TapeSourceCatalog.LiveTolerance"/> of its source time. Everything else is
+    /// <c>O-ARCH</c>: a late reading, one fetched from any other origin (a test's loopback listener
+    /// included), and every row a file added, whatever address it names. The window is measured either
+    /// side of the source time — a machine clock a second behind the vendor's must not make every
+    /// on-time reading archive, and a source time further ahead than the window is not live either.</para>
+    ///
+    /// <para><b>A later revision is never above the one before it</b>: a datum first read late, or from
+    /// elsewhere, does not become live because the vendor re-published it on time. A live datum's late
+    /// revision is archive.</para>
+    /// </summary>
+    static string ClassOf(string source, string? origin, DateTimeOffset sourceTime, DateTimeOffset receivedAt,
+        string? previous)
+    {
+        var own = TapeSourceCatalog.BuiltInLiveRule(source) is { } rule
+                  && string.Equals(origin, rule.Origin, StringComparison.Ordinal)
+                  && (receivedAt - sourceTime).Duration() <= rule.Cadence + TapeSourceCatalog.LiveTolerance
+            ? TapeClass.Live
+            : TapeClass.Arch;
+
+        return previous is null ? own : TapeClass.Lower(own, previous);
     }
 
     /// <summary>
