@@ -160,6 +160,15 @@ only — an instrument the catalogue does not hold verified, a size below the in
 of an order that has already filled — and an I/O error on the book or a bar source that throws
 propagates, so the gateway records UNKNOWN and reconciles rather than reading a broken read as a no.
 
+**ITS QUOTE IS THE LAST SETTLED BAR'S CLOSE, STAMPED AT THAT BAR'S CLOSE** (`U-runner-forward`): the
+bar's open plus the bar length its `IPaperBarSource` DECLARES (`BarLength` — one minute for the forward
+ledger and for `MemoryBarSource` unless a caller says otherwise). It used to be the open plus the
+spacing of the last two bars settled, which is the bar length only while no minute is missing: on the
+first bar after a ten-minute gap the price was dated nine minutes after its own close — in the future —
+and four minutes later it still passed every age check there is. A source never infers its bar length
+from that spacing, and the book no longer keeps it (an `interval:` row an older build wrote is never
+read). `QuoteClockTests` holds the stamp to the close and refuses that four-minute-old price.
+
 **Which connector an id names is decided in one place**, `Connectors.Create` in
 `src/TradeAgent.Platforms/`, for the desktop app and the gateway host alike; an id neither recognises
 still falls back to the practice simulator, which is the one platform where being wrong costs nothing.
@@ -1523,6 +1532,17 @@ taken from a quote can go stale. And a value cap switched ON inside the window *
 contract size is carried only when a cap was enforced above, the cached instrument list answers where
 it can, and otherwise `RISK_CHECK_UNAVAILABLE` rather than an awaited read inside the gate.
 
+**EVERY AGE ON THE ORDER PATH IS MEASURED ON THE GATEWAY'S CLOCK** (`U-runner-forward`).
+`QuoteInfo.IsStale(maxAge, now)` takes the instant it measures at, and both quote gates —
+`RiskCheckOrThrow` and `PerOrderLimitsAtDispatchOrThrow` — and the loss valuation's mark (`MarkFor`, the
+age it reports and the verdict on it read once) pass `GatewayOptions.Clock`: the clock
+`RefuseAStaleDecisionOrThrow` has always read. `IsStale` used to read the machine's clock, so two gates
+on one order could disagree about how old one instant was — a gateway on a substituted clock measured
+prices in a different time from its decisions, and the dispatch-time re-check could refuse a price the
+risk check had just passed. In production both clocks are the system's and nothing moves; the rule is
+that there is one. A screen that only asks whether a price is arriving at all (onboarding's market-data
+step) passes the machine's clock and says so in the code. The 30 s `MaxQuoteAge` is unchanged.
+
 **A SIGHTING IS ABOUT A SCOPE, AND THE RECORD'S DAY IS THE CONFIRMING PULL'S.** `Confirmed` filed the
 first of the two agreeing pulls under the BREACH KEY, which carries the UTC day — so a pair
 straddling midnight never agreed: the pull at 23:59:50Z filed itself under yesterday's key, the pull
@@ -1730,6 +1750,18 @@ comes back `CANCELLED` and it still wants the order.
 `HealthState`: `UNKNOWN · STARTING · READY · DEGRADED · FAILED · PAUSED`, per component.
 `HealthRegistry.ExecutionTrustable` requires Gateway, Trading connection, Account and Execution
 capability all `READY`; anything else revokes trading rather than guessing.
+
+**The Market data row's bound depends on whether the connector STREAMS quotes** (`U-runner-forward`).
+With streaming it is `MaxQuoteAge`, 30 s, as it always was. WITHOUT — the paper connector, whose price
+moves only when a bar closes — it is one bar plus the collector's look offset plus those 30 s:
+`ForwardBars.BarLength + ForwardBars.LookOffset + MaxQuoteAge`, **92 s** as shipped, and the row states
+it in its detail. A healthy bar-fed price is up to a minute and two seconds old just before the next
+bar lands, so the 30 s bound read "degraded" for half of every minute on a feed that was fine. It is
+keyed on `ConnectorCapabilities.SupportsStreaming` and never on `IsPaper`: the practice simulator says
+`IsPaper` too, streams, and keeps 30 s. It is a row and only a row — Market data is not one of the four
+components `ExecutionTrustable` reads — and the ORDER gates keep 30 s, so on a bar-fed connector an
+order is priced in the first half-minute after its bar lands or not at all, which is why the
+collector's looks are aligned (see "Forward bars").
 
 `ErrorCode` → `ErrorInfo` gives every failure a technical detail, a plain-language explanation, a
 suggested repair, and whether TradeAgent can fix it itself. A unit test asserts every code has all
@@ -2393,6 +2425,17 @@ healthy minute. A host that says nothing at all has a NULL status: "the vendor s
 said nothing" are different facts and the ledger keeps them apart. A failing host backs the look off to
 five minutes and is a status line, never a crash.
 
+**A HEALTHY COLLECTOR LOOKS TWO SECONDS PAST EACH MINUTE** (`U-runner-forward`). After a successful look
+the next one is at the next multiple of the tick plus `ForwardBars.LookOffset` (2 s), whatever time the
+app started and however long the last request took; after a failure the backoff is exactly what it was —
+doubling from the tick, capped at five minutes. The wait used to be the plain tick after each look, which
+kept the phase the app started at plus every request's duration: started at 12:00:37 it asked for the
+minute that closed at 12:01:00 at 12:01:37, and that price, 37 seconds old when it landed, was already
+past the 30 s an order may be priced from — so the runner's market order on that bar was refused
+`MARKET_DATA_UNAVAILABLE`. The arithmetic is ONE public helper, `TickAlignment` in
+`TradeAgent.Provisioning`, for every collector there that looks on a tick; the closed-bar rule, the first
+reading standing and the gap rows are unchanged.
+
 **NO HOLDOUT APPLIES TO FORWARD BARS, AND THAT IS A FACT ABOUT WHAT THEY ARE RATHER THAN A RELAXATION.**
 A holdout is a time cutoff the owner drew across a frozen dataset. Every forward bar post-dates every
 freeze on this installation, because it did not exist when the freeze was taken — so there is nothing
@@ -2923,6 +2966,20 @@ executions and never the account's total, because the owner's own position on th
 else's sizing. Which bar a fill landed on is two recorded facts and no guess: the floor is the first bar
 strictly after the operation's own bar (the connector's declared rule), and above it the last bar that had
 CLOSED when the execution was stamped.
+
+**EVERY BAR SINCE THE START, PAGED, ON EVERY PASS** (`U-runner-forward`). One `ForwardBarStore.Since` read
+answers at most a page — 10,000 bars, about 6.9 days of minutes — and the runner used to take that page as
+the whole run, so a deployment a week old stopped deciding and its maximum hold stopped counting with the
+position open. `ForwardRuns` now reads page after page, each starting strictly after the open time the last
+ended at (the ledger's key, so no bar is read twice or skipped), until a page comes back short, and hands
+every bar to the replay and to the run's books. **The cost is O(age) in time AND in memory on every pass**:
+the bars are the run's state, so all of them are re-read, stepped and held while the pass runs, and the
+app's background loop runs a pass about every five seconds. Measured 2026-10-02 on the development Mac (M3
+Pro), one pass over 50,000 bars (≈ 34.7 days): 98–281 ms across two programs (the shipped ma-crossover and
+an entry/exit on the close), 71–72.5 MiB allocated per pass, and the bars it holds 28.0–28.5 MiB (≈ 590
+bytes a bar) — on a machine that was swapping heavily that day, so an upper bound for this machine, not a
+property of the code. Nothing here is cached across passes on purpose; a cache would be the state a restart
+loses.
 
 **PROTECTION RUNS BY CODE, IN THE BACKTEST'S ORDER, BEFORE THE EVALUATOR IS ASKED.** The resting stop and target
 are the venue's business — real orders, placed the moment the entry fills, at the DISTANCES the program declared

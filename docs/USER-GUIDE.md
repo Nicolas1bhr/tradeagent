@@ -298,8 +298,9 @@ A month Binance has not published yet is recorded as not published; a file whose
 published checksum is thrown away rather than used.
 
 **Collect live bars** is the other half, and it is **on to start with**. While TradeAgent is running it
-asks the same pair's closed 1-minute bars as they happen, about once a minute, from Binance's
-*market-data-only* address — the one that serves public prices and accepts no trading request at all.
+asks for the same pair's closed 1-minute bars as they happen, two seconds after each minute closes, from
+Binance's *market-data-only* address — the one that serves public prices and accepts no trading request
+at all.
 Press the button once to stop, once more to start again; there is nothing here worth asking you twice
 about. It is on by default because this cannot be caught up later: **a minute nobody collected is gone**,
 and switching it on next month gives you a month of nothing.
@@ -338,6 +339,13 @@ costs are fixed then.
 If the line reads **"not being collected"** or shows a last look that failed, TradeAgent is still running
 normally — a public price service having a bad afternoon is an ordinary Tuesday. It keeps trying, more
 slowly, up to once every five minutes, and picks up where it left off.
+
+**On the paper platform, the Dashboard's Market data dot allows a price up to 92 seconds old.** A price
+there moves only when a minute closes, so just before the next one arrives it is a minute and two
+seconds old, and that is a healthy feed; the line beside the dot says so. Past 92 seconds the dot turns
+amber, because something really is late. Orders are stricter and stay that way: TradeAgent still will not
+size one from a price older than 30 seconds, so a paper run's orders go out in the half-minute after each
+bar lands.
 
 ## The Inbox — giving the AI things to work with
 
