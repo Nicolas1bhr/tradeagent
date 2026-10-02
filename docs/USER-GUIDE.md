@@ -619,6 +619,17 @@ reading the files TradeAgent keeps, so a key written into one of those files is 
 read. Until that is fixed, the key does not go in a file. Your daily report says **harness key: held**
 or **not held** so you can tell at a glance, and it never contains any part of the key itself.
 
+**Your key goes to one address, and the box tells you which before you paste.** Under the box TradeAgent
+shows the one address the key will be sent to — normally TradeAgent's own built-in address for your
+provider — and it keeps the key for that address and no other. If the address is anything else, the line
+turns orange and says *not TradeAgent's built-in address*, shows the built-in one beside it, and **Use this
+key** asks a second time, naming the address. Something on your computer changed it, and the AI's own
+program is one of the things that could; if it was not you, do not paste your key. TradeAgent never
+remembers that second press: after a restart it asks again. And if TradeAgent's own worker is ever about to
+send your key to any address other than the one you pasted it for, it does not send anything: it forgets the
+key, charges that turn nothing, and the Safety page then says no key is held. Paste it again if the new
+address is the one you meant.
+
 With no key held, a role set to TradeAgent's own worker **takes no turns at all** and the Safety page
 says so in orange. Nothing is lost; it starts working the moment you paste one.
 

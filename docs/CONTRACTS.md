@@ -2017,6 +2017,37 @@ on the Safety page with the sentence saying why — round 4's "keys… are not r
 unsandboxed CLI process until containment lands", and `Containment.Sandbox()` still answers `NONE`.
 The owner pastes it again after a restart; the daily report says `harness key: held` / `not held`.
 
+**The key is bound to the origin it was pasted for** (`U-key-host-pin`). `runtimes.json` overrides a
+built-in row WHOLE, `BaseUrl` included, and the vendor CLI — unconfined, the same user — can write it, so
+before this unit a key pasted after a restart went wherever that file said. `HarnessKey.Set(key,
+pastedFor)` now keeps the key WITH `KeyOrigin.Of(url)`: scheme, host and port, the default port written the
+browser's way (`https://x:443` is `https://x`); the host as `Uri.IdnHost`, so a look-alike Unicode host
+reads `xn--…` and never like the provider's; user-info dropped — `GetLeftPart(UriPartial.Authority)` keeps
+it, measured, so `https://<provider>@other.host` would have read as the provider. Only `http` and `https`
+have an origin; nothing else can hold or receive a key. The key leaves the holder only through
+`ReadFor(origin)`: a harness turn reads `manifest.Endpoint` ONCE, presents that endpoint's origin, and
+posts every request of the turn to that same string. A match returns the key; any other origin — another
+port on the same host, `http://` for `https://`, an address with no origin — clears the key inside the same
+lock and returns `KeyRefusal(PastedFor, PointsAt)`. The turn then ends `key-origin-refused` (exit code -1)
+BEFORE any request: the conversation names both origins and the repair, and `TurnMeter.Charge` charges it
+ZERO on `AgentTurnEnded.KeyWithheld` — the app's own record of its own act, not a vendor's report — with the
+sentence on the row's context as `refused`. Presence — `KeyHeld`, the health row, the auth state, both
+`StartAsync`s — reads `Held`, which never clears anything. **The Safety page** binds a paste to the origin of
+`AppHost.Harness.Manifest` — the manifest the harness was built from and sends to, never a fresh
+`RuntimeCatalog.Find` — and shows it beside the box before anything is pasted. When it differs from the
+BUILT-IN row's origin (`RuntimeCatalog.BuiltIn()`, the code list, never the catalogue as read) the line says
+"not TradeAgent's built-in address" in caution colour with the built-in address beside it, and **Use this
+key** takes the key only on a second press whose sentence names the address; the key is bound to the
+address that sentence named, and not taken at all if it moved between the presses. That confirmation lives
+in the control for one press and is never written anywhere, so no file an agent can write can pre-confirm
+an address. **Every future keyed endpoint** — decision models, keyed sources — uses this holder rule.
+**NOT claimed:** protection from a process that reads this app's memory (a debugger or a core dump under
+the same user reads the key, as the holder's own comment says); and keys handed to vendor CLIs —
+`ApiKeyPlan` (`RuntimeManifest.cs:52-67`), taken at `OnboardingView.cs:779` and written where the CLI reads
+it — which those agents can read by design until containment. The refusal's words reach the Research
+conversation and the launch row; no page shows the Research conversation today, so on screen the owner
+sees the Safety page's "No key is held" in caution colour.
+
 **What the harness is NOT contained by.** It runs IN this process, so `Containment.RefusalToLaunch` —
 which refuses to START an uncontained child while real money is armed — has no child to refuse and is
 not applied to it. That is not a gap being papered over: a worker with no process of its own is the
