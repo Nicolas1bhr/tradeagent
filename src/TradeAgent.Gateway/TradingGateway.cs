@@ -1275,10 +1275,24 @@ public sealed class TradingGateway : IAsyncDisposable
     /// A second press on a dataset that already has an open campaign moves the cutoff (later only) and
     /// leaves that campaign alone — its trial history is the whole point of it, and a fresh campaign
     /// would reset a count that must survive a team's replacement.</para>
+    ///
+    /// <para><b>The judge's cost model is settled FIRST, before anything is written.</b> The campaign
+    /// pins a <c>VenueCostModel</c> from the DATASET's recorded venue with the owner's
+    /// <c>JudgeCapital</c> — there is no picker, and nothing the judged party chose. When none can be
+    /// pinned, because the instrument's step is unconfirmed, the press is refused in those words and
+    /// writes NOTHING: a cutoff without the campaign it is the subject of is months held back with
+    /// nothing counting the attempts, and <c>Database.Write</c> rolls back only on an exception, so the
+    /// order is the guarantee. A press that only moves the cutoff of an open campaign pins nothing new.</para>
     /// </summary>
     public (DatasetStore.HoldoutSet Holdout, CampaignRow? Campaign) SetHoldout(
         long datasetId, DateTimeOffset cutoff, string evaluationClass) => _db.Write(_ =>
     {
+        if (_campaigns.OpenForDataset(datasetId) is null && _datasets.ById(datasetId) is { } before
+            && Core.Strategy.VenueCostModel.For(before, _venues, Settings.JudgeCapital) is { Ok: false } judge)
+            return (new DatasetStore.HoldoutSet(false,
+                $"Nothing was held back: {judge.Why} No cutoff was written and no campaign was opened.", null),
+                (CampaignRow?)null);
+
         var done = _datasets.SetHoldout(datasetId, cutoff, evaluationClass);
         if (!done.Ok) return (done, null);
 
@@ -1288,7 +1302,7 @@ public sealed class TradingGateway : IAsyncDisposable
         var opened = _campaigns.Open(
             $"{set.Pair} {set.Interval} {set.Version}", set,
             Settings.CampaignTrialBudget, Settings.CampaignVerdictBudget, Now,
-            exploration: Settings.CampaignExplorationBudget);
+            exploration: Settings.CampaignExplorationBudget, judgeCapital: Settings.JudgeCapital);
 
         return (done, opened.Campaign);
     });
@@ -1571,11 +1585,14 @@ public sealed class TradingGateway : IAsyncDisposable
         _allocations = new Allocations(db);
         _envelopes = new Envelopes(db);
         _deployments = new Deployments(db);
-        // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
-        // a record of when the app judged, and nothing inside the judging reads a clock.
-        _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
+        // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
+        // a record of when the app judged, and nothing inside the judging reads a clock. AFTER the
+        // settings, because the judge capital is read off them — at the moment a campaign opened before
+        // schema 27 is pinned at its first verdict; a campaign pinned at the press carries its own.
+        _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow(),
+            judgeCapital: () => Settings.JudgeCapital);
         // After the settings, because the report reads them; on this gateway's own clock, so a test
         // that moves time gets the day it asked for rather than the machine's.
         _reports = new DailyReports(this, db, () => _opt.Clock.GetLocalNow());

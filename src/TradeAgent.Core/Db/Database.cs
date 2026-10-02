@@ -1604,6 +1604,35 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','26') ON CONFLICT(key) DO UPDATE SET value='26';");
         }
 
+        if (have < 27)
+        {
+            // THE JUDGE'S COST MODEL, PINNED BY EACH CAMPAIGN — `U-cost-model`.
+            //
+            // `docs/EDGE-FACTORY.md` § 4.5 asks for one app-owned venue cost model, pinned at campaign
+            // open. Before this rung `trade verdict` passed no model and the referee fell back to the
+            // frictionless one — a step of a whole unit — so on a pair priced in tens of thousands every
+            // verdict was `no-trade` and still spent a judgement.
+            //
+            // TWO COLUMNS, THE TEXT AND ITS HASH, the shape `scoring_policy` and `paper_policy` already
+            // have and for the same reason: what a campaign is judged under is copied onto its row when
+            // it opens and never updated, so nothing edited later — the fee table, the venue catalogue,
+            // the owner's judge capital — can move the standard under evidence already collected.
+            // `CampaignStore.Renew` carries both.
+            //
+            // NULLABLE AND NOT BACKFILLED, and that is the rule rather than a gap. A campaign opened
+            // before this rung pinned nothing, and which judge it keeps depends on facts read at the
+            // moment it is next asked for a verdict: a lineage that already charged one was judged
+            // frictionless and keeps that judge ("legacy frictionless judge"), and one that never charged
+            // one is pinned from its dataset's venue at its first verdict, inside the transaction that
+            // charges it — refused before charging when the step is unconfirmed. `Referee.RequestVerdict`
+            // applies both, once, where nothing can race them; a backfill here would have to guess the
+            // second half a day early.
+            Exec("ALTER TABLE strategy_campaign ADD COLUMN cost_model_canonical TEXT;");
+            Exec("ALTER TABLE strategy_campaign ADD COLUMN cost_model_sha TEXT;");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','27') ON CONFLICT(key) DO UPDATE SET value='27';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
