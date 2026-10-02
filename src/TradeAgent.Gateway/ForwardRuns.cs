@@ -33,10 +33,11 @@ public sealed record ForwardRunState(
 /// <c>PlaceIntent</c> through <c>TradingGateway.PlaceAsync</c> and every gate it has.</para>
 ///
 /// <para><b>THERE IS NO STATE IN THIS PROCESS THAT A RESTART LOSES.</b> The evaluator's windows are
-/// rebuilt on every pass by replaying the forward bars from the deployment's start — indicators,
-/// warm-up, session and gaps are a function of the bars and of nothing else — and the position, the
-/// pending order and the bars held are read back out of the run's own <c>deployment_op</c> rows and
-/// the <c>execution_request</c> rows they join to. Two runners over one database therefore reach the
+/// rebuilt on every pass by replaying the forward bars from the deployment's start — every one of
+/// them, read page by page (<see cref="EveryBarSince"/>) — because indicators, warm-up, session and
+/// gaps are a function of the bars and of nothing else; and the position, the pending order and the
+/// bars held are read back out of the run's own <c>deployment_op</c> rows and the
+/// <c>execution_request</c> rows they join to. Two runners over one database therefore reach the
 /// same state, and a runner that died half way through a bar reaches the state it had. An
 /// in-memory cursor would have been a fifth thing to keep true across a crash.</para>
 ///
@@ -131,7 +132,7 @@ public sealed class ForwardRuns
         if (!deployment.IsActive)
             return new ForwardRunState(deployment, null, 0, 0, null, deployment.EndReason);
 
-        var bars = _bars.Since(deployment.Symbol, deployment.StartedAt, source: Source);
+        var bars = EveryBarSince(deployment.Symbol, deployment.StartedAt, ct);
         var state = EvaluationState.Start(program, null, ForwardBars.BarLength);
         var books = Books(deployment, bars);
 
@@ -159,10 +160,11 @@ public sealed class ForwardRuns
             var bar = Kline(bars[i]);
 
             // A BAR OUT OF ORDER OR SEEN TWICE IS SKIPPED AND COUNTED, NEVER STEPPED. The ledger is
-            // keyed `(source, symbol, open_time)` and answers in ascending order, so this cannot
-            // happen through `Since` — it is here because the evaluator's own contract says a bar
-            // fed twice counts a lookback twice, and a guard that only holds while an upstream key
-            // holds is a guard nobody is keeping.
+            // keyed `(source, symbol, open_time)` and answers in ascending order, and the pages are
+            // joined on the open time each one ended at, so this cannot happen through
+            // `EveryBarSince` — it is here because the evaluator's own contract says a bar fed twice
+            // counts a lookback twice, and a guard that only holds while an upstream key holds is a
+            // guard nobody is keeping.
             if (last is { } previous && bar.OpenTime <= previous)
             {
                 skipped++;
@@ -540,6 +542,42 @@ public sealed class ForwardRuns
         _gateway.Log.TryEngineering("Gateway", "forward_run_ended", "warn",
             metadataJson: Json.Write(new { deployment = deployment.Id, why }));
         return new ForwardRunState(deployment, state, replayed, skipped, last, why) { Account = account };
+    }
+
+    /// <summary>How many bars one read of the ledger asks for: the store's own cap, one page.</summary>
+    public const int BarsPerPage = DatasetReader.MaxBars;
+
+    /// <summary>
+    /// EVERY FORWARD BAR SINCE THE DEPLOYMENT STARTED, ASCENDING, PAGED UNTIL THE LEDGER IS EXHAUSTED
+    /// (<c>U-runner-forward</c>).
+    ///
+    /// <para><b>What was wrong.</b> One read of <see cref="ForwardBarStore.Since"/> answers at most
+    /// a page — ten thousand bars, about 6.9 days of minutes — and the runner took that one page as
+    /// the whole run. Nothing after it was ever stepped: a deployment a week old stopped deciding,
+    /// and its maximum hold stopped counting with a position still open.</para>
+    ///
+    /// <para><b>The pages are joined on the open time each one ended at</b>, which is exact: the
+    /// ledger is keyed on the open time and answers strictly after it, ascending, so no bar is read
+    /// twice and none is skipped. A page that comes back short is the end of the ledger.</para>
+    ///
+    /// <para><b>The cost is O(age) in time AND in memory, on every pass</b>, and it is the price of
+    /// "no state a restart loses": the bars ARE the run's state, so every pass replays them all from
+    /// the start and holds them all while it does. <c>docs/CONTRACTS.md</c> "The runner" states the
+    /// figure measured on the development Mac.</para>
+    /// </summary>
+    List<ForwardBar> EveryBarSince(string symbol, DateTimeOffset startedAt, CancellationToken ct)
+    {
+        var bars = new List<ForwardBar>();
+        var after = startedAt;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var page = _bars.Since(symbol, after, BarsPerPage, Source);
+            bars.AddRange(page);
+            if (page.Count < BarsPerPage) return bars;
+            after = page[^1].OpenTime;
+        }
     }
 
     static KlineBar Kline(ForwardBar b) => new(b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume);
