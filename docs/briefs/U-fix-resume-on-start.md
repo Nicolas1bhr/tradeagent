@@ -28,3 +28,24 @@ Items, one commit each, one-sentence messages:
 Done: three consecutive green windows-latest runs on the branch (run ids quoted) and green ubuntu/macos; the watched mutant quoted red; the local gate.
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push to `main`, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Code tip `0d5b157`**, 2 commits on `73cfaca` (rebased first, no conflict; `main` moved since by U-price-rows, no common file, `git merge-tree` clean). **Gate, this Mac, Release:** build `--no-incremental` → 19
+projects, `0 Warning(s)`, `0 Error(s)`; Unit `Passed! - Failed: 0, Passed: 1214, Skipped: 0, Total: 1214, Duration: 26 s`; Fault `Passed! - Failed: 0, Passed: 399, Skipped: 0, Total: 399, Duration: 1 m 27 s`;
+`ResumeOnStartTests` + `RuntimeDetectionTests` 3× → 10/10 each. Names vs `main`: sets 1969 → 1971, removed 0, added 2.
+**CI on `0d5b157`, workflow unmodified:** 37021009822, 37021014270, 37021021599 — each: ubuntu, windows, macos and package success; windows Unit 1213/1213, Integration 609 + 1 skipped, Fault 394, timing green first
+time; all 7 `ResumeOnStartTests` green on windows each time, by name `A_restart_in_the_armed_live_configuration_…` (seat P's second red) 4.5 / 3.1 / 5.7 s, `A_restart_with_the_ai_working_…` 21.2 / 15.0 / 41.6 s.
+- **Item 1 (`7be7ec2`), done — the cause, from windows-latest:** diagnostic run 37017805967, job 110872924285: `restarted=4853ms resume=20077ms`; card "Signing in took too long and was cancelled. Press Sign in
+  again."; activity `warn` "The AI was not started: Signing in took too long and was cancelled. Press Sign in again. (AI_AUTH_TIMEOUT)"; engineering "TradeAgentException: powershell.exe did not finish within 20s"
+  at `CliAgentRuntime.Run` :810 ← `ProbeVersionAsync` :254 ← `DetectAsync` :232 ← `AgentSupervisor.PrepareAsync` :67 ← `StartTheAiAsync` :1111. The 24–25 s: 4.9 s composing the restart, 20 s the version probe's
+  deadline on PowerShell's first launch beside the full suite (re-measured at once: 6.5 s, then 0.2 s; the class alone passed, `resume=2218ms`). Seat P's armed-live red (run 37019128845): the same — its one
+  activity line is that sentence, thrown before the containment check. Two tests name it, RED before the fix on this Mac: `ResumeOnStartTests.cs:106 a version answer slower than its deadline kept the AI stopped on
+  a restart`; `RuntimeDetectionTests.cs:83 TradeAgent.Core.TradeAgentException : slow-to-answer.sh did not finish within 1s` (seam: internal `VersionDeadline`, 1 s there; product 20 s).
+- **Item 2 (`0d5b157`), done — in the PRODUCT:** `ProbeVersionAsync` answers its deadline as a failed probe (not installed, found at its path, reason "<exe> did not answer within N seconds when asked for its
+  version"), so the start goes on as after any failed probe (armed live: `CONTAINMENT_REQUIRED`, same words); a caller's own cancellation still throws. Product, not harness: the deadline and its sign-in words are
+  the product's for every runtime, a restart is a first launch of the AI's program, and the Doctor and setup's install step call the same `DetectAsync` (RED line above). Watched mutant (the resume calls the loop
+  only): `:62 the restart resumed the loop and left the AI it needs stopped` (also `:106`, `:198 Assert.Single() Failure`, `:264 … Actual: 1`); restored → 7/7.
+- **Temporary, reverted:** `7743fe1` (test prints; `build.yml` narrowed to two windows legs, the full suite and the class alone, timing and package off), run 37017805967 only, dropped by reset before the proving
+  runs (`git diff 73cfaca..0d5b157 -- .github` empty). Scan gated every commit and push; `cts.Token` excluded by name on `7743fe1` and on this line. No `Co-Authored-By`.
+- **NOT done / NOT verified:** whether a proving run reached the 20 s deadline (no prints; 41.6 s in run 3): NOT VERIFIED; a real CLI's first launch on an owner's machine: NOT measured; the turn's PowerShell cold
+  start still runs on the test's own 60 s patience, unchanged; Integration only on CI; no box; the running app not observed; the first paint still waits for the probe (RESUME-HERE item 6).
