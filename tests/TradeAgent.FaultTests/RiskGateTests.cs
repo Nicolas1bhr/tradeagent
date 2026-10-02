@@ -486,8 +486,12 @@ public class RiskGateTests(ITestOutputHelper log)
         await gw.DisposeAsync();
 
         // Tomorrow, with the position still open: the fill is in the ledger and outside the day.
+        // And the platform's quotes are tomorrow's too: the gateway measures a price's age on its own
+        // clock (U-runner-forward), and a morning price stamped yesterday would be refused as stale
+        // before the question this test asks is reached.
         var clock = new TestClock();
         clock.Advance(TimeSpan.FromDays(1));
+        conn.Inner.QuoteClock = clock;
         using var db2 = TestEnv.NewDb();
         var restarted = new TradingGateway(db2, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         restarted.Update(s =>

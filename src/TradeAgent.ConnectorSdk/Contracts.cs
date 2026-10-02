@@ -15,8 +15,17 @@ public sealed record InstrumentInfo(string Symbol, string Description, string Ex
 public sealed record QuoteInfo(string Symbol, decimal? Bid, decimal? Ask, decimal? Last,
     decimal? BidSize, decimal? AskSize, DateTimeOffset At)
 {
-    /// <summary>A quote older than this is not a price, it is a memory. Refuse to size orders from it.</summary>
-    public bool IsStale(TimeSpan maxAge) => DateTimeOffset.UtcNow - At > maxAge;
+    /// <summary>
+    /// A quote older than this at <paramref name="now"/> is not a price, it is a memory. Refuse to
+    /// size orders from it.
+    ///
+    /// <para><b>The caller says what time it is</b> (<c>U-runner-forward</c>). This read the machine
+    /// clock, while the gateway's decision gate read the gateway's own: two gates on one order could
+    /// disagree about how old one instant was, and a gateway on a substituted clock was measuring
+    /// prices in a different time from everything else it measured. The order path and the loss
+    /// valuation pass the gateway's clock; a screen passes the machine's, and says so.</para>
+    /// </summary>
+    public bool IsStale(TimeSpan maxAge, DateTimeOffset now) => now - At > maxAge;
 }
 
 public sealed record PositionInfo(string Id, string AccountId, string Symbol, decimal Quantity,

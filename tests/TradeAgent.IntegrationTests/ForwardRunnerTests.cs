@@ -167,10 +167,11 @@ public class ForwardRunnerTests(ITestOutputHelper log)
     {
         db ??= TestEnv.NewDb();
 
-        // The quote the gateway sizes against is the last closed bar's close, and `QuoteInfo.IsStale`
-        // measures it against the REAL clock while this suite's bars are placed on an injected one.
-        // The age that matters to this unit is the DECISION's, which is measured on the gateway's own
-        // clock — see (d), which is entirely about that gate.
+        // The quote the gateway sizes against is the last closed bar's close, stamped at that bar's
+        // close, and its age is measured on the gateway's own clock — this one (U-runner-forward). The
+        // quote gate is still held wide here: the age these tests are about is the DECISION's, and (d)
+        // asks it of a bar ten minutes old, whose price the thirty-second quote gate would refuse
+        // first. That a stale bar-fed price is refused is QuoteClockTests', on the same clock.
         var start = origin ?? new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
         var clock = new TestClock(start);
 

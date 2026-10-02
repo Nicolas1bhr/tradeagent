@@ -168,23 +168,18 @@ public sealed class PaperBook : IDisposable
     public decimal? LastClose(string symbol) =>
         Meta($"close:{symbol.ToUpperInvariant()}") is { } c ? Dec(c) : null;
 
-    /// <summary>The spacing between the last two settled bars, or null with fewer than two.</summary>
-    public TimeSpan? Interval(string symbol) =>
-        Meta($"interval:{symbol.ToUpperInvariant()}") is { } s
-            ? TimeSpan.FromSeconds(double.Parse(s, CultureInfo.InvariantCulture))
-            : null;
-
     /// <summary>
-    /// Records that a bar has been settled — its open time, its close and, once two have been seen,
-    /// the spacing between them. The watermark is a HINT handed to the bar source and never the
-    /// idempotency: see the type summary.
+    /// Records that a bar has been settled — its open time and its close. The watermark is a HINT
+    /// handed to the bar source and never the idempotency: see the type summary.
+    ///
+    /// <para>The spacing between the last two bars is no longer kept (<c>U-runner-forward</c>): it was
+    /// read for one thing, the quote's timestamp, and after a gap it is the gap rather than the bar.
+    /// A file an older build wrote may still hold an <c>interval:</c> row; nothing reads it.</para>
     /// </summary>
     public void MarkSettled(string symbol, DateTimeOffset openTime, decimal close)
     {
         var key = symbol.ToUpperInvariant();
         var previous = SettledThrough(key);
-        if (previous > DateTimeOffset.MinValue && openTime > previous)
-            SetMeta($"interval:{key}", (openTime - previous).TotalSeconds.ToString(CultureInfo.InvariantCulture));
         if (openTime >= previous)
         {
             SetMeta($"settled:{key}", T(openTime));

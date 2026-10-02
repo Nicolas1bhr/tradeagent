@@ -55,9 +55,13 @@ public class ValuationLossTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
+
+        // THE SIMULATOR'S QUOTES ON THE GATEWAY'S CLOCK, so `Silent` backdates them from the instant
+        // the valuation measures from (U-runner-forward: the valuation reads the gateway's clock).
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker())
         {
-            EmergencyBudget = Unresolved.PressBudget
+            EmergencyBudget = Unresolved.PressBudget,
+            QuoteClock = clock
         });
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>

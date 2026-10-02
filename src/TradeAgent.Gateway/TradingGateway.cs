@@ -2748,11 +2748,13 @@ public sealed class TradingGateway : IAsyncDisposable
         RateLimitOrThrow(r.MaxOrdersPerMinute);
 
         // A price we trust is required for EVERY order, whether or not a value cap is set: an agent
-        // sizing a market order from a stale quote is the failure this prevents.
+        // sizing a market order from a stale quote is the failure this prevents. Its age is measured
+        // on THIS gateway's clock, the one the decision gate and the dispatch-time re-check read
+        // (U-runner-forward): two gates on one order must not disagree about how old one instant is.
         var quote = await Connector.GetQuoteAsync(intent.Symbol, ct);
         var named = intent.LimitPrice ?? intent.StopPrice;
         var reference = named
-                        ?? (quote is not null && !quote.IsStale(_opt.MaxQuoteAge) ? quote.Last ?? quote.Ask ?? quote.Bid : null);
+                        ?? (quote is not null && !quote.IsStale(_opt.MaxQuoteAge, Now) ? quote.Last ?? quote.Ask ?? quote.Bid : null);
         if (reference is null)
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
                 $"no price newer than {_opt.MaxQuoteAge.TotalSeconds:0}s for {intent.Symbol}, so the order value cannot be checked");
@@ -2844,7 +2846,9 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"quantity {intent.Quantity} exceeds the limit of {r.MaxOrderQuantity}");
 
-        if (priced.Quote is { } quote && quote.IsStale(_opt.MaxQuoteAge))
+        // ON THE GATEWAY'S CLOCK, read now, after the reads — the one RefuseAStaleDecisionOrThrow
+        // reads a moment later (U-runner-forward).
+        if (priced.Quote is { } quote && quote.IsStale(_opt.MaxQuoteAge, Now))
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
                 $"no price newer than {_opt.MaxQuoteAge.TotalSeconds:0}s for {intent.Symbol}, so the order value cannot be checked");
 
@@ -5154,13 +5158,17 @@ public sealed class TradingGateway : IAsyncDisposable
         if (p.UnrealizedPnl is { } marked)
             return (null, new LossBreachMark(p.Symbol, p.Quantity, side, null, "platform mark", null, marked));
 
+        // THE AGE ON THIS GATEWAY'S CLOCK, read once, so the age the note reports and the verdict on
+        // it are one measurement — and the same clock the order path's quote gates read
+        // (U-runner-forward).
+        var now = Now;
         var quote = _quotes.GetValueOrDefault(p.Symbol);
-        var age = quote is null ? (double?)null : (DateTimeOffset.UtcNow - quote.At).TotalSeconds;
+        var age = quote is null ? (double?)null : (now - quote.At).TotalSeconds;
 
         string? refused =
             quote is null ? "no quote"
             : _quoteEpoch.GetValueOrDefault(p.Symbol, -1) != epoch ? "from a previous connection"
-            : quote.IsStale(_opt.MaxQuoteAge) ? $"older than {_opt.MaxQuoteAge.TotalSeconds:0}s"
+            : quote.IsStale(_opt.MaxQuoteAge, now) ? $"older than {_opt.MaxQuoteAge.TotalSeconds:0}s"
             : (p.Quantity > 0m ? quote.Bid : quote.Ask) is null ? "no executable side"
             : null;
 
@@ -9948,9 +9956,10 @@ public sealed class TradingGateway : IAsyncDisposable
             if (symbol is not null)
             {
                 var q = await Connector.GetQuoteAsync(symbol, ct);
+                var stale = q is not null && q.IsStale(_opt.MaxQuoteAge, Now);
                 _health.Set(Components.MarketData,
-                    q is null ? HealthState.FAILED : q.IsStale(_opt.MaxQuoteAge) ? HealthState.DEGRADED : HealthState.READY,
-                    q is null ? "no quote" : q.IsStale(_opt.MaxQuoteAge) ? $"last price is older than {_opt.MaxQuoteAge.TotalSeconds:0}s" : "");
+                    q is null ? HealthState.FAILED : stale ? HealthState.DEGRADED : HealthState.READY,
+                    q is null ? "no quote" : stale ? $"last price is older than {_opt.MaxQuoteAge.TotalSeconds:0}s" : "");
             }
 
             // An unrecognised mode is in here rather than only in LoadSettings, because this method

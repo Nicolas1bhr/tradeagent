@@ -28,6 +28,16 @@ public interface IPaperBarSource
 {
     Task<IReadOnlyList<KlineBar>> SinceAsync(string symbol, DateTimeOffset openTimeExclusive, CancellationToken ct = default);
 
+    /// <summary>
+    /// HOW LONG ONE OF THIS SOURCE'S BARS IS, so a bar's close is its open plus this. A
+    /// <see cref="KlineBar"/> carries only its open, and the connector stamps its quote at the CLOSE
+    /// of the bar the price comes from (<c>U-runner-forward</c>) — the instant the price existed.
+    /// Declared by the source because it is a fact about the bars, and never inferred from the
+    /// spacing between two of them: after a gap that spacing is the gap, and a quote stamped with it
+    /// was dated as far in the future as the gap was long.
+    /// </summary>
+    TimeSpan BarLength { get; }
+
     event Action<ClosedBar>? BarClosed;
 }
 
@@ -51,6 +61,12 @@ public sealed class MemoryBarSource : IPaperBarSource
     /// connector must write no second fill either way.
     /// </summary>
     public bool ServeFromTheStart { get; init; }
+
+    /// <summary>
+    /// How long the bars added here are. One minute unless the caller declares otherwise: the one
+    /// interval this product collects forward (<see cref="ForwardBars.BarLength"/>).
+    /// </summary>
+    public TimeSpan BarLength { get; init; } = ForwardBars.BarLength;
 
     public event Action<ClosedBar>? BarClosed;
 
