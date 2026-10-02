@@ -79,6 +79,9 @@ sealed class SettingsPage
 
     /// <inheritdoc cref="ToggleLiveBars"/>
     readonly Button _liveBars;
+
+    /// <inheritdoc cref="ToggleMarketContext"/>
+    readonly Button _marketContext;
     bool _collecting;
 
     // ---- the holdout ----
@@ -198,6 +201,12 @@ sealed class SettingsPage
         _liveBars = Ui.Secondary("Stop collecting live bars", ToggleLiveBars);
         _liveBars.HorizontalAlignment = HorizontalAlignment.Left;
 
+        // MARKET CONTEXT. ONE press, and the same judgement again: public futures market data, no key,
+        // nothing granted, no limit changed, no order touched. ON by default, because a reading nobody
+        // recorded as it arrived can never be shown to have been known then.
+        _marketContext = Ui.Secondary("Stop recording market context", ToggleMarketContext);
+        _marketContext.HorizontalAlignment = HorizontalAlignment.Left;
+
         var marketData = Ui.Section("Market data", Ui.Col(Theme.S4,
             Ui.KeyValueLive("History TradeAgent holds", _dataValue),
             _dataNote,
@@ -216,6 +225,17 @@ sealed class SettingsPage
             Ui.Micro("These bars carry NO vendor checksum — none is published for a live window — so they are not "
                      + "evaluation evidence and no verdict is ever taken over them. They are what a paper run is "
                      + "watched against, and the AI can read them and nothing else about them."),
+            Ui.Divider(),
+            _marketContext,
+            Ui.Muted("While TradeAgent is running it also records the market's context for six Binance futures pairs "
+                     + "— BTC, ETH, SOL, BNB, XRP and DOGE against USDT: the premium index with the live funding rate, "
+                     + "open interest, the 5-minute long/short and taker ratios, and settled funding — each reading "
+                     + "with the moment it arrived. Nothing is ever overwritten: a reading Binance later changes is "
+                     + "kept as a new revision beside the first."),
+            Ui.Micro("It reads public market data with no key and places nothing. A reading that arrived on time from "
+                     + "Binance's own address is marked live; a late one, or one from any other address, is marked "
+                     + "archive. It is context for research, not evaluation evidence, it is recorded only while "
+                     + "TradeAgent is running, and the AI cannot start, stop or change it."),
             Ui.Divider(),
             Ui.Muted("TradeAgent downloads the twelve most recent complete months of 1-minute bars from Binance's " +
                      "public archive and checks every file against the checksum Binance published beside it. A month " +
@@ -414,6 +434,7 @@ sealed class SettingsPage
         _dataPair.IsEnabled = !_collecting;
 
         ApplyLiveBars();
+        ApplyMarketContext();
 
         try
         {
@@ -448,6 +469,28 @@ sealed class SettingsPage
             : "Live 1-minute bars: collection switched off");
         ApplyLiveBars();
     }
+
+    /// <summary>
+    /// ONE PRESS, AND IT ONLY EVER CHANGES WHAT TRADEAGENT RECORDS. See
+    /// <see cref="TradeAgentSettings.RecordMarketContext"/>: public market data, no key, nothing a
+    /// second press could protect. The collector reads the setting at every look, so nothing restarts:
+    /// off, it writes nothing at all; back on, the next look on each row's cadence carries on.
+    /// </summary>
+    void ToggleMarketContext()
+    {
+        var on = !_host.Gateway.Settings.RecordMarketContext;
+        _host.Gateway.Update(s => s.RecordMarketContext = on);
+        _host.Gateway.Log.Activity(on
+            ? "Market context: recording switched ON"
+            : "Market context: recording switched off");
+        ApplyMarketContext();
+    }
+
+    /// <summary>The button says what pressing it will do. What the tape holds is <c>U-tape-read</c>'s to show.</summary>
+    void ApplyMarketContext() =>
+        _marketContext.Content = _host.Gateway.Settings.RecordMarketContext
+            ? "Stop recording market context"
+            : "Record market context";
 
     /// <summary>
     /// THE LIVE SERIES AS IT STANDS, off the rows and never off "when the collector last ran": a

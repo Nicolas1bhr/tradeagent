@@ -158,11 +158,11 @@ public static class TapeSourceCatalog
 
     const string BinanceTerms =
         "Binance's public USDⓈ-M futures market data, read with no key and no account. Binance's own API "
-        + "terms and rate limits govern it; they were NOT re-read for this build (docs/RESEARCH-REQUIRED.md, C6).";
+        + "terms and rate limits govern it; they were NOT re-read for this build (docs/RESEARCH-REQUIRED.md, C5b).";
 
     const string Run =
         "measured 2026-10-02 from the dev Mac with no API key, every answer HTTP 200 in 0.31-0.37 s "
-        + "(U-tape-store; docs/RESEARCH-REQUIRED.md, C6): ";
+        + "(U-tape-store; docs/RESEARCH-REQUIRED.md, C5b): ";
 
     /// <summary>
     /// THE ROWS THIS BUILD SHIPS. A fresh copy on every call, so a caller that edits one edits its own.

@@ -45,7 +45,7 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         Assert.Equal(TimeSpan.FromSeconds(30), TapeSourceCatalog.LiveTolerance);
 
         // THE RATIOS ROW IS TWO SERIES, and the taker one's items carry no symbol: its subject is the
-        // symbol asked for (measured 2026-10-02 — see docs/RESEARCH-REQUIRED.md, C6).
+        // symbol asked for (measured 2026-10-02 — see docs/RESEARCH-REQUIRED.md, C5b).
         var ratios = rows.Single(r => r.Id == TapeSourceCatalog.Ratios5m);
         Assert.Equal(["long-short-account-5m", "taker-long-short-5m"], ratios.Series.Select(s => s.Id));
         Assert.Equal("", ratios.Series[1].SymbolField);

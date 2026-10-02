@@ -2466,6 +2466,82 @@ and a pressed kill switch all leave it collecting, because evidence is not a pai
 and no pipe op that starts it, stops it, points it somewhere else or writes a row; the owner's one-press
 toggle on the Settings page is the only control, and it is in-process.
 
+## The tape — `src/TradeAgent.Core/Db/TapeStore.cs`, `Data/Tape.cs`, `Data/TapeSourceCatalog.cs`, `Data/TapeParse.cs`, `Provisioning/TapeCollector.cs`
+
+**What it is.** While the app runs, TradeAgent records the market's context — Binance USDⓈ-M premium index
+with the live funding rate, open interest, the 5-minute long/short and taker ratios, settled funding — for
+six symbols into `state/tape.db` (`U-tape-store`; `docs/EDGE-FACTORY.md` § 4.1). It places no order, holds no
+credential and reaches nothing that could: every request is an unauthenticated GET of public market data.
+Reading the tape for agents and status is `U-tape-read`; history backfill is `U-tape-archive`.
+
+**ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
+`Versions.DatabaseSchemaVersion` does not move for it: its own connection, WAL, `synchronous=FULL`,
+`busy_timeout 5000`, a version row inside the file and an `if (have < N)` ladder from version 1
+(`U-decision-port` adds rung 2, through `TapeStore`). The version is READ before anything is written, so a
+tape from a newer build is refused with the file exactly as found — no table added, journal mode untouched —
+and the refusal is an activity line ("TradeAgent is not recording market context: …"); the app comes up
+without the tape.
+
+**CLAIMED — AS RECEIVED.** Every attempt is a `tape_fetch` row, succeeded or failed: source, series, the URL
+asked, the ORIGIN (scheme, host, port) the store read off that URL with `UrlOrigin` — the one rule
+`KeyOrigin` also answers through — both instants, the HTTP status (NULL when nothing answered), how many items
+the answer carried, this build's SHA-256 of the body, and the reason in words when it delivered nothing. Every
+observation is a `tape_obs` row naming its fetch (a foreign key) with its subject, the vendor's source time,
+the instant it arrived, its natural key — `symbol|time` for the premium index and open interest,
+`symbol|timestamp` for the 5-minute series, `symbol|fundingTime` for funding, the vendor's time in
+milliseconds — its revision, and its payload: the vendor's item, whole, as canonical JSON (keys in ordinal
+order, no whitespace, every decimal string and number exactly as served), at most 64 KB, with its SHA-256.
+
+**CLAIMED — APPEND-ONLY, REVISIONS KEPT.** A re-reading whose payload matches the latest revision writes
+nothing — the fetch's `items` against the rows naming it is the count — and a differing one is a new row,
+`revision + 1`, with its own `received_at`. The insert is what refuses: an unchanged re-reading is aimed at
+its revision's own slot `(source, series, natural_key, revision)` and the conflict clause writes nothing, so
+`INSERT OR REPLACE` would visibly move a first reading's arrival and fetch — `TapeStoreTests` watches that
+mutant go red. There is no `UPDATE` in `TapeStore`. One transaction per fetch; what the store refuses (a
+payload over 64 KB, one that is not JSON or names a key twice, a subject that cannot be keyed) is refused
+before the transaction opens, so no attempt is ever recorded with half its items.
+`AsOf(audience, source, series, subject, t)` answers the observation with the latest source time among those
+received at or before `t`, at its latest revision received by then. The audience is required and checked
+inside the reader, so a later tape holdout applies there; none exists yet, and every audience reads the same.
+
+**CLAIMED — THE CLASS RULES.** Computed by the store per observation, from fields it recorded and from this
+build's rows, never accepted from a caller: `O-LIVE` iff the fetch's source is a built-in row, its origin is
+that row's built-in origin, and the reading arrived within the row's cadence plus 30 s of its source time,
+either side; everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
+included), and every row `tape-sources.json` added, at any address. A later revision is never above the one
+before it. `O-PIT` is `U-tape-archive`'s and `O-HIND` is never written here; both are in the column's `CHECK`
+so those units add a writer, not a table rebuild.
+
+**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in rows (`docs/RESEARCH-REQUIRED.md`, C5b):
+`binance-um-premium` (60 s, one call for every symbol, kept to the six), `binance-um-oi` (60 s per symbol),
+`binance-um-oi-5m` and `binance-um-ratios-5m` (300 s), `binance-um-funding` (900 s); the universe is BTCUSDT
+ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms note, doc URL and measurement.
+`tape-sources.json` sits in TradeAgent's folder, which an unconfined agent can write, so it may add at most 8
+UNKEYED rows — no row type can hold a key and the collector sends none — at a cadence of 60 s to a day. A row
+naming a built-in id is refused in words and the built-in stands as shipped; so is one with a user name, query
+or fragment in its address, an unknown parser or a malformed series. An unreadable file stops only its own
+rows: unlike `sources.json`, the built-ins stand in for nothing it said, and a file anyone can corrupt must not
+be able to switch the tape off.
+
+**THE COLLECTOR.** One loop per row. On the working path the next look is at the next multiple of the row's
+cadence plus `ForwardBars.LookOffset` (2 s), through `TickAlignment` — the one helper the forward collector
+also looks on; a request is on a 10 s leash; a body over 4 MB is refused; a failing row backs off on a doubling wait
+that stops at 5 minutes and is back on its cadence at the first look that works; a 429 or 418 ends the look at
+once. A redirect is not followed: the origin recorded is the origin that answered. A body that does not read,
+or an item about a symbol nobody asked for, is a recorded failure and never an observation. No first-start
+backfill: the first look asks what every look asks. Started and stopped by `AppHost`, independent of the
+mission loop; the Market data card's **Record market context** toggle (default ON, one press) is the only
+control, and no verb or pipe op starts, stops or writes it.
+
+**NOT CLAIMED.** (1) *Completeness while the app is closed*: the tape is as deep as the app has been running,
+nothing fills a gap, and a later reading of an old point is `O-ARCH`. (2) *A vendor checksum*: none is
+published for a live answer; every hash here is this build's, of what it received. (3) *Evaluation evidence*:
+no verdict is taken over the tape; it is research context. (4) *Protection from an agent editing the file
+before containment*: "the store is the only writer" holds for the app's own paths, and an agent running
+unconfined could still edit `state/tape.db` itself (`docs/EDGE-FACTORY.md` § 6.11). (5) That an address a file
+row names is public or harmless: until containment the agent can reach it itself, and `R-containment` decides
+whether file rows survive containment.
+
 ## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
 
 **A holdout is a TIME CUTOFF on a dataset, not a second dataset, and that is a CHOICE this build made

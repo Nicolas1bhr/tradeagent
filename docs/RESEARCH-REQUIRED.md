@@ -206,6 +206,34 @@ costs nothing and an exclusive one loses no bar either — but it has not been m
 
 ---
 
+## C5b — Binance USDⓈ-M public market context for the tape (measured 2026-10-02 from this Mac; re-verify at build time)
+
+**Decided: while it runs, TradeAgent records the market's context into `state/tape.db`** (`U-tape-store`;
+`docs/EDGE-FACTORY.md` § 4.1), from public endpoints that need no key. `docs/CONTRACTS.md` "The tape" states
+what the record claims and does not.
+
+| Fact | Value |
+|---|---|
+| Host | `https://fapi.binance.com` — Binance's USDⓈ-M futures REST host. Every call below is an unauthenticated GET of public market data; the collector sends no key and holds none. |
+| Built-in rows | `binance-um-premium` (60 s): `GET /fapi/v1/premiumIndex` with no symbol — every symbol in one list, kept to the six. `binance-um-oi` (60 s): `GET /fapi/v1/openInterest?symbol={S}`. `binance-um-oi-5m` (300 s): `GET /futures/data/openInterestHist?symbol={S}&period=5m&limit=3`. `binance-um-ratios-5m` (300 s): `GET /futures/data/globalLongShortAccountRatio?symbol={S}&period=5m&limit=3` and `GET /futures/data/takerlongshortRatio?symbol={S}&period=5m&limit=3`. `binance-um-funding` (900 s): `GET /fapi/v1/fundingRate?symbol={S}&limit=2`. Universe: BTCUSDT ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT. The `limit` is an overlap so a missed look loses nothing; it is the same on the first look, so there is no backfill. |
+| Measured (the brief) | RUN 2026-10-02 from this Mac, no key, all HTTP 200 in 0.31–0.37 s: `GET https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT`, `/fapi/v1/openInterest`, `/futures/data/openInterestHist?…&period=5m`, `/fapi/v1/fundingRate`, `/futures/data/globalLongShortAccountRatio?…&period=5m`, `/futures/data/takerlongshortRatio?…`. |
+| Re-measured (the builder) | The same six with `symbol=BTCUSDT`, once each, read-only, at 2026-10-02 15:28:27 UTC: HTTP 200 in 0.357, 0.313, 0.329, 0.313, 0.313 and 0.320 s. These are the only requests this unit made to the host; the test suite talks to a loopback `HttpListener`, and `SuiteReachesNoVendorTests` refuses a test that names this host or builds a `TapeCollector` without a `baseUrl`. |
+| Answer shapes | Decimals are JSON strings and times JSON integers in milliseconds. `premiumIndex`: `symbol, markPrice, indexPrice, estimatedSettlePrice, lastFundingRate, interestRate, nextFundingTime, time`. `openInterest`: `symbol, openInterest, time`. `openInterestHist`: `symbol, sumOpenInterest, sumOpenInterestValue, CMCCirculatingSupply, timestamp`. `globalLongShortAccountRatio`: `symbol, longAccount, longShortRatio, shortAccount, timestamp`. `takerlongshortRatio`: `buySellRatio, sellVol, buyVol, timestamp` — **no symbol field**, so the symbol asked for is the subject. `fundingRate`: `symbol, fundingTime, fundingRate, markPrice, rateType`. |
+| Times, as read | At 15:28:28 UTC the newest `openInterestHist` and account-ratio point was 15:25:00 (208 s old) and the newest taker point 15:20:00 (508 s old): in that one reading the taker series ran one period behind the other two. `premiumIndex.time` read 15:28:28.000, about 0.2 s after the local clock was read before the request; `openInterest.time` 2.9 s before it. The last settled funding was 08:00:00 with `nextFundingTime` 16:00:00, and one earlier `fundingTime` read `…200002` — two milliseconds past the hour — which the tape keeps as served. |
+| Documentation | The per-endpoint pages under `https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/` redirect to one catalogue page, recorded on each row with its anchor: `https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data` with `#mark-price`, `#open-interest`, `#open-interest-statistics`, `#long-short-ratio`, `#taker-buy-sell-volume`, `#get-funding-rate-history`; each answered HTTP 202 on 2026-10-02. **The page content was not read.** |
+| Recorded as | `TapeSourceCatalog.BuiltIn()` — five rows, data in the `runtimes.json` pattern. `tape-sources.json` in TradeAgent's own folder may only ADD unkeyed rows, and every observation they produce is `O-ARCH`. |
+
+**Still to re-verify at build time.** (1) Binance's API terms and its unauthenticated rate limits for these
+endpoints were NOT re-read. The collector makes one premium call (every symbol) and six open-interest calls a
+minute, eighteen 5-minute calls every five minutes and six funding calls every fifteen, and stops a look at
+the first 429 or 418; no published figure is recorded here because none was read. (2) How soon after a
+5-minute boundary each series publishes its point: a point first seen more than 330 s after its timestamp is
+`O-ARCH` by rule, and the taker series' one-period lag in the reading above suggests many of its rows may be. The tape's own
+`received_at` against `source_time` is the measurement. (3) Whether `timestamp` marks a period's start or its
+end for each 5-minute series; the tape stores the vendor's value as served and assigns it no meaning.
+
+---
+
 ## C6 — Venue fees the referee judges with (read 2026-10-02 from the venue's own page; re-read before every release)
 
 **File:** `src/TradeAgent.Core/Strategy/VenueCostModel.cs`, `PublishedFees` — a table in CODE on purpose: the

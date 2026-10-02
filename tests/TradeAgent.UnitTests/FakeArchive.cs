@@ -29,6 +29,7 @@ public sealed class FakeArchive : IDisposable
 
     readonly HttpListener _http;
     readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
+    readonly Dictionary<string, byte[]> _exact = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
     readonly ConcurrentQueue<string> _marks = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -53,8 +54,9 @@ public sealed class FakeArchive : IDisposable
                 catch (Exception) { return; }
 
                 var path = ctx.Request.Url!.AbsolutePath;
+                var pathAndQuery = ctx.Request.Url!.PathAndQuery;
                 var method = ctx.Request.HttpMethod;
-                Mark($"got {method} {path}");
+                Mark($"got {method} {pathAndQuery}");
 
                 if (!Answers) { Mark("answering nothing, on purpose"); continue; }
 
@@ -67,6 +69,14 @@ public sealed class FakeArchive : IDisposable
                         continue;
                     }
 
+                    if (RedirectTo is { } elsewhere)
+                    {
+                        ctx.Response.StatusCode = (int)HttpStatusCode.Found;
+                        ctx.Response.RedirectLocation = elsewhere + pathAndQuery;
+                        Mark($"answering 302 to {elsewhere}, on purpose");
+                        continue;
+                    }
+
                     byte[]? body = null;
                     var what = "200";
 
@@ -74,6 +84,11 @@ public sealed class FakeArchive : IDisposable
                     {
                         body = Encoding.UTF8.GetBytes(text);
                         what = "200 sidecar";
+                    }
+                    else if (_exact.TryGetValue(pathAndQuery, out var exact))
+                    {
+                        body = exact;
+                        what = "200 exact";
                     }
                     else if (_files.TryGetValue(path, out var bytes))
                     {
@@ -132,6 +147,13 @@ public sealed class FakeArchive : IDisposable
     /// </summary>
     public HttpStatusCode? AlwaysAnswer { get; set; }
 
+    /// <summary>
+    /// When set, every request is answered <c>302</c> to the same path and query on this base address —
+    /// for the one thing the tape's collector must not do, which is follow it (<c>U-tape-store</c>): the
+    /// origin a fetch records has to be the origin that answered.
+    /// </summary>
+    public string? RedirectTo { get; set; }
+
     /// <summary>What this server received and what it did about it, oldest first.</summary>
     public IReadOnlyList<string> Marks => [.. _marks];
 
@@ -174,6 +196,13 @@ public sealed class FakeArchive : IDisposable
         _files[path] = bytes;
         if (checksumFor is not null) _sidecars[path + ".CHECKSUM"] = $"{Sha256(bytes)}  {checksumFor}";
     }
+
+    /// <summary>
+    /// PUBLISHES A BODY AT ONE PATH AND QUERY, EXACTLY (<c>U-tape-store</c>): a source asked once per
+    /// symbol carries the symbol in its query, and its answers must differ by it. Consulted before
+    /// <see cref="PublishAt"/>'s path-only answers; the query is matched as the client sent it.
+    /// </summary>
+    public void PublishAtExactly(string pathAndQuery, string body) => _exact[pathAndQuery] = Encoding.UTF8.GetBytes(body);
 
     /// <summary>Publishes the zip and no sidecar at all.</summary>
     public void PublishWithoutSidecar(string pair, DateOnly month, string csv)
