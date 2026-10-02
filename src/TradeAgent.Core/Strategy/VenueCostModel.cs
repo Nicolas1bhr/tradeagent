@@ -207,12 +207,24 @@ public sealed record VenueCostModel
 
         return VenueCostModelResolved.Yes(new VenueCostModel(VenueJudge, venue, symbol, model, Text(
             VenueJudge, model, venue, symbol,
-            $"{N(fee.TakerRate)} per fill — {fee.Venue}'s published standard taker rate, read "
-            + $"{fee.ReadOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}: {Line(fee.Source)}",
-            $"{N(SlippageRate)} per fill — {SlippageBasis}",
+            FeeLine(fee),
+            SlippageLine,
             $"{N(row.QuantityIncrement)} — {venue}/{symbol} in the venue catalogue, verified: {Line(row.Source)}",
             $"{N(capital)} — the account owner's judge capital when this model was pinned")));
     }
+
+    /// <summary>
+    /// THE FEE LINE OF A PINNED TEXT, WITHOUT ITS <c>fee: </c> KEY — the rate, whose published rate it
+    /// is, the day it was read and the page's own sentence. Spelled once, because a
+    /// <see cref="VenueFriction"/> carries the same line and a paper fill and a verdict on one venue
+    /// must be charged in the same words.
+    /// </summary>
+    internal static string FeeLine(PublishedFee fee) =>
+        $"{N(fee.TakerRate)} per fill — {fee.Venue}'s published standard taker rate, read "
+        + $"{fee.ReadOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}: {Line(fee.Source)}";
+
+    /// <summary>The slippage line of a pinned text, without its key. See <see cref="FeeLine"/>.</summary>
+    internal static string SlippageLine => $"{N(SlippageRate)} per fill — {SlippageBasis}";
 
     /// <summary>The capital a model is pinned with. Zero or less is not a capital of nothing: an account that can buy nothing judges nothing.</summary>
     public static decimal CapitalOf(decimal judgeCapital) => judgeCapital > 0m ? judgeCapital : DefaultCapital;
@@ -352,4 +364,85 @@ public sealed record VenueCostModelResolved
     internal static VenueCostModelResolved Yes(VenueCostModel model) => new(model, null);
 
     internal static VenueCostModelResolved No(string why) => new(null, why);
+}
+
+/// <summary>
+/// THE VENUE COST MODEL'S FRICTION ON ONE VENUE — the fee and the slippage, without a step or a
+/// capital, which is all a paper fill and a research run's undeclared friction need of it
+/// (<c>U-paper-friction</c>; <c>docs/EDGE-FACTORY.md</c> § 4.5, "one app-owned venue cost model at
+/// every stage").
+///
+/// <para><b>The same two numbers, in the same words, as the referee's pinned model.</b> The fee is the
+/// venue's row in <see cref="VenueCostModel.PublishedFees"/> and the slippage is
+/// <see cref="VenueCostModel.SlippageRate"/>, labelled TradeAgent's assumption; the two lines of
+/// <see cref="Canonical"/> are the very lines <see cref="VenueCostModel.For"/> writes into a pinned
+/// text. So a paper fill, a research run and a verdict on one venue are charged one fee, out of one
+/// table, read on one day.</para>
+///
+/// <para><b>Named by an id and a sha, as a source has to be.</b> <see cref="Id"/> says which model and
+/// which venue; <see cref="Sha256"/> is the hash of <see cref="Canonical"/>, so a fill or a run that
+/// records both says exactly which text it was charged under, and a later edit to the fee table is a
+/// different sha rather than the same name quietly meaning something else. The text has its own header
+/// and four lines, so it is never read as a campaign's nine-line pin: <see cref="VenueCostModel.Read"/>
+/// refuses it.</para>
+///
+/// <para><b>A venue with no published fee here has no friction model</b> — <see cref="Of"/> answers
+/// null — which is the reading <see cref="VenueCostModel.For"/> takes for the referee: a guessed fee is
+/// not a standard, and a run charged one would be a figure about a venue nobody priced.</para>
+/// </summary>
+public sealed record VenueFriction
+{
+    VenueFriction(PublishedFee fee)
+    {
+        VenueId = fee.VenueId;
+        Venue = fee.Venue;
+        FeeRate = fee.TakerRate;
+        FeeReadOn = fee.ReadOn;
+        Canonical = string.Join('\n',
+            Header,
+            $"venue: {fee.VenueId}",
+            $"fee: {VenueCostModel.FeeLine(fee)}",
+            $"slippage: {VenueCostModel.SlippageLine}");
+    }
+
+    /// <summary>The first line of every friction text: the cost model's own header, and the word that says this is its friction half.</summary>
+    public const string Header = VenueCostModel.Header + " friction";
+
+    /// <summary>The venue catalogue's id for the venue, e.g. <c>binance-spot</c>.</summary>
+    public string VenueId { get; }
+
+    /// <summary>The venue as a person names it.</summary>
+    public string Venue { get; }
+
+    /// <summary>The venue's published standard TAKER rate, a fraction of each fill's notional.</summary>
+    public decimal FeeRate { get; }
+
+    /// <summary>TradeAgent's assumed slippage, a fraction of the price — the same on every venue, and an assumption on every venue.</summary>
+    public decimal SlippageRate => VenueCostModel.SlippageRate;
+
+    /// <summary>The day the fee was read from the venue's own page.</summary>
+    public DateOnly FeeReadOn { get; }
+
+    /// <summary>The text that is hashed: the header, the venue, and the cost model's own fee and slippage lines.</summary>
+    public string Canonical { get; }
+
+    /// <summary>The SHA-256 of <see cref="Canonical"/>.</summary>
+    public string Sha256 => Sha256Hex.Of(Canonical);
+
+    /// <summary>Which model and which venue, e.g. <c>venue-cost-model-v1/binance-spot</c>.</summary>
+    public string Id => $"venue-cost-model-v{VenueCostModel.Version}/{VenueId}";
+
+    /// <summary>The model as a sentence names it: <c>TradeAgent's venue cost model v1 for binance-spot (sha256 …)</c>.</summary>
+    public string Named => $"TradeAgent's venue cost model v{VenueCostModel.Version} for {VenueId} (sha256 {Sha256})";
+
+    /// <summary>What the fee is, in words: whose published rate, and the day it was read.</summary>
+    public string FeeWords =>
+        $"{Venue}'s published standard taker rate, read {FeeReadOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+
+    /// <summary>What the slippage is, in words: an assumption, said as one.</summary>
+    public string SlippageWords => VenueCostModel.SlippageBasis;
+
+    /// <summary>The friction for one venue, or null because this build has read no published fee for it.</summary>
+    public static VenueFriction? Of(string? venueId) =>
+        VenueCostModel.FeeOf(venueId) is { } fee ? new VenueFriction(fee) : null;
 }
