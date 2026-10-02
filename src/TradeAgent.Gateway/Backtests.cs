@@ -153,7 +153,11 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         // AFTER the parse, so a text that is not a program is refused for being one rather than for
         // the instrument of a dataset it was never going to be run over.
         var step = Increment(ask);
-        var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, step.Value, ask.Capital);
+
+        // AND THE FRICTION, NUMBER BY NUMBER: the caller's where it declared one, the venue cost model's
+        // for the dataset's venue where it did not (`Friction`). Never a zero nobody chose.
+        var friction = Friction(ask);
+        var declared = ExecutionModel.Declare(friction.Fee, friction.Slippage, step.Value, ask.Capital);
         if (declared.Model is not { } model)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that execution model cannot be run: {declared.Why}.");
@@ -191,9 +195,12 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
             if (!stop.IsCancellationRequested)
-                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source, parent);
+                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source, friction.Source, parent);
 
-            return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source);
+            return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source)
+            {
+                FrictionSource = friction.Source
+            };
         }
         finally
         {
@@ -382,6 +389,79 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     readonly record struct IncrementChosen(decimal? Value, string? Source);
 
     /// <summary>
+    /// WHAT FRICTION THIS RUN IS CHARGED, NUMBER BY NUMBER, AND WHO SAID SO (<c>U-paper-friction</c>).
+    ///
+    /// <para><b>A declared number always wins, zero included.</b> A run declared at no fee is a
+    /// legitimate question about no fee; the run records that the number was the caller's.</para>
+    ///
+    /// <para><b>A number left undeclared takes TradeAgent's venue cost model for the DATASET's venue</b>
+    /// (<see cref="VenueFriction"/>): the fee table the referee judges with and a paper fill pays, which
+    /// is <c>docs/EDGE-FACTORY.md</c> § 4.5's one cost model at every stage. It used to be zero, so a
+    /// research run that said nothing measured a market with no costs in it and was later judged
+    /// against one that has them. Per number: a run that declares only its slippage is charged the
+    /// venue's fee and its own slippage. The venue is the one the collector recorded beside the bytes,
+    /// never the program's <c>instrument</c> line, for the reason <see cref="Increment"/> gives.</para>
+    ///
+    /// <para><b>Two datasets have no venue model, and they are answered differently.</b> Bars that record
+    /// NO venue get the cost model's own answer for such bars — nothing to charge, the judge
+    /// <c>VenueCostModel.NoVenueRecorded</c> labels "no venue recorded" — so a run over them is
+    /// frictionless and its answer says so out loud. A venue whose fee this build has never read from
+    /// the venue's own schedule is REFUSED for a number left undeclared, as the referee refuses it and as
+    /// an unconfirmed increment is refused: a guessed fee is not a standard, and the caller can always
+    /// declare its own.</para>
+    ///
+    /// <para><b>The provenance is not part of the run's identity</b>, exactly as the increment's is not:
+    /// the numbers go into <see cref="ExecutionModel"/> and are hashed there, and where they came from is
+    /// recorded beside the run.</para>
+    /// </summary>
+    FrictionChosen Friction(BacktestAsk ask)
+    {
+        if (ask.Fees is { } fee && ask.Slippage is { } slippage)
+            return new FrictionChosen(fee, slippage, $"{Declared("fee", fee)}; {Declared("slippage", slippage)}");
+
+        // A dataset id nobody has a row for is `Backtest.Over`'s refusal to make, in its own sentence.
+        if (gateway.Datasets.ById(ask.Dataset) is not { } set) return new FrictionChosen(ask.Fees, ask.Slippage, null);
+
+        if (set.VenueId is not { Length: > 0 } venueId)
+            return new FrictionChosen(ask.Fees ?? 0m, ask.Slippage ?? 0m, (ask.Fees, ask.Slippage) switch
+            {
+                (null, null) => $"fee 0 and slippage 0, neither declared — {NoVenue(set.Id)}",
+                ({ } f, _) => $"{Declared("fee", f)}; slippage 0, not declared — {NoVenue(set.Id)}",
+                (_, { } s) => $"fee 0, not declared — {NoVenue(set.Id)}; {Declared("slippage", s)}"
+            });
+
+        if (VenueFriction.Of(venueId) is not { } venue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"this run declared no {(ask.Fees is null && ask.Slippage is null ? "fee and no slippage" : ask.Fees is null ? "fee" : "slippage")} "
+                + $"and TradeAgent will not invent one: dataset {set.Id} records its bars as {venueId}'s, and "
+                + $"{venueId}'s standard fee is not one TradeAgent has read from the venue's own published "
+                + "schedule, so its venue cost model has nothing to charge them. A run charged a cost nobody "
+                + "published would be a figure about no venue. Declare it yourself with --fees and --slippage "
+                + "— the run records that the numbers were yours. Nothing was run and no trial was charged.");
+
+        var charged = (Fee: ask.Fees ?? venue.FeeRate, Slippage: ask.Slippage ?? venue.SlippageRate);
+        var source = (ask.Fees, ask.Slippage) switch
+        {
+            (null, null) => $"fee {Plain(charged.Fee)} and slippage {Plain(charged.Slippage)} from {venue.Named}: "
+                            + $"the fee is {venue.FeeWords}, and the slippage is {venue.SlippageWords}",
+            ({ } f, null) => $"{Declared("fee", f)}; slippage {Plain(charged.Slippage)} from {venue.Named}: "
+                             + venue.SlippageWords,
+            (null, { } s) => $"fee {Plain(charged.Fee)} from {venue.Named}: {venue.FeeWords}; {Declared("slippage", s)}",
+            ({ } f, { } s) => $"{Declared("fee", f)}; {Declared("slippage", s)}"
+        };
+        return new FrictionChosen(charged.Fee, charged.Slippage, source);
+    }
+
+    static string Declared(string name, decimal value) => $"{name} {Plain(value)} declared by the caller";
+
+    static string NoVenue(long dataset) =>
+        $"dataset {dataset} records no venue, so TradeAgent's venue cost model has nothing to charge these "
+        + "bars (its judge for them is labelled \"no venue recorded\")";
+
+    /// <summary>The fee and slippage a run will use, and the sentence that says where each came from.</summary>
+    readonly record struct FrictionChosen(decimal? Fee, decimal? Slippage, string? Source);
+
+    /// <summary>
     /// A REFUSAL, NEVER A GUESS — the one shape this whole unit exists to produce.
     ///
     /// <para>The alternative is <c>ExecutionModel.Frictionless</c>'s 1, and a whole unit is not a
@@ -414,7 +494,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
     void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        CampaignRow? campaign, string kind, string? incrementSource, string? parent)
+        CampaignRow? campaign, string kind, string? incrementSource, string? frictionSource, string? parent)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -451,7 +531,11 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 metrics.Bars, metrics.Trades, metrics.Wins, metrics.Signals, metrics.Fills,
                 metrics.ExposureBars, metrics.MissingMinutes, metrics.Faults,
                 metrics.GrossPnl, metrics.Fees, metrics.NetPnl, metrics.MaxDrawdown,
-                result.Trace.Sha256, at, role, attempt) { IncrementSource = incrementSource },
+                result.Trace.Sha256, at, role, attempt)
+                {
+                    IncrementSource = incrementSource,
+                    FrictionSource = frictionSource
+                },
                 [.. result.Trades.Select(t => new StrategyTradeRow(
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
@@ -493,4 +577,13 @@ public sealed record BacktestRan(
     /// the four numbers in <c>execution_model</c> say what was used and not who said so, and an agent
     /// reading a size it did not choose has to be able to see what chose it.
     /// </summary>
-    string? IncrementSource);
+    string? IncrementSource)
+{
+    /// <summary>
+    /// Where the run's fee and slippage came from, number by number — declared by the caller, or
+    /// TradeAgent's venue cost model for the dataset's venue, named by id and sha (<c>U-paper-friction</c>).
+    /// In the answer and on the run row for the reason <see cref="IncrementSource"/> is: an agent reading
+    /// a fee it did not declare has to be able to see what charged it.
+    /// </summary>
+    public string? FrictionSource { get; init; }
+}

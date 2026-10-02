@@ -309,9 +309,11 @@ public static class WorkspaceBuilder
     - when the strategy is written in the strategy language, `trade backtest --strategy
       strategies/x.strategy --dataset <id>` has TradeAgent run it and record the result itself: the
       metrics come back computed from the app's own trace rather than from your arithmetic, which is
-      the difference between evidence and a claim. Declare the model you want measured —
-      `--fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000` — because without those a run
-      is an upper bound on a frictionless market. Pass `--to` before any `holdout_from` on that dataset,
+      the difference between evidence and a claim. A fee or a slippage you leave out is TradeAgent's
+      venue cost model's for that dataset's venue — the venue's published fee and an assumed two basis
+      points, the table the final judgement charges — and `friction_source` in the answer says which
+      number came from where; declare `--fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000`
+      to measure a model of your own instead. Pass `--to` before any `holdout_from` on that dataset,
       for the reason above; a run whose window reaches the cutoff is refused before a bar is read, and
       every run you register is counted against the campaign's own budget of attempts, which a restart
       does not reset. It still proves nothing about a FILL: a backtest is a reason to test something and

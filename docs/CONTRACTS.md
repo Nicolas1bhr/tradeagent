@@ -2242,9 +2242,23 @@ evidence its author is judged on.
 
 **The execution model is DECLARED per run and is part of the run's identity.** Fees and slippage are
 FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to, and
-the capital is what the run starts with. Declared no fee and no slippage, a run is frictionless and the
-answer says so in those words rather than letting a zero fee read as a measurement; declared no capital,
-it starts with 10,000.
+the capital is what the run starts with; declared no capital, it starts with 10,000.
+
+**A fee or a slippage the run does not declare is TradeAgent's venue cost model's, number by number**
+(`U-paper-friction`, `Backtests.Friction`). A declared number always wins, zero included; a number left
+out takes `VenueFriction` for the **dataset's** recorded venue — the venue's published standard taker
+fee and the two basis points of slippage labelled TradeAgent's assumption, the table the referee pins and
+a paper fill pays (`docs/EDGE-FACTORY.md` § 4.5). It used to be zero, so a run that said nothing measured
+a market with no costs in it. The answer's `friction_source` and `strategy_run.increment_source` say
+which number came from where, naming the model by id and sha; that column is the run's one provenance
+field and the unit allowed no schema change, so it holds the increment's sentence and then a line of its
+own beginning `friction: `, which `StrategyStore` reads back as `StrategyRunRow.FrictionSource` apart
+from `IncrementSource` — a row written before this holds no such line. **Where they came from is not
+hashed**, exactly as the increment's provenance is not. Bars that record **no venue** have nothing to be
+charged — the cost model's judge for them is the labelled frictionless one — so such a run is frictionless
+and the answer says so in that word; a venue whose fee this build has never read from the venue's own
+schedule is **REFUSED** for a number left out, before anything is run or charged, as the referee refuses
+it: declare `--fees` and `--slippage` and the run records the numbers as yours.
 
 **The increment is the one number a run need not declare, and TradeAgent will not invent it.** A request
 that omits `--increment` gets the one recorded for the dataset's own `venue_id`/`instrument_symbol` in
