@@ -1,0 +1,174 @@
+using System.Buffers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+namespace TradeAgent.Core.Data;
+
+/// <summary>
+/// WHAT A TAPE OBSERVATION COUNTS AS — computed by the app per observation from fields it recorded
+/// itself, and never accepted from a caller (<c>docs/EDGE-FACTORY.md</c> § 4.1, R07 § 5).
+///
+/// <para>Four words, of which this build writes two: <see cref="Live"/> and <see cref="Arch"/>.
+/// <see cref="Pit"/> is <c>U-tape-archive</c>'s — a vendor-checksummed print whose overlap with our own
+/// live record matches — and <see cref="Hind"/> is built with hindsight. All four are spelled here, and
+/// in the column's <c>CHECK</c>, so the later units add a WRITER and never a table rebuild.</para>
+/// </summary>
+public static class TapeClass
+{
+    /// <summary>First received from the source's built-in origin within its cadence plus 30 s of its source time.</summary>
+    public const string Live = "O-LIVE";
+
+    /// <summary>An exchange-published print checked against its vendor checksum and our own live record. <c>U-tape-archive</c>'s.</summary>
+    public const string Pit = "O-PIT";
+
+    /// <summary>Anything else fetched after the fact — late, from another origin, or from a row a file added.</summary>
+    public const string Arch = "O-ARCH";
+
+    /// <summary>Built with hindsight. Never written by the tape's own collector.</summary>
+    public const string Hind = "O-HIND";
+}
+
+/// <summary>
+/// ONE ATTEMPT TO FETCH ONE SERIES OF ONE SOURCE, SUCCEEDED OR FAILED, as the collector observed it.
+///
+/// <para>It carries no ORIGIN: <c>TapeStore</c> computes that from <see cref="Url"/> with
+/// <see cref="UrlOrigin"/>, so the address a row was fetched from and the address the evidence class
+/// is decided by can never be two different claims.</para>
+/// </summary>
+public sealed record TapeFetch
+{
+    /// <summary>The catalogue row's id, e.g. <c>binance-um-premium</c>.</summary>
+    public required string Source { get; init; }
+
+    /// <summary>The series of that row this attempt asked for, e.g. <c>premium-index</c>.</summary>
+    public required string Series { get; init; }
+
+    /// <summary>The URL asked for, as asked. The origin and the window are read off it.</summary>
+    public required string Url { get; init; }
+
+    public required DateTimeOffset RequestedAt { get; init; }
+
+    /// <summary>When the answer — or the failure — was in hand. Every observation of this fetch arrived then.</summary>
+    public required DateTimeOffset ReceivedAt { get; init; }
+
+    /// <summary>The HTTP status, or null when nothing was answered at all (a timeout, a refused socket).</summary>
+    public int? HttpStatus { get; init; }
+
+    /// <summary>The SHA-256 of the body this build computed. NEVER a vendor's: there is none.</summary>
+    public string? BodySha256 { get; init; }
+
+    /// <summary>Why this attempt delivered nothing, in words, or null for one that delivered.</summary>
+    public string? Note { get; init; }
+}
+
+/// <summary>
+/// ONE ITEM OF AN ANSWER, before the store has decided what it is.
+///
+/// <para>No natural key, no revision, no hash and no class: the store computes all four, so none of
+/// them can be a caller's claim. The natural key is <c>subject|source time in milliseconds</c> — the
+/// vendor's own time field for each series (<c>time</c>, <c>timestamp</c>, <c>fundingTime</c>) — and the
+/// payload is made canonical by the store whatever spacing or key order it arrives in.</para>
+/// </summary>
+public sealed record TapeItem(string Subject, DateTimeOffset SourceTime, string Payload);
+
+/// <summary>
+/// ONE STORED OBSERVATION: what the vendor said about one subject at one source time, which reading
+/// of it this is, when it arrived, which fetch brought it, and what it counts as.
+/// </summary>
+public sealed record TapeObservation(
+    long Id, string Source, string Series, string Subject, DateTimeOffset SourceTime,
+    DateTimeOffset ReceivedAt, long FetchId, string NaturalKey, int Revision, string PayloadSha256,
+    string Payload, string EvidenceClass);
+
+/// <summary>One stored attempt, with the origin the store computed from its URL.</summary>
+public sealed record TapeFetchRecord(
+    long Id, string Source, string Series, string Url, string? Origin, DateTimeOffset RequestedAt,
+    DateTimeOffset ReceivedAt, int? HttpStatus, int Items, string? BodySha256, string? Note);
+
+/// <summary>
+/// WHAT ONE <c>Append</c> DID. <see cref="Items"/> is what the answer carried; <see cref="Stored"/> is
+/// what was new — a first reading or a revision, <see cref="Revised"/> of them revisions — and
+/// <see cref="Unchanged"/> is the re-readings that matched the latest revision and wrote nothing.
+/// </summary>
+public sealed record TapeAppend(long FetchId, int Items, int Stored, int Revised, int Unchanged);
+
+/// <summary>
+/// ONE SPELLING OF A JSON VALUE, SO THAT "THE SAME PAYLOAD" MEANS THE SAME BYTES.
+///
+/// <para>Objects with their keys in ordinal order, no whitespace, arrays in the order served, and —
+/// the reason this is not <c>JsonSerializer</c> — every value exactly as the vendor wrote it.
+/// <b>A decimal string stays the string it was</b>: Binance serves <c>"0.00010000"</c>, and a build
+/// that parsed it into a number and wrote it back would store <c>0.0001</c>, a value the vendor never
+/// published, and would call a re-reading that differs only in a trailing zero a revision. A JSON
+/// number is written back as its own raw text for the same reason.</para>
+///
+/// <para>An object that names the same key twice is refused rather than spelled: which of the two a
+/// later reader would see depends on the reader, and a payload whose meaning depends on who reads it
+/// is not one this ledger can say it holds.</para>
+/// </summary>
+public static class TapeJson
+{
+    /// <summary>The canonical spelling of <paramref name="json"/>. Throws <see cref="JsonException"/> for anything that is not one JSON value.</summary>
+    public static string Canonical(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer))
+            Write(w, doc.RootElement);
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>The SHA-256 of a payload's UTF-8 bytes, lower-case hex. Computed by this build, of the canonical text.</summary>
+    public static string Sha256(string text) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+    static void Write(Utf8JsonWriter w, JsonElement e)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var properties = e.EnumerateObject().ToList();
+                foreach (var p in properties)
+                    if (!seen.Add(p.Name))
+                        throw new JsonException($"the object names '{p.Name}' twice");
+
+                w.WriteStartObject();
+                foreach (var p in properties.OrderBy(p => p.Name, StringComparer.Ordinal))
+                {
+                    w.WritePropertyName(p.Name);
+                    Write(w, p.Value);
+                }
+                w.WriteEndObject();
+                break;
+
+            case JsonValueKind.Array:
+                w.WriteStartArray();
+                foreach (var item in e.EnumerateArray()) Write(w, item);
+                w.WriteEndArray();
+                break;
+
+            case JsonValueKind.String:
+                w.WriteStringValue(e.GetString());
+                break;
+
+            case JsonValueKind.Number:
+                // THE NUMBER AS SERVED, never re-formatted: `1.50` stays `1.50`.
+                w.WriteRawValue(e.GetRawText());
+                break;
+
+            case JsonValueKind.True:
+                w.WriteBooleanValue(true);
+                break;
+
+            case JsonValueKind.False:
+                w.WriteBooleanValue(false);
+                break;
+
+            default:
+                w.WriteNullValue();
+                break;
+        }
+    }
+}
