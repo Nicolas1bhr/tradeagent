@@ -2,7 +2,9 @@ using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Platforms;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -109,5 +111,89 @@ public class PaperGatewayTests(ITestOutputHelper log)
         log.WriteLine($"{refused.Code} — {refused.Message}");
         Assert.Equal(ErrorCode.LIVE_NOT_ACTIVATED, refused.Code);
         Assert.Single(await conn.GetExecutionsAsync(PaperConnector.TheAccount, null));
+    }
+
+    /// <summary>A clock the test sets by hand. The gateway and the paper connector read no other.</summary>
+    sealed class TestClock(DateTimeOffset at) : TimeProvider
+    {
+        public DateTimeOffset At { get; set; } = at;
+        public override DateTimeOffset GetUtcNow() => At;
+    }
+
+    /// <summary>
+    /// A FRESH PAPER BOOK OVER MORE THAN ONE PAGE OF FORWARD BARS PRICES ITS FIRST ORDER AT THE
+    /// NEWEST BAR (<c>U-paper-settle</c>).
+    ///
+    /// <para>A book's first settle starts from nothing, and one read of the forward ledger answers
+    /// its OLDEST ten thousand bars. On an installation that had been collecting for a week before
+    /// its first switch to paper, the quote that read produced was minute 10,000's close, five
+    /// minutes old, and the gateway's thirty-second gate refused the order as
+    /// <c>MARKET_DATA_UNAVAILABLE</c> — however long the collector had been right up to date. Here
+    /// 10,005 minutes go into the ledger in one answer through the shipped adapter, the health pass
+    /// runs BEFORE they do (it reads a quote too, and that read would settle a page of its own), and
+    /// the gate is the default thirty seconds: <c>ForwardRunnerTests</c> widens it, which hid this.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_paper_book_over_more_than_one_page_of_forward_bars_prices_its_first_order_at_the_newest_bar()
+    {
+        var origin = new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+        const int newest = 10_005;
+        var newestClose = origin.AddMinutes(newest) + ForwardBars.BarLength;
+        var clock = new TestClock(newestClose.AddSeconds(5));
+
+        var db = TestEnv.NewDb();
+        var bars = new ForwardBarStore(db);
+        await using var conn = new PaperConnector(new PaperConnectorOptions
+        {
+            Source = new ForwardBarSource(bars),
+            Clock = () => clock.At,
+            BookFile = Path.Combine(TestEnv.Home, $"paper-gw-pages-{Guid.NewGuid():n}.db"),
+            Catalogue = Catalogue()
+        });
+
+        await using var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = PaperConnector.TheAccount;
+            s.Risk.InstrumentAllowlist = ["BTCUSDT"];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        // A WEEK OF MINUTES IN ONE ANSWER, the way the collector stores a stretch it catches up on;
+        // each closes at 50,000 plus its number, so a quote names the minute it came from.
+        var klines = Enumerable.Range(1, newest).Select(m =>
+        {
+            var open = origin.AddMinutes(m);
+            var price = 50_000m + m;
+            return new ForwardBars.Kline(open, price, price, price, price, 10m, open + ForwardBars.BarLength);
+        }).ToList();
+        var append = bars.Append(new ForwardFetchAttempt
+        {
+            Source = ForwardBars.Source,
+            Symbol = "BTCUSDT",
+            Url = "https://example.invalid/klines (this test wrote the rows; nothing was fetched)",
+            RequestedAt = newestClose,
+            ReceivedAt = newestClose.AddSeconds(1),
+            HttpStatus = 200
+        }, klines);
+        Assert.Equal(newest, append.Stored);
+
+        var quotes = new List<QuoteInfo>();
+        conn.QuoteChanged += quotes.Add;
+        var intent = new PlaceIntent("BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null);
+        var request = await gw.PlaceAsync(new AgentContext("ai"), "paper-gw-pages-1", intent);
+
+        var first = quotes[0];
+        log.WriteLine($"{request.State}; the first quote read was {first.Last} stamped {first.At:u} on a clock at {clock.At:u}");
+        Assert.Equal(ExecutionState.WORKING, request.State);
+        Assert.Equal(50_000m + newest, first.Last);
+        Assert.Equal(newestClose, first.At);
+        Assert.Empty(await conn.GetExecutionsAsync(PaperConnector.TheAccount, null));
     }
 }

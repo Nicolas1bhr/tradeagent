@@ -49,7 +49,7 @@ public class PaperSettlementTests(ITestOutputHelper log)
         }
     ], null);
 
-    static PaperConnector Paper(MemoryBarSource source, Func<DateTimeOffset> clock, string file,
+    static PaperConnector Paper(IPaperBarSource source, Func<DateTimeOffset> clock, string file,
         PaperFriction? friction = null) =>
         new(new PaperConnectorOptions
         {
@@ -212,5 +212,195 @@ public class PaperSettlementTests(ITestOutputHelper log)
             () => paper.CancelOrderAsync(order.ConnectorOrderId));
         log.WriteLine(refused.Message);
         Assert.Contains("FILLED", refused.Message, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- U-paper-settle: past one page
+
+    /// <summary>
+    /// A LEDGER THAT ANSWERS A PAGE AT A TIME, the way <c>ForwardBarStore.Since</c> answers ten
+    /// thousand bars — here three, so eight bars are more than two pages. It raises no
+    /// <see cref="IPaperBarSource.BarClosed"/>, so only a read can settle, and it writes down the
+    /// watermark every read was asked from.
+    /// </summary>
+    sealed class PagedBarSource(int pageSize) : IPaperBarSource
+    {
+        readonly List<KlineBar> _bars = [];
+
+        /// <summary>The watermark each read was asked from, in the order the reads came.</summary>
+        public List<DateTimeOffset> AskedFrom { get; } = [];
+
+        public int Reads => AskedFrom.Count;
+
+        /// <summary>The read, counted from one, that fails as an unreadable ledger does; zero for none.</summary>
+        public int FailOnRead { get; set; }
+
+        /// <summary>Run inside every read, after it is counted: how a test acts between two pages.</summary>
+        public Action<int>? DuringRead { get; set; }
+
+        public TimeSpan BarLength => ForwardBars.BarLength;
+
+        public event Action<ClosedBar>? BarClosed { add { } remove { } }
+
+        public void Add(params KlineBar[] bars)
+        {
+            _bars.AddRange(bars);
+            _bars.Sort((a, b) => a.OpenTime.CompareTo(b.OpenTime));
+        }
+
+        public Task<IReadOnlyList<KlineBar>> SinceAsync(string symbol, DateTimeOffset openTimeExclusive,
+            CancellationToken ct = default)
+        {
+            AskedFrom.Add(openTimeExclusive);
+            DuringRead?.Invoke(Reads);
+            if (Reads == FailOnRead)
+                throw new IOException($"read {Reads} of the ledger failed (injected by this test)");
+            IReadOnlyList<KlineBar> page =
+                [.. _bars.Where(b => b.OpenTime > openTimeExclusive).Take(pageSize)];
+            return Task.FromResult(page);
+        }
+    }
+
+    /// <summary>Bar <paramref name="n"/> of a numbered series: it opens <paramref name="n"/> minutes after T0.</summary>
+    static DateTimeOffset Open(int n) => T0.AddMinutes(n);
+
+    /// <summary>Eight bars a page of three cannot hold, each closing at 100 + its number so a quote names its bar.</summary>
+    static PagedBarSource EightBars()
+    {
+        var source = new PagedBarSource(pageSize: 3);
+        for (var n = 1; n <= 8; n++) source.Add(Bar(Open(n), 100m, 101m, 99m, 100m + n));
+        return source;
+    }
+
+    /// <summary>
+    /// A WORKING ORDER WHOSE BAR IS PAST THE FIRST PAGE FILLS ON THAT BAR, ONCE, IN THE READ THAT
+    /// BRINGS IT (<c>U-paper-settle</c>).
+    ///
+    /// <para>One settle used to make one read, and one read of a paged ledger is one page: a limit
+    /// first touched on bar 7 of eight, three bars a page, did not fill in the read the owner made —
+    /// it filled two reads later. Here one read settles every page, the fill is on bar 7 at the
+    /// limit and not on bar 8, which touches it too, and a second read writes nothing more.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_working_order_fills_once_on_its_own_bar_past_the_first_page_in_one_read()
+    {
+        var source = new PagedBarSource(pageSize: 3);
+        var file = NewFile();
+        await using var paper = Paper(source, () => T0.AddSeconds(30), file);
+        await paper.ConnectAsync();
+
+        // Placed while the ledger is still empty, so every bar below is one it has not had.
+        await paper.PlaceOrderAsync(new PlaceOrderCommand("p-limit", PaperConnector.TheAccount, "BTCUSDT",
+            OrderSide.Buy, OrderType.Limit, 1m, 95m, null, TimeInForce.Day, null));
+        for (var n = 1; n <= 6; n++) source.Add(Bar(Open(n), 100m, 101m, 99m, 100m));
+        source.Add(Bar(Open(7), 100m, 101m, 94m, 96m));     // the first bar to reach 95
+        source.Add(Bar(Open(8), 96m, 97m, 93m, 94m));       // reaches it too, a bar too late
+        var before = source.Reads;
+
+        var fill = Assert.Single(await paper.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        log.WriteLine($"one call made {source.Reads - before} read(s) and filled {fill.ClientOrderId} at {fill.Price}");
+        Assert.Equal("p-limit", fill.ClientOrderId);
+        Assert.Equal(95m, fill.Price);
+
+        using (var book = new PaperBook(file, PaperConnector.TheAccount, "USDT", 10_000m))
+            Assert.Equal(Open(7), Assert.Single(book.Fills(null)).BarOpenTime);
+
+        Assert.Single(await paper.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        Assert.Equal(ExecutionState.FILLED,
+            Assert.Single(await paper.GetOrdersAsync(PaperConnector.TheAccount, true, null)).State);
+    }
+
+    /// <summary>
+    /// A PAGED CATCH-UP READS FROM THE WATERMARK EACH PAGE ENDED AT UNTIL A READ BRINGS NOTHING PAST
+    /// IT — AND THEN STOPS.
+    ///
+    /// <para>Four reads for eight bars at three a page: from nothing, from bar 3, from bar 6, and
+    /// from bar 8, which brings nothing. The stop is the book's own watermark not moving, and never
+    /// a page that came back short — this connector cannot know a source's page size, and a stop at
+    /// the first page shorter than the forward ledger's would stop here after one read, at bar 3.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_paged_catch_up_reads_until_nothing_is_past_the_watermark_and_no_further()
+    {
+        var source = EightBars();
+        await using var paper = Paper(source, () => T0.AddSeconds(30), NewFile());
+        await paper.ConnectAsync();
+
+        var quote = await paper.GetQuoteAsync("BTCUSDT");
+        log.WriteLine($"{source.Reads} read(s), asked from {string.Join(", ", source.AskedFrom.Select(t => t.ToString("HH:mm")))}; "
+            + $"quote {quote?.Last} stamped {quote?.At:HH:mm}");
+
+        Assert.Equal([DateTimeOffset.MinValue, Open(3), Open(6), Open(8)], source.AskedFrom);
+        Assert.Equal(108m, quote!.Last);
+        Assert.Equal(Open(8) + ForwardBars.BarLength, quote.At);
+    }
+
+    /// <summary>
+    /// A BOOK THAT IS CAUGHT UP READS ITS SOURCE ONCE WHEN NOTHING IS NEW — the guard on the loop.
+    /// Every SDK call settles first, so this is the cost of every read the gateway makes: one query,
+    /// from the newest bar settled, and not a second one to find out that the first was empty.
+    /// </summary>
+    [Fact]
+    public async Task A_caught_up_book_reads_its_source_once_when_nothing_is_new()
+    {
+        var source = new PagedBarSource(pageSize: 3);
+        source.Add(Bar(Open(1), 100m, 101m, 99m, 101m), Bar(Open(2), 100m, 101m, 99m, 102m));
+        await using var paper = Paper(source, () => T0.AddSeconds(30), NewFile());
+        await paper.ConnectAsync();
+        Assert.Equal(102m, (await paper.GetQuoteAsync("BTCUSDT"))!.Last);
+        var before = source.Reads;
+
+        var again = await paper.GetQuoteAsync("BTCUSDT");
+        log.WriteLine($"caught up: {source.Reads - before} read(s), asked from {source.AskedFrom[^1]:HH:mm}");
+        Assert.Equal(1, source.Reads - before);
+        Assert.Equal(Open(2), source.AskedFrom[^1]);
+        Assert.Equal(102m, again!.Last);
+    }
+
+    /// <summary>
+    /// A LATER PAGE THAT THROWS PROPAGATES, AND THE PAGES BEFORE IT STAY SETTLED. Nothing turns an
+    /// unreadable ledger into a refusal or an empty answer — the gateway records UNKNOWN and
+    /// reconciles — and nothing is held across reads: every page is applied before the next is
+    /// asked for, so the read after the failure starts where the first page ended.
+    /// </summary>
+    [Fact]
+    public async Task A_later_page_that_throws_propagates_with_the_earlier_pages_settled()
+    {
+        var source = EightBars();
+        source.FailOnRead = 2;
+        await using var paper = Paper(source, () => T0.AddSeconds(30), NewFile());
+        await paper.ConnectAsync();
+
+        var thrown = await Assert.ThrowsAsync<IOException>(() => paper.GetQuoteAsync("BTCUSDT"));
+        log.WriteLine(thrown.Message);
+        Assert.Equal(2, source.Reads);
+
+        source.FailOnRead = 0;
+        var quote = await paper.GetQuoteAsync("BTCUSDT");
+        Assert.Equal(Open(3), source.AskedFrom[2]);         // resumed after the page that was settled
+        Assert.Equal(108m, quote!.Last);
+    }
+
+    /// <summary>
+    /// A CANCELLATION BETWEEN PAGES STOPS BEFORE THE NEXT READ, AND THE PAGES BEFORE IT STAY
+    /// SETTLED. The connector checks for cancellation before every read itself rather than trusting
+    /// a source to: this one never looks.
+    /// </summary>
+    [Fact]
+    public async Task A_cancellation_between_pages_stops_before_the_next_read_with_the_earlier_pages_settled()
+    {
+        using var cancel = new CancellationTokenSource();
+        var source = EightBars();
+        source.DuringRead = n => { if (n == 1) cancel.Cancel(); };
+        await using var paper = Paper(source, () => T0.AddSeconds(30), NewFile());
+        await paper.ConnectAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => paper.GetQuoteAsync("BTCUSDT", cancel.Token));
+        log.WriteLine($"cancelled after {source.Reads} read(s)");
+        Assert.Equal(1, source.Reads);
+
+        source.DuringRead = null;
+        var quote = await paper.GetQuoteAsync("BTCUSDT");
+        Assert.Equal(Open(3), source.AskedFrom[1]);
+        Assert.Equal(108m, quote!.Last);
     }
 }

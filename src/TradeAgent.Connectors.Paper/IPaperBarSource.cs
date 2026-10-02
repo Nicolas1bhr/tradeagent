@@ -19,6 +19,14 @@ public sealed record ClosedBar(string Symbol, KlineBar Bar);
 /// older watermark does exactly that — and the connector is built so that re-serving a bar writes no
 /// second fill. That guard is the fills table's key, not this argument.</para>
 ///
+/// <para><b>An answer may be a PAGE</b> (<c>U-paper-settle</c>): the oldest bars after the argument,
+/// as many as the source likes — the forward ledger answers ten thousand. The connector asks again
+/// from the newest bar it settled, in the same call, until an answer brings nothing past it, so a
+/// source never needs to know how far behind its caller is and the connector never needs to know a
+/// page's size; a bar served again brings nothing past the watermark and ends that loop. An empty
+/// answer is "nothing after the argument yet": the connector stops on it and its next call asks
+/// again.</para>
+///
 /// <para><see cref="BarClosed"/> is how a live source says a new bar has closed without being asked.
 /// It carries the bar so a subscriber that only wants to know "something moved" pays nothing, and
 /// the connector still settles from <see cref="SinceAsync"/> rather than from the event payload:
