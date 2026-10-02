@@ -15,7 +15,8 @@ and the honesty and deletes the passes.
 ## What stays
 
 - **Hierarchy.** A manager directs, gates and lands; it writes no product code. Every leg is a fresh Opus agent on its
-  own worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. At most two heavy legs at once.
+  own worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. At most two heavy legs at once — from 2026-10-02 the fleet's
+  allotment instead, with an orchestrator opening top-level manager seats above the legs (`docs/FLEET.md`).
 - **Honesty.** Every claim is "verified by running X → output" or "NOT VERIFIED". Banned: should work, looks correct,
   probably, I believe, minor, trivial, static-verified. `BUILD-STATUS.md` stays the record and keeps that rule.
 - **Safety.** The rules in `CLAUDE.md`. A change on the money path (gateway, connectors, witness, updater, kill switch,

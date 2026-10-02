@@ -10,6 +10,11 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
+**2026-10-02 evening — THE BUILD IS ON.** The owner made the session the orchestrator of the whole build, with top-level manager seats and Opus
+builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allotments and rungs: `fleet/BOARD.md`; each seat's state: `fleet/status/`;
+every CI run read: `fleet/ci-ledger.md` (`fleet/` = `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`, outside `/tmp`). Resume from those and
+git; the plan and the waves below are unchanged, and this block is rewritten at each wave's end.
+
 **Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this
 was again a planning session ("bolted down" first, builders only when the owner says build). `docs/briefs/` holds ONE brief, `U-observed-loop`;
 `docs/queue/` holds NINETEEN ready briefs (eleven of the edge factory, six of the organisation, the Windows CI fixer and the containment probe); no worktree; the observed-run home persists, its AI
