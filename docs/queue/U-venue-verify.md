@@ -1,6 +1,6 @@
 # U-venue-verify — the app checks an instrument against the venue's own published definition and serves it verified, with nobody editing a file
 **Arrow closed:** paper allocation → deployment → sizing, and the cost model's increment (`manager-prompt.md` § 5; `docs/EDGE-FACTORY.md` § 6.9). **Dispatch only
-after `U-cost-model` (schema 27) AND `U-tape-store` have landed** — rung 28 must never land before 27 (R09 § 7), and both edit the Market data card and
+after `U-cost-model` (schema 27) AND `U-tape-store` have landed** — this unit takes the next free rung at its rebase (expected 29), the ladder contiguous; `U-tape-store` and this both edit the Market data card and
 `AppHost.StartAsync`. **Today (SOURCE at `0f47db7`, R09/R11-checked):** BTCUSDT ships `Verified = false` (`Core/Data/VenueCatalog.cs:174-186`); the paper connector
 offers verified rows only (`PaperConnector.cs:203,215`) and reads the FILE catalogue once at construction (`:101`; options built at `Platforms/Connectors.cs:87-90`);
 the runner sizes nothing without a verified row (`ForwardRuns.cs:492-516`); the only route to `Verified = true` is a hand-edited `venues.json` (`VenueCatalog.cs:105`)
@@ -8,14 +8,15 @@ that no screen writes, and six texts tell someone to edit it (`USER-GUIDE.md:935
 `VenueCatalog.cs:150-156`) — a terminal-shaped instruction. That file is also agent-writable (`Containment.cs:43`). **Observable result:** choosing BTCUSDT makes the
 app fetch Binance's public instrument definition from the BUILT-IN origin, record the check, and serve BTCUSDT verified with the venue's numbers, URL and instant
 to research, the cost model, the paper connector and the runner; a failed or stale check, or a definition URL whose origin is not the built-in one, leaves it
-unverified and says why. **Schema 28.**
+unverified and says why. **The next free rung** (expected 29; `docs/ORGANISATION.md` § 15). `DROP TABLE instrument_check;` joins the roll-back lists at
+`VenueCatalogTests.cs:214-249` and `PaperEligibleVerdictTests.cs:259-275` (R18 V2).
 RUN 2026-10-02 from this Mac, no key: `GET https://data-api.binance.vision/api/v3/exchangeInfo?symbol=BTCUSDT` → 200 ~0.3 s; `tickSize 0.01`, `stepSize 0.00001
 minQty 0.00001`, `NOTIONAL minNotional 5`. The host is already in `SuiteReachesNoVendorTests` (`ForwardHost`, `:66`). Never call a real host from a test.
 Read first: `CLAUDE.md`; `VenueCatalog.cs` (whole); `Core/Db/VenueStore.cs` (`Sync` :71-115, called at `TradingGateway.cs:1563`); `PaperConnector.cs:90-110,181-215,
 320-330`; `Platforms/Connectors.cs:80-95`; `ForwardRuns.cs:492-516`; `Backtests.cs:341-396`; `ForwardBarCollector.cs` (leash `:46`, body bound `:52`, a row per
 attempt `:243-257`); `App/SettingsView.cs:178-221`; `USER-GUIDE.md:935-963`; `FakeArchive.cs`; the `U-key-host-pin` origin rule as landed.
 Items, one commit each, one-sentence messages:
-1. Schema 28: `instrument_check` (id, venue_id, symbol, url, origin, requested_at, received_at, http_status, body_sha256, tick_size, quantity_increment,
+1. The rung: `instrument_check` (id, venue_id, symbol, url, origin, requested_at, received_at, http_status, body_sha256, tick_size, quantity_increment,
    min_quantity, min_notional, outcome ∈ {verified, failed, refused-origin}, note) — append-only, a row per attempt, written only by the app.
 2. `InstrumentVerifier` (Provisioning): the definition URL shape is a BUILT-IN venue fact; an override whose origin differs is recorded `refused-origin` and
    never verifies (the `U-key-host-pin` rule). It runs when the owner picks or changes the pair, at app start for the configured pair, and on "Check now";

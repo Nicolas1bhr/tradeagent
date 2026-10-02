@@ -7059,3 +7059,35 @@ a probe with a real key); anything on Windows. CI for this commit: pending at th
 _due_wake_is_taken_without_a_press` failed after 25 s with "the restart resumed the loop and left the AI it needs stopped" (`ResumeOnStartTests.cs:62,79`),
 Unit 1 failed / 1210 passed, ubuntu and macos green; `0f47db7`, the same `src/` and `tests/`, green on all four (36917611936). An intermittent hosted-Windows
 red outside `Timing`: recorded red; a fresh fixer is owed (resume block item 6).
+
+## 2026-10-02 — the organisation: the owner's hierarchical direction turned into `docs/ORGANISATION.md`, seven research and review legs, six ready briefs; docs only
+
+**What happened.** Second session of the day. The owner, on hearing that the edge-factory plan left the agents' way of working for later: "agents shouldn't
+choose anything there should be multiple top level managers managing teams that have a head manager that makes decisions and executing agents that do the
+work smartly. (way more advanced that that) it should be a whole organisation with sub org's and so on"; then, asked: one chief plus "one invisible chief
+watcher that secretly reports to me if he's not delivering or doing mistakes"; managers grow the chart; "be prepared for all, for now just plans"; the AI
+proposes the risk ceiling, he confirms. Earlier answers the same session: horizon indefinite; resident in Belgium; prop firms one small channel; paper runs
+"as many as we know won't melt the quota". NO product code, test or build changed; the last gate figure stands (2310 passed at `c56540e`). Legs (fresh Opus,
+read-only, one report each): R12 code seams, R13 agent-organisation evidence, R14 multi-manager platforms (SEC Form ADV filings), R15 control plane, seats and
+quota, R16 Belgium, R17 adversarial review of the design (42 findings, 9 HIGH), R18 verification of the briefs against `main`; the design was rewritten once
+(v2) from R17 and R18. Landed: `docs/ORGANISATION.md` v2; `docs/queue/` + `U-price-rows`, `U-org-ledger`, `U-org-principals`, `U-org-rights`,
+`U-org-envelopes`, `U-org-wakes` (READY, ≤ 40 lines by `wc -l`), and corrections to `U-venue-verify` (next free rung; its undo in the roll-back tests),
+`U-cost-model` (the roll-back-list trap R18 C1), `U-decision-port` (ordering after the org substrate); `docs/EDGE-FACTORY.md` (header, §§ 2 and 4.8 Belgium,
+§ 4.6 two-step volatility-scaled cuts, § 4.7 the organisation, § 5, § 8 tax and organisation cost, § 9 waves moved to ORGANISATION § 15, § 10 answers, § 11);
+`docs/PRINCIPLES.md` ("Models own the organisation" became "The organisation"); `docs/COUNCIL.md`, `CLAUDE.md`, `manager-prompt.md` pointers; the resume
+block rewritten; the research index (R12–R18) and an erratum at R12's head.
+
+**RUN, 2026-10-02:** `git fetch` → `main` = `origin/main` = `1275aff`, clean. `gh run view 36956107010` (CI for `1275aff`): ubuntu and macos green; windows-latest
+RED — `ResumeOnStartTests.A_restart_with_the_ai_working_starts_its_runtime_and_the_next_due_wake_is_taken_without_a_press` failed [25 s], Unit 1 failed /
+1210 passed, Integration 609 passed / 1 skipped, Fault 394 passed; package skipped — the third red in four runs on unchanged `src/` and `tests/`, so a defect,
+not a rare flake (resume item 6: a fresh fixer before W1's first gate). R17 ran `ls -d ~/.codex/auth.json ~/.codex/sessions` on this Mac → both exist: the
+owner's ChatGPT login and session store every unconfined CLI seat can read.
+
+**SOURCE, manager-read at `1275aff` (reading, NOT runtime):** `ListPrices.ReadOn = "2026-09-06"` with no GPT-6 rows, an unpriced model charged at the dearest
+row (`RuntimeManifest.cs:963-971`); `CouncilRoles.MayPlaceOrders` = `role == "operations"` (`Council.cs:63`); `Versioning.DatabaseSchemaVersion = 26`
+(`Versioning.cs:274`); `AiAttemptStore.Begin` reads totals and inserts in one `db.Write` (`AiAttemptStore.cs:256-281`); the daily cap `AiDailyCostCap = 5m`.
+
+**NOT VERIFIED:** every DOC or SECONDARY claim in R13–R16 beyond its label; the plan-capacity figures (the owner's ChatGPT tier is unrecorded; R15 § 3d is
+credit arithmetic); local decision-model speed on the owner's laptop; whether crypto perpetuals are open to a Belgian retail client (the FSMA texts and
+Kraken's Belgian page disagree, R16); every "red at base" in the new briefs (R18 traced them by reading; nothing was run); anything on Windows.
+CI for this commit: pending at the close — the next manager records it.

@@ -17,6 +17,10 @@ direction): the tape, perception, features, strategy language v2, the evidence c
 floor, with the protections each one touches and how they are kept. Ready briefs wait in `docs/queue/`; the research behind it,
 dated and sourced, is in `docs/research/2026-10-02/`.
 
+**`docs/ORGANISATION.md` is the agent organisation** (2026-10-02, the owner's hierarchical direction: one chief, top-level managers heading
+divisions, team heads who decide, executors who choose how and never what, an audit line, and an invisible watcher that reports only to him). It sets
+how the product's agents are organised, decide, work and improve, and the second build lane; a manager's authority is over work, and it outranks no protection.
+
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
 

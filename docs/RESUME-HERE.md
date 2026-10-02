@@ -10,42 +10,44 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session state at 2026-10-02, the session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed this session — the
-owner's instruction was "do not start the actual code implementation just yet … have everything bolted down to do so". `docs/briefs/` holds ONE brief,
-`U-observed-loop` (attempt 3 now waits for phase 0); `docs/queue/` holds ELEVEN ready briefs; no worktree. The observed-run home persists, its AI paused.** Restart:
+**Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this
+was again a planning session ("bolted down" first, builders only when the owner says build). `docs/briefs/` holds ONE brief, `U-observed-loop`;
+`docs/queue/` holds SEVENTEEN ready briefs (the eleven of the edge factory and six of the organisation); no worktree; the observed-run home persists, its AI
+paused.** What this session added: the owner's organisation direction and answers, `docs/ORGANISATION.md`, research R12–R18, the principles amended. Restart:
 
-1. **Read `docs/EDGE-FACTORY.md` in full** — the owner's 2026-10-02 direction ("way too stiff", "nothing … that makes it a moat"): the end state, where the money
-   can come from, the moat, seven planes on the existing kernel, every protection it touches and how it is kept, the phased units, milestones M0–M6, owner
-   decisions. Then `docs/PRINCIPLES.md` (amended 2026-10-02), `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `manager-prompt.md` §§ 1, 6, 7, and the eleven briefs in
-   `docs/queue/`. The research behind it, dated and sourced: `docs/research/2026-10-02/` (R01 § 0 lists the six paper-line blockers phase 0 fixes).
-2. **Phase 0 and the tape — TWO heavy builders at a time** (`docs/HOW-WE-BUILD.md`), plus `R-containment` (the Windows spike, factory plan § 9.3) as a light
-   third with no file overlap. Waves, from the verification leg's conflict matrix (`docs/research/2026-10-02/R09` § 8–9 and R11): **W1** `U-key-host-pin` ∥
-   `U-cost-model` (schema 27) · **W2** `U-runner-forward` ∥ `U-evidence-identity` · **W3** `U-timeframe-a` ∥ `U-tape-store` (its own `state/tape.db`, ladder v1)
-   · **W4** `U-venue-verify` (schema 28 — NEVER before 27) ∥ `U-paper-friction`, venue-verify landed first · **W4b** `U-timeframe-b` (the runner on declared bars, protection still
-   per minute) · then **M0** · **W5** `U-tape-read` ∥ `U-decision-port` (tape.db rung 2), tape-read landed first. Dispatch = re-check the brief's pointers against `main`, `git mv docs/queue/<unit>.md docs/briefs/`, a worktree under
-   `~/Projects/ai-trading-software-for-mihael-worktrees/`. `U-key-host-pin` is a credential fix found by reading (R10 #6, manager-checked): an agent can
-   point the harness's `BaseUrl` elsewhere through `runtimes.json`, and the next start sends the re-pasted key there — dispatch it first.
-3. **M0 — the observed loop, attempt 3, ONLY after phase 0 lands** (`docs/briefs/U-observed-loop.md`, "For attempt 3"; verify `U-resume-agent` and
-   `U-vendor-limit` in the running app first). Before phase 0 every BTCUSDT verdict comes back no-trade and still costs one of three, and a minute-scale
-   strategy pays most of its loss in fees (attempt 2: 321 trades a quarter, fees 62% of the loss) — `U-timeframe-a`/`-b` give the agents hourly and daily bars.
-4. **Then brief the CARD units by dependency** (`docs/EDGE-FACTORY.md` § 9): the tape's archive, events, chain and integrity units; features, language v2a,
-   the universe construct, archive depth and per-deployment paper books (the first target: positioning features on the six tape symbols); trial returns,
-   referee v2 (shown-versus-enforced gates and the capped INCONCLUSIVE paper path), canaries, the experiments op, forward standing, the incubator, mission
-   v2; perception after that. Phase 5 beyond `R-containment` and `U-worker-identity` is re-planned from evidence (keys stay memory-only until containment).
-5. **Owner-only — ask NOW (they change what phase 0 and the first campaign mean; `docs/EDGE-FACTORY.md` § 10):** capital and horizon (under the default
-   thresholds the system does not pay for itself in year one at modest capital — § 8); country of residence and intended spot and perpetual venues (Binance
-   has no MiCA authorisation; Kraken Futures EU ranks first for perpetuals, OKX Europe second; Revolut X spot); the prop-firm path and its written answer on
-   AI-authored code (CME end-of-day momentum is the one top edge today's language can express); how many paper runs may incubate at once; the two risk
-   questions in plain words. Later, per phase: the perception provider with its terms, the AI research budget and runtime, keeping the laptop awake while
-   recording, anchoring (default on), a paid-data trial budget, ever serving anyone else, batching releases until containment. Still from before:
-   full-screen control approval for the wheel scroll.
+1. **Read `docs/ORGANISATION.md` and `docs/EDGE-FACTORY.md` in full** — the organisation (one chief, top-level managers heading divisions, team heads who
+   decide, executors who choose how and never what, an audit line, an invisible watcher reporting only to the owner; the chart as app data; decisions with
+   scored forecasts; budget by judgement until measurement can; two lanes) and the factory it works (tape, perception, features, language, evidence, selection,
+   capital; Belgium in § 4.8). Then `docs/PRINCIPLES.md` (amended twice on 2026-10-02), `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `manager-prompt.md` §§ 1, 6, 7,
+   and the seventeen briefs in `docs/queue/`. Research: `docs/research/2026-10-02/` (its README indexes R01–R18).
+2. **Two lanes, two heavy builders and a light third — `docs/ORGANISATION.md` § 15's waves table is the only copy.** In short: W1 `U-key-host-pin` ∥
+   `U-cost-model` (27) · light `R-containment` (the Windows spike, factory plan § 9.3), `U-price-rows` (serialise the three builders' gates on this Mac); W2–W4b
+   finish lane A with `U-org-ledger` (inert, next free rung) and the tape's light units beside it; then M0; then lane B (`U-org-principals`, `U-org-rights`,
+   `U-org-envelopes`, `U-org-wakes`, …) paired with lane A's CARDs; M-org0 after W7; the chief at W11; M-org1. Rungs land contiguous, in landing order, each
+   rung's undo lines appended to the two roll-back tests (R18 § 2). Dispatch = re-check the brief's pointers against `main`, `git mv docs/queue/<unit>.md
+   docs/briefs/`, a worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. `U-key-host-pin` first: an agent can redirect the owner's pasted
+   key through `runtimes.json` (R10 #6, manager-checked).
+3. **M0 — the observed loop, attempt 3, after W4b — lane A only** (factory-plan Law 10; `docs/briefs/U-observed-loop.md`, "For attempt 3"; verify
+   `U-resume-agent` and `U-vendor-limit` in the running app first), the legacy pair on the owner's plan; GPT-6 seats need `U-price-rows`. **M-org0** after W7
+   (the legacy pair on the new substrate, no regression); **M-org1** after W11 (the observed organisation; claim ceiling "mechanics on unconfined seats").
+4. **Then brief the CARDs by dependency:** lane B per `docs/ORGANISATION.md` § 15 (orders, verbs, watcher, surface, chief, scorecards, parallel turns, router,
+   seat shadowing, templates, the Responses-API harness, the contained execution environment after `R-containment`); lane A per `docs/EDGE-FACTORY.md` § 9
+   (tape archive, events, chain, integrity; features, language v2a, universe, archive depth, paper books; trial returns, referee v2, canaries, experiments op,
+   forward standing, incubator; `U-mission-v2`, now written for the organisation).
+5. **Owner-only — ask NOW (`docs/ORGANISATION.md` § 16):** his ChatGPT plan tier (Settings › Usage) and whether other Codex use shares it; whether the manager
+   may prepare OpenAI's "Sign in with ChatGPT" interest form for him to send; an Anthropic API key for the watcher (optional, another vendor than the chief);
+   confirming once that the app may halve a live allocation at the first cut step; Belgium — written answers from Kraken and OKX on perpetuals for a Belgian
+   retail client, whether elective professional status is wanted, an accountant's view (10% vs 33%). ANSWERED 2026-10-02 (do not re-ask): horizon
+   indefinite; Belgium; prop firms yes as one small channel; paper runs "as many as we know won't melt the quota"; the AI proposes the risk ceiling and he
+   confirms; one chief + an invisible watcher; managers grow the chart; plans now, prepared for keys and local models.
 6. **Open, not briefed (judge before briefing):** the first paint waits for the CLI's version probe on a resuming start (`U-resume-agent`'s kept deviation);
    paper is not offered at onboarding; a paused AI after a restart reads "stopped — the AI has not been started"; seven daily reports written at a fresh home's
    first start for days before it existed; the `CouncilLoopTests.A_file_dropped_between_turns…` ubuntu flake (one sighting);
    `SweepRequestIdTests.A_leg_refused_before_the_wire_…` has the 5000 ms room item 1 had; the Doctor's "not checked" sentence for an install with no recorded
    hash; the same-user pipe gap (`U-contain-2`). ("Market data reads degraded on the paper connector" is item 3 of `U-runner-forward`.) **Owed a fresh
    fixer:** `ResumeOnStartTests.A_restart_with_the_ai_working_starts_its_runtime_…` (`U-resume-agent`'s own test) went red on windows-latest at `c56540e` and
-   `dbc7bf2` and green at `0f47db7` with identical code — `BUILD-STATUS.md` 2026-10-02 has the runs; a fixer brief on top of `main`, per the checklist's step 6.
+   `dbc7bf2`, green at `0f47db7`, and RED again at `1275aff` (docs only; run 36956107010) — three reds in four runs on unchanged code, so a defect, not a rare
+   flake; `BUILD-STATUS.md` 2026-10-02 has the runs; a fixer brief on top of `main`, per the checklist's step 6, before W1's first gate.
 7. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; up to three
    heavy legs by the owner's allowance; ONE manager gate at a time (`gate.sh`: `nohup` build + three suites to files, a waiter on DONE, ~13 min); a gate that
    spans a sleep or a stoppage is contaminated — re-run each suite alone and quote both; a test-name diff from git objects with both set sizes; the scan as a
@@ -56,7 +58,8 @@ owner's instruction was "do not start the actual code implementation just yet �
 8. **Machine facts:** a session's web-search budget (200 searches) is SHARED by every leg — seven research legs spent it in ~3 h on 2026-10-02 and later
    legs fell back to direct fetches of official URLs; the OS empties untouched files under `$TMPDIR` and `/private/tmp` after days (the scratchpad is not a checkpoint; a dev home there is
    not durable — lost scratch notes are recoverable from the session transcript); the app's day (cap, renewal) turns at LOCAL midnight; a wifi drop or a
-   rate-limit stoppage stalls every leg with "no progress for 600s" — one `SendMessage` per live leg resumes it; a builder 300–550k tokens, 35–75 min.
+   rate-limit stoppage stalls every leg with "no progress for 600s" — one `SendMessage` per live leg resumes it; a builder 300–550k tokens, 35–75 min; a
+   research leg 280–440k tokens, 23–31 min (2026-10-02, second session).
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 

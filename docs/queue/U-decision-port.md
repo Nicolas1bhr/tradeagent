@@ -1,7 +1,8 @@
 # U-decision-port — bounded decision models (Jev) behind one replaceable port, every call reserved, recorded, priced and pinned
 **Arrow closed:** perception (`docs/EDGE-FACTORY.md` § 4.2, phase 4) — the substrate lenses and the annotator stand on; nothing here annotates automatically,
 no agent can call it, and the owner's Perception card with its Test press is the follow-up `U-decision-card`. **Depends on `U-tape-store`** (rung 2 of `tape.db`,
-written THROUGH `TapeStore`) **and `U-key-host-pin`** (the key-to-origin holder). **Today:** nothing reaches a decision model (`git grep -i "systemone|typesafe|
+written THROUGH `TapeStore`) **and `U-key-host-pin`**; **lands after `U-org-principals`/`U-org-envelopes`**, which key `Fence`, `Refuse`, `ComposeRecovery` and the loop's
+counters by exact position and keep `RoleCap` for a role that is no position — at dispatch only (e)'s day-counter half stays red (R18 D1). **Today:** nothing reaches a decision model (`git grep -i "systemone|typesafe|
 openrouter" src` is empty); Core holds no HTTP client. **Observable result (connected mechanics, by test):** a call to the pinned instrument is reserved inside the
 owner's daily AI cap and a perception budget before it is sent, recorded with what was asked and answered, settled with the billed or estimated cost, and
 refused in words for a different answering model, an over-limit schema, an exhausted budget or a key bound to another origin — and no existing role, report or
@@ -21,8 +22,7 @@ Items, one commit each, one-sentence messages:
    limits and doc URL; hosts only from built-ins (any override may change prices or limits, never an origin); its own key holder under the origin rule.
 2. Spend: `Begin` with `AiAdmissionRule { Role = "perception", Cap = the owner's daily AI cap, RoleCap = new setting PerceptionDailyBudget (default 1 USD) }`,
    From/To/ResumesAt from the owner's local day (move `LocalDay`/`Midnight` into one shared helper); register the launch in `LiveAttempts.Shared` so
-   `LoseOpen` does not declare it LOST; settle with the answered model id and the billed cost when the host reports it, else the estimate; a lost answer keeps
-   its reservation.
+   `LoseOpen` does not declare it LOST; settle with the answered model id and the billed cost when the host reports it, else the estimate; a lost answer keeps its reservation.
 3. `perception` is a meter role, never scheduled and never a council role. Fix every reader that would say otherwise: `Refuse` names the perception budget, not
    the Operations Director; `CouncilRelay.Fence` QUARANTINES an attempt whose role is not a council role instead of reading it as Operations; `ComposeRecovery`
    labels it perception; the day counters and `AiTurnsToday` count it apart from council turns; a settled perception row never flips the council cost card to

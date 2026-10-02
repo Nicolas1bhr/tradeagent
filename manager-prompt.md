@@ -1,5 +1,9 @@
 # TradeAgent — final direction for the build fleet
 
+> **2026-10-02, later:** the agent organisation is `docs/ORGANISATION.md` (the owner's hierarchical direction, his answers and research R12–R17); § 1's
+> "capable models choose useful work … delegate" is read through it — managers decide, executors execute, the chart is app data — and the build runs
+> in two lanes, its § 15.
+>
 > **2026-10-02:** future sequencing now lives in `docs/EDGE-FACTORY.md` (the owner's "too stiff, no moat" direction; its
 > phase 0 fixes the paper line before the observed run's attempt 3). This handoff's mandate (§ 1), proof table (§ 6) and build
 > discipline (§ 7) stand; its § 5 slice is done.
@@ -33,7 +37,7 @@ On arrival, confirm it (`ls docs/PRINCIPLES.md`, `head -9 docs/COUNCIL.md`). If 
 
 ## 3. Canonical principles
 
-`docs/PRINCIPLES.md`, read in full; it is not summarised here so that there is one copy. Its spine: the factory floor belongs to the models, the vault door belongs to deterministic code; three zones — creative, evidence, capital and external effects — with different defaults; models own the organisation; delegation is one reusable capability that cannot manufacture authority or money; useful autonomy needs code, tools and durable memory; evidence supports iteration and governs promotion; the boundary remains enforceable; and the loop with its priority rule — close an arrow, remove a demonstrated blocker, protect a material boundary, prefer a local extension of a working primitive over a new subsystem.
+`docs/PRINCIPLES.md`, read in full; it is not summarised here so that there is one copy. Its spine: the factory floor belongs to the models, the vault door belongs to deterministic code; three zones — creative, evidence, capital and external effects — with different defaults; the organisation (amended 2026-10-02: a chief, top-level managers, deciding team heads, executors who choose how and never what, an audit line, an invisible watcher — `docs/ORGANISATION.md`); delegation is one reusable capability that cannot manufacture authority or money; useful autonomy needs code, tools and durable memory; evidence supports iteration and governs promotion; the boundary remains enforceable; and the loop with its priority rule — close an arrow, remove a demonstrated blocker, protect a material boundary, prefer a local extension of a working primitive over a new subsystem.
 
 ## 4. Inspect the reachable loop before choosing units
 

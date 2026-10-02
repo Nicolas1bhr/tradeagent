@@ -4,7 +4,7 @@
 (`Core/Strategy/Backtest.cs:76`, `Referee.cs:218`); every BTCUSDT size rounds to nothing or costs more than the capital (`Backtest.cs:487-495,401`) ⇒ every verdict
 is no-trade and still burns one of three (`Referee.cs:137-143,186`; `Trading.cs:503`); fixtures priced 96–105 hide it (`PaperEligibleVerdictTests.cs:55-60`).
 **Observable result:** a BTCUSDT program sized `capital_fraction 0.5` trades on the holdout, net of the venue's published fee; the submitter still never
-chooses the judge's friction; a dataset with no recorded venue keeps today's behaviour, labelled. **Schema 27** (U-venue-verify's 28 lands AFTER this).
+chooses the judge's friction; a dataset with no recorded venue keeps today's behaviour, labelled. **Schema 27** (every later rung lands after this).
 Fact: Binance spot regular tier 0.100% maker / 0.100% taker (R04 § 7, DOC 2026-10-02). The research-run default is NOT in this unit (`U-paper-friction`).
 Read first: `docs/EDGE-FACTORY.md` § 4.5; `CLAUDE.md`; `Referee.cs` (whole); `Backtest.cs:31-167,380-500`; `CampaignStore.cs:29-79` (DO NOT edit the V1 / PaperV1
 texts at `:38,:78` — their sha is checked at `Referee.cs:201-206,261-266`), `:368-398` (`Renew`), `:516-887`; `PromotionStore.cs:141-153` (`executionModel` is
@@ -20,7 +20,8 @@ Items, one commit each, one-sentence messages:
    fixture-backed test stands). A recorded venue whose instrument row is unverified refuses the press in words that name no missing feature: "BTCUSDT's
    quantity step is not confirmed against the venue's own definition; a judge that guessed it would judge a different strategy". LEGACY campaigns: none
    ever charged ⇒ pinned at the first verdict request inside the charge transaction, refused BEFORE charging if unverified; any charged ⇒ `Frictionless`,
-   recorded as "legacy frictionless judge", old verdicts untouched. `Referee.Verdict` with no caller model uses the pin.
+   recorded as "legacy frictionless judge", old verdicts untouched. `Referee.Verdict` with no caller model uses the pin. The two `ALTER TABLE strategy_campaign
+   DROP COLUMN …` lines join the roll-back lists at `VenueCatalogTests.cs:214-249` and `PaperEligibleVerdictTests.cs:259-275`, names kept (R18 C1: no add-if-missing).
 3. A research run and the referee refuse BEFORE charging a program whose `instrument` differs from the dataset's `InstrumentSymbol` (the key the increment
    is looked up by, `Backtests.cs:351-356`) when the dataset records one; naming both. `VenueIncrementTests.The_increment_is_looked_up_by_the_datasets
    _instrument_and_not_the_programs` is REWRITTEN IN PLACE, name kept (program and dataset agree; the increment comes from the dataset's row); the mismatch

@@ -7,6 +7,11 @@
 > proposals to reassess against the principles, not an automatic backlog. Memory, accountability and delegation remain
 > product needs; the implementations prescribed here for them are not commitments. Everything below keeps its date.
 >
+> **The organisation, 2026-10-02.** The owner's direction of that day revives this file's 2026-09-07 direction ("a council of very smart top level
+> manager agents … that run their own teams on cheaper models") as a recursive organisation with one chief and an invisible watcher: `docs/ORGANISATION.md`.
+> The ten rules, the context etiquette, the memory tiers, the sealed boundary assessments and round 4's access contract carry into it; the two directors
+> become the first two division heads under the chief, and `MayPlaceOrders` stays with `operations`.
+>
 > **Rule 8 read precisely, 2026-10-02.** A recorded perception measurement — an answer from a pinned decision model, recorded
 > by the app with its provenance and bound into the version's evidence like any other input — is data, not inference on the
 > signal path, on three conditions: evaluation is triggered only by a raw observation plus a declared fixed delay, never by a

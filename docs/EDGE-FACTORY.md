@@ -9,6 +9,10 @@ treatment and scraping". `docs/PRINCIPLES.md` stays the product definition; ever
 stands, and § 6 names each one this design touches. The research behind it — eleven legs, every external claim dated and
 sourced — is in `docs/research/2026-10-02/`; `R01`…`R11` below cite those files.
 
+**Later the same day the owner set the organisation that works this factory:** a hierarchy — one chief, top-level managers heading divisions, teams whose
+head manager decides, executors who do the work, and an invisible watcher reporting only to him. It is `docs/ORGANISATION.md` (research R12–R17). It replaces
+§ 4.7's "models own the organisation", re-sequences § 9 into two lanes, and with his answers to § 10 (Belgium among them, R16) changes §§ 2, 4.6, 4.8 and 8.
+
 ## 0. The diagnosis
 
 The kernel is rare and is kept: a gateway that round-trips client ids and reconciles UNKNOWN, an app-owned referee with a
@@ -40,7 +44,7 @@ budgets, risk and authority, confirms live capital with two presses, and never s
 **What runs inside, continuously:**
 
 ```text
- sources ─►┌──────────── CREATIVE ZONE — models own the organisation ──────────────┐
+ sources ─►┌──────────── CREATIVE ZONE — the organisation (docs/ORGANISATION.md) ──────────────┐
  (data)    │ agents read the tape and the genome bank, ask questions, propose      │
            │ features, strategies, lenses, adapters and tools, delegate, retire    │
            └───────┬──────────────────── proposals ─────────────────────▲──────────┘
@@ -79,7 +83,8 @@ From R03 §4, R04 §0, R06 §3, R07 and R10; INFERENCE where not cited.
   funding extremes, open-interest shocks, long/short and taker skew — on a six-symbol perpetual universe, traded long/flat on
   spot until shorts are decided (R03 #3; R10 #3). Free data, a deep exchange archive (metrics 2020-09→, funding 2019→, with a
   2026-03-18 backfill and a 2026-06-25 timestamp shift to handle), no new venue, no perception. Liquidations have no complete
-  free history and are recorded forward.
+  free history and are recorded forward. For the owner, a Belgian retail resident, spot is the venue on the texts: two FSMA regulations close crypto
+  perpetuals to retail clients (R16 § 0), so a short side needs elective professional status or a venue's written answer to the contrary.
 - **Next, as decisions and sources arrive:** on-chain incidents and depegs (governance tokens fall ~27% in 24 h, most of it
   after the public announcement, R03 #1), unlocks by recipient type (#2), delisting-risk flags after the first minutes (#5) —
   all three need a short side (§10.1) or paid or account-gated data; funding carry only when it is rich (~3% annualised on
@@ -230,7 +235,10 @@ Each plane extends a working primitive (R01 §B); none replaces the kernel.
 - **Live proposals are deterministic**: a posterior quantile with hysteresis, raised only on a material change, total capped at
   2/(λ+1) of Kelly from the owner's drawdown answer; each confirmed with two presses, bound to a digest of exactly what runs.
 - **Retirement:** fast alarms — realised cost above 1.5× modelled, behaviour outside the backtest's 99% band, drawdown past the
-  posterior's 99th percentile, a volatility-regime change — or CUSUM demote to paper. Nothing is deleted.
+  posterior's 99th percentile, a volatility-regime change — or CUSUM demote to paper. Nothing is deleted. Drawdown cuts come in two steps scaled to each
+  version's own backtest volatility σ_a (R14 § 4.2, adopted 2026-10-02): at max(1.0 σ_a, the backtest's 95th-percentile drawdown) a paper version gets no
+  widening and no new slot for its family, and a live one is halved as app-owned risk reduction if the owner confirms that reading (`docs/ORGANISATION.md`
+  § 16.4); at max(1.5 σ_a, the 99th-percentile alarm) it retires to watch. Absolute 5%/7.5% levels would retire 98% of Sharpe-1 crypto strategies in a year at 20% volatility (R14 § 4.2).
 - **The genome bank:** the minimal record per stage of R04 §8(b), measurements and claims in separate tables; fingerprints and
   near-duplicate detection charge a family's trials so renaming never resets them; family priors for E6; agents read it through
   a read-only `experiments` operation.
@@ -239,23 +247,30 @@ Each plane extends a working primitive (R01 §B); none replaces the kernel.
 - The 2026-09-27 factory plan (`TRADEAGENT_AUTONOMOUS_FACTORY_PLAN_2026-09-27.md`, the owner's consulting folder) stays the
   design for the agent substrate. Brief now only `R-containment` (the Windows spike, a light leg with no file overlap) and
   `U-worker-identity`; re-plan the rest after M0, the runtime profiles, the containment record and worker identity (its § 25.5).
-- **Models own the organisation.** Agents create, merge and retire their own workers through delegation; the mission text
-  suggests starting points (positioning, incidents, unlocks, listings, CME intraday on a prop path, carry). Code sets only
-  resource envelopes, from measured cost and E5 standings; yield-based budgets wait until a family has ≥ 90 days of forward
-  record (R10 #10).
+- **The organisation is `docs/ORGANISATION.md`** (the owner's direction of 2026-10-02, superseding "models own the organisation"):
+  one chief, divisions per information source or capability, a team per strategy family with a deciding head, executors who choose
+  how and never what, an audit line, and an invisible watcher reporting to the owner; the chart, orders and decision records are app
+  data. Code sets envelopes from measured cost and contribution; yield-based budgets still wait for ≥ 90 days of forward record (R10 #10).
 - **Admission ladder** for agent-built adapters, features and tools: scratch → registered → conformance-tested (point-in-time
   vectors; a seeded look-ahead adapter must fail) → evidence-eligible → quarantined on a health signal. Maturity is never
   authority (R05 row 2).
 
 ### 4.8 Capital
 - Gateway rules 1–4, risk and loss gates, operator controls and two-press: unchanged.
-- Venues for an EU resident (R08, R03 §1; owner decision §10.1): perpetuals are MiFID derivatives in the EU. **Kraken Futures
+- Venues for an EU resident (R08, R03 §1; owner decision §10.1): perpetuals are MiFID derivatives in the EU. **Only if the owner becomes an elective
+  professional client (R16, the next bullet):** **Kraken Futures
   (Kraken EU, CySEC)** ranks first — client ids up to 100 characters come back on status, fills and history; history is
   documented as complete; keys can trade with withdrawal set to "No Access" — all pending a probe with a real key (its demo
   redirected from this Mac). OKX Europe is the alternate (unfilled cancels vanish after 2 hours, so rule 2 is bounded).
   Revolut X for spot (MiCA). Binance (no MiCA authorisation; unfilled cancels vanish after 72 h) and Hyperliquid (unlicensed;
   history bounded by count) stay data sources unless the owner decides otherwise; Bybit is excluded. ATAS prop accounts stay
   ask-me-first until order history is provable.
+- **The owner is a Belgian retail resident (2026-10-02; R16):** on the texts, the FSMA's 2014 and 2016 regulations close crypto perpetuals to him at Kraken
+  Futures EU and OKX Europe, although Kraken's Belgian page still markets them — only a venue's or the FSMA's written answer settles that; elective
+  professional status is the lawful door. Spot is open: Revolut, Kraken, Bitvavo, OKX Europe, Coinbase and Bitstamp are passported into Belgium on ESMA's
+  register (30 Sep 2026); Binance, MEXC and Hyperliquid are not, and stay data sources. CME futures through a prop firm are open on eligibility (Zenit,
+  Brussels; Topstep), each needing a written yes on AI-authored code. Polymarket is on the Belgian Gaming Commission's blacklist: not a venue, and not read
+  if reading means using it.
 - Connector capabilities gain a **retention watermark** — the provable history bound per venue — as the ATAS connector already
   carries; a capability certificate produced by a probe precedes automation.
 - Paper and live fills are typed apart; a paper result becomes a fresh live proposal, never a copied state (R05 row 1).
@@ -272,7 +287,7 @@ Each plane extends a working primitive (R01 §B); none replaces the kernel.
 | strategy version | forward net growth and marginal contribution to the ensemble | paper slots, live proposals, retirement |
 | family | pooled forward record (ρ-adjusted) | prior for E6; trial budget |
 | lens / feature / source | information value of what it produces, per dollar | keep, drop, ask the owner for a paid trial |
-| worker, model choice | forward-validated edge per AI dollar, once ≥ 90 days exist | resource envelopes only; agents organise |
+| position, unit, seat (model) | calibration of recorded forecasts from day one; forward-validated marginal contribution per AI dollar once ≥ 90 days exist | envelopes, replacement, seat shadowing, unit templates — `docs/ORGANISATION.md` § 8 |
 
 Models propose and organise; deterministic code reading measurements allocates resources and capital.
 
@@ -327,6 +342,7 @@ agent-initiated actions until containment's egress policy exists (§6.11).
 | Forward Sharpe needed for the learning tier (P ≥ 0.80) | 1.88 over a year with no prior; 0.68 with a family prior of 0.3 |
 | Proven tier (e-LOND, first test E ≥ 100) at Sharpe 2 / 1.5 | 2.3–3.1 years / 4.1–5.5 years |
 | A $199/month data feed (R03 §6) | needs ≈ 2%/month on $10,000 just to break even |
+| The organisation at the owner's scale (R15 § 3b; `docs/ORGANISATION.md` § 10) | the plan alone: ≈ 4 managers + a few executors at the plan's fee; ≈ 25 agents at $20/day (≈ $600/month); ≈ 60 at $50/day (≈ $1,500/month) — 3–7× the research line above |
 
 - **Under the default thresholds and modest capital, the system does not pay for itself in its first year.** The ways to
   shorten that are owner choices, each with its risk stated: more capital, a larger learning tier, prop-firm capital on the
@@ -336,11 +352,14 @@ agent-initiated actions until containment's egress policy exists (§6.11).
 - **Paid data:** one paid source per hypothesis family may be trialled for at most a month inside an owner data budget, charged
   to that family; it stays only if the family's forward record pays for it (R10 #3).
 - Turnover is kept low (the fee drag above); the app shows the break-even return for the current budgets and capital.
+- **Tax, Belgium (R16 § 3; not tax advice):** since 1 January 2026 gains from normal management of private wealth — crypto and derivatives included — are
+  taxed at 10% above about EUR 10,000 a year; speculative gains at 33%; a professional activity as professional income. The law names automated software and
+  the number of transactions as signs of abnormal management, so the honest net figure is shown under 33% until the owner's accountant says otherwise.
 
 ## 9. Build plan
 
 Every unit follows `docs/HOW-WE-BUILD.md`: a fresh builder, a ≤ 40-line brief, red-first on the money path, the landing gate.
-**At most two heavy builders at once**, plus `R-containment` as a light third with no file overlap. **READY** = a brief in
+**At most two heavy builders at once**, plus a light third with no file overlap (the lights are named in `docs/ORGANISATION.md` § 15). **READY** = a brief in
 `docs/queue/`, re-checked against `main` at dispatch and moved to `docs/briefs/`. **CARD** = briefed just before its turn,
 against the code its dependencies actually landed. Schema rungs land in ladder order — never a higher rung before a lower one.
 
@@ -354,10 +373,10 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 | `U-evidence-identity` READY | evidence bound to evaluation semantics with golden vectors; releases stop ending paper runs | `U-cost-model` |
 | `U-timeframe-a` READY | `bars` in the language; backtests and the referee on hours and days; the runner refuses `bars` ≠ 1m | `U-evidence-identity` |
 | `U-timeframe-b` READY | the runner steps rules on declared bars while protection still acts within the minute | `U-timeframe-a`, `U-runner-forward` |
-| `U-venue-verify` READY | instruments verified by the app against the venue's own definition; no file to edit (rung 28) | `U-cost-model`, `U-tape-store` |
+| `U-venue-verify` READY | instruments verified by the app against the venue's own definition; no file to edit (the next free rung at landing, expected 29) | `U-cost-model`, `U-tape-store` |
 | `U-paper-friction` READY | paper fills and undeclared research friction default to the venue cost model; the friction in force named | `U-cost-model` |
 | `R-containment` CARD | the Windows containment spike (factory plan § 9.3), probe only, on the box | — |
-| **M0** observed loop, attempt 3 | `docs/briefs/U-observed-loop.md`, on the owner's allowance | all of phase 0 |
+| **M0** observed loop, attempt 3 | `docs/briefs/U-observed-loop.md`, on the owner's allowance | all of phase 0 (`U-org-ledger` may have landed; it is inert) |
 
 **Phase 1 — start recording**
 
@@ -397,19 +416,18 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 `U-key-host-pin`) → `U-decision-card` (the owner's Perception card and Test press) → `U-lenses` → `U-annotator` → `U-event-study`; `U-decision-fallbacks` (LLM-verbalised and local runtimes)
 deferred until a version binds to one or a schema is too sensitive to send out.
 
-**Phase 5 — factory floor:** `R-containment` (phase 0, light) → `U-worker-identity` → re-plan the rest from evidence (§4.7).
+**Phase 5 — factory floor, now the organisation lane:** `R-containment` (phase 0, light) and the O-units of `docs/ORGANISATION.md` § 15, which replace
+`U-worker-identity` and the factory plan's identity, wake, scheduler, resource-tree and delegation units and run BESIDE phases 0–4 as lane B.
 
-**Phase 6 — venues and live** (owner decisions §10): `U-perp-connector` (Kraken Futures EU first if chosen; demo first; the
+**Phase 6 — venues and live** (owner decisions §10): `U-perp-connector` (only if the owner becomes an elective professional client, R16 — then Kraken Futures EU first if chosen; demo first; the
 retention watermark; a probe certificate) → `U-language-v2b` (short side, raw-observation triggers, probability sizing) →
 `U-paper-perps` (funding accrual from the tape) → `U-live-tiers` (L1/L2 proposals, digest-bound two-press, typed fills,
 aggregate ceilings) → `U-cme-archive` and `U-rulebooks` if the prop path is chosen.
 
 **Phase 7 — moat extensions** (owner decisions): a local outcome-card format; an opt-in pooled outcome network after legal review.
 
-**Dispatch waves** (two heavy builders each, from the verification legs' conflict matrices, R09 § 8–9 and R11 § 11): W1
-`U-key-host-pin` ∥ `U-cost-model` (+ `R-containment` light) · W2 `U-runner-forward` ∥ `U-evidence-identity` · W3 `U-timeframe-a` ∥
-`U-tape-store` · W4 `U-venue-verify` ∥ `U-paper-friction` (land venue-verify first) · W4b `U-timeframe-b` (alone, or beside the light
-`R-containment`) · then **M0** · W5 `U-tape-read` ∥ `U-decision-port` (land tape-read first).
+**Dispatch waves — superseded 2026-10-02 by `docs/ORGANISATION.md` § 15**, whose waves table is the only copy (two lanes, two heavy builders and a
+light third; M0 after W4b on lane A only; M-org0 after W7; M-org1 after W11). The earlier pairings are kept in git history.
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule: **M0** the observed paper loop · **M1** the tape has
 recorded seven days with gaps accounted, and its endpoints are verified from the owner's laptop · **M2** three or more non-price
@@ -419,7 +437,13 @@ sustained factory of the factory plan's phase 7 · **M6** live readiness — own
 
 ## 10. Owner decisions — in plain words
 
-Asked now (they change what phase 0 and the first campaign mean):
+**Answered 2026-10-02:** 0 — horizon indefinite (capital not named); 1 — resident in Belgium (venues: § 4.8, R16); 2 — prop firms yes, as one small
+channel among many; 3 — paper runs "as many as we know won't melt the quota" (paper runs spend no AI allowance, so the chief proposes a count from the
+measured runner cost, `docs/ORGANISATION.md` § 12); 4 — "no limits; those decisions should be handled smartly by the AIs", then, offered the route that
+keeps operator authority, "AI proposes the ceiling": the chief proposes the drawdown ceiling and the share for strategies being proven, the owner confirms
+with two presses, the app sizes inside it. 6 — "be prepared for all, for now just plans". The organisation's own questions are `docs/ORGANISATION.md` § 16.
+
+As first asked (they change what phase 0 and the first campaign mean):
 0. **Capital and horizon.** How much capital, and how long before the system must cover its costs? The trade-off is stated
    in § 8: money sooner means a larger learning tier and more risk.
 1. **Country of residence and intended venues.** It decides spot (Revolut X), perpetuals (Kraken Futures EU or OKX Europe),
@@ -451,3 +475,4 @@ Asked when their phase comes:
 - e-LOND with asynchronous decisions (R04 §9) → a simulation study before `U-live-tiers`.
 - Out-of-sample evidence on positioning, unlocks and listings beyond vendor studies (R03 §7) → our own forward record.
 - The Windows containment route → `R-containment`.
+- Crypto perpetuals for a Belgian retail client (FSMA bans on the texts, Kraken's Belgian page to the contrary) → the venues' or the FSMA's written answer (R16 § 4).
