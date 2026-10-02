@@ -2625,6 +2625,25 @@ campaign written before the rung fixed a second standard because none existed fo
 the build's own is the truth about those rows, while an empty column would refuse a paper verdict on
 every campaign of every installation that upgrades.
 
+**"The interpreter build" in those two texts means the EVALUATION SEMANTICS** (`U-evidence-identity`). V1 and
+PaperV1 both bind evidence to "the interpreter build" and promise that "a change to any of them invalidates the
+evidence that rested on it". The texts are precommitted and their shas are checked at every verdict, so they are
+not edited; the phrase is defined HERE, once: it is `Referee.EvaluatorVersion` — the backtest that produced the
+trace, the metrics computed from it, the scoring applied to them — plus `StrategyVersions.Manifest`, the
+language, indicator and calendar semantics a version's id is hashed under. **The protected property** is what
+the clause is for: evidence produced under one meaning of a program, or one way of measuring and judging it, is
+never read as evidence under another. **How it is kept:** `Promotions.Standing` compares the promotion's
+`evaluator_version` and the version row's `manifest` with this build's, and either one moved withdraws the
+standing — reported as "the evaluation semantics changed from X to Y" — so the TradingGateway's reconcile pass
+ends any paper run of it, as it ends every run whose verdict no longer stands; and because the manifest is also
+inside the version's id, the forward runner ends a run whose recorded text re-parses to a different id, whichever
+of the two passes reaches it first. **What is no longer compared is the `interpreter_build` column**, which reads
+`app=<release>;language=<n>`: its release half moved on every update without moving either fact, so every
+update withdrew every verdict and ended every paper run — a false positive on the money path, not a protection —
+and its language half is inside the manifest. It stays on the promotion as provenance and as one of the nine
+hashed facts of its id. The two numbers are the build's DECLARATION of its evaluation semantics, and moving one
+is a decision somebody makes, in the commit that changes the meaning.
+
 **A campaign also pins the cost model its verdicts are judged under** (schema **27**, `U-cost-model`):
 `strategy_campaign.cost_model_canonical` and `.cost_model_sha`, a `VenueCostModel` text and its SHA-256,
 written in the opening transaction and never updated. The model is one, app-owned, and comes from the
@@ -2790,7 +2809,10 @@ paper-eligible standing is invalidated by exactly what invalidates a promotion, 
 re-checked against is the sha of the policy that PRODUCED it — comparing every row with V1's would
 withdraw every paper verdict the instant it was written. It compares the hashes ON THE ROW
 with the facts as they are now: the holdout dataset gone, REJECTED, re-collected under a different sha or
-reclassified as a fixture; the interpreter build or the scoring-policy sha no longer this build's. A
+reclassified as a fixture; the evaluation semantics — the row's `evaluator_version`, or the version row's
+`manifest` — or the scoring-policy sha no longer this build's. The row's `interpreter_build` is NOT compared:
+it names the release, and what the V1 and PaperV1 texts mean by "the interpreter build" is the evaluation
+semantics (the campaign section above defines it and names what is kept). A
 column would make a version's truth depend on a sweep having run. The dataset's **state** is read off the
 ledger rather than re-hashed here — every reader that opens the bars re-hashes them, and this answer is
 read on the money path — which is a choice, stated. The newest judgement is the one that answers, and a
@@ -3028,6 +3050,14 @@ and turns each `StrategyIntent` into a `PlaceIntent` dispatched through `Trading
 client, no prompt and no text in that file, which is `docs/PRINCIPLES.md`'s "no model call is required for each
 signal or for emergency protection" enforced by what the assembly can reach rather than by a promise.
 
+**THE TEXT IS RE-PARSED ON EVERY PASS, AND IT MUST STILL BE THE VERSION** (`U-evidence-identity`). Nothing holds
+a parse across passes: `ForwardRuns.Frozen` re-parses the version's recorded source and the run is ENDED, before
+a bar is stepped, when the text no longer parses or when it parses to a different id than the version the
+deployment names — which is what a `StrategyVersions.Manifest` bump does to every version recorded before it.
+Stepping it would trade a program nobody judged under the deployment of one somebody did. The same change
+withdraws the verdict (`Promotions.Standing`, "the evaluation semantics changed"), so the reconcile pass ends the
+run too; whichever pass reaches it first ends it, each with its own reason.
+
 **THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED.** `Connectors.Create` binds
 `ForwardBarStore` to `IPaperBarSource` through `ForwardBarSource`; before it the paper connector was handed an
 empty `MemoryBarSource` and quoted nothing on an installation that had been collecting for a week. The adapter
@@ -3120,7 +3150,7 @@ product for it would spend the submitter's allowance on a fact three lines of it
 who may look at evidence, and a bound-less version can still be charged and backtested like any other.
 
 **Nothing already promoted is invalidated by this unit.** `PromotionState.Invalidated` is what
-`docs/COUNCIL.md`:35 reserves for a changed ASSUMPTION — the dataset, the interpreter build, the scoring
+`docs/COUNCIL.md`:35 reserves for a changed ASSUMPTION — the dataset, the evaluation semantics, the scoring
 policy — and this build's judgement about what may be judged is not one of the assumptions those
 verdicts rested on. Withdrawing them by code would also be the app restating a record after the outcome
 was known, which is the move `Promotions` has no method for on purpose. `Promotions.Standing` is
