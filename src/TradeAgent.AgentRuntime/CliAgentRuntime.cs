@@ -242,6 +242,15 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         return (await ProbeVersionAsync(exe, ct)).Version;
     }
 
+    /// <summary>How long the version probe waits for the program's answer — what the product uses.</summary>
+    internal static readonly TimeSpan DefaultVersionDeadline = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// How long THIS runtime's version probe waits. The product never sets it; a test that needs a
+    /// program slower than the deadline sets it short rather than sleeping twenty seconds.
+    /// </summary>
+    internal TimeSpan VersionDeadline { get; init; } = DefaultVersionDeadline;
+
     /// <summary>
     /// The version probe, and what the program said instead when there is no version to report.
     ///
@@ -251,7 +260,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     async Task<(string? Version, string? Refused)> ProbeVersionAsync(string exe, CancellationToken ct)
     {
-        var r = await Run(exe, manifest.VersionArgs, TimeSpan.FromSeconds(20), ct, agentWork: false);
+        var r = await Run(exe, manifest.VersionArgs, VersionDeadline, ct, agentWork: false);
         if (r.ExitCode != 0)
             return (null, FirstLine(r.StdErr) ?? FirstLine(r.StdOut)
                 ?? $"{Path.GetFileName(exe)} exited {r.ExitCode} without saying why");
