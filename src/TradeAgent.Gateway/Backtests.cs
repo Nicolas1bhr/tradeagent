@@ -141,6 +141,15 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                     + "was derived from, which means it is that version and not a variant of it.");
         }
 
+        // THE PROGRAM TRADES THE DATASET'S INSTRUMENT, OR NOTHING IS RUN AND NOTHING IS CHARGED. Before
+        // the increment, the trial look and the run: the dataset's instrument is the key the step is
+        // looked up by, and a program about another instrument measured on these bars would be recorded
+        // as evidence about a strategy it is not (`InstrumentMatch`). A dataset that records none, or
+        // that does not exist, is not this check's to refuse.
+        if (gateway.Datasets.ById(ask.Dataset) is { } over && InstrumentMatch.Refusal(program, over) is { } mismatch)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                mismatch + " Nothing was run and no trial was charged.");
+
         // AFTER the parse, so a text that is not a program is refused for being one rather than for
         // the instrument of a dataset it was never going to be run over.
         var step = Increment(ask);

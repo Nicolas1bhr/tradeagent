@@ -151,11 +151,22 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 $"there is no campaign {campaignId} in this installation's ledger. A campaign is opened when "
                 + "the account owner sets a holdout cutoff on a dataset.", 0, 0);
 
-        if (_strategies.VersionById(versionId) is null)
+        if (_strategies.VersionById(versionId) is not { } version)
             return VerdictCharge.No(campaignId, versionId,
                 $"this installation has never accepted a version {versionId}, so there is nothing to judge. A "
                 + "verdict is about a program TradeAgent has parsed and measured, named by the program's own "
                 + "hash.", _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
+
+        // THE PROGRAM MUST TRADE THE HOLDOUT DATASET'S INSTRUMENT, and that is settled before the budget
+        // is touched: a verdict on a program about another instrument would score it on bars it does not
+        // trade, under a step and a fee looked up for an instrument it never named (`InstrumentMatch`).
+        // A source that no longer parses falls through to `Verdict`'s own refusal, as it always has.
+        if (StrategyParser.Parse(version.Source).Program is { } program
+            && _datasets.ById(campaign.HoldoutDatasetId) is { } holdout
+            && InstrumentMatch.Refusal(program, holdout) is { } mismatch)
+            return VerdictCharge.No(campaignId, versionId,
+                $"version {Short(versionId)}: {mismatch} No verdict was charged.",
+                _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
 
         // THE CHARGE AND THE JUDGE IT BUYS. Written here, in one transaction, before the audience below
         // exists — and the pin of a legacy campaign lands only with a charge that was taken.
@@ -436,11 +447,11 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// <c>IntentDecision</c> on it and <c>RefuseAStaleDecisionOrThrow</c> has nothing to refuse on —
     /// every order it decided would be sent however old the bars behind it were.</para>
     ///
-    /// <para><b>Before the charge, and it is the one check that is.</b> The answer is in the source
-    /// text this installation already recorded; reading the held-back months cannot change it. Charging
-    /// the scarcest budget in the product for it would spend the submitter's allowance on a fact three
-    /// lines of its own program would have settled — the reason <see cref="RequestVerdict"/> refuses an
-    /// unregistered version without charging either.</para>
+    /// <para><b>Before the charge.</b> The answer is in the source text this installation already
+    /// recorded; reading the held-back months cannot change it. Charging the scarcest budget in the
+    /// product for it would spend the submitter's allowance on a fact three lines of its own program
+    /// would have settled — the reason <see cref="RequestVerdict"/> refuses an unregistered version, and
+    /// a program whose instrument is not the holdout dataset's, without charging either.</para>
     ///
     /// <para><b>It refuses to JUDGE, so no promotion row is written — not even a refusal.</b> A
     /// recorded <c>refused</c> is a verdict about EVIDENCE: the budget was spent, the holdout was read,
