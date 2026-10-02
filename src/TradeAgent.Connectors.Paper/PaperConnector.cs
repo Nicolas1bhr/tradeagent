@@ -459,6 +459,23 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     /// <para>Nothing here converts a failure into a refusal. A bar source that throws and an I/O
     /// error on the book both propagate, because the caller must record UNKNOWN and reconcile rather
     /// than read a broken read as "the broker said no".</para>
+    ///
+    /// <para><b>ONE CALL CATCHES UP, HOWEVER FAR BEHIND THE BOOK STARTS</b> (<c>U-paper-settle</c>).
+    /// A source may answer a page at a time — the forward ledger answers ten thousand bars, oldest
+    /// first — so this reads again from the watermark each page ended at, until a read brings nothing
+    /// past it. It used to make one read: a fresh book over a week of collected minutes quoted the
+    /// ten-thousandth, minutes stale, and the gateway refused its first order for want of a price.
+    /// The stop is keyed on the BOOK'S OWN WATERMARK not moving, never on a page that came back
+    /// short, because a connector cannot know a source's page size; a source re-serving what was
+    /// already settled brings nothing past it, so it ends the loop too. Cancellation is asked before
+    /// every read, by this loop and not left to the source. Nothing is filtered, caught or held
+    /// across reads: each page is applied before the next is asked for, so a later page that throws
+    /// propagates with the earlier ones settled, and the next call resumes where they ended.</para>
+    ///
+    /// <para><b>The cost is O(backlog) time in that one call and O(one page) memory</b> — the work
+    /// one page per call used to spread over as many calls — and every other call on this connector
+    /// waits on <c>_settling</c> meanwhile. <see cref="WorstCaseOperationPath"/> does not bound it.
+    /// <c>docs/CONTRACTS.md</c> "The paper connector" states the figure measured.</para>
     /// </summary>
     async Task SettleAsync(string? symbol, CancellationToken ct)
     {
@@ -468,8 +485,14 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         {
             foreach (var s in SymbolsToSettle(symbol))
             {
-                var bars = await _source.SinceAsync(s, Book.SettledThrough(s), ct);
-                foreach (var bar in bars.OrderBy(b => b.OpenTime)) Apply(s, bar);
+                while (true)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var from = Book.SettledThrough(s);
+                    var bars = await _source.SinceAsync(s, from, ct);
+                    foreach (var bar in bars.OrderBy(b => b.OpenTime)) Apply(s, bar);
+                    if (Book.SettledThrough(s) <= from) break;
+                }
             }
         }
         finally { _settling.Release(); }
