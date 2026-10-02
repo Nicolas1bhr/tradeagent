@@ -288,6 +288,19 @@ public static class Labels
         "No API key is held for TradeAgent's own worker, so it started nothing. Paste one on the "
         + "Safety page — it is kept in memory for this session only and never written to disk.";
 
+    /// <summary>
+    /// WHAT A HARNESS TURN SAYS WHEN THE KEY IT HOLDS WAS PASTED FOR ANOTHER ORIGIN (<c>U-key-host-pin</c>).
+    ///
+    /// <para>Both addresses, because either one alone is a sentence the owner cannot act on: the first is
+    /// what they saw when they pasted, the second is where the worker would have sent it. What happened —
+    /// nothing sent, the key forgotten, nothing charged — and the one repair, in TradeAgent's own window.
+    /// <paramref name="pointsAt"/> is null for an address with no origin a key could go to.</para>
+    /// </summary>
+    public static string HarnessKeyPastedForAnotherOrigin(string pastedFor, string? pointsAt) =>
+        $"The key was pasted for {pastedFor}; TradeAgent's own worker now points at "
+        + $"{pointsAt ?? "an address TradeAgent cannot read"}. Nothing was sent, the key has been forgotten "
+        + "and this turn costs nothing — paste it again on the Safety page if you meant that.";
+
     /// <summary>The box the key is pasted into. Masked, and the sentence beside it says why.</summary>
     public const string HarnessKey = "API key for TradeAgent's own worker";
 
