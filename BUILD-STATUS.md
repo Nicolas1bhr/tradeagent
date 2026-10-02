@@ -7209,3 +7209,43 @@ windows Unit 1213/1213; all 7 `ResumeOnStartTests` green each time (`A_restart_i
 **NOT done, NOT verified:** whether any proving run reached the 20 s deadline (no prints; 41.6 s in run 3); a real CLI's first launch on an owner's machine,
 not measured; the turn's own PowerShell cold start still runs on the test's 60 s patience; Integration only on CI for the fixer; no box; the running app not
 observed; the first paint still waits for the version probe on a resuming start (`docs/RESUME-HERE.md` item 6).
+
+## 2026-10-02 — U-cost-model landed: the referee judges at the venue's published cost, pinned by each campaign, on the dataset's own instrument (rung 27)
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-cost-model.md` (dispatched `73cfaca`); rebased by the builder onto `36934e9`
+at the manager's request (one docs conflict, `docs/RESEARCH-REQUIRED.md`: both texts kept, its C6 above main's re-dated § D), then by the manager onto
+`c8d6642` (seat P's W0) and `ace127f`, `926be6e` (docs), src+tests patch-id identical. Merge `dcae0b8` (ff-only), 5 commits (4 items + report), 20 files,
++1714/−57. **Schema rung 27** (`DatabaseSchemaVersion` 26 → 27): two nullable `strategy_campaign` columns, no backfill; their `DROP COLUMN` lines joined
+both roll-back lists. The evidence path (referee, campaign pin), not a money-path file in HOW-WE-BUILD's list; red-first and two mutants run anyway.
+
+- **Item 1 (`1006b91`):** `VenueCostModel` v1 (Core/Strategy): fee per fill from a built-in code table of published standard taker rates with source
+  and date (binance-spot 0.001, read 2026-10-02, R04 § 7); slippage 0.0002 labelled TradeAgent's ASSUMPTION; the step from a VERIFIED instrument row
+  only; capital = new setting `JudgeCapital` (10,000; ≤ 0 reads 10,000); canonical text + sha; `Read` refuses a text that is not its sha's or not v1's.
+- **Item 2 (`75d8cd8`):** the owner's existing press pins the model in the opening transaction from the dataset's venue, or refuses in words ("BTCUSDT's
+  quantity step is not confirmed…") writing nothing; `Renew` copies the pin; no recorded venue ⇒ `Frictionless` labelled "no venue recorded"; a legacy
+  campaign is decided inside the verdict's charge transaction (a verdict already charged in its lineage ⇒ "legacy frictionless judge", old verdicts
+  untouched; else pinned from the venue, or refused BEFORE charging); `Referee.Verdict` with no caller model judges under the pin (the one production
+  caller, `trade verdict`, passes none — read by the manager); the holdout card reads "Judged under".
+- **Item 3 (`bb8103d`):** `InstrumentMatch.Refusal`, called by a research run before the increment, trial and run and by `Referee.RequestVerdict`
+  before the charge, refuses a program whose `instrument` differs from the dataset's recorded symbol, naming both; the brief's test rewritten in place.
+- **Item 4 (`864cc29`):** `CONTRACTS.md` (backtest, catalogue, campaign, verdict), `USER-GUIDE.md` (holdout card, fees, instrument), RESEARCH-REQUIRED C6.
+- **Judged at landing:** two more `VenueIncrementTests` over ETHUSDT data now declare `instrument ETHUSDT` (names, assertions kept) — accepted; a venue
+  with no published fee (revolut-x) is refused like an unconfirmed step; a legacy pin is written by the next verdict request, not by the migration.
+  **By design:** Binance spot's built-in BTCUSDT row is `Verified = false`, so the press on a Binance BTCUSDT dataset is refused in words until
+  `U-venue-verify` (W4); M0 runs after it. Start path: only rung 27's two `ALTER TABLE`s and the referee built after `LoadSettings` (builder).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `617a82a`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1228,
+Fault 399, a local Integration 699 + 1 skipped, 0 failed; six classes 3×, 42/42 each run; after its rebase, at `e0da92e`: 0 warnings, Unit 1240, 0 failed.
+RED before, on `73cfaca`: (a) "the holdout run took no trade: no-trade-on-the-holdout"; (d) expected "fees=0.001;…", actual "fees=0;slippage=0;
+increment=1…"; (e) "Assert.Throws() Failure: No exception was thrown"; (f) "the press opened a campaign over a step nobody confirmed"; (b) failed to
+compile (CS1061, no `JudgeCapital`); (c), (g) green as guards. Mutants, reverted: (i) `model ?? ExecutionModel.Frictionless` restored ⇒ (a) red with that
+line; (ii) the instrument check short-circuited ⇒ (e) red. Manager's gate at `7ab3dce` (carried to `dcae0b8`, build tree identical), Release: build
+`--no-incremental` 0 warnings, 0 errors; Unit 1242/1242 (31 s), Fault 399/399 (1 m 30 s), Integration 699/700, 1 skipped (11 m 6 s) → 0 failed. Names vs
+`main` (git objects): 1981 → 1997, 0 removed, 16 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37022783765 at `617a82a` (before U-key-host-pin, U-price-rows and W0 landed; the combination is the gate's and the merge's run):
+success on ubuntu, macos, windows-latest (40 min), package. U-key-host-pin on `main`: `36934e9` run 37026817205 — ubuntu, macos success; windows RED only
+in `ResumeOnStartTests.A_restart_with_the_ai_working_…` ("left the AI it needs stopped"), the W0 class on a sha before W0's fix, as `2586cd0` before it.
+
+**NOT done, NOT verified:** the Binance fee page not re-opened by the builder (read 2026-10-02 by a research leg); no box run; the holdout card not
+seen on screen (`JudgeLine` unit-tested); agent-facing texts on the judge's friction unchanged; the research-run default (`U-paper-friction`), paper
+friction, minimum notional and verifying BTCUSDT (`U-venue-verify`) are later units. `9a63a69`'s own CI run was still running at this record.
