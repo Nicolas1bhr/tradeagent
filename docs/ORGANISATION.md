@@ -259,7 +259,7 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
 
 | Budget | Active organisation (event-driven, value seats, R15 § 3b) | AI cost per month | EDGE-FACTORY § 8 |
 |---|---|---|---|
-| the plan only | ≈ 4 managers + 2–3 executors within the unconfined-seat ceiling | the plan's fee | the § 8 line stands |
+| the plan only | ≈ 4 managers (3 unconfined seats: the legacy pair and the chief); executors on confined seats once `U-contain-seats` lands | the plan's fee | the § 8 line stands |
 | $20 a day on API keys | ≈ 25 agents | ≈ $600 | ≈ 3× § 8's research line; break-even moves out accordingly |
 | $50 a day on API keys | ≈ 60 agents | ≈ $1,500 | ≈ 7× § 8's research line |
 
@@ -347,6 +347,8 @@ lane waits on the other's number; the gate checks the ladder is contiguous (R17 
 
 | Unit | Closes | Depends | Status |
 |---|---|---|---|
+| `U-fix-resume-on-start` | the restart test red on hosted Windows in five of six runs on unchanged code — cause named, fixed, nothing weakened | — | READY, first |
+| `R-containment` | the Windows isolation probe: the § 9.3 matrix for two candidates, a decision record for `U-contain-seats` (probe only, on the box) | — | READY |
 | `U-price-rows` | GPT-6 models priced from the vendor's page, dated | — | READY |
 | `U-org-ledger` (O1) | the chart is app-minted data: root, two divisions, the legacy positions; one writer; read by nothing yet | `U-cost-model` | READY |
 | `U-org-principals` (O2a) | a third position is a row, not a constant: own home, conversation, attempts and keys, never folded into the chair | O1; after M0 | READY |
@@ -372,6 +374,7 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 
 | Wave | Heavy | Heavy | Light |
 |---|---|---|---|
+| W0 | `U-fix-resume-on-start` (a fresh fixer: `main`'s Windows CI is red on one test, five of six runs) | — | — |
 | W1 | `U-key-host-pin` | `U-cost-model` (27) | `R-containment` (box) · `U-price-rows` |
 | W2 | `U-runner-forward` | `U-evidence-identity` | `U-org-ledger` (next rung, inert) |
 | W3 | `U-timeframe-a` | `U-tape-store` (the tape's clock starts) | — |

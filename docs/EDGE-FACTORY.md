@@ -375,7 +375,7 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 | `U-timeframe-b` READY | the runner steps rules on declared bars while protection still acts within the minute | `U-timeframe-a`, `U-runner-forward` |
 | `U-venue-verify` READY | instruments verified by the app against the venue's own definition; no file to edit (the next free rung at landing, expected 29) | `U-cost-model`, `U-tape-store` |
 | `U-paper-friction` READY | paper fills and undeclared research friction default to the venue cost model; the friction in force named | `U-cost-model` |
-| `R-containment` CARD | the Windows containment spike (factory plan § 9.3), probe only, on the box | — |
+| `R-containment` READY | the Windows containment spike (factory plan § 9.3), probe only, on the box; its record decides `U-contain-seats` | — |
 | **M0** observed loop, attempt 3 | `docs/briefs/U-observed-loop.md`, on the owner's allowance | all of phase 0 (`U-org-ledger` may have landed; it is inert) |
 
 **Phase 1 — start recording**

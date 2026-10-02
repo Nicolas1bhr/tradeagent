@@ -7090,4 +7090,6 @@ row (`RuntimeManifest.cs:963-971`); `CouncilRoles.MayPlaceOrders` = `role == "op
 **NOT VERIFIED:** every DOC or SECONDARY claim in R13–R16 beyond its label; the plan-capacity figures (the owner's ChatGPT tier is unrecorded; R15 § 3d is
 credit arithmetic); local decision-model speed on the owner's laptop; whether crypto perpetuals are open to a Belgian retail client (the FSMA texts and
 Kraken's Belgian page disagree, R16); every "red at base" in the new briefs (R18 traced them by reading; nothing was run); anything on Windows.
-CI for this commit: pending at the close — the next manager records it.
+**CI, recorded the same day (`gh run view`):** `a98f6f1` (37004472348) and `c80f422` (37004803635) — windows-latest RED on the same `ResumeOnStartTests` test
+[24–25 s], ubuntu and macos green, package skipped: five reds in six runs on unchanged `src/` and `tests/`. Briefed as `docs/queue/U-fix-resume-on-start.md`
+(W0, before W1's first gate), and `R-containment` briefed READY for W1; the queue holds nineteen. CI for the commit carrying this line: the next manager records it.

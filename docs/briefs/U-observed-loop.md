@@ -35,3 +35,5 @@ turn is charged its reservation). The AI runs on the owner's ChatGPT Codex plan,
 state that allowance as a bound and read `~/.codex/sessions/<date>/` for `usage_limit_exceeded`. On the first relaunch verify, before anything else,
 `U-resume-agent` (a restart while working brings the next turn with no press) and `U-vendor-limit` (the card names the vendor's limit and time; a turn refused
 before any work costs 0).
+**Since 2026-10-02:** attempt 3 runs after W4b (`docs/ORGANISATION.md` § 15) — the paper envelope above ends 2026-10-08, so a later run needs a new owner grant
+on the Safety page (one more recorded press); with `U-price-rows` landed, GPT-6 Luna is priced and may replace gpt-5.6-luna (state which in the record).

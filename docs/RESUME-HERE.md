@@ -12,15 +12,18 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 **Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this
 was again a planning session ("bolted down" first, builders only when the owner says build). `docs/briefs/` holds ONE brief, `U-observed-loop`;
-`docs/queue/` holds SEVENTEEN ready briefs (the eleven of the edge factory and six of the organisation); no worktree; the observed-run home persists, its AI
+`docs/queue/` holds NINETEEN ready briefs (eleven of the edge factory, six of the organisation, the Windows CI fixer and the containment probe); no worktree; the observed-run home persists, its AI
 paused.** What this session added: the owner's organisation direction and answers, `docs/ORGANISATION.md`, research R12–R18, the principles amended. Restart:
 
 1. **Read `docs/ORGANISATION.md` and `docs/EDGE-FACTORY.md` in full** — the organisation (one chief, top-level managers heading divisions, team heads who
    decide, executors who choose how and never what, an audit line, an invisible watcher reporting only to the owner; the chart as app data; decisions with
    scored forecasts; budget by judgement until measurement can; two lanes) and the factory it works (tape, perception, features, language, evidence, selection,
    capital; Belgium in § 4.8). Then `docs/PRINCIPLES.md` (amended twice on 2026-10-02), `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `manager-prompt.md` §§ 1, 6, 7,
-   and the seventeen briefs in `docs/queue/`. Research: `docs/research/2026-10-02/` (its README indexes R01–R18).
-2. **Two lanes, two heavy builders and a light third — `docs/ORGANISATION.md` § 15's waves table is the only copy.** In short: W1 `U-key-host-pin` ∥
+   and the nineteen briefs in `docs/queue/`. Research: `docs/research/2026-10-02/` (its README indexes R01–R18). The owner's factory plan (cited
+   throughout, outside the repo, read-only): `/Users/nicolasbeeckman/Library/Mobile Documents/com~apple~CloudDocs/Personal Workspace/TradeAgent Consulting/
+   TRADEAGENT_AUTONOMOUS_FACTORY_PLAN_2026-09-27.md`; his Jev paper sits beside it.
+2. **Two lanes, two heavy builders and a light third — `docs/ORGANISATION.md` § 15's waves table is the only copy.** In short: **W0 first —
+   `U-fix-resume-on-start`** (a fresh fixer; `main`'s Windows CI is red on one test in five of six runs, so every landing would read red); W1 `U-key-host-pin` ∥
    `U-cost-model` (27) · light `R-containment` (the Windows spike, factory plan § 9.3), `U-price-rows` (serialise the three builders' gates on this Mac); W2–W4b
    finish lane A with `U-org-ledger` (inert, next free rung) and the tape's light units beside it; then M0; then lane B (`U-org-principals`, `U-org-rights`,
    `U-org-envelopes`, `U-org-wakes`, …) paired with lane A's CARDs; M-org0 after W7; the chief at W11; containment's first enforcement unit and the execution environment before M-org1 (W11–W12). Rungs land contiguous, in landing order, each
@@ -48,7 +51,7 @@ paused.** What this session added: the owner's organisation direction and answer
    hash; the same-user pipe gap (`U-contain-2`). ("Market data reads degraded on the paper connector" is item 3 of `U-runner-forward`.) **Owed a fresh
    fixer:** `ResumeOnStartTests.A_restart_with_the_ai_working_starts_its_runtime_…` (`U-resume-agent`'s own test) went red on windows-latest at `c56540e` and
    `dbc7bf2`, green at `0f47db7`, and RED again at `1275aff` (docs only; run 36956107010) — three reds in four runs on unchanged code, so a defect, not a rare
-   flake; `BUILD-STATUS.md` 2026-10-02 has the runs; a fixer brief on top of `main`, per the checklist's step 6, before W1's first gate.
+   flake (and red again at `a98f6f1` and `c80f422`: five of six); briefed as `docs/queue/U-fix-resume-on-start.md` — W0, before W1's first gate.
 7. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; up to three
    heavy legs by the owner's allowance; ONE manager gate at a time (`gate.sh`: `nohup` build + three suites to files, a waiter on DONE, ~13 min); a gate that
    spans a sleep or a stoppage is contaminated — re-run each suite alone and quote both; a test-name diff from git objects with both set sizes; the scan as a
