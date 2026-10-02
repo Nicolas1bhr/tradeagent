@@ -460,7 +460,8 @@ costs*, above the two price boxes, there is a row of models with what each one c
 tokens in and out. One press picks one; *TradeAgent's choice* hands it back to the one this build
 ships as the default. It asks once, because it takes no permission and gives none — the daily limit
 above is unchanged either way, and a dearer model simply reaches it sooner. It is the single biggest
-lever you have over what the AI costs: the dearest model on the list is fifty times the cheapest.
+lever you have over what the AI costs: the dearest model on the list is at least a hundred times the
+cheapest.
 
 Before this existed the model came from a configuration file belonging to the AI assistant, which
 you have never opened and TradeAgent never mentions — so the model spending your money was whichever
@@ -475,7 +476,10 @@ own page on a stated day** — OpenAI's pricing page, <https://developers.openai
 read on **2026-10-02**, together with the list of models Codex can be set to from
 <https://learn.chatgpt.com/docs/models> read the same day. Both AI assistants TradeAgent offers are
 billed by OpenAI under the sign-in TradeAgent sets up for them, which is why one page covers both.
-Every price carries that page and that date with it, and the Safety page shows you both.
+Every price carries that page and that date with it, and the Safety page shows you both. The list
+includes OpenAI's GPT-6 models — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` — each at
+the price that page gives it, so a turn on one is charged at its own price rather than at the dearest
+model's.
 
 Three things follow from that, and it is worth knowing all three:
 
@@ -484,7 +488,9 @@ Three things follow from that, and it is worth knowing all three:
   supplier publishes, which is a ceiling, not an invoice.
 - **A price read on a day goes stale on the supplier's schedule, not TradeAgent's.** If the page has
   moved since, the figure on your screen is the old one until TradeAgent ships a new one or you
-  correct it yourself.
+  correct it yourself. One is already known to be temporary: OpenAI calls `gpt-5.6-sol`'s 4.00 in /
+  20.00 out — the model TradeAgent's Codex runs on unless you pick another — a promotional price,
+  available at least until 2026-11-21, and publishes no price for after it.
 - **When the assistant does not say which model it used, the model TradeAgent asked for is charged.**
   Codex names no model anywhere in what it reports — not even when TradeAgent puts the model on its
   command line, which was measured twice — so this is the ordinary case rather than the odd one. The
