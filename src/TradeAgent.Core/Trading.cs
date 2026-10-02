@@ -376,6 +376,19 @@ public sealed class TradeAgentSettings
     public bool CollectLiveBars { get; set; } = true;
 
     /// <summary>
+    /// WHETHER TRADEAGENT RECORDS THE MARKET'S CONTEXT AS IT ARRIVES — the tape (<c>U-tape-store</c>):
+    /// Binance USDⓈ-M premium index with the live funding rate, open interest, the 5-minute long/short
+    /// and taker ratios and settled funding, for six symbols, into <c>state/tape.db</c>.
+    ///
+    /// <para>ON by default and ONE press, for the reasons <see cref="CollectLiveBars"/> is: it reads
+    /// public market data with no key, grants nothing, changes no limit and touches no order — and it
+    /// cannot be retrofitted, because a reading nobody recorded as it arrived can never be shown to have
+    /// been known then. Off, the collector writes NOTHING, not even a failed attempt. It is the only
+    /// control of the tape, and it is in-process: no verb and no pipe op starts, stops or writes it.</para>
+    /// </summary>
+    public bool RecordMarketContext { get; set; } = true;
+
+    /// <summary>
     /// WHAT A FILL ON THE PAPER CONNECTOR IS CHARGED, as a FRACTION — <c>0.001</c> is ten basis
     /// points, the same spelling a backtest's <c>--fees</c> uses and for the same reason.
     ///

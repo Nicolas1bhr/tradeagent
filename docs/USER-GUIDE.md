@@ -288,7 +288,7 @@ settings, and no passwords.
 
 ## Market data — the history, and the minutes as they happen
 
-On the **Settings** page there is a card called **Market data**, and it does two separate things.
+On the **Settings** page there is a card called **Market data**, and it does three separate things.
 
 **Download 12 months** fetches the twelve most recent complete months of that pair's 1-minute bars from
 Binance's public archive and checks every file against the checksum Binance published beside it. One
@@ -297,7 +297,7 @@ nothing about what the AI may trade — that is the allowlist on the Safety page
 A month Binance has not published yet is recorded as not published; a file whose bytes do not match the
 published checksum is thrown away rather than used.
 
-**Collect live bars** is the other half, and it is **on to start with**. While TradeAgent is running it
+**Collect live bars** is the second, and it is **on to start with**. While TradeAgent is running it
 asks for the same pair's closed 1-minute bars as they happen, two seconds after each minute closes, from
 Binance's *market-data-only* address — the one that serves public prices and accepts no trading request
 at all.
@@ -320,6 +320,18 @@ only just happened. So TradeAgent never judges a strategy on them. They are what
 against; the verdict on whether a strategy is any good is taken over the frozen, checked history above,
 and over the months you chose to hold back. The AI can read the live bars and everything recorded about
 where they came from; it cannot collect, change or delete any of it.
+
+**Record market context** is the third, and it is **on to start with** too. While TradeAgent is running
+it records the context around the market for six Binance futures pairs — BTC, ETH, SOL, BNB, XRP and
+DOGE against USDT: the premium index with the live funding rate, open interest, the 5-minute long/short
+and taker ratios, and the funding each pair settled — every reading with the moment it arrived and the
+address it came from. It reads public market data, needs no key and places nothing; press the button
+once to stop and once more to start again. **Nothing in it is ever overwritten**: if Binance later
+changes a reading TradeAgent already has, the change is kept as a new revision beside the first, so what
+TradeAgent knew at a given moment stays apart from what it learned later. A reading that arrived on time
+from Binance's own address is marked *live*; a late one, or one from anywhere else, is marked *archive*.
+Like the live bars it cannot be caught up later — it is recorded only while TradeAgent is running — and
+it is context for research, never what a strategy is judged on. The AI cannot start, stop or change it.
 
 **Holding months back.** The card below, *Private evaluation evidence*, is where you draw a line across
 the history: every bar from that date on becomes evidence the AI never sees, and TradeAgent alone uses it

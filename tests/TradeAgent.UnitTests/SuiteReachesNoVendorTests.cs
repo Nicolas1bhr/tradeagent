@@ -65,6 +65,14 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string ForwardHost = "data-api" + ".binance" + ".vision";
 
+    /// <summary>
+    /// THE TAPE'S HOST (<c>U-tape-store</c>), spelled the same way — Binance's USDⓈ-M futures host, a
+    /// third Binance name that neither scan above contains. <see cref="TapeCollector"/>'s base URL
+    /// defaults to each catalogue row's, which is the vendor: a test that forgot to point it at loopback
+    /// would ask thirty-one public questions a minute, on three platforms, and pass.
+    /// </summary>
+    const string TapeHost = "fapi" + ".binance" + ".com";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -122,6 +130,9 @@ public class SuiteReachesNoVendorTests
                 if (code.Contains(ForwardHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names the forward collector's vendor host");
 
+                if (code.Contains(TapeHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names the tape collector's vendor host");
+
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
                 if (Regex.IsMatch(code, @"new\s+BinanceArchiveClient\s*\(\s*\)"))
@@ -154,6 +165,13 @@ public class SuiteReachesNoVendorTests
                 && !body.Contains("baseUrl:", StringComparison.Ordinal))
                 offenders.Add($"{name} builds a ForwardBarCollector and never names a baseUrl, so it "
                               + "would poll the vendor's market-data host every tick");
+
+            // AND THE TAPE COLLECTOR, THE SAME TRAP A FOURTH TIME: its `baseUrl` is optional and null
+            // means every row's own host. The same file-level rule, the same lookahead for static access.
+            if (Regex.IsMatch(body, @"\bTapeCollector\b(?!\s*\.)")
+                && !body.Contains("baseUrl:", StringComparison.Ordinal))
+                offenders.Add($"{name} builds a TapeCollector and never names a baseUrl, so it would ask "
+                              + "the vendor's futures host every look");
         }
 
         Assert.True(offenders.Count == 0,
@@ -237,6 +255,23 @@ public class SuiteReachesNoVendorTests
 
         Assert.Contains(ForwardHost, entry.BaseUrl, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("https://", entry.BaseUrl);
+    }
+
+    /// <summary>
+    /// AND EVERY BUILT-IN TAPE ROW SHIPS POINTING AT THE VENDOR, which is the product working — and the
+    /// reason the tape collector's own rule above exists. Asserted through the host spelled in this file.
+    /// </summary>
+    [Fact]
+    public void The_tape_sources_shipped_base_url_really_is_the_vendor()
+    {
+        var rows = TapeSourceCatalog.BuiltIn();
+
+        Assert.NotEmpty(rows);
+        Assert.All(rows, r =>
+        {
+            Assert.Contains(TapeHost, r.BaseUrl, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("https://", r.BaseUrl);
+        });
     }
 
     /// <summary>

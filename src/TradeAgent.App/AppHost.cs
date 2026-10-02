@@ -478,6 +478,22 @@ public sealed class AppHost : IAsyncDisposable
     public ForwardBarCollector? Forward { get; private set; }
 
     /// <summary>
+    /// THE TAPE'S COLLECTOR — the market's context recorded as it arrives, into its own file
+    /// (<c>U-tape-store</c>).
+    ///
+    /// <para>Started with the app and stopped with it, independent of the mission loop, for the reasons
+    /// <see cref="Forward"/> is: what it records is evidence, not a paid turn, and it takes no turn,
+    /// spends nothing, holds no key and places nothing. In-process only: no verb and no pipe op starts
+    /// it, stops it, points it elsewhere or writes the tape; the owner's "Record market context" toggle on
+    /// the Settings page is the only control. Null when the tape could not be opened — the activity log
+    /// says why — and the rest of the app runs without it.</para>
+    /// </summary>
+    public TapeCollector? Tape { get; private set; }
+
+    /// <summary>The tape the collector writes. Its own file, its own connection; closed after the collector stops.</summary>
+    TapeStore? _tape;
+
+    /// <summary>
     /// Whether TradeAgent asks GitHub about new versions on its own.
     ///
     /// Off means never touching the network for this; it does not mean never updating. An update is
@@ -555,6 +571,27 @@ public sealed class AppHost : IAsyncDisposable
             {
                 Gateway.Log.Activity(
                     "TradeAgent is not collecting live bars: " + ex.Message.ReplaceLineEndings(" "), "warn");
+            }
+
+            // THE TAPE, STARTED WITH THE APP, the same way and for the same reasons. A tape written by a
+            // newer TradeAgent is refused untouched and said in the activity log (`TapeStore.TryOpen`);
+            // an unreadable tape-sources.json, or a row in it that is refused, is said there too while
+            // the built-in rows go on. None of it is a reason for the app not to come up.
+            try
+            {
+                _tape = TapeStore.TryOpen(Paths.TapeFile, Gateway.Log);
+                if (_tape is not null)
+                {
+                    Tape = new TapeCollector(_tape, () => Gateway.Settings.RecordMarketContext);
+                    if (Tape.CatalogProblem is { } unreadable) Gateway.Log.Activity("Market context: " + unreadable, "warn");
+                    foreach (var refused in Tape.Refused) Gateway.Log.Activity("Market context: " + refused, "warn");
+                    Tape.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                Gateway.Log.Activity(
+                    "TradeAgent is not recording market context: " + ex.Message.ReplaceLineEndings(" "), "warn");
             }
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
@@ -1628,6 +1665,11 @@ public sealed class AppHost : IAsyncDisposable
         // transaction, and disposing the store underneath it is how a clean exit becomes a corrupt
         // row. This waits for the look it interrupted.
         if (Forward is not null) { await Forward.DisposeAsync(); Forward = null; }
+        // THE TAPE THE SAME WAY: the collector first, which waits for the look in flight and its
+        // transaction, then the tape's own connection.
+        if (Tape is not null) { await Tape.DisposeAsync(); Tape = null; }
+        _tape?.Dispose();
+        _tape = null;
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();
