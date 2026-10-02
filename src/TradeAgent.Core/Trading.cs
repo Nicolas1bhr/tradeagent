@@ -525,6 +525,23 @@ public sealed class TradeAgentSettings
     public int CampaignExplorationBudget { get; set; } = 50;
 
     /// <summary>
+    /// WHAT THE REFEREE'S ACCOUNT STARTS WITH WHEN IT JUDGES A VERSION — the capital of the venue cost
+    /// model a campaign pins (<c>Strategy.VenueCostModel</c>), in the units the dataset's prices are in.
+    ///
+    /// <para>It is COPIED into the model when the owner's press opens a campaign, like the budgets above,
+    /// so changing it moves no standard under evidence already collected: the next campaign gets the new
+    /// number. Ten thousand by default, which is what the frictionless judge always used. Zero or less
+    /// reads as that ten thousand — a judge with nothing in its account can buy nothing, and every
+    /// verdict would be <c>no-trade</c> for a reason that has nothing to do with the strategy.</para>
+    ///
+    /// <para><b>It is not a risk limit and not a permission.</b> No order is sized by it and nothing is
+    /// refused because of it; it is the size of the account a holdout run pretends to have. So the
+    /// unreadable-settings row leaves it at the shipped value — a campaign opened from that row has no
+    /// verdict budget to spend anyway.</para>
+    /// </summary>
+    public decimal JudgeCapital { get; set; } = 10_000m;
+
+    /// <summary>
     /// WHAT THE OWNER SAYS THEIR AI TOOL CHARGES THEM, per million tokens in and out, or null for
     /// "use the list price this build shipped".
     ///
