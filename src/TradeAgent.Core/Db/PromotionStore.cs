@@ -108,6 +108,12 @@ public static class PromotionReason
 /// <para><b>What is not here is the STANDING.</b> Whether this promotion still holds is computed at read
 /// time from these hashes against the current facts — see <see cref="Promotions.Standing"/> — never
 /// written back over the row. A record the app can edit after the outcome is known is not a record.</para>
+///
+/// <para><b>Hashed is not the same as compared.</b> <see cref="InterpreterBuild"/> names the RELEASE
+/// that judged — provenance, and one of the nine facts so that two releases' judgements are two rows
+/// — and no standing is withdrawn on it: a release that changed nothing a program means changed nothing
+/// this evidence rested on. What withdraws it is the evaluation semantics,
+/// <see cref="EvaluatorVersion"/> here and the manifest on the version row (<c>U-evidence-identity</c>).</para>
 /// </summary>
 public sealed record PromotionRow(
     string Id,
@@ -206,7 +212,8 @@ public static class PromotionState
 
     /// <summary>
     /// It was promoted, and something it was bound to has changed since — the dataset was rejected or
-    /// re-collected, the interpreter was rebuilt, the scoring policy is not the one that was applied.
+    /// re-collected, the evaluation semantics moved (the evaluator's version, or the language manifest
+    /// the version was identified under), the scoring policy is not the one that was applied.
     /// <c>docs/COUNCIL.md</c>:35: "a changed assumption invalidates the evidence that rested on it".
     /// </summary>
     public const string Invalidated = "invalidated";
@@ -252,6 +259,7 @@ public sealed record PromotionStanding(string State, string Why, PromotionRow? P
 public sealed class Promotions(Database db)
 {
     readonly DatasetStore _datasets = new(db);
+    readonly StrategyStore _strategies = new(db);
 
     const string Cols =
         "id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id, " +
@@ -337,8 +345,8 @@ public sealed class Promotions(Database db)
     ///
     /// <para>Each recent judgement is asked in turn and the first that still HOLDS is the answer —
     /// <see cref="Standing"/> computes invalidation at read time, so a promotion whose dataset was
-    /// rejected or whose interpreter has moved is skipped rather than reported as current. When none
-    /// holds, the newest INVALIDATED standing is returned anyway, so a caller can say what was
+    /// rejected or whose evaluation semantics have moved is skipped rather than reported as current.
+    /// When none holds, the newest INVALIDATED standing is returned anyway, so a caller can say what was
     /// withdrawn and why; told only "none", a turn would go looking for a verdict that is on the
     /// table.</para>
     ///
@@ -366,14 +374,14 @@ public sealed class Promotions(Database db)
     ///
     /// <para><b>Every check is the RECORDED hash against the CURRENT fact.</b> The dataset the evidence
     /// was computed over is asked whether it is still accepted and still the same bytes the run read;
-    /// the interpreter build and the scoring policy on the row are compared with this build's. Comparing
-    /// the current fact with itself — the mutant — is a check that can never fail: a dataset re-collected
-    /// under a promotion would go on reading as promoted, which is a version trading the owner's money
-    /// on months that are no longer on this machine.</para>
+    /// the evaluator's version and the scoring policy on the row, and the manifest on the version row,
+    /// are compared with this build's. Comparing the current fact with itself — the mutant — is a check
+    /// that can never fail: a dataset re-collected under a promotion would go on reading as promoted,
+    /// which is a version trading the owner's money on months that are no longer on this machine.</para>
     ///
     /// <para><b>The newest verdict is the one that answers.</b> A version can be judged again under a
-    /// renewed campaign or a later interpreter; the standing is the most recent of those judgements, and
-    /// the ones before it stay on the table where a reader can see the sequence.</para>
+    /// renewed campaign or later evaluation semantics; the standing is the most recent of those
+    /// judgements, and the ones before it stay on the table where a reader can see the sequence.</para>
     ///
     /// <para>The dataset's STATE is read off the ledger rather than re-hashed here. Every reader that
     /// actually opens the bars re-hashes them (<c>DatasetStore.Checked</c>, which is what writes the
@@ -442,10 +450,37 @@ public sealed class Promotions(Database db)
             return $"the holdout dataset {promotion.HoldoutDatasetId} is now classed "
                 + $"{set.EvaluationClass}, and a fixture establishes plumbing only — it is never evidence.";
 
-        if (!string.Equals(promotion.InterpreterBuild, StrategyStore.InterpreterBuild, StringComparison.Ordinal))
-            return $"this verdict was computed by interpreter build {promotion.InterpreterBuild} and this "
-                + $"build is {StrategyStore.InterpreterBuild}: the program may not mean the same thing, "
-                + "so the evidence does not carry across.";
+        // THE EVALUATION SEMANTICS — WHAT THE EVIDENCE MEANS — AND NEVER THE RELEASE NUMBER.
+        //
+        // Two facts, each read where it was decided: the evaluator's version on THIS row (the backtest
+        // that produced the trace, the metrics computed from it and the scoring applied to them,
+        // `Referee.EvaluatorVersion`), and the language, indicator and calendar manifest on the VERSION
+        // row, which is the manifest the program's id was hashed under (`StrategyVersions.Manifest`).
+        // Either moved, and the same bars no longer produce the same evidence, or the same text no
+        // longer means the same program.
+        //
+        // `interpreter_build` is NOT compared, and that is the fix rather than an omission. It reads
+        // `app=<release>;language=<n>`, so it moved on every update whether or not anything a program
+        // means had moved: every release withdrew every verdict, and `TradingGateway` ended every paper
+        // run on the strength of it. It stays on the row as provenance and as one of the id's nine
+        // hashed facts. What it ALSO caught, by accident, was a manifest bump — which is why the
+        // manifest is compared here on its own, and why the mutant this unit watched go red removes
+        // exactly that compare.
+        if (_strategies.VersionById(promotion.VersionId) is not { } version)
+            return $"version {Short(promotion.VersionId)}, which this verdict is about, is no longer in "
+                + "this installation's ledger, so what its evidence means cannot be read.";
+
+        var evaluatorMoved = !string.Equals(
+            promotion.EvaluatorVersion, Strategy.Referee.EvaluatorVersion, StringComparison.Ordinal);
+        var manifestMoved = !string.Equals(
+            version.Manifest, Strategy.StrategyVersions.Manifest, StringComparison.Ordinal);
+
+        if (evaluatorMoved || manifestMoved)
+            return "the evaluation semantics changed from "
+                + $"{Strategy.EvaluationSemantics.Of(promotion.EvaluatorVersion, version.Manifest)} to "
+                + $"{Strategy.EvaluationSemantics.Current}: "
+                + string.Join(" and ", WhatMoved(evaluatorMoved, manifestMoved))
+                + ", so the evidence does not carry across.";
 
         // THE POLICY COMPARED IS THE ONE THAT PRODUCED THE ANSWER. A paper-eligible row was scored by
         // `CampaignPolicy.PaperV1` and carries ITS sha, so comparing every row with V1's would
@@ -465,6 +500,17 @@ public sealed class Promotions(Database db)
     }
 
     static string Short(string id) => id.Length <= 12 ? id : id[..12];
+
+    /// <summary>Which half of the evaluation semantics moved, in the owner's words. See <see cref="Invalidation"/>.</summary>
+    static IEnumerable<string> WhatMoved(bool evaluator, bool manifest)
+    {
+        if (evaluator)
+            yield return "the backtest, the metrics or the scoring this verdict was computed by is not what "
+                + "this build runs";
+        if (manifest)
+            yield return "the language, indicator or calendar meaning this version was identified under is "
+                + "not this build's, so its text now reads as a different program with a different id";
+    }
 
     static List<PromotionRow> Read(SqliteCommand c)
     {

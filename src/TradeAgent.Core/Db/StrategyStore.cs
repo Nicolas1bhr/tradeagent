@@ -209,7 +209,12 @@ public sealed class StrategyStore(Database db)
         // LAST, so every positional read above it keeps its index. See `StrategyRunRow.IncrementSource`.
         "increment_source";
 
-    /// <summary>The interpreter build a version row records: the app's own version and the language's.</summary>
+    /// <summary>
+    /// The interpreter build a version row and a promotion record: the app's own version and the
+    /// language's. PROVENANCE — which release did the work — and nothing withdraws a verdict on it: a
+    /// release moves it whether or not anything a program means has moved. What does withdraw one is
+    /// the evaluation semantics (<c>Strategy.EvaluationSemantics</c>, <c>Promotions.Standing</c>).
+    /// </summary>
     public static string InterpreterBuild =>
         $"app={Versions.App};language={StrategyVersions.LanguageVersion}";
 

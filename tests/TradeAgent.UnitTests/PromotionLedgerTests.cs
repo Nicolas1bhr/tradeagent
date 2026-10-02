@@ -37,7 +37,12 @@ public class PromotionLedgerTests
     /// </summary>
     sealed record Judged(Database Db, DatasetRecord Set, CampaignRow Campaign, string VersionId, string RunId);
 
-    static Judged Given(string pair = "BTCUSDT", string evaluationClass = EvaluationClass.Research)
+    /// <param name="manifest">
+    /// Null for this build's own manifest. Otherwise the version is recorded as an EARLIER BUILD left it:
+    /// the same text hashed under that build's manifest — a different id — and that manifest on the row.
+    /// </param>
+    static Judged Given(string pair = "BTCUSDT", string evaluationClass = EvaluationClass.Research,
+        string? manifest = null)
     {
         var db = TestEnv.NewDb();
         var datasets = new DatasetStore(db);
@@ -57,20 +62,23 @@ public class PromotionLedgerTests
         Assert.True(opened.Ok, opened.Why);
 
         var program = StrategyParser.Parse(ProgramText).Program!;
+        var versionId = manifest is null
+            ? program.StrategyId
+            : Sha256Hex.Of($"{program.Canonical}\n{program.Parameters}\n{manifest}");
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
-            program.StrategyId, program.Source, program.Canonical, program.Manifest,
+            versionId, program.Source, program.Canonical, manifest ?? program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars,
             Cutoff.AddDays(-1), null, null));
 
         var request = new BacktestRequest(set.Id, set.NormalisedSha256, Model, Cutoff, null);
-        var runId = request.RunIdFor(program.StrategyId);
+        var runId = request.RunIdFor(versionId);
         strategies.RecordRun(new StrategyRunRow(
-            runId, program.StrategyId, set.Id, set.NormalisedSha256, Cutoff, null, Model.Canonical,
+            runId, versionId, set.Id, set.NormalisedSha256, Cutoff, null, Model.Canonical,
             BacktestOutcome.COMPLETED.ToString(), null, 500, 4, 3, 4, 4, 100, 0, 0,
             12m, 2m, 10m, 3m, "trace-sha", At, Referee.RunRole, null), []);
 
-        return new Judged(db, set, opened.Campaign!, program.StrategyId, runId);
+        return new Judged(db, set, opened.Campaign!, versionId, runId);
     }
 
     static ExecutionModel Model => ExecutionModel.Declare(0.001m, 0m, 0.0001m, 10_000m).Model!;
@@ -339,25 +347,55 @@ public class PromotionLedgerTests
     }
 
     /// <summary>
-    /// A PROMOTION TAKEN BY AN EARLIER INTERPRETER, OR UNDER AN EARLIER SCORING POLICY, DOES NOT STAND.
+    /// A PROMOTION TAKEN UNDER ANOTHER INTERPRETER — ANOTHER EVALUATOR, OR, SEPARATELY, ANOTHER
+    /// MANIFEST — OR UNDER AN EARLIER SCORING POLICY, DOES NOT STAND.
     ///
-    /// <para>Both are ordinary rather than adversarial: the interpreter build moves with every release,
-    /// and the scoring policy's text is a constant somebody can edit. Rule 9 binds promotion to both, so
-    /// a build that changed either is a build whose evidence has to be recollected — the row is written
-    /// with the facts of its own time, and the comparison is against this build's.</para>
+    /// <para><b>Rewritten in place, name kept</b> (<c>U-evidence-identity</c>). "Another interpreter"
+    /// used to be another RELEASE: <c>interpreter_build</c> carries the app's version, every update moved
+    /// it, and every update withdrew every verdict — and ended every paper run — whether or not anything
+    /// a program means had moved. What does decide that is two other numbers, and they are what
+    /// "another interpreter" is now: the evaluator's version on the promotion
+    /// (<see cref="Referee.EvaluatorVersion"/> — the backtest, the metrics, the scoring), and the
+    /// language manifest on the version row (<see cref="StrategyVersions.Manifest"/>, the one its id was
+    /// hashed under). Each is moved on its own here, because each is compared on its own: a manifest
+    /// bump is the case the release number used to catch by accident, and nothing else catches it
+    /// now.</para>
+    ///
+    /// <para>The scoring policy is unchanged: its text is a constant somebody can edit, rule 9 binds
+    /// promotion to it, and the row's sha is compared with the one this build applies.</para>
     /// </summary>
     [Fact]
     public void A_promotion_from_another_interpreter_or_another_policy_does_not_stand()
     {
+        // ANOTHER EVALUATOR: what produced the trace, the figures and the clauses is not this build's.
         var j = Given();
         using var _1 = j.Db;
         var promotions = new Promotions(j.Db);
 
-        promotions.Record(RowFor(j) with { InterpreterBuild = "app=0.0.1;language=1" });
+        promotions.Record(RowFor(j) with { EvaluatorVersion = "backtest=0;metrics=1;scoring=1" });
         var old = promotions.Standing(j.VersionId);
         Assert.Equal(PromotionState.Invalidated, old.State);
-        Assert.Contains("app=0.0.1;language=1", old.Why, StringComparison.Ordinal);
-        Assert.Contains("the program may not mean the same thing", old.Why, StringComparison.Ordinal);
+        Assert.Contains(
+            "the evaluation semantics changed from evaluator backtest=0;metrics=1;scoring=1 with manifest "
+            + $"{StrategyVersions.Manifest} to {EvaluationSemantics.Current}", old.Why, StringComparison.Ordinal);
+        Assert.Contains("the backtest, the metrics or the scoring this verdict was computed by", old.Why,
+            StringComparison.Ordinal);
+
+        // ANOTHER MANIFEST, SEPARATELY: the version as an earlier build identified it — the same text
+        // hashed under that build's language, indicator and calendar meaning — judged by THIS evaluator.
+        var reidentified = Given("SOLUSDT", manifest: "language=1;indicators=0;calendar=1");
+        using var _3 = reidentified.Db;
+        var underAnother = new Promotions(reidentified.Db);
+
+        underAnother.Record(RowFor(reidentified));
+        var reread = underAnother.Standing(reidentified.VersionId);
+        Assert.Equal(PromotionState.Invalidated, reread.State);
+        Assert.Contains(
+            $"the evaluation semantics changed from evaluator {Referee.EvaluatorVersion} with manifest "
+            + $"language=1;indicators=0;calendar=1 to {EvaluationSemantics.Current}", reread.Why,
+            StringComparison.Ordinal);
+        Assert.Contains("now reads as a different program with a different id", reread.Why,
+            StringComparison.Ordinal);
 
         var second = Given("ETHUSDT");
         using var _2 = second.Db;
@@ -366,6 +404,33 @@ public class PromotionLedgerTests
         var moved = others.Standing(second.VersionId);
         Assert.Equal(PromotionState.Invalidated, moved.State);
         Assert.Contains("the standard has changed", moved.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A PROMOTION AN EARLIER RELEASE WROTE, UNDER THE SAME EVALUATION SEMANTICS, STILL STANDS.
+    ///
+    /// <para>The false positive <c>U-evidence-identity</c> removed, at the ledger. The row names the
+    /// release that judged in <c>interpreter_build</c>, and that release is not this one — which is what
+    /// every promotion on an installation that has ever updated looks like. Nothing it rested on moved:
+    /// the same evaluator, the same manifest, the same dataset, the same policy. So it stands, and the
+    /// release stays on the row, and in the id, as the provenance it is.</para>
+    /// </summary>
+    [Fact]
+    public void A_promotion_an_earlier_release_wrote_under_the_same_evaluation_semantics_still_stands()
+    {
+        var j = Given();
+        using var _1 = j.Db;
+        var promotions = new Promotions(j.Db);
+
+        var written = promotions.Record(RowFor(j) with { InterpreterBuild = "app=0.0.1;language=1" });
+        var standing = promotions.Standing(j.VersionId);
+
+        Assert.Equal(PromotionState.Promoted, standing.State);
+        Assert.True(standing.IsPromoted, standing.Why);
+        Assert.Equal("app=0.0.1;language=1", written.InterpreterBuild);
+
+        // STILL A HASHED FACT: the same evidence judged by this release would be a different row.
+        Assert.NotEqual(RowFor(j).ComputedId, written.Id);
     }
 
     /// <summary>
