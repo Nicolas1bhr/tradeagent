@@ -288,9 +288,9 @@ public sealed class Allocations(Database db)
     /// <para><b>The eligibility is <see cref="Promotions.Standing"/> and never "a promotion row
     /// exists".</b> <c>docs/COUNCIL.md</c>:32-33 lets only a PROMOTED version execute, and :35 makes a
     /// changed assumption invalidate the evidence that rested on it — so a version whose holdout
-    /// dataset has since been rejected, re-collected or reclassified, or which was judged under an
-    /// interpreter or a scoring policy this build no longer applies, has no standing promotion and
-    /// may not be given the owner's money. A row-exists check is the mutant: it reads an invalidated
+    /// dataset has since been rejected, re-collected or reclassified, or which was judged under
+    /// evaluation semantics or a scoring policy this build no longer applies, has no standing promotion
+    /// and may not be given the owner's money. A row-exists check is the mutant: it reads an invalidated
     /// promotion as a live one and allocates capital on evidence TradeAgent has withdrawn.</para>
     ///
     /// <para><b>And it must be THAT promotion.</b> The id binds the allocation to the verdict that

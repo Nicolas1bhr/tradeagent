@@ -1492,7 +1492,7 @@ public sealed class AppHost : IAsyncDisposable
         ///
         /// <para>The standing is asked for each recent judgement in turn and the first that still HOLDS
         /// is the answer — <c>Promotions.Standing</c> computes invalidation at read time, so a promotion
-        /// whose dataset was rejected or whose interpreter has moved is skipped here rather than
+        /// whose dataset was rejected or whose evaluation semantics moved is skipped here rather than
         /// reported as current. When none of them holds, the newest judgement is returned anyway so the
         /// line can say what was withdrawn and why; a turn told only "none" would go looking for a
         /// verdict that is on the table.</para>

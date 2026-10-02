@@ -122,7 +122,8 @@ public sealed class ForwardRuns
         if (Frozen(deployment) is not { } program)
             return await EndAsync(deployment,
                 "the frozen text of the version this run was started on no longer parses in this "
-                + "build, so there is nothing to step", ct);
+                + "build as that version — it is refused, or this build's language manifest reads it as "
+                + "a different program with a different id — so there is nothing to step", ct);
 
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
@@ -525,12 +526,26 @@ public sealed class ForwardRuns
                 deployment = deployment.Id, bar = bar.OpenTime, quantity, why
             }));
 
-    /// <summary>The frozen program of this run's version, re-parsed, or null because it no longer parses.</summary>
+    /// <summary>
+    /// The frozen program of this run's version, re-parsed — or null because it no longer parses, or
+    /// because it now parses to a DIFFERENT program than the version the run was started on.
+    ///
+    /// <para>The second is what a <c>StrategyVersions.Manifest</c> bump does: the same text, read
+    /// under another language, indicator or calendar meaning, hashes to another id
+    /// (<c>StrategyProgram.StrategyId</c>). Stepping it would trade a program nobody judged under the
+    /// id of one somebody did, so the id is checked against the deployment's own version on every pass.
+    /// <c>Promotions.Standing</c> withdraws the verdict on the same change and the reconcile pass ends
+    /// the run on that; this is the runner refusing to step it in the meantime, whichever pass comes
+    /// first (<c>U-evidence-identity</c>).</para>
+    /// </summary>
     StrategyProgram? Frozen(StrategyDeploymentRow deployment)
     {
         if (_strategies.VersionById(deployment.VersionId) is not { } version) return null;
         var parsed = StrategyParser.Parse(version.Source);
-        return parsed.Ok ? parsed.Program : null;
+        return parsed.Program is { } program
+               && string.Equals(program.StrategyId, deployment.VersionId, StringComparison.Ordinal)
+            ? program
+            : null;
     }
 
     async Task<ForwardRunState> EndAsync(
