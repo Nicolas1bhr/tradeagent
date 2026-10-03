@@ -26,8 +26,10 @@ public sealed class StrategyProgram
         TargetRule target,
         int? maxHoldBars,
         TimeFilters time,
-        FreshnessBounds? freshness)
+        FreshnessBounds? freshness,
+        TimeSpan bars)
     {
+        Bars = bars;
         Freshness = freshness;
         Source = source;
         Instrument = instrument;
@@ -94,6 +96,18 @@ public sealed class StrategyProgram
     /// into <see cref="StrategyId"/>, so a changed bound is a different program.</para>
     /// </summary>
     public FreshnessBounds? Freshness { get; }
+
+    /// <summary>
+    /// THE BAR THIS PROGRAM IS EVALUATED ON — its <c>bars</c> declaration, one of
+    /// <see cref="StrategyBars.Allowed"/> — and ONE MINUTE when it declares none, which is what every
+    /// program written before the declaration existed is evaluated on.
+    ///
+    /// <para>Its rules are asked once per closed bar of this length, built from closed one-minute bars;
+    /// its indicators, lookback, history, warm-up and <see cref="MaxHoldBars"/> count these bars. Fills,
+    /// stops and targets stay on the minute (<c>Backtest.Run</c>). It is in the canonical form whenever it
+    /// is not one minute, so an hourly program is a different id from its minute twin.</para>
+    /// </summary>
+    public TimeSpan Bars { get; }
 
     /// <summary>Every exit rule, in declared order. Exits are evaluated before entries.</summary>
     public IEnumerable<StrategyRule> ExitRules => Rules.Where(r => r.Kind == RuleKind.Exit);

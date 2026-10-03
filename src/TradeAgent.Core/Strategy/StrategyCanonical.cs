@@ -40,6 +40,19 @@ public static class StrategyCanonical
         text.Append("instrument ").Append(p.Instrument).Append('\n');
         text.Append("zone ").Append(p.Time.TimeZone).Append('\n');
 
+        // THE BAR THE PROGRAM IS EVALUATED ON — AND THE ONE STATED EXCEPTION TO "ALWAYS STATED" BELOW.
+        //
+        // Written only when the program declares a bar that is not one minute. Absent and `bars 1m` are
+        // one meaning — every closed minute, which is what every program written before the declaration
+        // existed is evaluated on — so they must be one text, and the text they share is the one every
+        // stored version already hashed to: a v1 program's canonical form, and therefore its id, its
+        // lineage and every result recorded against it, are unchanged. `Header` stays `program/1` and the
+        // manifest does not move for the same reason; the manifest is inside every id, and moving it would
+        // re-identify every program to add one line to some. A program on any other bar has this line, which
+        // no v1 canonical text has, so the two can never share an id. In seconds, like the bounds below.
+        if (p.Bars != StrategyBars.OneMinute)
+            text.Append("bars ").Append(Duration(p.Bars)).Append('\n');
+
         // THE THREE EXECUTION BOUNDS, ALWAYS STATED — as a duration in seconds, or as `none`.
         //
         // Always, because "this program declares no bound" is a fact about it and not an absence: a

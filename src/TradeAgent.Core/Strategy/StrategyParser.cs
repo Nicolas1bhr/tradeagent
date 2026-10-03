@@ -50,8 +50,20 @@ public static class StrategyParser
     // ---- the vocabulary, in one place each -------------------------------------------------------
 
     const string Keywords =
-        "instrument, timezone, timeframe, data_freshness, max_decision_age, const, indicator, size, " +
+        "instrument, timezone, bars, timeframe, data_freshness, max_decision_age, const, indicator, size, " +
         "stop, target, max_hold_bars, weekdays, entry_window, opening_range, session_exit, exit, entry";
+
+    /// <summary>
+    /// `bars 1h` — A DECLARATION, AND DELIBERATELY NOT A KEYWORD.
+    ///
+    /// <para>It is recognised in exactly one place: as the first word of a line (<see cref="ReadLines"/>).
+    /// It is not in <see cref="IsKeyword"/> and therefore not in <see cref="IsReserved"/>, because the
+    /// language had no `bars` before and a stored program may well say `const bars = 20` — reserving the
+    /// word now would turn a program that parsed, and that results are recorded against, into a refusal.
+    /// A name and a declaration never meet: a declaration is always the line's first word, a name never
+    /// is (`const bars = 20` starts with `const`).</para>
+    /// </summary>
+    const string BarsDeclaration = "bars";
 
     const string IndicatorList =
         "sma, ema, rsi, atr, highest, lowest, opening_range_high, opening_range_low";
@@ -229,7 +241,8 @@ public static class StrategyParser
             settings.Target,
             settings.MaxHoldBars,
             time,
-            freshness);
+            freshness,
+            settings.Bars ?? StrategyBars.OneMinute);
 
         // A WARM-UP THAT CANNOT BE REACHED IS A REFUSAL, not a program that waits for ever. One limit
         // covers the period and the warm-up, so a period at the limit inside a crossing — which reads
@@ -273,7 +286,7 @@ public static class StrategyParser
             var keyword = (space < 0 ? body : body[..space]).ToLowerInvariant();
             var rest = space < 0 ? "" : body[(space + 1)..].Trim();
 
-            if (!IsKeyword(keyword))
+            if (!IsKeyword(keyword) && keyword != BarsDeclaration)
                 throw new Refused(no,
                     $"`{Clip(keyword)}` is not a declaration this language has. The declarations are: {Keywords}");
 
@@ -414,6 +427,7 @@ public static class StrategyParser
         public TimeSpan? Timeframe;
         public TimeSpan? DataFreshness;
         public TimeSpan? MaxDecisionAge;
+        public TimeSpan? Bars;
     }
 
     static Settings ReadSettings(List<Decl> decls, Dictionary<string, StrategyConstant> constants)
@@ -498,6 +512,11 @@ public static class StrategyParser
                 case "max_decision_age":
                     Once(d, s.MaxDecisionAge is not null);
                     s.MaxDecisionAge = Duration(d);
+                    break;
+
+                case BarsDeclaration:
+                    Once(d, s.Bars is not null);
+                    s.Bars = Bars(d);
                     break;
             }
         }
@@ -686,6 +705,46 @@ public static class StrategyParser
                 "rather than gating one, and a bound of months admits every order there will ever be");
 
         return TimeSpan.FromSeconds(total);
+    }
+
+    /// <summary>
+    /// THE BAR THIS PROGRAM IS EVALUATED ON — `bars 1h` — one of <see cref="StrategyBars.List"/>.
+    ///
+    /// <para>Written like a duration (a whole number and one of s, m, h or d) and then held to the closed
+    /// list, so `bars 60m` is `bars 1h` — one meaning, one text — while `bars 2h` is refused with the seven
+    /// named. Every one of them is a grid the evaluator cuts closed minutes on (`BarGrid`), and a duration
+    /// outside the list would be a grid nobody else's program shares.</para>
+    ///
+    /// <para><b>It is not a fourth execution bound</b> and it changes nothing about the other three: a
+    /// `timeframe` is a statement checked at execution, this is the bar the rules are asked on.
+    /// `docs/STRATEGY-LANGUAGE.md` says how the two relate.</para>
+    /// </summary>
+    static TimeSpan Bars(Decl d)
+    {
+        var text = d.Rest.Trim().ToLowerInvariant();
+        var unit = text.Length == 0 ? '\0' : text[^1];
+
+        var seconds = unit switch
+        {
+            's' => 1L,
+            'm' => 60L,
+            'h' => 3600L,
+            'd' => 86400L,
+            _ => 0L
+        };
+
+        // The count is bounded BEFORE it is multiplied, so a twenty-digit number is a refusal and never
+        // an overflow: nothing on the list is longer than a day.
+        if (seconds != 0
+            && long.TryParse(text[..^1], NumberStyles.None, CultureInfo.InvariantCulture, out var count)
+            && count is > 0 and <= 86400
+            && StrategyBars.IsAllowed(TimeSpan.FromSeconds(count * seconds)))
+            return TimeSpan.FromSeconds(count * seconds);
+
+        throw new Refused(d.No,
+            $"`{Clip(d.Rest)}` is not a bar this language evaluates a program on. Write one of {StrategyBars.List} — " +
+            "a closed list, so that two programs on hourly bars cut them at the same instants. A program that " +
+            "declares no `bars` is evaluated on every closed minute");
     }
 
     static TimeOfDay Clock(int line, string text)
