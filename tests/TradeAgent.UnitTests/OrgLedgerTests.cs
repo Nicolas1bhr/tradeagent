@@ -265,6 +265,7 @@ public class OrgLedgerTests
             c.CommandText = $"""
                 DELETE FROM org_event WHERE position_id='research';
                 DELETE FROM org_position WHERE id='research';
+                DROP TABLE instrument_check;
                 UPDATE meta SET value='{LedgerRung - 1}' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();
@@ -584,6 +585,7 @@ public class OrgLedgerTests
         using var raw = Raw(file);
         using var c = raw.CreateCommand();
         c.CommandText = (dropLedger ? "DROP TABLE org_event; DROP TABLE org_position; DROP TABLE org_unit; " : "")
+                        + "DROP TABLE instrument_check; "
                         + $"UPDATE meta SET value='{LedgerRung - 1}' WHERE key='schema_version';";
         c.ExecuteNonQuery();
     }

@@ -251,6 +251,7 @@ public class VenueCatalogTests
                 DROP TABLE org_event;
                 DROP TABLE org_position;
                 DROP TABLE org_unit;
+                DROP TABLE instrument_check;
                 UPDATE meta SET value='16' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();

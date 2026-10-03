@@ -277,6 +277,7 @@ public class PaperEligibleVerdictTests
                 DROP TABLE org_event;
                 DROP TABLE org_position;
                 DROP TABLE org_unit;
+                DROP TABLE instrument_check;
                 UPDATE meta SET value='22' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();

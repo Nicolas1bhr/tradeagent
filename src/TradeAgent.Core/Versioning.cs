@@ -285,8 +285,17 @@ public static class Versions
     /// role strings, homed where they already are — so no historical row changes meaning. The seed is
     /// idempotent, because a crash between it and the stamp runs the rung again. Nothing reads the tables yet
     /// and no op writes them (<c>OrgStore</c>).</para>
+    ///
+    /// <para><b>29 — the instrument check</b> (<c>U-venue-verify</c>): <c>instrument_check</c>, one row per
+    /// attempt to read a venue's OWN published definition of an instrument — the URL asked, its origin as the
+    /// store reads it, both instants, the status, this build's hash of the body, the tick size, quantity
+    /// increment, minimum quantity and minimum notional as the venue published them, and the outcome
+    /// (<c>verified</c>, <c>failed</c>, <c>refused-origin</c>). Append-only and written only by the app
+    /// (<c>InstrumentCheckStore</c>); not joined to <c>venue_instrument</c> and never written into it — the
+    /// served read overlays the latest verified row of seven days or less (<c>VenueStore</c>). Additive, and
+    /// an older database gains it empty.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 28;
+    public const int DatabaseSchemaVersion = 29;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
