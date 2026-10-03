@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using System.Xml.Linq;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -32,7 +33,7 @@ static class Cultures
     public static CultureInfo NlBe => Clone(",", ".");
 
     /// <summary>fr-BE's number format: <c>1 234,5</c>, the group separator U+202F.</summary>
-    public static CultureInfo FrBe => Clone(",", " ");
+    public static CultureInfo FrBe => Clone(",", "\u202F");
 
     /// <summary>
     /// A clock that writes <c>00.00.00</c> — the time separator fi-FI and da-DK use — over nl-BE's number
@@ -547,6 +548,96 @@ public class InvariantTraceTests
             for (var i = 0; i < invariant.Count; i++)
                 Assert.True(invariant[i] == under[i],
                     $"under {culture}, the {invariant[i].What} is\n{under[i].Text}\nand under the invariant culture\n{invariant[i].Text}");
+        }
+    }
+
+    // ---- (e): the switch that keeps the latent latent ----------------------------------------------
+
+    /// <summary>What has to be true before the switch may go, named for every failure below.</summary>
+    const string WhatMustPassFirst =
+        "It is what keeps a number some later change writes without naming its culture in the invariant spelling "
+        + "on every machine this ships to, and it may be turned off only after (a) EvaluationGoldenVectorTests."
+        + nameof(EvaluationGoldenVectorTests.Every_golden_vector_writes_the_same_bytes_under_nl_BE_and_fr_BE_number_formats)
+        + ", (b) " + nameof(Every_evaluator_fault_spells_its_numbers_as_the_trace_does)
+        + ", (c) " + nameof(A_backtest_over_a_stored_dataset_records_the_same_run_under_nl_BE_and_fr_BE)
+        + " and (d) " + nameof(No_id_or_canonical_text_moves_under_another_culture)
+        + " pass WITHOUT it, under the real nl-BE and fr-BE cultures it makes unbuildable today — then change this test.";
+
+    /// <summary>
+    /// (e) INVARIANT GLOBALIZATION STAYS ON UNLESS THE CULTURE TESTS PASS WITHOUT IT — the orchestrator's order:
+    /// what is latent stays latent by construction.
+    ///
+    /// <para>(a)–(d) prove that every number the evaluation path records names its culture, under the only
+    /// cultures this build can construct: clones of the invariant one. They cannot run under the real nl-BE or
+    /// fr-BE, because <c>InvariantGlobalization=true</c> is what makes those unbuildable — and the same switch
+    /// makes the ambient culture the invariant one on every machine this ships to, so a number a later change
+    /// writes without naming its culture still comes out in the invariant spelling there. It is one line in
+    /// <c>Directory.Build.props</c>, written for startup cost and not for traces, which is the kind of line a
+    /// tidy-up removes. So this reads the switch every shipped project is built with — the props file, and no
+    /// project, props, targets, runtime template, packaging script or CI step turning it off — and the switch
+    /// the tests and the shipped programs beside them run with, and fails if any is off, naming what must pass
+    /// first.</para>
+    ///
+    /// <para><b>RED</b> with <c>Directory.Build.props</c> set to <c>false</c>, watched once.</para>
+    /// </summary>
+    [Fact]
+    public void Invariant_globalization_stays_on_unless_the_culture_tests_pass_without_it()
+    {
+        var root = DayOnePrograms.RepoRoot();
+        string Relative(string path) => Path.GetRelativePath(root, path);
+        static IEnumerable<XElement> Switches(XDocument d) =>
+            d.Descendants().Where(e => e.Name.LocalName == "InvariantGlobalization");
+
+        // 1. WHAT EVERY PROJECT INHERITS: the props file at the root turns it on.
+        var props = Path.Combine(root, "Directory.Build.props");
+        var declared = Switches(XDocument.Load(props)).Select(e => e.Value.Trim()).ToList();
+        Assert.True(declared.SequenceEqual(["true"]),
+            $"{Relative(props)} sets InvariantGlobalization to [{string.Join(", ", declared)}] rather than true. {WhatMustPassFirst}");
+
+        // 2. NOTHING TURNS IT OFF FOR ONE PROJECT, or for one published build, or on one CI runner.
+        var files = new[] { "src", "tests", "packaging", ".github" }
+            .Select(d => Path.Combine(root, d))
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories))
+            .Where(f => !Relative(f).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+            .ToList();
+
+        var msbuild = files.Where(f => f.EndsWith("proj", StringComparison.OrdinalIgnoreCase)
+                                       || f.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
+                                       || f.EndsWith(".targets", StringComparison.OrdinalIgnoreCase)).ToList();
+        Assert.Contains(msbuild, f => Path.GetFileName(f) == "TradeAgent.App.csproj");
+        foreach (var file in msbuild)
+            foreach (var e in Switches(XDocument.Load(file)))
+                Assert.True(e.Value.Trim() == "true",
+                    $"{Relative(file)} sets InvariantGlobalization to '{e.Value}' for its project. {WhatMustPassFirst}");
+
+        var turnedOff = new System.Text.RegularExpressions.Regex(
+            @"InvariantGlobalization\W*=?\W*false|Globalization\.Invariant\W+false|GLOBALIZATION_INVARIANT\W+(0|false)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        foreach (var file in files.Where(f => f.EndsWith("runtimeconfig.template.json", StringComparison.OrdinalIgnoreCase)
+                                              || f.Contains($"{Path.DirectorySeparatorChar}packaging{Path.DirectorySeparatorChar}")
+                                              || f.Contains($"{Path.DirectorySeparatorChar}.github{Path.DirectorySeparatorChar}")))
+            Assert.False(turnedOff.IsMatch(File.ReadAllText(file)),
+                $"{Relative(file)} turns invariant globalization off. {WhatMustPassFirst}");
+
+        // 3. WHAT THE TESTS RUN WITH — the switch, and its effect: the culture a Belgian machine runs in cannot be built.
+        Assert.True(AppContext.TryGetSwitch("System.Globalization.Invariant", out var on) && on,
+            $"this test process runs without System.Globalization.Invariant. {WhatMustPassFirst}");
+        Assert.Throws<CultureNotFoundException>(() => CultureInfo.GetCultureInfo("nl-BE"));
+
+        // 4. WHAT THE SHIPPED PROGRAMS BESIDE THE TESTS RUN WITH — the app the owner starts is always here.
+        var shipped = new[] { "TradeAgent", "trade", "tradeagent-gateway", "TradeAgent.UnitTests" }
+            .Select(name => Path.Combine(AppContext.BaseDirectory, $"{name}.runtimeconfig.json"))
+            .Where(File.Exists)
+            .ToList();
+        Assert.Contains(shipped, f => Path.GetFileName(f) == "TradeAgent.runtimeconfig.json");
+        foreach (var config in shipped)
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(config));
+            var invariant = json.RootElement.GetProperty("runtimeOptions").GetProperty("configProperties")
+                .TryGetProperty("System.Globalization.Invariant", out var value) && value.GetBoolean();
+            Assert.True(invariant,
+                $"{Path.GetFileName(config)} runs without System.Globalization.Invariant. {WhatMustPassFirst}");
         }
     }
 }
