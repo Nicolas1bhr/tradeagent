@@ -30,7 +30,7 @@ that gave AI agents exchange access ships that (R06 §0). The factory floor arou
   R01 §0; phase 0 fixes them.
 - **Some protections are advisory today.** The vendor CLI agent runs unconfined as the owner's user (`Containment.cs:43`): it
   can read the holdout files, write any ledger file, and rewrite `runtimes.json` — whose base URL decides where the owner's
-  pasted provider key is sent after the next start (SOURCE `AppHost.cs:121-150`, `RuntimeManifest.cs:716-728`,
+  pasted provider key is sent after the next start — CLOSED by `U-key-host-pin` (record `9a63a69`, 2026-10-02) (SOURCE at the time `AppHost.cs:121-150`, `RuntimeManifest.cs:716-728`,
   `ApiConversation.cs:242-252,466-497`; R10 #6, R11 § 1). Phase 0 closes the key route; containment closes the rest.
 
 ## 1. The end state

@@ -15,6 +15,17 @@ builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allo
 every CI run read: `fleet/ci-ledger.md` (`fleet/` = `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`, outside `/tmp`). Resume from those and
 git; the plan and the waves below are unchanged, and this block is rewritten at each wave's end.
 
+**Checkpoint 2026-10-03 06:50 CEST (orchestrator).** LANDED on `main` (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69` · W0
+`U-fix-resume-on-start` `c8d6642` (the windows red fixed in the product) · `U-cost-model` rung 27 `afd1bb6` · `U-runner-forward` `f7f0b09` · `U-tape-store`
+`a912261` (tape.db v1 — built, but nothing records until an app runs with "Record market context" on) · `U-evidence-identity` `923fb28` ·
+`U-fix-inbox-boundary` `84a4664` (product fix: the yield asks the ledger) · `U-paper-friction` `923284e` · `U-meter-batch-1` `0e0ce82`. IN FLIGHT: seat P —
+`U-org-ledger` rung 28 landing (gate green), `U-inbox-order` building (an agent's file must never be recorded as the owner's after a backward clock step),
+`U-fix-bridge-heartbeat` queued (one macOS red); seat A — `U-paper-settle` reported (lands next), `U-timeframe-a` CI green (report), `U-venue-verify`
+(next free rung, expected 29) building; then `U-invariant-traces` (culture-proof evaluation path + version bump, BEFORE M0), `U-timeframe-b`, the tape
+CARDs (`U-tape-events` briefed: OKX EEA + Bybit EU announcements with a recorded terms basis; GDELT to `U-tape-archive`), then M0. Every agent stopped at
+the 5-hour usage limit three times (~18:15, ~22:20, ~03:40 CEST) and was resumed by SendMessage from `fleet/status/` with nothing lost. OWNER, pending:
+the Windows box is OFFLINE since 2026-10-02 01:42Z (blocks `R-containment`); may a tape recorder run on the box when back and on this Mac meanwhile.
+
 **Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this
 was again a planning session ("bolted down" first, builders only when the owner says build). `docs/briefs/` holds ONE brief, `U-observed-loop`;
 `docs/queue/` holds NINETEEN ready briefs (eleven of the edge factory, six of the organisation, the Windows CI fixer and the containment probe); no worktree; the observed-run home persists, its AI
