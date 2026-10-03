@@ -273,7 +273,8 @@ public sealed record BacktestRequest(
     /// of the two results would silently stand for both.</para>
     /// </summary>
     public string RunIdFor(string versionId) =>
-        Sha256Hex.Of($"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}");
+        Sha256Hex.Of(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}"));
 }
 
 /// <summary>

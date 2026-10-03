@@ -345,10 +345,16 @@ public static class KlineNormaliser
         using var stream = new FileStream(destFile, FileMode.Create, FileAccess.Write, FileShare.None);
         using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" };
         writer.WriteLine(candlesCarryVolume ? Header : HeaderWithQuality);
+
+        // THE TIME IS WRITTEN IN THE INVARIANT CULTURE, for the reason the line ending is LF: in a pattern,
+        // `:` means "the culture's time separator" and the year is the culture's calendar's, so a machine
+        // whose clock reads 00.00.00 wrote 2026-01-05T00.00.00Z — another file, another sha, another dataset,
+        // and another run id for every run over it (`U-invariant-traces`).
         foreach (var (at, priced) in bars)
             writer.WriteLine(candlesCarryVolume
-                ? $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text}"
-                : $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text},{priced.Quality}");
+                ? string.Create(CultureInfo.InvariantCulture, $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text}")
+                : string.Create(CultureInfo.InvariantCulture,
+                    $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text},{priced.Quality}"));
     }
 
     static string Sha256(string file)

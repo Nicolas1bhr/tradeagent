@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core.Strategy;
 
@@ -232,8 +233,8 @@ public sealed class StrategyStore(Database db)
     /// release moves it whether or not anything a program means has moved. What does withdraw one is
     /// the evaluation semantics (<c>Strategy.EvaluationSemantics</c>, <c>Promotions.Standing</c>).
     /// </summary>
-    public static string InterpreterBuild =>
-        $"app={Versions.App};language={StrategyVersions.LanguageVersion}";
+    public static string InterpreterBuild => string.Create(CultureInfo.InvariantCulture,
+        $"app={Versions.App};language={StrategyVersions.LanguageVersion}");
 
     /// <summary>
     /// Records one accepted version, or leaves the row that is already there alone. Returns the id,

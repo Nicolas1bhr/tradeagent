@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace TradeAgent.Core.Strategy;
 
 /// <summary>The five series of one closed bar. A series names no instrument; the program names one.</summary>
@@ -148,17 +150,21 @@ public sealed record TargetRule(TargetKind Kind, decimal Value)
     public static readonly TargetRule None = new(TargetKind.None, 0m);
 }
 
-/// <summary>Minutes past midnight in the program's declared zone, as a wall clock and never an instant.</summary>
+/// <summary>
+/// Minutes past midnight in the program's declared zone, as a wall clock and never an instant. Spelled
+/// <c>09:30</c> in the invariant culture, because <see cref="StrategyCanonical"/> writes this spelling into a
+/// version's id.
+/// </summary>
 public sealed record TimeOfDay(int Hour, int Minute)
 {
     public int MinuteOfDay => Hour * 60 + Minute;
-    public override string ToString() => $"{Hour:00}:{Minute:00}";
+    public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"{Hour:00}:{Minute:00}");
 }
 
-/// <summary>A half-open wall-clock interval, `From` included and `To` excluded.</summary>
+/// <summary>A half-open wall-clock interval, `From` included and `To` excluded. Spelled <c>09:30-10:00</c>, as <see cref="TimeOfDay"/> is.</summary>
 public sealed record TimeWindow(TimeOfDay From, TimeOfDay To)
 {
-    public override string ToString() => $"{From}-{To}";
+    public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"{From}-{To}");
 }
 
 [Flags]
