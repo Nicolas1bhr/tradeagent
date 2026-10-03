@@ -1633,10 +1633,155 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','27') ON CONFLICT(key) DO UPDATE SET value='27';");
         }
 
+        if (have < 28)
+        {
+            // THE ORGANISATION AS APP-MINTED DATA — `U-org-ledger`.
+            //
+            // `docs/ORGANISATION.md` § 3 asks for the chart as "one table with `parent` and `head`, no role
+            // enum". Before this rung "role" was unconstrained TEXT on eight columns and on every launch
+            // grant, the two roles were two constants (`CouncilRoles`), and nothing modelled a unit, a
+            // parent, a head, a seat or an envelope. NOTHING READS THESE TABLES YET AND NO OP WRITES THEM:
+            // this rung changes no behaviour.
+            //
+            // THREE TABLES BECAUSE THERE ARE THREE FACTS. `org_unit` is the chart — a tree by `parent_id`,
+            // its head by `head_position_id`, which is NULL on the root because the root's head is the
+            // OWNER, in-process, whom no row names and no agent can become. `org_position` is a place an
+            // agent fills — the role that survives the agents (`Council.cs`) — with its home folder and the
+            // seat it runs on. `org_event` is the append-only record of every act on either, and of who
+            // decided it.
+            //
+            // THE TWO LEGACY POSITIONS' IDS ARE THE LEGACY ROLE STRINGS, so no historical row changes
+            // meaning: every `role` a store has written is `operations`, `research` or an app principal
+            // that is code and never a position (`referee`, `allocator`), and the first two now name rows.
+            // Their homes are the folders they already have (`CouncilRoles.HomeDir`).
+            //
+            // THE VOCABULARY IS TEXT VALIDATED BY THE STORE — never an enum and never a CHECK, so a kind or
+            // a status from a newer build reads as itself (the reason `MissionEventKind` gives). THE SHAPE OF
+            // THE TREE IS SQL'S: only the root has no parent, only the root has kind `root`, and there is one
+            // root; a unit hangs from a unit that exists, and a position and an event belong to rows that
+            // exist. The head has no foreign key, because a division and its head's position each name the
+            // other and these rungs run in autocommit, so neither could be inserted first.
+            //
+            // `envelope_share` IS THE AI-SPEND ENVELOPE — a decimal string, a share of the parent's, NULL
+            // being today's split — and NOT `paper_envelope`, the owner's grant at rung 25. The four seat
+            // columns NULL are today's behaviour: the owner's runtime and model settings.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS org_unit(
+              id                     TEXT PRIMARY KEY,
+              parent_id              TEXT REFERENCES org_unit(id),
+              kind                   TEXT NOT NULL,
+              head_position_id       TEXT,
+              status                 TEXT NOT NULL,
+              envelope_share         TEXT,
+              charter_publication_id TEXT,
+              created_at             TEXT NOT NULL,
+              closed_at              TEXT,
+              CHECK ((parent_id IS NULL) = (kind = 'root'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_org_unit_one_root ON org_unit(kind) WHERE kind = 'root';
+            CREATE INDEX IF NOT EXISTS ix_org_unit_parent ON org_unit(parent_id);
+
+            CREATE TABLE IF NOT EXISTS org_position(
+              id             TEXT PRIMARY KEY,
+              unit_id        TEXT NOT NULL REFERENCES org_unit(id),
+              home_dir       TEXT NOT NULL,
+              status         TEXT NOT NULL,
+              seat_runtime   TEXT,
+              seat_model     TEXT,
+              seat_allow_in  TEXT,
+              seat_allow_out TEXT,
+              created_at     TEXT NOT NULL,
+              ended_at       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_org_position_unit ON org_position(unit_id);
+
+            CREATE TABLE IF NOT EXISTS org_event(
+              id          INTEGER PRIMARY KEY AUTOINCREMENT,
+              at          TEXT NOT NULL,
+              unit_id     TEXT NOT NULL REFERENCES org_unit(id),
+              position_id TEXT REFERENCES org_position(id),
+              kind        TEXT NOT NULL,
+              decider     TEXT NOT NULL,
+              detail      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_org_event_unit ON org_event(unit_id, id);
+            """);
+
+            SeedOrganisation(Sql.T(DateTimeOffset.UtcNow));
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','28') ON CONFLICT(key) DO UPDATE SET value='28';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"database schema {found} is newer than this build supports ({Versions.DatabaseSchemaVersion})");
+    }
+
+    /// <summary>
+    /// THE SCHEMA-28 SEED: the root, the two divisions and the two legacy positions, each with one
+    /// <c>org_event</c> saying the app wrote it.
+    ///
+    /// <para><b>Idempotent, because one kind of crash runs it twice.</b> The rungs run in autocommit and the
+    /// stamp is a rung's last statement, so a crash anywhere between the first insert here and the stamp
+    /// reopens at 27 with part or all of this already written. The five rows have fixed ids and
+    /// <c>ON CONFLICT DO NOTHING</c>. An event's key is a counter, which no conflict clause can refuse, so each
+    /// event is inserted only <c>WHERE NOT EXISTS</c> a seed event for that id. Units before positions and
+    /// every row before its event, because the foreign keys are checked as each statement commits.</para>
+    ///
+    /// <para><b><c>detail</c> is composed here, from ids and fixed words</b>, and from nothing an agent wrote, so
+    /// the record cannot carry an instruction. Every value is this assembly's own constant, bound as a
+    /// parameter.</para>
+    /// </summary>
+    void SeedOrganisation(string at)
+    {
+        Unit(OrgIds.Root, parent: null, OrgUnitKind.Root, head: null);
+        Unit(OrgIds.Operations, OrgIds.Root, OrgUnitKind.Division, CouncilRoles.Operations);
+        Unit(OrgIds.Research, OrgIds.Root, OrgUnitKind.Division, CouncilRoles.Research);
+        Position(CouncilRoles.Operations, OrgIds.Operations);
+        Position(CouncilRoles.Research, OrgIds.Research);
+
+        void Unit(string id, string? parent, string kind, string? head)
+        {
+            using (var u = Cmd("""
+                INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share,
+                                     charter_publication_id, created_at, closed_at)
+                VALUES($id, $parent, $kind, $head, $status, NULL, NULL, $at, NULL)
+                ON CONFLICT DO NOTHING
+                """, ("$id", id), ("$parent", parent), ("$kind", kind), ("$head", head),
+                ("$status", OrgUnitStatus.Active), ("$at", at)))
+                u.ExecuteNonQuery();
+
+            using var e = Cmd("""
+                INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail)
+                SELECT $at, $id, NULL, $kind, $decider, $detail
+                 WHERE NOT EXISTS (SELECT 1 FROM org_event
+                                    WHERE kind = $kind AND unit_id = $id AND position_id IS NULL)
+                """, ("$at", at), ("$id", id), ("$kind", OrgEventKind.Seeded), ("$decider", OrgDecider.App),
+                ("$detail", $"unit={id} kind={kind} parent={parent ?? "none"} head={head ?? "owner"}"));
+            e.ExecuteNonQuery();
+        }
+
+        void Position(string id, string unit)
+        {
+            var home = CouncilRoles.HomeDir(id);
+            using (var p = Cmd("""
+                INSERT INTO org_position(id, unit_id, home_dir, status, seat_runtime, seat_model, seat_allow_in,
+                                         seat_allow_out, created_at, ended_at)
+                VALUES($id, $unit, $home, $status, NULL, NULL, NULL, NULL, $at, NULL)
+                ON CONFLICT DO NOTHING
+                """, ("$id", id), ("$unit", unit), ("$home", home), ("$status", OrgPositionStatus.Active),
+                ("$at", at)))
+                p.ExecuteNonQuery();
+
+            using var e = Cmd("""
+                INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail)
+                SELECT $at, $unit, $id, $kind, $decider, $detail
+                 WHERE NOT EXISTS (SELECT 1 FROM org_event WHERE kind = $kind AND position_id = $id)
+                """, ("$at", at), ("$unit", unit), ("$id", id), ("$kind", OrgEventKind.Seeded),
+                ("$decider", OrgDecider.App), ("$detail", $"position={id} unit={unit} home={home}"));
+            e.ExecuteNonQuery();
+        }
     }
 
     /// <summary>
