@@ -496,6 +496,14 @@ public sealed class AppHost : IAsyncDisposable
     TapeStore? _tape;
 
     /// <summary>
+    /// THE APP'S INSTRUMENT CHECK (<c>U-venue-verify</c>): the configured pair, read against Binance spot's
+    /// own published definition from the built-in origin. In-process only, like the collectors: no verb and
+    /// no pipe op starts a check or writes its row. Null when it could not be built — the activity log says
+    /// why — and the rest of the app runs without it.
+    /// </summary>
+    InstrumentVerifier? _verifier;
+
+    /// <summary>
     /// Whether TradeAgent asks GitHub about new versions on its own.
     ///
     /// Off means never touching the network for this; it does not mean never updating. An update is
@@ -594,6 +602,16 @@ public sealed class AppHost : IAsyncDisposable
             {
                 Gateway.Log.Activity(
                     "TradeAgent is not recording market context: " + ex.Message.ReplaceLineEndings(" "), "warn");
+            }
+
+            // THE INSTRUMENT CHECK, BUILT WITH THE APP. It asks nothing here: the background loop's first
+            // pass checks the configured pair, and so do the owner's pair change and "Check now".
+            try { _verifier = new InstrumentVerifier(_db); }
+            catch (Exception ex)
+            {
+                Gateway.Log.Activity(
+                    "TradeAgent cannot check instruments against the venue's definition: "
+                    + ex.Message.ReplaceLineEndings(" "), "warn");
             }
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
@@ -1016,6 +1034,12 @@ public sealed class AppHost : IAsyncDisposable
                 // restarts itself while the owner is looking elsewhere is not a convenience.
                 if (pass % (12 * 60 * 6) == 0 && AutoCheckForUpdates) _ = Updates.CheckAsync(ct);
 
+                // THE CONFIGURED PAIR AGAINST THE VENUE'S OWN DEFINITION: once at startup, then every six
+                // hours (U-venue-verify). A successful check is served for seven days, so an app left
+                // running re-reads it long before it lapses, and a venue that changes a step is noticed
+                // within the day. It never throws: a failure is a row and an activity line.
+                if (pass % (12 * 60 * 6) == 0) _ = CheckInstrumentAsync(ct);
+
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) { return; }
@@ -1024,6 +1048,50 @@ public sealed class AppHost : IAsyncDisposable
             try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
             catch (OperationCanceledException) { return; }
         }
+    }
+
+    /// <summary>
+    /// CHECKS THE CONFIGURED MARKET-DATA PAIR AGAINST BINANCE SPOT'S OWN PUBLISHED DEFINITION, records the
+    /// attempt and says what happened in the activity log (<c>U-venue-verify</c>). Run at startup and every
+    /// six hours by the background loop, when the owner changes the pair, and by the owner's "Check now".
+    ///
+    /// <para>In-process only: nothing on the agent-facing pipe reaches it. It never throws — a vendor
+    /// failure is the verifier's row, and anything else is a line in the engineering log — so a caller may
+    /// discard the task. Null when nothing was asked: no verifier, or a pair TradeAgent will not put in an
+    /// address.</para>
+    /// </summary>
+    public async Task<Core.Data.InstrumentCheckRow?> CheckInstrumentAsync(CancellationToken ct = default)
+    {
+        if (_verifier is not { } verifier || Gateway is not { } gateway) return null;
+
+        var pair = gateway.Settings.MarketDataPair;
+        try
+        {
+            var row = await verifier.CheckAsync(Core.Data.VenueCatalog.BinanceSpot, pair, ct);
+            if (row is not null)
+                gateway.Log.Activity(
+                    "Instrument check: " + InstrumentVerifier.Describe(row, VenueName(gateway, row.VenueId)),
+                    row.IsVerified ? "info" : "warn");
+            Changed?.Invoke();
+            return row;
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex)
+        {
+            gateway.Log.Engineering("App", "instrument_check_failed", "warn", ex: ex);
+            return null;
+        }
+    }
+
+    /// <summary>A venue as a person names it, off the recorded catalogue, or its id where the catalogue has none.</summary>
+    static string VenueName(TradingGateway gateway, string venueId)
+    {
+        try
+        {
+            return gateway.Venues.Venues().FirstOrDefault(v => string.Equals(v.Id, venueId, StringComparison.Ordinal))
+                ?.DisplayName ?? venueId;
+        }
+        catch (Exception) { return venueId; }
     }
 
     /// <summary>

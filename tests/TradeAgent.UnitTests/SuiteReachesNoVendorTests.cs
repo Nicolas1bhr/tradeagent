@@ -172,6 +172,15 @@ public class SuiteReachesNoVendorTests
                 && !body.Contains("baseUrl:", StringComparison.Ordinal))
                 offenders.Add($"{name} builds a TapeCollector and never names a baseUrl, so it would ask "
                               + "the vendor's futures host every look");
+
+            // AND THE INSTRUMENT VERIFIER, THE SAME TRAP A FIFTH TIME (U-venue-verify): its built-in
+            // definition address defaults to the one compiled into this build — the vendor's market-data
+            // host — so a test that builds one without naming `builtInDefinition` would ask the vendor for an
+            // instrument definition on every run and pass. The same file-level rule and the same lookahead.
+            if (Regex.IsMatch(body, @"\bInstrumentVerifier\b(?!\s*\.)")
+                && !body.Contains("builtInDefinition:", StringComparison.Ordinal))
+                offenders.Add($"{name} builds an InstrumentVerifier and never names a builtInDefinition, so it "
+                              + "would ask the vendor's market-data host for an instrument definition");
         }
 
         Assert.True(offenders.Count == 0,
