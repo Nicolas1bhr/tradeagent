@@ -99,9 +99,10 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>
     /// The venue catalogue — what instruments this installation knows of, on which venue, with what
     /// grid and what step, and who said so. READ ONLY from here in the sense that matters: the rows
-    /// come from <c>VenueCatalog</c> (the built-ins plus <c>venues.json</c>) at construction, and there
-    /// is no pipe op and no <c>trade</c> verb that adds, edits or removes one — <c>venue-list</c> reads
-    /// it and nothing writes it.
+    /// come from <c>VenueCatalog</c> (the built-ins plus <c>venues.json</c>) at construction, overlaid at
+    /// read time by the app's own instrument checks on this gateway's clock (<c>U-venue-verify</c>), and
+    /// there is no pipe op and no <c>trade</c> verb that adds, edits, removes or checks one —
+    /// <c>venue-list</c> reads it and nothing on the pipe writes it.
     /// </summary>
     public VenueStore Venues => _venues;
 
@@ -2415,10 +2416,38 @@ public sealed class TradingGateway : IAsyncDisposable
             // WHAT A PAPER FILL PAYS, by the rule the connector reads at the fill — so the agent is never
             // told a friction the fills are not paying (U-paper-friction).
             PaperFriction = PaperFrictionStatus.Of(Core.Strategy.FrictionInForce.ForPaper(Settings)),
+            // THE MARKET-DATA PAIR'S INSTRUMENT CHECK, off the served read every sizing reader uses
+            // (U-venue-verify), so the agent is never told a verification no reader is acting on.
+            InstrumentCheck = InstrumentCheckForStatus(),
             LossValuationLost = loss.ValuationLost.Count > 0 ? loss.ValuationLost : null,
             LossValuationExit = loss.ValuationExits.Count > 0 ? loss.ValuationExits : null,
             AiModel = ai.Model
         };
+    }
+
+    /// <summary>
+    /// THE MARKET-DATA PAIR'S INSTRUMENT CHECK, for the status: the served row's verdict and sentence, and
+    /// the venue's numbers while a check stands. ABSENT when the read throws — the status must render — and
+    /// never an invented "verified".
+    /// </summary>
+    InstrumentCheckStatus? InstrumentCheckForStatus()
+    {
+        try
+        {
+            var said = _venues.Verification(Core.Data.VenueCatalog.BinanceSpot, Settings.MarketDataPair);
+            var served = said.Verified ? said.Served : null;
+            var check = served?.Check;
+            return new InstrumentCheckStatus(said.VenueId, said.Symbol, said.Verified, said.Says)
+            {
+                CheckedAt = check?.ReceivedAt,
+                Url = check?.Url,
+                TickSize = served?.TickSize,
+                QuantityIncrement = served?.QuantityIncrement,
+                MinQuantity = check?.MinQuantity,
+                MinNotional = check?.MinNotional
+            };
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>

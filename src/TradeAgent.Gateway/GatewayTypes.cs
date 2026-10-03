@@ -608,6 +608,19 @@ public sealed record GatewayStatus(
     public PaperFrictionStatus? PaperFriction { get; init; }
 
     /// <summary>
+    /// THE ACCOUNT OWNER'S MARKET-DATA PAIR AS TRADEAGENT LAST CHECKED IT AGAINST THE VENUE'S OWN
+    /// PUBLISHED DEFINITION (<c>U-venue-verify</c>), or ABSENT because the ledger would not read — never an
+    /// invented verdict. An unreadable catalogue is not absence: it is "not verified" with that reason.
+    ///
+    /// <para>It is on the status because it bounds the agent's next piece of work the way the forward
+    /// bars' age does: research's default increment, the judge's cost model, the paper platform and the
+    /// forward runner all size to the same served row, and an unverified pair sizes nothing. The
+    /// sentence is the one the Settings page's Market data card shows. There is no verb and no op that
+    /// asks for a check or changes one.</para>
+    /// </summary>
+    public InstrumentCheckStatus? InstrumentCheck { get; init; }
+
+    /// <summary>
     /// WHAT IS BEING RUN FORWARD ON PAPER RIGHT NOW, or ABSENT because nothing is.
     ///
     /// <para>Running and suspended runs, and any run that has ENDED with an operation still
@@ -647,6 +660,36 @@ public sealed record PaperFrictionStatus(string Source, decimal Fee, decimal Sli
 
 /// <summary>A venue cost model as a source names it: which model and which venue, and the sha of its text.</summary>
 public sealed record PaperFrictionModel(string Id, string Sha256);
+
+/// <summary>
+/// ONE INSTRUMENT'S CHECK AS THE STATUS REPORTS IT: whether it is verified, the one sentence that says
+/// why or why not, and — while a check of seven days or less stands — the venue's numbers, the address
+/// and the instant they were read (<c>U-venue-verify</c>).
+/// </summary>
+/// <param name="Venue">The venue catalogue's id, e.g. <c>binance-spot</c>.</param>
+/// <param name="Symbol">The pair, as the venue writes it.</param>
+/// <param name="Verified">Whether the served row is verified right now.</param>
+/// <param name="Says">"verified against … on …" or "not verified: …", exactly as the Market data card says it.</param>
+public sealed record InstrumentCheckStatus(string Venue, string Symbol, bool Verified, string Says)
+{
+    /// <summary>When the answer of the check being served arrived, or ABSENT because none is being served.</summary>
+    public DateTimeOffset? CheckedAt { get; init; }
+
+    /// <summary>The address that check read, or ABSENT.</summary>
+    public string? Url { get; init; }
+
+    /// <summary>The price grid in force, or ABSENT because the pair is not verified.</summary>
+    public decimal? TickSize { get; init; }
+
+    /// <summary>The step a size is rounded DOWN to, or ABSENT because the pair is not verified.</summary>
+    public decimal? QuantityIncrement { get; init; }
+
+    /// <summary>The venue's published minimum quantity, from the check. Recorded, NOT applied.</summary>
+    public decimal? MinQuantity { get; init; }
+
+    /// <summary>The venue's published minimum order value, from the check. Recorded, NOT applied: the v1 cost model ignores it.</summary>
+    public decimal? MinNotional { get; init; }
+}
 
 /// <summary>
 /// THE FORWARD SERIES AS THE STATUS REPORTS IT — the one line an agent needs before it decides

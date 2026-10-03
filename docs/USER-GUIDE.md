@@ -208,10 +208,13 @@ empty box keeps TradeAgent's number, and one press of *Clear my numbers* puts bo
 said as **FRICTIONLESS** on every fill rather than looking like an exchange that charges nothing. Every
 fill records whose numbers it paid, and the daily report repeats the line. **A fill here is a simulation
 and never proof that the price could have been traded** — it says the price existed, not that your order
-would have got it. Out of the box
-TradeAgent paper trades nothing at all, because it will not size an order against a step size nobody
-has confirmed; the same `venues.json` line described under *If a backtest says it will not guess an
-instrument's size step* is what opens it.
+would have got it. TradeAgent paper
+only trades a pair whose step size has been confirmed, and TradeAgent confirms it itself: it reads the
+pair you chose under **Market data** from Binance's own published definition — when it starts, every six
+hours, when you change the pair, and when you press **Check now** — and the line **Instrument check** on
+that card says whether the pair is verified and, if not, why. Until a check succeeds TradeAgent paper
+trades nothing, rather than size an order against a step nobody confirmed; see *If a backtest says it
+will not guess an instrument's size step*.
 
 If TradeAgent has been collecting for weeks before you first switch to TradeAgent paper, its first look
 catches up on every minute collected in one go — a few seconds for a month of minutes — so your first
@@ -1010,26 +1013,37 @@ a size is always rounded **down** to it, so the wrong step makes every number a 
 number about a position nobody could have taken.
 
 TradeAgent keeps a list of the venues and instruments it knows of, and each entry says who says so
-and whether anyone has actually **checked** it. The AI can read that list; it cannot write it. What
-ships is deliberately modest: the four practice-simulator contracts are marked checked, because the
-simulator is TradeAgent's own and there is nobody else to disagree with; the Binance pair is **not**,
-because nothing in TradeAgent has ever asked Binance what its real step is.
+and whether anyone has actually **checked** it. The AI can read that list; it cannot write it. The four
+practice-simulator contracts are marked checked, because the simulator is TradeAgent's own and there is
+nobody else to disagree with. The Binance pair is checked by **TradeAgent itself**: it asks Binance for
+its own published definition of the pair — the price step, the size step and the smallest order — at
+Binance's own address, when it starts, every six hours while it runs, when you change the pair under
+**Market data** on the Settings page, and when you press **Check now** there. A successful check is used
+for seven days. The line **Instrument check** on that card says *verified against Binance spot's
+published instrument definition on …* with the numbers, or *not verified:* and why — no answer, an
+answer TradeAgent could not read, a check more than seven days old, or an address that is not Binance's
+own, which TradeAgent refuses to ask at all.
 
-So when the AI asks for a backtest and does not name a step itself, and TradeAgent has no checked
-entry for that instrument, it refuses and says so instead of picking a number. The refusal names the
-two ways forward, and neither needs a command prompt:
+So when the AI asks for a backtest and does not name a step itself, and the pair is not verified, it
+refuses and says so instead of picking a number. The refusal names the two ways forward, and neither
+needs a command prompt:
 
 - the AI can state the step itself, and the record of that run then says the number was the AI's; or
-- you can record the instrument in **`venues.json`** in TradeAgent's own folder, with where you got
-  the numbers from and a note that you checked them. That is a small text file and a one-line fix,
-  and it is the same kind of file as the three below.
+- you can choose that pair under **Market data**, or press **Check now** there, and TradeAgent reads the
+  numbers from Binance itself. Nothing needs a file.
 
-An unreadable `venues.json` behaves like the others: nothing is served from it, the shipped entries
+A check confirms what Binance published at that moment. It does not promise that every order sized to
+it would be accepted, and it does not make a size clear Binance's minimum order value (5 USDT for
+BTCUSDT when this was written), which TradeAgent records beside the check and does not yet apply.
+
+Nobody has to write a `venues.json` any more. If one exists in TradeAgent's own folder and cannot be
+read, it behaves like the files in the next section: nothing is served from it, the shipped entries
 do **not** quietly stand in for it, and every backtest that does not name its own step is refused
 until the file is corrected or deleted.
 
-TradeAgent does **not** keep venue fees or minimum order sizes in that list; a fee taken from a table
-nobody checked would look like a measurement and would not be one. What it does keep is the venue's
+TradeAgent does **not** keep venue fees in that list, and the minimum order value it reads from Binance
+is shown and not applied; a fee taken from a table nobody checked would look like a measurement and would
+not be one. What it does keep is the venue's
 **published** standard fee, written into TradeAgent itself with the page it was read from and the day,
 and not into a file anybody can edit: its own judge charges it (see *Holding months back*), a fill on
 TradeAgent paper pays it unless you set your own numbers, and a backtest the AI runs pays it for any fee

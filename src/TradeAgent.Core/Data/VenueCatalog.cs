@@ -100,9 +100,12 @@ public sealed record VenueCatalogRead(IReadOnlyList<VenueEntry> Venues, string? 
 /// the request and the default was 1 — a whole Bitcoin on a pair whose real step is 0.00001.</para>
 ///
 /// <para><b>Shipped, and overridable in one line.</b> Exactly the <c>runtimes.json</c> / <c>atas.json</c>
-/// pattern <c>docs/DECISIONS.md</c>:73-78 settled: a venue that changes a step size should cost an edit
-/// to <c>venues.json</c> in the app's own folder, not a rebuild. A file entry REPLACES the built-in
-/// venue with the same id and is otherwise appended, which is <c>RuntimeManifest.Read</c>'s rule.</para>
+/// pattern <c>docs/DECISIONS.md</c>:73-78 settled: a catalogue fact should cost an edit to
+/// <c>venues.json</c> in the app's own folder, not a rebuild. A file entry REPLACES the built-in venue
+/// with the same id and is otherwise appended, which is <c>RuntimeManifest.Read</c>'s rule. Nobody has to
+/// write that file to VERIFY an instrument any more: the app reads the venue's own published definition
+/// itself and serves it over these rows (<c>U-venue-verify</c>, <c>VenueStore</c>), so a venue that changes
+/// a step size is noticed by a check rather than by a hand edit.</para>
 ///
 /// <para><b>An unreadable override is the most restrictive override</b>, and that is the same
 /// judgement <c>RuntimeManifest.Read</c> makes: a file the owner wrote to correct a step size that
@@ -134,8 +137,9 @@ public static class VenueCatalog
     /// (<c>DatasetRecord.VenueId</c>) and a venue id naming nothing in this catalogue would be a
     /// provenance row pointing at a fact nobody holds. It ships with NO INSTRUMENTS, which is not an
     /// omission: nothing in this build has read Revolut X's instrument definition, so a run over its
-    /// bars is REFUSED an increment rather than given a guessed one, and the owner who confirms a
-    /// step size writes one line into <c>venues.json</c>.</para>
+    /// bars is REFUSED an increment rather than given a guessed one. This build holds no definition
+    /// address for it either (<see cref="DefinitionShape"/>), so the app's instrument check cannot verify
+    /// one: reading Revolut X's own definition is a later unit.</para>
     /// </summary>
     public const string RevolutX = "revolut-x";
 
@@ -163,13 +167,15 @@ public static class VenueCatalog
     /// THE CATALOGUE THIS BUILD SHIPS. Two venues, five instruments, and one of the two is honest
     /// about not having been checked.
     ///
-    /// <para><b>Binance spot is UNVERIFIED and stays that way until something measures it.</b> The
-    /// numbers below are what this product has always assumed BTCUSDT's grid to be; nothing in this
-    /// build has read Binance's own instrument definition, and this unit reaches no network. So the row
-    /// is served as unverified, a run that would have taken its increment is REFUSED instead of
-    /// guessing, and the owner who confirms it writes one line into <c>venues.json</c>. Only BTCUSDT is
-    /// here: the app collects whatever pair the owner types, and a row for a pair nobody looked at
-    /// would be a fabricated fact rather than a missing one.</para>
+    /// <para><b>Binance spot is UNVERIFIED here, and what verifies it is a measurement.</b> The
+    /// numbers below are what this product has always assumed BTCUSDT's grid to be, and this row is
+    /// never edited to say otherwise. The app's own instrument check (<c>U-venue-verify</c>) reads
+    /// Binance's published definition from the built-in origin (<see cref="BinanceSpotDefinitionShape"/>)
+    /// and the served read overlays a successful check on this row for seven days — the venue's numbers
+    /// in place of these, and any of these that disagree kept beside them. Without a fresh check the row is
+    /// served as unverified and a run that would have taken its increment is REFUSED instead of guessing.
+    /// Only BTCUSDT is here: a row for a pair nobody looked at would be a fabricated fact rather than a
+    /// missing one, and a pair the app has CHECKED is served from its check.</para>
     ///
     /// <para><b>The simulator is VERIFIED, and that is not a double standard.</b> Its instrument
     /// definition is not a claim about somebody else's venue — it is this application's own, and the

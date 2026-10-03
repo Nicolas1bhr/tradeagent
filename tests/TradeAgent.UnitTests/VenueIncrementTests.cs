@@ -233,7 +233,11 @@ public class VenueIncrementTests(ITestOutputHelper log)
         Assert.Contains("binance-spot", refused.Message, StringComparison.Ordinal);
         Assert.Contains("trade venue list", refused.Message, StringComparison.Ordinal);
         Assert.Contains("--increment", refused.Message, StringComparison.Ordinal);
-        Assert.Contains("venues.json", refused.Message, StringComparison.Ordinal);
+
+        // THE OWNER'S ROUTE IS THE IN-APP CHECK, NOT A FILE (U-venue-verify): it used to name venues.json,
+        // which no screen writes.
+        Assert.Contains("Check now", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("venues.json", refused.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

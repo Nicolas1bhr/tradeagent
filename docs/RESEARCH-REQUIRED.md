@@ -234,6 +234,30 @@ end for each 5-minute series; the tape stores the vendor's value as served and a
 
 ---
 
+## C5c — Binance spot's published instrument definition (measured 2026-10-02 and 2026-10-03 from this Mac; re-verify at build time)
+
+**Decided: TradeAgent verifies an instrument by reading the venue's own definition itself** (`U-venue-verify`, schema
+29), so the step a size is rounded down to is the venue's and no screen tells anyone to edit `venues.json`.
+`docs/CONTRACTS.md` "The instrument check" states what a check claims and does not.
+
+| Fact | Value |
+|---|---|
+| Host | `https://data-api.binance.vision` — the same market-data-only host as C5; no key is sent and none is held. It is the BUILT-IN origin of the check (`VenueCatalog.BinanceSpotDefinitionShape`); a `venues.json` override on any other origin is refused before a request is made. |
+| Endpoint | `GET /api/v3/exchangeInfo?symbol={SYMBOL}` |
+| Measured (the brief) | RUN 2026-10-02 from this Mac, no key: `symbol=BTCUSDT` → HTTP 200 in ~0.3 s; `tickSize 0.01`, `stepSize 0.00001`, `minQty 0.00001`, `NOTIONAL minNotional 5`. |
+| Re-measured (the builder) | Once, read-only, at 2026-10-03 04:48:54 UTC: HTTP 200 in 1.03 s, 5,335 bytes, no redirect, one symbol listed, `status TRADING`. `PRICE_FILTER.tickSize "0.01000000"`, `LOT_SIZE.minQty "0.00001000"` and `stepSize "0.00001000"`, `NOTIONAL.minNotional "5.00000000"`. The only request this unit made to the host; the suite talks to a loopback `HttpListener` and `SuiteReachesNoVendorTests` refuses a test that builds an `InstrumentVerifier` without naming its built-in address. |
+| Answer shape | `{"timezone","serverTime","rateLimits","exchangeFilters","symbols":[{"symbol","status","baseAsset","quoteAsset",…,"filters":[…]}]}`, decimals as JSON strings. The filters read: `PRICE_FILTER`, `LOT_SIZE`, `NOTIONAL` (else the older `MIN_NOTIONAL`). `MARKET_LOT_SIZE` carries `stepSize "0.00000000"` and is NOT read — a parser that took the first step it found would serve a step of nothing. |
+| Recorded as | One `instrument_check` row per attempt, served for seven days by `VenueStore`. Data in the `runtimes.json` pattern: the path is overridable on the same origin by one line of `venues.json` (`definition_url`). |
+
+**Still to re-verify at build time.** (1) Binance's developer documentation for `exchangeInfo` and its filter
+definitions was NOT re-read; the filter names above are the measured answer, not the documented contract.
+(2) The minimum notional is recorded and NOT applied: whether `applyMinToMarket` should make the paper
+connector refuse a market order below it is a decision for the cost model's next version. (3) The host's
+unauthenticated rate limit for `exchangeInfo` (weight) was not read; the app makes four requests a day per
+pair plus the owner's presses, which no published figure is likely to come near, but it is not measured.
+
+---
+
 ## C6 — Venue fees the referee judges with (read 2026-10-02 from the venue's own page; re-read before every release)
 
 **File:** `src/TradeAgent.Core/Strategy/VenueCostModel.cs`, `PublishedFees` — a table in CODE on purpose: the

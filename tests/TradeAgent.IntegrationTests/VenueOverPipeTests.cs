@@ -142,6 +142,63 @@ public class VenueOverPipeTests(ITestOutputHelper log)
         Assert.Equal(gw.Venues.Instruments().Count, data.GetProperty("instrument_count").GetInt32());
     }
 
+    /// <summary>
+    /// A PAIR TRADEAGENT CHECKED IS SERVED VERIFIED OVER THE WIRE, WITH THE CHECK ON THE ROW
+    /// (<c>U-venue-verify</c>). The check is the app's own row — written here through the store, the only
+    /// writer, as the verifier writes it — and the agent reads the venue's numbers, where and when they were
+    /// read, the venue's published minimums (recorded, not applied) and the one line that says so. A row
+    /// with no check says why it is not verified.
+    /// </summary>
+    [Fact]
+    public async Task A_checked_pair_is_served_verified_over_the_wire_with_its_check()
+    {
+        var (gw, db, client, server) = await Connected(CouncilRoles.Research);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var now = gw.UtcNow;
+        var check = new InstrumentCheckStore(db).Append(new InstrumentCheckAttempt
+        {
+            VenueId = VenueCatalog.BinanceSpot,
+            Symbol = "BTCUSDT",
+            Url = "http://127.0.0.1:9/api/v3/exchangeInfo?symbol=BTCUSDT",
+            RequestedAt = now,
+            ReceivedAt = now,
+            HttpStatus = 200,
+            BodySha256 = new string('b', 64),
+            TickSize = 0.01m,
+            QuantityIncrement = 0.00001m,
+            MinQuantity = 0.00001m,
+            MinNotional = 5m,
+            Outcome = InstrumentCheckOutcome.Verified
+        });
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.VenueList, Session = "agent-r" });
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+
+        var binance = Data(reply).GetProperty("venues").EnumerateArray()
+            .Single(v => v.GetProperty("id").GetString() == VenueCatalog.BinanceSpot);
+        var pair = binance.GetProperty("instruments").EnumerateArray()
+            .Single(i => i.GetProperty("symbol").GetString() == "BTCUSDT");
+        log.WriteLine(pair.GetRawText());
+
+        Assert.True(pair.GetProperty("verified").GetBoolean());
+        Assert.Equal(0.00001m, pair.GetProperty("quantity_increment").GetDecimal());
+        Assert.Equal(check.Url, pair.GetProperty("check_url").GetString());
+        Assert.Equal(5m, pair.GetProperty("min_notional").GetDecimal());
+        Assert.Equal(0.00001m, pair.GetProperty("min_quantity").GetDecimal());
+        Assert.False(pair.TryGetProperty("catalogue_quantity_increment", out _));
+        Assert.StartsWith("verified against Binance spot's published instrument definition on ",
+            pair.GetProperty("says").GetString(), StringComparison.Ordinal);
+
+        var simulator = Data(reply).GetProperty("venues").EnumerateArray()
+            .Single(v => v.GetProperty("id").GetString() == VenueCatalog.Simulator);
+        Assert.StartsWith("verified by the venue catalogue's own row",
+            simulator.GetProperty("instruments")[0].GetProperty("says").GetString(), StringComparison.Ordinal);
+        Assert.False(simulator.GetProperty("instruments")[0].TryGetProperty("check_url", out _));
+    }
+
     /// <summary>There is no op on this channel that writes a venue, and asking for one is refused.</summary>
     [Fact]
     public async Task There_is_no_operation_on_this_channel_that_writes_a_venue()
@@ -196,7 +253,9 @@ public class VenueOverPipeTests(ITestOutputHelper log)
         Assert.Contains("BTCUSDT", reply.Error.Message, StringComparison.Ordinal);
         Assert.Contains("not been verified", reply.Error.Message, StringComparison.Ordinal);
         Assert.Contains("--increment", reply.Error.Message, StringComparison.Ordinal);
-        Assert.Contains("venues.json", reply.Error.Message, StringComparison.Ordinal);
+        // The owner's route is TradeAgent's own instrument check, not a file (U-venue-verify).
+        Assert.Contains("Check now", reply.Error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("venues.json", reply.Error.Message, StringComparison.Ordinal);
         Assert.Contains("trade venue list", reply.Error.Message, StringComparison.Ordinal);
 
         // And declaring it runs. The refusal is only ever about a number nobody gave.

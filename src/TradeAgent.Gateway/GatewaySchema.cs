@@ -55,7 +55,7 @@ public static class GatewaySchema
         // bars with instrument increments and a size rounded down to the increment; :239 wants venue
         // capabilities recorded before unattended real money. The honesty flag is the point of the
         // sentence: a step size nobody has checked is still served, and it is served as unchecked.
-        venue_catalogue = "TradeAgent keeps a catalogue of the venues and instruments it knows of: the price grid ('tick_size') and the step a size moves in ('quantity_increment'), with the SOURCE of every row, when it was recorded, and whether anything has 'verified' it against the venue's own instrument definition. 'venue-list' reads it. WHAT 'verified' false MEANS: nothing has confirmed those numbers — they are what this build shipped — so a backtest that does not declare its own increment is REFUSED over an unverified or unknown instrument rather than run on a guess, and the refusal names the row. What the catalogue does NOT hold: no fee and no minimum notional. Fees are DECLARED by you per backtest and are part of that run's identity, and a fee read out of a table nobody measured would read as a measurement. 'calendar_kind' is 'continuous' for a venue that never closes; 'sessioned' means the venue closes and TradeAgent does not hold the table that says when, which is a refusal to guess rather than a calendar. You cannot write any of it: there is no operation here that adds, edits, verifies or removes a venue or an instrument, and the account owner corrects a wrong number in venues.json in TradeAgent's own folder.",
+        venue_catalogue = "TradeAgent keeps a catalogue of the venues and instruments it knows of: the price grid ('tick_size') and the step a size moves in ('quantity_increment'), with the SOURCE of every row, when it was recorded, and whether anything has 'verified' it against the venue's own instrument definition. 'venue-list' reads it. WHAT 'verified' false MEANS: nothing has confirmed those numbers — they are what this build shipped — so a backtest that does not declare its own increment is REFUSED over an unverified or unknown instrument rather than run on a guess, and the refusal names the row. What the catalogue does NOT hold: no fee and no minimum notional. Fees are DECLARED by you per backtest and are part of that run's identity, and a fee read out of a table nobody measured would read as a measurement. 'calendar_kind' is 'continuous' for a venue that never closes; 'sessioned' means the venue closes and TradeAgent does not hold the table that says when, which is a refusal to guess rather than a calendar. WHAT 'verified' true MEANS: either TradeAgent itself read the venue's own published instrument definition from the venue's own address within the last seven days and is serving the venue's numbers (an instrument check, with its address, instant and 'says' line on the row), or the catalogue's own row says so. The app checks the account owner's market-data pair at start, every six hours, when the owner changes it and when they press Check now; a check older than seven days, one that failed, or one whose address was not the venue's own leaves the instrument unverified and 'says' why. You cannot write any of it: there is no operation here that adds, edits, verifies, checks or removes a venue or an instrument.",
         // WHAT THE OWNER READS, said where an agent reads the surface. docs/COUNCIL.md rule 10: the
         // app generates the daily factual report itself. It is here so an agent asked to cover what
         // it costs works from the same account of the day the account owner does, and so that it
@@ -142,7 +142,14 @@ public static class GatewaySchema
             + "number you leave out), none (nothing modelled — FRICTIONLESS), or fee-source/slippage-source "
             + "when the two differ. model names that venue cost model by id and sha256, and is ABSENT when "
             + "no number came from it. Every paper result is net of exactly these numbers, every paper fill "
-            + "records them in words, and there is no operation here that changes them.", []),
+            + "records them in words, and there is no operation here that changes them. "
+            + "instrument_check is the account owner's market-data pair as TradeAgent last checked it "
+            + "against the venue's own published instrument definition: verified, the venue's numbers "
+            + "(tick_size, quantity_increment, and min_quantity and min_notional, which are recorded and "
+            + "NOT applied), checked_at and url when a check of seven days or less stands, and says — the "
+            + "one line that states whether the pair is verified and why not. Research's default increment, "
+            + "the judge's cost model, the paper platform and the forward runner all read the same served "
+            + "row; there is no operation here that asks for a check or changes one.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),
@@ -222,12 +229,18 @@ public static class GatewaySchema
             + "unverified: the numbers are what TradeAgent shipped and nothing has checked them, so a "
             + "'backtest' that omits '--increment' over that instrument is REFUSED naming the row "
             + "rather than run on a guess — declare '--increment' yourself if you want to run anyway, "
-            + "and the run records that the number was yours. There is NO fee and NO minimum notional "
-            + "here: fees stay declared per backtest and are part of that run's identity. "
+            + "and the run records that the number was yours. A row 'verified' by TradeAgent's own "
+            + "instrument check carries the venue's numbers as read from its published definition within "
+            + "the last seven days, with 'checked_at', 'check_url', the venue's 'min_quantity' and "
+            + "'min_notional' (recorded, NOT applied: nothing refuses or raises a size for them), and "
+            + "'catalogue_tick_size' / 'catalogue_quantity_increment' where TradeAgent's shipped number "
+            + "disagrees with the venue's; 'says' is the one line that states whether the row is verified "
+            + "and why not. There is NO fee and NO minimum notional in the catalogue itself: fees stay "
+            + "declared per backtest and are part of that run's identity. "
             + "'unreadable' is set when the account owner's venues.json exists and could not be read, "
             + "in which case NOTHING is served from it and the shipped rows do not stand in for it. "
-            + "You cannot write any of this — there is no operation that adds, edits, verifies or "
-            + "removes a venue or an instrument.", []),
+            + "You cannot write any of this — there is no operation that adds, edits, verifies, checks "
+            + "or removes a venue or an instrument.", []),
 
         new(Core.Ops.Report, "trade report [--day 2026-09-08]", false,
             "The account owner's daily report for a local calendar day, exactly as they read it: the "

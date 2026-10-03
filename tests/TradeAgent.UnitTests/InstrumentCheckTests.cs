@@ -349,6 +349,13 @@ public class InstrumentCheckTests(ITestOutputHelper log)
 
         var served = venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!;
         Assert.False(served.Verified);
+
+        // AND IT SAYS WHY: the last attempt's own reason, in the sentence every surface shows.
+        var said = venues.Verification(VenueCatalog.BinanceSpot, "BTCUSDT");
+        log.WriteLine(said.Says);
+        Assert.False(said.Verified);
+        Assert.StartsWith("not verified: the last check, at 2026-10-03 04:48 UTC, failed: the host did not answer within",
+            said.Says, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -386,6 +393,11 @@ public class InstrumentCheckTests(ITestOutputHelper log)
         Assert.DoesNotContain(builtIn.Marks, m => m.Contains("got GET", StringComparison.Ordinal));
         Assert.Empty(new InstrumentCheckStore(db).LatestVerified());
         Assert.False(venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!.Verified);
+
+        var said = venues.Verification(VenueCatalog.BinanceSpot, "BTCUSDT").Says;
+        log.WriteLine(said);
+        Assert.StartsWith("not verified: the last check, at 2026-10-03 04:48 UTC, was refused: the definition address ",
+            said, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -407,6 +419,54 @@ public class InstrumentCheckTests(ITestOutputHelper log)
         Assert.Equal(InstrumentCheckOutcome.Verified, row!.Outcome);
         Assert.Equal(venue.BaseUrl + "/api/v4/exchangeInfo?symbol=BTCUSDT", row.Url);
         Assert.Equal(0.00001m, row.QuantityIncrement);
+    }
+
+    // ---- the surfaces ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// <c>status</c> SAYS WHETHER THE MARKET-DATA PAIR IS VERIFIED, AND WHY — the Market data card's own
+    /// sentence, off the same served read every sizing reader uses — and, while a check stands, the venue's
+    /// numbers, the address and the instant. Before any check it says none has been made; nothing on it is
+    /// an invented "verified".
+    /// </summary>
+    [Fact]
+    public async Task The_status_says_whether_the_market_data_pair_is_verified()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+
+        using (var wire = System.Text.Json.JsonDocument.Parse(Json.Write(await gw.StatusAsync())))
+        {
+            var check = wire.RootElement.GetProperty("instrument_check");
+            log.WriteLine(check.GetRawText());
+            Assert.Equal("BTCUSDT", check.GetProperty("symbol").GetString());
+            Assert.False(check.GetProperty("verified").GetBoolean());
+            Assert.Equal("not verified: TradeAgent has not checked it against Binance spot's published instrument definition yet",
+                check.GetProperty("says").GetString());
+            Assert.False(check.TryGetProperty("quantity_increment", out _));
+        }
+
+        var now = gw.UtcNow;
+        var row = new InstrumentCheckStore(db).Append(Attempt(InstrumentCheckOutcome.Verified) with
+        {
+            RequestedAt = now, ReceivedAt = now, HttpStatus = 200,
+            TickSize = 0.01m, QuantityIncrement = 0.00001m, MinQuantity = 0.00001m, MinNotional = 5m
+        });
+
+        using (var wire = System.Text.Json.JsonDocument.Parse(Json.Write(await gw.StatusAsync())))
+        {
+            var check = wire.RootElement.GetProperty("instrument_check");
+            log.WriteLine(check.GetRawText());
+            Assert.True(check.GetProperty("verified").GetBoolean());
+            Assert.Equal(row.Url, check.GetProperty("url").GetString());
+            Assert.Equal(0.00001m, check.GetProperty("quantity_increment").GetDecimal());
+            Assert.Equal(5m, check.GetProperty("min_notional").GetDecimal());
+            Assert.StartsWith("verified against Binance spot's published instrument definition on ",
+                check.GetProperty("says").GetString(), StringComparison.Ordinal);
+        }
+
+        var schema = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Status).Description;
+        Assert.Contains("instrument_check", schema, StringComparison.Ordinal);
     }
 
     // ---- (f) no op writes it -------------------------------------------------------------------------

@@ -37,10 +37,12 @@ public sealed record PublishedFee(string VenueId, string Venue, decimal TakerRat
 /// edit is not one.</item>
 /// <item><b>Slippage</b> is <see cref="SlippageRate"/>, two basis points a fill, and it is labelled for
 /// what it is: TradeAgent's ASSUMPTION, never a measurement of any venue's book.</item>
-/// <item><b>The quantity step</b> is the instrument's VERIFIED catalogue row and nothing else. An
-/// unverified row, or none, is refused — the rule <c>Backtests.Increment</c> already follows — because a
-/// step is what a size is rounded down to, and a judge that guessed it would judge a strategy nobody
-/// submitted.</item>
+/// <item><b>The quantity step</b> is the instrument's VERIFIED row as the venue store SERVES it — the
+/// catalogue's own, or the venue's published definition as TradeAgent's instrument check read it within
+/// seven days (<c>U-venue-verify</c>), whose address and instant then appear in the pinned text — and
+/// nothing else. An unverified row, or none, is refused — the rule <c>Backtests.Increment</c> already
+/// follows — because a step is what a size is rounded down to, and a judge that guessed it would judge a
+/// strategy nobody submitted.</item>
 /// <item><b>The capital</b> is the account owner's <c>JudgeCapital</c> setting at the moment the model
 /// is pinned.</item>
 /// </list>

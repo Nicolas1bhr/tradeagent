@@ -94,7 +94,8 @@ public class PaperConnectorTests(ITestOutputHelper log)
         Assert.Equal("BTCUSDT", Assert.Single(await paper.GetInstrumentsAsync()).Symbol);
 
         // The shipped catalogue, unmodified: no verified spot row, so nothing is offered and nothing
-        // is guessed. The refusal names the route out, which is the account owner's venues.json.
+        // is guessed. The refusal names the route out, which is TradeAgent's own instrument check — the
+        // owner's pair choice and Check now — and no longer a file (U-venue-verify).
         await using var shipped = new PaperConnector(new PaperConnectorOptions
         {
             Source = source, Clock = () => T0, BookFile = NewFile(),
@@ -105,7 +106,8 @@ public class PaperConnectorTests(ITestOutputHelper log)
         var refused = await Assert.ThrowsAsync<ConnectorRejectedException>(
             () => shipped.PlaceOrderAsync(Market("shipped-1")));
         log.WriteLine(refused.Message);
-        Assert.Contains("venues.json", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Check now", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("venues.json", refused.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
