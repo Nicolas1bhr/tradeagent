@@ -179,11 +179,17 @@ public sealed record EvaluationOutcome(
     /// <summary>The run's counters as they stand after this event.</summary>
     public EvaluationCounters Counters => State.Counters;
 
-    /// <summary>A defined fault: the reason, no intent, and a state that will not evaluate again.</summary>
-    public static EvaluationOutcome Faulted(EvaluationState state, string reason)
+    /// <summary>
+    /// A defined fault: the reason, no intent, and a state that will not evaluate again.
+    ///
+    /// <para>The reason is <see cref="TraceText"/> and there is no overload that takes a string: these words
+    /// become the trace's last line, so a number in them is spelled as the trace spells it on every
+    /// machine, and words built in the thread's culture cannot be handed in.</para>
+    /// </summary>
+    public static EvaluationOutcome Faulted(EvaluationState state, TraceText reason)
     {
-        state.Fault(reason);
-        return new EvaluationOutcome(EvaluationStatus.Faulted, state, null, reason);
+        var spelled = state.Fault(reason);
+        return new EvaluationOutcome(EvaluationStatus.Faulted, state, null, spelled);
     }
 
     internal static EvaluationOutcome Of(

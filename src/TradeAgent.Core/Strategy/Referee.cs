@@ -105,8 +105,14 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// of an old one. It is a constant rather than a computed string because it must move only when
     /// somebody decides it has: a number that tracked the assembly version would invalidate every
     /// promotion on every rebuild.</para>
+    ///
+    /// <para><b>backtest=2</b> (<c>U-invariant-traces</c>): a fault's words spell their numbers as the trace
+    /// does — invariant, trailing zeros gone — where some were written in the machine's culture with the
+    /// decimal's own scale. A trace that faulted on a decimal under 1 (<c>divided 1026.70 by zero</c>) is
+    /// not the trace the same request produces under 2 (<c>divided 1026.7 by zero</c>), so what the backtest
+    /// outputs moved and every verdict taken under 1 is withdrawn with it.</para>
     /// </summary>
-    public const string EvaluatorVersion = "backtest=1;metrics=1;scoring=1";
+    public const string EvaluatorVersion = "backtest=2;metrics=1;scoring=1";
 
     /// <summary>An id as it is printed for a person. The same twelve characters everything else uses.</summary>
     static string Short(string id) => id.Length <= 12 ? id : id[..12];

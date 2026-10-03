@@ -414,17 +414,17 @@ public static class Backtest
 
             if (stop.IsCancellationRequested)
             {
-                fault = $"the run was stopped after {evaluated} bars, before the bar at {minute.OpenTime:O}";
-                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                Halt(ordinal, minute.OpenTime,
+                    $"the run was stopped after {evaluated} bars, before the bar at {minute.OpenTime:O}");
                 break;
             }
 
             if (resampler is not null)
             {
+                // The resampler's words were spelled as trace words where it made them; carried, not spelled twice.
                 if (resampler.Refusal(minute) is { } refused)
                 {
-                    fault = refused;
-                    trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                    Halt(ordinal, minute.OpenTime, $"{refused}");
                     break;
                 }
 
@@ -443,15 +443,17 @@ public static class Backtest
             // A NEW DECLARED BAR OPENS ON THIS MINUTE, AND THE CAP COUNTS THE BARS EVALUATED.
             if (opens && evaluated >= MaxTracedBars)
             {
-                fault = resampler is null
-                    ? $"this window holds more than the {MaxTracedBars} bars one run may trace " +
-                      $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
-                      $"the bar before {minute.OpenTime:O}. Ask for a shorter window with --from and --to; " +
-                      "a year is four runs of a quarter each."
-                    : $"this window holds more than the {MaxTracedBars} bars of {state.Grid.Spelled} one run may " +
-                      $"evaluate, so the run halted at the bar before {minute.OpenTime:O}. Ask for a shorter " +
-                      "window with --from and --to.";
-                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                if (resampler is null)
+                    Halt(ordinal, minute.OpenTime,
+                        $"this window holds more than the {MaxTracedBars} bars one run may trace " +
+                        $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
+                        $"the bar before {minute.OpenTime:O}. Ask for a shorter window with --from and --to; " +
+                        $"a year is four runs of a quarter each.");
+                else
+                    Halt(ordinal, minute.OpenTime,
+                        $"this window holds more than the {MaxTracedBars} bars of {state.Grid.Spelled} one run may " +
+                        $"evaluate, so the run halted at the bar before {minute.OpenTime:O}. Ask for a shorter " +
+                        $"window with --from and --to.");
                 break;
             }
 
@@ -468,7 +470,7 @@ public static class Backtest
         // strategy whose last signal had nowhere to execute took no trade there.
         if (pending is { } waiting)
             trace.Add(BacktestEvent.NoTrade(ordinal, waiting.Bar, pendingQuantity, waiting.ReferencePrice,
-                "the run's window ended before the next bar, so this signal had no open to fill at"));
+                $"the run's window ended before the next bar, so this signal had no open to fill at"));
 
         var events = new BacktestTrace(trace);
 
@@ -502,9 +504,8 @@ public static class Backtest
                         if (cost > cash)
                         {
                             trace.Add(BacktestEvent.NoTrade(ordinal, minute.OpenTime, pendingQuantity, price,
-                                $"the declared capital cannot pay for this fill: {StrategyParser.Number(pendingQuantity)} " +
-                                $"at {StrategyParser.Number(price)} plus {StrategyParser.Number(fee)} in fees is " +
-                                $"{StrategyParser.Number(cost)}, and {StrategyParser.Number(cash)} is what is left"));
+                                $"the declared capital cannot pay for this fill: {pendingQuantity} " +
+                                $"at {price} plus {fee} in fees is {cost}, and {cash} is what is left"));
                         }
                         else
                         {
@@ -551,9 +552,9 @@ public static class Backtest
                 // A DEFINED OUTCOME, as it is inside the evaluator: the numbers a program and a
                 // declared capital can reach are bounded by nothing this end controls, and a crash
                 // would be the app's rather than the run's.
-                fault = $"the arithmetic of this run overflowed the largest number this build can hold, " +
-                        $"on the bar at {minute.OpenTime:O}";
-                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                Halt(ordinal, minute.OpenTime,
+                    $"the arithmetic of this run overflowed the largest number this build can hold, " +
+                    $"on the bar at {minute.OpenTime:O}");
                 return false;
             }
         }
@@ -594,8 +595,8 @@ public static class Backtest
 
                 if (outcome.Status == EvaluationStatus.Faulted)
                 {
-                    fault = outcome.FaultReason;
-                    trace.Add(BacktestEvent.Fault(barOrdinal, bar.OpenTime, fault ?? "a defined fault with no reason"));
+                    // Spelled as trace words where the evaluator made them; carried, not spelled twice.
+                    Halt(barOrdinal, bar.OpenTime, $"{outcome.FaultReason ?? "a defined fault with no reason"}");
                     return false;
                 }
 
@@ -616,9 +617,9 @@ public static class Backtest
                 if (sized <= 0m)
                 {
                     trace.Add(BacktestEvent.NoTrade(barOrdinal, bar.OpenTime, signal.Quantity, signal.ReferencePrice,
-                        $"the declared size came to {StrategyParser.Number(signal.Quantity)}, which rounds down to " +
-                        $"nothing at the run's quantity increment of {StrategyParser.Number(model.QuantityIncrement)} " +
-                        "— declare a smaller increment, or more capital"));
+                        $"the declared size came to {signal.Quantity}, which rounds down to " +
+                        $"nothing at the run's quantity increment of {model.QuantityIncrement} " +
+                        $"— declare a smaller increment, or more capital"));
                     return true;
                 }
 
@@ -628,11 +629,21 @@ public static class Backtest
             }
             catch (OverflowException)
             {
-                fault = $"the arithmetic of this run overflowed the largest number this build can hold, " +
-                        $"on the bar at {bar.OpenTime:O}";
-                trace.Add(BacktestEvent.Fault(barOrdinal, bar.OpenTime, fault));
+                Halt(barOrdinal, bar.OpenTime,
+                    $"the arithmetic of this run overflowed the largest number this build can hold, " +
+                    $"on the bar at {bar.OpenTime:O}");
                 return false;
             }
+        }
+
+        // THE RUN HALTS HERE AND NOWHERE ELSE: its words spelled as trace words (TraceText, the only thing a
+        // fault line takes), kept as the run's fault and written as the trace's last line — one text, so the
+        // fault the result carries and the line its hash covers cannot differ.
+        void Halt(long at, DateTimeOffset when, TraceText why)
+        {
+            var line = BacktestEvent.Fault(at, when, why);
+            fault = line.Reason;
+            trace.Add(line);
         }
 
         // A POSITION CLOSES on the minute it closed on, stamped with that minute and the declared bar it

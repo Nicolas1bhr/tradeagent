@@ -141,16 +141,21 @@ public sealed record BacktestEvent
             Price = price, Fee = fees, Pnl = pnl, Cash = cash, Reason = reason, Exposed = true
         };
 
+    /// <summary>
+    /// A signal that could not be acted on. The words are <see cref="TraceText"/> and nothing else, like a
+    /// fault's: they are part of the line that is hashed, so a number in them is spelled as the line spells it.
+    /// </summary>
     internal static BacktestEvent NoTrade(
-        long ordinal, DateTimeOffset bar, decimal quantity, decimal price, string why) =>
+        long ordinal, DateTimeOffset bar, decimal quantity, decimal price, TraceText why) =>
         new()
         {
             Ordinal = ordinal, Bar = bar, Kind = BacktestEventKind.NoTrade, Quantity = quantity,
-            Price = price, Reason = why
+            Price = price, Reason = why.ToStringAndClear()
         };
 
-    internal static BacktestEvent Fault(long ordinal, DateTimeOffset bar, string why) =>
-        new() { Ordinal = ordinal, Bar = bar, Kind = BacktestEventKind.Fault, Reason = why };
+    /// <summary>The run halted. The words are <see cref="TraceText"/> and nothing else — see that type.</summary>
+    internal static BacktestEvent Fault(long ordinal, DateTimeOffset bar, TraceText why) =>
+        new() { Ordinal = ordinal, Bar = bar, Kind = BacktestEventKind.Fault, Reason = why.ToStringAndClear() };
 
     /// <summary>
     /// THE LINE THIS EVENT IS HASHED AND COMPARED AS. Pipe separated, fixed field order, an empty

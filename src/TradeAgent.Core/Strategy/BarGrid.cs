@@ -114,27 +114,32 @@ public sealed class BarGrid
     /// feeding the wrong series — minutes to an hourly run — and is refused at the first bar rather than
     /// read as an hour. A zone's daily grid asks the same of every bar, because its bars are not all one
     /// length and "a whole number of days apart" would admit a series cut at the wrong hour.</para>
+    ///
+    /// <para>The words become a fault, so they are spelled as trace words (<see cref="TraceText"/>).</para>
     /// </summary>
     public string? Refusal(DateTimeOffset? previous, DateTimeOffset next)
     {
         if (_zone is { } zone)
             return StartOf(next) == next
                 ? null
-                : $"the bar at {next:O} does not open at midnight in {zone.Name}, which is where this program's " +
-                  "daily bars begin: this run's bars are not one series";
+                : TraceText.Spell(
+                    $"the bar at {next:O} does not open at midnight in {zone.Name}, which is where this program's " +
+                    $"daily bars begin: this run's bars are not one series");
 
         if (Length != StrategyBars.OneMinute && StartOf(next) != next)
-            return $"the bar at {next:O} does not open on the {Spelled} grid — a {Spelled} bar opens at a whole " +
-                   $"multiple of {Spelled} counted in UTC — so it is not one of this run's bars: this run's bars " +
-                   "are not one series";
+            return TraceText.Spell(
+                $"the bar at {next:O} does not open on the {Spelled} grid — a {Spelled} bar opens at a whole " +
+                $"multiple of {Spelled} counted in UTC — so it is not one of this run's bars: this run's bars " +
+                $"are not one series");
 
         if (previous is not { } last) return null;
 
         var elapsed = next - last;
         return elapsed.Ticks % Length.Ticks == 0
             ? null
-            : $"the bar at {next:O} is {elapsed} after the one before it, which is not a whole number of " +
-              $"{Length} bars: this run's bars are not one series";
+            : TraceText.Spell(
+                $"the bar at {next:O} is {elapsed} after the one before it, which is not a whole number of " +
+                $"{Length} bars: this run's bars are not one series");
     }
 
     static DateTime LocalDate(ZoneRules zone, DateTimeOffset instant) => StrategyCalendar.Local(zone, instant).Date;

@@ -183,8 +183,17 @@ public sealed class EvaluationState
         return new EvaluationState(program, zone, BarGrid.For(program), limits ?? EvaluationLimits.Default);
     }
 
-    /// <summary>Halts the run with a reason. There is no route back: a faulted state stays faulted.</summary>
-    internal void Fault(string reason) => FaultReason ??= reason;
+    /// <summary>
+    /// Halts the run with a reason, and answers the reason as spelled. There is no route back: a faulted
+    /// state stays faulted, on the first reason it was given. The words are <see cref="TraceText"/>, for the
+    /// reason <see cref="EvaluationOutcome.Faulted"/> gives.
+    /// </summary>
+    internal string Fault(TraceText reason)
+    {
+        var spelled = reason.ToStringAndClear();
+        FaultReason ??= spelled;
+        return spelled;
+    }
 
     /// <summary>
     /// Records one bar's arrival, the minutes missing in front of it and inside it, and the session it
@@ -292,11 +301,12 @@ public static class StrategyEvaluator
         if (state.LastBar is { } previous && bar.OpenTime <= previous)
             return EvaluationOutcome.Faulted(state,
                 $"the bar at {bar.OpenTime:O} is not after the bar at {previous:O}: bars reach the " +
-                "evaluator in ascending order, one for each closed interval, and never twice");
+                $"evaluator in ascending order, one for each closed interval, and never twice");
 
         var grid = state.Grid;
+        // The grid's words were spelled as trace words where it made them; they are carried, not spelled twice.
         if (grid.Refusal(state.LastBar, bar.OpenTime) is { } offGrid)
-            return EvaluationOutcome.Faulted(state, offGrid);
+            return EvaluationOutcome.Faulted(state, $"{offGrid}");
 
         // THE MINUTES THIS BAR'S WINDOW SPANS, AND HOW MANY IT WAS BUILT FROM. A one-minute bar is built
         // from one minute and is never short. A declared bar may be partial; one that claims more minutes
@@ -367,7 +377,8 @@ public static class StrategyEvaluator
         }
         catch (EvaluationFault fault)
         {
-            return EvaluationOutcome.Faulted(state, fault.Reason);
+            // Spelled as trace words when it was thrown — an EvaluationFault cannot be made any other way.
+            return EvaluationOutcome.Faulted(state, $"{fault.Reason}");
         }
         catch (OverflowException)
         {
@@ -571,7 +582,7 @@ public static class StrategyEvaluator
         if (account.Quantity <= 0m)
             throw new EvaluationFault(
                 $"the account reads {PositionSide.Long} with a quantity of {account.Quantity}, so there " +
-                "is no position for an exit to close; the evaluator does not invent one");
+                $"is no position for an exit to close; the evaluator does not invent one");
 
         return new StrategyIntent(
             IntentKind.Exit, cause, state.Program.Instrument, account.Quantity,
@@ -616,7 +627,7 @@ public static class StrategyEvaluator
                 if (state.StopAtr?.Value is not { } atr)
                     throw new EvaluationFault(
                         $"the stop's own atr({stop.AtrPeriod}) has no value on this bar, so the stop " +
-                        "distance cannot be measured");
+                        $"distance cannot be measured");
 
                 return reference - stop.Value * atr;
         }
@@ -648,21 +659,21 @@ public static class StrategyEvaluator
                 if (reference <= 0m)
                     throw new EvaluationFault(
                         $"the bar's close is {reference}, so a fraction of capital buys no quantity that " +
-                        "can be divided by a price");
+                        $"can be divided by a price");
 
                 return account.StrategyCapital * sizing.Value / reference;
 
             default:
                 if (stop is not { } level)
                     throw new EvaluationFault(
-                        "risk sizing measures the quantity against the stop distance, and this program " +
-                        "has no stop on this bar");
+                        $"risk sizing measures the quantity against the stop distance, and this program " +
+                        $"has no stop on this bar");
 
                 var distance = reference - level;
                 if (distance <= 0m)
                     throw new EvaluationFault(
                         $"the stop at {level} is not below the reference price {reference}, so there is " +
-                        "no risk distance to size against");
+                        $"no risk distance to size against");
 
                 return account.Equity * sizing.Value / distance;
         }
@@ -670,13 +681,13 @@ public static class StrategyEvaluator
 
     static int MinuteOf(DateTime local) => local.Hour * 60 + local.Minute;
 
-    static string Overflowed(KlineBar bar, string what) =>
+    static TraceText Overflowed(KlineBar bar, string what) =>
         $"{what} overflowed the largest number this build can hold, on the bar at {bar.OpenTime:O}";
 
-    static string OverBudget(EvaluationState state, int operations) =>
+    static TraceText OverBudget(EvaluationState state, int operations) =>
         $"one closed bar cost more than the {state.Limits.OperationsPerEvent} operations a single event " +
         $"is allowed ({operations} and counting), so this program is not one the runner will evaluate " +
-        "at the rate it is asked to";
+        $"at the rate it is asked to";
 
     /// <summary>
     /// A WHOLE RUN over bars in ascending order.

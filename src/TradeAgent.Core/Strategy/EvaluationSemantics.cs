@@ -26,7 +26,7 @@ public static class EvaluationSemantics
     public static string Current => Of(Referee.EvaluatorVersion, StrategyVersions.Manifest);
 
     /// <summary>
-    /// One pair as a person reads it — <c>evaluator backtest=1;metrics=1;scoring=1 with manifest
+    /// One pair as a person reads it — <c>evaluator backtest=2;metrics=1;scoring=1 with manifest
     /// language=1;indicators=1;calendar=1</c> — and the spelling every withdrawal names them in.
     /// </summary>
     public static string Of(string evaluatorVersion, string manifest) =>

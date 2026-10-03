@@ -45,7 +45,7 @@ public class DeclaredBarsGuardTests(ITestOutputHelper log)
     ///
     /// <para>The three shipped programs parse to the ids pinned for them before this unit, their canonical
     /// texts carry no <c>bars</c> line, and each with <c>bars 1m</c> added is the same text and the same id.
-    /// Then the golden vectors' own check runs — fifteen programs backtested through this build's
+    /// Then the golden vectors' own check runs — every golden program backtested through this build's
     /// <c>Backtest.Run</c> and compared, trace sha and metrics sha, with the pins
     /// <c>EvaluationGoldenVectorTests</c> holds beside <c>Referee.EvaluatorVersion</c> — so this guard cannot
     /// hold while what a v1 program does over those bars has moved. Calling that check rather than copying its

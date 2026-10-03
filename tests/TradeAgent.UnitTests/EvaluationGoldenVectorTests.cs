@@ -27,7 +27,7 @@ namespace TradeAgent.Tests.Unit;
 /// figure every <c>strategy_run</c> row records), the SHA-256 of the metrics and the closed trades as
 /// <see cref="MetricsText"/> spells them, and the answers of <see cref="ScoringPolicyV1"/> and
 /// <see cref="PaperPolicyV1"/> over that run — the backtest, the metrics and the scoring, the three
-/// halves of <c>backtest=1;metrics=1;scoring=1</c>.</para>
+/// parts of <c>backtest=2;metrics=1;scoring=1</c>.</para>
 ///
 /// <para><b>What every vector declares.</b> Its program, the series it runs over, and all four numbers of
 /// its execution model. Nothing is left to a default — a research default or a venue fee edited elsewhere
@@ -38,10 +38,17 @@ namespace TradeAgent.Tests.Unit;
 /// rule): a golden series is only a tripwire if its input cannot move either, so the file's own hash is
 /// pinned and checked first, with a message of its own.</para>
 ///
-/// <para><b>Culture-free on purpose.</b> Every trace line is built with the invariant culture, but a few
-/// evaluator fault texts interpolate a decimal in the CURRENT culture (a division by zero names its
-/// dividend). No vector reaches one: the faulting vector faults on the operation budget, whose words carry
-/// only whole numbers, so the pins mean the same thing on every machine CI runs them on.</para>
+/// <para><b>Culture-free, and proved so</b> (<c>U-invariant-traces</c>). Every trace line is built with
+/// the invariant culture, and every fault's and no-trade's words are made through <see cref="TraceText"/>,
+/// which spells a decimal as the line does — invariant, trailing zeros gone — and cannot be handed words
+/// built in the thread's culture. Three vectors fault, two of them on a decimal with a trailing zero
+/// (<c>1026.70</c>, <c>120.50</c>), and
+/// <see cref="Every_golden_vector_writes_the_same_bytes_under_nl_BE_and_fr_BE_number_formats"/> runs every
+/// vector again under nl-BE's and fr-BE's number formats, so a pin here means the same thing on a machine
+/// set to either. Under <c>backtest=1</c> those two faults were written in the machine's culture with the
+/// decimal's own scale — <c>1026,70</c> on a Belgian machine, <c>1026.70</c> on CI — and that change in
+/// what the backtest outputs is what moved the number to 2. The fifteen vectors that do not fault on a
+/// decimal kept every pin they had.</para>
 /// </summary>
 public class EvaluationGoldenVectorTests(ITestOutputHelper log)
 {
@@ -51,7 +58,7 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
     /// on its first check; re-pinning means computing the vectors again under the new numbers and writing
     /// both numbers and every pin here, in the commit that moved them.
     /// </summary>
-    const string PinnedEvaluator = "backtest=1;metrics=1;scoring=1";
+    const string PinnedEvaluator = "backtest=2;metrics=1;scoring=1";
 
     /// <inheritdoc cref="PinnedEvaluator"/>
     const string PinnedManifest = "language=1;indicators=1;calendar=1";
@@ -291,7 +298,27 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
             size fixed 1
             exit when f < s * 0.97
             entry when crosses_above(f, s)
-            """, Fees: 0.001m, Slippage: 0.0001m, Increment: 0.001m, Capital: 10_000m)
+            """, Fees: 0.001m, Slippage: 0.0001m, Increment: 0.001m, Capital: 10_000m),
+
+        // A division by zero under a dividend with a trailing zero: `close * 10` is 1026.70 on the first
+        // bar, and the fault names it the way the trace spells every number — 1026.7, never 1026.70 or
+        // 1026,70 — so this pin is the same on a machine set to any culture.
+        new("zero-divisor-under-a-trailing-zero-fault", "trend-utc", """
+            instrument BTCUSDT
+            size fixed 1
+            exit when close < 1
+            entry when close * 10 / (close - close) > 0
+            """, Fees: 0.001m, Slippage: 0m, Increment: 0.001m, Capital: 10_000m),
+
+        // Risk sizing under a fixed stop above every close in the series: the first entry has no risk
+        // distance, and the fault names the stop and the close as the trace would — 120.5 and 102.67.
+        new("risk-sizing-under-a-stop-above-every-close-fault", "trend-utc", """
+            instrument BTCUSDT
+            size risk_fraction 0.01
+            stop fixed 120.50
+            exit when close < 1
+            entry when close > 0
+            """, Fees: 0.001m, Slippage: 0m, Increment: 0.001m, Capital: 10_000m)
     ];
 
     /// <summary>
@@ -330,6 +357,10 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
             "d5d08a118de95697410c59c291a1395bc2038feedf8be73dde254c4b5dec7b3e", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
         new("london-summer-time-window", "9959b74c08413a2d31a73b4fb54d2c6bc260587e590d345031dd3c80415217c9",
             "6b3e781214f26d6b0cf2f13d3f5cbd0f255e859117597416a663432eb2070ee7", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("zero-divisor-under-a-trailing-zero-fault", "d7720e8bfcf708177e9fe67dfd639bdae80575daaf03830543fa71d69369c5a3",
+            "f2f987d0bbd47b20982605f3970de962212a0fece1c6c14c4d0ac04f90fb43ef", PromotionReason.DidNotComplete, PromotionReason.DidNotComplete),
+        new("risk-sizing-under-a-stop-above-every-close-fault", "7eb8a46a76cb522552ff497716ea452d769cf4d6a0d3ab478396a732f89fd5b8",
+            "859012137eabb253e71e7ab9aae8de300e18dd87a6511502855737a10ac45f62", PromotionReason.DidNotComplete, PromotionReason.DidNotComplete),
     ];
 
     // ---- the fixture ---------------------------------------------------------------------------
@@ -554,6 +585,66 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
                  })
             Assert.True(runs.Any(r => r.Pin.V1 == answer), $"no vector is answered {answer} by scoring policy v1");
         Assert.Contains(runs, r => r.Pin.Paper == PromotionReason.MetOnHistory);
+    }
+
+    /// <summary>
+    /// (a) EVERY GOLDEN VECTOR WRITES THE SAME BYTES UNDER nl-BE'S AND fr-BE'S NUMBER FORMATS
+    /// (<c>U-invariant-traces</c>).
+    ///
+    /// <para>The pins above are computed under the invariant culture, which is the only one this build can
+    /// construct (<see cref="Cultures"/>). A pin is only a declaration about the EVALUATOR if a machine set
+    /// to another culture computes it too, so every vector is run again under each Belgian number format and
+    /// must produce the same trace text, the same trace and metrics hashes, the same run id, the same fault
+    /// and the same two policy answers as the invariant run — which is the run the pins hold.</para>
+    ///
+    /// <para><b>RED on the base</b>: the two vectors that fault on a decimal wrote it in the thread's culture —
+    /// <c>1026,70</c> and <c>120,50</c> under a comma where the invariant run wrote <c>1026.70</c> and
+    /// <c>120.50</c> — so their traces, their metrics and their hashes were the machine's.</para>
+    /// </summary>
+    [Fact]
+    public void Every_golden_vector_writes_the_same_bytes_under_nl_BE_and_fr_BE_number_formats()
+    {
+        var invariant = Written(RunAll());
+
+        foreach (var (culture, clone) in Cultures.Belgian)
+        {
+            var under = Cultures.Under(clone, () => Written(RunAll()));
+            Assert.Equal(invariant.Length, under.Length);
+
+            for (var i = 0; i < invariant.Length; i++)
+            {
+                var (vector, trace, fault, runId, pin) = invariant[i];
+                var other = under[i];
+                var name = $"golden vector {vector} under {culture}";
+
+                Assert.True(trace == other.Trace,
+                    $"{name} wrote other trace bytes — first difference: {FirstDifference(trace, other.Trace)}");
+                Assert.True(fault == other.Fault,
+                    $"{name} faulted with '{other.Fault}' where the invariant run faulted with '{fault}'");
+                Assert.True(pin == other.Pin, $"{name} computed {other.Pin} where the invariant run computed {pin}");
+                Assert.True(runId == other.RunId, $"{name} has run id {other.RunId}, not {runId}");
+            }
+        }
+
+        // WRITTEN WHILE THE CULTURE IS STILL SET. A trace's text is computed when it is read, so a text read
+        // after the culture was put back would be the invariant culture's text whatever the run did — every
+        // figure is taken here, inside the call that runs under the clone.
+        static (string Vector, string Trace, string? Fault, string RunId, Pin Pin)[] Written(
+            (Vector Vector, Series Series, BacktestResult Run, Pin Pin)[] all) =>
+            [.. all.Select(a => (a.Vector.Name, a.Run.Trace.Text, a.Run.FaultReason, a.Run.RunId, a.Pin))];
+
+        static string FirstDifference(string a, string b)
+        {
+            var left = a.Split('\n');
+            var right = b.Split('\n');
+            for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+            {
+                var l = i < left.Length ? left[i] : "(no line)";
+                var r = i < right.Length ? right[i] : "(no line)";
+                if (l != r) return $"line {i + 1}: '{l}' became '{r}'";
+            }
+            return "none";
+        }
     }
 
 
