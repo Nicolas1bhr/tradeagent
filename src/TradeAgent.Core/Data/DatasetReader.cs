@@ -22,6 +22,21 @@ public sealed record KlineBar(
     /// a six-column file IS rather than a guess standing in for a missing column.</para>
     /// </summary>
     public string Quality { get; init; } = BarQuality.Traded;
+
+    /// <summary>
+    /// HOW MANY CLOSED ONE-MINUTE BARS THIS BAR WAS BUILT FROM — one for every bar a dataset or the
+    /// forward ledger holds, because those ARE one-minute bars.
+    ///
+    /// <para>A program that declares <c>bars 1h</c> is evaluated on bars <c>BarResampler</c> builds from
+    /// closed minutes, and an hour the data has only 45 minutes of is still a bar — its open, extremes and
+    /// close are what those 45 minutes did — but it is not a whole hour, and this is where it says so. The
+    /// evaluator counts the minutes it is short as missing (<c>EvaluationState.MissingMinutes</c>), so a
+    /// partial bar is never read as a complete one. An hour with no minute at all is no bar: a gap.</para>
+    ///
+    /// <para>Init-only with a default, like <see cref="Quality"/>: adding it re-parameterised no
+    /// construction site, and one is what every bar built before it was.</para>
+    /// </summary>
+    public int Minutes { get; init; } = 1;
 }
 
 /// <summary>

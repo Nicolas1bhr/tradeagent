@@ -20,11 +20,11 @@ public sealed class EvaluationState
 {
     readonly List<GapRun> gaps = [];
 
-    EvaluationState(StrategyProgram program, ZoneRules zone, TimeSpan barInterval, EvaluationLimits limits)
+    EvaluationState(StrategyProgram program, ZoneRules zone, BarGrid grid, EvaluationLimits limits)
     {
         Program = program;
         Zone = zone;
-        BarInterval = barInterval;
+        Grid = grid;
         Limits = limits;
         Indicators = IndicatorSet.For(program);
         History = new BarHistory();
@@ -46,8 +46,17 @@ public sealed class EvaluationState
     /// <summary>
     /// How long one bar is, which is what makes a gap a gap. Stated rather than assumed: a run over
     /// five-minute candles would count every minute of every bar as missing if this were hard-wired.
+    /// It is the program's own declared bar (<see cref="StrategyProgram.Bars"/>) — nominally, for a day
+    /// whose length a daylight change moved; <see cref="Grid"/> has the exact edges.
     /// </summary>
-    public TimeSpan BarInterval { get; }
+    public TimeSpan BarInterval => Grid.Length;
+
+    /// <summary>
+    /// THE GRID THIS RUN'S BARS ARE ON — the program's declared bars, cut in UTC or at its zone's
+    /// midnight for a day. Where a bar ends, which is when an intent from it may first be acted on, and
+    /// how many minutes it spans, which is how many it can be missing.
+    /// </summary>
+    public BarGrid Grid { get; }
 
     internal IndicatorSet Indicators { get; }
 
@@ -56,7 +65,16 @@ public sealed class EvaluationState
     /// <summary>Closed bars fed so far.</summary>
     public long Bars { get; private set; }
 
-    /// <summary>Minutes between the bars this run saw that had NO bar. Never filled, always counted.</summary>
+    /// <summary>
+    /// MINUTES THIS RUN HAD NO BAR FOR — never filled, always counted, and always MINUTES, whatever bar
+    /// the program declares.
+    ///
+    /// <para>On one-minute bars that is every minute between two bars this run saw. On a declared bar it
+    /// is the same thing measured against the bars the program was asked on: every minute of a window that
+    /// produced no bar at all — an empty hour is sixty — and every minute a partial bar is short of its
+    /// window (<see cref="KlineBar.Minutes"/>), wherever in the window those minutes fell, because the bar
+    /// the rules read was built without them.</para>
+    /// </summary>
     public long MissingMinutes { get; private set; }
 
     /// <summary>The gap runs crossed, bounded by <see cref="KlineNormaliser.MaxGapRunsListed"/>.</summary>
@@ -136,14 +154,24 @@ public sealed class EvaluationState
     /// <summary>
     /// The state a run starts in: nothing seen, nothing warm.
     ///
-    /// <paramref name="barInterval"/> defaults to one minute, which is what `docs/COUNCIL.md` says a
-    /// bar is ("closed 1-minute OHLCV bars in UTC") and what every dataset this build collects holds.
+    /// <para><b>The bars are the program's own.</b> A run is on the bar the program declares
+    /// (<see cref="StrategyProgram.Bars"/>; one minute, what `docs/COUNCIL.md` says a bar is and what every
+    /// dataset holds, when it declares none). <paramref name="barInterval"/> is the caller saying which bars
+    /// it will feed, and one that is not the declared bar is REFUSED: an hourly program stepped on minutes,
+    /// or a minute program on hours, is a different strategy wearing the version's id, and every figure or
+    /// order it produced would be about a program nobody judged.</para>
     /// </summary>
     public static EvaluationState Start(
         StrategyProgram program, EvaluationLimits? limits = null, TimeSpan? barInterval = null)
     {
-        var interval = barInterval ?? TimeSpan.FromMinutes(1);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        ArgumentNullException.ThrowIfNull(program);
+
+        if (barInterval is { } interval && interval != program.Bars)
+            throw new ArgumentException(
+                $"this program declares bars of {StrategyBars.Spelled(program.Bars)}, and this run was asked to " +
+                $"evaluate it on bars of {StrategyBars.Spelled(interval)}: a program is evaluated on the bar it " +
+                "declares or not at all",
+                nameof(barInterval));
 
         // A program can only name a zone from the allowlist, so this cannot miss for a parsed
         // program; a state built around a zone this build has no rules for would read every wall
@@ -152,14 +180,19 @@ public sealed class EvaluationState
             throw new ArgumentException(
                 $"this build has no calendar for the zone '{program.Time.TimeZone}'", nameof(program));
 
-        return new EvaluationState(program, zone, interval, limits ?? EvaluationLimits.Default);
+        return new EvaluationState(program, zone, BarGrid.For(program), limits ?? EvaluationLimits.Default);
     }
 
     /// <summary>Halts the run with a reason. There is no route back: a faulted state stays faulted.</summary>
     internal void Fault(string reason) => FaultReason ??= reason;
 
-    /// <summary>Records one bar's arrival, the gap in front of it, and the session it belongs to.</summary>
-    internal void Advance(KlineBar bar, DateOnly session, long missingMinutes)
+    /// <summary>
+    /// Records one bar's arrival, the minutes missing in front of it and inside it, and the session it
+    /// belongs to. <paramref name="from"/> and <paramref name="to"/> are the open times of the first and
+    /// last bar those minutes belong to — the empty windows in front of this bar, and this bar itself when
+    /// it is partial.
+    /// </summary>
+    internal void Advance(KlineBar bar, DateOnly session, long missingMinutes, DateTimeOffset from, DateTimeOffset to)
     {
         if (missingMinutes > 0)
         {
@@ -167,10 +200,7 @@ public sealed class EvaluationState
             GapRunCount++;
 
             if (gaps.Count < KlineNormaliser.MaxGapRunsListed)
-                gaps.Add(new GapRun(
-                    LastBar!.Value + BarInterval,
-                    bar.OpenTime - BarInterval,
-                    (int)Math.Min(missingMinutes, int.MaxValue)));
+                gaps.Add(new GapRun(from, to, (int)Math.Min(missingMinutes, int.MaxValue)));
             else
                 GapRunsTruncated = true;
         }
@@ -264,19 +294,27 @@ public static class StrategyEvaluator
                 $"the bar at {bar.OpenTime:O} is not after the bar at {previous:O}: bars reach the " +
                 "evaluator in ascending order, one for each closed interval, and never twice");
 
-        var missing = 0L;
-        if (state.LastBar is { } last)
-        {
-            var elapsed = bar.OpenTime - last;
-            var intervals = elapsed.Ticks / state.BarInterval.Ticks;
+        var grid = state.Grid;
+        if (grid.Refusal(state.LastBar, bar.OpenTime) is { } offGrid)
+            return EvaluationOutcome.Faulted(state, offGrid);
 
-            if (elapsed.Ticks % state.BarInterval.Ticks != 0)
-                return EvaluationOutcome.Faulted(state,
-                    $"the bar at {bar.OpenTime:O} is {elapsed} after the one before it, which is not a " +
-                    $"whole number of {state.BarInterval} bars: this run's bars are not one series");
+        // THE MINUTES THIS BAR'S WINDOW SPANS, AND HOW MANY IT WAS BUILT FROM. A one-minute bar is built
+        // from one minute and is never short. A declared bar may be partial; one that claims more minutes
+        // than its window holds is not a bar of this series at all.
+        var span = grid.MinutesIn(bar.OpenTime);
+        if (bar.Minutes < 1 || bar.Minutes > span)
+            return EvaluationOutcome.Faulted(state,
+                $"the bar at {bar.OpenTime:O} says it was built from {bar.Minutes} minute(s), and one bar of " +
+                $"{grid.Spelled} spans {span}: this run's bars are not one series");
 
-            missing = intervals - 1;
-        }
+        // MISSING, IN MINUTES: every minute of the windows in front of this bar that produced no bar at all,
+        // and every minute this bar is short of its own window. On one-minute bars the second is always
+        // nothing and the first is the gap the evaluator has always counted.
+        var front = state.LastBar is { } last ? BarGrid.MinutesBetween(grid.EndOf(last), bar.OpenTime) : 0L;
+        var shortfall = span - bar.Minutes;
+        var missing = front + shortfall;
+        var gapFrom = front > 0 ? grid.EndOf(state.LastBar!.Value) : bar.OpenTime;
+        var gapTo = shortfall > 0 ? bar.OpenTime : grid.PreviousStart(bar.OpenTime);
 
         var local = StrategyCalendar.Local(state.Zone, bar.OpenTime);
         var session = StrategyCalendar.SessionOf(local);
@@ -296,7 +334,7 @@ public static class StrategyEvaluator
         }
 
         state.History.Push(bar);
-        state.Advance(bar, session, missing);
+        state.Advance(bar, session, missing, gapFrom, gapTo);
         state.Charged(operations, state.StateBytes);
 
         // THE STATE-SIZE LIMIT. A program's state does not grow while it runs — every window is
@@ -521,7 +559,7 @@ public static class StrategyEvaluator
 
         return new StrategyIntent(
             IntentKind.Enter, IntentCause.Rule, program.Instrument, quantity,
-            bar.OpenTime, state.Bars - 1, bar.OpenTime + state.BarInterval, reference,
+            bar.OpenTime, state.Bars - 1, state.Grid.EndOf(bar.OpenTime), reference,
             stop, TargetPrice(program.Target, reference), program.Sizing, fired)
         { Freshness = program.Freshness };
     }
@@ -537,7 +575,7 @@ public static class StrategyEvaluator
 
         return new StrategyIntent(
             IntentKind.Exit, cause, state.Program.Instrument, account.Quantity,
-            bar.OpenTime, state.Bars - 1, bar.OpenTime + state.BarInterval, bar.Close,
+            bar.OpenTime, state.Bars - 1, state.Grid.EndOf(bar.OpenTime), bar.Close,
             null, null, state.Program.Sizing, ruleIndex)
         { Freshness = state.Program.Freshness };
     }
