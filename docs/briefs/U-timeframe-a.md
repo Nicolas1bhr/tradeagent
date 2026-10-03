@@ -33,3 +33,24 @@ _parses` (guard); (g) `The_paper_runner_refuses_a_bars_1h_deployment_in_words`. 
 counting minutes ⇒ (d) red; (iii) `bars` added to the reserved names ⇒ (f) red.
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Tip `389950b`** (6 commits on `7ceb7c9`; `main` since moved one docs-only commit). No schema change. Gate: `--no-incremental` Release build `0 Warning(s)` `0 Error(s)`;
+Unit `Passed: 1325, Failed: 0`; Fault `Passed: 408, Failed: 0`; 3× each, all green: DeclaredBarsGrammarTests 25, DeclaredBarsGuardTests 2, DeclaredBarsResamplerTests 14,
+DeclaredBarsBacktestTests 9, DeclaredBarsPaperRunnerTests (Fault) 3. **CI run 37085481666** on 389950b: success — windows-latest 36 min, ubuntu-latest 12, macos-latest 15,
+package 4. Names vs `main`: `sets: base 2044 tip 2075`, `removed: 0`, `added: 31`.
+1 done: `bars` is a declaration only as a line's first word, never reserved; the canonical form writes `bars <s>s` only when declared and not 1m, `Header` and manifest unmoved —
+  so `bars` rides with no manifest bump and every v1 text, id and golden vector is unchanged (guard (e) runs the golden vectors' own check).
+2 done: one decimal `BarResampler` on `BarGrid` (UTC; 1d at the zone's midnight, 23/25 h on DST days); partial count on `KlineBar.Minutes`; empty window = gap; `MissingMinutes` stays minutes.
+3 done: two-clock `Backtest.Run` (each minute: fill at its open, stop/target on its range; declared close: max hold, then `Step`); one `Bar` line per evaluated bar; the cap counts
+  evaluated bars (a year of 1h is one run). DEVIATION: no bar parameter — `Run` reads `program.Bars` (`barInterval` removed) and `EvaluationState.Start` refuses any other bar.
+  JUDGEMENT: a run that ends inside a declared bar closes it as a partial bar (history: its minutes happened, the data lacks them).
+4 done: limits in declared bars (test: 500 h ≈ 20.8 d); `ForwardRuns.Refuses` ends the deployment before its first bar in the brief's words; STRATEGY-LANGUAGE.md, the agents'
+  bullet (away from :314), CONTRACTS.md. ADDITION (money path): `StartPaperDeploymentsDue` starts no replacement for a version the runner refuses (else: a row, a flatten and a
+  paid Research wake per sweep). RED before, on base `d99155e` (code under test identical to `7ceb7c9`): (a) (c) (d), cap, max-hold, lookback, partial, Over, (e), (g) and the
+  no-replacement test fail at "`bars` is not a declaration this language has"; (f), 1m cap, 1m replacement green; (b) and the grammar/resampler classes do not compile there.
+Mutants, each red then reverted: (i) resampler bypassed ⇒ (a) `Expected: COMPLETED Actual: FAULTED` ("does not open on the 1h grid"); (ii) cap counting minutes ⇒ (d) FAULTED at
+  minute 200,001; (iii) `bars` reserved ⇒ (f) "`bars` already means something in this language"; refusal removed ⇒ (g) `Assert.Single() Failure: The collection was empty`;
+  sweep guard removed ⇒ `Expected: [0, 0, 0] Actual: [1, 1, 1]`. NOT done / NOT VERIFIED: the runner stepping declared bars (U-timeframe-b); Integration only on CI; no box run;
+  the pipe's backtest reply does not name the bar; a partial bar's shortfall counts window minutes outside `from`/the data's end (stated in docs); on declared bars a minute out
+  of order is refused before its fills, unlike 1m (unchanged).
