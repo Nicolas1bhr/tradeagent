@@ -353,7 +353,7 @@ public sealed class CampaignStore(Database db)
                 $"campaign {already.Id} is already open over dataset {holdout.Id}. There is one campaign per "
                 + "holdout dataset: renew that one, which carries its holdout and its trial history forward.");
 
-        var judge = Strategy.VenueCostModel.For(holdout, new VenueStore(db),
+        var judge = Strategy.VenueCostModel.For(holdout, new VenueStore(db, () => at),
             judgeCapital ?? Strategy.VenueCostModel.DefaultCapital);
         if (judge.Model is not { } costModel) return CampaignOpened.No(judge.Why);
 

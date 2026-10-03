@@ -2,6 +2,7 @@ using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Platforms;
@@ -50,6 +51,16 @@ public sealed record ConnectorChoice
     /// the connector before it has loaded the settings to read them from.
     /// </summary>
     public Func<PaperFriction>? PaperFrictionNow { get; init; }
+
+    /// <summary>
+    /// THE INSTRUMENTS THE PAPER CONNECTOR MAY TRADE, READ AT EVERY USE — the host's SERVED catalogue
+    /// (<c>VenueStore.Catalogue</c>, <c>U-venue-verify</c>): the recorded catalogue overlaid by the latest
+    /// successful instrument check of seven days or less. A function for the reason the friction is one:
+    /// the host builds the connector before the gateway that records the catalogue exists, and a check that
+    /// succeeds or lapses while it runs has to reach the next order. Left null, the connector reads the
+    /// catalogue file once when it is built — which never verifies anything the app has checked.
+    /// </summary>
+    public Func<VenueCatalogRead>? PaperInstruments { get; init; }
 }
 
 /// <summary>
@@ -87,7 +98,8 @@ public static class Connectors
         Paper => new PaperConnector(new PaperConnectorOptions
         {
             Source = PaperBarsFor(choice),
-            Friction = choice?.PaperFrictionNow ?? (() => PaperFriction.None)
+            Friction = choice?.PaperFrictionNow ?? (() => PaperFriction.None),
+            CatalogueNow = choice?.PaperInstruments
         }),
         _ => new FakeConnector(new FakeBroker { AccountId = choice?.SimulatorAccountId ?? "SIM-001" })
     };

@@ -64,8 +64,9 @@ public sealed class ForwardRuns
         _deployments = gateway.Deployments;
         _strategies = new StrategyStore(db);
         _bars = new ForwardBarStore(db);
-        _venues = new VenueStore(db);
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        // THE SERVED READ, ON THE RUNNER'S OWN CLOCK: a check's seven days are measured on it (U-venue-verify).
+        _venues = new VenueStore(db, _now);
     }
 
     /// <summary>The gateway this runner dispatches through. A host that switched platforms builds a new one.</summary>

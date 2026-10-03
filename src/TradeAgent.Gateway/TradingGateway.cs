@@ -1593,7 +1593,8 @@ public sealed class TradingGateway : IAsyncDisposable
         // is what every reader — `venue-list`, the runner's increment, the owner's own window — then
         // agrees on. An unreadable file empties the table and says why, which is the most restrictive
         // reading and the one `RuntimeManifest.Read` already takes.
-        _venues = new VenueStore(db);
+        // ON THIS GATEWAY'S CLOCK, because the served read ages a check against it (U-venue-verify).
+        _venues = new VenueStore(db, () => _opt.Clock.GetUtcNow());
         // GUARDED, BECAUSE A GATEWAY THAT CANNOT WRITE STILL HAS TO BE BUILT. This runs in a
         // constructor, and `DispatchRecoveryTests` holds this whole path to the rule the startup sweep
         // already follows: a store that will not take a write must not stop the gateway from existing,

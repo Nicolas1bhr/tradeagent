@@ -39,7 +39,11 @@ ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoic
     // THE SAME FRICTION RULE AS THE DESKTOP APP (`FrictionInForce.ForPaper`), read at each fill from
     // this host's own settings. Left on the connector's frictionless default, the paper platform run
     // headless would charge nothing where the app's charges the venue's fee, under the same name.
-    PaperFrictionNow = () => PaperFriction.Of(FrictionInForce.ForPaper(settingsOf?.Settings))
+    PaperFrictionNow = () => PaperFriction.Of(FrictionInForce.ForPaper(settingsOf?.Settings)),
+    // THE SAME SERVED INSTRUMENTS AS THE DESKTOP APP, read at every use (U-venue-verify): this host checks
+    // nothing itself, so a pair is verified here exactly when a check the app recorded in this database is
+    // seven days old or less.
+    PaperInstruments = () => (settingsOf?.Venues ?? new VenueStore(db)).Catalogue()
 });
 
 await using var gateway = new TradingGateway(db, connector, health);

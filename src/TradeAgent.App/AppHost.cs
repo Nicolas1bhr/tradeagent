@@ -829,7 +829,13 @@ public sealed class AppHost : IAsyncDisposable
         // handed over rather than a built source: `Connectors.Create` is the one place that decides
         // what a platform id gets, and a host that built the adapter itself would be a second answer.
         ForwardBars = _db is { } db ? new ForwardBarStore(db) : null,
-        SubscribeToBarClosed = announce => _forwardAnnounce = announce
+        SubscribeToBarClosed = announce => _forwardAnnounce = announce,
+
+        // THE INSTRUMENTS IT MAY TRADE ARE THE SERVED ONES, READ AT EVERY USE (U-venue-verify): the gateway's
+        // catalogue overlaid by the latest successful instrument check of seven days or less, on the
+        // gateway's clock. Read through the property, so a connector switch that replaces the gateway reads
+        // the new one; before the gateway exists the same database answers on the machine clock.
+        PaperInstruments = _db is { } venues ? () => (Gateway?.Venues ?? new VenueStore(venues)).Catalogue() : null
     };
 
     public async Task SwitchConnectorAsync(string id)
