@@ -27,3 +27,24 @@ first). Mutants to watch red and quote: (i) protection placement moved to declar
 check removed ⇒ (g) red.
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Tip `22d83f47`** — the code tip CI tested, on `main` 35606c56 (`main` since moved by docs-only a68b14b4, no file in common). Item 1 `c6ebeaf5`, item 2 `b0b1309a`, item 3 `22d83f47`.
+**Gate.** `dotnet build TradeAgent.sln -c Release --no-incremental`: 0 Warning(s), 0 Error(s). Unit: Passed 1333, Failed 0. Fault: Passed 415, Failed 0. 3× each: `ForwardRunnerTests` 16/16,
+`DeclaredBarsPaperRunnerTests` 4/4, `DeclaredBarsResamplerTests` 15/15. **CI run 37102232929** on 22d83f4: success — test (ubuntu-latest) success 12 min, test (macos-latest) success
+15 min, test (windows-latest) success 46 min, package success 3 min. **Names** (`names.sh main u-timeframe-b`): sets base 2090, tip 2097; **removed 2**, added 9. Removed, declared: both pinned the
+refusal this unit removes — `The_paper_runner_refuses_a_bars_1h_deployment_in_words` (superseded by (a)) and `A_run_the_runner_refused_for_its_bars_is_not_replaced_on_the_next_sweep` (kept by (g)).
+1. DONE, one deviation: settle, the loser's cancel, protection on an entry fill and the max hold (counted in declared bars, `BarGrid.Between`) run every minute; only `Step` waits for a declared close,
+   on the resampled bar, its ops keyed on the minute that closed it. U-timeframe-a's refusal AND its sweep guard went in THIS commit, together: item 1 cannot be observed behind the refusal, and the
+   amendment forbids one without the other. Also the runner's two no-trade sentences write decimals invariantly (manager's note). `TradingGateway`'s dispatch region untouched.
+2. DONE, no code beyond item 1: each pass builds its own resampler from the deployment's start over every page (`EveryBarSince` kept); (e) restarts mid-hour past 10,000 minutes and equals an uninterrupted control.
+3. DONE: the sweep now asks `ForwardRuns.CannotRun` (no row, a frozen text that no longer parses or re-identifies — the runner's own pre-step question) before any replacement, (g) a 2-case [Theory];
+   CONTRACTS.md (per minute vs per declared bar), STRATEGY-LANGUAGE.md, the agents' bars bullet. USER-GUIDE.md unchanged: the paper card's line shows no bar.
+**RED before** (base 3dff4294): (a)(b)(c)(d) `Assert.Null() Failure: Value is not null … Actual: "this program declares `bars 1h`, and this build's "···`; (g) `Assert.Equal() Failure: Collections
+differ Expected: [0, 0, 0] Actual: [1, 1, 1]`, against main's bars guard and against none. (e)(f) guards: (f)'s golden transcript was captured on the base runner and is green there.
+**Mutants watched red:** (i) protection only on declared closes ⇒ (b) `Values differ Expected: 2 Actual: 0`; (ii) cancel only on declared closes ⇒ (c) `Values differ Expected: 0 Actual: -1.000`
+(a paper short); (iii) the sweep's check removed ⇒ (g) `Expected: [0, 0, 0] Actual: [1, 1, 1]`; and the hold counted in minutes ⇒ (d) `Assert.DoesNotContain() Failure`.
+**Not done / not verified:** no Windows box run (CI windows-latest only); Integration run locally only for `ForwardRunnerTests`. Not guarded: a version with no execution bounds (ended at its first
+intent, not before its first bar; guarding it contradicts `PaperDeploymentTests`). A run's first declared bar is the partial window it saw from its start, as documented.
+**Found, not fixed (pre-existing, 1m too):** a gate-refused close keeps its request row `CREATED` and `RunBooks` counts it in flight — (f) pins it (minute 11, `pending=True` after); "the run never enters
+again" is read from the code, not run. By reading only, not reproduced: a stop/target fill first seen after its minute stopped being live leaves the loser resting. Each wants its own unit.
