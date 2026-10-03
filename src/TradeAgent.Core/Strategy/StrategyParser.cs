@@ -557,7 +557,7 @@ public static class StrategyParser
             case "fixed":
                 if (value <= 0m || value > StrategyLimits.MaxFixedQuantity)
                     throw new Refused(d.No,
-                        $"a fixed quantity must be above 0 and at most {StrategyLimits.MaxFixedQuantity}, and this one is {Number(value)}");
+                        $"a fixed quantity must be above 0 and at most {Number(StrategyLimits.MaxFixedQuantity)}, and this one is {Number(value)}");
                 return new Sizing(SizingKind.FixedQuantity, value);
 
             case "capital_fraction":

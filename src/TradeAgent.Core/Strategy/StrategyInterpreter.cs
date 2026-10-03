@@ -51,10 +51,18 @@ readonly struct Val
 /// becomes <see cref="EvaluationOutcome.Faulted"/> with this reason. An exception is the readable way
 /// to abandon a recursive descent; it is not the way a caller finds out, which is why nothing outside
 /// this assembly can see this type.</para>
+///
+/// <para><b>Its words are <see cref="TraceText"/> and nothing else</b>, because they become the trace's
+/// last line: a number in them is spelled as the trace spells it, whatever culture the machine is in.</para>
 /// </summary>
-sealed class EvaluationFault(string reason) : Exception(reason)
+sealed class EvaluationFault : Exception
 {
-    public string Reason { get; } = reason;
+    public EvaluationFault(TraceText reason) : this(reason.ToStringAndClear()) { }
+
+    EvaluationFault(string spelled) : base(spelled) => Reason = spelled;
+
+    /// <summary>The words, already spelled.</summary>
+    public string Reason { get; }
 }
 
 /// <summary>
@@ -98,8 +106,8 @@ sealed class StrategyInterpreter(EvaluationState state, int budget)
         if (++Operations > budget)
             throw new EvaluationFault(
                 $"the rules of this program cost more than the {budget} operations left in this event's " +
-                "budget after the indicators, counted across every rule on the bar rather than one rule " +
-                "at a time");
+                $"budget after the indicators, counted across every rule on the bar rather than one rule " +
+                $"at a time");
 
         switch (expr)
         {
@@ -148,7 +156,7 @@ sealed class StrategyInterpreter(EvaluationState state, int budget)
             default:
                 // Unreachable while every node kind is covered, and a defined fault rather than a
                 // crash if a kind is ever added without a case here.
-                throw new EvaluationFault("a rule holds a value this build does not know how to evaluate");
+                throw new EvaluationFault($"a rule holds a value this build does not know how to evaluate");
         }
     }
 

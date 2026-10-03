@@ -47,22 +47,27 @@ public sealed class BarResampler(BarGrid grid)
     /// a declared bar was built from; so the same refusals are made here, one level down. A minute fed twice
     /// would be counted into an hour's volume twice and a minute fed backwards would change its close, and
     /// both would look exactly like a real bar.</para>
+    ///
+    /// <para>The words become a backtest's fault, so they are spelled as trace words (<see cref="TraceText"/>).</para>
     /// </summary>
     public string? Refusal(KlineBar minute)
     {
         ArgumentNullException.ThrowIfNull(minute);
 
         if (minute.Minutes != 1)
-            return $"the bar at {minute.OpenTime:O} was built from {minute.Minutes} minutes, and a declared bar is " +
-                   "built from closed one-minute bars: this run's bars are not one series";
+            return TraceText.Spell(
+                $"the bar at {minute.OpenTime:O} was built from {minute.Minutes} minutes, and a declared bar is " +
+                $"built from closed one-minute bars: this run's bars are not one series");
 
         if (minute.OpenTime.UtcTicks % TimeSpan.TicksPerMinute != 0)
-            return $"the bar at {minute.OpenTime:O} does not open on a whole minute, so it is not one of the closed " +
-                   "one-minute bars a declared bar is built from: this run's bars are not one series";
+            return TraceText.Spell(
+                $"the bar at {minute.OpenTime:O} does not open on a whole minute, so it is not one of the closed " +
+                $"one-minute bars a declared bar is built from: this run's bars are not one series");
 
         if (_lastMinute is { } last && minute.OpenTime <= last)
-            return $"the bar at {minute.OpenTime:O} is not after the bar at {last:O}: minutes reach the resampler in " +
-                   "ascending order, one for each closed minute, and never twice";
+            return TraceText.Spell(
+                $"the bar at {minute.OpenTime:O} is not after the bar at {last:O}: minutes reach the resampler in " +
+                $"ascending order, one for each closed minute, and never twice");
 
         return null;
     }
