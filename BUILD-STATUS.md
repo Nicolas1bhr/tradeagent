@@ -7638,3 +7638,37 @@ success on ubuntu-latest (12 min), macos-latest (16 min), windows-latest (41 min
 **NOT done, NOT verified:** the card not seen on screen (the app's start would call the real host); the AppHost triggers (start, 6-hourly, pair change,
 Check now) have no automated test; minimum notional recorded, not applied; a `"verified": true` written into `venues.json` is still honoured (advisory until
 containment, said in CONTRACTS); Windows only through CI.
+
+## 2026-10-04 — U-timeframe-b landed: the paper runner steps a program's rules on its declared bars while protection still acts within the minute
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-timeframe-b.md` (amended at dispatch on the orchestrator's order,
+`5f4bd44a`; dispatched `3dff4294`); built on `35606c56`, rebased by the manager onto `5a040a56` (U-invariant-traces, U-venue-verify and docs in), src+tests patch-id identical. Merge `7fc9e792` (ff-only), 4
+commits (3 items + the report). No schema change. Money path: the runner places orders through the gateway (`TradingGateway`'s dispatch region untouched).
+
+- **Item 1 (`36d3cfe8`):** every minute the runner still settles its ops, cancels the losing protective order, places protection on an entry fill and checks
+  the max hold (counted in declared bars, `BarGrid.Between`); only `Step` waits for a declared close, on the resampled bar, its ops keyed on the minute
+  that closed it. U-timeframe-a's refusal AND its sweep guard went in this same commit (item 1 cannot be observed behind the refusal; the amendment forbade
+  one without the other). The runner's two no-trade sentences write decimals invariantly.
+- **Item 2 (`1416794b`):** each pass rebuilds its resampler from the deployment's start over every page (`EveryBarSince` kept): a restart mid-hour past 10,000
+  minutes equals an uninterrupted run — no code beyond item 1.
+- **Item 3 (`01048621`):** the sweep asks `ForwardRuns.CannotRun` (no row; a frozen text that no longer parses or re-identifies — the runner's own pre-step
+  question) before any replacement, so it never churns a version the runner cannot run; `CONTRACTS.md` (per minute vs per declared bar),
+  `STRATEGY-LANGUAGE.md`, the agents' bars bullet.
+- **Judged at landing — TWO TEST NAMES REMOVED, a judged exception (accepted by the orchestrator):** `The_paper_runner_refuses_a_bars_1h_deployment_in_words`
+  and `A_run_the_runner_refused_for_its_bars_is_not_replaced_on_the_next_sweep` pinned the refusal this unit had to remove; superseded by (a) and (g).
+- **Found, not fixed, now a pre-M0 unit:** a close refused before the wire keeps its request row `CREATED` and the books count it in flight, freezing the run
+  — pinned by guard (f) at minute 11; every max-hold close sets it off. Briefed as `U-runner-refused-close` (the orchestrator, 2026-10-04), before M0.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `22d83f4` (on `35606c56`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1333, Fault 415, 0 failed; `ForwardRunnerTests` 16/16, `DeclaredBarsPaperRunnerTests` 4/4, `DeclaredBarsResamplerTests` 15/15, 3× each. RED
+before (base `3dff4294`): (a)–(d) "Assert.Null() Failure … this program declares `bars 1h`, and this build's …"; (g) "Expected: [0, 0, 0] Actual: [1, 1, 1]"
+against main's guard and against none. Mutants watched red: (i) protection only on declared closes ⇒ (b) "Expected: 2 Actual: 0"; (ii) the cancel only on
+declared closes ⇒ (c) "Expected: 0 Actual: -1.000" (a paper short); (iii) the sweep's check removed ⇒ (g); the hold counted in minutes ⇒ (d).
+Manager's gate at `7fc9e79`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1352/1352 (7 m 28 s, the slow Mac), Fault 415/415 (1 m 41 s), Integration 712/713, 1 skipped (11 m 17 s) → 0 failed.
+Names vs `main` (git objects): 2110 → 2117, 2 REMOVED (the two named above — the judged exception; `land.sh check` read FAIL on exactly that and nothing else), 9 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37102232929 at `22d83f4` (on `35606c56`; U-invariant-traces and U-venue-verify landed after it, covered by the gate and the merge's run):
+success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (46 min), package (3 min). U-venue-verify's landing push: still running at this record (the ledger and the next record carry it).
+
+**NOT done, NOT verified:** no box run; Integration locally only for `ForwardRunnerTests` (in full on CI and the gate); a version with no execution bounds is
+ended at its first intent, not before its first bar (guarding it contradicts `PaperDeploymentTests`); a run's first declared bar is the partial window it
+saw from its start (documented); the second finding (a stop/target fill first seen after its minute was live) is `U-runner-refused-close`'s test (c).
