@@ -213,6 +213,10 @@ TradeAgent paper trades nothing at all, because it will not size an order agains
 has confirmed; the same `venues.json` line described under *If a backtest says it will not guess an
 instrument's size step* is what opens it.
 
+If TradeAgent has been collecting for weeks before you first switch to TradeAgent paper, its first look
+catches up on every minute collected in one go — a few seconds for a month of minutes — so your first
+order is priced on the newest minute rather than refused for want of a recent price.
+
 ## About ATAS
 
 ATAS is not TradeAgent's software, and this is the one part of setup that is not automatic.
