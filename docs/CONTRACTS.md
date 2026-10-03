@@ -1828,6 +1828,48 @@ zero, never two.
 `role` on `ai_attempt` and on `mission_event` is nullable and additive; a row that names none is the
 chair's (`CouncilRoles.Or`), because the single agent the council replaces was Operations.
 
+## The organisation ledger — `src/TradeAgent.Core/Db/OrgStore.cs`
+
+**The organisation is app-minted data, and nothing reads it yet.** Schema 28 adds three tables and changes no
+behaviour. `org_unit` — `id · parent_id · kind · head_position_id · status · envelope_share ·
+charter_publication_id · created_at · closed_at` — is the chart, a tree by `parent_id`, and SQL holds its shape:
+one root, only the root without a parent, every unit under a unit that exists. `kind` (`root`, `division`,
+`subdivision`, `team`, `staff`) and `status` (`chartered`, `active`, `dormant`, `closed`) are TEXT the store
+validates when it writes — never an enum or a CHECK, so a value from a newer build reads as itself. A NULL
+`head_position_id` on the root is THE OWNER, in-process: no row names them and no position can become them.
+`org_position` — `id · unit_id · home_dir · status · seat_runtime · seat_model · seat_allow_in · seat_allow_out ·
+created_at · ended_at` — is a place an agent fills; NULL seat columns are today's behaviour, the owner's runtime
+and model settings. `org_event` — `id · at · unit_id · position_id · kind · decider · detail` — is append-only,
+and `detail` holds app-composed ids, numbers and fixed words, never agent text.
+
+**The seed.** The rung writes the root `org` (head NULL), the divisions `div-operations` (head `operations`) and
+`div-research` (head `research`), and two positions whose ids ARE the legacy role strings, homed in `agent` and
+`research` — so every `role` a store has written still names what it named. Fixed ids under `ON CONFLICT DO
+NOTHING`, and one `seeded` event per row, decider `app`, inserted only `WHERE NOT EXISTS` a seed event for that
+id: the rungs run in autocommit, so a crash between the seed and the stamp runs the rung again, and an event's
+counter key refuses no second copy by itself. These five are the only fixed ids; every later one is minted at
+random by `OrgStore`.
+
+**App principals are never positions.** `referee` (`Referee.RunRole`) and `allocator`
+(`TradingGateway.PaperAllocatorRole`) write into role columns today, and `perception` is reserved for
+`U-decision-port`; `OrgStore.IsAppPrincipal` names all three, and none of them is a position row.
+
+**Measurement and claim.** An `org_*` row is the app's measurement of the chart. A unit's title and charter, a
+head's rationale and every report will be publications — claims — referenced by id (`charter_publication_id`)
+and never copied into a row. **The writers are the app's alone:** the rung's seed today, `OrgStore` from
+`U-org-verbs`. `OrgStore` has no public writer yet, no pipe op or `trade` verb names the organisation, and no
+source file but the rung writes an org table (`OrgLedgerTests.No_pipe_op_writes_an_org_table`). Nothing in it
+confers authority: order permission stays `CouncilRoles.MayPlaceOrders`, bound to `operations`, and never
+follows headship.
+
+**`envelope_share` is the AI-spend envelope** — a decimal string, a share of the parent's — and NOT
+`paper_envelope`, the owner's grant of paper experimentation at schema 25. NULL is today's split.
+
+**NOT CLAIMED.** (1) *Protection from a CLI agent that writes `state/` directly*: until containment a CLI seat
+runs as the owner's user and can open the database file itself, so against it every rule above is advisory
+(`docs/ORGANISATION.md` § 14); what holds is that no APP path writes an org row. (2) *That the chart is used*: no
+launch, budget, wake or permission reads it before `U-org-principals`.
+
 ## A turn's staged output, its revisions and its one commit — `src/TradeAgent.AgentRuntime/CouncilRelay.cs`
 
 **A file is attributed by the attempt id in its NAME.** The `## Situation` names the launch id and the
