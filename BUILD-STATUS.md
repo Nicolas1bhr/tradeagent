@@ -7431,3 +7431,37 @@ merge's run): success on ubuntu-latest (12 min), macos-latest (15 min), windows-
 
 **NOT done, NOT verified:** the Settings row not seen on screen (the app was not run); no box; CI ran on `2bfb74c`, not on the rebased tip; an override
 written into the settings row by anything but the Settings page is applied without a bound, as the old field was (agent-writable until containment).
+
+## 2026-10-03 — U-meter-batch-1 landed: a harness turn with no key held sends nothing and is charged nothing; two default-model comments made true after the 2026-10-02 price reading
+
+One fresh Opus builder under build-fleet seat P from `docs/briefs/U-meter-batch-1.md` (queued `aa77717`, dispatched `be91995`; the builder was stopped by the
+account's usage limit before its first edit and resumed by message), rebased onto `923fb28`, then `298bb36`, then at landing onto `d99155e` with the
+`src`+`tests` patch-id identical (`0d1304fa17b3`). Merge `01eb286` (ff-only), 3 commits (2 items + the report), 8 files, +201/−23. No schema rung. Spend
+accounting (the day's cap counts what was billed; "unknown is never zero", `docs/COUNCIL.md` rule 3); no money-path file.
+
+- **Item 1:** `AgentTurnEnded.KeyNotHeld`, set to `Labels.HarnessKeyNotHeld` by `ApiConversation` on the no-key return only — before a request is built,
+  beside `KeyWithheld`'s (`U-key-host-pin`); `TurnMeter.Charge` charges zero on it with the other two markers and `ContextOf` writes it as `context.refused`.
+  Exit code −1 and `not-started` are unchanged and are never read for money. `docs/CONTRACTS.md` (cost section) and `docs/USER-GUIDE.md` +1 sentence each.
+- **Item 2:** both `RuntimeManifest.cs` default-model comments rewritten from `ListPrices.cs` as read on 2026-10-02 (gpt-6.1-sol and gpt-6-sol 2.00 / 10.00,
+  gpt-6-luna 0.10 / 0.50; gpt-5.6-sol's 4.00 / 20.00 promotional through at least 2026-11-21), each saying its default predates those rows (chosen 2026-09-07
+  and 2026-09-13, by `git log -S`) and is the owner's decision; no `DefaultModel`, price or reservation changed — the diff has no non-comment line.
+- **Deviations, judged at landing:** the guide said a no-key harness role "takes no turns at all", but `AppHost.RuntimeForRole` keeps an owner-chosen harness
+  role on the harness without a key and the loop gets a metered conversation, so it now reads "sends nothing at all" — accepted, the guide now matches the
+  code. An added guard (below), beyond the brief — accepted.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 19 projects, 0 warnings, 0 errors; Unit 1267/1267,
+Fault 405/405; 3× `HarnessBudgetTests` 12/12 and the guards `VendorLimitTests` 6/6, `ApiWorkerTests` 7/7, `HarnessKeyOriginTests` 6/6, `TurnMeterTests` 9/9.
+RED first on the base `923fb28` with the test alone: `A_harness_turn_with_no_key_held_sends_nothing_and_is_charged_nothing` → "Expected: 0 / Actual: 1.28" at
+`row.Cost`, after its asserts that the transport saw 0 requests and the row ENDED with 1.28 reserved had passed. Mutant (`|| ended.KeyNotHeld is not null`
+dropped from `Charge`): the same line red; restored (`cmp` identical). Guard `A_cancelled_harness_turn_keeps_its_reservation_though_it_ends_with_the_same_exit
+_code` (pre-cancelled, exit −1, no usage → 1.28 kept); a second mutant keying the zero on `ExitCode == NotStarted` turned it red ("Expected: 1.28 / Actual:
+0") with the no-key test still green — the zero is not read from an exit code. Manager's gate at `01eb286` (the reported tip rebased, 0 behind `main`
+`d99155e`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1275/1275 (33 s), Fault 405/405 (1 m 40 s), Integration 704/705,
+1 skipped (11 m 9 s, the clean baseline's length) → 0 failed. Names vs `main` (git objects): sets 2042 → 2044, 0 removed, 2 added. Scan: `stop.Token` (a
+cancellation source's property) and "pre-cancelled token" (report prose) excluded by name, otherwise clean; no trailers; `rev-list --count` → 0 both ways.
+**CI:** branch run 37080890075 at `8e4ad13` (`src`/`tests` identical to `01eb286`): ubuntu, macos, windows and package success. CI at the merge: recorded
+when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** the app was not run and no real turn made; a keyless harness role relaunched after a restart is read from source, not run; the
+CLI's own −1 paths keep their reservation, as the brief bounds; `docs/EDGE-FACTORY.md:33`'s pointer `RuntimeManifest.cs:716-728` (`RuntimeCatalog.Read`)
+now reads at `727-739` — the plan file was not edited (the orchestrator's).
