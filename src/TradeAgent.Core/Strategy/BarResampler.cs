@@ -4,7 +4,7 @@ namespace TradeAgent.Core.Strategy;
 
 /// <summary>
 /// CLOSED ONE-MINUTE BARS IN, CLOSED BARS OF A PROGRAM'S DECLARED LENGTH OUT — the one resampler the
-/// backtest uses and the paper runner will (<c>U-timeframe-b</c>).
+/// backtest and the paper runner use (<c>U-timeframe-b</c>).
 ///
 /// <para><b>What a bar is.</b> A bar covers one window of its <see cref="BarGrid"/>: the OPEN is its first
 /// minute's open, the HIGH and LOW the extremes of its minutes, the CLOSE its last minute's close and the

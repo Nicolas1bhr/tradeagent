@@ -103,6 +103,16 @@ public sealed class BarGrid
         (to - from).Ticks / TimeSpan.TicksPerMinute;
 
     /// <summary>
+    /// HOW MANY BARS OF THIS GRID THE ONE <paramref name="to"/> FALLS IN COMES AFTER THE ONE <paramref name="from"/>
+    /// FALLS IN — whole windows counted on the grid, whether or not the data has a minute in them, and negative
+    /// when it comes before. A zone's daily bars are counted in its own dates, so a 23- or 25-hour day is one bar.
+    /// </summary>
+    public long Between(DateTimeOffset from, DateTimeOffset to) =>
+        _zone is { } zone
+            ? (LocalDate(zone, to) - LocalDate(zone, from)).Days
+            : (StartOf(to).UtcTicks - StartOf(from).UtcTicks) / Length.Ticks;
+
+    /// <summary>
     /// WHY A BAR OPENING AT <paramref name="next"/> CANNOT FOLLOW ONE AT <paramref name="previous"/> ON
     /// THIS GRID, or null when it can. The caller has already refused a bar that is not after the one
     /// before it.

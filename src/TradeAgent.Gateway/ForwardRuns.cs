@@ -1,3 +1,4 @@
+using System.Globalization;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -9,6 +10,10 @@ namespace TradeAgent.Gateway;
 /// <summary>
 /// ONE DEPLOYMENT'S RUN, AS THIS PASS REBUILT IT: the evaluator's state, where the replay stopped,
 /// and why it stopped there.
+///
+/// <para><paramref name="BarsReplayed"/> counts the bars the evaluator was stepped on, which are the
+/// program's own — minutes for a program that declares no <c>bars</c>, hours for one on <c>bars 1h</c>;
+/// <paramref name="BarsSkipped"/> and <paramref name="LastBar"/> are about the minutes the replay read.</para>
 /// </summary>
 public sealed record ForwardRunState(
     StrategyDeploymentRow Deployment,
@@ -32,19 +37,28 @@ public sealed record ForwardRunState(
 /// text, and what comes out is a <see cref="StrategyIntent"/> that becomes an ordinary
 /// <c>PlaceIntent</c> through <c>TradingGateway.PlaceAsync</c> and every gate it has.</para>
 ///
+/// <para><b>TWO CLOCKS, AS THE BACKTEST HAS THEM</b> (<c>U-timeframe-b</c>). The MINUTE clock is the
+/// market's, and everything that protects a position runs on it: the operations that have an answer are
+/// settled, the losing half of a stop/target pair is cancelled, the stop and the target go to the venue
+/// when the entry fills, and the maximum hold is enforced — in the pass over the minute that needs it.
+/// The DECLARED clock is the program's: only when one of its bars has closed
+/// (<see cref="BarResampler"/>) is the evaluator stepped, on that bar. A program that declares no
+/// <c>bars</c> is the case where the two clocks are one, and it runs exactly as it always has.</para>
+///
 /// <para><b>THERE IS NO STATE IN THIS PROCESS THAT A RESTART LOSES.</b> The evaluator's windows are
 /// rebuilt on every pass by replaying the forward bars from the deployment's start — every one of
-/// them, read page by page (<see cref="EveryBarSince"/>) — because indicators, warm-up, session and
-/// gaps are a function of the bars and of nothing else; and the position, the pending order and the
+/// them, read page by page (<see cref="EveryBarSince"/>), and through a resampler of its own for a
+/// program on declared bars — because indicators, warm-up, session, gaps and the declared bar still
+/// forming are a function of the bars and of nothing else; and the position, the pending order and the
 /// bars held are read back out of the run's own <c>deployment_op</c> rows and the
 /// <c>execution_request</c> rows they join to. Two runners over one database therefore reach the
 /// same state, and a runner that died half way through a bar reaches the state it had. An
 /// in-memory cursor would have been a fifth thing to keep true across a crash.</para>
 ///
 /// <para><b>What it claims and what it does not.</b> Forward paper observation under declared
-/// bar-fill assumptions: the price existed at the open of a bar. Not executability, not queue
-/// position, not intrabar ordering — protection is judged at bar granularity, because a bar is what
-/// this product has. <c>docs/CONTRACTS.md</c> "The runner" says it in the same words.</para>
+/// bar-fill assumptions: the price existed at the open of a minute. Not executability, not queue
+/// position, not intrabar ordering — protection is judged at minute granularity, because a minute is
+/// the finest bar this product has. <c>docs/CONTRACTS.md</c> "The runner" says it in the same words.</para>
 /// </summary>
 public sealed class ForwardRuns
 {
@@ -126,10 +140,6 @@ public sealed class ForwardRuns
                 + "build as that version — it is refused, or this build's language manifest reads it as "
                 + "a different program with a different id — so there is nothing to step", ct);
 
-        // A PROGRAM ON BARS THIS RUNNER DOES NOT STEP IS ENDED BEFORE ITS FIRST BAR, IN WORDS. See `Refuses`.
-        if (Refuses(program) is { } refused)
-            return await EndAsync(deployment, refused, ct);
-
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
         // this pass dispatch at all — the frontier below is the cursor's other half.
@@ -139,8 +149,16 @@ public sealed class ForwardRuns
             return new ForwardRunState(deployment, null, 0, 0, null, deployment.EndReason);
 
         var bars = EveryBarSince(deployment.Symbol, deployment.StartedAt, ct);
-        var state = EvaluationState.Start(program, null, ForwardBars.BarLength);
-        var books = Books(deployment, bars);
+
+        // THE PROGRAM IS STEPPED ON THE BARS IT DECLARES, AND THE RUNNER SAYS SO TO THE EVALUATOR, which
+        // refuses any other. For a program on declared bars the minutes go through a resampler of this
+        // pass's own, fed from the deployment's start like everything else here: a restart mid-hour
+        // replays the same minutes into a new one and reaches the same hour still forming. Null for a
+        // program on one-minute bars, whose declared bar IS the minute.
+        var state = EvaluationState.Start(program, null, program.Bars);
+        var grid = state.Grid;
+        var resampler = program.Bars == StrategyBars.OneMinute ? null : new BarResampler(grid);
+        var books = Books(deployment, bars, grid);
 
         // THE FRONTIER, AND IT IS THE CURSOR'S OTHER HALF: THE EARLIEST BAR THIS RUN HAS AN OPERATION
         // ON THAT THE CURSOR HAS NOT REACHED. Nothing is planned past it, and that is the whole of
@@ -159,6 +177,7 @@ public sealed class ForwardRuns
         StrategyIntent? entrySignal = null;
         string? stopRequest = null;
         string? targetRequest = null;
+        var decided = new List<KlineBar>(2);
 
         for (var i = 0; i < bars.Count; i++)
         {
@@ -185,6 +204,16 @@ public sealed class ForwardRuns
                 continue;
             }
 
+            // A MINUTE THE PROGRAM'S BARS CANNOT BE BUILT FROM ENDS THE RUN, IN WORDS — before anything is
+            // applied, exactly as the evaluator's own refusal of a one-minute bar off its series does. The
+            // resampler would throw instead, and a pass that throws on the same minute every time is a run
+            // left active that never protects anything again; ending it is the protection policy.
+            if (resampler?.Refusal(bar) is { } unbuildable)
+                return await EndAsync(deployment,
+                    $"the minute at {bar.OpenTime.ToString("u", CultureInfo.InvariantCulture)} cannot be built "
+                    + $"into this program's {grid.Spelled} bars: {unbuildable}", ct,
+                    state, replayed, skipped, last, account);
+
             // A UTC DAY THAT CLOSED OVER THIS RUN IS ONE THING TO SAY, ONCE. The boundary is the first
             // bar of a new UTC date, and the note is about the day that ended — keyed by the
             // deployment and that date, so replaying the week raises ids the queue already holds.
@@ -192,8 +221,10 @@ public sealed class ForwardRuns
                 _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(before),
                     $"the UTC day {MissionEventIds.DayOf(before)} closed over it", _now());
 
+            // THE ACCOUNT AT THIS MINUTE, WITH THE BARS HELD COUNTED IN THE PROGRAM'S OWN BARS: through the
+            // last of them that has closed by the end of this minute. On one-minute bars that is this minute.
             last = bar.OpenTime;
-            account = books.At(i, bar);
+            account = books.At(bar, ClosedThrough(grid, bar.OpenTime));
             var seq = 0;
             var planned = false;
 
@@ -245,6 +276,10 @@ public sealed class ForwardRuns
             // is closed at market, and the evaluator then reads a FLAT account. Asked the other way
             // round it would decide from a position this app had already said must not survive the
             // bar, and its own `max_hold_bars` exit would arrive one whole bar later.
+            //
+            // It is asked on EVERY minute, counted in the program's bars: the count reaches the limit at
+            // the close of the declared bar that reaches it — the backtest's step 3 — and stays there, so
+            // a close a gate refused is asked for again on the next minute rather than the next hour.
             if (live && account.Position == PositionSide.Long
                 && program.MaxHoldBars is { } hold && account.BarsSinceEntry >= hold)
             {
@@ -257,21 +292,44 @@ public sealed class ForwardRuns
                 account = RunBooks.Flat(account);
             }
 
-            var outcome = StrategyEvaluator.Step(state, bar, account);
-            replayed++;
-
-            // A FAULT IS STICKY AND ENDS THE RUN. `docs/COUNCIL.md`: an interpreter fault is a
-            // defined outcome — no new exposure, the app's protection policy. Ending is that policy:
-            // the working orders are cancelled and the position is flattened by
-            // `EndPaperDeploymentAsync`, under the run's own identity.
-            if (outcome.Status == EvaluationStatus.Faulted)
-                return await EndAsync(deployment,
-                    "the program faulted on the bar at " + bar.OpenTime.ToString("u")
-                    + ": " + (outcome.FaultReason ?? "a defined fault with no reason"), ct,
-                    state, replayed, skipped, last, account);
-
-            if (outcome.Intent is { } signalled)
+            // THE DECLARED CLOCK, AND ONLY THE STEP WAITS FOR IT: the program's bars that closed on this
+            // minute, in order. On one-minute bars that is this minute. On declared bars it is the bar
+            // whose last minute this is, and before it the bar whose last minutes the data does not have
+            // and that this minute is past — both, when a whole bar of minutes is missing in between.
+            // What either of them dispatches is written on THIS minute, the one the runner learned it on,
+            // so the cursor, the frontier and every request id stay on the minute as they always were.
+            decided.Clear();
+            if (resampler is null) decided.Add(bar);
+            else
             {
+                if (resampler.CloseBefore(bar.OpenTime) is { } passed) decided.Add(passed);
+                if (resampler.Add(bar) is { } completed) decided.Add(completed);
+            }
+
+            foreach (var closed in decided)
+            {
+                // THE ACCOUNT AT THIS MINUTE, AFTER ITS PROTECTION, with the bars held counted to the bar
+                // being decided — the one this minute completes is the one the account above was
+                // counted to; a bar that ended before this minute is fewer bars after the entry.
+                var reading = account.Position == PositionSide.Long
+                    ? account with { BarsSinceEntry = books.At(bar, closed.OpenTime).BarsSinceEntry }
+                    : account;
+
+                var outcome = StrategyEvaluator.Step(state, closed, reading);
+                replayed++;
+
+                // A FAULT IS STICKY AND ENDS THE RUN. `docs/COUNCIL.md`: an interpreter fault is a
+                // defined outcome — no new exposure, the app's protection policy. Ending is that policy:
+                // the working orders are cancelled and the position is flattened by
+                // `EndPaperDeploymentAsync`, under the run's own identity.
+                if (outcome.Status == EvaluationStatus.Faulted)
+                    return await EndAsync(deployment,
+                        "the program faulted on the bar at " + closed.OpenTime.ToString("u", CultureInfo.InvariantCulture)
+                        + ": " + (outcome.FaultReason ?? "a defined fault with no reason"), ct,
+                        state, replayed, skipped, last, account);
+
+                if (outcome.Intent is not { } signalled) continue;
+
                 // REMEMBERED WHETHER OR NOT IT IS DISPATCHED, because a bar that is already accounted
                 // for still produced the entry whose declared stop and target the next bar's fill is
                 // measured against. That is what makes a restart place the same protection.
@@ -290,7 +348,7 @@ public sealed class ForwardRuns
                         + "the referee refuses such a program a promotion and this run is over", ct,
                         state, replayed, skipped, last, account);
 
-                if (live && await DispatchAsync(deployment, bar, signalled, decision, account, seq++, ct))
+                if (live && await DispatchAsync(deployment, bar, signalled, decision, reading, seq++, ct))
                     planned = true;
             }
 
@@ -404,7 +462,8 @@ public sealed class ForwardRuns
         if (level <= 0m)
         {
             NoTrade(deployment, bar, quantity,
-                $"the declared {kind} works out at {level} from this fill, which is not a price");
+                FormattableString.Invariant(
+                    $"the declared {kind} works out at {level} from this fill, which is not a price"));
             return (null, false);
         }
 
@@ -511,8 +570,8 @@ public sealed class ForwardRuns
         if (sized > 0m) return sized;
 
         NoTrade(deployment, bar, quantity,
-            $"{what} came to {quantity}, which rounds down to nothing at the venue's quantity "
-            + $"increment of {step}");
+            FormattableString.Invariant(
+                $"{what} came to {quantity}, which rounds down to nothing at the venue's quantity increment of {step}"));
         return null;
     }
 
@@ -532,38 +591,14 @@ public sealed class ForwardRuns
             }));
 
     /// <summary>
-    /// WHY THIS BUILD'S RUNNER WILL NOT STEP A PROGRAM, IN WORDS — or null when it will.
-    ///
-    /// <para><b>This runner evaluates every closed minute</b>, and a program that declares <c>bars 1h</c>
-    /// is judged — by <c>Backtest.Over</c> and the referee — on hours. Stepped here it would be a different
-    /// strategy under the judged one's id: its 24-bar mean a 24-minute mean, its <c>max_hold_bars</c> sixty
-    /// times shorter, its turnover the minute's. So such a run is ENDED before a bar is stepped, with this
-    /// sentence on its own line for the owner and in the one note Research is sent, and nothing is ever
-    /// sent for it. <c>U-timeframe-b</c> steps the rules on declared bars while protection stays on the
-    /// minute, and removes this. The evaluator would refuse it as well — <c>EvaluationState.Start</c>
-    /// will not step a program on bars it did not declare — but a refusal that only surfaces as an
-    /// exception in the runner's log is a run left active that never decides, so it is made here, first.</para>
-    ///
-    /// <para><c>TradingGateway.StartPaperDeploymentsDue</c> asks the same question so that, once one run
-    /// of an allocation has been ended for this, no replacement is started to be ended for it again.</para>
+    /// THE START OF THE LAST OF THE PROGRAM'S BARS THAT HAS CLOSED BY THE END OF THIS MINUTE: the bar this
+    /// minute completes when it is the bar's last minute — the rule <see cref="BarResampler.Add"/> closes a
+    /// bar by — and otherwise the bar before the one still forming. On one-minute bars it is the minute.
     /// </summary>
-    public static string? Refuses(StrategyProgram program)
+    static DateTimeOffset ClosedThrough(BarGrid grid, DateTimeOffset minute)
     {
-        ArgumentNullException.ThrowIfNull(program);
-        if (program.Bars == StrategyBars.OneMinute) return null;
-
-        var bars = StrategyBars.Spelled(program.Bars);
-        var kind = bars switch
-        {
-            "1h" => "hourly",
-            "4h" => "four-hour",
-            "1d" => "daily",
-            _ => bars
-        };
-
-        return $"this program declares `bars {bars}`, and this build's paper runner evaluates every minute; "
-               + $"programs on {kind} bars run after the next update. It was ended before a bar was "
-               + "stepped, and nothing was sent";
+        var start = grid.StartOf(minute);
+        return minute + StrategyBars.OneMinute >= grid.EndOf(start) ? start : grid.PreviousStart(start);
     }
 
     /// <summary>
@@ -646,7 +681,7 @@ public sealed class ForwardRuns
     /// charging one run for another's exposure. Every figure here comes off this deployment's
     /// <c>deployment_op</c> rows joined to <c>execution_request</c> and <c>fill</c> by request id.</para>
     /// </summary>
-    RunBooks Books(StrategyDeploymentRow deployment, IReadOnlyList<ForwardBar> bars)
+    RunBooks Books(StrategyDeploymentRow deployment, IReadOnlyList<ForwardBar> bars, BarGrid grid)
     {
         var ops = _deployments.OpsOf(deployment.Id);
         var fills = _gateway.Fills.Since(deployment.StartedAt)
@@ -680,7 +715,7 @@ public sealed class ForwardRuns
         }
 
         settled.Sort((a, b) => a.Bar.CompareTo(b.Bar));
-        return new RunBooks(settled, inFlight, Capital(deployment));
+        return new RunBooks(settled, inFlight, Capital(deployment), grid);
     }
 
     /// <summary>
@@ -741,13 +776,18 @@ public sealed class ForwardRuns
     /// THE RUN'S POSITION AS OF ANY BAR, walked forward from its own executions. Long or flat: the
     /// language cannot spell a third value and neither can this.
     /// </summary>
-    sealed class RunBooks(IReadOnlyList<RunFill> fills, IReadOnlyList<RunOp> inFlight, decimal capital)
+    sealed class RunBooks(IReadOnlyList<RunFill> fills, IReadOnlyList<RunOp> inFlight, decimal capital, BarGrid grid)
     {
         /// <summary>This run's own executions that landed on one bar, in the order they landed.</summary>
         public IReadOnlyList<RunFill> At(DateTimeOffset bar) =>
             [.. fills.Where(f => f.Bar == bar)];
 
-        public AccountReading At(int ordinal, KlineBar bar)
+        /// <summary>
+        /// THE RUN'S ACCOUNT AT THE CLOSE OF ONE MINUTE, from its own executions up to that minute, with the
+        /// bars held counted on the program's grid through the bar that opens at or contains
+        /// <paramref name="through"/>.
+        /// </summary>
+        public AccountReading At(KlineBar bar, DateTimeOffset through)
         {
             var quantity = 0m;
             var average = 0m;
@@ -775,7 +815,7 @@ public sealed class ForwardRuns
                 }
             }
 
-            var held = since is { } entry && ordinal >= 0 ? BarsSince(entry, bar.OpenTime) : 0;
+            var held = since is { } entry ? BarsSince(entry, through) : 0;
             var equity = capital + realised + (quantity > 0m ? (bar.Close - average) * quantity : 0m);
 
             var pending = inFlight.Any(o =>
@@ -802,13 +842,14 @@ public sealed class ForwardRuns
         };
 
         /// <summary>
-        /// HOW MANY BARS THIS POSITION HAS BEEN HELD, counted in the run's own bar interval. Whole
-        /// intervals between the bar the entry filled on and this one, which is the count
-        /// `max_hold_bars` is stated in and the count the backtest's `ordinal - entryOrdinal` is.
+        /// HOW MANY BARS THIS POSITION HAS BEEN HELD, counted in the PROGRAM'S OWN BARS. Whole bars of its
+        /// grid between the one the entry filled in and the one <paramref name="through"/> falls in, which
+        /// is the count `max_hold_bars` is stated in and the count the backtest's `ordinal - entryOrdinal`
+        /// is: on one-minute bars the minutes between the two, on hourly bars the hours.
         /// </summary>
-        static int BarsSince(DateTimeOffset entry, DateTimeOffset bar)
+        int BarsSince(DateTimeOffset entry, DateTimeOffset through)
         {
-            var elapsed = (bar - entry).Ticks / ForwardBars.BarLength.Ticks;
+            var elapsed = grid.Between(entry, through);
             return elapsed <= 0 ? 0 : (int)Math.Min(elapsed, int.MaxValue);
         }
     }

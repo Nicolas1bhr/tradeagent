@@ -656,14 +656,6 @@ public sealed class TradingGateway : IAsyncDisposable
             var runs = _deployments.ForAllocation(allocation.Id);
             if (runs.Any(d => !d.IsEnded || !_deployments.IsReconciled(d.Id))) continue;
 
-            // AND NO REPLACEMENT FOR A RUN THIS BUILD'S RUNNER ENDS BEFORE ITS FIRST BAR. A version that
-            // declares `bars` other than 1m is started once and the runner ends it, in words
-            // (`ForwardRuns.Refuses`): on the deployment's own line for the owner, and in one note to
-            // Research. A replacement would meet the same sentence at its first pass — another row,
-            // another flatten, another wake and a paid turn to be told it again, on every sweep — so once
-            // one run of this allocation exists, none is started until a build whose runner steps it.
-            if (runs.Count > 0 && RunnerRefuses(allocation.VersionId)) continue;
-
             var result = _deployments.Start(new StrategyDeploymentRow(
                 "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,
                 envelope.Symbol, TradingMode.PAPER.ToString(), DeploymentState.Active,
@@ -680,17 +672,6 @@ public sealed class TradingGateway : IAsyncDisposable
 
         return started;
     }
-
-    /// <summary>
-    /// Whether this build's runner would end a run of this version before its first bar
-    /// (<see cref="ForwardRuns.Refuses"/>), read off the version's recorded source. A version this
-    /// installation has no row for, or whose text no longer parses, is not this question's: the runner ends
-    /// that run for its own reason, and nothing here starts or stops anything on it.
-    /// </summary>
-    bool RunnerRefuses(string versionId) =>
-        Strategies.VersionById(versionId) is { } version
-        && Core.Strategy.StrategyParser.Parse(version.Source).Program is { } program
-        && ForwardRuns.Refuses(program) is not null;
 
     /// <summary>
     /// WHAT EVERY DEPLOYMENT NEEDS DOING, at start-up and on every tick: settle what has an answer,
