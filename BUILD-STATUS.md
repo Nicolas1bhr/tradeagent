@@ -7531,3 +7531,38 @@ success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (38 min
 
 **NOT done, NOT verified:** the settle not measured on Windows (CI runs the tests, prints no figure); per-bar cost with many orders not measured (one
 working order); the 5 s `WorstCaseOperationPath` stated, not changed; the app not run.
+
+## 2026-10-03 — U-timeframe-a landed: a program declares the bar it is evaluated on, and backtests and the referee judge it on hours and days, not fee-eating minutes
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-timeframe-a.md` (dispatched `298bb36`; pointer corrections in its prompt);
+built on `7ceb7c9`, rebased by the manager onto `3b03041` (U-org-ledger and U-paper-settle in), src+tests patch-id identical. Merge `c0090bef` (ff-only), 7 commits (6 code + the report), 23
+files, +2332/−120. No schema rung, no manifest or `EvaluatorVersion` change: every v1 program's text, id and golden vector is unchanged.
+
+- **Item 1 (`dbb147f5`):** `bars DURATION` (1m 5m 15m 30m 1h 4h 1d) is a declaration only as a line's first word and never reserved (a stored `const bars`
+  keeps parsing); the canonical form writes the `bars` line only when declared and not 1m — `Header` and manifest unmoved, so `bars` rides with no bump.
+- **Item 2 (`4564b411`):** one decimal `BarResampler` on a `BarGrid` (UTC; `1d` at the program's zone midnight, 23/25 h on DST days); a partial bar carries
+  its minute count on `KlineBar.Minutes`; an empty window is a gap, never filled; `MissingMinutes` still counts minutes.
+- **Item 3 (`4463c5ac`):** `Backtest.Run` is a two-clock loop — each minute fills at its open and fires stops and targets on its range exactly as before; at a
+  declared close the max hold, then `Step`; one `Bar` trace line per evaluated bar; the cap counts evaluated bars, so a year of hourly bars is one run.
+- **Item 4 (`557b328c`, with `f6ee6f9a` and `132e519c`):** limits count declared bars (500 hourly ≈ 20.8 days); `ForwardRuns` ends a deployment whose program declares
+  `bars` ≠ `1m` before its first bar, in the brief's words; `STRATEGY-LANGUAGE.md`, the agents' language bullet, `CONTRACTS.md`; the two guards moved
+  into a class written against the base's own API; `BacktestEvent` says what its ordinal and instant name on a declared-bar run.
+- **Judged at landing (accepted, as the orchestrator also judged):** (1) `Run` reads the declared bar off the program (`barInterval` removed) and
+  `EvaluationState.Start` refuses any other bar — a program cannot be judged on a bar it did not declare. (2) A run ending inside a declared bar closes
+  it as a partial bar (stated in the docs). (3) ADDITION on the money path: `StartPaperDeploymentsDue` starts no replacement for a version the runner
+  refuses — without it each sweep would start one, the runner end it, and Research take a paid wake per sweep (the churn family of 2026-10-01).
+  `U-timeframe-b` removes that guard together with the refusal, keeping a sweep that never churns (its brief is amended at dispatch).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `389950b` (on `7ceb7c9`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1325/1325, Fault 408/408; five classes 3×, all green. RED before, on base `d99155e`: (a) (c) (d), cap, max-hold, lookback, partial, Over,
+(e), (g) and the no-replacement test fail at "`bars` is not a declaration this language has"; (f), the 1m cap and 1m replacement green. Mutants, each
+reverted: (i) resampler bypassed ⇒ (a) "Expected: COMPLETED Actual: FAULTED"; (ii) cap counting minutes ⇒ (d) FAULTED at minute 200,001; (iii) `bars`
+reserved ⇒ (f) "`bars` already means something in this language"; the sweep guard removed ⇒ "Expected: [0, 0, 0] Actual: [1, 1, 1]".
+Manager's gate at `c0090be`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1332/1332 (35 s), Fault 414/414 (1 m 40 s), Integration 705/706, 1 skipped (11 m 19 s) → 0 failed.
+Names vs `main` (git objects): 2059 → 2090, 0 removed, 31 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37085481666 at `389950b` (on `7ceb7c9`; U-org-ledger and U-paper-settle landed after it, covered by the gate and the merge's run):
+success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (36 min), package (4 min). U-paper-settle's landing push `3b03041`: still running at this record (the ledger and the next record carry it).
+
+**NOT done, NOT verified:** the paper runner stepping declared bars (`U-timeframe-b`); Integration only on CI and the gate; no box; the pipe's backtest
+reply does not name the bar; a partial bar's shortfall counts window minutes outside `from` / the data's end (stated); on declared bars a minute out of
+order is refused before its fills, unlike 1m.
