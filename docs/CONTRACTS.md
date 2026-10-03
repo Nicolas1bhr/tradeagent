@@ -2418,18 +2418,38 @@ run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused 
 a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
 
 **Pinned by golden vectors, beside the semantics they were computed under** (`U-evidence-identity`).
-`EvaluationGoldenVectorTests` runs fifteen programs — every indicator, both crossings (each decided once from
+`EvaluationGoldenVectorTests` runs seventeen programs — every indicator, both crossings (each decided once from
 an exact equality the bar before), history references, every sizing, stop and target kind, sessions in two
 zones (London across the EU change to summer time), weekdays, entry windows, opening ranges, session exits,
-maximum holds, a 120-bar warm-up, gaps, no-trades and a fault — each under an explicit four-number execution
-model, over `tests/TradeAgent.UnitTests/Golden/evaluation-bars.json` (whose own hash is pinned), and pins each
-run's trace sha, the sha of its metrics and closed trades, and both policies' answers, beside
-`Referee.EvaluatorVersion` and `StrategyVersions.Manifest`. Output that changes while neither number moves fails
-the build and says to bump one and re-pin in the same commit; a bump that does not re-pin fails too. That is
-what makes the two numbers a declaration a promotion's standing can be withdrawn on (the campaign section)
-rather than a promise. **Its limit, stated:** a few evaluator fault texts format a decimal in the machine's
-culture, so a trace that contains one can differ between machines; no vector reaches one, and that
-formatting is not changed here.
+maximum holds, a 120-bar warm-up, gaps, no-trades and three faults, two of them on a decimal with a trailing zero —
+each under an explicit four-number execution model, over `tests/TradeAgent.UnitTests/Golden/evaluation-bars.json`
+(whose own hash is pinned), and pins each run's trace sha, the sha of its metrics and closed trades, and both
+policies' answers, beside `Referee.EvaluatorVersion` and `StrategyVersions.Manifest`. Output that changes while
+neither number moves fails the build and says to bump one and re-pin in the same commit; a bump that does not
+re-pin fails too. That is what makes the two numbers a declaration a promotion's standing can be withdrawn on (the
+campaign section) rather than a promise. **And they mean the same on every machine** (`U-invariant-traces`):
+every vector runs again under nl-BE's and fr-BE's number formats and must write the same bytes, its fault
+included. That is what moved `Referee.EvaluatorVersion` to `backtest=2`: under 1 a fault's words carried a decimal
+in the machine's culture and with its own scale — `divided 1026,70 by zero` on a Belgian machine,
+`divided 1026.70 by zero` on CI — where the trace line beside them reads `1026.7`.
+
+**Every number the evaluation path writes or reads names its culture** (`U-invariant-traces`), as a price read
+off the pipe does — "writes" meaning into what a run records. A decimal in a trace line, a canonical text, an
+execution model or a cost-model text is spelled by `StrategyParser.Number`: invariant, trailing zeros gone. A
+fault's or a no-trade's words are made through `TraceText` and nothing else — `EvaluationOutcome.Faulted`, the
+evaluation state's own fault, the interpreter's fault, and a trace's fault and no-trade lines, which carry every
+halt `Backtest.Run` makes — and `TraceText` spells a decimal the same way and every other value invariantly. No
+string converts to it, so `"… " + price` cannot become a fault, and a test fails if an overload taking a string
+is added. Every whole number and date that reaches a version, run, promotion or publication id, the manifest, a
+canonical text, the metrics' words or a dataset file names `CultureInfo.InvariantCulture` — the normaliser's bar
+times included, whose `:` was the machine's time separator, so a clock that reads `00.00.00` wrote another file,
+another sha and another run id over the same bars. Every number read from a program, a dataset or a stored row
+is parsed invariant. **The one exception, stated:** the whole numbers in a refusal's words — a line number, a
+limit, a campaign id — are still formatted in the machine's culture; they reach no trace, hash or id, and a whole
+number above zero is spelled the same in all 1,063 cultures this Mac's ICU carries (measured). The switch that
+makes all of this the invariant spelling anyway, `InvariantGlobalization=true`, stays on and is pinned by
+`InvariantTraceTests`: it may go only once the culture tests pass against the real nl-BE and fr-BE, which it
+makes unbuildable here.
 
 **It runs under the caller's own launch identity, and reads only that launch's folder.** The role and
 the attempt on the version and the run come from `AgentContext` — the launch grant the app minted for
