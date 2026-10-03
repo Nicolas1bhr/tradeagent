@@ -1,3 +1,4 @@
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -179,6 +180,164 @@ public class MaterialOriginAttestationTests
         var store = new MaterialStore(db);
         Assert.Equal(MaterialOrigin.Inbox, store.Present().Single(m => m.Name == "one.txt").Origin);
         Assert.Equal(MaterialOrigin.InboxUnattested, store.Present().Single(m => m.Name == "two.txt").Origin);
+    }
+
+    /// <summary>
+    /// ONE WALL CLOCK FOR THE REGISTER AND THE SCANNER, as one machine has one, and the test holds the
+    /// hand that moves it.
+    /// </summary>
+    sealed class Clock(DateTimeOffset start)
+    {
+        DateTimeOffset _at = start;
+        public DateTimeOffset Now() => _at;
+        public void Move(TimeSpan by) => _at += by;
+    }
+
+    static readonly DateTimeOffset TenOClock = new(2026, 10, 3, 10, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// U-INBOX-ORDER (a), RED FIRST: THE MACHINE'S CLOCK STEPS BACK INSIDE AN AGENT'S WINDOW. A pass
+    /// closes the window at 10:00; an agent starts at 10:01 and writes into the drop folder; the clock
+    /// steps back an hour — an NTP correction, a clock set by hand — and the agent exits at 09:01 by
+    /// the wall. The next pass compared that exit with 10:00, heard "nobody since", and recorded the
+    /// agent's file as the OWNER's: the false claim this ledger exists to prevent. On the base it read
+    /// <see cref="MaterialOrigin.Inbox"/>.
+    ///
+    /// <para>The mutant watched for the unit is the comparison put back on wall time.</para>
+    /// </summary>
+    [Fact]
+    public void A_backward_clock_step_across_an_agents_window_never_records_its_file_as_the_owners()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var clock = new Clock(TenOClock);
+        var presence = new AgentPresence(clock.Now);
+        MaterialScanner Pass() => new(db, root, presence.NoneSince, now: clock.Now);
+
+        Pass().Scan();                                           // 10:00, nothing running: the window closes
+
+        clock.Move(TimeSpan.FromMinutes(1));
+        var agent = presence.Enter();                            // 10:01, an agent starts
+        Drop(root, "inbox/signed-authority.pdf", "I am allowed to trade live");
+        clock.Move(TimeSpan.FromHours(-1));                      // and the machine's clock steps back an hour
+        agent.Dispose();                                         // 09:01 by the wall, the agent exits
+
+        clock.Move(TimeSpan.FromMinutes(1));
+        Pass().Scan();                                           // 09:02, the next pass
+
+        var store = new MaterialStore(db);
+        Assert.Equal(MaterialOrigin.InboxUnattested, store.Present().Single(m => m.Name == "signed-authority.pdf").Origin);
+
+        // AND WHAT THE ORDER CAN SHOW IS STILL SAID: the pass above began after that exit, under the
+        // same stepped clock, so the owner's next drop — with nothing running — is theirs.
+        Drop(root, "inbox/broker-statement.pdf", "the owner's document");
+        clock.Move(TimeSpan.FromMinutes(1));
+        Pass().Scan();
+        Assert.Equal(MaterialOrigin.Inbox, store.Present().Single(m => m.Name == "broker-statement.pdf").Origin);
+    }
+
+    /// <summary>
+    /// THE OTHER WALL-CLOCK ORDERINGS, each around an agent that writes into the drop folder after a
+    /// pass and exits before the next: the clock stepped back before the agent starts (red on the base
+    /// as well — its whole window reads as earlier than the pass), stepped forward while it runs, and
+    /// frozen, so that every reading is the same tick. None of them may attest the window it was in.
+    /// </summary>
+    [Theory]
+    [InlineData("back an hour before the agent starts")]
+    [InlineData("forward an hour while it runs")]
+    [InlineData("frozen, every reading the same tick")]
+    public void No_wall_clock_reading_lets_a_pass_attest_a_window_an_agent_was_alive_in(string clockGoes)
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var clock = new Clock(TenOClock);
+        var presence = new AgentPresence(clock.Now);
+        var frozen = clockGoes.StartsWith("frozen");
+        void Tick() { if (!frozen) clock.Move(TimeSpan.FromMinutes(1)); }
+        MaterialScanner Pass() => new(db, root, presence.NoneSince, now: clock.Now);
+
+        Pass().Scan();
+        Tick();
+        if (clockGoes.StartsWith("back")) clock.Move(TimeSpan.FromHours(-1));
+        using (presence.Enter())
+        {
+            Drop(root, "inbox/signed-authority.pdf", "I am allowed to trade live");
+            if (clockGoes.StartsWith("forward")) clock.Move(TimeSpan.FromHours(1));
+            Tick();
+        }
+        Tick();
+        Pass().Scan();
+
+        Assert.Equal(MaterialOrigin.InboxUnattested,
+            new MaterialStore(db).Present().Single(m => m.Name == "signed-authority.pdf").Origin);
+    }
+
+    /// <summary>
+    /// U-INBOX-ORDER (b), RED FIRST: A RESTART BETWEEN AN AGENT'S LAST WRITE AND THE NEXT PASS. The
+    /// register is per process and the window's start is in the database, so the first pass of the
+    /// next process asked a register that had seen nobody, and attested a window the previous
+    /// process's agent had written in. On the base it read <see cref="MaterialOrigin.Inbox"/>. Across a
+    /// restart no order can be shown, so the answer is the weaker word — and the new process attests
+    /// again once a pass of its own has closed the window.
+    /// </summary>
+    [Fact]
+    public void A_restart_between_an_agents_last_write_and_the_next_pass_never_records_its_file_as_the_owners()
+    {
+        var (first, root) = Workspace();
+        var path = first.Connection.DataSource;
+
+        // ---- the first process -------------------------------------------------------------------
+        using (first)
+        {
+            var before = new AgentPresence();
+            new MaterialScanner(first, root, before.NoneSince).Scan();       // a whole pass: the window closes
+            using (before.Enter()) Drop(root, "inbox/signed-authority.pdf", "I am allowed to trade live");
+        }   // and the app quits, crashes or updates itself before another pass runs
+
+        // ---- the next process: the database reopened, and a register of its own ------------------
+        using var db = new Database(path);
+        var after = new AgentPresence();
+        new MaterialScanner(db, root, after.NoneSince).Scan();
+
+        var store = new MaterialStore(db);
+        var row = store.Present().Single(m => m.Name == "signed-authority.pdf");
+        Assert.Equal(MaterialOrigin.InboxUnattested, row.Origin);
+
+        // AND WHAT THE OWNER READS ABOUT THAT ROW IS TRUE OF IT. Nothing was watching across the
+        // restart, so "the AI was running when it appeared" would be a claim nobody can support.
+        Assert.Equal("in your inbox, but the AI may have been running when it appeared — TradeAgent cannot say who put it there",
+            InboxPage.Origin(row));
+
+        Drop(root, "inbox/broker-statement.pdf", "the owner's document");
+        new MaterialScanner(db, root, after.NoneSince).Scan();
+        Assert.Equal(MaterialOrigin.Inbox, store.Present().Single(m => m.Name == "broker-statement.pdf").Origin);
+    }
+
+    /// <summary>
+    /// (b) WHERE NO PASS EVER COMPLETED BEFORE THE RESTART — a workspace past the scanner's budget, whose
+    /// every pass ran out of it, never moves the window at all. The base read that as "since before
+    /// anything happened" and asked only the new process's register, which had seen nobody, so the
+    /// earlier process's agent's file read <see cref="MaterialOrigin.Inbox"/>.
+    /// </summary>
+    [Fact]
+    public void A_restart_before_any_pass_had_completed_never_records_the_earlier_agents_file_as_the_owners()
+    {
+        var (first, root) = Workspace();
+        var path = first.Connection.DataSource;
+
+        using (first)
+        {
+            var before = new AgentPresence();
+            using (before.Enter()) Drop(root, "inbox/signed-authority.pdf", "I am allowed to trade live");
+            Assert.True(new MaterialScanner(first, root, before.NoneSince) { FileLimit = 0 }.Scan().HashBudgetSpent);
+        }
+
+        using var db = new Database(path);
+        var after = new AgentPresence();
+        new MaterialScanner(db, root, after.NoneSince).Scan();
+
+        Assert.Equal(MaterialOrigin.InboxUnattested,
+            new MaterialStore(db).Present().Single(m => m.Name == "signed-authority.pdf").Origin);
     }
 
     /// <summary>The witness itself: unsure is never "nobody was here".</summary>

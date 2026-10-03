@@ -3158,9 +3158,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             "inbox" => MaterialOrigin.Inbox,
             // A separate word, not a synonym for `inbox`: these are the rows TradeAgent could not
-            // attribute to the account owner because an agent process was running when the file
-            // appeared. Asking for `inbox` and getting them back would be the ledger conceding the
-            // very claim it declines to make.
+            // attribute to the account owner because it could not show that no agent process was
+            // running when the file appeared. Asking for `inbox` and getting them back would be the
+            // ledger conceding the very claim it declines to make.
             "inbox-unattested" => MaterialOrigin.InboxUnattested,
             "agent" => MaterialOrigin.Agent,
             // Files TradeAgent itself wrote into the role's home. A separate word for the same
