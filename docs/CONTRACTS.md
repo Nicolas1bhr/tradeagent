@@ -194,6 +194,30 @@ and four minutes later it still passed every age check there is. A source never 
 from that spacing, and the book no longer keeps it (an `interval:` row an older build wrote is never
 read). `QuoteClockTests` holds the stamp to the close and refuses that four-minute-old price.
 
+**ONE CALL CATCHES A BOOK UP, HOWEVER FAR BEHIND IT STARTS** (`U-paper-settle`). Every SDK call settles
+first, and settling reads the bar source from the book's watermark — the open time of the newest bar
+settled — again and again, each read from where the last one ended, until a read brings nothing past it.
+It used to make one read, and one read of the forward ledger is a page, its OLDEST 10,000 bars: a fresh
+book's watermark is nothing, so after a week of collecting the first switch to paper quoted minute
+10,000's close, minutes stale, and the gateway refused the first market order `MARKET_DATA_UNAVAILABLE`
+("no price newer than 30s") however current the collector was, while a working order whose bar lay past
+the first page filled on it a read late. The stop is the book's own watermark not moving and never a
+short page, because a connector cannot know a source's page size; a source re-serving settled bars ends
+it too, and the fills' unique key still stops a second fill. Cancellation is checked before every read,
+and nothing is filtered, caught or held across reads, so a later page that throws propagates with the
+earlier pages settled. The watermark and the close are now written in ONE transaction: as two commits, a
+kill between them left bar N's watermark beside bar N−1's close — a stale price that reads fresh. **The
+cost is O(backlog) time in that one call and O(one page) memory.** Measured 2026-10-03 on the development
+Mac (M3 Pro), one settle of a fresh book over 50,000 forward bars (≈ 34.7 days) through the shipped
+`ForwardBarSource`: 2.18–2.46 s across six runs (≈ 44–49 µs a bar), ≈ 376 MiB allocated, the live heap
+at most 6.3 MiB above its start in a run sampling it with a full collection every 20 ms (one page held
+as bars is ≈ 2.4 MiB), and 2.5–3.3 s with one working order a candidate on every bar — with 6.2 of the
+machine's 7 GiB of swap in use, no page swapped out and at most 140 swapped in during the runs. Every
+other call on the connector waits meanwhile, and its declared 5 s `WorstCaseOperationPath`, which
+`DispatchStrandedAfter` is derived from, bounds neither this nor one page: at this rate one settle
+passes five seconds at about 100,000 bars (≈ 70 days), sooner wherever a commit's flush is slower. NOT
+measured on Windows.
+
 **Which connector an id names is decided in one place**, `Connectors.Create` in
 `src/TradeAgent.Platforms/`, for the desktop app and the gateway host alike; an id neither recognises
 still falls back to the practice simulator, which is the one platform where being wrong costs nothing.
