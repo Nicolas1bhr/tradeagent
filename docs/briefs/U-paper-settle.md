@@ -38,3 +38,23 @@ traced by reading, NOT run: the main checkout's Release build predates `7ec88cc`
 Seen, not in this unit: no other single-page read on a paper path (`GatewayPipeServer.cs:2753` refuses past the cap; `ForwardBarCollector.cs:297` reads what it stored).
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Tip `1861393`** (code tip `5c975ab`) on `main` `d99155e`. Local gate at `3d57e1b` on `923284e`, then rebased over two `docs/queue` briefs only: build-tree diff 0 lines.
+**Build** Release `--no-incremental`: 19 `CoreCompile` run, 0 skipped, 0 Warning(s), 0 Error(s). Under `suite.sh`: **Unit** 1273/1273 (31 s), **Fault** 411/411 (1 m 37 s), 0 failed.
+**3×**: `PaperSettlementTests` 10/10, `PaperBookTests` 4/4 and `PaperGatewayTests` 2/2 each run; once: Integration `ForwardRunnerTests|ForwardBar|Paper` 21/21.
+**CI** run 37082332809 on `1861393`: ubuntu-latest success 12 min, macos-latest success 15 min, windows-latest success 38 min, package success 4 min.
+**Names** vs `main`: sets base 2042, tip 2050; removed 0; added 8 = the 7 tests + the paging double's `public void Add` (the regex counts it); `[Fact]` 2004 → 2011.
+**Scan**: one hit judged a false positive (the `CancellationTokenSource` in the cancellation test), excluded by name `CI_SCAN_EXCLUDE='cancel\.Token'`.
+**Item 1 done**: `SettleAsync` reads again from the book's watermark until a read brings nothing past it, checking cancellation before every read; `IPaperBarSource` and `SettleAsync` docs say so.
+Tests (a)–(e) as briefed. Added two the item claims: `A_later_page_that_throws_propagates_…` and `A_cancellation_between_pages_stops_before_the_next_read_…`.
+**Item 2 done**: `MarkSettled` reads the watermark and writes it and the close in ONE transaction. (f) faults the second write with a SQLite trigger on the book's own file (no product seam needed).
+**Item 3 done**: temporary test under `suite.sh`, not committed: one fresh-book settle over 50,000 bars via `ForwardBarSource` takes 2.18–2.46 s over six runs, ≈ 376 MiB allocated.
+Live heap ≤ 6.3 MiB above start (sampled with full GCs); 2.5–3.3 s with one working order. Swap 6.2 of 7 GiB used, no swap-out, ≤ 140 swap-ins. CONTRACTS paragraph (the figure, the 5 s note) and USER-GUIDE line.
+**RED before** (base `be91995`, tests only): (a) "GatewayDeniedException : no price newer than 30s for BTCUSDT"; (b) "Assert.Single() Failure: The collection was empty".
+(c) "1 read(s), asked from 00:00; quote 103 stamped 10:04"; (f) "watermark 10:01, close 100"; the two added tests "No exception was thrown". (d) and (e) green on base.
+**Mutants**, each alone and reverted: (i) loop removed ⇒ (a) red "no price newer than 30s for BTCUSDT"; (ii) stop on `bars.Count < DatasetReader.MaxBars` ⇒ (c) red "1 read(s), asked from 00:00; quote 103".
+(iii) the two writes as two commits again ⇒ (f) red "Expected: 2026-09-19T10:00 … Actual: 2026-09-19T10:01".
+**Deviations**: (f) uses a trigger rather than an internal seam (the brief allowed "the reason none exists"). Two tests beyond the brief's list. Rebased three times: `be91995`, `923284e` after U-paper-friction, `d99155e`.
+**NOT done / NOT verified**: the settle NOT measured on Windows (CI runs the tests, prints no figure). The 5 s `WorstCaseOperationPath` is stated, not changed.
+Also NOT verified: per-bar cost with many orders (measured with one); the app's friction function (in-memory, read, not timed; the measurement used `PaperFriction.None`); the app not run.
