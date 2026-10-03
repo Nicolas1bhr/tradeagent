@@ -227,8 +227,9 @@ public sealed record TurnContext
     /// THE VENDOR'S OWN WORDS, where it refused the turn for its usage limit, or null. On the row because
     /// the row is the record: a turn charged nothing has to say why, and a turn the limit cut after it
     /// had worked says what stopped it. See <see cref="VendorLimit"/>. A turn the APP refused before any
-    /// request — the key withheld from an origin it was not pasted for — carries the app's sentence here
-    /// instead, for the same reason (<see cref="AgentTurnEnded.KeyWithheld"/>).
+    /// request — the key withheld from an origin it was not pasted for, or no key held at all — carries
+    /// the app's sentence here instead, for the same reason (<see cref="AgentTurnEnded.KeyWithheld"/>,
+    /// <see cref="AgentTurnEnded.KeyNotHeld"/>).
     /// </summary>
     public string? Refused { get; init; }
 
@@ -661,7 +662,8 @@ public sealed class TurnMeter
     /// WHAT ONE TURN IS CHARGED, and the one place a turn the vendor refused is told apart from a turn
     /// that went silent. Four branches, each reading only what the session parsed out of the turn's own
     /// stream (<see cref="AgentTurnEnded.Usage"/>, <see cref="AgentTurnEnded.Limit"/>) or what the app
-    /// itself did before any request (<see cref="AgentTurnEnded.KeyWithheld"/>):
+    /// itself did before any request (<see cref="AgentTurnEnded.KeyWithheld"/>,
+    /// <see cref="AgentTurnEnded.KeyNotHeld"/>):
     ///
     /// <list type="number">
     /// <item><b>Usage reported</b> — priced as it always was. A refusal beside it changes nothing: what
@@ -672,18 +674,22 @@ public sealed class TurnMeter
     /// refusal did) and <c>Usage</c> null. Codex 0.153.4 refused the observed turn at its first request; a
     /// turn the vendor did not run is not one it billed, and charging it the reservation was charging the
     /// owner for the vendor's refusal.</item>
-    /// <item><b>No usage, and the app withheld the key</b> — ZERO, with the app's sentence on the row
-    /// (<c>U-key-host-pin</c>). <see cref="ApiConversation"/> sets <c>KeyWithheld</c> on one path: the key
-    /// it holds was pasted for another origin, the holder refused and forgot it, and the turn returned
-    /// before a request was built. That is the app's own record of its own act rather than a vendor's
-    /// report, and a request never built is a request nobody billed.</item>
+    /// <item><b>No usage, and the app sent nothing</b> — ZERO, with the app's sentence on the row.
+    /// <see cref="ApiConversation"/> sets one of two markers, each on one path that returns before a
+    /// request is built: <c>KeyWithheld</c> when the key it holds was pasted for another origin and the
+    /// holder refused and forgot it (<c>U-key-host-pin</c>), <c>KeyNotHeld</c> when it held no key at all
+    /// (<c>U-meter-batch-1</c>). Each is the app's own record of its own act rather than a vendor's report,
+    /// and a request never built is a request nobody billed.</item>
     /// <item><b>No usage otherwise</b> — unknown, and <see cref="AiAttemptStore.End"/> charges the
     /// reservation, as before: a turn that showed work, or whose stream said nothing recognisable, may
-    /// have been billed for requests nothing measured, and unknown is never zero.</item>
+    /// have been billed for requests nothing measured, and unknown is never zero. That includes a turn
+    /// that ended with the not-started exit code or outcome but neither marker — a cancelled turn ends
+    /// -1 too, after its request may have gone — so the zero reads the markers and nothing else.</item>
     /// </list>
     /// </summary>
     TurnPrice Charge(AgentTurnEnded ended, string? role) =>
-        ended.Usage is null && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null)
+        ended.Usage is null
+        && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null || ended.KeyNotHeld is not null)
             ? new TurnPrice(0m, Currency(), null)
             : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
 
@@ -697,12 +703,13 @@ public sealed class TurnMeter
     /// <summary>
     /// WHAT THE APP COULD SEE OF THE TURN, from the stream it kept — and, for a turn the vendor refused,
     /// how it ended and the vendor's own words, on both cost branches; for a turn the app withheld the
-    /// key from, its own sentence naming both origins.
+    /// key from, its own sentence naming both origins; for a turn it held no key for, its own sentence
+    /// saying so.
     /// </summary>
     static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars) =>
         TurnContext.Read(ended.Raw, promptChars, ended.Usage,
             ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
-        with { Refused = ended.Limit?.Message ?? ended.KeyWithheld };
+        with { Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld };
 
     /// <summary>
     /// COMMITS THE HELD CLOSE, inside whatever transaction is open on this thread. Returns whether

@@ -679,8 +679,9 @@ send your key to any address other than the one you pasted it for, it does not s
 key, charges that turn nothing, and the Safety page then says no key is held. Paste it again if the new
 address is the one you meant.
 
-With no key held, a role set to TradeAgent's own worker **takes no turns at all** and the Safety page
-says so in orange. Nothing is lost; it starts working the moment you paste one.
+With no key held, a role set to TradeAgent's own worker **sends nothing at all** and the Safety page
+says so in orange. Any turn it is woken for in the meantime ends at once and is charged nothing — not the
+amount set aside for it. Nothing is lost; it starts working the moment you paste one.
 
 Their folders sit side by side: **Open the AI's folder** on the Dashboard gives you the Operations
 Director's, and `research` beside it is the other one's. Each has an `in` folder — what TradeAgent

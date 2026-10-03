@@ -208,6 +208,23 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// provider was asked for anything, and writes the sentence on the launch row as the reason.</para>
     /// </summary>
     public string? KeyWithheld { get; init; }
+
+    /// <summary>
+    /// THE SENTENCE THE APP ENDED THE TURN IN BECAUSE IT HELD NO KEY, or null — and when it is not null, NO
+    /// REQUEST OF THIS TURN WAS BUILT, LET ALONE SENT (<c>U-meter-batch-1</c>).
+    ///
+    /// <para>Set by <see cref="ApiConversation"/> on one path only, the one just after
+    /// <see cref="KeyWithheld"/>'s: the holder had no key to release (nothing was withheld, because there
+    /// was nothing), so the turn returned before a request was built. Like that marker it is the app's own
+    /// record of its own act, so it can carry money: <see cref="TurnMeter"/> charges such a turn nothing and
+    /// writes the sentence on the launch row as the reason.</para>
+    ///
+    /// <para>It is set, never inferred. The exit code is the same -1 a cancelled turn ends with, whose
+    /// request may already have gone; <see cref="Outcome"/> is a word for the ledger; and a stream that shows
+    /// no request is what every vendor CLI's stream looks like, billed or not. Each of those turns may have
+    /// been billed, so each keeps its reservation: unknown is never zero.</para>
+    /// </summary>
+    public string? KeyNotHeld { get; init; }
 }
 
 /// <summary>

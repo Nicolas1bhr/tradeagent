@@ -275,14 +275,19 @@ public sealed class ApiConversation(
 
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
         // it is a sentence in the conversation, and the turn still ends so the loop and the ledger
-        // both account for it rather than losing a turn that vanished.
+        // both account for it rather than losing a turn that vanished. The same sentence is the app's
+        // record that no request was built, and the meter charges the turn nothing on it. A role the
+        // owner put on the harness keeps being launched after a restart until a key is pasted (the key
+        // is memory-only), and charging each such launch its reservation spent the day's ceiling on
+        // nothing (U-meter-batch-1). Set HERE and nowhere else: see AgentTurnEnded.KeyNotHeld.
         if (release.Key is not { Length: > 0 } released)
         {
             Append(new ChatTurn(ChatRole.System, Labels.HarnessKeyNotHeld, _now()));
             transcript.Note("no key is held, so nothing was sent");
             TurnEnded?.Invoke(new AgentTurnEnded(NotStarted, _now() - startedAt, transcript.Text, _now())
             {
-                Outcome = EndedNotStarted
+                Outcome = EndedNotStarted,
+                KeyNotHeld = Labels.HarnessKeyNotHeld
             });
             return;
         }
