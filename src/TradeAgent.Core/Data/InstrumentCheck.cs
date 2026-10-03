@@ -1,4 +1,152 @@
+using System.Globalization;
+using System.Text.Json;
+
 namespace TradeAgent.Core.Data;
+
+/// <summary>
+/// WHAT A VENUE'S OWN PUBLISHED DEFINITION SAYS ABOUT ONE INSTRUMENT — the four numbers an instrument
+/// check records (<c>U-venue-verify</c>).
+///
+/// <para><b>Read strictly, because these are the numbers a size is rounded down to.</b> An answer that
+/// is not JSON, that does not list the instrument exactly once, that lacks a price filter with a tick
+/// above zero or a lot-size filter with a step above zero, or that states a filter twice, is NOT a
+/// definition: the caller records a failed check in those words, and nothing is served from it. Reading
+/// "the part that parsed" is how a check comes to claim a step the venue never published — the reason
+/// <c>ForwardBars.TryParse</c> refuses a half-readable klines answer.</para>
+///
+/// <para>The minimum quantity and the minimum notional are recorded when the venue states them and are
+/// NOT applied anywhere: TradeAgent's v1 cost model ignores a minimum notional, and no size is refused or
+/// raised for either. Numbers come back with their trailing zeros removed, so <c>"0.01000000"</c> and
+/// <c>0.01</c> are the same tick in every message and every hash.</para>
+/// </summary>
+public sealed record InstrumentDefinition(
+    decimal TickSize,
+    decimal QuantityIncrement,
+    decimal? MinQuantity,
+    decimal? MinNotional)
+{
+    /// <summary>
+    /// BINANCE'S <c>exchangeInfo</c> ANSWER FOR <paramref name="symbol"/>, or why it is not one. The shape,
+    /// measured 2026-10-03: <c>{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER",
+    /// "tickSize":"0.01000000"},{"filterType":"LOT_SIZE","minQty":"0.00001000","stepSize":"0.00001000"},
+    /// {"filterType":"NOTIONAL","minNotional":"5.00000000"}, …]}]}</c>, decimals as JSON strings. The older
+    /// filter name <c>MIN_NOTIONAL</c> is read where <c>NOTIONAL</c> is absent.
+    /// </summary>
+    public static bool TryParse(string? body, string symbol, out InstrumentDefinition? definition, out string why)
+    {
+        definition = null;
+        why = "";
+
+        if (string.IsNullOrWhiteSpace(body)) { why = "the answer was empty"; return false; }
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(body); }
+        catch (JsonException) { why = "the answer is not JSON"; return false; }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("symbols", out var symbols) || symbols.ValueKind != JsonValueKind.Array)
+            {
+                why = "the answer holds no list of symbols, so it is not an instrument definition";
+                return false;
+            }
+
+            var entries = symbols.EnumerateArray()
+                .Where(s => s.ValueKind == JsonValueKind.Object
+                            && s.TryGetProperty("symbol", out var name) && name.ValueKind == JsonValueKind.String
+                            && string.Equals(name.GetString(), symbol, StringComparison.Ordinal))
+                .ToList();
+            if (entries.Count != 1)
+            {
+                why = entries.Count == 0
+                    ? $"the answer does not list {symbol}"
+                    : $"the answer lists {symbol} {entries.Count} times, so it is not one definition";
+                return false;
+            }
+
+            if (!entries[0].TryGetProperty("filters", out var filters) || filters.ValueKind != JsonValueKind.Array)
+            {
+                why = $"{symbol}'s entry holds no filters";
+                return false;
+            }
+
+            // THE FOUR FILTERS THIS READS, EACH AT MOST ONCE. A filter stated twice is two answers to one
+            // question, and picking either would be choosing a step the venue did not single out.
+            var read = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var f in filters.EnumerateArray())
+            {
+                if (f.ValueKind != JsonValueKind.Object || !f.TryGetProperty("filterType", out var type)
+                    || type.ValueKind != JsonValueKind.String) continue;
+
+                var name = type.GetString()!;
+                if (name is not ("PRICE_FILTER" or "LOT_SIZE" or "NOTIONAL" or "MIN_NOTIONAL")) continue;
+                if (!read.TryAdd(name, f))
+                {
+                    why = $"{symbol}'s entry states its {name} filter more than once, so it is not one definition";
+                    return false;
+                }
+            }
+
+            if (!read.TryGetValue("PRICE_FILTER", out var price)
+                || !Number(price, "tickSize", out var tick) || tick is not { } tickSize || tickSize <= 0m)
+            {
+                why = $"{symbol}'s entry has no PRICE_FILTER with a tick size above zero";
+                return false;
+            }
+
+            if (!read.TryGetValue("LOT_SIZE", out var lot)
+                || !Number(lot, "stepSize", out var step) || step is not { } stepSize || stepSize <= 0m)
+            {
+                why = $"{symbol}'s entry has no LOT_SIZE filter with a step size above zero";
+                return false;
+            }
+
+            if (!Number(lot, "minQty", out var minQty))
+            {
+                why = $"{symbol}'s LOT_SIZE filter states a minimum quantity that is not a number of zero or more";
+                return false;
+            }
+
+            decimal? minNotional = null;
+            if ((read.TryGetValue("NOTIONAL", out var minimum) || read.TryGetValue("MIN_NOTIONAL", out minimum))
+                && !Number(minimum, "minNotional", out minNotional))
+            {
+                why = $"{symbol}'s minimum-notional filter states a value that is not a number of zero or more";
+                return false;
+            }
+
+            definition = new InstrumentDefinition(Plain(tickSize), Plain(stepSize),
+                minQty is { } q ? Plain(q) : null, minNotional is { } n ? Plain(n) : null);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A filter's number: absent is true with null, a decimal of zero or more — as a JSON string, which is
+    /// how Binance writes them, or a JSON number — is true with the value, and anything else is false.
+    /// </summary>
+    static bool Number(JsonElement filter, string name, out decimal? value)
+    {
+        value = null;
+        if (!filter.TryGetProperty(name, out var v)) return true;
+
+        var parsed = 0m;
+        var ok = v.ValueKind == JsonValueKind.String
+            ? decimal.TryParse(v.GetString(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out parsed)
+            : v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out parsed);
+        if (!ok || parsed < 0m) return false;
+
+        value = parsed;
+        return true;
+    }
+
+    /// <summary>The same number with its trailing zeros removed: <c>0.01000000</c> is <c>0.01</c>.</summary>
+    static decimal Plain(decimal value) =>
+        decimal.Parse(value.ToString("0.############################", CultureInfo.InvariantCulture),
+            CultureInfo.InvariantCulture);
+}
 
 /// <summary>
 /// WHAT ONE INSTRUMENT CHECK CAME TO, IN THE THREE WORDS THE LEDGER KEEPS (<c>U-venue-verify</c>).

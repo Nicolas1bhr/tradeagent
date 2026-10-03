@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace TradeAgent.Core.Data;
 
 /// <summary>
@@ -65,6 +67,20 @@ public sealed class VenueEntry
     public DateTimeOffset? RecordedAt { get; set; }
     public bool Verified { get; set; }
     public List<VenueInstrumentEntry> Instruments { get; set; } = [];
+
+    /// <summary>
+    /// AN OVERRIDE OF WHERE THIS VENUE'S OWN INSTRUMENT DEFINITION IS READ — a URL shape with
+    /// <c>{symbol}</c> in it — or empty, which means the BUILT-IN address
+    /// (<see cref="VenueCatalog.DefinitionShape"/>), and is what every row this build ships says
+    /// (<c>U-venue-verify</c>).
+    ///
+    /// <para>A <c>venues.json</c> entry may set it — a venue that moves its endpoint on its own schedule
+    /// should cost a one-line data fix — and an override whose ORIGIN is not the built-in one is refused:
+    /// the check is recorded <c>refused-origin</c>, nothing is sent to that address, and the instrument is
+    /// not verified by it. The <c>U-key-host-pin</c> rule, for the same reason: the file is one the AI's
+    /// own program can write, so it may move a path on the venue's own host and never the host.</para>
+    /// </summary>
+    public string DefinitionUrl { get; set; } = "";
 }
 
 /// <summary>
@@ -213,6 +229,37 @@ public static class VenueCatalog
             ]
         }
     ];
+
+    /// <summary>
+    /// WHERE BINANCE SPOT PUBLISHES ITS OWN DEFINITION OF ONE INSTRUMENT: the <c>exchangeInfo</c> answer for
+    /// one symbol, on Binance's market-data-only host — the host the forward collector already reads, which
+    /// serves public data and accepts no authenticated or trading request at all. Measured from the dev Mac
+    /// with no key on 2026-10-02 (the brief) and 2026-10-03 (the builder): HTTP 200, <c>PRICE_FILTER.tickSize
+    /// 0.01</c>, <c>LOT_SIZE.stepSize 0.00001</c> and <c>minQty 0.00001</c>, <c>NOTIONAL.minNotional 5</c>
+    /// (<c>docs/RESEARCH-REQUIRED.md</c> C5c).
+    /// </summary>
+    public const string BinanceSpotDefinitionShape =
+        "https://data-api.binance.vision/api/v3/exchangeInfo?symbol={symbol}";
+
+    /// <summary>
+    /// THE BUILT-IN DEFINITION ADDRESSES, compiled into this build and read from nowhere else. Value types
+    /// in a frozen map, so no caller can edit the answer for the next one.
+    /// </summary>
+    static readonly FrozenDictionary<string, string> DefinitionShapes =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [BinanceSpot] = BinanceSpotDefinitionShape
+        }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE BUILT-IN ADDRESS OF A VENUE'S OWN INSTRUMENT DEFINITION, as a shape with <c>{symbol}</c> — or
+    /// null because this build holds none, which is the answer for Revolut X and for TradeAgent's own
+    /// simulator. It is what an instrument check's ORIGIN is judged against, and it is read off this
+    /// build's code and never off <c>venues.json</c>: comparing against the catalogue as read would let the
+    /// file declare its own address built in, the reason <c>DashboardView.HarnessKeyDestination</c> gives.
+    /// </summary>
+    public static string? DefinitionShape(string? venueId) =>
+        venueId is not null && DefinitionShapes.TryGetValue(venueId, out var shape) ? shape : null;
 
     /// <summary>One simulated future: whole contracts, on the simulator's own price grid.</summary>
     static VenueInstrumentEntry Sim(string symbol, decimal tick) => new()
