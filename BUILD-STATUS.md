@@ -7601,3 +7601,40 @@ min), windows-latest (43 min), package (4 min). Earlier landings: `3b03041` (U-p
 the_owners_note_quoted` (first sighting; a gateway test over the Fake connector; seat P's `U-fix-loss-reopen`); `88c5a2f` (U-timeframe-a) success ×3.
 
 **NOT done, NOT verified:** Integration on CI and the gate only; no box; the real-culture run is macOS only, not Windows; refusal integers left ambient.
+
+## 2026-10-04 — U-venue-verify landed at schema 29: the app checks an instrument against the venue's own published definition and serves it verified, no file edited
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-venue-verify.md` (dispatched `e57bee24`; resumed twice after usage limits);
+built on `35606c56`, rebased by the manager onto `b757bbd3` (U-invariant-traces and docs in), `e32c683c` (docs), src+tests patch-id identical. Merge `35e95db9` (ff-only), 6 commits (4 items, three more tests, the
+report), 35 files, +2272/−121. **Schema rung 29** (`DatabaseSchemaVersion` 28 → 29, after seat P's `U-org-ledger` at 28): `instrument_check`; its
+`DROP TABLE` joined both roll-back lists and `OrgLedgerTests.StampBack`. The cost model's step, the paper connector's offer and the runner's sizing.
+
+- **Item 1 (`6ee4ed5a`):** rung 29 `instrument_check` (the brief's 15 columns), one append-only row per attempt; `InstrumentCheckStore` its only writer
+  (origin read off the URL, outcome validated).
+- **Item 2 (`44cc9c94`):** `InstrumentVerifier` (Provisioning) reads the venue's definition from the BUILT-IN shape (`VenueCatalog.DefinitionShape`); a
+  `venues.json` `definition_url` is honoured on the same origin only, any other origin recorded `refused-origin` with nothing sent (`UrlOrigin`); 10 s
+  leash, 4 MB bound, no redirects; a failure is a row and an activity line; it runs at start, on a pair change, on "Check now", and every 6 h.
+- **Item 3 (`d32c49ec`):** ONE served read (`VenueStore.Instruments/Instrument/Catalogue`): the catalogue overlaid by the latest successful check ≤ 7 days old
+  (a disagreeing catalogue number kept beside it), on each reader's own clock — Backtests, ForwardRuns, Referee, `CampaignStore.Open`, venue-list, status,
+  and the paper connector through `ConnectorChoice.PaperInstruments`, read at every use, so a check that succeeds or lapses reaches it without a restart.
+- **Item 4 (`aa130122`, tests `cbeb34e1`):** the Market data card's line and one-press "Check now"; `status.instrument_check`; venue-list's check fields; the six
+  "edit venues.json" texts (and the agent schema, the venue-list note, a CLI comment) name the in-app check; CONTRACTS (claimed / NOT claimed / advisory
+  until containment), USER-GUIDE, RESEARCH-REQUIRED C5c.
+- **Judged at landing (accepted, as the orchestrator also judged):** a checked pair the catalogue holds no row for is served from its check on a venue it
+  holds (else a verified check nothing serves); the 6-hourly re-check (a running app never lapses at 7 days); `VenueCostModel.For` reads the served row,
+  so a verified BTCUSDT lifts U-cost-model's refusal of the campaign press; three assertions moved from `Contains("venues.json")` to `Contains("Check now")`
+  plus `DoesNotContain("venues.json")` — none removed or renamed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `a39e658` (on `35606c56`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1345/1345, Fault 414/414; eight classes 3×, all green. RED before: (a) with the served read answering the catalogue's own rows
+"InstrumentCheckTests.cs:143 Assert.True() Failure"; (e) with the connector reading its catalogue once at construction "Assert.Single() Failure: The
+collection was empty". Mutants, reverted: (i) 7-day freshness removed ⇒ (c) "a check older than seven days still verified the instrument"; (ii) the origin
+check removed ⇒ (d) "Expected: \"refused-origin\" Actual: \"verified\""; (iii) is (e)'s red line. One real read: `exchangeInfo?symbol=BTCUSDT` on
+the market-data API at 04:48:54Z → 200, tick 0.01, step 0.00001, minQty 0.00001, minNotional 5. Manager's gate at `3c4f8ca`, carried to `35e95db9`, build tree identical, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1351/1351 (7 m 28 s — this Mac's slowed Unit suite, measured environmental, see the U-invariant-traces record), Fault 414/414 (1 m 46 s), Integration 706/707, 1 skipped (11 m 11 s) → 0 failed.
+Names vs `main` (git objects): 2096 → 2110, 0 removed, 14 added. Scan: the request leash's cancellation member excluded by name (`leash`), otherwise clean; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37100662391 at `a39e658` (on `35606c56`; `main` has since gained docs and U-invariant-traces, covered by the gate and the merge's run):
+success on ubuntu-latest (12 min), macos-latest (16 min), windows-latest (41 min), package (4 min). U-invariant-traces' landing push `6a24e12`: still running at this record (the ledger and the next record carry it).
+
+**NOT done, NOT verified:** the card not seen on screen (the app's start would call the real host); the AppHost triggers (start, 6-hourly, pair change,
+Check now) have no automated test; minimum notional recorded, not applied; a `"verified": true` written into `venues.json` is still honoured (advisory until
+containment, said in CONTRACTS); Windows only through CI.
