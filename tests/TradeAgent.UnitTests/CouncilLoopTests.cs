@@ -829,6 +829,63 @@ public class CouncilLoopTests
     }
 
     /// <summary>
+    /// U-INBOX-ORDER ITEM 2, THE OTHER DIRECTION: NO ROLE LAUNCHES WHILE A PASS THE APP TOOK ON ITS OWN
+    /// ACCOUNT IS MEASURING. The thirty-second tick and the Inbox page reach the loop's exclusion
+    /// through <see cref="MissionLoop.TryPass{T}"/> (<c>MaterialPassExclusionTests</c> holds the
+    /// first direction, on the host). Held open here, a role whose wake is due tries to launch inside
+    /// it: refused in words and never launched, and the owner's file that pass is recording stays
+    /// theirs.
+    /// </summary>
+    [Fact]
+    public async Task No_role_launches_while_a_pass_the_app_took_is_measuring()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new CouncilHost(db, root, new Concurrency(), presence);
+        var loop = new MissionLoop(host, NoHeartbeat);
+        var refused = new List<string>();
+        loop.Refused += why => { lock (refused) refused.Add(why); };
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        void Wake(string role, int n) => host.Events!.Raise(
+            MissionEventIds.ForRole($"{MissionEventKind.Review}:{n}", role),
+            MissionEventKind.Review, earlier.AddSeconds(n), role: role);
+
+        // ---- a first turn, so a pass has closed the window behind it ---------------------------
+        Wake(CouncilRoles.Operations, 1);
+        await loop.TurnAsync();
+
+        // ---- the owner drops something, and the app takes a pass of its own --------------------
+        File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, "broker-statement.pdf"),
+            "the owner's document");
+        Wake(CouncilRoles.Research, 2);
+
+        using var measuring = new ManualResetEventSlim();
+        using var tried = new ManualResetEventSlim();
+        ScanResult? recorded = null;
+        Together(
+            () => recorded = loop.TryPass(() =>
+            {
+                measuring.Set();
+                Assert.True(tried.Wait(TimeSpan.FromSeconds(30)), "the role never tried to launch");
+                return new MaterialScanner(db, root, presence.NoneSince).Scan();
+            }),
+            () =>
+            {
+                Assert.True(measuring.Wait(TimeSpan.FromSeconds(30)), "the app's pass never started");
+                loop.TurnAsync().GetAwaiter().GetResult();
+                tried.Set();
+            });
+
+        Assert.NotNull(recorded);
+        Assert.Empty(host.Conversations[CouncilRoles.Research].Sent);
+        Assert.Contains(refused, why => why.Contains("a material pass is measuring", StringComparison.Ordinal));
+        var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
+        Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
     /// ITEM 5, RED FIRST: ONE ROLE'S TURNS ARE NOT THE OTHER ROLE'S. The session count and the run
     /// of failures are per role, because both are facts about ONE conversation.
     ///

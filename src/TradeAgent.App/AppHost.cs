@@ -437,6 +437,12 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     long _lastScanAtTicks;
 
+    /// <summary>
+    /// The background loop's last scheduled pass was refused under the loop's exclusion and is owed.
+    /// Read and written only by <see cref="BackgroundAsync"/>, on its one thread.
+    /// </summary>
+    bool _scanOwed;
+
     DateTimeOffset? LastScanAt =>
         Interlocked.Read(ref _lastScanAtTicks) is var t and not 0
             ? new DateTimeOffset(t, TimeSpan.Zero)
@@ -1003,7 +1009,11 @@ public sealed class AppHost : IAsyncDisposable
                 // Every 30s rather than every 5s. Nothing downstream needs a file noticed within
                 // five seconds, and the walk plus a bounded round of hashing is the most expensive
                 // thing in this loop.
-                if (pass % 6 == 0) ScanMaterials(ct);
+                //
+                // A PASS REFUSED because a role holds its turn lease (or another pass is measuring)
+                // is OWED, and asked for again on the next tick rather than in half a minute: never
+                // beside a launch, and no later than it has to be once the turn is over.
+                if (pass % 6 == 0 || _scanOwed) _scanOwed = ScanMaterials(ct) is null;
 
                 // Once at startup, then every five minutes. A day that ended while this machine was
                 // asleep gets its report the first time the app is awake afterwards; a day that ends
@@ -1088,8 +1098,22 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>
     /// Records what is in the workspace. Public so the inbox page can ask for a pass the moment the
     /// user drops something in, rather than making them watch a list that updates in half a minute.
+    ///
+    /// <para><b>Under the loop's one exclusion</b> (<see cref="MissionLoop.TryPass{T}"/>, U-inbox-order):
+    /// the thirty-second tick and the Inbox page both come here, and neither may walk the tree while a
+    /// role holds its turn lease, nor let a role launch while the walk runs. A pass beside a launching
+    /// role spends every sighting it makes on the weaker word, for good. Null is a pass that was
+    /// refused for that reason; the loop takes one of its own behind every turn, and the caller may ask
+    /// again.</para>
     /// </summary>
-    public ScanResult ScanMaterials(CancellationToken ct = default)
+    public ScanResult? ScanMaterials(CancellationToken ct = default) =>
+        Mission.TryPass(() => RecordWorkspace(ct));
+
+    /// <summary>
+    /// ONE PASS, with no exclusion of its own: called only from inside one — the loop's
+    /// (<see cref="MissionHost.ScanAsync"/>) or the app's (<see cref="ScanMaterials"/>).
+    /// </summary>
+    ScanResult RecordWorkspace(CancellationToken ct)
     {
         var at = DateTimeOffset.UtcNow;
         Interlocked.Exchange(ref _lastScanAtTicks, at.UtcTicks);
@@ -1448,9 +1472,14 @@ public sealed class AppHost : IAsyncDisposable
             host.Changed?.Invoke();
         }
 
+        /// <summary>
+        /// The loop's own pass, run inside its exclusion — so it records the workspace directly rather
+        /// than through <see cref="AppHost.ScanMaterials"/>, which would find that exclusion taken and
+        /// refuse.
+        /// </summary>
         public Task ScanAsync(CancellationToken ct)
         {
-            try { host.ScanMaterials(ct); }
+            try { host.RecordWorkspace(ct); }
             catch (OperationCanceledException) { throw; }
             // A scan that threw must not stop the mission. It is a record-keeping pass, and the
             // engineering log already has the exception from the background loop that also runs it.

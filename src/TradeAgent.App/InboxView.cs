@@ -156,7 +156,11 @@ sealed class InboxPage
         });
 
         // Scan immediately rather than waiting for the thirty-second tick: a list that stays empty
-        // after a drop reads as a drop that did not work.
+        // after a drop reads as a drop that did not work. NULL IS A PASS REFUSED under the loop's
+        // exclusion — a role is launching or turning, or a pass is already measuring — because a
+        // pass beside a launch would record these very files with the weaker word for good. The
+        // next pass records them, and the line below says so rather than leaving a list that looks
+        // like the drop failed.
         var result = await Task.Run(() => _host.ScanMaterials());
 
         _status.Text = failed == 0
@@ -164,7 +168,8 @@ sealed class InboxPage
             : $"Added {copied}, could not read {failed}.";
         _status.Foreground = failed == 0 ? Theme.Positive : Theme.Caution;
         if (copied > 0) _host.Gateway.Log.Activity($"You handed the AI {copied} file{(copied == 1 ? "" : "s")}");
-        if (result.HashBudgetSpent) _status.Text += " Still reading some of them.";
+        if (result is null) { if (copied > 0) _status.Text += " They will be listed on TradeAgent's next look."; }
+        else if (result.HashBudgetSpent) _status.Text += " Still reading some of them.";
 
         Update();
     }

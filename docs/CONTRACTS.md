@@ -1980,7 +1980,10 @@ never be released. The durable witness that a turn was in flight is its `LAUNCHE
 and a restart holds no leases, loses every open row at its reservation and reconciles from disk. There
 is no schema for any of it. Quiescence stays whole-council: a material pass runs only when NO role is
 turning, and no role may launch while one runs (`docs/COUNCIL.md` rule 7 — the scanner attests only
-across proven quiescence of every managed agent). `_sessionTurns`, the run of consecutive errors and
+across proven quiescence of every managed agent). That holds for EVERY pass, under one exclusion
+(`MissionLoop.TryPass`, U-inbox-order): the loop's own, the background loop's thirty-second tick (a
+refused tick is owed and asked again on the next one) and the Inbox page's pass after a drop (refused,
+it says the files will be listed on the next look). `_sessionTurns`, the run of consecutive errors and
 the cap notice are per role, because each is a fact about one conversation. What is NOT concurrent is
 the money path: only the Operations Director places orders and the gateway's dispatch gate is a mutex.
 
