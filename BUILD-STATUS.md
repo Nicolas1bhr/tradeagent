@@ -7499,3 +7499,35 @@ objects): sets 2044 → 2051, 0 removed, 7 added. Scan clean; no trailers; `rev-
 when complete (`fleet/ci-ledger.md`, then the next record).
 
 **NOT done, NOT verified:** the app was not run; Integration ran only on CI for the builder; nothing reads the ledger yet; the box was not used.
+
+## 2026-10-03 — U-paper-settle landed: one settle catches a paper book up to the newest forward bar however far behind it starts, its watermark and close one write
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-paper-settle.md` (briefed from a read-only survey leg, item 2 added by the
+manager from its finding; dispatched `f4dab1d`); the builder rebased onto `be91995`, `923284e` (after U-paper-friction) and `d99155e`, the manager onto
+`3301781` (U-meter-batch-1 and U-org-ledger in), src+tests patch-id compared at the gate. Merge `65083cc4` (ff-only), 4 commits (3 items + the report). No schema change. Money path: the paper
+connector's settle, which prices every paper order's quote; owed before M0 (the orchestrator, 2026-10-02).
+
+- **Item 1 (`dd47090f`):** `SettleAsync` reads again from the book's own watermark until a read brings nothing past it — `EveryBarSince`'s pattern, keyed on the
+  watermark because a connector cannot know a source's page size — checking for cancellation before every read; nothing filtered, caught or held across
+  calls; a later page that throws propagates with every earlier bar settled; `IPaperBarSource`'s and `SettleAsync`'s docs say so.
+- **Item 2 (`759882fe`):** `PaperBook.MarkSettled` reads the watermark and writes it and the close in ONE transaction: before, two commits, so a kill between them
+  quoted the previous bar's close stamped at the new bar's close — a stale price that read fresh.
+- **Item 3 (`f073215d`):** measured (a temporary test under `suite.sh`, not committed): one fresh-book settle over 50,000 bars through the real
+  `ForwardBarSource` takes 2.18–2.46 s over six runs, ≈ 376 MiB allocated, live heap ≤ 6.3 MiB above start (2.5–3.3 s with one working order; swap 6.2 of
+  7 GiB in use, no swap-out); `CONTRACTS.md` states O(backlog) time, O(page) memory, the figure and that the 5 s `WorstCaseOperationPath` bounds neither
+  this nor one page; `USER-GUIDE.md`: the first look after switching to paper can take a moment.
+- **Judged at landing:** test (f) faults the second write with a SQLite trigger on the book's own file instead of a product seam — accepted, it adds no
+  test-only code to the product; two tests beyond the brief's list (a later page that throws; a cancellation between pages) — accepted.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `1861393` (on `d99155e`): Release `--no-incremental` 0 warnings, 0
+errors; Unit 1273/1273, Fault 411/411 (under `suite.sh`); `PaperSettlementTests` 10/10, `PaperBookTests` 4/4, `PaperGatewayTests` 2/2, 3× each; an
+Integration subset 21/21. RED before (base `be91995`, tests only): (a) "GatewayDeniedException : no price newer than 30s for BTCUSDT"; (b) "Assert.Single()
+Failure: The collection was empty"; (c) "1 read(s), asked from 00:00; quote 103 stamped 10:04"; (f) "watermark 10:01, close 100"; (d), (e) green as
+guards. Mutants, each alone, reverted: (i) the loop removed ⇒ (a) red; (ii) the stop on a short page ⇒ (c) red; (iii) the two writes as two commits ⇒ (f)
+"Expected: 2026-09-19T10:00 … Actual: 2026-09-19T10:01". Manager's gate at `65083cc`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1282/1282 (34 s), Fault 411/411 (1 m 40 s), Integration 705/706, 1 skipped (11 m 17 s) → 0 failed.
+Names vs `main` (git objects): 2051 → 2059, 0 removed, 8 added (7 tests, a paging double). Scan: one cancellation member excluded by name (`cancel`), otherwise clean; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37082332809 at `1861393` (on `d99155e`; U-meter-batch-1 and U-org-ledger landed after it, covered by the gate and the merge's run):
+success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (38 min), package (4 min). Earlier landings' pushes: U-evidence-identity `923fb28` run 37079001165 and U-paper-friction `923284e` run 37081949389, both success on all three.
+
+**NOT done, NOT verified:** the settle not measured on Windows (CI runs the tests, prints no figure); per-bar cost with many orders not measured (one
+working order); the 5 s `WorstCaseOperationPath` stated, not changed; the app not run.
