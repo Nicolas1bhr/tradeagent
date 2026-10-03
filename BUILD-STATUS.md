@@ -7396,3 +7396,38 @@ two dropped-file tests ends with this landing.** CI at the merge: recorded when 
 compiled, not run in a test. Read-only findings of the fixer, pre-existing, NOT fixed, sent to the orchestrator: (1) a BACKWARD wall-clock step between an
 agent's exit and a pass's start would let `NoneSince` say "no agent" across that agent — the false claim rule 7 exists to forbid; (2) the 30 s background
 pass and the Inbox page's scan do not take the loop's `_passing`, so a role can launch beside them (the weaker word on an owner's file, not a false claim).
+
+## 2026-10-03 — U-paper-friction landed: paper fills and undeclared research friction pay the venue cost model the referee judges with, and say so
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-paper-friction.md` (dispatched `8a51a16`); rebased by the builder onto
+`c44425a` and, at landing, onto `c0ce760` (by the builder, at the manager's request) and `298bb36` (docs, by the manager) (one conflict in `Core/Trading.cs`, a doc comment beside U-tape-store's `RecordMarketContext`: both kept, the two
+old paper-fee lines dropped), src+tests patch-id compared at the gate. Merge `55b1d50` (ff-only), 6 commits (4 items + the report + its rebase line). No schema change
+(settings JSON; see the judged item 3). Money path: the paper connector's fills.
+
+- **Item 1 (`7b16be5`):** Core `VenueFriction` (beside `VenueCostModel`, its fee and slippage, id `venue-cost-model-v1/<venue>`, sha of its text) and
+  `FrictionInForce` (a source per number — owner, venue model, none — the fill's sentence, the owner's line); `PaperFriction` carries both; the
+  connector's own default stays `None`, FRICTIONLESS as before (`PaperSettlementTests` untouched and green).
+- **Item 2 (`0529769`):** new nullable `PaperFeeOverride` / `PaperSlippageOverride`; at every fill an override (0 included) is the owner's, else the venue
+  model of the forward collector's venue (binance-spot); the legacy fields are read, not consulted (`git grep` at `8a51a16`: no writer); CONTRACTS says
+  the settings row is agent-writable until containment. The headless gateway host applies the same rule.
+- **Item 3 (`08b12d8`):** each friction number a research run leaves undeclared takes the dataset venue's model, a declared one wins (0 included).
+- **Item 4 (`d2dd95c`):** the paper row reads "Fills pay 0.1% + 0.02% (assumption) — Binance spot standard taker, 2026-10-02" with two override boxes
+  (one press saves, one clears); `status.paper_friction {source, fee, slippage, model{id, sha256}}`; the daily report's "paper fills pay" line;
+  CONTRACTS' paper section and USER-GUIDE rewritten; the agents' texts no longer promise a frictionless default.
+- **Judged at landing:** (1) no recorded venue ⇒ 0, labelled "no venue recorded" and said frictionless; a venue with no published fee is refused for an
+  undeclared number (the referee's rule) — accepted. (2) The run's friction provenance is stored on a `friction:` line of the existing
+  `strategy_run.increment_source` text, read back apart as `StrategyRunRow.FrictionSource` — accepted to keep the brief's no-schema rule; app-written,
+  like the increment's sentence it follows; a later rung may give it a column.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `2bfb74c`: Release `--no-incremental` 0 warnings, 0 errors; Unit
+1252/1252, Fault 402/402; `PaperFrictionTests` 8/8 and `PaperSettlementTests` 5/5 3×; a local Integration subset 71/71. After its landing rebase:
+Release `--no-incremental` 0 warnings, 0 errors, Unit 1273/1273, Fault 405/405, the two classes 3×; `git range-diff`: items 1, 3, 4 identical, item 2 differing only in `Trading.cs` context, every +/- line in src and tests as CI tested at `2bfb74c`. RED before (base `new PaperFriction(PaperFeeFraction, PaperSlippageFraction)` restored): (a) "Expected: 110.0220 Actual: 110"; (b) the same
+in its one-number-overridden half. Mutant, restored identical: the venue fee branch → `0m` ⇒ (a) "Expected: 0.1100220 Actual: 0.0000000".
+Manager's gate at `55b1d50`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1273/1273 (30 s), Fault 405/405 (1 m 38 s), Integration 704/705, 1 skipped (11 m 5 s) → 0 failed.
+Names vs `main` (git objects): 2034 → 2042, 0 removed, 8 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37057026434 at `2bfb74c` (on `c44425a`, before U-tape-store and U-evidence-identity landed; the combination is the gate's and the
+merge's run): success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (45 min), package (4 min). U-evidence-identity's landing push
+`923fb28`: still running at this record (the ledger and the next record carry it).
+
+**NOT done, NOT verified:** the Settings row not seen on screen (the app was not run); no box; CI ran on `2bfb74c`, not on the rebased tip; an override
+written into the settings row by anything but the Settings page is applied without a bound, as the old field was (agent-writable until containment).
