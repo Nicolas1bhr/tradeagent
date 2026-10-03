@@ -293,6 +293,105 @@ public class HarnessBudgetTests : IDisposable
     }
 
     /// <summary>
+    /// U-METER-BATCH-1, RED FIRST: A TURN THAT ENDS BECAUSE NO KEY IS HELD SENDS NOTHING AND IS CHARGED
+    /// NOTHING — admitted first, so its reservation is really committed before the turn finds no key.
+    ///
+    /// <para>The conversation returns before a request is built: the transport it sends through saw no
+    /// request and the listener heard nothing. Until this unit the meter could not tell that turn from one
+    /// whose usage never arrived (the test above), so it charged the whole reservation, 1.28, for a turn
+    /// that never left the app — and a role the owner put on the harness keeps being launched like this
+    /// after a restart until a key is pasted, spending the day's ceiling on nothing until it refuses real
+    /// work. The row carries the app's own sentence as the reason, as the withheld key's does
+    /// (<c>HarnessKeyOriginTests</c>). Take the no-key marker out of <c>TurnMeter.Charge</c>'s zero rule
+    /// and the cost below is the reservation again.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_with_no_key_held_sends_nothing_and_is_charged_nothing()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        // 1.20 M at 1.00 plus 20 k at 4.00 per million: a reservation of 1.28, well under the ceiling.
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("should never be asked for"));
+        using var transport = new CountingTransport();
+
+        using var runtime = new ApiAgentRuntime(Manifest(provider), provider.Holding(null),
+            allowance: () => allowance, requestTimeout: TimeSpan.FromSeconds(10), transport: transport);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        await conversation.SendAsync("what is the plan?");
+
+        Assert.Equal(0, transport.Sent);
+        Assert.Empty(provider.Marks);
+        Assert.NotNull(ended);
+        Assert.Null(ended!.Usage);
+        Assert.Equal(ApiConversation.NotStarted, ended.ExitCode);
+        Assert.Equal(ApiConversation.EndedNotStarted, ended.Outcome);
+
+        var row = Assert.Single(Attempts());
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(1.28m, row.ReservedCost);
+        Assert.Equal(0m, row.Cost);
+        Assert.Null(row.UnpricedReason);
+        var today = meter.TodayFor(CouncilRoles.Research);
+        Assert.Equal(0m, today.Spent);
+        Assert.Equal(0m, today.Reserved);
+        Assert.Equal(0, today.UnreportedTurns);
+
+        // AND THE ROW SAYS WHY IT COST NOTHING, in the words the conversation showed: a zero with no reason
+        // is a zero nobody can check afterwards.
+        Assert.Contains(conversation.History, t => t.Role == ChatRole.System && t.Text == Labels.HarnessKeyNotHeld);
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.Equal(ApiConversation.EndedNotStarted, context.RootElement.GetProperty("ended").GetString());
+        Assert.True(context.RootElement.TryGetProperty("refused", out var refused), row.Context);
+        Assert.Equal(Labels.HarnessKeyNotHeld, refused.GetString());
+    }
+
+    /// <summary>
+    /// AND THE ZERO READS THE MARKER, NOT THE EXIT CODE: A CANCELLED TURN KEEPS ITS RESERVATION. It ends
+    /// with the same -1 and no usage as the no-key turn above, but it held a key and built its request,
+    /// and the app cannot know whether that request reached the provider — so its cost is unknown, and
+    /// unknown is never zero. A zero rule keyed on the exit code instead of the marker charges this turn
+    /// nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_harness_turn_keeps_its_reservation_though_it_ends_with_the_same_exit_code()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("never read: the turn is stopped before its answer"));
+
+        using var runtime = Runtime(provider, allowance);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        // STOPPED BEFORE IT STARTS, so how it ends is certain rather than a race with the listener: the
+        // turn is admitted, builds its request, and the send is cancelled.
+        using var stop = new CancellationTokenSource();
+        await stop.CancelAsync();
+        await conversation.SendAsync("what is the plan?", stop.Token);
+
+        Assert.NotNull(ended);
+        Assert.Equal(ApiConversation.NotStarted, ended!.ExitCode);
+        Assert.Equal(ApiConversation.EndedCancelled, ended.Outcome);
+        Assert.Null(ended.Usage);
+
+        var row = Assert.Single(Attempts());
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(1.28m, row.Cost);
+        Assert.Equal(AiAttemptStore.UnreportedReason, row.UnpricedReason);
+        Assert.Equal(1, meter.TodayFor(CouncilRoles.Research).UnreportedTurns);
+    }
+
+    /// <summary>
     /// THE ROW SAYS THE TURN WAS BOUNDED RATHER THAN BROKEN. It lands in <c>ai_attempt.context</c>,
     /// which is already the app's own account of what it could see of a turn — a column per fact is how
     /// a table stops being readable.
@@ -360,5 +459,23 @@ public class HarnessBudgetTests : IDisposable
 
         var store = new AiAttemptStore(_db);
         return [.. ids.Select(id => store.Get(id)!)];
+    }
+
+    /// <summary>
+    /// THE APP'S OWN TRANSPORT, COUNTED. Every request a harness conversation makes goes through the
+    /// handler its runtime was given, so zero here is "no request was made" — which the listener alone
+    /// cannot say: it only knows what arrived.
+    /// </summary>
+    sealed class CountingTransport() : DelegatingHandler(new SocketsHttpHandler())
+    {
+        int _sent;
+
+        public int Sent => Volatile.Read(ref _sent);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _sent);
+            return base.SendAsync(request, ct);
+        }
     }
 }

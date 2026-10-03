@@ -1948,6 +1948,12 @@ clock passes twice read as the later instant — or its own backoff where it nam
 stepped over like turning ones, so their wakes stay due; the owner's chat and Pause are not held. The
 hold is in memory: a restart forgets it, and the first turn after one is refused again at no cost.
 
+**And a harness turn that ends because no key is held** (`U-meter-batch-1`) is ENDED at cost 0, `unpriced_reason`
+null, with `context.ended` = `not-started` and `Labels.HarnessKeyNotHeld` in `context.refused`: `ApiConversation` sets
+`AgentTurnEnded.KeyNotHeld` on the one path that returns before a request is built, as it sets `KeyWithheld` for a key
+pasted for another origin (below), and `TurnMeter.Charge` zeroes on those markers alone — never on the exit code -1, which
+a cancelled turn shares after its request may have gone, and never on the outcome word.
+
 `TurnMeter` holds one open attempt PER ROLE — one conversation per role, and the owner can type into
 the chair's while another role's turn is in flight — and `Close` writes the row it opened, by id. The
 close of a turn the MISSION LOOP opened is held for that turn's one committed transition
