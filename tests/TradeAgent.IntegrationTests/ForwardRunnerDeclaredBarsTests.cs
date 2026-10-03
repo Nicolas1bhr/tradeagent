@@ -286,6 +286,107 @@ public partial class ForwardRunnerTests
             o.ClientOrderId == TradingGateway.ClientOrderIdFor(flatten.RequestId) && o.Side == OrderSide.Sell);
     }
 
+    // ---------------------------------------------------------------- (e) a restart mid-hour
+
+    /// <summary>
+    /// (e) A RESTART IN THE MIDDLE OF AN HOUR RESUMES WITH THE STATE AN UNINTERRUPTED RUN HAS, AND SENDS NOTHING
+    /// TWICE — past one page of bars, so the paging of <c>U-runner-forward</c> is under it too.
+    ///
+    /// <para>The hourly program enters when an hour closes above 100, and the first that does is the 168th,
+    /// whose last minute is 10,079 — past the ten thousand bars one read of the ledger answers. One process
+    /// sends the entry at that close and dies before any answer. Thirty-one minutes close while it is down:
+    /// the next hour is half formed when a new process comes up over the same database and the same paper book.
+    /// It rebuilds the run from the deployment's start — every page of minutes into a resampler of its own — and
+    /// must arrive at exactly what a control run that never stopped arrives at over the same minutes: the same
+    /// state, the same operations under the same ids, the same orders at the wire, the hour still forming at
+    /// the same place; and, at that hour's close, the same answer again.</para>
+    ///
+    /// <para>A guard: nothing in the runner's process survives a pass, so there was never a resampler to lose.
+    /// What it would catch is one kept — across passes, or from the cursor instead of the start.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_restart_mid_hour_resumes_with_the_same_state_and_no_duplicate_op()
+    {
+        var program = HourlyText("stop percent 5\ntarget percent 1\n", "entry when close > 100");
+        var origin = new DateTimeOffset(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+        var entryClose = HourClose(168);                     // 10,079
+        Assert.True(entryClose > ForwardRuns.BarsPerPage);
+
+        // ---- the control: one process, never stopped
+        await using var control = await ReadyAsync(program, origin: origin);
+        await UpToTheEntryAsync(control, entryClose);
+        control.Minutes(entryClose + 1, entryClose + 31, _ => 100m);
+        await control.Gw.RefreshHealthAsync();
+        var uninterrupted = Assert.Single(await control.Runner.AdvanceAsync());
+
+        // ---- the process that died with the entry at the wire and no answer for it
+        var db = TestEnv.NewDb();
+        var book = Path.Combine(TestEnv.Home, $"paper-restart-hour-{Guid.NewGuid():n}.db");
+        string entryRequest;
+        {
+            await using var first = await ReadyAsync(program, book, db, origin);
+            await UpToTheEntryAsync(first, entryClose);
+            var entry = Assert.Single(first.Gw.Deployments.OpsOf(first.Deployment.Id));
+            entryRequest = entry.RequestId;
+            Assert.Equal(DeploymentOpState.Dispatched, entry.State);
+        }
+
+        // ---- thirty-one minutes later, a new process over the same database and the same book
+        await using var second = await ReadyAsync(program, book, db, origin);
+        second.Minutes(entryClose + 1, entryClose + 31, _ => 100m);
+        await second.Gw.RefreshHealthAsync();
+        var resumed = Assert.Single(await second.Runner.AdvanceAsync());
+        Show(log, second);
+        log.WriteLine($"control : {Said(control, uninterrupted)}");
+        log.WriteLine($"resumed : {Said(second, resumed)}");
+
+        // THE SAME STATE — the evaluator's counters, the account, the bars stepped and the minute reached — and
+        // the same book: one entry, under the id the dead process sent, filled once, with its protection.
+        Assert.Equal(Said(control, uninterrupted), Said(second, resumed));
+        Assert.Equal(168, resumed.BarsReplayed);
+        Assert.Equal(await Ledger(control), await Ledger(second));
+        Assert.Equal(entryRequest,
+            Assert.Single(second.Gw.Deployments.OpsOf(second.Deployment.Id), o => o.Kind == DeploymentOpKind.Entry).RequestId);
+        Assert.Single(await second.Conn.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        Assert.Equal(1m, await Position(second));
+
+        // AND THE HOUR THAT WAS HALF FORMED AT THE RESTART CLOSES IN BOTH WITH THE SAME ANSWER.
+        foreach (var rig in new[] { control, second })
+        {
+            rig.Minutes(entryClose + 32, HourClose(169), _ => 100.5m);
+            await rig.Gw.RefreshHealthAsync();
+        }
+
+        var controlAtClose = Assert.Single(await control.Runner.AdvanceAsync());
+        var resumedAtClose = Assert.Single(await second.Runner.AdvanceAsync());
+        Assert.Equal(169, resumedAtClose.BarsReplayed);
+        Assert.Equal(Said(control, controlAtClose), Said(second, resumedAtClose));
+        Assert.Equal(await Ledger(control), await Ledger(second));
+    }
+
+    /// <summary>
+    /// Flat minutes at 100 to the minute before <paramref name="close"/>, then that minute closing at 101 — the
+    /// hour's close, above 100 — and the runner's pass that sends the entry.
+    /// </summary>
+    static async Task UpToTheEntryAsync(Rig rig, int close)
+    {
+        rig.Minutes(1, close - 1, _ => 100m);
+        Assert.Null(Assert.Single(await rig.Runner.AdvanceAsync()).Ended);
+        await MinuteAsync(rig, close, 100m, 101m, 100m, 101m);
+    }
+
+    /// <summary>A run's operations and its orders at the wire, with the deployment's hash taken out of every id.</summary>
+    static async Task<string> Ledger(Rig rig)
+    {
+        var said = new StringBuilder();
+        foreach (var op in rig.Gw.Deployments.OpsOf(rig.Deployment.Id))
+            said.Append(CultureInfo.InvariantCulture, $"op {Said(rig, op.RequestId)} {op.Kind} {op.State} — {op.Answer}\n");
+        foreach (var order in (await Wire(rig)).OrderBy(o => o.ClientOrderId, StringComparer.Ordinal))
+            said.Append(CultureInfo.InvariantCulture,
+                $"wire {Said(rig, order.ClientOrderId ?? "-")} {order.Side} {order.Type} {order.Quantity} stop={order.StopPrice?.ToString(CultureInfo.InvariantCulture) ?? "-"} limit={order.LimitPrice?.ToString(CultureInfo.InvariantCulture) ?? "-"} filled={order.FilledQuantity} {order.State}\n");
+        return said.ToString();
+    }
+
     // ---------------------------------------------------------------- (f) the one-minute guard
 
     /// <summary>
