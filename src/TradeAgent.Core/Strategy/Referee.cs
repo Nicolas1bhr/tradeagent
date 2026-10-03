@@ -70,7 +70,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     readonly StrategyStore _strategies = new(db);
     readonly Promotions _promotions = new(db);
     readonly PublicationStore _publications = new(db);
-    readonly VenueStore _venues = new(db);
+    readonly VenueStore _venues = new(db, now);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>

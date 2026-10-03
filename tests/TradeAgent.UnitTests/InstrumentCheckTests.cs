@@ -107,6 +107,157 @@ public class InstrumentCheckTests(ITestOutputHelper log)
         Assert.Equal(failed, store.ById(failed.Id));
     }
 
+    // ---- the served read -------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (a) A SUCCESSFUL CHECK SERVES THE INSTRUMENT VERIFIED WITH THE VENUE'S NUMBERS. The catalogue's row
+    /// here DISAGREES with the venue — a step of 0.001 nobody checked — so whose number is served is
+    /// visible: the venue's 0.00001, with the address and the instant it was read as its source, and the
+    /// catalogue's 0.001 kept beside it rather than lost. The same row reaches every reader of an increment:
+    /// the served list, the paper connector's catalogue and the referee's cost model, whose pinned text
+    /// records where its step came from. Red on base, where nothing overlays the catalogue at all.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_check_serves_the_instrument_verified_with_the_venue_numbers()
+    {
+        using var db = TestEnv.NewDb();
+        var catalogue = Shipped();
+        catalogue.Venues.Single(v => v.Id == VenueCatalog.BinanceSpot).Instruments.Single().QuantityIncrement = 0.001m;
+        var venues = new VenueStore(db, () => T0.AddHours(1));
+        venues.Sync(catalogue);
+        Assert.False(venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!.Verified);
+
+        using var venue = new FakeArchive();
+        venue.PublishAtExactly(DefinitionPath, ExchangeInfo());
+        var row = await Verifier(db, Shape(venue)).CheckAsync(VenueCatalog.BinanceSpot, "BTCUSDT");
+
+        Assert.Equal(InstrumentCheckOutcome.Verified, row!.Outcome);
+        Assert.Equal(venue.BaseUrl + DefinitionPath, row.Url);
+        Assert.Equal(venue.BaseUrl, row.Origin);
+        Assert.Equal(200, row.HttpStatus);
+        Assert.Equal(FakeArchive.Sha256(System.Text.Encoding.UTF8.GetBytes(ExchangeInfo())), row.BodySha256);
+        Assert.Equal((0.01m, 0.00001m, 0.00001m, 5m), (row.TickSize, row.QuantityIncrement, row.MinQuantity, row.MinNotional));
+
+        var served = venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!;
+        log.WriteLine(served.Source);
+        Assert.True(served.Verified);
+        Assert.Equal(0.01m, served.TickSize);
+        Assert.Equal(0.00001m, served.QuantityIncrement);
+        Assert.Equal(row, served.Check);
+        Assert.Equal(row.ReceivedAt, served.RecordedAt);
+        Assert.Contains(row.Url, served.Source, StringComparison.Ordinal);
+        Assert.Contains("2026-10-03T04:48:54Z", served.Source, StringComparison.Ordinal);
+        Assert.Equal(0.001m, served.CatalogueQuantityIncrement);
+        Assert.Null(served.CatalogueTickSize);
+        Assert.Equal(served, Assert.Single(venues.Instruments(VenueCatalog.BinanceSpot)));
+
+        // THE PAPER CONNECTOR'S CATALOGUE AND THE REFEREE'S COST MODEL READ THE SAME ROW.
+        var offered = venues.Catalogue().Venues.Single(v => v.Id == VenueCatalog.BinanceSpot).Instruments.Single();
+        Assert.True(offered.Verified);
+        Assert.Equal(0.00001m, offered.QuantityIncrement);
+
+        var judge = Core.Strategy.VenueCostModel.For(Bars(), venues, 10_000m);
+        Assert.True(judge.Ok, judge.Why);
+        Assert.Equal(0.00001m, judge.Model!.Model.QuantityIncrement);
+        Assert.Contains(row.Url, judge.Model.Canonical, StringComparison.Ordinal);
+
+        var said = venues.Verification(VenueCatalog.BinanceSpot, "BTCUSDT");
+        log.WriteLine(said.Says);
+        Assert.True(said.Verified);
+        Assert.StartsWith("verified against Binance spot's published instrument definition on 2026-10-03 04:48 UTC: "
+                          + "tick 0.01, step 0.00001, minimum quantity 0.00001, minimum notional 5 (recorded, not applied)",
+            said.Says, StringComparison.Ordinal);
+        Assert.Contains("TradeAgent's catalogue says step 0.001, and the venue's number is the one used", said.Says,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (c) A CHECK OLDER THAN SEVEN DAYS NO LONGER VERIFIES. Seven days to the instant is still served; one
+    /// second more and the catalogue's own unverified row stands again — in the list, in the paper
+    /// connector's catalogue and in the cost model, which refuses — and the sentence says why. The rows are
+    /// untouched: the age is judged at read time, on the reader's clock.
+    /// </summary>
+    [Fact]
+    public async Task A_check_older_than_seven_days_no_longer_verifies()
+    {
+        using var db = TestEnv.NewDb();
+        var clock = T0;
+        var venues = new VenueStore(db, () => clock);
+        venues.Sync(Shipped());
+
+        using var venue = new FakeArchive();
+        venue.PublishAtExactly(DefinitionPath, ExchangeInfo());
+        var row = await Verifier(db, Shape(venue)).CheckAsync(VenueCatalog.BinanceSpot, "BTCUSDT");
+        Assert.True(row!.IsVerified);
+
+        clock = row.ReceivedAt + VenueStore.CheckServedFor;
+        Assert.True(venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!.Verified, "seven days to the instant is still served");
+
+        clock = row.ReceivedAt + VenueStore.CheckServedFor + TimeSpan.FromSeconds(1);
+        var lapsed = venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!;
+        Assert.False(lapsed.Verified, "a check older than seven days still verified the instrument");
+        Assert.Null(lapsed.Check);
+        Assert.Contains("NOT confirmed", lapsed.Source, StringComparison.Ordinal);
+        Assert.False(venues.Catalogue().Venues.Single(v => v.Id == VenueCatalog.BinanceSpot).Instruments.Single().Verified);
+        Assert.False(Core.Strategy.VenueCostModel.For(Bars(), venues, 10_000m).Ok);
+
+        var said = venues.Verification(VenueCatalog.BinanceSpot, "BTCUSDT");
+        log.WriteLine(said.Says);
+        Assert.False(said.Verified);
+        Assert.Equal("not verified: the last check, on 2026-10-03 04:48 UTC, is more than seven days old", said.Says);
+        Assert.Equal(row, new InstrumentCheckStore(db).ById(row.Id));
+    }
+
+    /// <summary>
+    /// (e) THE RUNNING PAPER CONNECTOR OFFERS AN INSTRUMENT VERIFIED AFTER IT STARTED — and stops offering it
+    /// when the check lapses, with no restart either way. Before the check it offers nothing and REFUSES an
+    /// order outright; after it, it offers BTCUSDT on the venue's grid and sizes an order DOWN to the
+    /// venue's step; eight days on it offers nothing again. And the hosts' own wiring,
+    /// <c>Platforms.Connectors.Create</c>, hands the served read to the connector it builds. Red on base,
+    /// where the connector read its catalogue once, when it was built.
+    /// </summary>
+    [Fact]
+    public async Task The_running_paper_connector_offers_an_instrument_verified_after_it_started()
+    {
+        using var db = TestEnv.NewDb();
+        var clock = T0;
+        var venues = new VenueStore(db, () => clock);
+        venues.Sync(Shipped());
+
+        await using var paper = new Connectors.Paper.PaperConnector(new Connectors.Paper.PaperConnectorOptions
+        {
+            Source = new Connectors.Paper.MemoryBarSource(),
+            Clock = () => T0,
+            BookFile = Path.Combine(TestEnv.Home, $"paper-{Guid.NewGuid():n}.db"),
+            CatalogueNow = () => venues.Catalogue()
+        });
+        await paper.ConnectAsync();
+
+        Assert.Empty(await paper.GetInstrumentsAsync());
+        var refused = await Assert.ThrowsAsync<ConnectorSdk.ConnectorRejectedException>(
+            () => paper.PlaceOrderAsync(Market("before-check")));
+        log.WriteLine(refused.Message);
+
+        using var venue = new FakeArchive();
+        venue.PublishAtExactly(DefinitionPath, ExchangeInfo());
+        Assert.True((await Verifier(db, Shape(venue)).CheckAsync(VenueCatalog.BinanceSpot, "BTCUSDT"))!.IsVerified);
+
+        var offered = Assert.Single(await paper.GetInstrumentsAsync());
+        Assert.Equal(("BTCUSDT", 0.01m), (offered.Symbol, offered.TickSize));
+        var placed = await paper.PlaceOrderAsync(Market("after-check"));
+        Assert.Equal(0.12345m, placed.Quantity);
+
+        await using var built = Platforms.Connectors.Create(Platforms.Connectors.Paper, new Platforms.ConnectorChoice
+        {
+            PaperInstruments = () => venues.Catalogue()
+        });
+        Assert.Equal("BTCUSDT", Assert.Single(await built.GetInstrumentsAsync()).Symbol);
+
+        clock = T0.AddDays(8);
+        Assert.Empty(await paper.GetInstrumentsAsync());
+        Assert.Empty(await built.GetInstrumentsAsync());
+    }
+
     // ---- the verifier ----------------------------------------------------------------------------------
 
     /// <summary>
@@ -311,6 +462,21 @@ public class InstrumentCheckTests(ITestOutputHelper log)
     }
 
     // ---- helpers -------------------------------------------------------------------------------------
+
+    /// <summary>Dataset bars of BTCUSDT on Binance spot, as the collector records them — all the cost model reads of a dataset.</summary>
+    static DatasetRecord Bars() =>
+        new(7, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            "/not/read/here.csv", "aa11", 1000, T0.AddDays(-60), T0.AddDays(-30), 0, [], false, 0, 0, 0, T0,
+            DatasetState.ACCEPTED, null, [])
+        {
+            VenueId = VenueCatalog.BinanceSpot,
+            InstrumentSymbol = "BTCUSDT"
+        };
+
+    /// <summary>A market buy of 0.123456 BTCUSDT on the paper account, which the venue's step rounds DOWN to 0.12345.</summary>
+    static ConnectorSdk.PlaceOrderCommand Market(string clientOrderId) =>
+        new(clientOrderId, Connectors.Paper.PaperConnector.TheAccount, "BTCUSDT", ConnectorSdk.OrderSide.Buy,
+            ConnectorSdk.OrderType.Market, 0.123456m, null, null, ConnectorSdk.TimeInForce.Day, null);
 
     /// <summary>The path and query the verifier asks a loopback listener for BTCUSDT.</summary>
     const string DefinitionPath = "/api/v3/exchangeInfo?symbol=BTCUSDT";

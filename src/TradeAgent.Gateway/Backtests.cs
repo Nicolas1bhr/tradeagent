@@ -67,7 +67,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 {
     readonly StrategyStore _strategies = new(db);
     readonly CampaignStore _campaigns = new(db);
-    readonly VenueStore _venues = new(db);
+    readonly VenueStore _venues = new(db, now);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>Roles with a run in flight right now. See the type's summary.</summary>

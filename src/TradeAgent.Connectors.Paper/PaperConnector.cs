@@ -39,10 +39,21 @@ public sealed record PaperConnectorOptions
     public string? BookFile { get; init; }
 
     /// <summary>
-    /// The venue catalogue to take instruments from, or null for this installation's own
-    /// (<c>VenueCatalog.Read()</c>: the built-ins plus <c>venues.json</c>).
+    /// A FIXED venue catalogue to take instruments from — for a caller that holds one, which is a test —
+    /// or null. Ignored when <see cref="CatalogueNow"/> is set; with neither, the connector reads
+    /// <c>VenueCatalog.Read()</c> (the built-ins plus <c>venues.json</c>) once, when it is built.
     /// </summary>
     public VenueCatalogRead? Catalogue { get; init; }
+
+    /// <summary>
+    /// THE CATALOGUE AS IT STANDS, READ AT EVERY USE — what both hosts hand over through
+    /// <c>Platforms.Connectors</c>: the app's SERVED instruments, the recorded catalogue overlaid by the
+    /// latest successful instrument check of seven days or less (<c>VenueStore.Catalogue</c>,
+    /// <c>U-venue-verify</c>). A function rather than a value because a check that succeeds — or lapses —
+    /// while the connector is running has to reach the next order without a restart; a read taken when the
+    /// connector was built would go on offering what the venue said that morning.
+    /// </summary>
+    public Func<VenueCatalogRead>? CatalogueNow { get; init; }
 }
 
 /// <summary>
@@ -90,7 +101,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
 
     readonly PaperConnectorOptions _opt;
     readonly IPaperBarSource _source;
-    readonly VenueCatalogRead _catalogue;
+    readonly Func<VenueCatalogRead> _catalogue;
     readonly SemaphoreSlim _settling = new(1, 1);
     PaperBook? _book;
 
@@ -98,7 +109,15 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     {
         _opt = options ?? new PaperConnectorOptions();
         _source = _opt.Source;
-        _catalogue = _opt.Catalogue ?? VenueCatalog.Read();
+
+        // THE HOST'S READ AT EVERY USE, when there is one. Otherwise one fixed catalogue: the caller's, or
+        // this installation's file read now — the reading a connector built on its own has always had.
+        if (_opt.CatalogueNow is { } now) _catalogue = now;
+        else
+        {
+            var fixedRead = _opt.Catalogue ?? VenueCatalog.Read();
+            _catalogue = () => fixedRead;
+        }
     }
 
     public string Id => ConnectorId;
@@ -198,7 +217,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
 
     IReadOnlyList<InstrumentInfo> Instruments =>
     [
-        .. _catalogue.Venues
+        .. _catalogue().Venues
             .Where(v => !string.Equals(v.Id, VenueCatalog.Simulator, StringComparison.Ordinal))
             .SelectMany(v => v.Instruments.Where(i => i.Verified)
                 // TickValue is the tick and ContractSize is ONE, because these are spot rows: a unit
@@ -209,7 +228,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     ];
 
     VenueInstrumentEntry? Row(string symbol) =>
-        _catalogue.Venues
+        _catalogue().Venues
             .Where(v => !string.Equals(v.Id, VenueCatalog.Simulator, StringComparison.Ordinal))
             .SelectMany(v => v.Instruments)
             .FirstOrDefault(i => i.Verified && string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase));
