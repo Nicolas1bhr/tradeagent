@@ -18,6 +18,12 @@ namespace TradeAgent.Core.Strategy;
 /// indicators sorted by name, conditions in prefix form where precedence cannot be misread, numbers
 /// with their trailing zeros gone.</para>
 ///
+/// <para><b>Every number here names its culture</b> (<c>U-invariant-traces</c>): a decimal through
+/// <see cref="StrategyParser.Number"/>, a whole number, a wall clock and a duration with
+/// <see cref="CultureInfo.InvariantCulture"/>. This text is hashed into an id compared against ids other
+/// machines wrote, and a number spelled in the machine's culture would make the id a fact about the
+/// machine.</para>
+///
 /// <para><b>Every name here is written out, never taken from an enum.</b> `IndicatorKind.Sma`
 /// serialises as `sma` because this file says so, not because that is what `ToString()` returns: a
 /// rename in `StrategyAst.cs` would otherwise re-identify every program in every installation, and
@@ -78,12 +84,12 @@ public static class StrategyCanonical
         text.Append("size ").Append(Size(p.Sizing)).Append('\n');
         text.Append("stop ").Append(Stop(p.Stop)).Append('\n');
         text.Append("target ").Append(Target(p.Target)).Append('\n');
-        text.Append("hold ").Append(p.MaxHoldBars is { } bars ? bars.ToString() : "none").Append('\n');
+        text.Append("hold ").Append(p.MaxHoldBars is { } bars ? bars.ToString(CultureInfo.InvariantCulture) : "none").Append('\n');
 
         // DERIVED, AND IN HERE ANYWAY. The warm-up is a function of the declarations above, so it adds
         // nothing a reader could not work out — but it is part of what the FROZEN program states, and
         // hashing it means two builds that disagree about how warm is warm enough cannot share an id.
-        text.Append("warmup ").Append(p.WarmUpBars).Append('\n');
+        text.Append("warmup ").Append(p.WarmUpBars.ToString(CultureInfo.InvariantCulture)).Append('\n');
 
         foreach (var rule in p.Rules)
             text.Append(rule.Kind == RuleKind.Exit ? "exit " : "entry ").Append(Condition(rule.Condition)).Append('\n');
@@ -123,17 +129,21 @@ public static class StrategyCanonical
         return string.Join(",", names);
     }
 
-    static string Call(IndicatorDecl i) => i.Kind switch
+    static string Call(IndicatorDecl i)
     {
-        IndicatorKind.Sma => $"sma({Series(i.Source)},{i.Period})",
-        IndicatorKind.Ema => $"ema({Series(i.Source)},{i.Period})",
-        IndicatorKind.Rsi => $"rsi({Series(i.Source)},{i.Period})",
-        IndicatorKind.Highest => $"highest({Series(i.Source)},{i.Period})",
-        IndicatorKind.Lowest => $"lowest({Series(i.Source)},{i.Period})",
-        IndicatorKind.Atr => $"atr({i.Period})",
-        IndicatorKind.OpeningRangeHigh => "opening_range_high()",
-        _ => "opening_range_low()"
-    };
+        var period = i.Period.ToString(CultureInfo.InvariantCulture);
+        return i.Kind switch
+        {
+            IndicatorKind.Sma => $"sma({Series(i.Source)},{period})",
+            IndicatorKind.Ema => $"ema({Series(i.Source)},{period})",
+            IndicatorKind.Rsi => $"rsi({Series(i.Source)},{period})",
+            IndicatorKind.Highest => $"highest({Series(i.Source)},{period})",
+            IndicatorKind.Lowest => $"lowest({Series(i.Source)},{period})",
+            IndicatorKind.Atr => $"atr({period})",
+            IndicatorKind.OpeningRangeHigh => "opening_range_high()",
+            _ => "opening_range_low()"
+        };
+    }
 
     static string Series(BarSeries s) => s switch
     {
@@ -155,7 +165,7 @@ public static class StrategyCanonical
     {
         StopKind.FixedPrice => $"fixed:{StrategyParser.Number(s.Value)}",
         StopKind.Percent => $"percent:{StrategyParser.Number(s.Value)}",
-        StopKind.EntryAtr => $"atr:{StrategyParser.Number(s.Value)}:{s.AtrPeriod}",
+        StopKind.EntryAtr => $"atr:{StrategyParser.Number(s.Value)}:{s.AtrPeriod.ToString(CultureInfo.InvariantCulture)}",
         _ => "none"
     };
 
@@ -175,8 +185,8 @@ public static class StrategyCanonical
     {
         NumberLiteral n => StrategyParser.Number(n.Value),
         BoolLiteral b => b.Value ? "true" : "false",
-        SeriesRef s => s.Back == 0 ? Series(s.Series) : $"{Series(s.Series)}[{s.Back}]",
-        IndicatorRef i => i.Back == 0 ? $"@{i.Name}" : $"@{i.Name}[{i.Back}]",
+        SeriesRef s => s.Back == 0 ? Series(s.Series) : $"{Series(s.Series)}[{s.Back.ToString(CultureInfo.InvariantCulture)}]",
+        IndicatorRef i => i.Back == 0 ? $"@{i.Name}" : $"@{i.Name}[{i.Back.ToString(CultureInfo.InvariantCulture)}]",
         UnaryExpr u => $"({(u.Op == UnaryOp.Not ? "not" : "neg")} {Condition(u.Operand)})",
         CrossExpr c => $"({(c.Direction == CrossDirection.Above ? "crosses_above" : "crosses_below")} " +
                        $"{Condition(c.Left)} {Condition(c.Right)})",

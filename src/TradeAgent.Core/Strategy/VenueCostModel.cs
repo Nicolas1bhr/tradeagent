@@ -430,10 +430,11 @@ public sealed record VenueFriction
     public string Sha256 => Sha256Hex.Of(Canonical);
 
     /// <summary>Which model and which venue, e.g. <c>venue-cost-model-v1/binance-spot</c>.</summary>
-    public string Id => $"venue-cost-model-v{VenueCostModel.Version}/{VenueId}";
+    public string Id => string.Create(CultureInfo.InvariantCulture, $"venue-cost-model-v{VenueCostModel.Version}/{VenueId}");
 
     /// <summary>The model as a sentence names it: <c>TradeAgent's venue cost model v1 for binance-spot (sha256 …)</c>.</summary>
-    public string Named => $"TradeAgent's venue cost model v{VenueCostModel.Version} for {VenueId} (sha256 {Sha256})";
+    public string Named =>
+        string.Create(CultureInfo.InvariantCulture, $"TradeAgent's venue cost model v{VenueCostModel.Version} for {VenueId} (sha256 {Sha256})");
 
     /// <summary>What the fee is, in words: whose published rate, and the day it was read.</summary>
     public string FeeWords =>

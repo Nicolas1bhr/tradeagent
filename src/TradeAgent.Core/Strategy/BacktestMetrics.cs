@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace TradeAgent.Core.Strategy;
 
 /// <summary>
@@ -189,14 +191,14 @@ public sealed record BacktestMetrics
                 + "which covers closed trades only; it is in the equity the drawdown is measured on"));
 
         if (halted is not null)
-            missing.Add(new MetricGap("the end of the window",
+            missing.Add(new MetricGap("the end of the window", string.Create(CultureInfo.InvariantCulture,
                 $"the run halted at bar {haltedAt}: {halted}. Every figure here covers the bars "
-                + "before the halt and nothing after it"));
+                + $"before the halt and nothing after it")));
 
         if (missingMinutes > 0)
-            missing.Add(new MetricGap("coverage",
+            missing.Add(new MetricGap("coverage", string.Create(CultureInfo.InvariantCulture,
                 $"{missingMinutes} minute(s) inside the window have no bar, in {gaps} run(s). Nothing "
-                + "was filled in for them, so the strategy was not evaluated there at all"));
+                + $"was filled in for them, so the strategy was not evaluated there at all")));
 
         foreach (var why in reasons)
             missing.Add(new MetricGap("a signal that was not acted on", why));

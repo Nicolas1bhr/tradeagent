@@ -1,3 +1,4 @@
+using System.Globalization;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
@@ -715,7 +716,9 @@ public static class RefereeFeedback
     {
         ArgumentNullException.ThrowIfNull(promotion);
 
-        return $"""
+        // INVARIANT, because the publication's id is this text's hash: a campaign number written in the
+        // machine's culture would make one judgement two artifacts on two machines.
+        return string.Create(CultureInfo.InvariantCulture, $"""
             # TradeAgent's referee has judged version {promotion.VersionId}
 
             The app ran this version over the months campaign {promotion.CampaignId} holds back from
@@ -734,7 +737,7 @@ public static class RefereeFeedback
             judgements and they are counted across every renewal of it, so renewing buys attempts and
             never more of these. What comes back is this same pair — the verdict and the reason class —
             and never a figure.
-            """;
+            """);
     }
 
     /// <summary>

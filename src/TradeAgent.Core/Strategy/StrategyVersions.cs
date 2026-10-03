@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace TradeAgent.Core.Strategy;
 
 /// <summary>
@@ -48,6 +50,6 @@ public static class StrategyVersions
     /// it is an input to a hash that is compared against figures written by earlier builds, so its
     /// spelling is part of the contract and not a formatting choice.
     /// </summary>
-    public static string Manifest =>
-        $"language={LanguageVersion};indicators={IndicatorSemanticsVersion};calendar={CalendarVersion}";
+    public static string Manifest => string.Create(CultureInfo.InvariantCulture,
+        $"language={LanguageVersion};indicators={IndicatorSemanticsVersion};calendar={CalendarVersion}");
 }

@@ -368,4 +368,185 @@ public class InvariantTraceTests
         Assert.Equal("a rule divided 144 by zero, which has no value to compare or size against",
             invariant.Row.FaultReason);
     }
+
+    // ---- (d): every id and canonical text ------------------------------------------------------------
+
+    /// <summary>
+    /// A PROGRAM THAT PUTS EVERY WHOLE NUMBER THE CANONICAL FORM WRITES INTO ITS ID — wall clocks in an
+    /// opening range, two entry windows and a session exit, every indicator's period, an ATR stop's period,
+    /// history references on a series and on an indicator, a maximum hold, and the warm-up they add up to.
+    /// </summary>
+    const string EveryClockAndPeriod = """
+        instrument BTCUSDT
+        timezone America/New_York
+        opening_range 09:30-10:00
+        entry_window 10:05-11:30
+        entry_window 13:00-15:45
+        session_exit 15:55
+        weekdays mon, wed, fri
+        const k = 1.250
+        indicator a = sma(close, 12)
+        indicator b = ema(high, 26)
+        indicator c = rsi(close, 14)
+        indicator d = highest(high, 20)
+        indicator e = lowest(low, 20)
+        indicator f = atr(14)
+        indicator g = opening_range_high()
+        size risk_fraction 0.0250
+        stop atr 2.50 14
+        target percent 1.50
+        max_hold_bars 120
+        exit when close[3] < a[2] * 0.990 or c > 70 or b < 1
+        entry when crosses_above(close, g) and d - e > f * k and volume[1] > 0
+        """;
+
+    /// <summary>A program on declared hourly bars with all three execution bounds, which the canonical form writes in seconds.</summary>
+    const string DeclaredBarsAndBounds = """
+        instrument ETHUSDT
+        bars 1h
+        timeframe 1h
+        data_freshness 90m
+        max_decision_age 120s
+        indicator m = sma(close, 24)
+        size capital_fraction 0.50
+        target fixed 2500.00
+        exit when close < m
+        entry when close > m[1]
+        """;
+
+    /// <summary>
+    /// A raw month as a source publishes it — open time and close time in milliseconds, five prices — with a
+    /// minute missing, for <see cref="KlineNormaliser.Normalise"/> to write as a dataset file.
+    /// </summary>
+    static string RawMonth()
+    {
+        var text = new StringBuilder();
+        foreach (var minute in (int[])[0, 1, 2, 4, 5])
+        {
+            var open = 1_767_571_200_000L + minute * 60_000L;   // 2026-01-05T00:00:00Z
+            text.Append(CultureInfo.InvariantCulture,
+                $"{open},102.67,102.82,102.17,102.6{minute},10.50,{open + 59_999}\n");
+        }
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// EVERY ID AND CANONICAL TEXT THIS PATH WRITES, labelled, in a fixed order, computed under whatever
+    /// culture the thread is in: three shipped programs and two more, each as its id, its canonical text and
+    /// its parameters; the manifest; the execution model and both venue cost texts with their hashes; a run's
+    /// window and id; a promotion's id, the interpreter build inside it, and the note the referee publishes
+    /// (the publication's id is that note's hash); and a dataset file written by the normaliser, with its sha.
+    /// </summary>
+    static List<(string What, string Text)> EveryIdAndCanonicalText()
+    {
+        var all = new List<(string, string)>();
+
+        var programs = DayOnePrograms.Names.Select(n => (n, DayOnePrograms.Text(n)))
+            .Append(("every clock and period", EveryClockAndPeriod))
+            .Append(("declared bars and bounds", DeclaredBarsAndBounds));
+        foreach (var (name, text) in programs)
+        {
+            var p = Program(text);
+            all.Add(($"{name}: version id", p.StrategyId));
+            all.Add(($"{name}: canonical text", p.Canonical));
+            all.Add(($"{name}: parameters", p.Parameters));
+        }
+
+        var version = Program(EveryClockAndPeriod).StrategyId;
+        all.Add(("manifest", StrategyVersions.Manifest));
+
+        var model = ExecutionModel.Declare(0.0010m, 0.00050m, 0.0010m, 25_000.00m).Model!;
+        all.Add(("execution model", model.Canonical));
+
+        using (var db = TestEnv.NewDb())
+        {
+            var venues = new VenueStore(db);
+            venues.Sync(new VenueCatalogRead(
+            [
+                new VenueEntry
+                {
+                    Id = VenueCatalog.BinanceSpot, DisplayName = VenueCatalog.BinanceSpot,
+                    CalendarKind = CalendarKind.Continuous, Source = "declared by this test", Verified = true,
+                    Instruments =
+                    [
+                        new VenueInstrumentEntry
+                        {
+                            Symbol = "BTCUSDT", TickSize = 0.010m, QuantityIncrement = 0.000010m,
+                            Source = "declared by this test", Verified = true
+                        }
+                    ]
+                }
+            ], null));
+            var bars = new DatasetRecord(7, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+                "/not/read/here.csv", "aa11", 1000, Start, Start.AddDays(30), 0, [], false, 0, 0, 0, Start,
+                DatasetState.ACCEPTED, null, []) { VenueId = VenueCatalog.BinanceSpot, InstrumentSymbol = "BTCUSDT" };
+
+            var judge = VenueCostModel.For(bars, venues, 25_000.00m);
+            Assert.True(judge.Ok, judge.Why);
+            all.Add(("venue cost model", judge.Model!.Canonical));
+            all.Add(("venue cost model sha256", judge.Model.Sha256));
+        }
+
+        var friction = VenueFriction.Of(VenueCatalog.BinanceSpot)!;
+        all.Add(("venue friction", friction.Canonical));
+        all.Add(("venue friction sha256", friction.Sha256));
+        all.Add(("venue friction id", friction.Id));
+
+        var request = new BacktestRequest(1_234_567, "abc123", model, Start, Start.AddDays(90));
+        var runId = request.RunIdFor(version);
+        all.Add(("run window", request.Window));
+        all.Add(("run id", runId));
+
+        all.Add(("interpreter build", StrategyStore.InterpreterBuild));
+        var promotionId = PromotionRow.IdOf(version, 1_234_567, "policy-sha", StrategyStore.InterpreterBuild,
+            7_654_321, "dataset-sha", model.Canonical, Referee.EvaluatorVersion, runId);
+        all.Add(("promotion id", promotionId));
+        all.Add(("the referee's note", RefereeFeedback.Text(new PromotionRow(promotionId, version, 1_234_567,
+            "policy-sha", StrategyStore.InterpreterBuild, 7_654_321, "dataset-sha", model.Canonical,
+            Referee.EvaluatorVersion, runId, PromotionVerdict.Refused, PromotionReason.NotProfitable, Start))));
+
+        var dir = Path.Combine(TestEnv.Home, "invariant-traces", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(dir);
+        var raw = Path.Combine(dir, "BTCUSDT-1m-2026-01.csv");
+        File.WriteAllText(raw, RawMonth());
+        var dataset = KlineNormaliser.Normalise([new RawArchiveFile("2026-01", raw)],
+            new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), Path.Combine(dir, "normalised.csv"));
+        all.Add(("dataset file", File.ReadAllText(dataset.Path)));
+        all.Add(("dataset sha256", dataset.Sha256));
+
+        return all;
+    }
+
+    /// <summary>
+    /// (d) NO ID OR CANONICAL TEXT MOVES UNDER ANOTHER CULTURE.
+    ///
+    /// <para>A version's id, a run's, a promotion's and a publication's, and a dataset's sha, are hashes of
+    /// texts with whole numbers and dates in them; the ledger and the referee compare them against figures
+    /// earlier builds wrote, on other machines. Every one is computed under the invariant culture and again
+    /// under nl-BE's and fr-BE's number formats and under a clock that writes <c>00.00.00</c>, and must be
+    /// the same text. The integers are named invariant where they are written (<c>U-invariant-traces</c>);
+    /// the decimals already went through <c>StrategyParser.Number</c>.</para>
+    ///
+    /// <para><b>RED on the base</b> at the dataset file: <see cref="KlineNormaliser"/> wrote each bar's time
+    /// through a pattern whose <c>:</c> means the culture's time separator, so the dotted clock wrote
+    /// <c>2026-01-05T00.00.00Z</c> — a different file, a different sha, a different dataset and therefore a
+    /// different run id for every run over it. Every other line held already, by the luck of positive whole
+    /// numbers having no separator to disagree about.</para>
+    /// </summary>
+    [Fact]
+    public void No_id_or_canonical_text_moves_under_another_culture()
+    {
+        var invariant = EveryIdAndCanonicalText();
+        Assert.Contains(invariant, x => x.What == "dataset file" && x.Text.Contains("2026-01-05T00:00:00Z,", StringComparison.Ordinal));
+
+        foreach (var (culture, clone) in Cultures.Belgian.Append(("a clock that writes 00.00.00", Cultures.DottedClock)))
+        {
+            var under = Cultures.Under(clone, EveryIdAndCanonicalText);
+            Assert.Equal(invariant.Count, under.Count);
+
+            for (var i = 0; i < invariant.Count; i++)
+                Assert.True(invariant[i] == under[i],
+                    $"under {culture}, the {invariant[i].What} is\n{under[i].Text}\nand under the invariant culture\n{invariant[i].Text}");
+        }
+    }
 }
