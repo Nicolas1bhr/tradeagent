@@ -300,10 +300,10 @@ public class InstrumentCheckTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (b) A FAILED CHECK IS A ROW AND LEAVES THE INSTRUMENT UNVERIFIED. Three ways a check fails — a host
-    /// answering 503, an answer that is not a definition, and no answer at all inside the leash — and each
-    /// is a <c>failed</c> row with its reason in words and no numbers, the body hashed where there was one.
-    /// The served row stays the shipped, unverified one.
+    /// (b) A FAILED CHECK IS A ROW AND LEAVES THE INSTRUMENT UNVERIFIED. Four ways a check fails — a host
+    /// answering 503, an answer that is not a definition, an answer past the 4 MB bound, and no answer at
+    /// all inside the leash — and each is a <c>failed</c> row with its reason in words and no numbers, the
+    /// body hashed where one was read. The served row stays the shipped, unverified one, and says why.
     /// </summary>
     [Fact]
     public async Task A_failed_check_is_a_row_and_leaves_the_instrument_unverified()
@@ -334,6 +334,16 @@ public class InstrumentCheckTests(ITestOutputHelper log)
             Assert.Null(row.TickSize);
         }
 
+        using (var huge = new FakeArchive())
+        {
+            huge.PublishAtExactly(DefinitionPath, new string(' ', InstrumentVerifier.MaxBodyBytes + 1));
+            var row = await Verifier(db, Shape(huge)).CheckAsync(VenueCatalog.BinanceSpot, "BTCUSDT");
+            log.WriteLine(row?.Note ?? "(no note)");
+            Assert.Equal(InstrumentCheckOutcome.Failed, row!.Outcome);
+            Assert.Null(row.BodySha256);
+            Assert.Contains("which is not an instrument definition", row.Note, StringComparison.Ordinal);
+        }
+
         using (var silent = new FakeArchive(answers: false))
         {
             var row = await Verifier(db, Shape(silent), timeout: TimeSpan.FromMilliseconds(300))
@@ -344,7 +354,7 @@ public class InstrumentCheckTests(ITestOutputHelper log)
             Assert.Contains("did not answer within", row.Note, StringComparison.Ordinal);
         }
 
-        Assert.Equal("3", Scalar(db, "SELECT COUNT(*) FROM instrument_check WHERE outcome='failed'"));
+        Assert.Equal("4", Scalar(db, "SELECT COUNT(*) FROM instrument_check WHERE outcome='failed'"));
         Assert.Empty(new InstrumentCheckStore(db).LatestVerified());
 
         var served = venues.Instrument(VenueCatalog.BinanceSpot, "BTCUSDT")!;
@@ -398,6 +408,70 @@ public class InstrumentCheckTests(ITestOutputHelper log)
         log.WriteLine(said);
         Assert.StartsWith("not verified: the last check, at 2026-10-03 04:48 UTC, was refused: the definition address ",
             said, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A REDIRECT IS NOT FOLLOWED. The built-in address answers 302 to another origin that serves a perfectly
+    /// good definition; following it would read one address and record another, which is the escape the origin
+    /// rule exists to close. The check is a failed row naming the redirect, and nothing reached the target.
+    /// </summary>
+    [Fact]
+    public async Task A_redirect_is_not_followed()
+    {
+        using var db = TestEnv.NewDb();
+        using var builtIn = new FakeArchive();
+        using var elsewhere = new FakeArchive();
+        elsewhere.PublishAtExactly(DefinitionPath, ExchangeInfo());
+        builtIn.RedirectTo = elsewhere.BaseUrl;
+
+        var row = await Verifier(db, Shape(builtIn)).CheckAsync(VenueCatalog.BinanceSpot, "BTCUSDT");
+
+        log.WriteLine(row?.Note ?? "(no note)");
+        Assert.Equal(InstrumentCheckOutcome.Failed, row!.Outcome);
+        Assert.Equal(302, row.HttpStatus);
+        Assert.Equal(builtIn.BaseUrl, row.Origin);
+        Assert.Contains("a redirect, which TradeAgent does not follow", row.Note, StringComparison.Ordinal);
+        Assert.DoesNotContain(elsewhere.Marks, m => m.Contains("got GET", StringComparison.Ordinal));
+        Assert.Empty(new InstrumentCheckStore(db).LatestVerified());
+    }
+
+    /// <summary>
+    /// A PAIR THE CATALOGUE HOLDS NO ROW FOR IS SERVED FROM ITS CHECK — on a venue the catalogue holds, for
+    /// seven days, and nowhere else. The owner who picks ETHUSDT gets it verified by the app, with no file to
+    /// write; a check naming a venue the catalogue does not hold serves nothing, and a lapsed one is gone.
+    /// </summary>
+    [Fact]
+    public async Task A_pair_the_catalogue_holds_no_row_for_is_served_from_its_check()
+    {
+        using var db = TestEnv.NewDb();
+        var clock = T0;
+        var venues = new VenueStore(db, () => clock);
+        venues.Sync(Shipped());
+        Assert.Null(venues.Instrument(VenueCatalog.BinanceSpot, "ETHUSDT"));
+
+        using var venue = new FakeArchive();
+        venue.PublishAtExactly("/api/v3/exchangeInfo?symbol=ETHUSDT", ExchangeInfo(symbol: "ETHUSDT", step: "0.00010000"));
+        var row = await Verifier(db, Shape(venue)).CheckAsync(VenueCatalog.BinanceSpot, "ETHUSDT");
+        Assert.True(row!.IsVerified, row.Note);
+
+        var served = venues.Instrument(VenueCatalog.BinanceSpot, "ETHUSDT")!;
+        Assert.True(served.Verified);
+        Assert.Equal(0.0001m, served.QuantityIncrement);
+        Assert.Equal(row, served.Check);
+        Assert.Null(served.CatalogueQuantityIncrement);
+        Assert.Contains(venues.Catalogue().Venues.Single(v => v.Id == VenueCatalog.BinanceSpot).Instruments,
+            i => i.Symbol == "ETHUSDT" && i.Verified);
+
+        new InstrumentCheckStore(db).Append(Attempt(InstrumentCheckOutcome.Verified) with
+        {
+            VenueId = "no-such-venue", TickSize = 1m, QuantityIncrement = 1m
+        });
+        Assert.DoesNotContain(venues.Instruments(), i => i.VenueId == "no-such-venue");
+
+        clock = T0.AddDays(8);
+        Assert.Null(venues.Instrument(VenueCatalog.BinanceSpot, "ETHUSDT"));
+        Assert.Equal("not verified: the last check, on 2026-10-03 04:48 UTC, is more than seven days old",
+            venues.Verification(VenueCatalog.BinanceSpot, "ETHUSDT").Says);
     }
 
     /// <summary>
