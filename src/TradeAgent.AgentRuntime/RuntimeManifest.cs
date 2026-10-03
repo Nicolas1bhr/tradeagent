@@ -632,9 +632,14 @@ public static class RuntimeCatalog
             // ("error: unexpected argument '-s' found", exit 2). UnattendedArgs above passes
             // --dangerously-bypass-approvals-and-sandbox rather than -s, and that one IS on both.
             //
-            // gpt-5.6-sol as the default because it is the mid-priced current model on the
-            // catalogue this build ships (4.00 in / 20.00 out per million against astra's
-            // 10.00/50.00), so the day's ceiling buys roughly two and a half times the work.
+            // THE DEFAULT PREDATES THE GPT-6 SOL AND LUNA ROWS. gpt-5.6-sol was chosen on 2026-09-07 as
+            // the mid-priced current model on the catalogue this build then shipped (4.00 in / 20.00 out
+            // per million against gpt-6-astra's 10.00/50.00), so the day's ceiling bought about two and
+            // a half times astra's work. As ListPrices reads OpenAI's page on 2026-10-02 it is no longer
+            // the middle: gpt-6.1-sol and gpt-6-sol list at 2.00/10.00, half its figure, and gpt-6-luna
+            // at 0.10/0.50. And its own 4.00/20.00 is promotional — the only figure the page prints for
+            // it, standing at least through 2026-11-21 (its row's comment in ListPrices). Which model a
+            // seat defaults to is the owner's decision, not this comment's, so DefaultModel is unchanged.
             ModelArgs = ["-m", "{model}"],
             DefaultModel = "gpt-5.6-sol",
             InteractiveArgs = [],
@@ -675,10 +680,16 @@ public static class RuntimeCatalog
             BaseUrl = "https://api.openai.com/v1",
             CompletionsPath = "chat/completions",
             MaxOutputParam = "max_completion_tokens",
-            // The cheapest current model on the catalogue this build ships (0.20 in / 1.20 out per
-            // million against sol's 4.00/20.00), because a WORKER is the case the harness exists for:
-            // "can run the cheapest capable model per task" (docs/COUNCIL.md). The owner picks another
-            // on the Safety page; the reservation is priced at whichever is in force.
+            // THE DEFAULT PREDATES THE GPT-6 SOL AND LUNA ROWS. gpt-5.6-luna was chosen on 2026-09-13 as
+            // the cheapest current model on the catalogue this build then shipped (0.20 in / 1.20 out per
+            // million against gpt-5.6-sol's 4.00/20.00), because a WORKER is the case the harness exists
+            // for: "can run the cheapest capable model per task" (docs/COUNCIL.md). As ListPrices reads
+            // OpenAI's page on 2026-10-02 it is no longer the cheapest current model: gpt-6-luna lists at
+            // 0.10/0.50. That a GPT-6 model is a CAPABLE worker here is not claimed — tool calls on the
+            // harness for the GPT-6 models are U-harness-responses' work, not yet built
+            // (docs/ORGANISATION.md § 15). Which model a seat defaults to is the owner's decision, so
+            // DefaultModel is unchanged. The owner picks another on the Safety page; the reservation is
+            // priced at whichever is in force.
             DefaultModel = "gpt-5.6-luna",
             SelfContained = true,
             Verified = false,
