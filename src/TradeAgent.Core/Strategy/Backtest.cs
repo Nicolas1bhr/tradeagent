@@ -309,16 +309,28 @@ public sealed record BacktestRequest(
 /// cannot fire a second exit. That ordering is what makes the maximum holding time a promise: if the
 /// bar that reaches the limit is one the evaluator cannot evaluate — warming up, a value undefined,
 /// an interpreter fault — the position still closes.</para>
+///
+/// <para><b>"A bar" above is two bars for a program that declares one</b> (`bars 1h`,
+/// <see cref="StrategyProgram.Bars"/>). Decisions are taken at the DECLARED bar's close and the maximum
+/// hold counts declared bars; the fill of a decision, the stop, the target and the conservative ordering
+/// stay on the MINUTE — the next minute's open, each minute's own range. An hourly bar whose range
+/// touched both levels is not a stop if a minute inside it reached the target first and alone: the
+/// minutes carry that ordering, and an hour's range would throw it away. <see cref="Run"/> has the two
+/// clocks.</para>
 /// </summary>
 public static class Backtest
 {
     /// <summary>
-    /// THE MOST BARS ONE RUN TRACES BEFORE IT HALTS, AND SAYS SO.
+    /// THE MOST BARS ONE RUN EVALUATES BEFORE IT HALTS, AND SAYS SO — counted in the program's DECLARED
+    /// bars, because those are what put a line in the trace.
     ///
-    /// <para>Every bar puts a line in the trace, and the trace is what every figure is computed from,
-    /// so a run holds one event per bar in memory while it goes. 200,000 one-minute bars is about
-    /// 139 days and tens of megabytes of trace, which is a bound a low-spec laptop can carry; a full
-    /// twelve months is four windows of a quarter each, and the halt's reason says so.</para>
+    /// <para>Every evaluated bar puts a line in the trace, and the trace is what every figure is computed
+    /// from, so a run holds one event per evaluated bar in memory while it goes. 200,000 one-minute bars
+    /// is about 139 days and tens of megabytes of trace, which is a bound a low-spec laptop can carry; a
+    /// full twelve months of a minute program is four windows of a quarter each, and the halt's reason
+    /// says so. A program on hourly bars evaluates 8,760 of them in a year, so a year is one run: the
+    /// minutes between its closes are stepped for fills and protection and put no line in the trace
+    /// unless something filled on them.</para>
     ///
     /// <para>It HALTS rather than truncating, exactly as `DatasetReader`'s own cap REFUSES rather than
     /// truncating: a result quietly computed over the first part of a window is a result about a period
@@ -328,16 +340,34 @@ public static class Backtest
     public const int MaxTracedBars = 200_000;
 
     /// <summary>
-    /// One run over bars in ascending order. Everything it answers is computed here from those bars;
-    /// nothing is read from a clock, a file, the network or a random number, so the same inputs give
-    /// the same trace on every machine and in a year.
+    /// One run over CLOSED ONE-MINUTE BARS in ascending order, evaluated on the bars the program declares
+    /// (<see cref="StrategyProgram.Bars"/>). Everything it answers is computed here from those bars;
+    /// nothing is read from a clock, a file, the network or a random number, so the same inputs give the
+    /// same trace on every machine and in a year.
+    ///
+    /// <para><b>Two clocks.</b> The MINUTE clock is the market's: on every minute a signal waiting from
+    /// the last decision fills at that minute's open, and the stop and the target fire on that minute's
+    /// range — the rules of the type's summary, applied minute by minute exactly as they always were. The
+    /// DECLARED clock is the program's: only when one of its bars has closed (<see cref="BarResampler"/>)
+    /// is the maximum hold taken at that bar's close and the evaluator asked, on that bar — so its
+    /// indicators, lookback, history and `max_hold_bars` count declared bars, and the trace has one line
+    /// per evaluated bar plus a line for every fill, exit and refusal, never one per minute. A program that
+    /// declares no `bars` is the case where the two clocks are one: its declared bar IS the minute, and
+    /// the loop below is the loop this build has always had, line for line in its trace.</para>
+    ///
+    /// <para><b>The declared bar is the program's and never the caller's.</b> There is no parameter for
+    /// it: <see cref="Over"/>, the referee behind it and every test run a program on the bar it declared,
+    /// because a program judged on any other bar is a different strategy wearing its id.</para>
+    ///
+    /// <para><b>A run over history that ends inside a declared bar closes it, as a partial bar</b>: its
+    /// remaining minutes happened and the data does not have them, which is what a missing minute is. A
+    /// signal from it has no open to fill at, and says so.</para>
     /// </summary>
     public static BacktestResult Run(
         StrategyProgram program,
         BacktestRequest request,
         IEnumerable<KlineBar> bars,
         EvaluationLimits? limits = null,
-        TimeSpan? barInterval = null,
         CancellationToken stop = default)
     {
         ArgumentNullException.ThrowIfNull(program);
@@ -345,9 +375,15 @@ public static class Backtest
         ArgumentNullException.ThrowIfNull(bars);
 
         var model = request.Model;
-        var state = EvaluationState.Start(program, limits, barInterval);
+        var state = EvaluationState.Start(program, limits);
         var trace = new List<BacktestEvent>();
         var trades = new List<BacktestTrade>();
+
+        // NULL FOR A PROGRAM ON ONE-MINUTE BARS: the minute is its declared bar, handed to the evaluator
+        // as it came, and the evaluator itself refuses a minute out of order or off its grid — after that
+        // minute's fills and protection, exactly as it always did. A declared bar longer than a minute is
+        // built here, and the resampler makes the same refusals one level down, before anything is applied.
+        var resampler = program.Bars == StrategyBars.OneMinute ? null : new BarResampler(state.Grid);
 
         var cash = model.InitialCapital;
         var position = 0m;
@@ -360,47 +396,112 @@ public static class Backtest
 
         StrategyIntent? pending = null;
         var pendingQuantity = 0m;
-        var ordinal = 0L;
         string? fault = null;
 
-        foreach (var bar in bars)
+        // THE DECLARED BAR'S PLACE IN THE RUN, 1-based: every event of one declared bar shares it — its
+        // fills, its exits and its close. `evaluated` is how many declared bars have closed and been asked.
+        var ordinal = 0L;
+        var evaluated = 0L;
+
+        // THE DECLARED BAR STILL FORMING: whether the position was open at any point in it, and the last
+        // minute it has had, which is the minute its maximum hold is taken on.
+        var exposed = false;
+        KlineBar? lastMinute = null;
+
+        foreach (var minute in bars)
         {
-            ordinal++;
+            ordinal = evaluated + 1;
 
             if (stop.IsCancellationRequested)
             {
-                fault = $"the run was stopped after {ordinal - 1} bars, before the bar at {bar.OpenTime:O}";
-                trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault));
+                fault = $"the run was stopped after {evaluated} bars, before the bar at {minute.OpenTime:O}";
+                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
                 break;
             }
 
-            if (ordinal > MaxTracedBars)
+            if (resampler is not null)
             {
-                fault = $"this window holds more than the {MaxTracedBars} bars one run may trace " +
-                        $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
-                        $"the bar before {bar.OpenTime:O}. Ask for a shorter window with --from and --to; " +
-                        "a year is four runs of a quarter each.";
-                trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault));
+                if (resampler.Refusal(minute) is { } refused)
+                {
+                    fault = refused;
+                    trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                    break;
+                }
+
+                // A DECLARED BAR WHOSE LAST MINUTES THE DATA DOES NOT HAVE HAS CLOSED BY NOW — this minute
+                // is past its end — and it is decided BEFORE this minute is applied: a signal from its close
+                // fills at this minute's open, the first price after it.
+                if (resampler.CloseBefore(minute.OpenTime) is { } passed)
+                {
+                    if (!Decide(passed)) break;
+                    ordinal = evaluated + 1;
+                }
+            }
+
+            var opens = resampler is null || !resampler.Forming;
+
+            // A NEW DECLARED BAR OPENS ON THIS MINUTE, AND THE CAP COUNTS THE BARS EVALUATED.
+            if (opens && evaluated >= MaxTracedBars)
+            {
+                fault = resampler is null
+                    ? $"this window holds more than the {MaxTracedBars} bars one run may trace " +
+                      $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
+                      $"the bar before {minute.OpenTime:O}. Ask for a shorter window with --from and --to; " +
+                      "a year is four runs of a quarter each."
+                    : $"this window holds more than the {MaxTracedBars} bars of {state.Grid.Spelled} one run may " +
+                      $"evaluate, so the run halted at the bar before {minute.OpenTime:O}. Ask for a shorter " +
+                      "window with --from and --to.";
+                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
                 break;
             }
 
+            if (!OnMinute(minute, opens)) break;
+
+            var closed = resampler is null ? minute : resampler.Add(minute);
+            if (closed is { } bar && !Decide(bar)) break;
+        }
+
+        // THE DATA ENDED INSIDE A DECLARED BAR: it closes, as the partial bar it is. See the summary.
+        if (fault is null && resampler?.Flush() is { } last) Decide(last);
+
+        // AN INTENT THE RUN ENDED ON NEVER FILLED, and that is recorded rather than dropped: a
+        // strategy whose last signal had nowhere to execute took no trade there.
+        if (pending is { } waiting)
+            trace.Add(BacktestEvent.NoTrade(ordinal, waiting.Bar, pendingQuantity, waiting.ReferencePrice,
+                "the run's window ended before the next bar, so this signal had no open to fill at"));
+
+        var events = new BacktestTrace(trace);
+
+        return new BacktestResult(
+            request.RunIdFor(program.StrategyId), program.StrategyId, request, events, trades,
+            BacktestMetrics.Of(events), state.Counters,
+            fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault);
+
+        // THE MINUTE CLOCK: the signal waiting from the last decision fills, then protection fires, on this
+        // minute's own prices. False when the run halted on it.
+        bool OnMinute(KlineBar minute, bool opens)
+        {
             try
             {
-                var exposedAtOpen = position > 0m;
+                if (opens)
+                {
+                    exposed = position > 0m;
+                    lastMinute = null;
+                }
 
-                // 1. THE PENDING SIGNAL FILLS AT THIS BAR'S OPEN. It was decided at the previous
-                //    bar's close and this is the first price after that decision.
+                // 1. THE PENDING SIGNAL FILLS AT THIS MINUTE'S OPEN. It was decided at the previous
+                //    declared bar's close and this is the first price after that decision.
                 if (pending is { } intent)
                 {
                     if (intent.Kind == IntentKind.Enter)
                     {
-                        var price = model.Buy(bar.Open);
+                        var price = model.Buy(minute.Open);
                         var fee = model.Fee(pendingQuantity, price);
                         var cost = pendingQuantity * price + fee;
 
                         if (cost > cash)
                         {
-                            trace.Add(BacktestEvent.NoTrade(ordinal, bar.OpenTime, pendingQuantity, price,
+                            trace.Add(BacktestEvent.NoTrade(ordinal, minute.OpenTime, pendingQuantity, price,
                                 $"the declared capital cannot pay for this fill: {StrategyParser.Number(pendingQuantity)} " +
                                 $"at {StrategyParser.Number(price)} plus {StrategyParser.Number(fee)} in fees is " +
                                 $"{StrategyParser.Number(cost)}, and {StrategyParser.Number(cash)} is what is left"));
@@ -411,91 +512,39 @@ public static class Backtest
                             position = pendingQuantity;
                             entryPrice = price;
                             entryFees = fee;
-                            entryBar = bar.OpenTime;
+                            entryBar = minute.OpenTime;
                             entryOrdinal = ordinal;
                             stopPrice = intent.StopPrice;
                             targetPrice = intent.TargetPrice;
-                            trace.Add(BacktestEvent.Fill(ordinal, bar.OpenTime, position, price, fee, cash));
+                            trace.Add(BacktestEvent.Fill(ordinal, minute.OpenTime, position, price, fee, cash));
                         }
                     }
                     else if (position > 0m)
                     {
-                        Close(bar, model.Sell(bar.Open), Reason(intent.Cause));
+                        Close(minute, ordinal, model.Sell(minute.Open), Reason(intent.Cause));
                     }
 
                     pending = null;
                     pendingQuantity = 0m;
                 }
 
-                // 2. PROTECTION, ON THIS BAR'S OWN RANGE, BEFORE THE EVALUATOR IS ASKED ANYTHING.
+                // 2. PROTECTION, ON THIS MINUTE'S OWN RANGE, BEFORE THE EVALUATOR IS ASKED ANYTHING.
                 if (position > 0m)
                 {
-                    var held = ordinal - entryOrdinal;
-
-                    if (stopPrice is { } level && bar.Low <= level)
-                        // A BAR THAT OPENED THROUGH THE STOP FILLS AT THAT OPEN. A market that gapped
+                    if (stopPrice is { } level && minute.Low <= level)
+                        // A MINUTE THAT OPENED THROUGH THE STOP FILLS AT THAT OPEN. A market that gapped
                         // past a resting stop does not fill you at the stop.
-                        Close(bar, model.Sell(Math.Min(level, bar.Open)), ExitReason.Stop);
-                    else if (targetPrice is { } target && bar.High >= target)
-                        // The target exactly, even when the bar opened above it. That open is the
-                        // better price and taking it would be the flattering reading of a bar whose
+                        Close(minute, ordinal, model.Sell(Math.Min(level, minute.Open)), ExitReason.Stop);
+                    else if (targetPrice is { } target && minute.High >= target)
+                        // The target exactly, even when the minute opened above it. That open is the
+                        // better price and taking it would be the flattering reading of a minute whose
                         // intrabar ordering the data does not carry.
-                        Close(bar, model.Sell(target), ExitReason.Target);
-                    else if (program.MaxHoldBars is { } maximum && held >= maximum)
-                        Close(bar, model.Sell(bar.Close), ExitReason.MaxHoldBars);
+                        Close(minute, ordinal, model.Sell(target), ExitReason.Target);
                 }
 
-                // 3. THE EVENT. The account reading is what this backtest's own books say, at this
-                //    bar's close, after its fills and its protection.
-                var equity = cash + position * bar.Close;
-                var account = new AccountReading(
-                    cash, equity, position > 0m ? PositionSide.Long : PositionSide.Flat, position,
-                    position > 0m ? entryPrice : 0m,
-                    // NOTHING IS EVER PENDING AT AN EVENT IN A BACKTEST: an intent emitted at the
-                    // previous close has already filled or been refused at this bar's open.
-                    OrderPending: false,
-                    position > 0m ? (int)Math.Min(ordinal - entryOrdinal, int.MaxValue) : 0);
-
-                var missingBefore = state.MissingMinutes;
-                var outcome = StrategyEvaluator.Step(state, bar, account);
-                if (state.MissingMinutes > missingBefore)
-                    trace.Add(BacktestEvent.Gap(ordinal, bar.OpenTime, state.MissingMinutes - missingBefore));
-
-                trace.Add(BacktestEvent.Closed(ordinal, bar.OpenTime, outcome.Status.ToString(),
-                    equity, position, exposedAtOpen || position > 0m));
-
-                if (outcome.Status == EvaluationStatus.Faulted)
-                {
-                    fault = outcome.FaultReason;
-                    trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault ?? "a defined fault with no reason"));
-                    break;
-                }
-
-                if (outcome.Intent is not { } signal) continue;
-
-                trace.Add(BacktestEvent.Signal(ordinal, bar.OpenTime, signal.Kind.ToString(),
-                    signal.Quantity, signal.ReferencePrice, signal.Cause.ToString()));
-
-                if (signal.Kind == IntentKind.Exit)
-                {
-                    // An exit is not sized: it closes what is open, which is what the evaluator was
-                    // told is open.
-                    if (position > 0m) { pending = signal; pendingQuantity = position; }
-                    continue;
-                }
-
-                var sized = model.RoundDown(signal.Quantity);
-                if (sized <= 0m)
-                {
-                    trace.Add(BacktestEvent.NoTrade(ordinal, bar.OpenTime, signal.Quantity, signal.ReferencePrice,
-                        $"the declared size came to {StrategyParser.Number(signal.Quantity)}, which rounds down to " +
-                        $"nothing at the run's quantity increment of {StrategyParser.Number(model.QuantityIncrement)} " +
-                        "— declare a smaller increment, or more capital"));
-                    continue;
-                }
-
-                pending = signal;
-                pendingQuantity = sized;
+                exposed |= position > 0m;
+                lastMinute = minute;
+                return true;
             }
             catch (OverflowException)
             {
@@ -503,35 +552,101 @@ public static class Backtest
                 // declared capital can reach are bounded by nothing this end controls, and a crash
                 // would be the app's rather than the run's.
                 fault = $"the arithmetic of this run overflowed the largest number this build can hold, " +
-                        $"on the bar at {bar.OpenTime:O}";
-                trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault));
-                break;
+                        $"on the bar at {minute.OpenTime:O}";
+                trace.Add(BacktestEvent.Fault(ordinal, minute.OpenTime, fault));
+                return false;
             }
         }
 
-        // AN INTENT THE RUN ENDED ON NEVER FILLED, and that is recorded rather than dropped: a
-        // strategy whose last signal had nowhere to execute took no trade there.
-        if (pending is { } last)
-            trace.Add(BacktestEvent.NoTrade(ordinal, last.Bar, pendingQuantity, last.ReferencePrice,
-                "the run's window ended before the next bar, so this signal had no open to fill at"));
+        // THE DECLARED CLOCK: one of the program's bars has closed. The maximum hold is taken at its close,
+        // then the evaluator is asked, on that bar. False when the run halted on it.
+        bool Decide(KlineBar bar)
+        {
+            var barOrdinal = evaluated + 1;
 
-        var events = new BacktestTrace(trace);
+            try
+            {
+                // 3. THE MAXIMUM HOLD, AT THE CLOSE OF THE DECLARED BAR THAT REACHES IT — protection, and
+                //    before the evaluator is asked, so the account it reads is already flat.
+                if (position > 0m && program.MaxHoldBars is { } maximum && barOrdinal - entryOrdinal >= maximum)
+                    Close(lastMinute!, barOrdinal, model.Sell(bar.Close), ExitReason.MaxHoldBars);
 
-        return new BacktestResult(
-            request.RunIdFor(program.StrategyId), program.StrategyId, request, events, trades,
-            BacktestMetrics.Of(events), state.Counters,
-            fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault);
+                // 4. THE EVENT. The account reading is what this backtest's own books say, at this
+                //    bar's close, after its fills and its protection.
+                var equity = cash + position * bar.Close;
+                var account = new AccountReading(
+                    cash, equity, position > 0m ? PositionSide.Long : PositionSide.Flat, position,
+                    position > 0m ? entryPrice : 0m,
+                    // NOTHING IS EVER PENDING AT AN EVENT IN A BACKTEST: an intent emitted at the
+                    // previous close has already filled or been refused at the first minute after it.
+                    OrderPending: false,
+                    position > 0m ? (int)Math.Min(barOrdinal - entryOrdinal, int.MaxValue) : 0);
 
-        void Close(KlineBar bar, decimal price, ExitReason reason)
+                var missingBefore = state.MissingMinutes;
+                var outcome = StrategyEvaluator.Step(state, bar, account);
+                evaluated++;
+
+                if (state.MissingMinutes > missingBefore)
+                    trace.Add(BacktestEvent.Gap(barOrdinal, bar.OpenTime, state.MissingMinutes - missingBefore));
+
+                trace.Add(BacktestEvent.Closed(barOrdinal, bar.OpenTime, outcome.Status.ToString(),
+                    equity, position, exposed || position > 0m));
+
+                if (outcome.Status == EvaluationStatus.Faulted)
+                {
+                    fault = outcome.FaultReason;
+                    trace.Add(BacktestEvent.Fault(barOrdinal, bar.OpenTime, fault ?? "a defined fault with no reason"));
+                    return false;
+                }
+
+                if (outcome.Intent is not { } signal) return true;
+
+                trace.Add(BacktestEvent.Signal(barOrdinal, bar.OpenTime, signal.Kind.ToString(),
+                    signal.Quantity, signal.ReferencePrice, signal.Cause.ToString()));
+
+                if (signal.Kind == IntentKind.Exit)
+                {
+                    // An exit is not sized: it closes what is open, which is what the evaluator was
+                    // told is open.
+                    if (position > 0m) { pending = signal; pendingQuantity = position; }
+                    return true;
+                }
+
+                var sized = model.RoundDown(signal.Quantity);
+                if (sized <= 0m)
+                {
+                    trace.Add(BacktestEvent.NoTrade(barOrdinal, bar.OpenTime, signal.Quantity, signal.ReferencePrice,
+                        $"the declared size came to {StrategyParser.Number(signal.Quantity)}, which rounds down to " +
+                        $"nothing at the run's quantity increment of {StrategyParser.Number(model.QuantityIncrement)} " +
+                        "— declare a smaller increment, or more capital"));
+                    return true;
+                }
+
+                pending = signal;
+                pendingQuantity = sized;
+                return true;
+            }
+            catch (OverflowException)
+            {
+                fault = $"the arithmetic of this run overflowed the largest number this build can hold, " +
+                        $"on the bar at {bar.OpenTime:O}";
+                trace.Add(BacktestEvent.Fault(barOrdinal, bar.OpenTime, fault));
+                return false;
+            }
+        }
+
+        // A POSITION CLOSES on the minute it closed on, stamped with that minute and the declared bar it
+        // belongs to.
+        void Close(KlineBar minute, long at, decimal price, ExitReason reason)
         {
             var fee = model.Fee(position, price);
             cash += position * price - fee;
 
             trades.Add(new BacktestTrade(
-                trades.Count, entryBar, entryPrice, bar.OpenTime, price, position, reason,
+                trades.Count, entryBar, entryPrice, minute.OpenTime, price, position, reason,
                 entryFees + fee, (price - entryPrice) * position));
 
-            trace.Add(BacktestEvent.Exit(ordinal, bar.OpenTime, position, price, entryFees + fee,
+            trace.Add(BacktestEvent.Exit(at, minute.OpenTime, position, price, entryFees + fee,
                 (price - entryPrice) * position, cash, reason.ToString()));
 
             position = 0m;
@@ -562,6 +677,11 @@ public static class Backtest
     /// So a rejection discovered next month can be traced to every run that fed on those bytes —
     /// <c>StrategyStore.RunsOfDataset</c> — instead of leaving results attached to a dataset id whose
     /// contents nobody can identify any more.</para>
+    ///
+    /// <para><b>And it runs the program on the bar the program declares.</b> The dataset serves closed
+    /// minutes and <see cref="Run"/> reads <see cref="StrategyProgram.Bars"/> off the program it was
+    /// given, so a `trade backtest` and the referee's holdout run — both of which come through here —
+    /// judge an hourly program on hours, and no caller can hand it any other bar.</para>
     /// </summary>
     public static BacktestOpened Over(
         Db.DatasetStore datasets,
@@ -590,7 +710,7 @@ public static class Backtest
 
         try
         {
-            return BacktestOpened.Yes(Run(program, request, feed.Bars(from, to), limits, null, stop));
+            return BacktestOpened.Yes(Run(program, request, feed.Bars(from, to), limits, stop));
         }
         catch (IOException ex)
         {
