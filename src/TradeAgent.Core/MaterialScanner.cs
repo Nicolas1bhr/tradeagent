@@ -17,17 +17,23 @@ namespace TradeAgent.Core;
 /// only what changed, a bounded number per pass.
 /// </summary>
 /// <param name="noAgentSince">
-/// Answers "was no agent process alive at any point since this instant?". Only when it says yes is
-/// a file in the inbox recorded as <see cref="MaterialOrigin.Inbox"/> — the one origin that claims
+/// Answers "was no agent process alive at any point since this mark?". Only when it says yes is a
+/// file in the inbox recorded as <see cref="MaterialOrigin.Inbox"/> — the one origin that claims
 /// something a directory listing cannot show. Defaults to the process-wide
-/// <see cref="AgentPresence.Shared"/>; tests pass their own so nothing races through shared state.
+/// <see cref="AgentPresence.Shared"/>; tests pass their own so nothing races through shared state. A
+/// register's own <see cref="AgentPresence.NoneSince(PresenceMark)"/> is also the register each pass
+/// takes its mark in (<see cref="AgentPresence.Behind"/>); any other answer is asked as it is.
 /// </param>
+/// <param name="now">The wall clock the rows and <c>material_scan_at</c> are stamped with, for people
+/// to read. The machine's in the product; a test passes one it can step. No claim is decided by it.</param>
 public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
-    Func<DateTimeOffset, bool>? noAgentSince = null, AppFileManifest? appFiles = null)
+    Func<PresenceMark, bool>? noAgentSince = null, AppFileManifest? appFiles = null,
+    Func<DateTimeOffset>? now = null)
 {
     readonly string _root = workspaceRoot ?? Paths.Workspace;
+    readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
     readonly MaterialStore _store = new(db);
-    readonly Func<DateTimeOffset, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
+    readonly Func<PresenceMark, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
 
     /// <summary>
     /// WHAT THE APP WROTE INTO A ROLE'S HOME AND WHAT IT PUT IN IT, recorded by the app at the moment
@@ -44,7 +50,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// window with an agent in it. Delegate identity is the check — same target, same method — and
     /// the target is what matters, because it is the register.
     /// </summary>
-    public Func<DateTimeOffset, bool> Attests => _noAgentSince;
+    public Func<PresenceMark, bool> Attests => _noAgentSince;
 
     /// <summary>Where the account owner drops things. Everything under it is theirs, not the agent's.</summary>
     public const string InboxDir = "inbox";
@@ -58,11 +64,19 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     public const string AgentDir = "agent";
 
     /// <summary>
-    /// When the previous pass ran. The window an <see cref="MaterialOrigin.Inbox"/> claim is
-    /// attested over is [this, the sighting]. Kept in the database rather than on the instance
-    /// because a scanner is built fresh for every pass.
+    /// When the previous complete pass began, by the wall clock — for a person reading the database.
+    /// Nothing decides a claim by it: <see cref="LastMarkKey"/> is the window.
     /// </summary>
     const string LastScanKey = "material_scan_at";
+
+    /// <summary>
+    /// WHERE THE PREVIOUS COMPLETE PASS BEGAN, IN THE REGISTER'S ORDER — the mark it took
+    /// (<see cref="AgentPresence.Mark"/>), as text. The window an <see cref="MaterialOrigin.Inbox"/>
+    /// claim is attested over is [this, the sighting]. Kept in the database, beside
+    /// <see cref="LastScanKey"/>, because a scanner is built fresh for every pass; and it carries the
+    /// register's name, because a restart is a new register that cannot place an old mark.
+    /// </summary>
+    const string LastMarkKey = "material_scan_mark";
 
     /// <summary>
     /// The agent's own directories that are worth remembering, relative to <see cref="AgentDir"/>.
@@ -126,14 +140,20 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
     public ScanResult Scan(CancellationToken ct = default)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _now();
         int seen = 0, added = 0, removed = 0, skipped = 0;
         var addedBy = new Dictionary<MaterialOrigin, int>();
         var truncated = false;
 
-        // The window every Inbox claim in this pass is measured over. On the very first pass there
-        // is no previous one, and MinValue is the honest window: "since before anything happened".
-        var since = Sql.TimeN(db.GetKv(LastScanKey)) ?? DateTimeOffset.MinValue;
+        // THIS PASS'S PLACE IN THE REGISTER'S ORDER, taken before it looks at anything — so an agent
+        // that opens or closes a window while this walk runs is after it, inside the window the NEXT
+        // pass measures, whatever the clock says. A question with no register behind it orders
+        // nothing and takes no mark.
+        var register = AgentPresence.Behind(_noAgentSince);
+        var mark = register?.Mark();
+
+        // The window every Inbox claim in this pass is measured over.
+        var since = WindowOpenedAt(register);
 
         // ONE GROUP PER PLACE, and every role's home inside the second group. `present` and
         // MarkMissing are per GROUP, so the roles have to be walked together: marking missing after
@@ -223,11 +243,43 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // NEXT pass measures it over. A pass that ran out of budget, or threw before this line,
         // leaves the older and wider window in place: it did not look everywhere, so it cannot
         // shorten the period the next pass has to account for. Fail-closed, in the direction that
-        // costs a weaker word on a row rather than a claim nobody can support.
-        if (!truncated) db.SetKv(LastScanKey, Sql.T(now));
+        // costs a weaker word on a row rather than a claim nobody can support. The mark and the
+        // wall time go in together, and a pass asked of no register leaves the mark where it was.
+        if (!truncated)
+            db.Write(_ =>
+            {
+                db.SetKv(LastScanKey, Sql.T(now));
+                if (mark is { } taken) db.SetKv(LastMarkKey, taken.ToString());
+                return 0;
+            });
 
         var hashed = HashPending(ct);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated) { AddedBy = addedBy };
+    }
+
+    /// <summary>
+    /// WHERE THE WINDOW THIS PASS ATTESTS OVER OPENED, in the order of the register it asks — or a
+    /// mark no register issued, wherever that order cannot be shown, so that every claim over the
+    /// window is unsure.
+    ///
+    /// <para><b>The last complete pass's mark</b>, when there is one. A mark from another register — the
+    /// process before a restart, whose agent may have gone on writing after its last pass — cannot be
+    /// placed, and neither can text that is not a mark.</para>
+    ///
+    /// <para><b>A complete pass that left no mark</b> — a build that kept only the wall time, or a pass
+    /// asked of no register — opened a window nobody can order against.</para>
+    ///
+    /// <para><b>No complete pass ever</b>: "since before anything happened". The register watched all
+    /// of that only if the database's whole life is this process's — <see cref="Database.CreatedHere"/>
+    /// — because then everything that could have written into the drop folder reported to it. A
+    /// database an earlier process opened, whose every pass ran out of budget, is the case this
+    /// answers unsure for: that process's agent may have written anything.</para>
+    /// </summary>
+    PresenceMark WindowOpenedAt(AgentPresence? register)
+    {
+        if (db.GetKv(LastMarkKey) is { } stored) return PresenceMark.Parse(stored) ?? PresenceMark.Unordered;
+        if (db.GetKv(LastScanKey) is not null) return PresenceMark.Unordered;
+        return register is not null && db.CreatedHere ? register.Origin : PresenceMark.Unordered;
     }
 
     /// <summary>

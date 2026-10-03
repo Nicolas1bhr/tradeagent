@@ -34,6 +34,19 @@ public sealed class Database : IDisposable
 
     public SqliteConnection Connection => _conn;
 
+    /// <summary>
+    /// WHETHER THIS CONNECTION FOUND NO SCHEMA AND BUILT IT — so everything this database holds was
+    /// written by the process holding it, and nothing an earlier process did is recorded here or
+    /// owed an account here.
+    ///
+    /// <para>The material scanner asks it for one decision: a window that opened "before anything
+    /// happened" can be attested only where the database's whole life is this process's, because only
+    /// then did everything that could have written into the drop folder report to this process's
+    /// presence register (<see cref="MaterialScanner"/>, U-inbox-order). A database reopened after a
+    /// restart answers false, which costs a weaker word on a row and never makes a claim.</para>
+    /// </summary>
+    public bool CreatedHere { get; private set; }
+
     public void Exec(string sql)
     {
         using var c = _conn.CreateCommand();
@@ -104,6 +117,7 @@ public sealed class Database : IDisposable
     {
         Exec("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);");
         var have = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
+        CreatedHere = have == 0;
 
         if (have < 1)
         {

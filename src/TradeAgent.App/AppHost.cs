@@ -1093,7 +1093,10 @@ public sealed class AppHost : IAsyncDisposable
     {
         var at = DateTimeOffset.UtcNow;
         Interlocked.Exchange(ref _lastScanAtTicks, at.UtcTicks);
-        var result = new MaterialScanner(_db!).Scan(ct);
+        // THE REGISTER THIS HOST'S AI PROCESSES REPORT TO, which the pass takes its mark in and asks.
+        // The process-wide one in the product; a composed test host's own, so that its scans and its
+        // agents are one register there too.
+        var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince).Scan(ct);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
 

@@ -268,10 +268,12 @@ sealed class InboxPage
     /// <summary>
     /// The things the ledger can honestly say about where a file came from, in the owner's words.
     /// <see cref="MaterialOrigin.InboxUnattested"/> gets its own sentence rather than being
-    /// rounded up to "you gave this to the AI": it is in the drop folder, and the AI was running
-    /// while it appeared, so nobody can show who put it there (REVIEW 2026-09-05b finding 5). It is
-    /// rounded DOWN in one place only — the sort order above keeps it with the rest of the inbox,
-    /// because it is still the folder the owner is looking in.
+    /// rounded up to "you gave this to the AI": it is in the drop folder, and TradeAgent cannot show
+    /// that no AI program was running while it appeared, so nobody can show who put it there (REVIEW
+    /// 2026-09-05b finding 5). "May have been", not "was": since U-inbox-order a file that arrived
+    /// while TradeAgent itself was closed reads this way too, and nothing was watching then to say
+    /// either. It is rounded DOWN in one place only — the sort order above keeps it with the rest of
+    /// the inbox, because it is still the folder the owner is looking in.
     ///
     /// <see cref="MaterialOrigin.App"/> is the fourth, and it is the one that stops this page
     /// overstating what the AI did: the strategy language reference, the worked programs and every
@@ -282,7 +284,7 @@ sealed class InboxPage
     internal static string Origin(Material m) => m.Origin switch
     {
         MaterialOrigin.Inbox => "you gave this to the AI",
-        MaterialOrigin.InboxUnattested => "in your inbox, but the AI was running when it appeared — TradeAgent cannot say who put it there",
+        MaterialOrigin.InboxUnattested => "in your inbox, but the AI may have been running when it appeared — TradeAgent cannot say who put it there",
         MaterialOrigin.App => "written by TradeAgent",
         _ => "the AI made this"
     };
