@@ -170,7 +170,7 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
     /// minute-stepped run to have entered. The runner ends the run before stepping a single bar, with the
     /// sentence on the deployment's own line, and nothing reaches the connector.</para>
     ///
-    /// <para><b>RED on the base</b> (<c>298bb36</c>): the hourly text did not parse, so no version could be
+    /// <para><b>RED on the base</b> (<c>d99155e</c>): the hourly text did not parse, so no version could be
     /// recorded. <b>The mutant</b> — the refusal removed from <c>ForwardRuns.AdvanceOneAsync</c> — goes red
     /// here: the run is left active and stepped nothing, the evaluator refusing to start a program on bars it
     /// did not declare, and no sentence anywhere says why.</para>

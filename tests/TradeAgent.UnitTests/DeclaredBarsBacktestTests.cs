@@ -21,7 +21,7 @@ namespace TradeAgent.Tests.Unit;
 /// run. A program that declares nothing is unchanged, line for line (<c>DeclaredBarsGrammarTests</c>'s
 /// guard (e) runs the golden vectors).</para>
 ///
-/// <para><b>RED on the base</b> (<c>298bb36</c>) for every test that declares <c>bars</c>: the declaration
+/// <para><b>RED on the base</b> (<c>d99155e</c>) for every test that declares <c>bars</c>: the declaration
 /// was refused by the parser, so each failed at its first parse. These tests use only what the base had —
 /// the parser, <c>Backtest.Run</c>, <c>Backtest.Over</c> and the trace — so that is the only reason.</para>
 /// </summary>
