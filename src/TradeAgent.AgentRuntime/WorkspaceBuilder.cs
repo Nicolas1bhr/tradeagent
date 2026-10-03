@@ -306,7 +306,8 @@ public static class WorkspaceBuilder
       lets it, and every trade pays a fee and the spread: minute-scale turnover dies on costs before an
       edge can show. On declared bars the same 500-bar lookback reaches about three weeks, backtests and
       TradeAgent's verdict judge the program on those bars, and fills, stops and targets still happen
-      on the minute. This build's paper runner does not run such a program yet — the next update does;
+      on the minute. On paper too: the runner asks the rules once per closed bar, and places, cancels and
+      enforces the protection within the minute that needs it;
     - **three worked programs are in `{ResearchLibrary.ExamplesDir}/`** — a moving-average crossover,
       an opening-range breakout and an RSI mean reversion, all of which parse today. Same ownership:
       rewritten every start, so copy one into `strategies/` before you change it;

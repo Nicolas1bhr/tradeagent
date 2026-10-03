@@ -20,6 +20,11 @@ namespace TradeAgent.Tests.Fault;
 /// end to end over the paper connector), so the refusal and the sweep's guard for it went together, and an
 /// hourly run that ends is replaced exactly as a minute run is.</para>
 ///
+/// <para><b>What the sweep asks instead.</b> The question that guard asked survives for every reason that is a
+/// version's own rather than its bars': a version the runner cannot run at all — its frozen text no longer
+/// parses in this build, or parses to another id — is started once, ended by the runner in words, and never
+/// replaced (<c>ForwardRuns.CannotRun</c>, test (g)).</para>
+///
 /// <para>Everything runs over <see cref="RecordingConnector"/> and the built-in simulator, in practice mode.
 /// Nothing reaches a venue and no real money is involved.</para>
 /// </summary>
@@ -68,8 +73,12 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
     /// <summary>
     /// A VERSION OF <paramref name="text"/> THAT REALLY CARRIES A PAPER-ELIGIBLE VERDICT IN THIS DATABASE —
     /// dataset, holdout, campaign, version, holdout run and promotion — written by this build.
+    ///
+    /// <para><paramref name="identifiedUnder"/>, when given, is the manifest an earlier build hashed the text's id
+    /// under: the version row then carries that id and THIS build's manifest, so its verdict stands while its
+    /// text re-parses to a different id — what <c>EvidenceIdentityTests</c> builds the same way.</para>
     /// </summary>
-    static string Judged(Database db, string text)
+    static string Judged(Database db, string text, string? identifiedUnder = null)
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"declared-bars-{Guid.NewGuid():n}.csv");
@@ -89,10 +98,13 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
         var parse = StrategyParser.Parse(text);
         Assert.True(parse.Ok, parse.Why);
         var program = parse.Program!;
+        var versionId = identifiedUnder is null
+            ? program.StrategyId
+            : Sha256Hex.Of($"{program.Canonical}\n{program.Parameters}\n{identifiedUnder}");
 
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
-            program.StrategyId, program.Source, program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
+            versionId, program.Source, program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
             ParseVerdict.Accepted, program.WarmUpBars, Cutoff.AddDays(-1), null, null)
         {
             Timeframe = program.Freshness?.Timeframe,
@@ -101,14 +113,14 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
         });
 
         var model = ExecutionModel.Declare(0.001m, 0m, 0.0001m, 10_000m).Model!;
-        var runId = new BacktestRequest(set.Id, set.NormalisedSha256, model, Cutoff, null).RunIdFor(program.StrategyId);
+        var runId = new BacktestRequest(set.Id, set.NormalisedSha256, model, Cutoff, null).RunIdFor(versionId);
         strategies.RecordRun(new StrategyRunRow(
-            runId, program.StrategyId, set.Id, set.NormalisedSha256, Cutoff, null, model.Canonical,
+            runId, versionId, set.Id, set.NormalisedSha256, Cutoff, null, model.Canonical,
             BacktestOutcome.COMPLETED.ToString(), null, 500, 4, 3, 4, 4, 100, 0, 0,
             12m, 2m, 10m, 3m, "trace-sha", At, Referee.RunRole, null), []);
 
         new Promotions(db).Record(new PromotionRow(
-            "", program.StrategyId, campaign.Campaign!.Id, CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1),
+            "", versionId, campaign.Campaign!.Id, CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1),
             StrategyStore.InterpreterBuild, set.Id, set.NormalisedSha256, model.Canonical, Referee.EvaluatorVersion,
             runId, PromotionVerdict.PaperEligible, PromotionReason.MetOnHistory, At)
         {
@@ -117,7 +129,7 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
             MaxDecisionAge = program.Freshness?.MaxDecisionAge
         });
 
-        return program.StrategyId;
+        return versionId;
     }
 
     /// <summary>The owner's grant, the app's allocation inside it and the app's deployment of it — each by the call the product uses.</summary>
@@ -190,6 +202,72 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
         Assert.Equal(1, gw.StartPaperDeploymentsDue(clock.At.AddMinutes(1)));
         Assert.Equal(2, gw.Deployments.ForAllocation(deployment.AllocationId).Count);
         Assert.Equal(0, conn.Places);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (g) THE SWEEP NEVER STARTS A REPLACEMENT FOR A VERSION THE RUNNER CANNOT RUN — for any reason that is the
+    /// version's own and not its bars'.
+    ///
+    /// <para>Two such reasons, one per case, both on a one-minute program: the version's frozen text now reads,
+    /// under this build's language manifest, as a different program with a different id — its row still
+    /// carrying this build's manifest, so its verdict stands and its allocation still authorises; and a text
+    /// this build no longer parses at all. The app's own policy starts the first run, the runner ends it before
+    /// stepping a bar, in words, and from then on every sweep would start another for the runner to end at its
+    /// next pass — another row, another flatten, another paid wake for Research. None is started.</para>
+    ///
+    /// <para><b>RED first</b>, against both guards that came before it: <c>U-timeframe-a</c>'s asked about bars
+    /// and nothing else, and this unit's first item removed it with the refusal it was for — 1, 1, 1 replacements
+    /// either way. <b>Mutant (iii)</b> — the sticky-refusal check removed from
+    /// <c>StartPaperDeploymentsDue</c> — goes red the same way.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("re-identifies")]
+    [InlineData("parses")]
+    public async Task The_sweep_never_starts_a_replacement_for_a_version_the_runner_cannot_run(string sticky)
+    {
+        var (gw, _, db, clock) = await Ready();
+        using var _1 = db;
+        var runner = new ForwardRuns(gw, db, () => clock.At);
+
+        var minuteText = HourlyText.Replace("bars 1h\n", "");
+        var version = sticky == "re-identifies"
+            ? Judged(db, minuteText, identifiedUnder: "language=1;indicators=0;calendar=1")
+            : Judged(db, minuteText);
+        var deployment = await Deployed(gw);
+
+        // A BUILD THAT NO LONGER READS THE TEXT: the row's source, as an update to such a build leaves it.
+        if (sticky == "parses")
+            Assert.Equal(1, db.Write(_ =>
+            {
+                using var c = db.Cmd("UPDATE strategy_version SET source=$s WHERE id=$id",
+                    ("$s", "this build no longer reads this text as a program"), ("$id", version));
+                return c.ExecuteNonQuery();
+            }));
+
+        // THE VERDICT STILL STANDS, so nothing but the question under test can stop a replacement.
+        Assert.Equal(PromotionState.PaperEligible, gw.Promotions.Standing(version).State);
+
+        Minutes(db, clock, 3);
+        await runner.AdvanceAsync();
+        var ended = gw.Deployments.ById(deployment.Id)!;
+        log.WriteLine($"{sticky}: {ended.State} — {ended.EndReason ?? "-"}");
+        Assert.Equal(DeploymentState.Ended, ended.State);
+        Assert.Contains("no longer parses in this build as that version", ended.EndReason, StringComparison.Ordinal);
+        Assert.True(gw.Deployments.IsReconciled(deployment.Id));
+
+        var started = new List<int>();
+        for (var k = 1; k <= 3; k++)
+        {
+            clock.At = clock.At.AddMinutes(1);
+            started.Add(gw.StartPaperDeploymentsDue(clock.At));
+            await runner.AdvanceAsync();
+        }
+        log.WriteLine($"sweeps after the end started: {string.Join(", ", started)}");
+
+        Assert.Equal([0, 0, 0], started);
+        Assert.Single(gw.Deployments.ForAllocation(deployment.AllocationId));
+        Assert.Empty(gw.Deployments.Open());
         await gw.DisposeAsync();
     }
 

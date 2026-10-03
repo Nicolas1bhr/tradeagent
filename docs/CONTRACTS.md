@@ -3286,8 +3286,9 @@ unresolved operation, and section 4 of the owner's report prints one line per de
 ## The runner — `src/TradeAgent.Gateway/ForwardRuns.cs`, `src/TradeAgent.Platforms/ForwardBarSource.cs`
 
 **A closed forward bar drives the frozen program, and what comes out is an ordinary order.** `ForwardRuns`
-replays the forward bars from the deployment's start into `EvaluationState`, steps the evaluator once per bar,
-and turns each `StrategyIntent` into a `PlaceIntent` dispatched through `TradingGateway.PlaceAsync` under
+replays the forward bars from the deployment's start into `EvaluationState`, steps the evaluator once per closed
+bar of the program's own — a minute, unless it declares `bars` — and turns each `StrategyIntent` into a
+`PlaceIntent` dispatched through `TradingGateway.PlaceAsync` under
 `AgentContext.Deployment`. **No model is called for any signal and none for protection** — there is no model
 client, no prompt and no text in that file, which is `docs/PRINCIPLES.md`'s "no model call is required for each
 signal or for emergency protection" enforced by what the assembly can reach rather than by a promise.
@@ -3300,14 +3301,30 @@ Stepping it would trade a program nobody judged under the deployment of one some
 withdraws the verdict (`Promotions.Standing`, "the evaluation semantics changed"), so the reconcile pass ends the
 run too; whichever pass reaches it first ends it, each with its own reason.
 
-**A PROGRAM ON BARS THIS RUNNER DOES NOT STEP IS ENDED BEFORE ITS FIRST BAR, IN WORDS** (`U-timeframe-a`). This runner
-evaluates every closed minute, and a program that declares `bars` other than 1m is judged on its bars — stepped here it
-would be a different strategy under the judged one's id. `ForwardRuns.Refuses` ends such a run before a bar is stepped:
-"this build's paper runner evaluates every minute; programs on hourly bars run after the next update", on the
-deployment's own line and in the one note to Research, and nothing is sent. `TradingGateway.StartPaperDeploymentsDue`
-asks the same question: once one run of an allocation exists, no replacement is started for a version the runner
-refuses, because each would be another row, another flatten and another paid wake to say the same sentence.
-`U-timeframe-b` steps rules on declared bars while protection stays on the minute, and removes both.
+**TWO CLOCKS: THE RULES ON THE DECLARED BAR, EVERYTHING THAT PROTECTS ON THE MINUTE** (`U-timeframe-b`). On every
+minute, in this order: what has an answer is settled; when a stop, a target, an exit or a flatten landed on the minute,
+the other half of the stop/target pair is cancelled; when the entry filled on it, the stop and the target go to the
+venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed; and a UTC
+day that closed is told to Research. Only the STEP waits for the declared clock: the evaluator is asked on the bar
+`BarResampler` builds from the run's minutes, when that bar's last minute closes — or on the first minute past its end
+when the data does not have its last minutes, and then two bars can close on one minute and are asked in order. What a
+decision dispatches is written on the minute the runner learned of it, so the cursor, the frontier and every request id
+stay on the minute exactly as before. Each pass builds its own resampler from the deployment's start: a restart
+mid-hour reaches the same hour still forming (`ForwardRunnerTests` measures it against a run that never stopped, past
+one page of bars). A run's first declared bar is the partial bar it saw from its start — the minutes before the
+deployment are not read — and the evaluator counts the minutes it is short as missing, as for any partial bar. A
+program that declares no `bars` is the case where the two clocks are one; its passes, operations and orders are pinned
+by a guard to what the runner at `3dff4294` produced. `U-timeframe-a`'s refusal of declared bars and the sweep guard it
+needed are gone.
+
+**THE SWEEP NEVER CHURNS A VERSION THE RUNNER CANNOT RUN** (`U-timeframe-b`, on the orchestrator's amendment).
+`ForwardRuns.CannotRun` answers, in the runner's own words, when this installation has no row for a version, its text
+no longer parses, or it parses to another id — every run of it is ended before its first bar — and
+`TradingGateway.StartPaperDeploymentsDue` asks it: once one run of an allocation exists, no replacement is started for
+such a version, because each would be another row, another flatten and another paid wake for Research. The first run
+is still started, so the owner reads the reason on the deployment's own line. A program that declares no execution
+bounds is not in it: that run is ended at its first intent, not before its first bar, and a version promoted before
+`U-promote-bounds` can be replaced after each such end.
 
 **THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED.** `Connectors.Create` binds
 `ForwardBarStore` to `IPaperBarSource` through `ForwardBarSource`; before it the paper connector was handed an
@@ -3344,6 +3361,9 @@ measured from the price actually paid, and when one fills the other is cancelled
 runner's, because no venue has an order for "this many bars": at the close of the bar that reaches the limit the
 position is closed at market and the evaluator then reads a FLAT account. Asked the other way round it decides
 from a position this app had already said must not survive the bar — the mutant `ForwardRunnerTests` measures.
+It is asked on every minute and counted in the program's bars (`BarGrid.Between`, a zone's 23- or 25-hour day being
+one bar), so it reaches the limit at the declared bar's close and a close a gate refused is asked for again on the
+next minute, not the next hour.
 
 **THE CURSOR IS THE FRONTIER.** Nothing is planned past the first bar the deployment's cursor has not reached,
 and the cursor is the last bar every one of whose operations resolved or was refused. An UNKNOWN answer
@@ -3366,8 +3386,9 @@ operation — `DECISION_EXPIRED`, `ALLOCATION_EXCEEDED` — and a request row st
 `refused`, because `DISPATCHING` is durable before the wire and a `CREATED` row provably never left the process.
 
 **WHAT THE RECORD MAY CLAIM: forward paper observation under declared bar-fill assumptions, and nothing more.**
-The price existed at the open of a bar. No executability, no queue position, no intrabar ordering, and
-protection judged at BAR granularity — a stop is checked against a bar's low and not against the path inside it.
+The price existed at the open of a minute. No executability, no queue position, no intrabar ordering, and
+protection judged at MINUTE granularity, whatever bar the program declares — a stop is checked against a minute's
+low and not against the path inside it.
 Fills reach the fill ledger scoped to the paper connector and account and attributed to the version, the
 allocation and the deployment through `execution_request`, so `pnl` and the owner's report show them like any
 other. A deployment's END and each UTC day that closed over it raise ONE persisted wake to Research, keyed by

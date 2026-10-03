@@ -77,9 +77,13 @@ statement, hashed into the id, recorded on a verdict and carried to execution �
 it; nothing refuses one whose two differ, because a stored program's `timeframe` never meant the bar it was
 evaluated on.
 
-**On paper, not yet.** This build's paper runner evaluates every minute. A deployment of a program that
-declares any other bar is ended before its first bar, in words, and nothing is sent; programs on hourly bars
-run on paper after the next update. Backtests and the referee's verdicts already judge them on their bars.
+**On paper, the same two clocks.** The paper runner asks the rules once per closed declared bar, on the bar
+it builds from the minutes the same way, and sends what they decide at that bar's close. Everything that
+protects a position stays on the minute: the stop and the target go to the venue in the pass after the
+minute the entry filled on, the other one is cancelled in the pass after the minute one of them filled on,
+and `max_hold_bars` — counted in declared bars — closes the position at the close of the declared bar that
+reaches it. A run's first bar is the partial bar it saw from its start, its missing minutes counted as
+missing.
 
 ## Conditions
 

@@ -134,11 +134,8 @@ public sealed class ForwardRuns
     {
         ArgumentNullException.ThrowIfNull(deployment);
 
-        if (Frozen(deployment) is not { } program)
-            return await EndAsync(deployment,
-                "the frozen text of the version this run was started on no longer parses in this "
-                + "build as that version — it is refused, or this build's language manifest reads it as "
-                + "a different program with a different id — so there is nothing to step", ct);
+        if (Frozen(_strategies, deployment.VersionId) is not { } program)
+            return await EndAsync(deployment, NotFrozen, ct);
 
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
@@ -602,8 +599,30 @@ public sealed class ForwardRuns
     }
 
     /// <summary>
-    /// The frozen program of this run's version, re-parsed — or null because it no longer parses, or
-    /// because it now parses to a DIFFERENT program than the version the run was started on.
+    /// WHY THIS BUILD'S RUNNER CANNOT RUN ANY DEPLOYMENT OF A VERSION, IN WORDS — or null when it can.
+    ///
+    /// <para>Every reason is the version's own and none of them is about its bars: this installation has no
+    /// row for it, its recorded text no longer parses in this build, or it parses to a different program with
+    /// a different id (<see cref="Frozen"/>). A run of such a version is ended before its first bar with this
+    /// sentence, and a replacement would be ended the same way at its first pass — another row, another
+    /// flatten, another paid wake for Research — so <c>TradingGateway.StartPaperDeploymentsDue</c> asks this
+    /// before it starts one, and once one run of an allocation exists starts none (<c>U-timeframe-b</c>).</para>
+    /// </summary>
+    public static string? CannotRun(StrategyStore strategies, string versionId)
+    {
+        ArgumentNullException.ThrowIfNull(strategies);
+        return Frozen(strategies, versionId) is null ? NotFrozen : null;
+    }
+
+    /// <summary>What the runner says when it cannot run a version, on the deployment's line and to Research.</summary>
+    const string NotFrozen =
+        "the frozen text of the version this run was started on no longer parses in this "
+        + "build as that version — it is refused, or this build's language manifest reads it as "
+        + "a different program with a different id — so there is nothing to step";
+
+    /// <summary>
+    /// The frozen program of a version, re-parsed — or null because it no longer parses, or because it now
+    /// parses to a DIFFERENT program than the version the run was started on.
     ///
     /// <para>The second is what a <c>StrategyVersions.Manifest</c> bump does: the same text, read
     /// under another language, indicator or calendar meaning, hashes to another id
@@ -613,12 +632,12 @@ public sealed class ForwardRuns
     /// the run on that; this is the runner refusing to step it in the meantime, whichever pass comes
     /// first (<c>U-evidence-identity</c>).</para>
     /// </summary>
-    StrategyProgram? Frozen(StrategyDeploymentRow deployment)
+    static StrategyProgram? Frozen(StrategyStore strategies, string versionId)
     {
-        if (_strategies.VersionById(deployment.VersionId) is not { } version) return null;
+        if (strategies.VersionById(versionId) is not { } version) return null;
         var parsed = StrategyParser.Parse(version.Source);
         return parsed.Program is { } program
-               && string.Equals(program.StrategyId, deployment.VersionId, StringComparison.Ordinal)
+               && string.Equals(program.StrategyId, versionId, StringComparison.Ordinal)
             ? program
             : null;
     }
