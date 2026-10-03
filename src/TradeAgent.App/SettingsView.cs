@@ -93,6 +93,16 @@ sealed class SettingsPage
     readonly Button _marketContext;
     bool _collecting;
 
+    /// <summary>
+    /// THE PAIR'S INSTRUMENT CHECK, in the one sentence every surface says: "verified against … on …" with
+    /// the venue's numbers, or "not verified: …" with the reason (<c>U-venue-verify</c>).
+    /// </summary>
+    readonly TextBlock _instrumentValue = Ui.Mono("—");
+
+    /// <inheritdoc cref="CheckInstrumentNowAsync"/>
+    readonly Button _checkInstrument;
+    bool _checkingInstrument;
+
     // ---- the holdout ----
     readonly TextBox _holdoutFrom;
     readonly TextBlock _holdoutValue = Ui.Mono("—");
@@ -216,6 +226,14 @@ sealed class SettingsPage
         _dataBusy.IsVisible = false;
         _dataNote.IsVisible = false;
 
+        // THE INSTRUMENT CHECK. ONE press, for the reason the download beside it is one: it reads the
+        // venue's public definition of the pair with no key, grants nothing, changes no limit and touches
+        // no order. A sentence rather than a figure, because the half that says WHY a pair is not verified
+        // is the half the owner needs.
+        _instrumentValue.TextWrapping = TextWrapping.Wrap;
+        _checkInstrument = Ui.Secondary("Check now", CheckInstrumentNowAsync);
+        _checkInstrument.HorizontalAlignment = HorizontalAlignment.Left;
+
         // LIVE BARS. ONE press, and the same judgement as the download above it: this reads Binance's
         // market-data-only host, which accepts no authenticated request at all, and it grants nothing,
         // changes no limit and touches no order. ON by default, because forward observation cannot be
@@ -236,6 +254,18 @@ sealed class SettingsPage
             Ui.FieldRow("Pair", _dataPair, "Upper-case letters and digits, as Binance writes it — BTCUSDT, ETHUSDT."),
             _collect,
             _dataBusy,
+            Ui.Divider(),
+            Ui.KeyValueLive("Instrument check", _instrumentValue),
+            _checkInstrument,
+            Ui.Muted("TradeAgent reads the pair's price step and size step from Binance's own published instrument "
+                     + "definition, at Binance's own address — when it starts, every six hours while it runs, when you "
+                     + "change the pair here, and when you press Check now. Backtests, the judge, TradeAgent paper and "
+                     + "paper runs size to those numbers while the last successful check is under seven days old; a "
+                     + "check that fails, or an address that is not Binance's own, leaves the pair unverified and this "
+                     + "line says why."),
+            Ui.Micro("It reads public data with no key and places nothing. A check confirms what Binance published at "
+                     + "that moment — not that every order sized to it would be accepted, and not that a size clears "
+                     + "Binance's minimum order value, which TradeAgent records and does not yet apply."),
             Ui.Divider(),
             Ui.KeyValueLive("Live bars TradeAgent has collected", _liveValue),
             _liveBars,
@@ -517,8 +547,13 @@ sealed class SettingsPage
 
         _collecting = true;
         _dataPair.Text = pair;
+        var before = _host.Gateway.Settings.MarketDataPair;
         _host.Gateway.Update(s => s.MarketDataPair = pair);
         ApplyMarketData();
+
+        // A NEW PAIR IS CHECKED AT ONCE (U-venue-verify): the owner chose it, and until its definition is read
+        // nothing will size to it. Beside the download, not after it — the two are independent reads.
+        if (!string.Equals(before, pair, StringComparison.Ordinal)) _ = CheckInstrumentNowAsync();
 
         try
         {
@@ -561,6 +596,7 @@ sealed class SettingsPage
 
         ApplyLiveBars();
         ApplyMarketContext();
+        ApplyInstrumentCheck();
 
         try
         {
@@ -575,6 +611,42 @@ sealed class SettingsPage
                   + $"{set.Gaps:N0} minutes missing";
         }
         catch (Exception) { _dataValue.Text = "could not be read"; }
+    }
+
+    /// <summary>
+    /// ONE PRESS: READ THE PAIR'S DEFINITION FROM THE VENUE NOW (<c>U-venue-verify</c>). It grants nothing,
+    /// changes no limit and touches no order; what it can change is whether TradeAgent's own readers size to
+    /// the venue's numbers, and only to numbers the venue published. Off the UI thread, because it is a
+    /// network request with a ten-second leash, and a second press while one is running does nothing.
+    /// </summary>
+    async Task CheckInstrumentNowAsync()
+    {
+        if (_checkingInstrument) return;
+        _checkingInstrument = true;
+        ApplyInstrumentCheck();
+        try { await Task.Run(() => _host.CheckInstrumentAsync()); }
+        finally
+        {
+            _checkingInstrument = false;
+            ApplyInstrumentCheck();
+        }
+    }
+
+    /// <summary>
+    /// THE PAIR'S CHECK AS IT STANDS, off the served read every sizing reader uses, so this line can never
+    /// say "verified" about a pair nothing is sizing to.
+    /// </summary>
+    void ApplyInstrumentCheck()
+    {
+        _checkInstrument.IsEnabled = !_checkingInstrument;
+        _checkInstrument.Content = _checkingInstrument ? "Checking…" : "Check now";
+
+        try
+        {
+            var pair = _host.Gateway.Settings.MarketDataPair;
+            _instrumentValue.Text = $"{pair} — {_host.Gateway.Venues.Verification(VenueCatalog.BinanceSpot, pair).Says}";
+        }
+        catch (Exception) { _instrumentValue.Text = "could not be read"; }
     }
 
     /// <summary>

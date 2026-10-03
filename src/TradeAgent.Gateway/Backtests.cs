@@ -379,7 +379,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 $"'{symbol}' on '{venue}' is recorded with a quantity increment of "
                 + $"{Plain(row.QuantityIncrement)}, and that row has not been verified — its source is "
                 + $"“{row.Source}”, so nothing has confirmed the number against the venue's own "
-                + "instrument definition");
+                + $"instrument definition ({_venues.Verification(venue, symbol).Says})");
 
         return new IncrementChosen(row.QuantityIncrement,
             $"the venue catalogue: {venue}/{symbol}, recorded from {row.Source}");
@@ -473,16 +473,21 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     ///
     /// <para>Both routes out are named, because the two are for different people. The AGENT can declare
     /// <c>--increment</c> and own the number, which the run then records as the caller's. The ACCOUNT
-    /// OWNER can confirm the row in <c>venues.json</c>, which is the one-line data fix
-    /// <c>docs/DECISIONS.md</c>:73-78 asks for and needs no rebuild.</para>
+    /// OWNER can have TradeAgent check the instrument (<c>U-venue-verify</c>): the app reads the venue's own
+    /// published definition when the owner chooses the pair under Market data on its Settings page, at
+    /// start and every six hours, and on "Check now" there, and serves the venue's numbers for seven days —
+    /// no file and no command. It used to name a hand edit to <c>venues.json</c>, which no screen
+    /// writes.</para>
     /// </summary>
     static GatewayDeniedException Guessing(string why) => new(ErrorCode.INVALID_REQUEST,
         $"this run declared no quantity increment and TradeAgent will not invent one: {why}. A size is "
         + "rounded DOWN to the increment, so a number nobody recorded would make every figure in the "
         + "result about a position that could not have been taken. Either pass --increment yourself — "
-        + "the run records that the number was yours — or ask the account owner to record the "
-        + "instrument in venues.json in TradeAgent's own folder. 'trade venue list' shows what is "
-        + "recorded today and which rows have been verified.");
+        + "the run records that the number was yours — or ask the account owner to have TradeAgent "
+        + "check the instrument: it reads the venue's own published definition when the owner chooses "
+        + "that pair under Market data on TradeAgent's Settings page or presses Check now there, and "
+        + "serves the venue's numbers for seven days. 'trade venue list' shows what is recorded today, "
+        + "which rows are verified and why the others are not.");
 
     /// <summary>
     /// A decimal with its trailing zeros gone, invariant, for a sentence a person reads.

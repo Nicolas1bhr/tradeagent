@@ -198,15 +198,17 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     // ---- what this platform describes -----------------------------------------------------------
 
     /// <summary>
-    /// THE INSTRUMENTS THIS CONNECTOR WILL TRADE, AND THEY ARE THE CATALOGUE'S VERIFIED SPOT ROWS.
+    /// THE INSTRUMENTS THIS CONNECTOR WILL TRADE, AND THEY ARE THE SERVED CATALOGUE'S VERIFIED SPOT ROWS.
     ///
     /// <para>Verified only, and that is the same judgement <c>Backtests.Increment</c> makes for the
     /// same reason: a size is rounded DOWN to the quantity increment, so an increment nobody has
     /// confirmed against the venue's own instrument definition would make every simulated position
-    /// one that could not have been taken. Out of the box that is an EMPTY list — Binance spot's
-    /// BTCUSDT ships <c>verified = false</c> — and an empty list is the honest answer: the account
-    /// owner confirms the row in <c>venues.json</c>, which is the one-line data fix
-    /// <c>docs/DECISIONS.md</c>:73-78 asks for, and then this connector will trade it.</para>
+    /// one that could not have been taken. Binance spot's BTCUSDT ships <c>verified = false</c>, and what
+    /// verifies it is the app's own instrument check (<c>U-venue-verify</c>): the venue's published
+    /// definition read from the built-in origin and served, with the venue's numbers, for seven days. The
+    /// hosts hand this connector that served catalogue through <see cref="PaperConnectorOptions.CatalogueNow"/>
+    /// and it is read at every use, so a check that succeeds — or lapses — reaches the next order without a
+    /// restart. Until one succeeds the list is EMPTY, and an empty list is the honest answer.</para>
     ///
     /// <para>The simulator's own venue is excluded. Its four futures are
     /// <c>FakeBroker.Instruments</c> — the practice simulator's own prices, which this connector does
@@ -348,7 +350,9 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
             throw new ConnectorRejectedException(
                 $"this installation's venue catalogue holds no VERIFIED instrument '{cmd.Symbol}' on a "
                 + "venue the paper connector trades, so there is no quantity increment to round a size "
-                + "to. Ask the account owner to record the instrument in venues.json.");
+                + "to. TradeAgent verifies an instrument by reading the venue's own published definition — "
+                + "at start, when the account owner chooses the pair under Market data on its Settings page, "
+                + "and when they press Check now there — and serves the venue's numbers for seven days.");
         }
 
         var quantity = decimal.Truncate(cmd.Quantity / row.QuantityIncrement) * row.QuantityIncrement;

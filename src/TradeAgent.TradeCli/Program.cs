@@ -211,9 +211,9 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         }
 
         // `trade venue list`. A READ, and the only subcommand there is: there is deliberately no
-        // `trade venue add`, `set` or `verify`. An increment is what a size is rounded down to, so an
-        // agent that could write one would be choosing how much it trades; the account owner corrects
-        // a wrong number in venues.json in TradeAgent's own folder.
+        // `trade venue add`, `set`, `verify` or `check`. An increment is what a size is rounded down to, so
+        // an agent that could write one would be choosing how much it trades; the app itself checks an
+        // instrument against the venue's own published definition, in-process (U-venue-verify).
         case "venue":
         case "venues":
         {

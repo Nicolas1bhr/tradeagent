@@ -157,12 +157,16 @@ row lives in `tradeagent.db`, which the vendor CLI agent — unconfined, running
 write until containment lands. Neither number is a risk limit: nothing is refused by them and no cap
 moves with them, so they ask once.
 
-**It trades the venue catalogue's VERIFIED rows and nothing else.** The instruments come from
-`VenueCatalog` — every venue but TradeAgent's own simulator — filtered to `verified = true`, which is
-`Backtests.Increment`'s judgement applied to the same number: a size is rounded down to the increment,
-so an increment nobody confirmed against the venue's own definition would make every simulated position
-one that could not have been taken. Out of the box that list is **empty**, because Binance spot's
-BTCUSDT ships unverified; the account owner records the row in `venues.json` and it trades.
+**It trades the SERVED catalogue's VERIFIED rows and nothing else.** The instruments come from
+`VenueStore.Catalogue()` — the recorded catalogue overlaid by the latest successful instrument check of
+seven days or less (see "The instrument check" below), every venue but TradeAgent's own simulator —
+filtered to `verified = true`, which is `Backtests.Increment`'s judgement applied to the same number: a
+size is rounded down to the increment, so an increment nobody confirmed against the venue's own definition
+would make every simulated position one that could not have been taken. Both hosts hand it over as
+`ConnectorChoice.PaperInstruments`, a function the connector reads at EVERY use
+(`PaperConnectorOptions.CatalogueNow`), so a check that succeeds — or lapses — reaches a running connector
+at its next order without a restart. Binance spot's BTCUSDT ships unverified and is offered once a check
+of it succeeds; until then the list is **empty**.
 
 **The book is its own SQLite file, at `state/paper-<account>.db`, versioned inside the file.** It is
 not a rung of the app's schema and must not become one: simulated fills one join away from real ones
@@ -2361,12 +2365,14 @@ schedule is **REFUSED** for a number left out, before anything is run or charged
 it: declare `--fees` and `--slippage` and the run records the numbers as yours.
 
 **The increment is the one number a run need not declare, and TradeAgent will not invent it.** A request
-that omits `--increment` gets the one recorded for the dataset's own `venue_id`/`instrument_symbol` in
-`venue_instrument`, and the answer's `increment_source` and the run row say which row it came from. A
+that omits `--increment` gets the one SERVED for the dataset's own `venue_id`/`instrument_symbol` — the
+`venue_instrument` row, overlaid by a successful instrument check of seven days or less — and the answer's
+`increment_source` and the run row say which row it came from, a check's address and instant included. A
 DECLARED increment always wins — the catalogue is a default for a caller that gave no number, never an
 override of one that did. An instrument the catalogue does not hold, one whose row is not `verified`, and
 a dataset that records no instrument at all are each **REFUSED in words** naming both routes out (declare
-`--increment` yourself, or have the account owner record the instrument in `venues.json`); there is no
+`--increment` yourself, or have the account owner let TradeAgent check the instrument — the pair choice and
+"Check now" on the Settings page); there is no
 fallback to 1, because a size is rounded down to the increment and a number nobody recorded makes every
 figure in the result a measurement of a position that could not have been taken. **Where the increment
 came from is NOT hashed.** The number is, exactly as a declared one is; its provenance is recorded beside
@@ -2466,9 +2472,9 @@ number a size is computed from. An absent file is a different fact and means the
 `VenueStore.Sync` writes the table from that at gateway construction; the migration seeds nothing.
 
 **What ships, and what it admits.** Binance spot carries BTCUSDT at tick 0.01 and increment 0.00001 with
-`verified = false`, because nothing in this build has read Binance's own instrument definition — so out
-of the box a backtest over collected Binance bars that declares no `--increment` is REFUSED until the
-account owner records the row. TradeAgent's own simulator carries ES, NQ, MES and YM at increment 1 with
+`verified = false`, and the row is never edited to say otherwise: what verifies it is the app's own
+instrument check (below), whose numbers the served read puts over it for seven days — so a backtest over
+collected Binance bars that declares no `--increment` is REFUSED until a check of the pair succeeds. TradeAgent's own simulator carries ES, NQ, MES and YM at increment 1 with
 `verified = true`, and that is not a double standard: the venue is this application's own and the rows
 are the same four `FakeBroker.Instruments` serves, which a test holds them to. Both venues are
 `continuous`.
@@ -2490,6 +2496,47 @@ so removing a venue cannot dangle a dataset. Rows written before schema 17 are b
 owner's daily report carry both, null included. A run's increment is looked up by THAT pair and never by
 the instrument named in the program, which is a line an agent types — and a program whose line names a
 different instrument than the dataset records is refused outright (see the backtest section above).
+
+## The instrument check — `src/TradeAgent.Provisioning/InstrumentVerifier.cs`, `Core/Db/InstrumentCheckStore.cs`, `Core/Db/VenueStore.cs`
+
+**The app reads the venue's own published definition of an instrument, and nobody edits a file** (`U-venue-verify`,
+schema 29). `InstrumentVerifier` asks for one symbol's definition — for Binance spot, `GET /api/v3/exchangeInfo?symbol=…`
+on `data-api.binance.vision`, the market-data-only host the forward collector reads — and reads the venue's tick
+(`PRICE_FILTER.tickSize`), step (`LOT_SIZE.stepSize`), minimum quantity (`LOT_SIZE.minQty`) and minimum notional
+(`NOTIONAL.minNotional`, else `MIN_NOTIONAL`). It runs at start and every six hours for the owner's market-data pair, when
+the owner changes the pair, and on the Market data card's one-press "Check now": in-process only, no key, a 10-second leash,
+a 4 MB body bound, no redirect followed. **No pipe op and no `trade` verb asks for a check, points it elsewhere or writes a
+row**, and the pipe server's assembly does not reference the verifier's (`InstrumentCheckTests.No_pipe_op_writes_an_instrument_check`).
+
+**The address is a built-in venue fact.** `VenueCatalog.DefinitionShape` is compiled in; a `venues.json` entry may override
+it (`definition_url`) on the SAME origin only. An override on any other origin — or a venue with no built-in address — is
+recorded `refused-origin` and NOTHING is sent: the `U-key-host-pin` rule through the one `UrlOrigin`, compared with the
+compiled-in row and never with the catalogue as read.
+
+**`instrument_check` is measurement, a row per attempt, append-only, written only by the app.** `InstrumentCheckStore.Append`
+is the one writer — no update, no delete — and records the URL, the ORIGIN the store reads off it, both instants, the status,
+this build's SHA-256 of the body (never a vendor's: none is published), the four numbers on a `verified` row only, the outcome
+(`verified`, `failed`, `refused-origin`, text validated by the store) and the reason in words. A failure is a row, an activity
+line and the card's "not verified: …"; it never throws out of the app.
+
+**The served read is the one every consumer of an increment uses.** `VenueStore.Instruments`/`Instrument`/`Catalogue` answer
+the recorded catalogue OVERLAID by the latest `verified` check of seven days or less (`VenueStore.CheckServedFor`), judged at
+read time on the reader's own clock: the VENUE's tick and step, `source` naming the address, the instant and the check id,
+and a catalogue number that disagrees kept beside it (`catalogue_tick_size`, `catalogue_quantity_increment`). A pair the app
+checked that the catalogue holds no row for is served from its check, on a venue the catalogue holds. Research's default
+increment, the referee's cost model (whose pinned text then names the check), the paper connector, the forward runner,
+`venue-list`, `status.instrument_check` and the Market data card all read it, so a check that succeeds or lapses reaches each
+at its next read. `VenueStore.Verification` is the one sentence they show: "verified against … on …" or "not verified: …"
+with the last check's failure, refusal or age.
+
+**Claimed:** the venue's published definition of that instrument, as served from the built-in origin at the recorded instant.
+**NOT claimed:** that every order sized to it is accepted by the venue; that a size clears the venue's minimum notional (5
+USDT for BTCUSDT on 2026-10-03), which is recorded and not applied — TradeAgent's v1 cost model ignores it and nothing refuses
+or raises a size for it; that the definition is unchanged after the instant; or that the body hash proves what the venue meant
+to publish. **Advisory until containment, said so:** a `"verified": true` written into `venues.json` — a file the CLI agent
+can write while it runs unconfined — is still honoured as the catalogue's own row, and is said as "verified by the venue
+catalogue's own row, not by a TradeAgent check"; and `instrument_check` lives in `tradeagent.db`, which that agent can write
+too. "Written only by the app" holds for the app's own paths; `R-containment` is what closes both.
 
 ## Candle sources — `src/TradeAgent.Core/Data/CandleSource.cs`, `CandleSourceCatalog.cs`, `Provisioning/CandleSourceClient.cs`
 

@@ -2984,7 +2984,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// WHAT INSTRUMENTS THIS INSTALLATION KNOWS OF, AND WHO SAID SO.
     ///
     /// A read, and only a read. The rows come from the catalogue TradeAgent ships and from the
-    /// account owner's <c>venues.json</c>; nothing on this pipe adds, edits, verifies or removes one.
+    /// account owner's <c>venues.json</c>, overlaid by the app's own instrument checks (the served read,
+    /// <c>U-venue-verify</c>); nothing on this pipe adds, edits, verifies or removes one, or asks for a
+    /// check.
     /// An increment is what a size is rounded DOWN to, so an agent that could write its own would be
     /// choosing how much it trades and having the record agree with it.
     ///
@@ -3073,18 +3075,36 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "'verified' false means NOTHING has confirmed that row against the venue's own instrument "
             + "definition — the numbers are what this build shipped, and a backtest that does not "
             + "declare its own increment is REFUSED over an unverified or unknown instrument rather "
-            + "than run on a guess. 'quantity_increment' is what a size is rounded DOWN to and "
-            + "'tick_size' is the price grid. There is NO fee and NO minimum notional here: fees are "
-            + "declared per backtest and are part of that run's identity, and a fee read out of a "
-            + "table nobody measured would read as a measurement. 'calendar_kind' is 'continuous' for "
-            + "a venue that never closes; 'sessioned' means it closes and TradeAgent does not hold the "
-            + "table that says when, so it is a refusal to guess and not a calendar. You cannot write "
-            + "any of this: the account owner corrects it in venues.json in TradeAgent's own folder.",
+            + "than run on a guess. 'verified' true with a 'checked_at' means TradeAgent itself read the "
+            + "venue's own published instrument definition, from the venue's own address, within the last "
+            + "seven days: these are the venue's numbers, 'check_url' says where they were read, and a "
+            + "shipped number that disagrees is kept beside them as 'catalogue_tick_size' or "
+            + "'catalogue_quantity_increment'. 'says' is the one line that states whether a row is "
+            + "verified and why not. 'quantity_increment' is what a size is rounded DOWN to and "
+            + "'tick_size' is the price grid. There is NO fee and NO minimum notional in the catalogue "
+            + "itself: fees are declared per backtest and are part of that run's identity, and a fee read "
+            + "out of a table nobody measured would read as a measurement; a checked row's 'min_quantity' "
+            + "and 'min_notional' are the venue's published minimums, recorded and NOT applied. "
+            + "'calendar_kind' is 'continuous' for a venue that never closes; 'sessioned' means it closes "
+            + "and TradeAgent does not hold the table that says when, so it is a refusal to guess and not "
+            + "a calendar. You cannot write any of this, and nothing here asks for a check: TradeAgent "
+            + "checks the account owner's market-data pair itself.",
             gateway.Venues.Unreadable,
             [.. venues.Select(v => new VenueListReplyVenue(
                 v.Id, v.DisplayName, v.CalendarKind, v.Source, v.RecordedAt, v.Verified,
                 [.. instruments.Where(i => i.VenueId == v.Id).Select(i => new VenueListReplyInstrument(
-                    i.Symbol, i.TickSize, i.QuantityIncrement, i.Source, i.RecordedAt, i.Verified))]))]);
+                    i.Symbol, i.TickSize, i.QuantityIncrement, i.Source, i.RecordedAt, i.Verified)
+                {
+                    // THE SERVED ROW'S CHECK, WHEN ONE STANDS (U-venue-verify): where and when the venue's
+                    // numbers were read, the minimums it published, and a shipped number that disagrees.
+                    CheckedAt = i.Check?.ReceivedAt,
+                    CheckUrl = i.Check?.Url,
+                    MinQuantity = i.Check?.MinQuantity,
+                    MinNotional = i.Check?.MinNotional,
+                    CatalogueTickSize = i.CatalogueTickSize,
+                    CatalogueQuantityIncrement = i.CatalogueQuantityIncrement,
+                    Says = gateway.Venues.Verification(v.Id, i.Symbol).Says
+                })]))]);
     }
 
     /// <summary>
@@ -3107,7 +3127,29 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     sealed record VenueListReplyInstrument(
         string Symbol, decimal TickSize, decimal QuantityIncrement, string Source,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? RecordedAt,
-        bool Verified);
+        bool Verified)
+    {
+        /// <summary>When the check being served was answered, or absent because none is (<c>U-venue-verify</c>).</summary>
+        public DateTimeOffset? CheckedAt { get; init; }
+
+        /// <summary>The address that check read, or absent.</summary>
+        public string? CheckUrl { get; init; }
+
+        /// <summary>The venue's published minimum quantity, from the check. Recorded, not applied.</summary>
+        public decimal? MinQuantity { get; init; }
+
+        /// <summary>The venue's published minimum order value, from the check. Recorded, not applied.</summary>
+        public decimal? MinNotional { get; init; }
+
+        /// <summary>TradeAgent's shipped tick where it disagrees with the venue's, or absent.</summary>
+        public decimal? CatalogueTickSize { get; init; }
+
+        /// <summary>TradeAgent's shipped step where it disagrees with the venue's, or absent.</summary>
+        public decimal? CatalogueQuantityIncrement { get; init; }
+
+        /// <summary>Whether this row is verified right now and why not, in the Market data card's own words.</summary>
+        public string Says { get; init; } = "";
+    }
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
     object MaterialList(IpcRequest req)

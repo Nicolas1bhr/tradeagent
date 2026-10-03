@@ -53,8 +53,9 @@ public static class Ops
     ///
     /// There is no op that writes one, and there is deliberately none. An increment is what a size is
     /// rounded down to, so an agent that could write its own would be choosing how much it trades and
-    /// having the record agree with it. The rows are shipped with TradeAgent and corrected by the
-    /// account owner in <c>venues.json</c> in TradeAgent's own folder.
+    /// having the record agree with it. The rows are shipped with TradeAgent, and the app itself verifies
+    /// an instrument by reading the venue's own published definition — an instrument check, recorded and
+    /// served with the venue's numbers for seven days (<c>U-venue-verify</c>). No op asks for a check.
     ///
     /// It is NOT in <see cref="Mutating"/>: that word on this channel means "sends something to a
     /// broker", and this reads a table. It is also why it is not on that list — every part of the AI
