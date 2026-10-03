@@ -19,6 +19,13 @@ public static class StrategyVersions
     /// <summary>
     /// The concrete syntax and the typed AST: which declarations exist, what an expression may be,
     /// what is refused. 1 is the language `docs/STRATEGY-LANGUAGE.md` specifies.
+    ///
+    /// <para><b>An ADDITION does not move it</b> when no text that parsed before can mean anything
+    /// different and no stored canonical form changes — `bars` (`U-timeframe-a`) is the case: a text
+    /// that declares it was a refusal before, and a text that does not is read, canonicalised and
+    /// evaluated exactly as it was, which the golden vectors check. Moving this number re-identifies
+    /// every program, so it moves when an existing program's meaning does, and not to announce a new
+    /// declaration.</para>
     /// </summary>
     public const int LanguageVersion = 1;
 
