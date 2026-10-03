@@ -10,7 +10,8 @@ public enum BacktestEventKind
     /// <summary>
     /// ONE CLOSED BAR: what the event produced, and what the account was worth at its close. Every
     /// bar of the window has exactly one of these, warming-up bars included — a run that recorded only
-    /// the interesting bars would have no equity curve to measure a drawdown on.
+    /// the interesting bars would have no equity curve to measure a drawdown on. On a program that
+    /// declares <c>bars 1h</c> a bar is one of its hours: one line per hour, never one per minute.
     /// </summary>
     Bar,
 
@@ -53,10 +54,17 @@ public enum BacktestEventKind
 /// </summary>
 public sealed record BacktestEvent
 {
-    /// <summary>The bar's place in the run, 1-based. Two events of one bar share it.</summary>
+    /// <summary>
+    /// The bar's place in the run, 1-based. Two events of one bar share it — on a declared-bar run, every
+    /// event of one declared bar: its fills and exits on its minutes, its gap, its close and its signal.
+    /// </summary>
     public required long Ordinal { get; init; }
 
-    /// <summary>The bar's open time, in UTC. The only timestamp a dataset carries.</summary>
+    /// <summary>
+    /// The bar's open time, in UTC. The only timestamp a dataset carries. On a declared-bar run a fill, an
+    /// exit and a refused fill carry the open of the MINUTE they happened on, because that is where the
+    /// price was; the bar's own lines — its close, its gap, its signal — carry the declared bar's open.
+    /// </summary>
     public required DateTimeOffset Bar { get; init; }
 
     public required BacktestEventKind Kind { get; init; }
