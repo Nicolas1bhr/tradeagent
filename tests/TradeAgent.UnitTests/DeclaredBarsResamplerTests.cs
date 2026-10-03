@@ -14,7 +14,7 @@ namespace TradeAgent.Tests.Unit;
 /// one is a bar whose <see cref="KlineBar.Minutes"/> says so. And the evaluator, stepped on those bars,
 /// keeps counting what is missing in MINUTES.</para>
 ///
-/// <para><b>RED on the base</b> (<c>298bb36</c>) by not compiling: <c>BarResampler</c>, <c>BarGrid</c> and
+/// <para><b>RED on the base</b> (<c>d99155e</c>) by not compiling: <c>BarResampler</c>, <c>BarGrid</c> and
 /// <c>KlineBar.Minutes</c> did not exist, and neither did the <c>bars</c> declaration the evaluator runs
 /// below read.</para>
 /// </summary>
