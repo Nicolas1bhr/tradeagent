@@ -301,6 +301,12 @@ public static class WorkspaceBuilder
       what each indicator computes, the limits and every refusal. TradeAgent writes that file on every
       start and overwrites anything you change in it, so read it rather than working the syntax out
       from what the parser rejects;
+    - **`bars 1h` makes a program decide once an hour instead of every minute** — `5m`, `15m`, `30m`,
+      `4h` and `1d` are the others. A program that decides every minute trades as often as the minute
+      lets it, and every trade pays a fee and the spread: minute-scale turnover dies on costs before an
+      edge can show. On declared bars the same 500-bar lookback reaches about three weeks, backtests and
+      TradeAgent's verdict judge the program on those bars, and fills, stops and targets still happen
+      on the minute. This build's paper runner does not run such a program yet — the next update does;
     - **three worked programs are in `{ResearchLibrary.ExamplesDir}/`** — a moving-average crossover,
       an opening-range breakout and an RSI mean reversion, all of which parse today. Same ownership:
       rewritten every start, so copy one into `strategies/` before you change it;

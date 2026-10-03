@@ -125,6 +125,10 @@ public sealed class ForwardRuns
                 + "build as that version — it is refused, or this build's language manifest reads it as "
                 + "a different program with a different id — so there is nothing to step", ct);
 
+        // A PROGRAM ON BARS THIS RUNNER DOES NOT STEP IS ENDED BEFORE ITS FIRST BAR, IN WORDS. See `Refuses`.
+        if (Refuses(program) is { } refused)
+            return await EndAsync(deployment, refused, ct);
+
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
         // this pass dispatch at all — the frontier below is the cursor's other half.
@@ -525,6 +529,41 @@ public sealed class ForwardRuns
             {
                 deployment = deployment.Id, bar = bar.OpenTime, quantity, why
             }));
+
+    /// <summary>
+    /// WHY THIS BUILD'S RUNNER WILL NOT STEP A PROGRAM, IN WORDS — or null when it will.
+    ///
+    /// <para><b>This runner evaluates every closed minute</b>, and a program that declares <c>bars 1h</c>
+    /// is judged — by <c>Backtest.Over</c> and the referee — on hours. Stepped here it would be a different
+    /// strategy under the judged one's id: its 24-bar mean a 24-minute mean, its <c>max_hold_bars</c> sixty
+    /// times shorter, its turnover the minute's. So such a run is ENDED before a bar is stepped, with this
+    /// sentence on its own line for the owner and in the one note Research is sent, and nothing is ever
+    /// sent for it. <c>U-timeframe-b</c> steps the rules on declared bars while protection stays on the
+    /// minute, and removes this. The evaluator would refuse it as well — <c>EvaluationState.Start</c>
+    /// will not step a program on bars it did not declare — but a refusal that only surfaces as an
+    /// exception in the runner's log is a run left active that never decides, so it is made here, first.</para>
+    ///
+    /// <para><c>TradingGateway.StartPaperDeploymentsDue</c> asks the same question so that, once one run
+    /// of an allocation has been ended for this, no replacement is started to be ended for it again.</para>
+    /// </summary>
+    public static string? Refuses(StrategyProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        if (program.Bars == StrategyBars.OneMinute) return null;
+
+        var bars = StrategyBars.Spelled(program.Bars);
+        var kind = bars switch
+        {
+            "1h" => "hourly",
+            "4h" => "four-hour",
+            "1d" => "daily",
+            _ => bars
+        };
+
+        return $"this program declares `bars {bars}`, and this build's paper runner evaluates every minute; "
+               + $"programs on {kind} bars run after the next update. It was ended before a bar was "
+               + "stepped, and nothing was sent";
+    }
 
     /// <summary>
     /// The frozen program of this run's version, re-parsed — or null because it no longer parses, or

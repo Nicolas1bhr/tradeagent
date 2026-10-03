@@ -14,6 +14,12 @@ namespace TradeAgent.Core.Strategy;
 /// rule set, not an engineer tuning a kernel; a program that needs 300 nodes is not a rule set that
 /// went one node over, it is a different kind of artifact and it should be refused loudly while it
 /// is still text.</para>
+///
+/// <para><b>Every count of BARS here is in the program's DECLARED bars</b> (<c>bars 1h</c>,
+/// <see cref="StrategyProgram.Bars"/>), because those are what the evaluator is stepped on: a lookback
+/// of <see cref="MaxLookbackBars"/> is 500 minutes on a program that declares nothing and 500 hours —
+/// about 21 days — on an hourly one, and <see cref="MaxHistoryDepth"/> and <see cref="MaxHoldBars"/>
+/// scale the same way. The numbers did not move; what a bar is, did.</para>
 /// </summary>
 public static class StrategyLimits
 {
@@ -60,13 +66,14 @@ public static class StrategyLimits
     /// </summary>
     public const int MaxExpressionDepth = 8;
 
-    /// <summary>The largest bar offset a history reference may ask for: `close[20]`, never `close[21]`.</summary>
+    /// <summary>The largest bar offset a history reference may ask for: `close[20]`, never `close[21]` — declared bars back.</summary>
     public const int MaxHistoryDepth = 20;
 
     /// <summary>
     /// The largest indicator period, and the largest warm-up a program may end up needing. One
     /// number for both, because the second is a function of the first and two numbers would let a
-    /// program declare a period it can never be warm enough to use.
+    /// program declare a period it can never be warm enough to use. In declared bars: about eight
+    /// hours of minutes, about 21 days of hours, about 83 days of four-hour bars.
     /// </summary>
     public const int MaxLookbackBars = 500;
 
@@ -85,7 +92,7 @@ public static class StrategyLimits
     /// </summary>
     public const int MaxBoundSeconds = 7 * 24 * 60 * 60;
 
-    /// <summary>The largest holding time a program may state, in bars.</summary>
+    /// <summary>The largest holding time a program may state, in its declared bars.</summary>
     public const int MaxHoldBars = 10_000;
 
     /// <summary>

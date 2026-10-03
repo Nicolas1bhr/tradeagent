@@ -2261,6 +2261,17 @@ spacing, letter case and declaration order are not part of it: one strategy save
 reformatted its own output is ONE submission, one trial budget, one lineage. Rule order IS part of it.
 The three day-one programs are pinned to their ids in `tests/TradeAgent.UnitTests/Strategies/`.
 
+**`bars` — the bar a program is evaluated on** (`U-timeframe-a`). `StrategyProgram.Bars` is one of
+`StrategyBars.Allowed` — 1m 5m 15m 30m 1h 4h 1d — and ONE MINUTE when the program declares none. `bars` is a
+declaration only as a line's first word and is NOT a reserved name, so a stored `const bars = 20` keeps parsing.
+**It is additive and the ids prove it:** the canonical form writes `bars <seconds>s` only when the bar is declared
+and is not one minute — the one stated exception to "always stated" — and `Header` (`program/1`) and the manifest
+do not move, because the manifest is inside every id and moving it would re-identify every v1 program to add a
+line to some. So every v1 text, id and golden vector is unchanged (`DeclaredBarsGrammarTests` (e) runs the golden
+vectors' own check), `bars 1m` is the program that declares nothing, and an hourly program can never share an id
+with its minute twin. `bars` and `timeframe` are independent: `timeframe` stays an execution bound that resamples
+nothing, and nothing refuses a program whose two differ.
+
 **Warm-up is explicit** (`StrategyWarmUp`, one place): the deepest lookback over every DECLARED
 indicator, every history reference, every crossing (one bar more than its deeper side) and the stop's
 own ATR period, at least 1, refused when it exceeds `StrategyLimits.MaxLookbackBars`. An indicator
@@ -2307,6 +2318,16 @@ stopped — which is how a TIMEOUT is defined without a clock in the evaluator. 
 EVENT and not per rule, and it is set above what any program the parser accepts can cost, so the two
 limits cannot contradict each other. Nothing throws out of the evaluator: the program was written by a
 cheap model, and a text it can produce that crashes the app would be the app's defect.
+
+**A program is evaluated on the bar it declares, or not at all.** `EvaluationState.Start` takes its grid from the
+program (`BarGrid.For`: `[k·d, (k+1)·d)` in UTC, midnight in the program's zone for `1d`, so a daylight-change day
+is 1,380 or 1,500 minutes) and REFUSES a caller that says it will feed any other bar. Its bars come from
+`BarResampler`, the one resampler: first open, extremes, last close, summed volume, decimals; a bar closes when its
+last minute has closed; an empty window is a gap and never a bar; a partial one carries its minute count on
+`KlineBar.Minutes` (init-only, default 1, so no construction site moved). **`MissingMinutes` stays in MINUTES**:
+the minutes of windows that produced no bar, plus every minute a partial bar is short of its window wherever they
+fell — on one-minute bars, exactly the count it always was. A bar that claims more minutes than its window, or a
+declared bar off its grid, is a defined fault.
 
 ## The backtest — `src/TradeAgent.Core/Strategy/Backtest.cs`, `src/TradeAgent.Gateway/Backtests.cs`
 
@@ -2368,6 +2389,18 @@ holding time is protection too, taken at the close of the bar that reaches the l
 the evaluator is asked anything on that bar — so the account it reads is already flat and the evaluator
 emits nothing for it. A size that rounds down to nothing, an entry the declared capital cannot pay for
 and a signal the window ended before are each **no trade with the reason**, on the record.
+
+**Two clocks for a program on declared bars** (`U-timeframe-a`). `Backtest.Run` walks closed MINUTES: on every
+minute a waiting signal fills at that minute's open and the stop and target fire on that minute's range — the rules
+above, minute by minute, exactly as before. Only at a DECLARED bar's close is the maximum hold taken (counting
+declared bars, at that bar's close, stamped with its last minute) and the evaluator asked, on the resampled bar. The
+trace holds one `Bar` line per evaluated bar plus every fill, exit and refusal — never one per minute — and every event
+of one declared bar shares its ordinal, a fill or exit carrying the minute it happened on. `MaxTracedBars` counts
+EVALUATED bars, so a year of hourly bars (8,760) is one run. There is no bar parameter: `Run` reads `program.Bars`,
+so `Backtest.Over`, `trade backtest` and the referee judge what was declared. A run that ends inside a declared bar
+closes it as a partial bar — history: its last minutes happened and the data does not have them — and a signal from it
+is the usual no-trade. A program that declares nothing is the case where the two clocks are one, and its trace is the
+one it always had, byte for byte.
 
 **Metrics come from the trace and from nothing else.** `BacktestMetrics.Of(trace)` takes one argument on
 purpose: a figure read off the program's text would be a claim about the program rather than a
@@ -3199,6 +3232,15 @@ deployment names — which is what a `StrategyVersions.Manifest` bump does to ev
 Stepping it would trade a program nobody judged under the deployment of one somebody did. The same change
 withdraws the verdict (`Promotions.Standing`, "the evaluation semantics changed"), so the reconcile pass ends the
 run too; whichever pass reaches it first ends it, each with its own reason.
+
+**A PROGRAM ON BARS THIS RUNNER DOES NOT STEP IS ENDED BEFORE ITS FIRST BAR, IN WORDS** (`U-timeframe-a`). This runner
+evaluates every closed minute, and a program that declares `bars` other than 1m is judged on its bars — stepped here it
+would be a different strategy under the judged one's id. `ForwardRuns.Refuses` ends such a run before a bar is stepped:
+"this build's paper runner evaluates every minute; programs on hourly bars run after the next update", on the
+deployment's own line and in the one note to Research, and nothing is sent. `TradingGateway.StartPaperDeploymentsDue`
+asks the same question: once one run of an allocation exists, no replacement is started for a version the runner
+refuses, because each would be another row, another flatten and another paid wake to say the same sentence.
+`U-timeframe-b` steps rules on declared bars while protection stays on the minute, and removes both.
 
 **THE PAPER CONNECTOR'S PRICES ARE THE MINUTES THIS INSTALLATION COLLECTED.** `Connectors.Create` binds
 `ForwardBarStore` to `IPaperBarSource` through `ForwardBarSource`; before it the paper connector was handed an
