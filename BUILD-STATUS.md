@@ -7465,3 +7465,37 @@ when complete (`fleet/ci-ledger.md`, then the next record).
 **NOT done, NOT verified:** the app was not run and no real turn made; a keyless harness role relaunched after a restart is read from source, not run; the
 CLI's own −1 paths keep their reservation, as the brief bounds; `docs/EDGE-FACTORY.md:33`'s pointer `RuntimeManifest.cs:716-728` (`RuntimeCatalog.Read`)
 now reads at `727-739` — the plan file was not edited (the orchestrator's).
+
+## 2026-10-03 — U-org-ledger landed at schema 28: the organisation is app-minted data — a root, two divisions and the two legacy positions, written by the app, read by nothing yet
+
+One fresh Opus builder under build-fleet seat P from `docs/briefs/U-org-ledger.md` (amended at dispatch `d0bc32f`, dispatched `5427746`); stopped twice by
+the account's usage limit and resumed by message, its work in progress carried across a rebase by a local commit never pushed; rebased onto `be91995`, then
+`298bb36`, then at landing onto `7ceb7c9`, `e57bee2` and `aff8bec` (docs only each time) with the `src`+`tests` patch-id identical (`6bdcef92f638`). Merge
+`c62ec29` (ff-only), 5 commits (4 items + the report), 8 files, +1110/−1. **Schema rung 28** (27 is `U-cost-model`'s). No money-path file; inert.
+
+- **Item 1, rung 28:** `org_unit`, `org_position`, `org_event` with the brief's columns; the root `org`, `div-operations` (head `operations`), `div-research`
+  (head `research`) and the positions `operations` (home `agent`) and `research` (home `research`) under fixed ids with `ON CONFLICT DO NOTHING`; five
+  `seeded` events, decider `app`, each `WHERE NOT EXISTS` a seed event for its id; kinds and statuses TEXT, their vocabulary validated by the store.
+- **Deviation, additive, judged at landing — accepted:** SQL also holds the tree's shape — `CHECK ((parent_id IS NULL) = (kind = 'root'))`, a unique index
+  allowing one root, foreign keys unit→parent, position→unit, event→unit/position — and none on `head_position_id`, because a division and its head name each
+  other and rungs run in autocommit; `The_chart_s_shape_is_sql_s_and_its_vocabulary_is_the_store_s` tests it.
+- **Item 2:** `OrgStore` reads `Units`, `Positions`, `Position`, `UnitOf`, `Ancestors`, `Subtree` and static `IsAppPrincipal` (`referee`, `allocator`;
+  `perception` reserved for `U-decision-port`); no public writer; a loop or a missing parent throws `STATE_DATABASE_CORRUPT` rather than answer in part;
+  `AppPrincipals.Allocator` re-spells `TradingGateway.PaperAllocatorRole` (Core cannot reference the gateway) and test (b) holds them equal.
+- **Items 3–4:** both roll-back lists (`VenueCatalogTests`, `PaperEligibleVerdictTests`) drop the three org tables before restamping; `docs/CONTRACTS.md` "The
+  organisation ledger" (app measurement; titles and charters will be publications; app-only writers; NOT claimed: protection from a CLI agent that writes
+  `state/` directly — advisory until containment). **The next rung (`U-venue-verify`) must extend `OrgLedgerTests.StampBack` as well as those two lists.**
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 19 assemblies, 0 warnings, 0 errors; Unit
+1272/1272, Fault 405/405; 3× `OrgLedgerTests` 7/7, `VenueCatalogTests` 8/8, `PaperEligibleVerdictTests` 10/10. RED first on the base `5427746` with the
+tests alone: (a) and (c) "SQLite Error 1: 'no such table: org_unit'."; (e) "the organisation ledger needs schema 28 or later; this build says 27"; (b) and
+(d) came with item 2, (d) a guard (no pipe op writes an org table; org-table writes in `src/` only in `Database.cs`; `OrgStore`'s public surface pinned).
+Mutant, both seed-event `WHERE NOT EXISTS` removed: only (c) red — "Expected: [div-operations|1, div-research|1, org|1] / Actual: [div-operations|2,
+div-research|2, org|2]"; restored, green. Manager's gate at `cf8789f` (the reported tip rebased onto `7ceb7c9`), Release: build `--no-incremental`, 19
+projects → 0 warnings, 0 errors; Unit 1282/1282 (31 s), Fault 405/405 (1 m 38 s), Integration 704/705, 1 skipped (11 m 10 s, the clean baseline's length)
+→ 0 failed; CARRIED to `c62ec29` by `land.sh`'s rule (only docs moved on `main`: `e57bee2`, `aff8bec`; the build tree identical). Names vs `main` (git
+objects): sets 2044 → 2051, 0 removed, 7 added. Scan clean; no trailers; `rev-list --count` → 0 both ways.
+**CI:** branch run 37081786583 at `316aab4` (`src`/`tests` identical to `c62ec29`): ubuntu, macos, windows and package success. CI at the merge: recorded
+when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** the app was not run; Integration ran only on CI for the builder; nothing reads the ledger yet; the box was not used.
