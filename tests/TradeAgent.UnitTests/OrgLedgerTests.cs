@@ -1,7 +1,13 @@
 using System.Globalization;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
+using TradeAgent.Gateway;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -117,6 +123,111 @@ public class OrgLedgerTests
                 $"'{at}' is not a time");
     }
 
+    // ---- (b) every role value is a position or an app principal ------------------------------------------
+
+    /// <summary>
+    /// (b) EVERY ROLE VALUE TODAY'S STORES WRITE IS A POSITION OR AN APP PRINCIPAL — which is what lets the seed
+    /// change the meaning of no historical row.
+    ///
+    /// <para><b>The columns</b> are the eight that hold a role — <c>ai_attempt</c>, <c>mission_event</c>,
+    /// <c>publication</c>, <c>delivery.recipient</c>, <c>strategy_version</c>, <c>strategy_run</c>,
+    /// <c>tool_call</c>, <c>boundary_submission</c> — and the recipient list a publication carries, which spells the
+    /// same roles joined by commas. The schema is asked for every column so named, so one more cannot arrive
+    /// without being classified here.</para>
+    ///
+    /// <para><b>The values</b> are what the product hands those stores, written through the stores themselves: the
+    /// roles the app launches and grants (<c>CouncilRoles.All</c> — no launch grant is issued for anything else)
+    /// through every one of them, the referee's holdout run and verdict note (<c>Referee.RunRole</c>), and the
+    /// paper allocator's note (<c>TradingGateway.PaperAllocatorRole</c>). Each distinct non-NULL value must be a
+    /// seeded position or an app principal, and never both.</para>
+    /// </summary>
+    [Fact]
+    public void Every_role_value_today_s_stores_write_is_a_position_or_an_app_principal()
+    {
+        using var db = TestEnv.NewDb();
+        var at = new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
+        var publications = new PublicationStore(db);
+        var strategies = new StrategyStore(db);
+        var (datasetId, datasetSha) = Dataset(db, at);
+        var boundaries = new CouncilBoundaries(db);
+        Assert.True(boundaries.Open(BoundaryKind.Promotion, "v-org", 1, BoundaryDisposition.Hold, "{}", at).Fresh);
+
+        foreach (var role in CouncilRoles.All)
+        {
+            var recipients = string.Join(",", CouncilRelay.RecipientsOf(role));
+            new AiAttemptStore(db).Begin(new AiAttempt { Id = $"attempt-{role}", StartedAt = at, Role = role });
+            new MissionEventStore(db).Raise($"{MissionEventKind.Self}:{role}", MissionEventKind.Self, at, role: role);
+            new ToolCallStore(db).Record(new ToolCallRow
+            {
+                At = at, Attempt = $"attempt-{role}", Role = role, Tool = "read", Served = true
+            });
+            strategies.RecordVersion(new StrategyVersionRow(
+                $"version-{role}", "source", "canonical", "manifest", StrategyStore.InterpreterBuild,
+                ParseVerdict.Accepted, 0, at, role, $"attempt-{role}"));
+            Run(strategies, $"run-{role}", $"version-{role}", datasetId, datasetSha, role, at);
+
+            // A report or a brief to the other director: the publication, its delivery and the wake it buys.
+            Publish(publications, role, role == CouncilRoles.Research ? PublicationKind.Report : PublicationKind.Brief,
+                recipients, at);
+
+            // And a sealed assessment at the open boundary.
+            var assessment = $"{BoundaryDeclaration.RecommendationPrefix} {BoundaryDisposition.Hold}\n"
+                             + $"{BoundaryDeclaration.BaselinePrefix} {PromotionState.Unjudged}\n{role} assesses";
+            var sealedOne = boundaries.Assess(new Publication
+            {
+                Id = Publication.IdOf(role, PublicationKind.Assessment, assessment), Role = role,
+                Kind = PublicationKind.Assessment, Recipients = recipients, CreatedAt = at, Content = assessment
+            }, at);
+            Assert.True(sealedOne.Ok, sealedOne.Why);
+        }
+
+        // THE APP'S OWN PRINCIPALS, where the product writes them.
+        Run(strategies, "run-holdout", $"version-{CouncilRoles.Research}", datasetId, datasetSha, Referee.RunRole, at);
+        Publish(publications, Referee.RunRole, PublicationKind.Verdict, CouncilRoles.Research, at);
+        Publish(publications, TradingGateway.PaperAllocatorRole, PublicationKind.Note, CouncilRoles.Research, at);
+
+        var columns = Rows(db, """
+            SELECT m.name || '.' || p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p
+             WHERE m.type = 'table' AND p.name IN ('role', 'recipient', 'recipients') ORDER BY 1
+            """);
+        Assert.Equal(
+            [
+                "ai_attempt.role", "boundary_submission.role", "delivery.recipient", "mission_event.role",
+                "publication.recipients", "publication.role", "strategy_run.role", "strategy_version.role",
+                "tool_call.role",
+            ],
+            columns);
+
+        var values = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var column in columns)
+        {
+            var (table, name) = (column[..column.IndexOf('.')], column[(column.IndexOf('.') + 1)..]);
+            var held = Rows(db, $"SELECT DISTINCT {name} FROM {table} WHERE {name} IS NOT NULL");
+            Assert.True(held.Count > 0, $"{column} holds no role here, so this test would say nothing about it");
+            foreach (var value in held)
+                values.UnionWith(name == "recipients" ? value.Split(',') : [value]);
+        }
+        Assert.Equal(["allocator", "operations", "referee", "research"], values.ToArray());
+
+        var org = new OrgStore(db);
+        foreach (var value in values)
+        {
+            var position = org.Position(value);
+            Assert.True((position is not null) ^ OrgStore.IsAppPrincipal(value),
+                $"'{value}' must be exactly one of a seeded position and an app principal");
+            if (position is null) continue;
+            Assert.Equal(OrgPositionStatus.Active, position.Status);
+            Assert.Equal(value, org.UnitOf(value)?.HeadPositionId);
+        }
+
+        // ONE SPELLING PER PRINCIPAL: the referee's and the gateway's own constants are the names the store knows,
+        // and the reserved one is no position either.
+        Assert.Equal(Referee.RunRole, AppPrincipals.Referee);
+        Assert.Equal(TradingGateway.PaperAllocatorRole, AppPrincipals.Allocator);
+        Assert.True(OrgStore.IsAppPrincipal(AppPrincipals.Perception));
+        Assert.Null(org.Position(AppPrincipals.Perception));
+    }
+
     // ---- (c) a rung that runs twice --------------------------------------------------------------------
 
     /// <summary>
@@ -179,6 +290,54 @@ public class OrgLedgerTests
              WHERE kind='seeded' AND position_id IS NOT NULL GROUP BY position_id ORDER BY position_id
             """));
         Assert.Equal(["5"], Rows(db, "SELECT COUNT(*) FROM org_event"));
+    }
+
+    // ---- (d) no op writes it -------------------------------------------------------------------------
+
+    /// <summary>
+    /// (d) NO PIPE OP WRITES AN ORG TABLE — a GUARD, green before this unit as after it, in the shape of
+    /// <c>RefereeVerdictTests.No_pipe_op_asks_for_a_verdict_or_writes_a_promotion</c>: the whole agent-facing
+    /// vocabulary is asked by name, so an op added later has to be justified here rather than pass quietly.
+    ///
+    /// <para><b>Three layers, because a name is the weakest of them.</b> No op and no <c>trade</c> verb names the
+    /// organisation, and no op takes an argument that would address a unit, a head or a seat. <c>OrgStore</c>'s
+    /// public surface is its seven reads: no writer, yet. And no source file but the rung writes an org table at
+    /// all, so no handler can do it with raw SQL either. <c>U-org-verbs</c>, which adds the writers and a READ op,
+    /// is where each layer is revisited, out loud.</para>
+    /// </summary>
+    [Fact]
+    public void No_pipe_op_writes_an_org_table()
+    {
+        string[] chart = ["org", "unit", "chart", "hire", "seat", "division", "team", "headship", "envelope"];
+        foreach (var op in GatewaySchema.Ops())
+        {
+            foreach (var word in chart)
+            {
+                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
+            }
+
+            foreach (var arg in op.Args)
+                foreach (var word in chart.Concat(["head", "parent", "charter", "position", "share"]))
+                    Assert.DoesNotContain(word, arg.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Equal(
+            ["Ancestors", "IsAppPrincipal", "Position", "Positions", "Subtree", "UnitOf", "Units"],
+            typeof(OrgStore)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Select(m => m.Name).Order(StringComparer.Ordinal).ToArray());
+
+        var root = RepoRoot();
+        var writes = new Regex(
+            @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
+            RegexOptions.IgnoreCase);
+        Assert.Equal(
+            ["src/TradeAgent.Core/Db/Database.cs"],
+            Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+                .Where(f => writes.IsMatch(File.ReadAllText(f)))
+                .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
+                .Order(StringComparer.Ordinal).ToArray());
     }
 
     // ---- (e) the rung ------------------------------------------------------------------------------
@@ -256,7 +415,147 @@ public class OrgLedgerTests
         Assert.Equal(["guild|proposed"], Rows(db, "SELECT kind, status FROM org_unit WHERE id='guild-1'"));
     }
 
+    // ---- the store's reads -------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE STORE READS THE CHART THE RUNG SEEDED AND WALKS IT BOTH WAYS — up a unit's line of parents and down the
+    /// units below it — and refuses to answer over a chart that is not a tree.
+    ///
+    /// <para>The team below <c>div-research</c> is written with raw SQL because the store has no writer: it is the
+    /// depth the seed does not have, and the shape <c>U-org-principals</c> seeds its third position into. The loop
+    /// and the missing parent are what a writer outside the app could leave behind — the second only with foreign
+    /// keys off, which is how an ordinary <c>sqlite3</c> opens the file.</para>
+    /// </summary>
+    [Fact]
+    public void The_store_reads_the_seeded_chart_and_walks_it_both_ways()
+    {
+        var file = NewFile("reads");
+        using var db = new Database(file);
+        var org = new OrgStore(db);
+
+        var units = org.Units();
+        Assert.Equal([OrgIds.Root, OrgIds.Operations, OrgIds.Research], units.Select(u => u.Id).ToArray());
+        Assert.True(units[0].IsRoot);
+        Assert.Equal(OrgUnitKind.Root, units[0].Kind);
+        Assert.Null(units[0].HeadPositionId);
+        Assert.All(units.Skip(1), u =>
+        {
+            Assert.False(u.IsRoot);
+            Assert.Equal(OrgIds.Root, u.ParentId);
+            Assert.Equal(OrgUnitKind.Division, u.Kind);
+            Assert.Equal(OrgUnitStatus.Active, u.Status);
+            Assert.Null(u.EnvelopeShare);
+            Assert.Null(u.CharterPublicationId);
+            Assert.Null(u.ClosedAt);
+        });
+        Assert.Equal(new string?[] { CouncilRoles.Operations, CouncilRoles.Research },
+            units.Skip(1).Select(u => u.HeadPositionId));
+
+        Assert.Equal(CouncilRoles.All, org.Positions().Select(p => p.Id).ToArray());
+        var research = org.Position(CouncilRoles.Research);
+        Assert.NotNull(research);
+        Assert.Equal(OrgIds.Research, research.UnitId);
+        Assert.Equal(CouncilRoles.HomeDir(CouncilRoles.Research), research.HomeDir);
+        Assert.Equal(OrgPositionStatus.Active, research.Status);
+        Assert.All(new[] { research.SeatRuntime, research.SeatModel, research.SeatAllowIn, research.SeatAllowOut },
+            Assert.Null);
+        Assert.Null(research.EndedAt);
+        Assert.Null(org.Position(Referee.RunRole));
+        Assert.Null(org.Position("nobody"));
+
+        Assert.Equal(OrgIds.Operations, org.UnitOf(CouncilRoles.Operations)?.Id);
+        Assert.Null(org.UnitOf("nobody"));
+
+        // EXACT, as every role comparison here is: a principal's name in another case is nobody.
+        Assert.True(OrgStore.IsAppPrincipal(Referee.RunRole));
+        Assert.False(OrgStore.IsAppPrincipal("Referee"));
+        Assert.False(OrgStore.IsAppPrincipal(CouncilRoles.Operations));
+        Assert.False(OrgStore.IsAppPrincipal(null));
+
+        Assert.Equal([OrgIds.Root], org.Ancestors(OrgIds.Research).Select(u => u.Id).ToArray());
+        Assert.Empty(org.Ancestors(OrgIds.Root));
+        Assert.Empty(org.Ancestors("nobody"));
+        Assert.Equal([OrgIds.Root, OrgIds.Operations, OrgIds.Research],
+            org.Subtree(OrgIds.Root).Select(u => u.Id).ToArray());
+        Assert.Equal([OrgIds.Research], org.Subtree(OrgIds.Research).Select(u => u.Id).ToArray());
+        Assert.Empty(org.Subtree("nobody"));
+
+        // A TEAM BELOW A DIVISION.
+        AddTeam(db, "team-p1", OrgIds.Research);
+        Assert.Equal([OrgIds.Research, OrgIds.Root], org.Ancestors("team-p1").Select(u => u.Id).ToArray());
+        Assert.Equal([OrgIds.Research, "team-p1"], org.Subtree(OrgIds.Research).Select(u => u.Id).ToArray());
+        Assert.Equal([OrgIds.Root, OrgIds.Operations, OrgIds.Research, "team-p1"],
+            org.Subtree(OrgIds.Root).Select(u => u.Id).ToArray());
+
+        // A LOOP IS DAMAGE, NOT AN ANSWER — up the line and down it — and the rest of the chart still reads.
+        AddTeam(db, "team-a", OrgIds.Research);
+        AddTeam(db, "team-b", "team-a");
+        Exec(db, "UPDATE org_unit SET parent_id='team-b' WHERE id='team-a'");
+        Assert.Equal(ErrorCode.STATE_DATABASE_CORRUPT,
+            Assert.Throws<TradeAgentException>(() => org.Ancestors("team-a")).Code);
+        Assert.Equal(ErrorCode.STATE_DATABASE_CORRUPT,
+            Assert.Throws<TradeAgentException>(() => org.Subtree("team-b")).Code);
+        Assert.Equal([OrgIds.Research, OrgIds.Root], org.Ancestors("team-p1").Select(u => u.Id).ToArray());
+
+        // AND SO IS A PARENT THAT IS NOT THERE.
+        using (var raw = new SqliteConnection($"Data Source={file};Pooling=False;Foreign Keys=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "INSERT INTO org_unit(id, parent_id, kind, status, created_at) "
+                            + $"VALUES('stray', 'gone', 'team', 'active', '{Now()}')";
+            c.ExecuteNonQuery();
+        }
+        Assert.Equal(ErrorCode.STATE_DATABASE_CORRUPT,
+            Assert.Throws<TradeAgentException>(() => org.Ancestors("stray")).Code);
+    }
+
     // ---- helpers -----------------------------------------------------------------------------------
+
+    /// <summary>A team under <paramref name="parent"/>, by raw SQL: the store has no writer.</summary>
+    static void AddTeam(Database db, string id, string parent) =>
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, status, created_at) "
+                 + $"VALUES('{id}', '{parent}', 'team', 'active', '{Now()}')");
+
+    static string Now() => DateTimeOffset.UtcNow.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>One accepted dataset for the runs to reference, the way <c>PromotionLedgerTests</c> records one.</summary>
+    static (long Id, string Sha) Dataset(Database db, DateTimeOffset at)
+    {
+        var datasets = new DatasetStore(db);
+        var file = Path.Combine(Paths.Data, $"org-{Guid.NewGuid():n}.csv");
+        Directory.CreateDirectory(Paths.Data);
+        File.WriteAllText(file, KlineNormaliser.Header + "\n");
+
+        var id = datasets.Record(new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            file, DatasetStore.Sha256(file)!, 1000, at.AddDays(-300), at.AddDays(-1), 0, [],
+            false, 0, 0, 0, at, DatasetState.ACCEPTED, null, []));
+        return (id, datasets.ById(id)!.NormalisedSha256);
+    }
+
+    static void Run(StrategyStore store, string id, string versionId, long datasetId, string datasetSha,
+        string role, DateTimeOffset at) =>
+        store.RecordRun(new StrategyRunRow(
+            id, versionId, datasetId, datasetSha, null, null, "model", BacktestOutcome.COMPLETED.ToString(), null,
+            0, 0, 0, 0, 0, 0, 0, 0, null, null, null, null, "trace", at, role, null), []);
+
+    static void Publish(PublicationStore store, string role, string kind, string recipients, DateTimeOffset at)
+    {
+        var content = $"{role} writes this {kind}";
+        store.Commit(new Publication
+        {
+            Id = Publication.IdOf(role, kind, content), Role = role, Kind = kind, Recipients = recipients,
+            CreatedAt = at, Content = content
+        }, at);
+    }
+
+    static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "src"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
+    }
 
     static void Exec(Database db, string sql) => db.Write(_ =>
     {
