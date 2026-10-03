@@ -359,6 +359,36 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE LIMITS COUNT DECLARED BARS: the most lookback a program may have, 500 bars, is 500 HOURS on an
+    /// hourly program — about 21 days of context where it used to be about eight hours. A 500-hour mean is
+    /// warming up for its first 499 hours and is first asked at hour 500, 20.8 days into 21 days of minutes.
+    /// </summary>
+    [Fact]
+    public void The_lookback_limit_counts_declared_bars_so_500_hourly_bars_reach_back_about_21_days()
+    {
+        var program = Program($"""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            stop percent 5
+            indicator slow = sma(close, {StrategyLimits.MaxLookbackBars})
+            entry when close > slow and close > close[{StrategyLimits.MaxHistoryDepth}]
+            """);
+        Assert.Equal(StrategyLimits.MaxLookbackBars, program.WarmUpBars);
+
+        var minutes = Enumerable.Range(0, 21 * 1440).Select(i => M(i, 100m, 102m, 100m, 100m + i % 3));
+        var run = Backtest.Run(program, Request(), minutes);
+        var closes = Of(run, BacktestEventKind.Bar);
+
+        Assert.Equal(21 * 24, closes.Count);
+        Assert.All(closes.Take(StrategyLimits.MaxLookbackBars - 1), e => Assert.Equal("WarmingUp", e.Status));
+        var first = closes[StrategyLimits.MaxLookbackBars - 1];
+        Assert.NotEqual("WarmingUp", first.Status);
+        Assert.Equal(Start.AddHours(StrategyLimits.MaxLookbackBars - 1), first.Bar);
+        Assert.InRange((first.Bar - Start).TotalDays, 20.7, 20.9);
+    }
+
+    /// <summary>
     /// A RUN THAT ENDS INSIDE AN HOUR CLOSES IT, AS THE PARTIAL BAR IT IS. Two and a half hours of minutes:
     /// three hourly bars, the last built from thirty minutes and counted thirty short. Its exit signal has
     /// no minute after it to fill at, and the trace says so; the position is still open at the end, and the

@@ -199,6 +199,32 @@ public class DeclaredBarsGrammarTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE ROLE THAT WRITES PROGRAMS IS TOLD `bars` EXISTS AND WHY: its instructions say what `bars 1h`
+    /// does and that minute-scale turnover dies on costs, and the language reference it is handed —
+    /// <c>docs/STRATEGY-LANGUAGE.md</c>, copied into its home — has the declaration in its grammar and says
+    /// how it relates to <c>timeframe</c>. A declaration the writer is never shown is one it never uses.
+    /// </summary>
+    [Fact]
+    public void The_role_that_writes_programs_is_told_bars_exists_and_why_minute_turnover_dies_on_fees()
+    {
+        var mission = TradeAgent.AgentRuntime.WorkspaceBuilder.Instructions(new TradeAgent.AgentRuntime.WorkspaceContext(
+            "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["ES"] },
+            ConnectorIsBuiltInSimulator: false, Role: CouncilRoles.Research));
+
+        Assert.Contains("`bars 1h` makes a program decide once an hour instead of every minute", mission,
+            StringComparison.Ordinal);
+        Assert.Contains("minute-scale turnover dies on costs", mission, StringComparison.Ordinal);
+
+        var reference = File.ReadAllText(Path.Combine(DayOnePrograms.RepoRoot(), "docs", "STRATEGY-LANGUAGE.md"))
+            .ReplaceLineEndings("\n");
+        Assert.Contains("| \"bars\" BARS", reference, StringComparison.Ordinal);
+        Assert.Contains($"BARS        := \"1m\" | \"5m\" | \"15m\" | \"30m\" | \"1h\" | \"4h\" | \"1d\"", reference,
+            StringComparison.Ordinal);
+        Assert.Contains("**`bars` and `timeframe` are independent.**", reference, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (f) GUARD — A STORED PROGRAM WITH A CONSTANT NAMED `bars` STILL PARSES, TO THE TEXT IT ALWAYS HAD.
     ///
     /// <para>The language had no <c>bars</c> before this unit, so a stored program may use the word as a

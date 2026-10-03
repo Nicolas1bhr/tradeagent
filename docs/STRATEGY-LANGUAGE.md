@@ -14,6 +14,7 @@ matter except among rules. Keywords and names are read case-insensitively; a sym
 
 ```
 declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, required; zone default UTC
+             | "bars" BARS                               # the bar the rules are asked on; default 1m
              | "timeframe" DURATION | "data_freshness" DURATION | "max_decision_age" DURATION
              | "const" NAME "=" (NUMBER | "true" | "false") | "indicator" NAME "=" indicator
              | "size" ("fixed" | "capital_fraction" | "risk_fraction") value      # required
@@ -26,6 +27,7 @@ indicator   := ("sma" | "ema" | "rsi" | "highest" | "lowest") "(" SERIES "," val
              | "atr" "(" value ")" | ("opening_range_high" | "opening_range_low") "(" ")"
 value       := NUMBER | NAME     # a declared number constant;  CLOCK := HH ":" MM, 24-hour
 DURATION    := INT ("s" | "m" | "h" | "d")   # `30s`, `5m`, `2h`, `1d`; no default unit, no fractions
+BARS        := "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d"   # spelled like a DURATION; `60m` is `1h`
 SERIES      := "open" | "high" | "low" | "close" | "volume"
 ```
 
@@ -36,6 +38,48 @@ refuses a late order. They are what the dispatcher checks again when an intent r
 
 Rules are evaluated **in declared order, every exit before every entry**; an exit written below an entry
 is refused, not reordered. A program is **long or flat**: one position, and no rule takes a side.
+
+## Bars — what a program is evaluated on
+
+`bars 1h` declares the bar the rules are asked on: one of `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`. A
+program that declares none is asked on **every closed minute**, which is what every program written before
+`bars` existed is asked on; `bars 1m` is that same program with the same id. `bars` is a declaration only as
+the first word of a line, never a reserved name — `const bars = 20` still means what it meant.
+
+**Why it exists.** A program that decides every minute trades as often as the minute lets it, and every
+trade pays a fee and the spread: one model-written program, deciding every minute, traded 321 times in a
+quarter, and 62% of its loss was fees. A program on hourly bars decides once an hour, and the same 500-bar
+lookback reaches three weeks back instead of eight hours. Minute-scale turnover dies on costs; declare the
+bar your edge lives on.
+
+**How a bar is built.** From the closed one-minute bars, on a fixed grid: `[k·d, (k+1)·d)` counted in UTC,
+so the 14:00 hour is the same hour everywhere — and for `1d`, from midnight to midnight **in the program's
+`timezone`**, so a daily bar on a daylight-change day is 23 or 25 hours long. The open is its first minute's
+open, the high and low its minutes' extremes, the close its last minute's close, the volume their sum —
+decimals, as published. It **closes when its last minute has closed**, and the rules are asked at that close
+and never before. A window with no minute at all is **no bar**: a gap, never filled. A window with some
+minutes missing is a **partial bar**, built from the minutes it has, and every minute it is short is counted
+as missing, exactly as a missing minute always was.
+
+**What counts declared bars**: indicator periods, warm-up, history (`close[3]` is three declared bars back),
+`max_hold_bars`, every bar limit below — 500 hourly bars is about 21 days — and a backtest's run cap, so a
+year of hourly bars is one run. **What stays on the minute**: a decision taken at a declared bar's close
+fills at the **next minute's open**; a stop and a target fire on each minute's own range, with the
+conservative ordering applied minute by minute — an hour whose range touched both levels is a target if a
+minute inside it reached the target first and alone; and `max_hold_bars` is taken at the close of the
+declared bar that reaches it. **Time filters read the declared bar's open time**, so on hourly bars an
+`entry_window` or `opening_range` must contain an hour's open (`10:00`) to admit that hour: declare them on
+the bar's boundaries.
+
+**`bars` and `timeframe` are independent.** `timeframe` is one of the three execution bounds above — a
+statement, hashed into the id, recorded on a verdict and carried to execution — and it resamples nothing.
+`bars` is what the rules are evaluated on. A program on `bars 1h` will normally state `timeframe 1h` beside
+it; nothing refuses one whose two differ, because a stored program's `timeframe` never meant the bar it was
+evaluated on.
+
+**On paper, not yet.** This build's paper runner evaluates every minute. A deployment of a program that
+declares any other bar is ended before its first bar, in words, and nothing is sent; programs on hourly bars
+run on paper after the next update. Backtests and the referee's verdicts already judge them on their bars.
 
 ## Conditions
 
@@ -104,7 +148,8 @@ before it is refused rather than answered from a half-filled window.
 16 indicators · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
 period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
 1 (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
-second and at most one week. Zones a program may name: `UTC`,
+second and at most one week. Every count of bars is in the program's declared bars: 500 bars of lookback
+is about eight hours of minutes and about 21 days of hours. Zones a program may name: `UTC`,
 `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
 an OS lookup, so a program means the same thing on every machine that hashes it.
 
@@ -162,6 +207,9 @@ measure risk against are refusals, not warnings.
 Identity is `Sha256Hex.Of(canonical + "\n" + parameters + "\n" + manifest)`: the typed canonical form
 (comments, spacing, case and declaration order gone; rule order and the computed warm-up kept), the
 constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONTRACTS.md` has the form.
+The canonical form states every bound, present or not, with ONE exception: the `bars` line is written only
+when a program declares a bar that is not one minute — so every program written before `bars` existed keeps
+its canonical text and its id, and an hourly program can never share an id with its minute twin.
 
 ## The three day-one programs
 
@@ -249,7 +297,11 @@ open** plus adverse slippage, with a fee on every fill; a stop or a target fires
 price, and a bar that touched both counts as the **stop**; a bar that opened through the stop fills at
 that open; `max_hold_bars` is taken at the close of the bar that reaches it, by the backtest's own
 protection, before the evaluator is asked anything on that bar — so the evaluator emits nothing for it.
-A size that rounds down to nothing is no trade, with the reason.
+A size that rounds down to nothing is no trade, with the reason. On a program that declares `bars`, the
+decision and `max_hold_bars` are the declared bar's and everything else here is the minute's: the fill at
+the next MINUTE's open, the stop and the target on each minute's range — the "Bars" section above. The
+dataset still serves minutes; the run builds the declared bars from them, and a run that ends inside one
+closes it as a partial bar.
 
 **What a run cannot prove.** It is computed over bars, and bars establish no actual fill, no queue
 position and no intrabar ordering. A run is a reason to test something and never a record of a trade.
