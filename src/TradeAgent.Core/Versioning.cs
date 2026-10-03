@@ -278,8 +278,15 @@ public static class Versions
     /// that predates the rung keeps the frictionless judge if its lineage ever charged a verdict, and is
     /// pinned at its first verdict otherwise — a rule <c>Referee.RequestVerdict</c> applies inside the
     /// charge, because the second half depends on whether the instrument's step is confirmed THEN.</para>
+    ///
+    /// <para><b>28 — the organisation as app-minted data</b> (<c>U-org-ledger</c>): the unit, position and
+    /// event tables, seeded in the same rung with the root <c>org</c> (its head NULL: the owner, in-process),
+    /// the divisions <c>div-operations</c> and <c>div-research</c>, and two positions whose ids ARE the legacy
+    /// role strings, homed where they already are — so no historical row changes meaning. The seed is
+    /// idempotent, because a crash between it and the stamp runs the rung again. Nothing reads the tables yet
+    /// and no op writes them (<c>OrgStore</c>).</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 27;
+    public const int DatabaseSchemaVersion = 28;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
