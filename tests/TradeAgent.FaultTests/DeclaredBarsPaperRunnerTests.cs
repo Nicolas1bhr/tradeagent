@@ -10,19 +10,15 @@ using Xunit.Abstractions;
 namespace TradeAgent.Tests.Fault;
 
 /// <summary>
-/// THE PAPER RUNNER REFUSES, IN WORDS, A PROGRAM ON BARS IT DOES NOT STEP — AND IS NOT HANDED A NEW ONE TO
-/// REFUSE ON EVERY SWEEP (<c>U-timeframe-a</c> item 4).
+/// A PROGRAM ON DECLARED BARS IS DEPLOYED, RUN AND REPLACED LIKE ANY OTHER (<c>U-timeframe-b</c>).
 ///
-/// <para><b>Why the runner refuses.</b> After this unit a program that declares <c>bars 1h</c> is backtested
-/// and judged on hours, so it can carry a paper-eligible verdict, and the app's own policy allocates and
-/// deploys it. This build's runner evaluates every closed minute: stepping that program here would run a
-/// different strategy under the judged one's id. So the run is ENDED before a bar is stepped, saying why,
-/// and nothing is sent — until <c>U-timeframe-b</c> steps rules on declared bars.</para>
-///
-/// <para><b>Why the sweep stops.</b> An ended, reconciled run frees its allocation, and the deployment sweep
-/// starts a replacement at a later instant. For a run the runner will end at its first pass for the same
-/// reason, that is a new deployment row, a flatten and a paid turn for Research on every sweep. Once one run
-/// of the allocation exists, none is started for a version the runner refuses.</para>
+/// <para><b>What changed.</b> <c>U-timeframe-a</c> taught the backtest and the referee to judge a program that
+/// declares <c>bars 1h</c> on hours while the paper runner still evaluated every minute, so the runner ended such
+/// a run before its first bar, in words, and the deployment sweep started no replacement for it — each would have
+/// been another row, another flatten and another paid wake to say the same sentence. <c>U-timeframe-b</c> steps
+/// the rules on the declared bars while protection stays on the minute (<c>ForwardRunnerTests</c> measures that
+/// end to end over the paper connector), so the refusal and the sweep's guard for it went together, and an
+/// hourly run that ends is replaced exactly as a minute run is.</para>
 ///
 /// <para>Everything runs over <see cref="RecordingConnector"/> and the built-in simulator, in practice mode.
 /// Nothing reaches a venue and no real money is involved.</para>
@@ -33,9 +29,8 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
     static readonly DateTimeOffset At = new(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>
-    /// AN HOURLY PROGRAM THAT WOULD TRADE ON THESE BARS IF IT WERE STEPPED ON MINUTES: every bar below closes
-    /// at 100, above its two-bar mean the first time the price lifts. Its three execution bounds are declared,
-    /// so the only reason this run can end is the one under test.
+    /// AN HOURLY PROGRAM: it enters when an hour closes at or above its two-bar mean, and its three execution
+    /// bounds are declared, so nothing about the program itself ends a run of it.
     /// </summary>
     const string HourlyText =
         "instrument BTCUSDT\nbars 1h\ntimeframe 1h\ndata_freshness 2h\nmax_decision_age 1h\nsize fixed 1\n"
@@ -163,90 +158,44 @@ public class DeclaredBarsPaperRunnerTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (g) THE PAPER RUNNER REFUSES A `bars 1h` DEPLOYMENT IN WORDS.
+    /// AN HOURLY PROGRAM'S RUN IS STEPPED RATHER THAN ENDED, AND WHEN IT DOES END IT IS REPLACED AS A MINUTE
+    /// PROGRAM'S IS. Two and a half hours of minutes are stepped as the two hours that closed in them; the run
+    /// is then ended by the owner's own call — any end would do — and the next sweep starts its replacement.
     ///
-    /// <para>A paper-eligible hourly version is allocated and deployed by the app's own policy, and two and a
-    /// half hours of closed minutes are in the ledger — enough for two hourly bars to have closed, and for a
-    /// minute-stepped run to have entered. The runner ends the run before stepping a single bar, with the
-    /// sentence on the deployment's own line, and nothing reaches the connector.</para>
-    ///
-    /// <para><b>RED on the base</b> (<c>d99155e</c>): the hourly text did not parse, so no version could be
-    /// recorded. <b>The mutant</b> — the refusal removed from <c>ForwardRuns.AdvanceOneAsync</c> — goes red
-    /// here: the run is left active and stepped nothing, the evaluator refusing to start a program on bars it
-    /// did not declare, and no sentence anywhere says why.</para>
+    /// <para><b>RED before this unit</b>: the runner ended the run before its first bar, in words. With only the
+    /// runner's refusal removed and the sweep's guard for it left behind, it goes red at the sweep instead,
+    /// which starts nothing: the two went together.</para>
     /// </summary>
     [Fact]
-    public async Task The_paper_runner_refuses_a_bars_1h_deployment_in_words()
+    public async Task A_bars_1h_programs_run_is_stepped_and_its_ended_run_replaced_as_a_minute_programs_is()
     {
         var (gw, conn, db, clock) = await Ready();
         using var _1 = db;
         var runner = new ForwardRuns(gw, db, () => clock.At);
 
-        var version = Judged(db, HourlyText);
-        Assert.Equal(PromotionState.PaperEligible, gw.Promotions.Standing(version).State);
+        Judged(db, HourlyText);
         var deployment = await Deployed(gw);
         Minutes(db, clock, 150);
 
-        var states = await runner.AdvanceAsync();
-        var state = Assert.Single(states);
-        var ended = gw.Deployments.ById(deployment.Id)!;
-        log.WriteLine($"runner     : {state.BarsReplayed} bars stepped, ended: {state.Ended ?? "no"}");
-        log.WriteLine($"deployment : {ended.State} — {ended.EndReason ?? "-"}");
+        var state = Assert.Single(await runner.AdvanceAsync());
+        log.WriteLine($"runner : {state.BarsReplayed} bars stepped, ended: {state.Ended ?? "no"}, {state.State?.Counters}");
+        Assert.Null(state.Ended);
+        Assert.Equal(2, state.BarsReplayed);
+        Assert.Equal(2, state.State!.Counters.Bars);
+        Assert.True(gw.Deployments.ById(deployment.Id)!.IsActive);
 
-        Assert.Equal(DeploymentState.Ended, ended.State);
-        Assert.Equal(
-            "this program declares `bars 1h`, and this build's paper runner evaluates every minute; programs on hourly "
-            + "bars run after the next update. It was ended before a bar was stepped, and nothing was sent",
-            ended.EndReason);
-        Assert.Equal(ended.EndReason, state.Ended);
-        Assert.Equal(0, state.BarsReplayed);
-        Assert.Equal(0, conn.Places);
-        Assert.DoesNotContain(gw.Deployments.OpsOf(deployment.Id), o => o.Kind is DeploymentOpKind.Entry
-            or DeploymentOpKind.Exit or DeploymentOpKind.Stop or DeploymentOpKind.Target);
+        await gw.EndPaperDeploymentAsync(deployment.Id, "ended by the test");
         Assert.True(gw.Deployments.IsReconciled(deployment.Id));
+
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(clock.At.AddMinutes(1)));
+        Assert.Equal(2, gw.Deployments.ForAllocation(deployment.AllocationId).Count);
+        Assert.Equal(0, conn.Places);
         await gw.DisposeAsync();
     }
 
     /// <summary>
-    /// A RUN THE RUNNER REFUSED IS NOT REPLACED ON THE NEXT SWEEP, OR ANY SWEEP AFTER IT. The allocation
-    /// still stands and its slot is free, so without the guard every sweep starts a new deployment for the
-    /// runner to end on its next pass — a new row, a flatten and a new paid wake for Research each time.
-    ///
-    /// <para><b>The mutant</b> — the guard removed from <c>StartPaperDeploymentsDue</c> — starts one
-    /// replacement per sweep here, each ended by the runner before the next: 1, 1, 1, and four deployments
-    /// of one allocation.</para>
-    /// </summary>
-    [Fact]
-    public async Task A_run_the_runner_refused_for_its_bars_is_not_replaced_on_the_next_sweep()
-    {
-        var (gw, _, db, clock) = await Ready();
-        using var _1 = db;
-        var runner = new ForwardRuns(gw, db, () => clock.At);
-
-        Judged(db, HourlyText);
-        var deployment = await Deployed(gw);
-        Minutes(db, clock, 10);
-        await runner.AdvanceAsync();
-        Assert.Equal(DeploymentState.Ended, gw.Deployments.ById(deployment.Id)!.State);
-
-        var started = new List<int>();
-        for (var k = 1; k <= 3; k++)
-        {
-            clock.At = clock.At.AddMinutes(1);
-            started.Add(gw.StartPaperDeploymentsDue(clock.At));
-            await runner.AdvanceAsync();
-        }
-        log.WriteLine($"sweeps after the refusal started: {string.Join(", ", started)}");
-
-        Assert.Equal([0, 0, 0], started);
-        Assert.Single(gw.Deployments.ForAllocation(deployment.AllocationId));
-        Assert.Empty(gw.Deployments.Open());
-        await gw.DisposeAsync();
-    }
-
-    /// <summary>
-    /// AND A MINUTE PROGRAM'S ENDED RUN IS STILL REPLACED, AS IT ALWAYS WAS: the guard is about a program the
-    /// runner refuses and nothing else. Its run is ended by the owner's own call here — any end would do.
+    /// AND A MINUTE PROGRAM'S ENDED RUN IS STILL REPLACED, AS IT ALWAYS WAS. Its run is ended by the owner's own
+    /// call here — any end would do.
     /// </summary>
     [Fact]
     public async Task A_minute_programs_ended_run_is_still_replaced_as_before()

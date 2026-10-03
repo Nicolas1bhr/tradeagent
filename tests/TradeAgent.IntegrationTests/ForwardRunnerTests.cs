@@ -29,7 +29,7 @@ namespace TradeAgent.Tests.Integration;
 /// program decide from a position the app's own protection had already said must not survive the
 /// bar.</para>
 /// </summary>
-public class ForwardRunnerTests(ITestOutputHelper log)
+public partial class ForwardRunnerTests(ITestOutputHelper log)
 {
     static readonly DateTimeOffset Cutoff = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
 

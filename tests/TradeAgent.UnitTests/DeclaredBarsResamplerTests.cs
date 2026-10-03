@@ -233,6 +233,41 @@ public class DeclaredBarsResamplerTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE BARS BETWEEN TWO INSTANTS ARE WHOLE WINDOWS OF THE GRID, and a zone's day is one bar whatever its length
+    /// (<c>U-timeframe-b</c>: the paper runner counts a position's bars held with it, so `max_hold_bars 2` on
+    /// hours is two hours and on New York days two New York days).
+    ///
+    /// <para>Counted on the windows the two instants fall in, never on the time between them: from 13:59 to
+    /// 14:00 is one hour bar, from 13:01 to 13:59 none. And the spring day in New York is 23 hours long, so a
+    /// count by 24-hour division would read the day after it as no day later at all.</para>
+    /// </summary>
+    [Fact]
+    public void The_bars_between_two_instants_are_whole_windows_and_a_zones_short_or_long_day_is_one_bar()
+    {
+        var hour = BarGrid.Uniform(TimeSpan.FromHours(1));
+        var at = new DateTimeOffset(2026, 9, 19, 13, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(0, hour.Between(at.AddMinutes(1), at.AddMinutes(59)));
+        Assert.Equal(1, hour.Between(at.AddMinutes(59), at.AddMinutes(60)));
+        Assert.Equal(2, hour.Between(at.AddMinutes(1), at.AddMinutes(150)));
+        Assert.Equal(-2, hour.Between(at.AddHours(2), at));
+        Assert.Equal(3, BarGrid.OneMinute.Between(at.AddMinutes(1), at.AddMinutes(4)));
+
+        var ny = BarGrid.For(Program("1d", "America/New_York"));
+        var springMidnight = new DateTimeOffset(2026, 3, 8, 5, 0, 0, TimeSpan.Zero);    // 00:00 in New York
+        var nextMidnight = ny.EndOf(springMidnight);                                     // 23 hours later
+        Assert.Equal(TimeSpan.FromHours(23), nextMidnight - springMidnight);
+        Assert.Equal(1, ny.Between(springMidnight, nextMidnight));
+        Assert.Equal(2, ny.Between(springMidnight.AddHours(-1), nextMidnight.AddHours(1)));
+
+        var autumnMidnight = new DateTimeOffset(2026, 11, 1, 4, 0, 0, TimeSpan.Zero);   // 00:00 in New York
+        Assert.Equal(TimeSpan.FromHours(25), ny.EndOf(autumnMidnight) - autumnMidnight);
+        Assert.Equal(0, ny.Between(autumnMidnight, ny.EndOf(autumnMidnight).AddMinutes(-1)));
+        Assert.Equal(1, ny.Between(autumnMidnight, ny.EndOf(autumnMidnight)));
+        log.WriteLine($"New York: {springMidnight:u} to {nextMidnight:u} is {ny.Between(springMidnight, nextMidnight)} bar");
+    }
+
+    /// <summary>
     /// EVERY LOCAL MIDNIGHT EXISTS ONCE IN EVERY ZONE A PROGRAM CAN NAME, for every day of seven years: a
     /// daily bar's end is the next one's start, it is midnight on the zone's own wall clock, and no day is
     /// shorter than 23 hours or longer than 25.
