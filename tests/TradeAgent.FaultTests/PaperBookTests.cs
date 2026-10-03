@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
@@ -185,5 +186,54 @@ public class PaperBookTests(ITestOutputHelper log)
         await reopened.ConnectAsync();
         Assert.Equal(coid, Assert.Single(await reopened.GetOrdersAsync(PaperConnector.TheAccount, true, null)).ClientOrderId);
         Assert.Equal(coid, Assert.Single(await reopened.GetExecutionsAsync(PaperConnector.TheAccount, null)).ClientOrderId);
+    }
+
+    /// <summary>
+    /// A FAILURE BETWEEN THE WATERMARK AND THE CLOSE LEAVES BOTH AS THEY WERE (<c>U-paper-settle</c>
+    /// item 2).
+    ///
+    /// <para>They were two commits. A process killed between them kept bar N's watermark beside bar
+    /// N−1's close, and the quote is that close stamped at bar N's close — a stale price that reads
+    /// fresh. The fault here is at the second write and nowhere else: a trigger on the book's own
+    /// file refuses the close row, so no seam had to be added to the book to reach it. Then the
+    /// trigger goes and the same bar settles, which shows nothing was left half-open behind it.</para>
+    /// </summary>
+    [Fact]
+    public void A_failure_between_the_watermark_and_the_close_leaves_both_as_they_were()
+    {
+        var file = NewFile();
+        using var book = new PaperBook(file, PaperConnector.TheAccount, "USDT", 10_000m);
+        book.MarkSettled("BTCUSDT", T0, 100m);
+
+        Raw(file, """
+            CREATE TRIGGER fault_close_insert BEFORE INSERT ON paper_meta WHEN NEW.key LIKE 'close:%'
+            BEGIN SELECT RAISE(ABORT, 'the close was not written (injected by this test)'); END;
+            CREATE TRIGGER fault_close_update BEFORE UPDATE ON paper_meta WHEN NEW.key LIKE 'close:%'
+            BEGIN SELECT RAISE(ABORT, 'the close was not written (injected by this test)'); END;
+            """);
+
+        var thrown = Assert.Throws<SqliteException>(() => book.MarkSettled("BTCUSDT", T0.AddMinutes(1), 111m));
+        log.WriteLine($"{thrown.Message}; watermark {book.SettledThrough("BTCUSDT"):HH:mm}, close {book.LastClose("BTCUSDT")}");
+        Assert.Equal(T0, book.SettledThrough("BTCUSDT"));
+        Assert.Equal(100m, book.LastClose("BTCUSDT"));
+
+        Raw(file, "DROP TRIGGER fault_close_insert; DROP TRIGGER fault_close_update;");
+        book.MarkSettled("BTCUSDT", T0.AddMinutes(1), 111m);
+        Assert.Equal(T0.AddMinutes(1), book.SettledThrough("BTCUSDT"));
+        Assert.Equal(111m, book.LastClose("BTCUSDT"));
+    }
+
+    /// <summary>A statement run on the book's file over a connection of the test's own.</summary>
+    static void Raw(string file, string sql)
+    {
+        using var raw = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = file,
+            Pooling = false
+        }.ToString());
+        raw.Open();
+        using var c = raw.CreateCommand();
+        c.CommandText = sql;
+        c.ExecuteNonQuery();
     }
 }

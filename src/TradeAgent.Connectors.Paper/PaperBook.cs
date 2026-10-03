@@ -175,16 +175,48 @@ public sealed class PaperBook : IDisposable
     /// <para>The spacing between the last two bars is no longer kept (<c>U-runner-forward</c>): it was
     /// read for one thing, the quote's timestamp, and after a gap it is the gap rather than the bar.
     /// A file an older build wrote may still hold an <c>interval:</c> row; nothing reads it.</para>
+    ///
+    /// <para><b>The watermark and the close are written in ONE transaction</b>, with the watermark
+    /// they are compared against read inside it (<c>U-paper-settle</c>). They were two commits, and
+    /// the quote is the close stamped at the watermark's bar: a process killed between the two kept
+    /// bar N's watermark beside bar N−1's close — a stale price that reads fresh — and a catch-up over
+    /// a backlog paid both commits on every bar.</para>
     /// </summary>
     public void MarkSettled(string symbol, DateTimeOffset openTime, decimal close)
     {
         var key = symbol.ToUpperInvariant();
-        var previous = SettledThrough(key);
-        if (openTime >= previous)
+        lock (_gate)
         {
-            SetMeta($"settled:{key}", T(openTime));
-            SetMeta($"close:{key}", D(close));
+            using var tx = _conn.BeginTransaction();
+            var previous = MetaIn(tx, $"settled:{key}") is { } t ? Time(t) : DateTimeOffset.MinValue;
+            if (openTime >= previous)
+            {
+                SetMetaIn(tx, $"settled:{key}", T(openTime));
+                SetMetaIn(tx, $"close:{key}", D(close));
+            }
+            tx.Commit();
         }
+    }
+
+    /// <summary>One meta row, read inside the caller's transaction.</summary>
+    string? MetaIn(SqliteTransaction tx, string key)
+    {
+        using var c = _conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = "SELECT value FROM paper_meta WHERE key=$k";
+        c.Parameters.AddWithValue("$k", key);
+        return c.ExecuteScalar() as string;
+    }
+
+    /// <summary>One meta row, written inside the caller's transaction, so a rollback takes it back.</summary>
+    void SetMetaIn(SqliteTransaction tx, string key, string value)
+    {
+        using var c = _conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = "INSERT INTO paper_meta(key,value) VALUES($k,$v) ON CONFLICT(key) DO UPDATE SET value=$v";
+        c.Parameters.AddWithValue("$k", key);
+        c.Parameters.AddWithValue("$v", value);
+        c.ExecuteNonQuery();
     }
 
     /// <summary>Every symbol this book has ever settled a bar for, ordered for a stable settlement pass.</summary>
