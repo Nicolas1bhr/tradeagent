@@ -7566,3 +7566,38 @@ success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (36 min
 **NOT done, NOT verified:** the paper runner stepping declared bars (`U-timeframe-b`); Integration only on CI and the gate; no box; the pipe's backtest
 reply does not name the bar; a partial bar's shortfall counts window minutes outside `from` / the data's end (stated); on declared bars a minute out of
 order is refused before its fills, unlike 1m.
+
+## 2026-10-03 — U-invariant-traces landed: a trace, its hashes and its fault words are the same bytes under any culture; InvariantGlobalization pinned
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-invariant-traces.md` (briefed from a read-only survey leg, amended on the
+orchestrator's decisions: the pin test and `KlineNormaliser`; dispatched `12f30542`, after U-timeframe-a); built on `35606c56`, rebased by the manager
+onto `a68b14b4`, `54013b6d` (docs), src+tests patch-id identical. Merge `dec23ca8` (ff-only), 4 commits (3 items + the report). No schema change. **`Referee.EvaluatorVersion` →
+`backtest=2;metrics=1;scoring=1`**, every golden vector re-pinned in the same commit: a standing verdict recorded under `backtest=1` is withdrawn by
+U-evidence-identity's rule (none exists on any install the fleet controls — the orchestrator's statement, not a measurement). Not the money path.
+
+- **Item 1 (`4b1deace`):** the `TraceText` interpolated-string handler — a decimal through `StrategyParser.Number`, everything else invariant — is the ONLY
+  parameter type of `EvaluationFault`, `EvaluationOutcome.Faulted`, the state's `Fault` and `BacktestEvent.Fault`/`.NoTrade`, so a culture-formatted string
+  does not compile in (CS1503; a test fails if a string overload appears); `Backtest.Run`'s halts through one `Halt`; two faulting golden vectors added
+  (shas re-derived independently), the fifteen old pins byte-identical apart from the bump.
+- **Item 2 (`63ba5ece`):** the audit re-run on this `main` as a typed Roslyn scan (23 `Strategy/` files, 369 interpolation holes): every integer and date reaching
+  a version id, the manifest, a canonical text, the run, promotion and publication ids, the metrics' words and the venue friction's id names
+  `InvariantCulture`; `KlineNormaliser` writes bar times invariantly; no id pin moved.
+- **Item 3 (`92248328`):** test (e) pins `InvariantGlobalization` (props, project, runtime and CI files, the shipped runtimeconfigs) and names the culture tests
+  that must pass before it may be turned off; `CONTRACTS.md` states the rule with its one exception and seventeen vectors.
+- **Judged at landing:** no-trade words go through `TraceText` too (the same hashed field) — accepted; positive integers in REFUSAL words stay ambient (in
+  no trace, hash or id; spelled alike in all 1,063 ICU cultures of this Mac, measured; stated in CONTRACTS) — accepted; U-timeframe-a's new fault texts
+  carried ambient integers and now go through `TraceText` — accepted.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `bcba2e2`: Release `--no-incremental` 0 warnings, 0 errors; Unit
+1338/1338, Fault 414/414 (under `suite.sh`); three classes 3×. RED before, on a `git archive` of `12f3054`: (a) "…divided 1026.70 by zero…' became
+'…divided 1026,70 by zero…'"; (b) "…'a rule divided 100.50 by zero…' where the trace's spelling is '…100.5…'"; (c) "under nl-BE's number format the recorded
+fault reads '…144,0…'"; (d) "the dataset file is … 2026-01-05T00.00.00Z"; (e) with the props false: "…sets InvariantGlobalization to [false]…". Mutants:
+(i) ⇒ (a), (b), (c) and the pin check red; (ii) `Number` without its culture ⇒ Unit "Failed: 4" — (a)–(d), nothing else. Also run: a temporary build with
+`InvariantGlobalization=false` passed (a)–(d) against the REAL nl-BE and fr-BE (macOS ICU); (e) failed, as designed.
+Manager's gate at `b15509a`, carried to `dec23ca8`, build tree identical, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1338/1338 (6 m 22 s — the Unit suite ran ~11× slower on this Mac after it slept: re-run alone 6 m 24 s, U-venue-verify's build 7 m 28 s under the same conditions, this unit's two classes 401 ms and 151 ms alone — environmental, all green), Fault 414/414 (1 m 43 s), Integration 705/706, 1 skipped (11 m 11 s) → 0 failed.
+Names vs `main` (git objects): 2090 → 2096, 0 removed, 6 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37102017452 at `bcba2e2` (on `35606c56`; `main` has moved by docs only since): success on ubuntu-latest (12 min), macos-latest (15
+min), windows-latest (43 min), package (4 min). Earlier landings: `3b03041` (U-paper-settle) windows RED in `LossHoldSurfacesTests.A_release_is_told_with_
+the_owners_note_quoted` (first sighting; a gateway test over the Fake connector; seat P's `U-fix-loss-reopen`); `88c5a2f` (U-timeframe-a) success ×3.
+
+**NOT done, NOT verified:** Integration on CI and the gate only; no box; the real-culture run is macOS only, not Windows; refusal integers left ambient.
