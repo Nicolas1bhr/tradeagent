@@ -1092,7 +1092,8 @@ public sealed class MissionLoop
     readonly HashSet<string> _turning = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A MATERIAL PASS IN FLIGHT, and the other half of the same lease.
+    /// A MATERIAL PASS IN FLIGHT — the loop's own, or one the app asked for through
+    /// <see cref="TryPass{T}"/> — and the other half of the same lease.
     ///
     /// <para><c>docs/COUNCIL.md</c> rule 7: the inbox scanner attests only across proven quiescence
     /// of EVERY managed agent. A pass can say "the account owner put this file here" only if no
@@ -1248,15 +1249,49 @@ public sealed class MissionLoop
     /// </summary>
     async Task<bool> PassAsync(CancellationToken ct)
     {
+        if (!EnterPass()) return false;
+        try { await _host.ScanAsync(ct); }
+        finally { LeavePass(); }
+        return true;
+    }
+
+    /// <summary>
+    /// A MATERIAL PASS THE APP TAKES ON ITS OWN ACCOUNT — the background loop's thirty-second tick and
+    /// the Inbox page's pass after a drop — UNDER THE SAME EXCLUSION AS THE LOOP'S OWN, or not at all.
+    ///
+    /// <para>These two used to walk the tree whatever the loop was doing (U-inbox-order): a pass taken
+    /// beside a role that is launching measures a window with an agent in it, and spends every
+    /// sighting it makes on the weaker word for good, because a material row is written once; and a
+    /// role that launched beside one of them walked into the window it was measuring. One exclusion
+    /// for every pass is what makes <c>docs/COUNCIL.md</c> rule 7 true of all of them: no pass runs
+    /// while any role holds its turn lease, and no lease is taken while any pass runs.</para>
+    ///
+    /// <para>Refused, never queued — the same answer a second turn for a turning role gets. The caller
+    /// asks again on its own clock, and the loop takes a pass of its own behind every turn.</para>
+    /// </summary>
+    /// <returns>What the pass returned, or null when it was refused: a role is turning, or a pass is
+    /// already measuring.</returns>
+    public T? TryPass<T>(Func<T> pass) where T : class
+    {
+        if (!EnterPass()) return null;
+        try { return pass(); }
+        finally { LeavePass(); }
+    }
+
+    /// <summary>The pass half of the lease: taken only while no role is turning and no pass runs.</summary>
+    bool EnterPass()
+    {
         lock (_gate)
         {
             if (_turning.Count > 0 || _passing) return false;
             _passing = true;
+            return true;
         }
+    }
 
-        try { await _host.ScanAsync(ct); }
-        finally { lock (_gate) _passing = false; }
-        return true;
+    void LeavePass()
+    {
+        lock (_gate) _passing = false;
     }
 
     /// <summary>Whether this role has a turn in flight right now.</summary>
