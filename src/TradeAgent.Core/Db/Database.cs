@@ -1712,6 +1712,60 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','28') ON CONFLICT(key) DO UPDATE SET value='28';");
         }
 
+        if (have < 29)
+        {
+            // THE INSTRUMENT CHECK — `U-venue-verify`.
+            //
+            // Until this rung the only route to a VERIFIED instrument was a hand-edited `venues.json`
+            // that no screen writes — a terminal-shaped instruction — and the shipped BTCUSDT row is
+            // unverified, so the paper connector offered nothing, the runner sized nothing and the
+            // cost model refused the campaign press. This table is where the app records reading the
+            // venue's OWN published definition of an instrument, so the step a size is rounded down to
+            // comes from the venue and the record says from where and when.
+            //
+            // A ROW PER ATTEMPT, APPEND-ONLY, WRITTEN ONLY BY THE APP. `InstrumentCheckStore.Append` is
+            // the one writer and there is no update and no delete; no pipe op and no `trade` verb
+            // reaches it. Succeeded, failed or refused, every attempt is a row, for the reason
+            // `forward_fetch` is one: a check that left no trace is indistinguishable from a check that
+            // never ran.
+            //
+            // MEASUREMENT, NOT CLAIM. The URL asked, the ORIGIN the store reads off it (never one the
+            // caller hands in), the two instants, the status, THIS BUILD's hash of the body — never a
+            // vendor's — and the four numbers as the venue published them. `outcome` is `verified`,
+            // `failed` or `refused-origin`: TEXT validated by the store and never a CHECK, the reading
+            // rung 28 gives. A `refused-origin` row is a definition address whose origin was not the
+            // built-in one, and nothing was sent to it.
+            //
+            // NOT JOINED TO THE CATALOGUE AND NOT WRITTEN INTO IT. `venue_instrument` stays what
+            // `VenueCatalog` ships and `venues.json` overrides; the served read (`VenueStore`) overlays
+            // the latest `verified` row of seven days or less onto it and keeps a catalogue value that
+            // disagrees beside the venue's. Additive — one table, one index — and an older database
+            // gains it empty, which reads correctly as "TradeAgent has checked nothing here".
+            Exec("""
+            CREATE TABLE IF NOT EXISTS instrument_check(
+              id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+              venue_id           TEXT NOT NULL,
+              symbol             TEXT NOT NULL,
+              url                TEXT NOT NULL,
+              origin             TEXT,
+              requested_at       TEXT NOT NULL,
+              received_at        TEXT NOT NULL,
+              http_status        INTEGER,
+              body_sha256        TEXT,
+              tick_size          TEXT,
+              quantity_increment TEXT,
+              min_quantity       TEXT,
+              min_notional       TEXT,
+              outcome            TEXT NOT NULL,
+              note               TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_instrument_check_pair
+              ON instrument_check(venue_id, symbol, outcome);
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','29') ON CONFLICT(key) DO UPDATE SET value='29';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
