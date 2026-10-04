@@ -218,9 +218,12 @@ public sealed record AllocationRow(
 /// <para><b>A PAPER row carries a third fact and answers a different question.</b>
 /// <see cref="Envelope"/> is the grant it was written under, re-read at this instant, and it is null
 /// for a live row and for a paper row whose grant has expired or been withdrawn. The LIVE arm of
-/// <see cref="Authorises"/> is untouched and still asks <c>IsPromoted</c> and nothing else — one
-/// question, which is what keeps an <c>IsPromoted</c> that started answering true for
-/// <c>paper_eligible</c> catchable here rather than hidden behind an extra check.</para>
+/// <see cref="Authorises"/> asks <c>IsPromoted</c> and, since <c>U-data-licence</c>, that the evidence's
+/// licence refuses nothing. The second question does not hide the first: <c>Promotions.Standing</c> sets
+/// <see cref="PromotionStanding.LiveRefusal"/> on a paper-eligible standing exactly as on a promoted one,
+/// so over evidence that confers an <c>IsPromoted</c> that started answering true for
+/// <c>paper_eligible</c> is still caught here (the fixtures that test it record first-party
+/// evidence).</para>
 /// </summary>
 public sealed record AllocationStanding(
     AllocationRow Allocation, PromotionStanding Promotion, PaperEnvelopeRow? Envelope = null)
@@ -228,14 +231,30 @@ public sealed record AllocationStanding(
     /// <summary>
     /// Whether this allocation may authorise an order right now.
     ///
-    /// <para>Live: the promotion stands. Paper: the grant stands AND the verdict stands, where
-    /// "stands" for a paper experiment includes <c>paper_eligible</c> — which is the whole distinction
-    /// <c>docs/PRINCIPLES.md</c> § Evidence asks for, and it buys the version no capital, because a
-    /// paper row is never read in a live mode at all.</para>
+    /// <para>Live: the promotion stands AND the evidence under it may confer live eligibility — its
+    /// <see cref="PromotionStanding.LiveRefusal"/> is null (<c>U-data-licence</c>). Read when an order
+    /// arrives, never copied onto the allocation, so a row written before its evidence was read
+    /// research-only stops authorising the moment it is, and the row stays on the table. Paper: the grant
+    /// stands AND the verdict stands, where "stands" for a paper experiment includes <c>paper_eligible</c> —
+    /// which is the whole distinction <c>docs/PRINCIPLES.md</c> § Evidence asks for, and it buys the
+    /// version no capital, because a paper row is never read in a live mode at all. The paper arm asks no
+    /// licence: the archive's terms allow personal non-production research, and paper is that.</para>
+    ///
+    /// <para><b>It only ever narrows.</b> A close and a reduce never ask it
+    /// (<c>TradingGateway.AllocationCeilingOrThrow</c>), so nothing here can stop a position being
+    /// flattened.</para>
     /// </summary>
     public bool Authorises => Allocation.IsPaper
         ? Envelope is not null && (Promotion.IsPromoted || Promotion.IsPaperEligible)
-        : Promotion.IsPromoted;
+        : Promotion.IsPromoted && Promotion.LiveRefusal is null;
+
+    /// <summary>
+    /// WHY A LIVE ROW IN FORCE UNDER A PROMOTION THAT STANDS AUTHORISES NOTHING, or null because that is not
+    /// why: the licence sentence, for the refusal the order path and the owner's surfaces print in place of
+    /// "withdrawn". Null on a paper row, which is never asked it.
+    /// </summary>
+    public string? RefusedForLive =>
+        !Allocation.IsPaper && Promotion.IsPromoted ? Promotion.LiveRefusal : null;
 }
 
 /// <summary>
@@ -319,8 +338,9 @@ public sealed class Allocations(Database db)
 
         var standing = _promotions.Standing(allocation.VersionId);
 
-        // THE GATE IS `IsPromoted` AND NOTHING ELSE, AND A PAPER-ELIGIBLE VERSION ONLY CHANGES THE
-        // WORDS OF ITS REFUSAL.
+        // THE VERDICT'S GATE IS `IsPromoted` AND NOTHING ELSE, AND A PAPER-ELIGIBLE VERSION ONLY CHANGES
+        // THE WORDS OF ITS REFUSAL. (The evidence's licence is asked BELOW it and the promotion-id check,
+        // never above: see `LiveRefusal` further down.)
         //
         // The temptation is a second condition above this one, and it is the wrong shape: it would make
         // an `IsPromoted` that started answering true for `paper_eligible` — the mutant — invisible
@@ -350,6 +370,20 @@ public sealed class Allocations(Database db)
                 $"the promotion this allocation names ({Short(allocation.PromotionId)}) is not the one "
                 + $"version {Short(allocation.VersionId)} stands on ({Short(standing.Promotion.Id)}), so "
                 + "nothing was allocated.", null);
+
+        // REFUSED FOR LIVE, AFTER THE TWO QUESTIONS ABOVE AND NEVER INSTEAD OF THEM (`U-data-licence`).
+        //
+        // The version stands promoted and this is the promotion it stands on — and the bars that verdict
+        // was computed over came under terms that confer no live eligibility: the Binance archive's say
+        // personal non-production research only (Binance Vision Dataset Terms v1.0 § 4.1, § 4.2), and
+        // NULL or a word this build does not know reads the same. Below `IsPromoted` deliberately, so the
+        // `IsPromoted` mutants stay visible on evidence that does confer; a refusal, never a grant, and it
+        // writes nothing. The sentence names the dataset, its class and its terms, and says that
+        // backtests and paper go on — it is what the owner's capital card shows.
+        if (standing.LiveRefusal is { } refusal)
+            return new AllocationResult(false,
+                $"version {Short(allocation.VersionId)} stands promoted and is REFUSED FOR LIVE, so no "
+                + $"capital was allocated to it: {refusal}", null);
 
         if (allocation.MaxQuantity < 0m)
             return new AllocationResult(false,

@@ -50,6 +50,53 @@ public static class DataLicence
     public static bool Confers(string? licenceClass) => licenceClass is CommercialOk or FirstParty;
 
     /// <summary>
+    /// THE ONE DECISION: why no capital may stand on evidence computed over <paramref name="set"/>, as one
+    /// sentence — or null, ONLY when the row's own class AND its source's newest reading, where one exists,
+    /// both confer.
+    ///
+    /// <para><b>Both, and that is what makes a reading able to refuse and unable to re-open.</b> The row's class
+    /// is what its bars came under; the newest reading is what TradeAgent knows now. A narrower reading
+    /// appended later refuses evidence collected under wider terms; a wider one never widens bars collected
+    /// under narrower terms. Pure: the caller reads the row and the reading, this decides, and it is read at
+    /// the gate rather than hashed into any verdict — a tenth hashed fact would re-key every promotion and
+    /// make a reclassification a re-judging.</para>
+    ///
+    /// <para><b>It only ever refuses.</b> It is asked by the live capital ledger and by the live arm of
+    /// <c>AllocationStanding.Authorises</c>, never by the paper arm, never by a close and never to open
+    /// anything: the sentence says that backtests and paper go on, because the archive's terms allow exactly
+    /// that.</para>
+    /// </summary>
+    public static string? LiveRefusal(Db.DatasetRecord set, DataLicenceReading? newest)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        var current = newest is not null && string.Equals(newest.Source, set.Source, StringComparison.Ordinal)
+            ? newest
+            : null;
+
+        if (set.Licence.Confers && (current is null || Confers(current.Class))) return null;
+
+        var dataset = $"dataset {set.Id} ({set.Source} {set.Pair} {set.Interval} {set.Version})";
+        var own = set.Licence.Class is null
+            ? $"{dataset}, which has no licence recorded"
+            : $"{dataset}, whose bars came under {Words(set.Licence)}";
+        var narrowed = set.Licence.Confers && current is not null
+            ? $", and the newest reading of {set.Source}'s terms is {Words(current.Licence)}"
+            : "";
+
+        return $"the evidence it stands on is {own}{narrowed}; only {FirstParty} or {CommercialOk} data "
+               + "confers live eligibility, so no capital may stand on it — backtests and paper go on.";
+    }
+
+    /// <summary>
+    /// WHAT A STANDING SAYS WHEN NOBODY HAS READ THE LICENCE OF ITS EVIDENCE — the default of
+    /// <c>PromotionStanding.LiveRefusal</c>, so a standing built without the licence asked refuses live
+    /// rather than allowing it.
+    /// </summary>
+    public const string NotRead =
+        "TradeAgent has not read the terms of the evidence under this version, so no capital may stand on "
+        + "it — backtests and paper go on.";
+
+    /// <summary>
     /// A DATASET'S LICENCE IN WORDS: the class and the terms it names — their address, their version and the
     /// day they were read — or "no licence recorded". The one spelling every surface prints.
     /// </summary>

@@ -240,6 +240,19 @@ public sealed record PromotionStanding(string State, string Why, PromotionRow? P
     /// disjoint states, and <c>Allocations.Record</c> refuses this one by name.
     /// </summary>
     public bool IsPaperEligible => State == PromotionState.PaperEligible;
+
+    /// <summary>
+    /// WHY NO CAPITAL MAY STAND ON THE EVIDENCE UNDER THIS VERDICT, in one sentence — or null, because the
+    /// evidence's licence confers live eligibility (<see cref="Data.DataLicence.LiveRefusal"/>).
+    ///
+    /// <para><b>The default is a refusal</b>, so a standing built without the licence asked refuses live
+    /// rather than allowing it; <see cref="Promotions.Standing"/> sets it wherever a verdict's evidence can be
+    /// read. It is a SECOND fact beside <see cref="IsPromoted"/> and never folded into it: the verdict is not
+    /// re-judged — <c>IsPromoted</c>, the invalidation and the nine hashed facts are untouched — and it is
+    /// asked only where capital is: the live capital ledger and the live arm of
+    /// <see cref="AllocationStanding.Authorises"/>. Paper never reads it.</para>
+    /// </summary>
+    public string? LiveRefusal { get; init; } = Data.DataLicence.NotRead;
 }
 
 /// <summary>
@@ -260,6 +273,7 @@ public sealed class Promotions(Database db)
 {
     readonly DatasetStore _datasets = new(db);
     readonly StrategyStore _strategies = new(db);
+    readonly DataLicences _licences = new(db);
 
     const string Cols =
         "id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id, " +
@@ -404,11 +418,19 @@ public sealed class Promotions(Database db)
         if (Invalidation(promotion) is { } changed)
             return new PromotionStanding(PromotionState.Invalidated, changed, promotion);
 
+        // THE LICENCE OF THE EVIDENCE, READ AT THIS INSTANT AND NEVER HASHED. The dataset row's class and
+        // its source's newest reading, compared as the holdout row's state and evaluation class are above —
+        // a tenth hashed fact would re-key every promotion and allocation and make a reclassification a
+        // re-judging. Set on every state whose evidence can be read, so that `IsPromoted` stays the one
+        // question that separates them: a paper-eligible standing whose bars confer reads null here, and an
+        // `IsPromoted` that started answering true for it is still caught where it always was.
+        var refusal = LiveRefusalOf(promotion);
+
         if (promotion.IsPromoted)
             return new PromotionStanding(PromotionState.Promoted,
                 $"TradeAgent's referee promoted version {Short(versionId)} at {promotion.At:u} on the "
                 + $"evidence of holdout run {Short(promotion.HoldoutRunId)}, and every assumption that "
-                + "verdict was bound to still holds.", promotion);
+                + "verdict was bound to still holds.", promotion) { LiveRefusal = refusal };
 
         // THE FIFTH STATE, AND IT IS INVALIDATED ABOVE EXACTLY AS A PROMOTION IS. A favourable verdict
         // that escaped `Invalidation` would be a standing whose truth nothing rechecks — and this one
@@ -419,12 +441,21 @@ public sealed class Promotions(Database db)
                 + $"{promotion.At:u} on the evidence of holdout run {Short(promotion.HoldoutRunId)}, and "
                 + "every assumption that verdict was bound to still holds. It is NOT promoted: the "
                 + "months it was measured over do not post-date its own freeze, so it may be observed "
-                + "forward on paper and may be given no capital.", promotion);
+                + "forward on paper and may be given no capital.", promotion) { LiveRefusal = refusal };
 
         return new PromotionStanding(PromotionState.Refused,
             $"TradeAgent's referee refused version {Short(versionId)} at {promotion.At:u}: "
-            + PromotionReason.Words(promotion.Reason) + ".", promotion);
+            + PromotionReason.Words(promotion.Reason) + ".", promotion) { LiveRefusal = refusal };
     }
+
+    /// <summary>
+    /// The one decision (<see cref="Data.DataLicence.LiveRefusal"/>) over the verdict's holdout row and its
+    /// source's newest reading. A row that cannot be read answers the default refusal, never an allowance.
+    /// </summary>
+    string? LiveRefusalOf(PromotionRow promotion) =>
+        _datasets.ById(promotion.HoldoutDatasetId) is { } set
+            ? Data.DataLicence.LiveRefusal(set, _licences.Newest(set.Source))
+            : Data.DataLicence.NotRead;
 
     /// <summary>
     /// WHAT HAS CHANGED SINCE THIS VERDICT WAS TAKEN, in words, or null because nothing has.
