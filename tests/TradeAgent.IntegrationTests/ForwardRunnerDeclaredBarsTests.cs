@@ -401,9 +401,10 @@ public partial class ForwardRunnerTests
     /// about it may move.</para>
     ///
     /// <para><b>It pins what that runner did, all of it</b> — including the second close it wrote on minute 11,
-    /// which the gateway refused <c>POSITION_MOVED</c> and whose order row stays <c>CREATED</c>, so the run's
-    /// books read an order in flight from then on. That is behaviour this unit does not touch; a unit that
-    /// changes it changes this transcript on purpose and says so.</para>
+    /// which the gateway refused <c>POSITION_MOVED</c> and whose order row stays <c>CREATED</c>. The run's books
+    /// read that refusal as an order in flight from then on, until <c>U-runner-refused-close</c> changed this
+    /// transcript on purpose, in two places and no others: minute 12's second pass reads no order in flight, and
+    /// the program's entry on minute 12 is written and at the wire.</para>
     /// </summary>
     [Fact]
     public async Task A_bars_1m_deployment_behaves_exactly_as_before()
@@ -455,7 +456,10 @@ public partial class ForwardRunnerTests
         Assert.Equal(OneMinuteTranscript, said);
     }
 
-    /// <summary>What the runner at <c>3dff4294</c> answered for (f), pass by pass. See the test.</summary>
+    /// <summary>
+    /// What the runner at <c>3dff4294</c> answered for (f), pass by pass, with <c>U-runner-refused-close</c>'s change
+    /// at minute 12. See the test. The minute-12 entry's operation line ends in a space: it has no answer yet.
+    /// </summary>
     const string OneMinuteTranscript = """
         m1 a: replayed=1 skipped=0 last=+1 ended=- account=Flat/0@0 equity=5000000 capital=5000000 pending=False held=0 counters=bars:1 missing:0 gaps:0 warm:0 undef:0 eval:1 intents:1 outside:0 whilePending:0 unsized:0
         m1 b: replayed=1 skipped=0 last=+1 ended=- account=Flat/0@0 equity=5000000 capital=5000000 pending=True held=0 counters=bars:1 missing:0 gaps:0 warm:0 undef:0 eval:1 intents:0 outside:0 whilePending:1 unsized:0
@@ -480,7 +484,7 @@ public partial class ForwardRunnerTests
         m11 a: replayed=11 skipped=0 last=+11 ended=- account=Long/1.000@100 equity=5000001.5000 capital=5000000 pending=True held=4 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
         m11 b: replayed=11 skipped=0 last=+11 ended=- account=Long/1.000@100 equity=5000001.5000 capital=5000000 pending=True held=4 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
         m12 a: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=False held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:3 outside:0 whilePending:4 unsized:0
-        m12 b: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=True held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:3 outside:0 whilePending:4 unsized:0
+        m12 b: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=False held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:4 outside:0 whilePending:3 unsized:0
         op +1#0 entry resolved request=FILLED — FILLED
         op +3#0 stop resolved request=CANCELLED — WORKING — resting at the venue
         op +3#1 target resolved request=FILLED — WORKING — resting at the venue
@@ -492,6 +496,7 @@ public partial class ForwardRunnerTests
         op +10#1 cancel resolved request=CANCELLED — CANCELLED
         op +10#2 flatten resolved request=FILLED — FILLED
         op +11#0 flatten refused request=CREATED — nothing was sent: POSITION_MOVED — BTCUSDT was 1.000 when this close was sized and is 0 now, so Sell 1.000 would not flatten it; nothing was sent. Ask again with a new request id.
+        op +12#0 entry dispatched request=WORKING — 
         wire +1#0 Buy Market 1.000 stop=- limit=- filled=1.000 FILLED
         wire +3#0 Sell Stop 1.000 stop=95 limit=- filled=0 CANCELLED
         wire +3#1 Sell Limit 1.000 stop=- limit=101 filled=1.000 FILLED
@@ -499,6 +504,7 @@ public partial class ForwardRunnerTests
         wire +7#0 Sell Stop 1.000 stop=95 limit=- filled=0 CANCELLED
         wire +7#1 Sell Limit 1.000 stop=- limit=101 filled=0 CANCELLED
         wire +10#2 Sell Market 1.000 stop=- limit=- filled=1.000 FILLED
+        wire +12#0 Buy Market 1.000 stop=- limit=- filled=0 WORKING
         position 0
 
         """;

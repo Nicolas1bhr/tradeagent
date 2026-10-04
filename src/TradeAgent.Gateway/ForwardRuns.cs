@@ -727,15 +727,41 @@ public sealed class ForwardRuns
             // open, and reading them as "pending" would suppress every exit signal the program has,
             // which is the opposite of protection. `AccountReading.OrderPending` is the authority the
             // evaluator uses to refuse a duplicate ENTRY.
+            //
+            // AND A REFUSAL THAT SENT NOTHING IS NOT ONE EITHER (`U-runner-refused-close`): see
+            // RefusedBeforeTheWire. Its row stays CREATED for ever, and reading that as an order in
+            // flight suppressed every exit while long and every entry while flat from then on — the
+            // run frozen, its envelope's slot held, by an order that provably does not exist.
             if (request is not null
                 && op.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten
-                && !OrderStateMachine.IsTerminal(request.State))
+                && !OrderStateMachine.IsTerminal(request.State)
+                && !RefusedBeforeTheWire(op, request))
                 inFlight.Add(new RunOp(op.BarOpenTime, filled));
         }
 
         settled.Sort((a, b) => a.Bar.CompareTo(b.Bar));
         return new RunBooks(settled, inFlight, Capital(deployment), grid);
     }
+
+    /// <summary>
+    /// AN OPERATION A GATE REFUSED BEFORE ANYTHING LEFT THIS PROCESS: <c>refused</c>, over no request row at all
+    /// or over one still <c>CREATED</c>. It is over, and nothing will ever be sent under its id.
+    ///
+    /// <para><c>refused</c> is written only there (<c>TradingGateway.RunDeploymentOpAsync</c> and
+    /// <c>SettleDeploymentOps</c>): a gate before <c>TryCreate</c> leaves no row, and one between it and the wire
+    /// leaves the row <c>CREATED</c>, because <c>DISPATCHING</c> is written durably before the wire is touched. And
+    /// a <c>CREATED</c> row is never sent afterwards — nothing dispatches, approves or recovers it to the wire, and
+    /// a second <c>PlaceAsync</c> under its id answers with it and sends nothing. So this is not a reading of an
+    /// absent answer as a no, which <c>CLAUDE.md</c> rule 3 forbids: it is a definite refusal.</para>
+    ///
+    /// <para><b>Both halves are asked, the operation's state and the row's.</b> An operation refused whose row has
+    /// since moved on — another process's <c>PlaceAsync</c> still on its way to <c>TryCreate</c> when a reconcile
+    /// pass refused the operation for having no row yet — is an order that may be live at the venue, and it is
+    /// not this.</para>
+    /// </summary>
+    static bool RefusedBeforeTheWire(DeploymentOpRow op, ExecutionRequest? request) =>
+        string.Equals(op.State, DeploymentOpState.Refused, StringComparison.Ordinal)
+        && request is null or { State: ExecutionState.CREATED };
 
     /// <summary>
     /// WHICH BAR A FILL LANDED ON, from two recorded facts and no guess: the bar the operation was
