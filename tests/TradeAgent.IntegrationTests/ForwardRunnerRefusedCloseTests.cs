@@ -161,6 +161,132 @@ public partial class ForwardRunnerTests
         Assert.Equal(1m, await Position(rig));
     }
 
+    // ---------------------------------------------------------------- (c) the unseen stop fill
+
+    /// <summary>
+    /// (c) A STOP THAT FILLED INSIDE THE PASS THAT DECIDED ON ITS MINUTE STILL TAKES THE TARGET OFF THE BOOK, AND
+    /// NO PAPER SHORT OPENS.
+    ///
+    /// <para>A minute is appended and nothing asks the connector about it — no announcement, no refresh — so the
+    /// runner's pass is the first to read the venue. Its low is through the stop and its close is under 90: the
+    /// program exits, the pass's own first connector read settles the minute and fills the stop there, and the
+    /// gateway refuses the exit <c>POSITION_MOVED</c>. That refusal moves the cursor onto the minute, so the pass
+    /// that first sees the stop's fill does not replay its minute as live: the loser's cancel used to be skipped
+    /// and the pair forgotten, and the target rested under no position until a rise through it opened a short
+    /// the run's books cannot spell.</para>
+    ///
+    /// <para><b>RED on the base</b>: the account ends short one. Every live minute whose books read flat cancels
+    /// any stop or target of the run still working (item 3), and minute 6 is the first after the stop's fill;
+    /// <b>mutant (ii)</b> — item 3 removed — goes red here and in (c2).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_stop_fill_seen_after_its_minute_settled_still_cancels_the_target_and_no_paper_short_opens()
+    {
+        await using var rig = await ReadyAsync(
+            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
+
+        await MinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 95, target 101
+        await MinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress
+        await MinuteAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);     // the entry fills at this open; protection goes on
+        await MinuteAsync(rig, 4, 100.5m, 100.9m, 100.2m, 100.8m);  // nothing touched
+        Assert.Equal(1m, await Position(rig));
+
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
+        var target = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Target);
+
+        // MINUTE 5, APPENDED AND NOT ANNOUNCED, AND THE RUNNER ASKED BEFORE ANYTHING ELSE READS THE VENUE.
+        rig.Minutes(5, 5, _ => 89m);
+        await rig.Runner.AdvanceAsync();
+        Show(log, rig);
+
+        var exit = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Exit);
+        Assert.Equal(5, MinuteOf(rig, exit));
+        Assert.Equal(DeploymentOpState.Refused, exit.State);
+        Assert.Contains(ErrorCode.POSITION_MOVED.ToString(), exit.Answer);
+
+        // THE NEXT MINUTE, AND THEN A RISE THROUGH WHERE THE TARGET WAS.
+        await MinuteAsync(rig, 6, 89.5m, 90m, 89m, 89.5m);
+        await MinuteAsync(rig, 7, 95m, 101.5m, 94.5m, 98m);
+        await FlatMinuteAsync(rig, 8, 98m);
+        Show(log, rig);
+
+        // NO PAPER SHORT: two executions in all, the entry and the stop, and nothing held.
+        Assert.Equal(0m, await Position(rig));
+        Assert.Equal(2, (await rig.Conn.GetExecutionsAsync(PaperConnector.TheAccount, null)).Count);
+        Assert.Equal(ExecutionState.FILLED, (await OrderOf(rig, stop)).State);
+
+        var targetOrder = await OrderOf(rig, target);
+        log.WriteLine($"target {targetOrder.State} filled={targetOrder.FilledQuantity}");
+        Assert.Equal(ExecutionState.CANCELLED, targetOrder.State);
+        Assert.Equal(0m, targetOrder.FilledQuantity);
+    }
+
+    // ---------------------------------------------------------------- (c2) the refused cancel
+
+    /// <summary>
+    /// (c2) A LOSING STOP WHOSE CANCEL A GATE REFUSED IS CANCELLED ON THE NEXT LIVE MINUTE WHOSE BOOKS READ FLAT,
+    /// AND A FALL THROUGH IT LATER OPENS NO PAPER SHORT.
+    ///
+    /// <para>The target fills on minute 5 and the pass that sees it is refused by the update window: the loser's
+    /// cancel goes nowhere. The pair used to be forgotten there, and the stop rested under no position until the
+    /// price fell through it. No exit is involved, so this is item 3 alone.</para>
+    ///
+    /// <para><b>RED on the base</b>: the account ends short one. <b>Mutant (ii)</b> — item 3 removed — goes red
+    /// here.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_losing_stop_whose_cancel_a_gate_refused_is_cancelled_on_the_next_flat_minute_and_no_paper_short_opens()
+    {
+        await using var rig = await ReadyAsync(
+            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
+
+        await MinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 95, target 101
+        await MinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress
+        await MinuteAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);     // the entry fills at this open; protection goes on
+        await MinuteAsync(rig, 4, 100.5m, 100.9m, 100.2m, 100.8m);  // nothing touched
+
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
+        var target = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Target);
+
+        // THE TARGET FILLS ON MINUTE 5 — its close, 99, is no new signal — AND THAT PASS IS REFUSED.
+        rig.Bar(5, 101m, 101.5m, 98.5m, 99m);
+        await rig.Gw.RefreshHealthAsync();
+        await RefusedPassAsync(rig);
+        Show(log, rig);
+
+        Assert.Equal(ExecutionState.FILLED, (await OrderOf(rig, target)).State);
+        var refused = rig.Gw.Deployments.OpsOf(rig.Deployment.Id)
+            .Where(o => o.Kind == DeploymentOpKind.Cancel && MinuteOf(rig, o) == 5).ToList();
+        Assert.NotEmpty(refused);
+        Assert.All(refused, o =>
+        {
+            Assert.Equal(DeploymentOpState.Refused, o.State);
+            Assert.Contains(ErrorCode.UPDATE_INSTALL_IN_PROGRESS.ToString(), o.Answer);
+        });
+        Assert.Equal(ExecutionState.WORKING, (await OrderOf(rig, stop)).State);
+
+        // THE NEXT MINUTE, AND THEN A FALL THROUGH WHERE THE STOP WAS.
+        await MinuteAsync(rig, 6, 99m, 99.2m, 98.8m, 99m);
+        await MinuteAsync(rig, 7, 96m, 96.5m, 94m, 95.5m);
+        await FlatMinuteAsync(rig, 8, 95.5m);
+        Show(log, rig);
+
+        // NO PAPER SHORT: two executions in all, the entry and the target, and nothing held.
+        Assert.Equal(0m, await Position(rig));
+        Assert.Equal(2, (await rig.Conn.GetExecutionsAsync(PaperConnector.TheAccount, null)).Count);
+
+        // BECAUSE THE STOP WAS CANCELLED ON MINUTE 6, the first live minute after the refusal.
+        var stopOrder = await OrderOf(rig, stop);
+        log.WriteLine($"stop {stopOrder.State} filled={stopOrder.FilledQuantity}");
+        Assert.Equal(ExecutionState.CANCELLED, stopOrder.State);
+        Assert.Equal(0m, stopOrder.FilledQuantity);
+        var cancel = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id),
+            o => o.Kind == DeploymentOpKind.Cancel && o.State == DeploymentOpState.Resolved);
+        Assert.Equal(6, MinuteOf(rig, cancel));
+    }
+
     // ---------------------------------------------------------------- (d) the refused exit, again
 
     /// <summary>

@@ -232,6 +232,16 @@ public sealed class ForwardRuns
             var live = bar.OpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue)
                        && (blocked is not { } wall || bar.OpenTime <= wall);
 
+            // AND FIRST, ON A LIVE MINUTE WHOSE BOOKS READ FLAT, NO STOP OR TARGET OF THE RUN IS LEFT WORKING
+            // (`U-runner-refused-close`). The cancel below is keyed to the minute a closing fill landed on and to the
+            // pair this replay is tracking, and both can miss: a fill the pass's own first connector read settled
+            // lands on a minute that pass then moved the cursor onto, so the pass that sees it replays that minute
+            // as over and forgets the pair; and a cancel a gate refused forgets it too. Every stop and target of the
+            // run is read off its own operation rows instead, on every live minute it should have none, and
+            // whatever is still working is cancelled under this minute's id, however often that was tried before.
+            if (live && account.Position == PositionSide.Flat)
+                planned |= await CancelProtectionAsync(deployment, bar, () => seq++, ct);
+
             // WHAT LANDED ON THIS BAR, off the run's own executions. A position that closed takes the
             // other half of its protection off the book with it: a resting sell stop under no position
             // is an order that OPENS a short the moment it fires, and this language cannot spell one.
@@ -578,6 +588,20 @@ public sealed class ForwardRuns
 
         return cancelled;
     }
+
+    /// <summary>
+    /// EVERY STOP AND TARGET OF THIS RUN STILL WORKING AT THE VENUE, TAKEN OFF THE BOOK — read off the run's own
+    /// <c>stop</c> and <c>target</c> operations and the order rows they join to, rather than off the pair this
+    /// pass's replay happens to be tracking, which a fill seen late or a refused cancel can have lost. What is
+    /// not working any more is left alone, exactly as <see cref="CancelRestingAsync"/> leaves it.
+    /// </summary>
+    Task<bool> CancelProtectionAsync(StrategyDeploymentRow deployment, KlineBar bar, Func<int> seq,
+        CancellationToken ct) =>
+        CancelRestingAsync(deployment, bar,
+            [.. _deployments.OpsOf(deployment.Id)
+                .Where(o => o.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target)
+                .Select(o => (string?)o.RequestId)],
+            seq, ct);
 
     /// <summary>
     /// THE MAXIMUM HOLD, ENFORCED: one market close of exactly what this run is holding, written
