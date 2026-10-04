@@ -7749,3 +7749,39 @@ min), windows-latest (48 min), package. U-timeframe-b's landing push `4656b12`: 
 **NOT done, NOT verified:** protection put back after an exit refused once its cancel went through (stated NOT claimed in CONTRACTS); an END's refused
 flatten and the `TryCreate`→`DISPATCHING` crash window (`U-runner-exit-hygiene`, owed before any live use); the rest of Integration on CI and the gate
 only; no box run. M0's last precondition (the orchestrator): this unit.
+
+## 2026-10-04 — U-inbox-unreadable landed: a material pass that could not read everything is not complete — it moves neither window key, marks nothing in that group missing, and says so once on the activity log
+
+One fresh Opus builder under build-fleet seat P from `docs/briefs/U-inbox-unreadable.md` (briefed `54013b6` from `U-inbox-order`'s read-only finding,
+amended `17d01f7`, dispatched `c987128`); stopped by the usage limit and resumed by message; rebased onto `5ed875a`, then at landing onto `f149ae0` with the
+`src`+`tests` patch-id identical (`582308403598`). Merge `7202e89` (ff-only), 3 commits (2 items + the report), 6 files, +806/−51. No schema rung. A
+`CLAUDE.md` protection — measurement vs claim, the inbox as data (`Inbox` only across a window no agent was alive in, `docs/COUNCIL.md` rule 7, which a pass
+may shorten only if it read everywhere; no deletion nobody observed); no money-path file.
+
+- **Item 1:** the pass reads the disk only through `WorkspaceReads` (folder there? · list · stat), each answering "absent" only on not-found and throwing on
+  anything else; a refused read anywhere makes the pass incomplete — neither window key moves, nothing in that group is marked missing (the other group is
+  swept as before), and what it saw is recorded under its unshortened window; `ScanResult` carries `Unreadable`, `UnreadableFolders` (relative, inbox first,
+  ≤ 20) and `Complete`; `InboxHoldsUnrecorded` asks the same three reads by the same rule. Skips on purpose stay `Skipped` and hold nothing.
+- **Item 2:** `AppHost.RecordWorkspace`, every pass's one way in under the loop's exclusion, says one activity line on change — a warning naming up to three
+  folders relative to the workspace (control characters printed as '?', names cut at 80) — and one info line when a complete pass clears it; `CONTRACTS.md` +1.
+- **Judged, the orchestrator's rulings at landing — all ACCEPTED:** DECLARED (1), measured on this Mac (.NET 10.0.400): in a folder listable but not
+  searchable `FileInfo.Exists` answers false while `Length` throws, so a file the pass found and could not inspect read as GONE — the stat now reads `Length`
+  and `LastWriteTimeUtc`, and only not-found means gone. DECLARED (2), the same root, one structural fix: the top-level `Directory.Exists` also answered false on
+  a refusal (an inbox whose parent could not be searched read as empty); it is now `FolderIsThere`, which throws. DECLARED (3), judgement: an agent can hold
+  the window by making a folder in its own home unreadable — weaker words and late deletions only, never a stronger claim, named on the activity log; a folder
+  that vanished after its parent named it counts as unread.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 19 projects, 0 warnings, 0 errors; Unit 1372/1372
+(7 m 38 s), Fault 415/415; 3× `MaterialUnreadableTests` 12/12 and nine neighbouring classes 91/91. RED first, on the base logic plus the listing seam: (a)
+`A_folder_unreadable_during_a_pass_never_lets_an_agents_file_in_it_be_recorded_as_the_owners` → "Expected: InboxUnattested / Actual: Inbox"; (b)
+`A_pass_that_could_not_list_a_folder_marks_nothing_in_it_missing` → "Expected: null / Actual: 2026-10-04T01:27:39…" (a file stamped removed); (c) the
+skipped-on-purpose guard green. On the real disk at base (chmod, macOS) both cases of `A_place_the_disk_refuses_to_describe_is_never_taken_for_gone` stamped the
+file removed. Mutant (`Scan` ignoring what it could not read): 8 failed / 2 passed, (a) red with the same line; restored 12/12. Manager's gate at `7202e89`
+(the reported tip rebased, 0 behind `main` `f149ae0`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1372/1372 (7 m 42 s, the
+local slowdown since the Mac slept), Fault 415/415 (1 m 58 s), Integration 718/719, 1 skipped (12 m 3 s) → 0 failed. Names vs `main` (git objects): sets
+2130 → 2143, 0 removed, 13 added (nine tests and four test-disk helpers the heuristic reads as names). Scan clean; no trailers; `rev-list --count` → 0.
+**CI:** branch run 37169876739 at `3ba6424`: ubuntu, macos, windows and package success (no midnight crossing). CI at the merge: read by the orchestrator.
+
+**NOT done, NOT verified:** no Windows box — Windows' own refusals are reached only through the seam; the activity line not seen in the running app; a restart
+says a standing line once more (state in memory). Read-only finding, pre-existing, NOT fixed → `U-material-file-limit` (owed, light): past `FileLimit`
+(5,000) a pass stops at the same files every time, so the rest are never recorded and the window never moves.
