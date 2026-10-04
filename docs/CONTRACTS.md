@@ -3305,10 +3305,12 @@ withdraws the verdict (`Promotions.Standing`, "the evaluation semantics changed"
 run too; whichever pass reaches it first ends it, each with its own reason.
 
 **TWO CLOCKS: THE RULES ON THE DECLARED BAR, EVERYTHING THAT PROTECTS ON THE MINUTE** (`U-timeframe-b`). On every
-minute, in this order: what has an answer is settled; when a stop, a target, an exit or a flatten landed on the minute,
+minute, in this order: what has an answer is settled; when the run's books read flat, any stop or target of the run still
+working is cancelled (`U-runner-refused-close`); when a stop, a target, an exit or a flatten landed on the minute,
 the other half of the stop/target pair is cancelled; when the entry filled on it, the stop and the target go to the
-venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed; and a UTC
-day that closed is told to Research. Only the STEP waits for the declared clock: the evaluator is asked on the bar
+venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed; on a minute
+that closes no declared bar, an exit refused before the wire is sent again (below); and a UTC day that closed is told
+to Research. Only the STEP waits for the declared clock: the evaluator is asked on the bar
 `BarResampler` builds from the run's minutes, when that bar's last minute closes — or on the first minute past its end
 when the data does not have its last minutes, and then two bars can close on one minute and are asked in order. What a
 decision dispatches is written on the minute the runner learned of it, so the cursor, the frontier and every request id
@@ -3387,6 +3389,36 @@ Sizes are rounded **DOWN** to the venue catalogue's VERIFIED increment and a siz
 recorded no-trade with its reason, never a minimum this software invented. The refusal code is recorded on the
 operation — `DECISION_EXPIRED`, `ALLOCATION_EXCEEDED` — and a request row still `CREATED` when a gate threw is
 `refused`, because `DISPATCHING` is durable before the wire and a `CREATED` row provably never left the process.
+
+**A REFUSAL THAT SENT NOTHING IS OVER** (`U-runner-refused-close`). An entry, exit or flatten `refused` over no request
+row, or over one still `CREATED`, is not an order in flight: the run's books stopped counting it, so the next minute
+reads nothing pending and the program enters and exits by its rules again. It used to read as pending for ever — every
+exit suppressed while long, every entry while flat, the envelope's slot held — and the maximum hold's own second close,
+asked on the minute before the first one's fill is seen and refused `POSITION_MOVED`, did that to the one-minute guard's
+run at its first maximum-hold close. The row stays `CREATED`: outside the gateway's open set, never `REJECTED` (which
+says a broker refused), and never sent — nothing dispatches, approves or recovers a `CREATED` row, and a second
+`PlaceAsync` under its id answers with it. An operation refused whose row has since moved on is read off that row like
+any other; one still `dispatched` — UNKNOWN among them — stays in flight and holds the frontier; neither is sent again. **A refused exit
+on declared bars goes out again on the minute**: the evaluator is asked only at a declared close, and its one-bar hold
+then suppresses the exit it decided, so on a live minute that closes no declared bar, while the books read long and the
+run's latest entry, exit or flatten is an exit refused before the wire, that exit's intent is read back from its
+operation, sized from the books and sent as an `exit` under that minute's own id — its own `TA-` client order id — with
+its decision block unchanged, for as long as the decision is inside both of its bounds; the gateway still judges each
+one `DECISION_EXPIRED`. Never on one-minute bars, where the program decides again itself, and never on a minute a
+declared bar closes on. **An exit takes the protection off first**: once sized, every exit — the program's, or one sent
+again — cancels the run's working stop and target before it goes, as the maximum hold does before its close. A
+protective order resting at the exit's fill fills too, or on the minute in progress before it, and the exit then opens
+a paper short the books cannot spell: the venue no longer matches the books, every later close is refused
+`POSITION_MOVED`, and the run is frozen. **And a stop or target left under no position is cancelled on the next live
+minute**: on every live minute whose books read flat, each stop or target of the run still working is cancelled under
+that minute's id, read off the run's own operations — whatever minute the closing fill landed on (a fill the pass's own
+first connector read settled lands on a minute that pass then moved the cursor onto) and however often a cancel was
+refused before. **NOT claimed**: an exit sent again past its decision's bounds; a refused entry sent again (the program
+decides again on a later bar); protection put back after an exit a gate refused once its cancel had gone through — the
+position is then without its stop and target until the exit goes out or the maximum hold closes it (the update window,
+the kill switch and the mode refuse the cancel as well, and keep them); an END whose flatten a gate refused, which is not
+sent again and reads reconciled; and an operation left `dispatched` over a `CREATED` row by a crash between `TryCreate`
+and `DISPATCHING`, which holds the frontier for good. The last two are named for `U-runner-exit-hygiene`.
 
 **WHAT THE RECORD MAY CLAIM: forward paper observation under declared bar-fill assumptions, and nothing more.**
 The price existed at the open of a minute. No executability, no queue position, no intrabar ordering, and
