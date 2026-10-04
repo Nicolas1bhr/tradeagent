@@ -7672,3 +7672,41 @@ success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (46 min
 **NOT done, NOT verified:** no box run; Integration locally only for `ForwardRunnerTests` (in full on CI and the gate); a version with no execution bounds is
 ended at its first intent, not before its first bar (guarding it contradicts `PaperDeploymentTests`); a run's first declared bar is the partial window it
 saw from its start (documented); the second finding (a stop/target fill first seen after its minute was live) is `U-runner-refused-close`'s test (c).
+
+## 2026-10-04 — U-inbox-order landed: agent presence is ordered against material passes by the register's own sequence, so no clock step can make a pass attest a window an agent was alive in; every pass the app runs takes the loop's one exclusion
+
+One fresh Opus builder under build-fleet seat P from `docs/briefs/U-inbox-order.md` (briefed `c0ce760` from `U-fix-inbox-boundary`'s two read-only
+findings, amended `a1643a6`, dispatched `7ceb7c9`); stopped by the usage limit and by the Mac's sleep and resumed by message; rebased onto `e57bee2`, then
+`12f3054`, then at landing onto `4656b12` and `5a54452` (docs only) with the `src`+`tests` patch-id identical (`5c7b1763c4cf`). Merge `87c4dde` (ff-only),
+3 commits (2 items + the report), 13 files, +700/−56. No schema rung: the window's mark is kv `material_scan_mark`, beside `material_scan_at`. A `CLAUDE.md`
+protection — measurement vs claim, the inbox as data (`Inbox` only across a window with no live agent, `docs/COUNCIL.md` rule 7); no money-path file.
+
+- **Item 1:** `AgentPresence` numbers every window's opening and closing and every pass's start under one lock, and names itself (`Epoch`; a restart is a
+  new register); `NoneSince(PresenceMark)` decides — a live agent, one alive at or after the mark, or a mark this register did not issue → no; the scanner
+  takes its mark before the walk and stores it with the window; another process's mark, unparsable text, a complete pass that left no mark, or no complete
+  pass ever on a database this process did not create (new `Database.CreatedHere`) → unsure, `InboxUnattested`. One injected clock for register and scanner;
+  wall time is stamped for people only; the host's scanner asks the shared register.
+- **Item 2:** `MissionLoop.TryPass` is the loop's one exclusion; `AppHost.ScanMaterials` (the 30 s tick and the Inbox page's pass) goes through it and
+  returns null when refused — a refused tick is owed to the next, a refused page pass says the files will be listed on the next look; `CONTRACTS.md` +1.
+- **Judged, the orchestrator's rulings at landing:** DECLARED (1) ACCEPTED — within a process the sequence is an exact order, so a window that a wall-clock
+  tie or backward step left unattested (never with an agent in it) now attests: a true claim, with wall time out of the decision as the brief's design rule
+  requires, over the letter of its "never yes where it says no today". DECLARED (2) ACCEPTED — a file that arrives while TradeAgent is closed, or before a
+  new process's first complete pass, reads `InboxUnattested`, and the Inbox page and the guide now say "the AI may have been running when it appeared".
+  DECLARED (3), implementation: the scanner's question is `Func<PresenceMark,bool>`, the register found by delegate identity; no existing test line changed.
+- **Manager-read at landing:** the `GatewayPipeServer.cs` change is a comment only; `Database.CreatedHere` is a read-only flag set at migration; no pipe op,
+  `state/` file or inbox file can move the sequence.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 19 projects, 0 warnings, 0 errors; Unit 1340/1340,
+Fault 414/414; 3× `MaterialOriginAttestationTests` 12/12, `MaterialPassExclusionTests` 1/1, `CouncilLoopTests` 13/13. RED first, on the base logic plus the
+clock seam: (a) `A_backward_clock_step_across_an_agents_window_never_records_its_file_as_the_owners` → "Expected: InboxUnattested / Actual: Inbox"; the
+step-back-before-the-agent-starts case; (b) both restart tests; (c) `No_scan_runs_while_a_role_is_launching` → "Expected: null / Actual: seen=8 …"; the
+forward and frozen cases green on both sides (guards). Mutant, the comparison back on wall time: 4 failed / 8 passed, (a) red with the same line; restored.
+Manager's gate at `e77c143` (the reported tip rebased onto `4656b12`), Release: build `--no-incremental`, 19 projects → 0 warnings, 0 errors; Unit 1360/1360
+(7 m 30 s — the local Unit slowdown since the Mac's sleep, measured by the orchestrator; CI unchanged), Fault 415/415 (1 m 40 s), Integration 712/713,
+1 skipped (11 m 15 s) → 0 failed; CARRIED to `87c4dde` (only docs moved on `main`). Names vs `main` (git objects): sets 2117 → 2124, 0 removed, 7 added.
+Scan clean; no trailers; `rev-list --count` → 0 both ways. **CI:** branch run 37099983439 at `4f670f7`: ubuntu, macos, windows and package success. CI at
+the merge: recorded when complete (`fleet/ci-ledger.md`, then the next record).
+
+**NOT done, NOT verified:** no box (CI only); an agent process orphaned by a crashed app is outside any register (a job object contains it on Windows,
+nothing does on macOS); a database deleted under a kept workspace attests old files as before; the Inbox page's new line not seen in the running app.
+Read-only finding, pre-existing, NOT fixed here → `U-inbox-unreadable` (briefed `54013b6`): `Scan` discards `Collect`'s unreadable-directory count.
