@@ -21,6 +21,14 @@ namespace TradeAgent.Tests.Integration;
 /// </summary>
 public partial class ForwardRunnerTests
 {
+    /// <summary>One pass of the runner with the update window's refusal standing for exactly that pass.</summary>
+    static async Task<ForwardRunState> RefusedPassAsync(Rig rig)
+    {
+        rig.Gw.InstallInProgress = () => true;
+        try { return Assert.Single(await rig.Runner.AdvanceAsync()); }
+        finally { rig.Gw.InstallInProgress = null; }
+    }
+
     /// <summary>The order at the wire a run's operation put there, by the client order id it carries.</summary>
     static async Task<OrderInfo> OrderOf(Rig rig, DeploymentOpRow op) =>
         Assert.Single(await Wire(rig), o => o.ClientOrderId == TradingGateway.ClientOrderIdFor(op.RequestId));
@@ -151,5 +159,70 @@ public partial class ForwardRunnerTests
         var fill = Assert.Single(await rig.Conn.GetExecutionsAsync(PaperConnector.TheAccount, null));
         Assert.Equal(101.5m, fill.Price);
         Assert.Equal(1m, await Position(rig));
+    }
+
+    // ---------------------------------------------------------------- (d) the refused exit, again
+
+    /// <summary>
+    /// (d) AN HOURLY PROGRAM'S EXIT REFUSED BEFORE THE WIRE GOES OUT AGAIN ON THE NEXT MINUTE, UNDER THAT MINUTE'S
+    /// OWN ID AND WITH ITS DECISION UNCHANGED — not at a later hour's close.
+    ///
+    /// <para>The entry was decided on the 12:00 hour, so the evaluator's own one-bar hold covers the 13:00 hour's
+    /// close; the 14:00 hour is the first an exit can be decided on. It closes at 89 and the program exits, and the
+    /// update window refuses that pass. Minute 180 closes no hour, the books still read long, and the run's latest
+    /// entry, exit or flatten is that refused exit: its intent is read back from its operation, sized from the books
+    /// and sent as an exit under minute 180's id. Its decision is minute 179's, a minute old against bounds of an
+    /// hour, and the gateway judges it again. Minute 181 is in progress and the exit fills at minute 182's open;
+    /// from then on the latest exit is not a refused one and nothing more is sent.</para>
+    ///
+    /// <para><b>RED on the base</b>: there is no <c>+180</c> — on declared bars the evaluator is not asked again
+    /// until the 15:00 hour, and its one-bar hold suppresses an exit there too. <b>Mutant (iii)</b> — sent again
+    /// after ANY refused exit rather than the latest — goes red here: minute 181, replayed live once the exit has
+    /// filled, writes a third exit.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_refused_exit_on_declared_bars_is_sent_again_next_minute_while_its_decision_is_fresh()
+    {
+        await using var rig = await ReadyAsync(HourlyText());
+
+        await EnteredAsync(rig);
+        rig.Minutes(62, HourClose(3) - 1, _ => 100m);
+        await rig.Gw.RefreshHealthAsync();
+        Assert.Single(await rig.Runner.AdvanceAsync());
+        Assert.Equal(1m, await Position(rig));
+
+        // THE 14:00 HOUR CLOSES AT 89, AND THE PASS THAT DECIDES ON IT IS REFUSED.
+        rig.Bar(HourClose(3), 100m, 100m, 89m, 89m);
+        await rig.Gw.RefreshHealthAsync();
+        await RefusedPassAsync(rig);
+
+        for (var minute = HourClose(3) + 1; minute <= HourClose(3) + 4; minute++)
+            await MinuteAsync(rig, minute, 89m, 89.5m, 88.5m, 89m);
+        Show(log, rig);
+
+        // TWO EXITS IN ALL: minute 179's, refused, and minute 180's, sent and filled.
+        var exits = rig.Gw.Deployments.OpsOf(rig.Deployment.Id).Where(o => o.Kind == DeploymentOpKind.Exit).ToList();
+        foreach (var x in exits) log.WriteLine($"exit {Said(rig, x.RequestId)} {x.State} — {x.Answer}");
+        Assert.Equal(["+179#0", "+180#0"], exits.Select(x => Said(rig, x.RequestId)));
+
+        var (first, again) = (exits[0], exits[1]);
+        Assert.Equal(DeploymentOpState.Refused, first.State);
+        Assert.Contains(ErrorCode.UPDATE_INSTALL_IN_PROGRESS.ToString(), first.Answer);
+        Assert.Null(rig.Gw.Requests.Get(first.RequestId));
+
+        // UNDER ITS OWN CLIENT ORDER ID, AT THE WIRE ONCE, FILLED...
+        Assert.Equal(DeploymentOpState.Resolved, again.State);
+        var order = await OrderOf(rig, again);
+        Assert.Equal(OrderSide.Sell, order.Side);
+        Assert.Equal(ExecutionState.FILLED, order.State);
+        Assert.Equal(1m, order.FilledQuantity);
+
+        // ...WITH THE DECISION IT WAS SENT AGAIN FOR: the 14:00 hour, its bounds unchanged.
+        var decided = Json.Read<PlaceIntent>(first.IntentJson)!.Decision!;
+        Assert.Equal(decided, Json.Read<PlaceIntent>(again.IntentJson)!.Decision);
+        Assert.Equal(rig.Origin.AddHours(2), decided.BarOpen);
+        Assert.Equal(rig.Origin.AddHours(3), decided.BarClose);
+
+        Assert.Equal(0m, await Position(rig));
     }
 }
