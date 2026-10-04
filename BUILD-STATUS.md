@@ -7785,3 +7785,42 @@ local slowdown since the Mac slept), Fault 415/415 (1 m 58 s), Integration 718/7
 **NOT done, NOT verified:** no Windows box — Windows' own refusals are reached only through the seam; the activity line not seen in the running app; a restart
 says a standing line once more (state in memory). Read-only finding, pre-existing, NOT fixed → `U-material-file-limit` (owed, light): past `FileLimit`
 (5,000) a pass stops at the same files every time, so the rest are never recorded and the window never moves.
+
+## 2026-10-04 — U-data-licence landed at schema 30: every dataset records the terms its bars came under; nothing live rests on research-only evidence; paper goes on
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-data-licence.md` (briefed from a read-only survey on the orchestrator's COMPLY
+decision of 2026-10-04 — Binance's archive is research-only — and research R19; dispatched `5a54452b`); built on `c15040a5`, rebased by the manager onto
+`a222f539` (U-runner-refused-close and seat P's U-inbox-unreadable in), src+tests patch-id identical. Merge `8ea1ff2e` (ff-only), 6 commits (5 items + the report), 30 files, +1624/−56. **Schema rung 30** (`DatabaseSchemaVersion` 29
+→ 30): `data_licence` and four `dataset` columns; all four roll-back sites extended. MONEY PATH: the live gate only REFUSES — never a close, a reduce or a
+grant; the promotion's nine hashed facts and its id untouched (the class is read at the gate, so reclassifying is a new reading, not a re-judging).
+
+- **Item 1 (`a897f3c1`):** `data_licence` — a row per READING of a source's terms, append-only, written by rungs only, newest in force; seeded once: the
+  Binance archive (`binance-spot-monthly-klines`) `research-only` (Dataset Terms v1.0, updated 2026-08-26, read 2026-10-04); the one backfill gives every
+  archive dataset that reading. **DEVIATION on the orchestrator's order:** the forward ledger (`binance-spot-forward-klines`) is seeded `unverified`
+  ("R19 § 6 Q2 open: Binance API terms not read for live-gating use"), not `first-party` — it confers nothing; its own red-first assertion in (f).
+- **Item 2 (`d8ce9c3b`):** `DatasetRecord.Licence` through `DatasetStore`; the collector stamps a source's newest reading only when every URL's origin is that
+  id's BUILT-IN row's (an agent-writable `sources.json` neither sets nor inherits a class); `Rebuild` carries the row's own; only `commercial-ok` and
+  `first-party` confer — anything else, NULL included, is research-only ("unknown is never zero").
+- **Item 3 (`310aa8ae`):** one pure `DataLicence.LiveRefusal`; `PromotionStanding.LiveRefusal` defaults to a refusal (set on the promoted, paper-eligible and
+  refused arms, so `IsPromoted`'s mutant stays seen); `Allocations.Record` refuses after both checks; the live arm is `IsPromoted && LiveRefusal is null`;
+  `ALLOCATION_NONE` gives the sentence naming dataset, class and terms; closes, paper and deployments untouched; eight live-path fixtures moved to a
+  first-party test source, none removed.
+- **Item 4 (`be246b3f`), item 5 (`ec7b34ea`):** the report, the Situation, the promoted line, the readiness blocker, the allocation and Capital-card lines say
+  REFUSED FOR LIVE with the sentence; CONTRACTS "Data licences" — **live allocation is closed until a conferring dataset path exists**; the planned route:
+  datasets cut from the tape's recordings of a venue whose terms reach own-account use (OKX Europe first), each classed by its venue's reading (a unit
+  owed, with or after U-features); NOT claimed: legal advice, R19's Q1/Q2/Q9, the tape's class; USER-GUIDE (backtests and paper go on; the Binance Vision
+  credit); RESEARCH-REQUIRED C7.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `1fe12819`: Release `--no-incremental` 0 warnings, 0 errors; Unit
+1369/1369 (7 m 47 s), Fault 416/416 (2 m); twelve classes 3×, 62/62 and 24/24. RED before: (a) "capital was allocated to a version promoted on
+research-only evidence"; (b) "opening order after : ok — FILLED"; (c) "an allocation went on authorising after its source's newest reading stopped
+conferring"; (d) "a promoted version on research-only evidence was given capital"; (e) "… licence reads 'no licence recorded'"; (f) "no such column:
+\"licence_class\"". Mutants watched red: (i) the live arm on `IsPromoted` alone ⇒ (b); (ii) the `Record` refusal removed ⇒ (a); (iii) conferring on all but
+research-only ⇒ (e); (iv) the newest reading ignored ⇒ (c); (g) with the origin check removed and with a rebuild re-stamping.
+Manager's gate at `8ea1ff2`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1381/1381 (7 m 45 s, the slow Mac), Fault 416/416 (1 m 55 s), Integration 718/719, 1 skipped (11 m 46 s) → 0 failed.
+Names vs `main` (git objects): 2143 → 2153, 0 removed, 10 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37169183315 at `1fe12819` (on `c15040a5`; U-runner-refused-close and seat P's U-inbox-unreadable landed after it, covered by the gate
+and the merge's run): success on ubuntu-latest (12 min), macos-latest (15 min), windows-latest (38 min), package (4 min). Landing CI read by the orchestrator.
+
+**NOT done, NOT verified:** the Capital card's dashboard line has no test and the app was not run; the tape not seeded (U-features, per venue); a
+research-only promotion still opens its `deploy` boundary — seen, not acted on (paper deployments are allowed by design and place nothing live); no box.
