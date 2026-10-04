@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Provisioning;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -95,7 +96,98 @@ public class DataLicenceTests
             Rows(db, "SELECT value FROM meta WHERE key='schema_version'"));
     }
 
+    // ---- (g) the collector --------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) A COLLECTION TAKES ITS READING ONLY FROM THE BUILT-IN ORIGIN, AND A REBUILD CARRIES THE ROW'S OWN.
+    ///
+    /// <para>The archive HAS a reading, and a collection of the archive's id served from loopback does not take
+    /// it: bars fetched from anywhere but this build's own row for that id — a <c>sources.json</c> row that
+    /// replaced it, which an unconfined agent can write, or a test's listener — are not the bars the reading
+    /// was taken about. Every vendor URL here is built from <see cref="BinanceArchive.BaseUrl"/> and is never
+    /// fetched: the stamp is a pure function of the URLs, the source and the reading.</para>
+    ///
+    /// <para>A REBUILD re-derives the same bars from the same raw files, so it carries the row's own licence —
+    /// not the source's newest reading, which here is narrower, and not a re-stamp from the origin.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_collection_takes_its_reading_only_from_the_built_in_origin()
+    {
+        using var archive = new FakeArchive();
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Pair, m, Minutes(m));
+        using var db = TestEnv.NewDb();
+        var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
+
+        var newest = new DataLicences(db).Newest(BinanceArchive.Source);
+        Assert.NotNull(newest);
+        Assert.Equal(DataLicence.ResearchOnly, newest.Class);
+
+        // LOOPBACK: the archive's id, not the archive's origin — nothing stamped, on the record and on the row.
+        var collected = (await svc.CollectAsync(Pair, Now)).Dataset!;
+        Assert.Equal(DatasetLicence.Unrecorded, collected.Licence);
+        Assert.Equal(DatasetLicence.Unrecorded, svc.Store.ById(collected.Id)!.Licence);
+        Assert.False(svc.Store.ById(collected.Id)!.Licence.Confers);
+
+        // THE BUILT-IN ORIGIN, AND ONLY IT, TAKES THE READING.
+        var months = BinanceArchive.RecentCompleteMonths(Now).ToList();
+        var vendor = months.Select(m => BinanceArchive.MonthUrl(BinanceArchive.BaseUrl, Pair, m)).ToList();
+        Assert.Equal(new DatasetLicence(DataLicence.ResearchOnly, DataLicence.ArchiveTermsUrl,
+                DataLicence.ArchiveTermsVersion, DataLicence.ArchiveTermsReadOn),
+            DataLicence.Stamp(BinanceArchive.Source, vendor, newest));
+
+        // ONE PERIOD FROM ANYWHERE ELSE and none of it is stamped; nothing fetched, nothing stamped.
+        Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(BinanceArchive.Source,
+            [.. vendor.Skip(1), BinanceArchive.MonthUrl(archive.BaseUrl, Pair, months[0])], newest));
+        Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(BinanceArchive.Source, [], newest));
+
+        // A SOURCE WITH NO BUILT-IN ROW, or a built-in row with no endpoint, takes nothing whatever it names;
+        // and a reading of one source is never stamped onto another.
+        Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp("a-row-sources-json-added", vendor,
+            newest with { Source = "a-row-sources-json-added" }));
+        Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(CandleSourceCatalog.RevolutXCandles, vendor,
+            newest with { Source = CandleSourceCatalog.RevolutXCandles }));
+        Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(CandleSourceCatalog.RevolutXCandles, vendor,
+            newest));
+
+        // REBUILD CARRIES THE ROW'S OWN. The row is given a conferring class by raw SQL, as a collection under a
+        // conferring reading would have written it; the source's newest reading stays research-only.
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                UPDATE dataset SET licence_class=$class, terms_url=$url, terms_version=$version, terms_read_on=$read
+                 WHERE id=$id
+                """, ("$class", DataLicence.FirstParty), ("$url", "terms of the row's own"), ("$version", "v9"),
+                ("$read", "2026-10-01"), ("$id", collected.Id));
+            return c.ExecuteNonQuery();
+        });
+
+        var rebuilt = svc.Rebuild(Pair).Dataset!;
+        var carried = new DatasetLicence(DataLicence.FirstParty, "terms of the row's own", "v9", "2026-10-01");
+        Assert.Equal("v2", rebuilt.Version);
+        Assert.Equal(carried, rebuilt.Licence);
+        Assert.Equal(carried, svc.Store.ById(rebuilt.Id)!.Licence);
+    }
+
     // ---- fixtures -----------------------------------------------------------------------------------
+
+    const string Pair = "BTCUSDT";
+
+    static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
+
+    /// <summary>Three closed minutes of one month, in the archive's own column order.</summary>
+    static string Minutes(DateOnly month)
+    {
+        var start = new DateTimeOffset(month.Year, month.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var b = new System.Text.StringBuilder();
+        for (var i = 0; i < 3; i++)
+        {
+            var open = start.AddMinutes(i).ToUnixTimeMilliseconds() * 1000L;
+            var close = start.AddMinutes(i + 1).ToUnixTimeMilliseconds() * 1000L - 1;
+            b.Append(open).Append(",100.00000000,101.00000000,99.00000000,100.50000000,1.00000000,")
+             .Append(close).Append(",1000.00000000,10,0.50000000,500.00000000,0\n");
+        }
+        return b.ToString();
+    }
 
     /// <summary>A dataset row with the provenance a collector writes, and nothing on disk to hash.</summary>
     static DatasetRecord Row(string source) => new(

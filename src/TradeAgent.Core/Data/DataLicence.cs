@@ -49,6 +49,50 @@ public static class DataLicence
     /// </summary>
     public static bool Confers(string? licenceClass) => licenceClass is CommercialOk or FirstParty;
 
+    /// <summary>
+    /// A DATASET'S LICENCE IN WORDS: the class and the terms it names — their address, their version and the
+    /// day they were read — or "no licence recorded". The one spelling every surface prints.
+    /// </summary>
+    public static string Words(DatasetLicence licence)
+    {
+        ArgumentNullException.ThrowIfNull(licence);
+        return licence.Class is not { } named
+            ? "no licence recorded"
+            : $"{named} (terms {licence.TermsUrl ?? "not recorded"}, "
+              + $"{licence.TermsVersion ?? "version not recorded"}, read {licence.TermsReadOn ?? "on no recorded day"})";
+    }
+
+    /// <summary>
+    /// THE LICENCE A COLLECTION RECORDS: <paramref name="newest"/> — the newest reading for
+    /// <paramref name="sourceId"/> — only when EVERY fetched URL's origin (<see cref="UrlOrigin.Of"/>) is the
+    /// origin of THIS BUILD's own catalogue row for that id, and <see cref="DatasetLicence.Unrecorded"/>
+    /// otherwise.
+    ///
+    /// <para><b>The built-in row and never the catalogue as it stands.</b> A <c>sources.json</c> row REPLACES a
+    /// built-in one (<see cref="CandleSourceCatalog.Read"/>), and that file sits in TradeAgent's own folder,
+    /// which an unconfined agent can write: bars fetched from wherever such a row points are not the bars a
+    /// reading was taken about, so they are recorded as what nothing has read — research-only. The same rule
+    /// <see cref="TapeSourceCatalog.BuiltInLiveRule"/> keeps for the tape: a class is decided from this build's
+    /// rows and from nothing a file says. A source with no built-in row, a built-in row with no endpoint and a
+    /// collection with no URL at all take nothing.</para>
+    /// </summary>
+    public static DatasetLicence Stamp(string sourceId, IEnumerable<string> urls, DataLicenceReading? newest)
+    {
+        ArgumentNullException.ThrowIfNull(urls);
+        if (newest is null || !string.Equals(newest.Source, sourceId, StringComparison.Ordinal))
+            return DatasetLicence.Unrecorded;
+
+        var builtIn = CandleSourceCatalog.BuiltIn()
+            .FirstOrDefault(s => string.Equals(s.Id, sourceId, StringComparison.Ordinal));
+        if (UrlOrigin.Of(builtIn?.BaseUrl) is not { } origin) return DatasetLicence.Unrecorded;
+
+        var fetched = urls.ToList();
+        return fetched.Count > 0
+               && fetched.All(u => string.Equals(UrlOrigin.Of(u), origin, StringComparison.Ordinal))
+            ? newest.Licence
+            : DatasetLicence.Unrecorded;
+    }
+
     // ---- the two readings rung 30 seeds (R19 § 8, S1 and S2; both read 2026-10-04) ----------------------
 
     /// <summary>The Binance Vision Dataset Terms, R19 S1 — the archive's reading.</summary>
@@ -79,4 +123,36 @@ public static class DataLicence
 
     /// <summary>Why the forward ledger reads <see cref="Unverified"/> — the orchestrator's order of 2026-10-04.</summary>
     public const string ForwardNote = "R19 § 6 Q2 open: Binance API terms not read for live-gating use";
+}
+
+/// <summary>
+/// WHAT A DATASET ROW RECORDS ABOUT THE TERMS ITS BARS CAME UNDER: the class and the three facts about the
+/// terms, copied from its source's newest reading when the bars were collected — or
+/// <see cref="Unrecorded"/>, which is every row of a source nothing has read and reads research-only.
+/// </summary>
+public sealed record DatasetLicence(string? Class, string? TermsUrl, string? TermsVersion, string? TermsReadOn)
+{
+    /// <summary>No reading was taken about these bars. NOT a class of its own: it reads research-only.</summary>
+    public static DatasetLicence Unrecorded { get; } = new(null, null, null, null);
+
+    /// <summary>Whether this row's own class confers. See <see cref="DataLicence.Confers"/>.</summary>
+    public bool Confers => DataLicence.Confers(Class);
+}
+
+/// <summary>
+/// ONE READING OF A SOURCE'S TERMS — a <c>data_licence</c> row, written by a schema rung and by nothing else.
+/// The newest reading for a source is the one in force (<see cref="Db.DataLicences.Newest"/>).
+/// </summary>
+public sealed record DataLicenceReading(
+    long Id,
+    string Source,
+    string Class,
+    string? TermsUrl,
+    string? TermsVersion,
+    string? TermsReadOn,
+    string? Note,
+    DateTimeOffset RecordedAt)
+{
+    /// <summary>The four facts a dataset collected under this reading records.</summary>
+    public DatasetLicence Licence => new(Class, TermsUrl, TermsVersion, TermsReadOn);
 }

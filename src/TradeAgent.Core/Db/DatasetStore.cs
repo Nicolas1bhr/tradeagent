@@ -209,6 +209,22 @@ public sealed record DatasetRecord(
     /// <see cref="Data.BarQuality.Note"/>.
     /// </summary>
     public string? MidpointNote => Data.BarQuality.Note(MidpointBars, Bars, SourceCarriesVolume);
+
+    /// <summary>
+    /// THE TERMS THESE BARS CAME UNDER, as the collector recorded them (schema 30) — or
+    /// <see cref="Data.DatasetLicence.Unrecorded"/>, which reads research-only.
+    ///
+    /// <para><b>Copied onto the row and never joined at read time</b>, for the reason
+    /// <see cref="VenueId"/> is: a reading appended next month must not restate what last month's evidence
+    /// was collected under. The live gate reads this AND the source's newest reading, so a narrower reading
+    /// refuses and a wider one never re-opens (<see cref="Data.DataLicence.LiveRefusal"/>).</para>
+    ///
+    /// <para>Init-only with a default, like <see cref="HoldoutFrom"/>, so adding it re-parameterised no
+    /// construction site: a caller that knows nothing of licences records an unrecorded row, which is the
+    /// narrowest thing a row can be. The class is TEXT and never a CHECK — see
+    /// <see cref="Data.DataLicence"/>.</para>
+    /// </summary>
+    public Data.DatasetLicence Licence { get; init; } = Data.DatasetLicence.Unrecorded;
 }
 
 /// <summary>
@@ -235,7 +251,8 @@ public sealed class DatasetStore(Database db)
         source, pair, interval, version, months_attempted, months_present, months_not_published,
         normalised_path, normalised_sha256, bars, first_bar, last_bar, gaps, gap_runs,
         gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state, rejected_reason,
-        venue_id, instrument_symbol, coverage_target_days, source_carries_volume, midpoint_bars
+        venue_id, instrument_symbol, coverage_target_days, source_carries_volume, midpoint_bars,
+        licence_class, terms_url, terms_version, terms_read_on
         """;
 
     /// <summary>
@@ -264,7 +281,8 @@ public sealed class DatasetStore(Database db)
         using var insert = db.Cmd($"""
             INSERT INTO dataset({Written})
             VALUES($src,$pair,$int,$ver,$att,$pres,$notpub,$npath,$nsha,$bars,$first,$last,$gaps,
-                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why,$venue,$sym,$target,$vol,$mid);
+                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why,$venue,$sym,$target,$vol,$mid,
+                   $licence,$terms,$termsver,$termsread);
             SELECT last_insert_rowid();
             """,
             ("$src", set.Source), ("$pair", set.Pair), ("$int", set.Interval), ("$ver", set.Version),
@@ -286,7 +304,11 @@ public sealed class DatasetStore(Database db)
             // one that recorded none, and a midpoint count is a measurement of the file that was
             // written rather than an opinion about the vendor.
             ("$target", set.CoverageTargetDays), ("$vol", set.SourceCarriesVolume ? 1 : 0),
-            ("$mid", set.MidpointBars));
+            ("$mid", set.MidpointBars),
+            // WHAT THE BARS CAME UNDER, as the collector stamped it from its source's newest reading — and
+            // NULL when nothing was stamped, never a default class: an unrecorded row reads research-only.
+            ("$licence", set.Licence.Class), ("$terms", set.Licence.TermsUrl),
+            ("$termsver", set.Licence.TermsVersion), ("$termsread", set.Licence.TermsReadOn));
 
         var id = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
 
@@ -477,8 +499,12 @@ public sealed class DatasetStore(Database db)
                     CoverageTargetDays = r.IsDBNull(24) ? 0 : r.GetInt32(24),
                     SourceCarriesVolume = r.IsDBNull(25) || r.GetInt32(25) != 0,
                     MidpointBars = r.IsDBNull(26) ? 0 : r.GetInt32(26),
-                    HoldoutFrom = Sql.TimeN(r.IsDBNull(27) ? null : r.GetString(27)),
-                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(28) ? null : r.GetString(28))
+                    // THE CLASS AS WRITTEN, an unknown word included: it is read research-only by the gate
+                    // (`DataLicence.Confers`), never rewritten into a known one here.
+                    Licence = new Data.DatasetLicence(Sql.S(r.GetValue(27)), Sql.S(r.GetValue(28)),
+                        Sql.S(r.GetValue(29)), Sql.S(r.GetValue(30))),
+                    HoldoutFrom = Sql.TimeN(r.IsDBNull(31) ? null : r.GetString(31)),
+                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(32) ? null : r.GetString(32))
                 });
 
         return [.. rows.Select(row => row with { Files = FilesOf(row.Id) })];
