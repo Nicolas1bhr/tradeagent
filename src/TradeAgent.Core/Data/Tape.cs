@@ -16,7 +16,7 @@ namespace TradeAgent.Core.Data;
 /// </summary>
 public static class TapeClass
 {
-    /// <summary>First received from the source's built-in origin within its cadence plus 30 s of its source time.</summary>
+    /// <summary>First received from the source's built-in origin within its cadence, its documented publication delay and 30 s of its source time.</summary>
     public const string Live = "O-LIVE";
 
     /// <summary>An exchange-published print checked against its vendor checksum and our own live record. <c>U-tape-archive</c>'s.</summary>

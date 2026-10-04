@@ -256,6 +256,71 @@ public class TapeStoreTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// AN ANNOUNCEMENT IS LIVE WITHIN ITS CADENCE PLUS ITS DOCUMENTED DELAY PLUS THIRTY SECONDS
+    /// (<c>U-tape-events</c>). OKX documents that its answer may lag an announcement's first publication by
+    /// about five minutes, so its row's window is 60 + 300 + 30 s: first read 390 s after its <c>pTime</c>
+    /// from OKX's own origin is live, 391 s is archive. From a loopback listener an on-time item is archive,
+    /// and so is a page-1 item three days old — what the first look after a start sees: the tape does not
+    /// claim to have seen that one arrive. A row with no documented delay is classed exactly as before (the
+    /// premium index at 90 and 91 s), and the delay is lateness only: a <c>pTime</c> ahead of this machine's
+    /// clock still has the cadence plus 30 s and no more.
+    ///
+    /// <para>The built-in addresses below are never asked anything: the store makes no request.</para>
+    /// </summary>
+    [Fact]
+    public void An_announcement_is_live_within_cadence_plus_its_documented_delay()
+    {
+        using var store = new TapeStore(NewFile());
+
+        var okx = TapeSourceCatalog.Announcements().Single(r => r.Id == TapeSourceCatalog.OkxEeaAnnouncements);
+        var series = okx.Series[0].Id;
+        var builtInUrl = okx.Series[0].UrlShape.Replace("{base}", okx.BaseUrl, StringComparison.Ordinal);
+        const string loopbackUrl = "http://127.0.0.1:9/api/v5/support/announcements";
+        var received = Noon.AddSeconds(2);
+
+        static string UrlOf(string slug) => $"https://example.invalid/en-eu/help/{slug}";
+
+        static TapeItem Announcement(string slug, DateTimeOffset published) => new(TapeParse.ItemSubject(UrlOf(slug)), published,
+            $$"""{"annType":"announcements-new-listings","businessPTime":"{{Ms(published)}}","pTime":"{{Ms(published)}}","title":"{{slug}}","url":"{{UrlOf(slug)}}"}""");
+
+        var own = store.Append(Fetch(received, builtInUrl, okx.Id, series),
+        [
+            Announcement("just-published", received.AddSeconds(-5)),
+            Announcement("at-the-bound", received.AddSeconds(-390)),     // 60 + 300 + 30 s: the bound is inclusive
+            Announcement("a-second-past-it", received.AddSeconds(-391)),
+            Announcement("three-days-old", received.AddDays(-3)),        // page 1, at the first look after a start
+            Announcement("ahead-by-90", received.AddSeconds(90)),        // the vendor's clock ahead of this machine's
+            Announcement("ahead-by-91", received.AddSeconds(91))
+        ]);
+        var elsewhere = store.Append(Fetch(received, loopbackUrl, okx.Id, series), [Announcement("on-time-elsewhere", received.AddSeconds(-5))]);
+
+        string Class(long fetchId, string slug) =>
+            store.ObservationsOf(fetchId).Single(o => o.Subject == TapeParse.ItemSubject(UrlOf(slug))).EvidenceClass;
+
+        foreach (var slug in new[] { "just-published", "at-the-bound", "a-second-past-it", "three-days-old", "ahead-by-90", "ahead-by-91" })
+            log.WriteLine($"{slug}: {Class(own.FetchId, slug)}");
+        log.WriteLine($"on-time-elsewhere: {Class(elsewhere.FetchId, "on-time-elsewhere")}");
+
+        Assert.Equal(TapeClass.Live, Class(own.FetchId, "just-published"));
+        Assert.Equal(TapeClass.Live, Class(own.FetchId, "at-the-bound"));
+        Assert.Equal(TapeClass.Arch, Class(own.FetchId, "a-second-past-it"));
+        Assert.Equal(TapeClass.Arch, Class(own.FetchId, "three-days-old"));
+        Assert.Equal(TapeClass.Live, Class(own.FetchId, "ahead-by-90"));
+        Assert.Equal(TapeClass.Arch, Class(own.FetchId, "ahead-by-91"));
+        Assert.Equal(TapeClass.Arch, Class(elsewhere.FetchId, "on-time-elsewhere"));
+        Assert.Equal(UrlOrigin.Of(TapeSourceCatalog.OkxEeaBaseUrl), store.Fetches(okx.Id).Single(f => f.Id == own.FetchId).Origin);
+
+        // A ROW WITH NO DOCUMENTED DELAY IS CLASSED EXACTLY AS BEFORE: the premium index's window is 60 + 0 + 30 s.
+        var premium = TapeSourceCatalog.BuiltIn().Single(r => r.Id == TapeSourceCatalog.Premium);
+        var premiumUrl = premium.Series[0].UrlShape.Replace("{base}", premium.BaseUrl, StringComparison.Ordinal);
+        static TapeItem Mark(string symbol, DateTimeOffset time) =>
+            new(symbol, time, $$"""{"markPrice":"1.00","symbol":"{{symbol}}","time":{{Ms(time)}}}""");
+        var market = store.Append(Fetch(received, premiumUrl, premium.Id, premium.Series[0].Id),
+            [Mark("BTCUSDT", received.AddSeconds(-90)), Mark("ETHUSDT", received.AddSeconds(-91))]);
+        Assert.Equal([TapeClass.Live, TapeClass.Arch], store.ObservationsOf(market.FetchId).Select(o => o.EvidenceClass));
+    }
+
+    /// <summary>
     /// ITS OWN FILE AND ITS OWN LADDER, AND A NEWER FILE IS LEFT AS IT WAS FOUND. The version is read
     /// BEFORE anything is migrated — a newer tape gets no table of this build's added to it, and keeps
     /// its journal mode — and the app is told in the activity log, in words.
