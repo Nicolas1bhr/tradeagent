@@ -303,6 +303,24 @@ public sealed class ForwardRuns
                 if (resampler.Add(bar) is { } completed) decided.Add(completed);
             }
 
+            // AN EXIT A GATE REFUSED BEFORE THE WIRE GOES OUT AGAIN ON THE MINUTE, NOT AT THE NEXT DECLARED CLOSE
+            // (`U-runner-refused-close`). On declared bars the evaluator is asked only when one of its bars closes,
+            // and its one-bar hold then suppresses the exit it decided a bar earlier, so a refusal there left the
+            // position open for two whole bars of the program's. On a minute that closes no declared bar, while the
+            // books read long and the run's latest entry, exit or flatten is an exit refused before the wire, that
+            // exit is sent again under THIS minute's id — its intent read back from its own operation, the decision
+            // block unchanged, sized from the books — for as long as the decision is inside both of its bounds; and
+            // the gateway judges the decision again at dispatch. Never on one-minute bars, where every minute is a
+            // declared close and the program decides again itself; never on a minute a declared bar closes on,
+            // which is the evaluator's.
+            if (live && resampler is not null && decided.Count == 0 && account.Position == PositionSide.Long
+                && ExitToSendAgain(deployment) is { } again
+                && await SendExitAgainAsync(deployment, bar, again, account, seq++, ct))
+            {
+                planned = true;
+                account = RunBooks.Flat(account);
+            }
+
             foreach (var closed in decided)
             {
                 // THE ACCOUNT AT THIS MINUTE, AFTER ITS PROTECTION, with the bars held counted to the bar
@@ -396,6 +414,58 @@ public sealed class ForwardRuns
         return await _gateway.RunDeploymentIntentAsync(deployment,
             Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
             enter ? DeploymentOpKind.Entry : DeploymentOpKind.Exit, bar.OpenTime, intent, ct);
+    }
+
+    /// <summary>
+    /// THE EXIT TO SEND AGAIN, or null because there is none: the run's LATEST entry, exit or flatten, when it is an
+    /// exit refused before the wire (<see cref="RefusedBeforeTheWire"/>) whose decision is still inside both of its
+    /// bounds at this instant.
+    ///
+    /// <para><b>The latest, and only the latest.</b> An exit refused earlier and followed by anything that moves the
+    /// position — an exit that went out, a flatten, an entry — is over: what came after it is the run's later word.
+    /// And an exit that did go out is not sent again whatever happened to it at the venue; what an order with an
+    /// answer did is the position's business, read off the books.</para>
+    ///
+    /// <para><b>Inside both bounds, measured from the decided bar's close</b> (<see cref="IntentDecision.AgeAt"/>),
+    /// which is the test <c>TradingGateway</c>'s decision gate makes at dispatch. Asked here as well so that a
+    /// decision past its bound stops being sent at all, rather than written and refused once a minute; the
+    /// gateway's own answer still decides every one that is sent.</para>
+    /// </summary>
+    PlaceIntent? ExitToSendAgain(StrategyDeploymentRow deployment)
+    {
+        var latest = _deployments.OpsOf(deployment.Id)
+            .LastOrDefault(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten);
+
+        if (latest is not { Kind: DeploymentOpKind.Exit }
+            || !RefusedBeforeTheWire(latest, _gateway.Requests.Get(latest.RequestId)))
+            return null;
+
+        PlaceIntent? intent;
+        try { intent = Json.Read<PlaceIntent>(latest.IntentJson); }
+        catch (Exception) { intent = null; }
+
+        if (intent?.Decision is not { } decision) return null;
+
+        var age = decision.AgeAt(_now());
+        return age >= TimeSpan.Zero && age <= decision.MaxDecisionAge && age <= decision.DataFreshness
+            ? intent
+            : null;
+    }
+
+    /// <summary>
+    /// A REFUSED EXIT, SENT AGAIN: the same intent and the same decision, sized from what the books hold now and
+    /// written under this minute's own request id — so its own <c>TA-</c> client order id, and a replay of this
+    /// minute collapses onto it rather than sending a second order.
+    /// </summary>
+    async Task<bool> SendExitAgainAsync(StrategyDeploymentRow deployment, KlineBar bar, PlaceIntent refused,
+        AccountReading account, int seq, CancellationToken ct)
+    {
+        if (Sized(deployment, bar, account.Quantity, "the refused exit's close, sent again") is not { } quantity)
+            return false;
+
+        return await _gateway.RunDeploymentIntentAsync(deployment,
+            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
+            DeploymentOpKind.Exit, bar.OpenTime, refused with { Quantity = quantity }, ct);
     }
 
     /// <summary>Which run, and which of its own statements. It goes onto the broker order's comment.</summary>
