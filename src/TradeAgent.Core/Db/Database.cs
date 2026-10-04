@@ -1780,6 +1780,69 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','29') ON CONFLICT(key) DO UPDATE SET value='29';");
         }
 
+        if (have < 30)
+        {
+            // THE TERMS EVERY DATASET'S BARS CAME UNDER — `U-data-licence`.
+            //
+            // Binance's public archive is now under the Binance Vision Dataset Terms v1.0 (CC BY-NC-SA 4.0):
+            // § 4.1 allows backtesting for personal non-production research and § 4.2 forbids live
+            // proprietary trading execution. The orchestrator's COMPLY decision of 2026-10-04 and R19
+            // (`docs/research/2026-10-04/R19-historical-data-licences.md`) follow from it: archive datasets
+            // serve research — backtests, paper, M0 — and nothing that confers LIVE eligibility rests on
+            // them. Before this rung a dataset row said where its bars came from and nothing about the
+            // terms they came under, so the live gate had nothing to read.
+            //
+            // `data_licence` IS A ROW PER READING, APPEND-ONLY, NEWEST IN FORCE, WRITTEN BY RUNGS ONLY.
+            // Reclassifying a source is a new row in a later rung — never gate code, never an op, never a
+            // verb — and `DataLicences` exposes reads and nothing else. The class is TEXT validated by the
+            // reader and never a CHECK, the reading rung 28 gives: only `commercial-ok` and `first-party`
+            // confer, and every other value, NULL included, reads research-only (`DataLicence.Confers`).
+            //
+            // THE FOUR `dataset` COLUMNS ARE WHAT THE BARS CAME UNDER, copied onto the row when they were
+            // collected (`MarketDataService.Recorded`) and never joined at read time: a reading appended next
+            // month must not be able to restate what last month's evidence was collected under — the gate
+            // asks for both the row's class AND its source's newest reading to confer, so a narrower reading
+            // refuses and a wider one never re-opens. Each is added only where `pragma_table_info` lacks it,
+            // because these rungs run in autocommit and a crash between an ALTER and the stamp runs the rung
+            // again, and a second ALTER of the same column is an error that would leave the database unable
+            // to open.
+            //
+            // THE TWO SEEDS, each `WHERE NOT EXISTS` for the same reason: the archive `research-only` (R19
+            // S1), and the forward ledger `unverified` (R19 S2) — on the orchestrator's order of 2026-10-04,
+            // because whether the archive terms' "associated endpoints" reach the forward host is R19 § 6 Q2
+            // and it is open. `unverified` confers nothing. The tape is NOT seeded here: each tape source's
+            // reading is seeded per venue, on that venue's terms read the same day, by the unit that first
+            // lets tape evidence count (`U-features`).
+            //
+            // THE ONE BACKFILL: every archive dataset takes the archive reading. It is the 17 and 21 reading,
+            // not the 22 one: there is a knowable fact here — every such row's bars are Binance archive bars,
+            // and research-only is the narrowest class there is, so it can only refuse. A row of any other
+            // source stays NULL, which reads research-only too. `licence_class IS NULL` keeps a rerun from
+            // restating a row.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS data_licence(
+              id            INTEGER PRIMARY KEY AUTOINCREMENT,
+              source        TEXT NOT NULL,
+              licence_class TEXT NOT NULL,
+              terms_url     TEXT,
+              terms_version TEXT,
+              terms_read_on TEXT,
+              note          TEXT,
+              recorded_at   TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_data_licence_source ON data_licence(source, id);
+            """);
+
+            AddColumnIfMissing("dataset", "licence_class", "TEXT");
+            AddColumnIfMissing("dataset", "terms_url", "TEXT");
+            AddColumnIfMissing("dataset", "terms_version", "TEXT");
+            AddColumnIfMissing("dataset", "terms_read_on", "TEXT");
+
+            SeedDataLicences(Sql.T(DateTimeOffset.UtcNow));
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','30') ON CONFLICT(key) DO UPDATE SET value='30';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
@@ -1850,6 +1913,57 @@ public sealed class Database : IDisposable
                 ("$decider", OrgDecider.App), ("$detail", $"position={id} unit={unit} home={home}"));
             e.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>
+    /// THE SCHEMA-30 SEED: the two readings rung 30 records, and the one backfill.
+    ///
+    /// <para><b>Idempotent, for the reason <see cref="SeedOrganisation"/> is.</b> A reading's key is a counter,
+    /// which no conflict clause can refuse, so each is inserted only <c>WHERE NOT EXISTS</c> a row with the same
+    /// source, class, terms, version and read date; and the backfill touches only a row whose class is still
+    /// NULL, so a rerun restates nothing. Every value is this assembly's own constant, bound as a parameter.</para>
+    /// </summary>
+    void SeedDataLicences(string at)
+    {
+        Reading(Data.BinanceArchive.Source, Data.DataLicence.ResearchOnly, Data.DataLicence.ArchiveTermsUrl,
+            Data.DataLicence.ArchiveTermsVersion, Data.DataLicence.ArchiveTermsReadOn, Data.DataLicence.ArchiveNote);
+        Reading(Data.ForwardBars.Source, Data.DataLicence.Unverified, Data.DataLicence.ForwardTermsUrl,
+            Data.DataLicence.ForwardTermsVersion, Data.DataLicence.ForwardTermsReadOn, Data.DataLicence.ForwardNote);
+
+        using var backfill = Cmd("""
+            UPDATE dataset SET licence_class=$class, terms_url=$url, terms_version=$version, terms_read_on=$read
+             WHERE source=$src AND licence_class IS NULL
+            """, ("$class", Data.DataLicence.ResearchOnly), ("$url", Data.DataLicence.ArchiveTermsUrl),
+            ("$version", Data.DataLicence.ArchiveTermsVersion), ("$read", Data.DataLicence.ArchiveTermsReadOn),
+            ("$src", Data.BinanceArchive.Source));
+        backfill.ExecuteNonQuery();
+
+        void Reading(string source, string licenceClass, string url, string version, string readOn, string note)
+        {
+            using var c = Cmd("""
+                INSERT INTO data_licence(source, licence_class, terms_url, terms_version, terms_read_on, note,
+                                         recorded_at)
+                SELECT $src, $class, $url, $version, $read, $note, $at
+                 WHERE NOT EXISTS (SELECT 1 FROM data_licence
+                                    WHERE source=$src AND licence_class=$class AND terms_url=$url
+                                      AND terms_version=$version AND terms_read_on=$read)
+                """, ("$src", source), ("$class", licenceClass), ("$url", url), ("$version", version),
+                ("$read", readOn), ("$note", note), ("$at", at));
+            c.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// ADDS A COLUMN ONLY WHERE THE TABLE LACKS IT. The rungs run in autocommit and the stamp is a rung's last
+    /// statement, so a crash between an <c>ALTER</c> and the stamp runs the rung again — and a second
+    /// <c>ADD COLUMN</c> of the same name is an error, which would leave the database unable to open at all.
+    /// Both names are this assembly's own constants.
+    /// </summary>
+    void AddColumnIfMissing(string table, string column, string type)
+    {
+        if (ReadInt($"SELECT COUNT(*) FROM pragma_table_info('{Lit(table)}') WHERE name='{Lit(column)}'") is > 0)
+            return;
+        Exec($"ALTER TABLE {table} ADD COLUMN {column} {type};");
     }
 
     /// <summary>

@@ -294,8 +294,18 @@ public static class Versions
     /// (<c>InstrumentCheckStore</c>); not joined to <c>venue_instrument</c> and never written into it — the
     /// served read overlays the latest verified row of seven days or less (<c>VenueStore</c>). Additive, and
     /// an older database gains it empty.</para>
+    ///
+    /// <para><b>30 — the terms a dataset's bars came under</b> (<c>U-data-licence</c>): <c>data_licence</c>, a row
+    /// per READING of a source's terms (source, class, terms URL, version, read date, note, recorded at),
+    /// append-only, newest in force, written by rungs only — and <c>dataset.licence_class</c>,
+    /// <c>.terms_url</c>, <c>.terms_version</c> and <c>.terms_read_on</c>, each added only where
+    /// <c>pragma_table_info</c> lacks it. Seeded with the archive's <c>research-only</c> reading (the Binance
+    /// Vision Dataset Terms v1.0) and the forward ledger's <c>unverified</c> one (R19 § 6 Q2 open); the one
+    /// backfill gives every archive dataset the archive reading. Only <c>commercial-ok</c> and
+    /// <c>first-party</c> confer live eligibility, and the live gate reads both the row's class and its
+    /// source's newest reading (<c>DataLicence.LiveRefusal</c>).</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 29;
+    public const int DatabaseSchemaVersion = 30;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
