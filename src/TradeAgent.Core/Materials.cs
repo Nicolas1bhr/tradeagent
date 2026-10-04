@@ -119,8 +119,35 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     public int Arrived =>
         AddedBy.GetValueOrDefault(MaterialOrigin.Inbox) + AddedBy.GetValueOrDefault(MaterialOrigin.InboxUnattested);
 
+    /// <summary>
+    /// HOW MANY FOLDERS THIS PASS COULD NOT READ IN FULL (U-inbox-unreadable): a tracked folder the disk
+    /// would not say is there, a folder it would not list, or one holding a listed file it would not
+    /// describe. Never a folder skipped on purpose — that is <see cref="Skipped"/>.
+    ///
+    /// <para><b>Any at all and the pass is not complete:</b> it moved neither window key, marked nothing
+    /// missing in the group the folder is in, and recorded what it did see with the words its older,
+    /// wider window allows. "I could not look" is neither "it is gone" nor "I looked".</para>
+    /// </summary>
+    public int Unreadable { get; init; }
+
+    /// <summary>
+    /// Those folders, relative to the workspace — the owner's drop folder's first — at most
+    /// <see cref="MaterialScanner.UnreadableNamed"/> of them; <see cref="Unreadable"/> counts them all.
+    /// Names only, never anything inside a file.
+    /// </summary>
+    public IReadOnlyList<string> UnreadableFolders { get; init; } = [];
+
+    /// <summary>
+    /// The pass looked everywhere: it did not run out of budget (<see cref="HashBudgetSpent"/>, which is
+    /// the file budget's flag despite its name) and read every place it walked. Only a complete pass
+    /// moves the window, and only a complete pass can say that a folder it once could not read is
+    /// readable again — one that stopped early may never have reached it.
+    /// </summary>
+    public bool Complete => !HashBudgetSpent && Unreadable == 0;
+
     public bool Changed => Added > 0 || Removed > 0 || Hashed > 0;
     public override string ToString() =>
         $"seen={Seen} added={Added} hashed={Hashed} removed={Removed} skipped={Skipped}" +
+        (Unreadable > 0 ? $" unreadable={Unreadable}" : "") +
         (HashBudgetSpent ? " (hash budget spent — more next pass)" : "");
 }
