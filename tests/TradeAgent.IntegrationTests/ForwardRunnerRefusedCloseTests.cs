@@ -1,6 +1,7 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using Xunit;
@@ -27,6 +28,40 @@ public partial class ForwardRunnerTests
         rig.Gw.InstallInProgress = () => true;
         try { return Assert.Single(await rig.Runner.AdvanceAsync()); }
         finally { rig.Gw.InstallInProgress = null; }
+    }
+
+    /// <summary>
+    /// ONE CLOSED MINUTE STORED THE WAY <see cref="Rig.Bar"/> STORES IT, BUT NOT ANNOUNCED — so nothing settles the
+    /// paper book on it, now or later, until something reads the venue. An announcement settles on the thread pool
+    /// whenever that runs, and one still queued from an earlier minute could settle a later minute before the pass
+    /// that is meant to be the first to read it.
+    /// </summary>
+    static void QuietBar(Rig rig, int minute, decimal open, decimal high, decimal low, decimal close)
+    {
+        var openTime = rig.Origin.AddMinutes(minute);
+        var closeTime = openTime + ForwardBars.BarLength;
+        rig.Clock.At = closeTime;
+
+        var append = rig.Bars.Append(new ForwardFetchAttempt
+        {
+            Source = ForwardBars.Source,
+            Symbol = rig.Symbol,
+            Url = "https://example.invalid/klines (this test wrote the rows; nothing was fetched)",
+            RequestedAt = closeTime,
+            ReceivedAt = closeTime.AddSeconds(1),
+            HttpStatus = 200
+        }, [new ForwardBars.Kline(openTime, open, high, low, close, 10m, closeTime)]);
+
+        Assert.Equal(1, append.Stored);
+        rig.Clock.At = closeTime.AddSeconds(1);
+    }
+
+    /// <summary><see cref="MinuteAsync"/> with the minute not announced: the refresh is what settles it.</summary>
+    static async Task QuietMinuteAsync(Rig rig, int minute, decimal open, decimal high, decimal low, decimal close)
+    {
+        QuietBar(rig, minute, open, high, low, close);
+        await rig.Gw.RefreshHealthAsync();
+        Assert.Single(await rig.Runner.AdvanceAsync());
     }
 
     /// <summary>The order at the wire a run's operation put there, by the client order id it carries.</summary>
@@ -167,8 +202,8 @@ public partial class ForwardRunnerTests
     /// (c) A STOP THAT FILLED INSIDE THE PASS THAT DECIDED ON ITS MINUTE STILL TAKES THE TARGET OFF THE BOOK, AND
     /// NO PAPER SHORT OPENS.
     ///
-    /// <para>A minute is appended and nothing asks the connector about it — no announcement, no refresh — so the
-    /// runner's pass is the first to read the venue. Its low is through the stop and its close is under 90: the
+    /// <para>A minute is appended and nothing asks the connector about it — no announcement, no refresh, and no
+    /// announcement of an earlier minute still queued — so the runner's pass is the first to read the venue. Its low is through the stop and its close is under 90: the
     /// program exits, the pass's own first connector read settles the minute and fills the stop there, and the
     /// gateway refuses the exit <c>POSITION_MOVED</c>. That refusal moves the cursor onto the minute, so the pass
     /// that first sees the stop's fill does not replay its minute as live: the loser's cancel used to be skipped
@@ -186,18 +221,20 @@ public partial class ForwardRunnerTests
         await using var rig = await ReadyAsync(
             ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
 
-        await MinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 95, target 101
-        await MinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress
-        await MinuteAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);     // the entry fills at this open; protection goes on
-        await MinuteAsync(rig, 4, 100.5m, 100.9m, 100.2m, 100.8m);  // nothing touched
+        // NO MINUTE OF THIS RUN IS ANNOUNCED: see QuietBar. Each is settled by the refresh that follows it, and
+        // minute 5 by nothing but the runner's own pass.
+        await QuietMinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 95, target 101
+        await QuietMinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress
+        await QuietMinuteAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);     // the entry fills at this open; protection goes on
+        await QuietMinuteAsync(rig, 4, 100.5m, 100.9m, 100.2m, 100.8m);  // nothing touched
         Assert.Equal(1m, await Position(rig));
 
         var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
         var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
         var target = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Target);
 
-        // MINUTE 5, APPENDED AND NOT ANNOUNCED, AND THE RUNNER ASKED BEFORE ANYTHING ELSE READS THE VENUE.
-        rig.Minutes(5, 5, _ => 89m);
+        // MINUTE 5, AND THE RUNNER ASKED BEFORE ANYTHING ELSE READS THE VENUE: low and close at 89.
+        QuietBar(rig, 5, 89m, 89m, 89m, 89m);
         await rig.Runner.AdvanceAsync();
         Show(log, rig);
 
@@ -207,9 +244,9 @@ public partial class ForwardRunnerTests
         Assert.Contains(ErrorCode.POSITION_MOVED.ToString(), exit.Answer);
 
         // THE NEXT MINUTE, AND THEN A RISE THROUGH WHERE THE TARGET WAS.
-        await MinuteAsync(rig, 6, 89.5m, 90m, 89m, 89.5m);
-        await MinuteAsync(rig, 7, 95m, 101.5m, 94.5m, 98m);
-        await FlatMinuteAsync(rig, 8, 98m);
+        await QuietMinuteAsync(rig, 6, 89.5m, 90m, 89m, 89.5m);
+        await QuietMinuteAsync(rig, 7, 95m, 101.5m, 94.5m, 98m);
+        await QuietMinuteAsync(rig, 8, 98m, 98m, 98m, 98m);
         Show(log, rig);
 
         // NO PAPER SHORT: two executions in all, the entry and the stop, and nothing held.
