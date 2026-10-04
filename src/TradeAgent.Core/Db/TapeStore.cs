@@ -282,12 +282,17 @@ public sealed class TapeStore : IDisposable
     ///
     /// <para><c>O-LIVE</c> iff all three: the fetch's source is a BUILT-IN row
     /// (<see cref="TapeSourceCatalog.BuiltInLiveRule"/>); the fetch's origin — read off its own URL — is
-    /// that row's built-in origin; and this reading arrived within the row's cadence plus
-    /// <see cref="TapeSourceCatalog.LiveTolerance"/> of its source time. Everything else is
-    /// <c>O-ARCH</c>: a late reading, one fetched from any other origin (a test's loopback listener
-    /// included), and every row a file added, whatever address it names. The window is measured either
-    /// side of the source time — a machine clock a second behind the vendor's must not make every
-    /// on-time reading archive, and a source time further ahead than the window is not live either.</para>
+    /// that row's built-in origin; and this reading arrived no later than the row's cadence plus its
+    /// documented publication delay plus <see cref="TapeSourceCatalog.LiveTolerance"/> after its source
+    /// time. Everything else is <c>O-ARCH</c>: a late reading, one fetched from any other origin (a test's
+    /// loopback listener included), and every row a file added, whatever address it names.</para>
+    ///
+    /// <para><b>The delay is the vendor's word for how late its answer may be</b> — OKX documents that its
+    /// announcements may be served about five minutes after their first publication, so its window is
+    /// 60 + 300 + 30 s, and a market row's delay is zero, which leaves it exactly as it was. It is LATENESS
+    /// only: a source time AHEAD of this machine's clock still has the cadence plus 30 s and no more — a
+    /// clock a second behind the vendor's must not make every on-time reading archive, and a source time
+    /// further ahead than that is not live either, delay or none.</para>
     ///
     /// <para><b>A later revision is never above the one before it</b>: a datum first read late, or from
     /// elsewhere, does not become live because the vendor re-published it on time. A live datum's late
@@ -298,12 +303,22 @@ public sealed class TapeStore : IDisposable
     {
         var own = TapeSourceCatalog.BuiltInLiveRule(source) is { } rule
                   && string.Equals(origin, rule.Origin, StringComparison.Ordinal)
-                  && (receivedAt - sourceTime).Duration() <= rule.Cadence + TapeSourceCatalog.LiveTolerance
+                  && InWindow(receivedAt - sourceTime, rule.Cadence, rule.Delay)
             ? TapeClass.Live
             : TapeClass.Arch;
 
         return previous is null ? own : TapeClass.Lower(own, previous);
     }
+
+    /// <summary>
+    /// Whether a reading that arrived <paramref name="late"/> after its source time (negative: before it) is
+    /// within the live window: late by at most the cadence, the delay and the tolerance; early by at most the
+    /// cadence and the tolerance.
+    /// </summary>
+    static bool InWindow(TimeSpan late, TimeSpan cadence, TimeSpan delay) =>
+        late >= TimeSpan.Zero
+            ? late <= cadence + delay + TapeSourceCatalog.LiveTolerance
+            : -late <= cadence + TapeSourceCatalog.LiveTolerance;
 
     /// <summary>
     /// THE NATURAL KEY OF AN OBSERVATION: its subject and the vendor's own time field for that series,
