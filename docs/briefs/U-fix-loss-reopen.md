@@ -37,3 +37,23 @@ Items, one commit each, one-sentence messages:
 Done: the cause quoted; for a product fix each red-first test red before and green after and its mutant red; the full workflow green on all three platforms on
 the final tip (run id); any narrowed stress run quoted with its count; the gate per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass" (rebase on
 `main` first; `--no-incremental` Release 0 warnings; Unit and Fault 0 failed; touched classes 3×; names 0 removed with both set sizes); `## Report` ≤ 20 lines.
+## Report
+**Tip** `d0d14159` (code; this report is the next commit), rebased on `main` `e651eaa0`, no conflict. **Property kept:** a closed day never coexists silently with an
+open position — the flatten goes out at the breach unless it cannot; then every pass retries, the dashboard says so, and nothing reopens until it reads flat.
+**Item 1, DONE — one cause behind both sightings:** the flatten ran on the connector's 2 s emergency budget, a real wall clock (`RiskReducingScope`, `TickCount64`; every
+instant is `GatewayOptions.Clock`), and its own write-ahead commits were charged to it: on a slow disk they spent it before the first platform call, that call was refused
+before the wire, and the outcome was written once, final, with a flagged row refusing the sweep — nothing retried; a day later the reopen was held by "ES 1 open". Runs
+37170522369 + 37170524233 (branch-only `LossFlattenDiagTests` + windows-only `build.yml`, both removed in `d0d14159`), under the suite's load: each flatten step's spend a
+~30 ms commit (first read 1922 ms left, close 1828 ms); 120 instrumented runs and 2×12 class loops green, no sighting red again; the CONTROL (deadline gone at the first flatten call) reproduced
+both sightings on windows exactly (`closes=0, mutations 1/1`; `reopened=[]`, ES 1). 23 s/41 s = these fixtures (0.7–4.8 s there) on a disk 5–60× slower: 2–4 commits ≈ 2 s.
+**Item 2, DONE (product):** (A) `RiskReducingScope.BeginExcludingTheStore` + `Core.Db.StoreTime`: the app's flatten is not charged for its own `Database` time; presses,
+sweeps and the 2 s value unchanged. (B) one `TransportRecord` per attempt: empty ⇒ its rows settled not-sent and unflagged, no outcome, an owed note `loss_flatten_owed:`
+("has NOT closed your open positions yet … tries again on every pass") on every surface, the sweep re-runs it each pass, `HeldBy` holds it; dispatched ⇒ final as before.
+**RED before:** slow-store test `Expected: 1 Actual: 0` ("store held by another : 3050 ms against a 2000 ms budget"); owed test `Assert.Null() Failure` (final record,
+`UNKNOWN flagged=1`); every-pass test "1 attempts in all, 1 by the confirming pass". **Mutants:** A, refund removed ⇒ slow-store `Expected: 1 Actual: 0`; B, proof removed
+⇒ wire guard `Expected: 1 Actual: 2`, book `[Buy 1 ES FILLED | Sell 1 ES CANCELLED | Sell 1 ES WORKING]`, and 2 `LossFlattenTests` red. Both restored identical.
+**Gate:** `-c Release --no-incremental` 0 warnings 0 errors; Unit 1381/1381, Fault 420/420; 3× green: LossFlattenOwedTests, LossFlattenTests, LossWatchTests, LossHold-
+and LossFlattenSurfacesTests. CI 37185798775 at `d0d1415`: ubuntu, macos, windows (44 min, Timing first try), package all success. Names: removed 0, added 4, 2153 → 2157.
+**Declared deviation:** `LossFlattenTests.A_position_that_shrinks…` (not renamed) now reads its refused attempt alone (nothing sent, REJECTED/REVERSE, ES 1, owed) and then
+the next pass's single Sell 1 and a flat book, in place of the final flagged record the ruling reverses. Docs: CONTRACTS, USER-GUIDE, status schema, AGENTS.md.
+**NOT done / NOT verified:** U-flatten-3's exit still charges its store; a close that MAY have reached the platform still waits for the owner; no box, app not run.
