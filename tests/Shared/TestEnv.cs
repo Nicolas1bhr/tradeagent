@@ -49,6 +49,20 @@ public static class TestEnv
     public static readonly string[] Instruments = ["ES", "NQ", "MES", "YM", "XYZ"];
 
     /// <summary>
+    /// A CANDLE SOURCE NO READING HAS EVER BEEN TAKEN ABOUT (<c>U-data-licence</c>), for the fixtures whose
+    /// promoted version is given LIVE capital. Since schema 30 the live gate refuses a version whose evidence
+    /// does not confer — the Binance archive's datasets read research-only — so a test about the capital gate
+    /// itself records its evidence <see cref="FirstParty"/> under this source: with no reading for the source,
+    /// the row's own class is the whole of the licence check, and every other guard on the live path — the
+    /// <c>IsPromoted</c> mutants above all — is still the one that answers.
+    /// </summary>
+    public const string FirstPartySource = "test-first-party-klines";
+
+    /// <summary>The licence those fixtures record: <c>first-party</c>, one of the two classes that confer.</summary>
+    public static readonly Core.Data.DatasetLicence FirstParty =
+        new(Core.Data.DataLicence.FirstParty, "recorded by this test itself", "test fixture", "2026-10-04");
+
+    /// <summary>
     /// A gateway wired to a fresh simulator, already healthy and allowed to trade.
     ///
     /// <para><paramref name="emergencyBudget"/> is the simulator's whole risk-reducing operation

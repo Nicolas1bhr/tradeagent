@@ -255,10 +255,12 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
         Directory.CreateDirectory(Paths.Data);
         File.WriteAllText(file, KlineNormaliser.Header + "\n");
 
+        // FIRST-PARTY EVIDENCE UNDER A SOURCE NO READING NAMES (`TestEnv.FirstParty`): archive bars are
+        // refused for live before any gate this class tests (U-data-licence).
         var id = datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
-            false, 0, 0, 0, at, DatasetState.ACCEPTED, null, []));
+            false, 0, 0, 0, at, DatasetState.ACCEPTED, null, []) { Licence = TestEnv.FirstParty });
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
         var set = datasets.ById(id)!;
 

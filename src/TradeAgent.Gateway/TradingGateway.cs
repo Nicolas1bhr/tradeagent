@@ -3055,10 +3055,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// alone, so a ledger that cannot be read is one place rather than two. A failure answers null and
     /// says so in the engineering log, and the gate above then refuses: an order attributed to an
     /// allocation nobody could look up is worse than one refused.</para>
+    ///
+    /// <para><b>And the licence sentence, when that is why</b> (<c>U-data-licence</c>): a live row in force
+    /// under a promotion that stands, whose evidence confers no live eligibility, authorises nothing, and
+    /// the refusal says which dataset, under which terms — never "no capital", which would send the owner
+    /// to a card that refuses them.</para>
     /// </summary>
-    AllocationRow? AllocationFor(PlaceIntent intent, string accountId)
+    (AllocationRow? Allocation, string? RefusedForLive) AllocationFor(PlaceIntent intent, string accountId)
     {
-        if (intent.StrategyVersionId is not { Length: > 0 } version) return null;
+        if (intent.StrategyVersionId is not { Length: > 0 } version) return (null, null);
 
         try
         {
@@ -3088,12 +3093,14 @@ public sealed class TradingGateway : IAsyncDisposable
                 ? _allocations.StandingForPaper(version, Connector.Id, accountId, Now)
                 : _allocations.StandingForLive(version, Now);
 
-            return standing is { Authorises: true } ? standing.Allocation : null;
+            return standing is { Authorises: true }
+                ? (standing.Allocation, null)
+                : (null, standing?.RefusedForLive);
         }
         catch (Exception ex)
         {
             _log.TryEngineering("Gateway", "allocation_not_read", "error", ex: ex);
-            return null;
+            return (null, null);
         }
     }
 
@@ -3164,10 +3171,21 @@ public sealed class TradingGateway : IAsyncDisposable
             return null;
         }
 
-        var allocation = AllocationFor(intent, account.Id);
+        var (allocation, refusedForLive) = AllocationFor(intent, account.Id);
 
-        // A CLOSE OR A REDUCE IS ATTRIBUTED AND NEVER REFUSED, whether or not anything stands.
+        // A CLOSE OR A REDUCE IS ATTRIBUTED AND NEVER REFUSED, whether or not anything stands — and
+        // whatever the licence of the evidence under it says: nothing about evidence may stop a position
+        // being flattened.
         if (!CanIncreaseExposure(intent, positions)) return allocation;
+
+        // REFUSED FOR LIVE (`U-data-licence`): the allocation is in force and its promotion stands, and the
+        // bars that promotion was computed over confer no live eligibility. The same code — no capital
+        // stands behind this order — with the sentence that says which dataset, under which terms.
+        if (allocation is null && refusedForLive is { } why)
+            throw new GatewayDeniedException(ErrorCode.ALLOCATION_NONE,
+                $"strategy version {Short(version)} is REFUSED FOR LIVE, so nothing was sent: {why} An "
+                + "allocation written before its evidence was read this way stops standing at once, and "
+                + "closing and reducing are still allowed.");
 
         if (allocation is null)
             throw new GatewayDeniedException(ErrorCode.ALLOCATION_NONE,

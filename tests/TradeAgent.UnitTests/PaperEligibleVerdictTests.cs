@@ -95,12 +95,16 @@ public class PaperEligibleVerdictTests
         }
         File.WriteAllText(csv, text.ToString());
 
+        // FIRST-PARTY EVIDENCE UNDER A SOURCE NO READING NAMES (`TestEnv.FirstParty`): the live allocation
+        // path below must refuse a paper-eligible version BECAUSE it is paper-eligible — the `IsPromoted`
+        // mutant — and archive bars would be refused for live first, whatever the verdict (U-data-licence).
         var id = gw.Datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
             csv, DatasetStore.Sha256(csv)!, bars, Bar0, Bar0.AddMinutes(bars - 1), 0, [], false,
             0, 0, 0, Bar0, DatasetState.ACCEPTED, null,
             [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
-                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)]));
+                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)])
+        { Licence = TestEnv.FirstParty });
 
         var (held, campaign) = gw.SetHoldout(id, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
         Assert.True(held.Ok, held.Why);
