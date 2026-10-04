@@ -118,7 +118,7 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         foreach (var why in read.Refused) log.WriteLine("refused: " + why);
 
         Assert.Null(read.Unreadable);
-        Assert.Equal(TapeSourceCatalog.BuiltIn().Select(r => r.Id).Append("my-top-ratio"), read.Sources.Select(r => r.Id));
+        Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id).Append("my-top-ratio"), read.Sources.Select(r => r.Id));
 
         // THE BUILT-IN PREMIUM ROW IS THE ONE SHIPPED, not the file's redirect of it.
         var premium = Assert.Single(read.Sources, r => r.Id == TapeSourceCatalog.Premium);
@@ -138,14 +138,15 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         // AN UNREADABLE FILE STOPS ONLY ITS OWN ROWS.
         var broken = TapeSourceCatalog.Read(NewFile("[ { \"id\": \"half-writ"));
         log.WriteLine("unreadable: " + broken.Unreadable);
-        Assert.Equal(TapeSourceCatalog.BuiltIn().Select(r => r.Id), broken.Sources.Select(r => r.Id));
+        Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id), broken.Sources.Select(r => r.Id));
         Assert.Contains("could not read it", broken.Unreadable!, StringComparison.Ordinal);
         Assert.Contains("built-in rows go on", broken.Unreadable!, StringComparison.Ordinal);
         Assert.Empty(broken.Refused);
 
-        // AN ABSENT FILE IS THE BUILT-INS, and says nothing.
+        // AN ABSENT FILE IS THE SHIPPED ROWS — the five market rows and the announcement row — and says nothing.
         var absent = TapeSourceCatalog.Read(Path.Combine(TestEnv.Home, $"absent-{Guid.NewGuid():n}.json"));
-        Assert.Equal(5, absent.Sources.Count);
+        Assert.Equal(5 + 1, absent.Sources.Count);
+        Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id), absent.Sources.Select(r => r.Id));
         Assert.Null(absent.Unreadable);
         Assert.Empty(absent.Refused);
 
@@ -155,8 +156,103 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
               "series": [ { "id": "s", "url_shape": "{base}/x?symbol={symbol}", "time_field": "t" } ] }
             """));
         var capped = TapeSourceCatalog.Read(NewFile("[" + many + "]"));
-        Assert.Equal(5 + TapeSourceCatalog.MaxFileRows, capped.Sources.Count);
+        Assert.Equal(5 + 1 + TapeSourceCatalog.MaxFileRows, capped.Sources.Count);
         Assert.Equal(2, capped.Refused.Count);
         Assert.All(capped.Refused, r => Assert.Contains("is past the 8 rows", r, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// THE ANNOUNCEMENT FAMILY AS SHIPPED (<c>U-tape-events</c>): one row, OKX's announcements for EU users —
+    /// its first page once a minute, read by the announcement parser, with OKX's documented five-minute
+    /// delay, its terms basis (the page and the clauses read on the day) and the measurement that says it
+    /// answers. <see cref="TapeSourceCatalog.BuiltIn"/> stays the five market rows; the live rule, the ids a
+    /// file may not reuse and <see cref="TapeSourceCatalog.Read"/> take both families.
+    /// </summary>
+    [Fact]
+    public void The_announcement_row_is_okx_eea_with_its_terms_basis_and_its_documented_delay()
+    {
+        var row = Assert.Single(TapeSourceCatalog.Announcements());
+        log.WriteLine($"{row.Id} {row.CadenceSeconds}s delay={row.PublicationDelay.TotalSeconds}s parser={row.Parser}");
+        log.WriteLine("terms: " + row.Terms);
+
+        Assert.Equal((TapeSourceCatalog.OkxEeaAnnouncements, "okx-eea-announcements"), (row.Id, row.Id));
+        Assert.Equal(TapeSourceCatalog.OkxEeaBaseUrl, row.BaseUrl);
+        Assert.StartsWith("https://", row.BaseUrl, StringComparison.Ordinal);
+        Assert.Equal((60, false, TapeSourceCatalog.AnnouncementParser), (row.CadenceSeconds, row.PerSymbol, row.Parser));
+        Assert.Equal(TimeSpan.FromSeconds(300), row.PublicationDelay);
+
+        var series = Assert.Single(row.Series);
+        Assert.Equal(("announcements", "{base}/api/v5/support/announcements", "data.details", "url", "pTime", ""),
+            (series.Id, series.UrlShape, series.ItemsPath, series.IdField, series.TimeField, series.SymbolField));
+
+        // THE TERMS BASIS: the vendor's own page, and the clauses read on the day — never a keyless 200.
+        Assert.Equal(TapeSourceCatalog.OkxTermsUrl, row.TermsUrl);
+        Assert.StartsWith("https://", row.TermsUrl, StringComparison.Ordinal);
+        Assert.EndsWith("/en-eu/help/okx-api-agreement", row.TermsUrl, StringComparison.Ordinal);
+        Assert.Contains("re-read 2026-10-04", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("§ 9.4", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("personal trading use", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("§ 9.3(b)", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("one page a minute", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("/docs-v5/en/#announcement-get-announcements", row.DocUrl, StringComparison.Ordinal);
+        Assert.Contains("measured 2026-10-04", row.Measured, StringComparison.Ordinal);
+
+        // THE LIVE RULE TAKES THE ROW'S ORIGIN, CADENCE AND DOCUMENTED DELAY; a market row's delay is zero.
+        Assert.Equal((UrlOrigin.Of(TapeSourceCatalog.OkxEeaBaseUrl)!, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(300)),
+            TapeSourceCatalog.BuiltInLiveRule(TapeSourceCatalog.OkxEeaAnnouncements));
+        Assert.All(TapeSourceCatalog.BuiltIn(), r => Assert.Equal(TimeSpan.Zero, TapeSourceCatalog.BuiltInLiveRule(r.Id)!.Value.Delay));
+
+        // BUILT-IN STAYS THE FIVE MARKET ROWS; THE SHIPPED LIST IS BOTH FAMILIES, IN THAT ORDER.
+        Assert.Equal(5, TapeSourceCatalog.BuiltIn().Count);
+        Assert.DoesNotContain(TapeSourceCatalog.BuiltIn(), r => r.Id == TapeSourceCatalog.OkxEeaAnnouncements);
+        Assert.Equal(TapeSourceCatalog.BuiltIn().Select(r => r.Id).Append(TapeSourceCatalog.OkxEeaAnnouncements),
+            TapeSourceCatalog.Shipped().Select(r => r.Id));
+
+        // A FRESH COPY EVERY CALL, and an edited copy moves nothing the store decides by.
+        row.BaseUrl = "http://127.0.0.1:9";
+        row.PublicationDelay = TimeSpan.FromDays(1);
+        Assert.Equal(TapeSourceCatalog.OkxEeaBaseUrl, TapeSourceCatalog.Announcements()[0].BaseUrl);
+        Assert.Equal(TimeSpan.FromSeconds(300), TapeSourceCatalog.BuiltInLiveRule(TapeSourceCatalog.OkxEeaAnnouncements)!.Value.Delay);
+    }
+
+    /// <summary>
+    /// A FILE ROW NAMING THE ANNOUNCEMENT PARSER IS REFUSED, in words that say why: an announcement is an
+    /// exchange's own text, and a file an agent can write must not be able to put text into the tape from
+    /// wherever it points. So is a file row reusing the announcement row's id, and one whose series names
+    /// an items path or an id field, which only that parser reads. A delay the file names is not read at all.
+    /// </summary>
+    [Fact]
+    public void A_file_row_naming_the_announcement_parser_is_refused()
+    {
+        var path = NewFile("""
+            [
+              { "id": "my-announcements", "base_url": "http://127.0.0.1:9", "cadence_seconds": 60, "parser": "announcement-json",
+                "series": [ { "id": "news", "url_shape": "{base}/news", "time_field": "pTime", "items_path": "data.details", "id_field": "url" } ] },
+              { "id": "okx-eea-announcements", "base_url": "http://127.0.0.1:9", "cadence_seconds": 60,
+                "series": [ { "id": "announcements", "url_shape": "{base}/api/v5/support/announcements", "time_field": "pTime", "symbol_field": "x" } ] },
+              { "id": "my-items-path", "base_url": "http://127.0.0.1:9", "cadence_seconds": 60,
+                "series": [ { "id": "s", "url_shape": "{base}/x", "time_field": "t", "symbol_field": "symbol", "items_path": "data.list" } ] },
+              { "id": "my-late-ratio", "base_url": "http://127.0.0.1:9", "cadence_seconds": 300, "per_symbol": true, "publication_delay": "01:00:00",
+                "series": [ { "id": "s", "url_shape": "{base}/x?symbol={symbol}", "time_field": "timestamp", "symbol_field": "symbol" } ] }
+            ]
+            """);
+
+        var read = TapeSourceCatalog.Read(path);
+        foreach (var why in read.Refused) log.WriteLine("refused: " + why);
+
+        Assert.Null(read.Unreadable);
+        Assert.Equal(3, read.Refused.Count);
+        Assert.Contains(read.Refused, r => r.StartsWith("'my-announcements' names the parser 'announcement-json', which only "
+                                                        + "TradeAgent's built-in announcement rows use", StringComparison.Ordinal)
+                                           && r.Contains("must not be able to put text into the tape", StringComparison.Ordinal));
+        Assert.Contains(read.Refused, r => r.Contains("'okx-eea-announcements' is one of TradeAgent's built-in rows", StringComparison.Ordinal));
+        Assert.Contains(read.Refused, r => r.Contains("'my-items-path' series 's' names an items path or an id field", StringComparison.Ordinal));
+
+        // THE ANNOUNCEMENT ROW STANDS AS SHIPPED, and the one row added is a market row with no delay to claim.
+        Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id).Append("my-late-ratio"), read.Sources.Select(r => r.Id));
+        Assert.Equal(TapeSourceCatalog.OkxEeaBaseUrl, read.Sources.Single(r => r.Id == TapeSourceCatalog.OkxEeaAnnouncements).BaseUrl);
+        var added = read.Sources[^1];
+        Assert.Equal((TapeSourceCatalog.JsonParser, TimeSpan.Zero), (added.Parser, added.PublicationDelay));
+        Assert.Null(TapeSourceCatalog.BuiltInLiveRule(added.Id));
     }
 }

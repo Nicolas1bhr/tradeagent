@@ -73,6 +73,20 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string TapeHost = "fapi" + ".binance" + ".com";
 
+    /// <summary>
+    /// OKX'S NAME (<c>U-tape-events</c>), spelled the same way: the announcement row ships pointing at OKX's
+    /// EU domain, and the collector's own rule above is what keeps a test from asking it. A test that named
+    /// any OKX host would be one edit away from a request to it, so the name is refused outright.
+    /// </summary>
+    const string OkxHost = "okx" + ".com";
+
+    /// <summary>
+    /// BYBIT'S NAME, as the start of every host it runs — <c>bybit.com</c>, <c>bybit.eu</c> and the rest.
+    /// Its announcements were measured beside OKX's and DROPPED: Bybit EU's terms forbid automatic means to
+    /// access or monitor its platform (<c>docs/RESEARCH-REQUIRED.md</c>, C5c). No row reaches it, and no test may.
+    /// </summary>
+    const string BybitHost = "bybit" + ".";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -132,6 +146,12 @@ public class SuiteReachesNoVendorTests
 
                 if (code.Contains(TapeHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names the tape collector's vendor host");
+
+                if (code.Contains(OkxHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names an OKX host, which the tape's announcement row reaches");
+
+                if (code.Contains(BybitHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names a Bybit host, a source dropped on its terms that nothing here may reach");
 
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
@@ -280,6 +300,27 @@ public class SuiteReachesNoVendorTests
         {
             Assert.Contains(TapeHost, r.BaseUrl, StringComparison.OrdinalIgnoreCase);
             Assert.StartsWith("https://", r.BaseUrl);
+        });
+    }
+
+    /// <summary>
+    /// AND THE ANNOUNCEMENT ROW SHIPS POINTING AT OKX (<c>U-tape-events</c>), asserted through the name spelled
+    /// in this file — while no shipped row, announcement or market, names Bybit anywhere: its address, its
+    /// documentation or its terms. That is the drop, pinned.
+    /// </summary>
+    [Fact]
+    public void The_announcement_source_ships_pointing_at_okx_and_no_shipped_row_names_bybit()
+    {
+        var row = Assert.Single(TapeSourceCatalog.Announcements());
+        Assert.Contains(OkxHost, row.BaseUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", row.BaseUrl);
+        Assert.Contains(OkxHost, row.TermsUrl, StringComparison.OrdinalIgnoreCase);
+
+        Assert.All(TapeSourceCatalog.Shipped(), r =>
+        {
+            Assert.DoesNotContain(BybitHost, r.BaseUrl, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(BybitHost, r.DocUrl, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(BybitHost, r.TermsUrl, StringComparison.OrdinalIgnoreCase);
         });
     }
 
