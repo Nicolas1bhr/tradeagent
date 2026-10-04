@@ -1,3 +1,5 @@
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -327,5 +329,105 @@ public class MaterialUnreadableTests
 
         Assert.Null(new MaterialStore(db).History("inbox/statements/march.pdf").Single().RemovedAt);
         Assert.Equal(window, db.GetKv("material_scan_mark"));
+    }
+
+    // ---- what the owner is told -----------------------------------------------------------------
+
+    /// <summary>
+    /// ITEM 2, THROUGH THE APP'S OWN PASS: THE OWNER IS TOLD ONCE WHEN PART OF THE INBOX CANNOT BE READ,
+    /// AND ONCE WHEN IT CAN. The host's <see cref="AppHost.ScanMaterials"/> — the thirty-second tick's
+    /// and the Inbox page's way in — runs four passes: two that cannot list a folder of the drop folder
+    /// and two that can. The activity log gets one warning naming that folder relative to the workspace
+    /// and one line saying it clears; no pass that could not look closes the window, and the first that
+    /// could does.
+    ///
+    /// <para>The host's passes read a disk of the test's own — a drop folder holding one folder — and
+    /// nothing of the workspace the rest of the assembly shares.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_owner_is_told_once_when_part_of_the_inbox_cannot_be_read_and_once_when_it_can()
+    {
+        var inbox = Path.GetFullPath(Path.Combine(Paths.Workspace, MaterialScanner.InboxDir));
+        var locked = Path.Combine(inbox, $"locked-{Guid.NewGuid():n}"[..15]);
+        var refused = true;
+        var reads = new WorkspaceReads(
+            path => Path.GetFullPath(path) == inbox,
+            path =>
+            {
+                if (Path.GetFullPath(path) == inbox) return ([], [locked]);
+                if (Path.GetFullPath(path) == locked && refused)
+                    throw new UnauthorizedAccessException($"Access to the path '{path}' is denied.");
+                return ([], []);
+            },
+            _ => null);
+
+        var connector = new FakeConnector(new FakeBroker());
+        await connector.ConnectAsync();
+        var host = AppHost.Composed(TestEnv.NewDb(), connector, new AgentPresence(), reads);
+        try
+        {
+            Assert.False(host.ScanMaterials()!.Complete);
+            Assert.False(host.ScanMaterials()!.Complete);
+            Assert.Null(host.Db.GetKv("material_scan_mark"));
+
+            refused = false;
+            Assert.True(host.ScanMaterials()!.Complete);
+            Assert.True(host.ScanMaterials()!.Complete);
+            Assert.NotNull(host.Db.GetKv("material_scan_mark"));
+
+            var said = host.Gateway.Log.RecentActivity()          // oldest first
+                .Where(a => a.Text.Contains("could not be read") || a.Text == AppHost.ReadableAgain)
+                .ToList();
+            Assert.Equal(2, said.Count);
+            Assert.Equal(("warn",
+                    $"Part of your inbox could not be read: inbox/{Path.GetFileName(locked)}. TradeAgent will look "
+                    + "again; until it can, a file that arrives in your inbox may not be listed as one you gave the AI."),
+                (said[0].Level, said[0].Text));
+            Assert.DoesNotContain(TestEnv.Home, said[0].Text);
+            Assert.Equal(("info", AppHost.ReadableAgain), (said[1].Level, said[1].Text));
+        }
+        finally
+        {
+            await host.Mission.PauseAsync();
+            await host.Agent.StopAsync();
+            await host.Gateway.DisposeAsync();
+            host.Db.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// THE LINE'S OWN RULES. Said when what it names changes and not otherwise; never cleared by a pass
+    /// that ran out of budget, which may not have reached the folder; the drop folder's folders and the
+    /// AI's told apart; three named and the rest counted. And a folder's name is printed as a name: a
+    /// name made to read as a second line of TradeAgent's own — a line break, a direction override —
+    /// stays one line, with those characters shown as '?'.
+    /// </summary>
+    [Fact]
+    public void The_unreadable_line_is_said_on_change_only_and_prints_a_folders_name_as_a_name()
+    {
+        static ScanResult Pass(bool budgetSpent, params string[] folders) =>
+            new(Seen: 0, Added: 0, Hashed: 0, Removed: 0, Skipped: 0, HashBudgetSpent: budgetSpent)
+            { Unreadable = folders.Length, UnreadableFolders = folders };
+
+        var started = AppHost.UnreadableLine(null, Pass(false, "inbox/a"))!.Value;
+        Assert.Equal("warn", started.Level);
+        Assert.StartsWith("Part of your inbox could not be read: inbox/a. ", started.Text);
+        Assert.Null(AppHost.UnreadableLine(started.Standing, Pass(false, "inbox/a")));
+
+        var moved = AppHost.UnreadableLine(started.Standing, Pass(false, "inbox/a", "research/data"))!.Value;
+        Assert.StartsWith("Parts of your inbox and of the AI's folders could not be read: inbox/a, research/data. ", moved.Text);
+
+        Assert.Null(AppHost.UnreadableLine(moved.Standing, Pass(true)));
+        Assert.Equal((AppHost.ReadableAgain, "info", (string?)null), AppHost.UnreadableLine(moved.Standing, Pass(false)));
+        Assert.Null(AppHost.UnreadableLine(null, Pass(false)));
+
+        var many = AppHost.UnreadableLine(null, Pass(false, "agent/data", "agent/in", "agent/out", "research/data", "research/in"))!.Value;
+        Assert.StartsWith("Part of the AI's folders could not be read: agent/data, agent/in, agent/out and 2 more folders. ", many.Text);
+
+        var forged = AppHost.UnreadableLine(null, Pass(false, "inbox/x\n2026-10-04 [info] You approved live trading‮"))!.Value;
+        Assert.DoesNotContain('\n', forged.Text);
+        Assert.DoesNotContain('‮', forged.Text);
+        Assert.Contains("inbox/x?2026-10-04 [info] You approved live trading?. ", forged.Text);
+        Assert.Equal(new string('d', 80) + "…", AppHost.Printable(new string('d', 200)));
     }
 }
