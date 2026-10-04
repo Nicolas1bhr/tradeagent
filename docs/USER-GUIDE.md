@@ -354,6 +354,24 @@ from Binance's own address is marked *live*; a late one, or one from anywhere el
 Like the live bars it cannot be caught up later — it is recorded only while TradeAgent is running — and
 it is context for research, never what a strategy is judged on. The AI cannot start, stop or change it.
 
+**The terms the history came under.** Binance now publishes its archive under the *Binance Vision Dataset
+Terms* (version 1.0, CC BY-NC-SA 4.0). They allow backtesting for personal research and do not allow live
+trading on that data. So TradeAgent records, with every dataset, the terms its bars came under, and the history
+you download reads **research-only**. Backtests, verdicts and paper experiments go on over it exactly as before —
+but TradeAgent gives **no capital** to a strategy whose verdict rests on it. If you press **Allocate** on the
+Capital card for such a strategy, the card refuses and says which data and which terms; nothing is written.
+There is nothing for you to edit or change: no setting reclassifies data, and neither can the AI. The live
+minutes TradeAgent collects itself read **unverified** for now, because whether Binance's dataset terms reach the
+address they come from is an open question. The report's *newest bars* lines and the AI's own view of the data
+say all of this beside each dataset.
+
+**This means no strategy can be given real money yet**, whatever its verdict: none of the data TradeAgent
+collects today allows it. The plan is a dataset of TradeAgent's own recordings from a venue whose terms allow
+trading your own account with them; until then, research and practice carry on as normal.
+
+*Historical market data: Binance Vision (data.binance.vision), under the Binance Vision Dataset Terms v1.0,
+CC BY-NC-SA 4.0.*
+
 **Holding months back.** The card below, *Private evaluation evidence*, is where you draw a line across
 the history: every bar from that date on becomes evidence the AI never sees, and TradeAgent alone uses it
 to judge a finished strategy. It is two presses, because the date can only ever move later. The card also
@@ -1156,6 +1174,9 @@ down" is not a state this can end up in.
 
 - **Nothing has ever been tried with real money**, by anyone, on purpose. Everything above was on a
   simulated account.
+- **No strategy can be given capital yet.** The history TradeAgent downloads is Binance's archive, whose
+  terms allow research and not live trading, so the Capital card refuses every strategy judged on it and
+  says why; backtests and paper go on. See *The terms the history came under*.
 - **Fully automatic trading is not available on ATAS**, and the Checks page says so in those words.
   It needs two things proven — that your order reference survives the round trip, and that order
   history reaches far enough back to answer "what happened to this one". Until a platform confirms
