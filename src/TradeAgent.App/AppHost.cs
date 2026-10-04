@@ -39,6 +39,12 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     AgentPresence _presence = AgentPresence.Shared;
 
+    /// <summary>
+    /// The reads every material pass makes of the disk. The machine's own, always, in the product; only
+    /// <see cref="Composed"/> — a test's host — is handed one that refuses a folder.
+    /// </summary>
+    WorkspaceReads _reads = WorkspaceReads.Disk;
+
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
     public HealthRegistry Health { get; } = new();
@@ -770,10 +776,14 @@ public sealed class AppHost : IAsyncDisposable
     /// report to <paramref name="presence"/> rather than to the process-wide register, which is sticky:
     /// one agent process entered there would weaken every inbox sighting the rest of the assembly
     /// records.</para>
+    ///
+    /// <para><paramref name="reads"/> is the disk its material passes read, for a test that needs a folder
+    /// the disk refuses; the machine's own when it is not given.</para>
     /// </summary>
-    internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence)
+    internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence,
+        WorkspaceReads? reads = null)
     {
-        var host = new AppHost { _db = db, _presence = presence };
+        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk };
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
@@ -1194,14 +1204,109 @@ public sealed class AppHost : IAsyncDisposable
         // THE REGISTER THIS HOST'S AI PROCESSES REPORT TO, which the pass takes its mark in and asks.
         // The process-wide one in the product; a composed test host's own, so that its scans and its
         // agents are one register there too.
-        var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince).Scan(ct);
+        var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince, reads: _reads).Scan(ct);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
+
+        // WHAT THIS PASS COULD NOT READ, said where the owner looks — once when it starts, once when
+        // what it names changes and once when it clears, never on every tick.
+        if (UnreadableLine(_unreadableSaid, result) is { } line)
+        {
+            Gateway.Log.Activity(line.Text, line.Level);
+            _unreadableSaid = line.Standing;
+        }
 
         if (InboxWake(result, at) is { } wake)
             RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload);
 
         return result;
+    }
+
+    /// <summary>
+    /// THE "COULD NOT READ" LINE THE ACTIVITY LOG WAS LAST GIVEN, while it stands; null when none does.
+    /// Read and written only inside a pass, and every pass comes through <see cref="RecordWorkspace"/>
+    /// under the loop's one exclusion, so no two passes touch it at once. In memory: after a restart a
+    /// folder that still cannot be read is said once more, which is the first the new process knows of it.
+    /// </summary>
+    string? _unreadableSaid;
+
+    /// <summary>
+    /// THE ONE ACTIVITY LINE A PASS OWES ABOUT WHAT IT COULD NOT READ, or none (U-inbox-unreadable).
+    ///
+    /// <para>A pass that could not read a folder is not complete: it holds the window open, so files that
+    /// arrive in the owner's drop folder meanwhile may be recorded as ones TradeAgent cannot say who put
+    /// there, and it marks nothing missing where it could not look. That costs the owner a word on the
+    /// Inbox page, and it must not cost it silently — so the line names the folders, relative to the
+    /// workspace, and says what follows; it never prints a path outside the workspace or anything inside
+    /// a file.</para>
+    ///
+    /// <para><b>Said on change only.</b> A warning when the folders named are not the ones last said —
+    /// the condition starting, or moving — and nothing while a pass finds exactly what was said. The
+    /// clearing line needs a COMPLETE pass: one that ran out of budget may never have reached the folder,
+    /// and "it can be read again" would be a claim nothing measured.</para>
+    /// </summary>
+    /// <param name="standing">The warning last said and not yet cleared, or null.</param>
+    /// <param name="pass">What this pass found.</param>
+    /// <returns>The line, its level, and what stands after it — or null when nothing is owed.</returns>
+    internal static (string Text, string Level, string? Standing)? UnreadableLine(string? standing, ScanResult pass)
+    {
+        if (pass.Unreadable > 0)
+        {
+            var warning = CouldNotRead(pass);
+            return warning == standing ? null : (warning, "warn", warning);
+        }
+        return standing is not null && pass.Complete ? (ReadableAgain, "info", null) : null;
+    }
+
+    /// <summary>The line that clears <see cref="UnreadableLine"/>'s warning.</summary>
+    internal const string ReadableAgain = "TradeAgent can read all of your inbox and the AI's folders again.";
+
+    /// <summary>How many folders the warning names before it counts the rest.</summary>
+    const int UnreadableShown = 3;
+
+    static string CouldNotRead(ScanResult pass)
+    {
+        var folders = pass.UnreadableFolders;
+        var inInbox = folders.Any(MaterialScanner.IsInInbox);
+        var inHomes = folders.Any(f => !MaterialScanner.IsInInbox(f));
+        var where = (inInbox, inHomes) switch
+        {
+            (true, false) => "Part of your inbox",
+            (false, true) => "Part of the AI's folders",
+            _ => "Parts of your inbox and of the AI's folders"
+        };
+        var shown = folders.Take(UnreadableShown).Select(Printable).ToList();
+        var more = pass.Unreadable - shown.Count;
+        var named = string.Join(", ", shown) + (more > 0 ? $" and {more} more folder{(more == 1 ? "" : "s")}" : "");
+        return $"{where} could not be read: {named}. TradeAgent will look again; until it can, a file that "
+               + "arrives in your inbox may not be listed as one you gave the AI.";
+    }
+
+    /// <summary>
+    /// A FOLDER'S NAME AS THE ACTIVITY LOG MAY PRINT IT. Names in the workspace are chosen by whoever made
+    /// the folder — the AI among them — and this line is read by the owner, written into the daily
+    /// report and joined line by line into a diagnostics bundle: a line break, a control character or a
+    /// character that reorders how text is drawn (U+202E) would let a folder's name pass for a line
+    /// TradeAgent wrote. Each becomes '?', and a name longer than any honest one is cut, visibly.
+    /// </summary>
+    internal static string Printable(string folder)
+    {
+        const int longest = 80;
+        var b = new System.Text.StringBuilder(Math.Min(folder.Length, longest + 1));
+        foreach (var c in folder)
+        {
+            if (b.Length == longest)
+            {
+                if (char.IsHighSurrogate(b[^1])) b.Length--;
+                b.Append('…');
+                break;
+            }
+            b.Append(char.GetUnicodeCategory(c) is System.Globalization.UnicodeCategory.Control
+                or System.Globalization.UnicodeCategory.Format
+                or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator ? '?' : c);
+        }
+        return b.ToString();
     }
 
     /// <summary>

@@ -1973,6 +1973,16 @@ AI made this", which is what it did for every app file before this. An `app` row
 row raises one `inbox:` wake counting those rows; a new `Agent` row (a role's own write) or `App` row (the
 app's files and deliveries, which wake by their own `task:`) is recorded as before and wakes nobody.
 
+**A pass that could not read everything is not complete** (`U-inbox-unreadable`): a tracked folder the
+disk would not say is there, a folder it would not list or a listed file it would not describe — read
+through `WorkspaceReads`, which says absent only when the disk does — leaves both window keys
+(`material_scan_at`, `material_scan_mark`) where they were and marks nothing missing in that folder's
+group, while the pass records what it did see with the words its unshortened window allows,
+`InboxHoldsUnrecorded` answers yes for the same places, and the activity log says so once, naming the
+folders relative to the workspace, when it starts and when a complete pass clears it; folders skipped on
+purpose (package and build caches, dot-folders, past the depth limit) are not reads that failed and hold
+nothing open.
+
 **Two roles' turns may overlap, and three leases are what keeps that honest.** A turn lease per role in
 `MissionLoop` (a second `TurnAsync` for a role already turning is refused in words, never queued, and a
 role that is turning is stepped over when the next turn's role is chosen); one open attempt, one staged

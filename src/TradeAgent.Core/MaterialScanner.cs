@@ -277,7 +277,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // later pass that can — with no agent since this one — would attest the agent's file as the
         // owner's over a window this pass had shortened past it. A folder that stays unreadable holds
         // the window for as long as it does, and every file that arrives meanwhile gets the word that
-        // wider window allows; the result names the folders (ScanResult.UnreadableFolders).
+        // wider window allows; the result names the folders (ScanResult.UnreadableFolders), and the app
+        // says so on the activity log when that starts and when it clears (AppHost.UnreadableLine).
         //
         // Fail-closed, in the direction that costs a weaker word on a row rather than a claim nobody can
         // support. The mark and the wall time go in together, and a pass asked of no register leaves the
