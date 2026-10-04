@@ -31,6 +31,21 @@ public sealed class TapeSeriesEntry
     /// are <c>{buySellRatio, buyVol, sellVol, timestamp}</c> and nothing else.
     /// </summary>
     public string SymbolField { get; set; } = "";
+
+    /// <summary>
+    /// WHERE THE ANNOUNCEMENT PARSER FINDS ITS ITEMS (<see cref="TapeSourceCatalog.AnnouncementParser"/>):
+    /// property names from the body's root, dotted, every list on the way flattened — OKX's
+    /// <c>data.details</c> is "the <c>details</c> list of each element of <c>data</c>". EMPTY for the market
+    /// parser, which reads the body itself as its items.
+    /// </summary>
+    public string ItemsPath { get; set; } = "";
+
+    /// <summary>
+    /// WHICH FIELD NAMES AN ANNOUNCEMENT — OKX's <c>url</c>. The item's subject is the first 32 hex
+    /// characters of that text's SHA-256 (<see cref="TapeParse.ItemSubject"/>), because a URL cannot be a
+    /// subject itself (<c>TapeStore.IsSubject</c>). EMPTY for the market parser.
+    /// </summary>
+    public string IdField { get; set; } = "";
 }
 
 /// <summary>
@@ -57,7 +72,11 @@ public sealed class TapeSourceEntry
     /// <summary>True: one request per symbol of the universe. False: one request for every symbol, filtered to the universe.</summary>
     public bool PerSymbol { get; set; }
 
-    /// <summary>The parser family. One exists: <see cref="TapeSourceCatalog.JsonParser"/>, an object or a list of objects.</summary>
+    /// <summary>
+    /// The parser family: <see cref="TapeSourceCatalog.JsonParser"/>, an object or a list of objects, or
+    /// <see cref="TapeSourceCatalog.AnnouncementParser"/>, an exchange's list of announcements — which only
+    /// a built-in row may name.
+    /// </summary>
     public string Parser { get; set; } = "";
 
     public List<TapeSeriesEntry> Series { get; set; } = [];
@@ -128,8 +147,16 @@ public static class TapeSourceCatalog
     /// </summary>
     public const string BinanceUmBaseUrl = "https://fapi" + ".binance" + ".com";
 
-    /// <summary>The one parser family: the body is a JSON object, or a list of them, one item each.</summary>
+    /// <summary>The market parser family: the body is a JSON object, or a list of them, one item each.</summary>
     public const string JsonParser = "binance-um-json";
+
+    /// <summary>
+    /// THE ANNOUNCEMENT PARSER FAMILY (<c>U-tape-events</c>): the list at the series'
+    /// <see cref="TapeSeriesEntry.ItemsPath"/>, one item each, its subject the digest of its
+    /// <see cref="TapeSeriesEntry.IdField"/> and its time the vendor's own (<see cref="TapeParse.TryReadItems"/>).
+    /// Built-in rows only.
+    /// </summary>
+    public const string AnnouncementParser = "announcement-json";
 
     /// <summary>The symbols every row is recorded for, built-in and added alike.</summary>
     public static readonly IReadOnlyList<string> Universe =
