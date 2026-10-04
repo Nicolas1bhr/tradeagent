@@ -44,6 +44,7 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     readonly BinanceArchiveClient _binance = client ?? new BinanceArchiveClient();
     readonly CandleSourceClient _fetcher = new();
     readonly DatasetStore _store = new(db);
+    readonly DataLicences _licences = new(db);
     readonly MissionEventStore _wakes = new(db);
 
     public DatasetStore Store => _store;
@@ -160,7 +161,11 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
             InstrumentSymbol = verified.InstrumentSymbol,
             CoverageTargetDays = verified.CoverageTargetDays,
             SourceCarriesVolume = verified.SourceCarriesVolume,
-            MidpointBars = set.MidpointDerived
+            MidpointBars = set.MidpointDerived,
+            // THE TERMS THE BARS CAME UNDER ARE THE ROW'S OWN, carried and never re-stamped: a rebuild
+            // re-derives the same bars from the same raw files, so they came under exactly what the row
+            // recorded, and today's newest reading is a fact about today rather than about those files.
+            Licence = verified.Licence
         };
 
         var id = _store.Record(record);
@@ -231,7 +236,12 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
             InstrumentSymbol = symbol,
             CoverageTargetDays = source.CoverageTargetDays,
             SourceCarriesVolume = source.CandlesCarryVolume,
-            MidpointBars = set.MidpointDerived
+            MidpointBars = set.MidpointDerived,
+            // THE TERMS THESE BARS CAME UNDER: the source's newest reading, and only when every period was
+            // fetched from the origin of THIS BUILD's own row for that source — never one a `sources.json`
+            // row points at, never a test's loopback. Anything else is recorded unrecorded, which reads
+            // research-only (`DataLicence.Stamp`).
+            Licence = DataLicence.Stamp(source.Id, collected.Select(f => f.Url), _licences.Newest(source.Id))
         };
 
         return record with { Id = _store.Record(record) };
