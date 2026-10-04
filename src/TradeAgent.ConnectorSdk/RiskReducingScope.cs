@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using TradeAgent.Core.Db;
+
 namespace TradeAgent.ConnectorSdk;
 
 /// <summary>
@@ -38,7 +42,16 @@ public static class RiskReducingScope
 {
     static readonly AsyncLocal<State?> Current = new();
 
-    sealed record State(bool Active, long? DeadlineAt);
+    /// <param name="StoreTicks">
+    /// Null for every scope but <see cref="BeginExcludingTheStore"/>'s: there, the time the operation
+    /// has so far spent inside the app's own store, which moves its deadline out by exactly that much.
+    /// </param>
+    sealed record State(bool Active, long? DeadlineAt, StrongBox<long>? StoreTicks = null)
+    {
+        public long? Effective => DeadlineAt is { } d
+            ? d + (StoreTicks is { } t ? Volatile.Read(ref t.Value) * 1000 / Stopwatch.Frequency : 0)
+            : null;
+    }
 
     /// <summary>Whether the caller is inside a risk-reducing operation.</summary>
     public static bool IsActive => Current.Value?.Active == true;
@@ -46,8 +59,14 @@ public static class RiskReducingScope
     /// <summary>
     /// When the whole operation must be over, as an <see cref="Environment.TickCount64"/> stamp, or
     /// null when this scope carries no operation deadline and each RPC keeps its own bound.
+    ///
+    /// <para>Read it once, where a call begins — every caller does. Inside a scope opened by
+    /// <see cref="BeginExcludingTheStore"/> it is later, on each read, by the time the operation has
+    /// spent in the app's own store so far; a call keeps the value it started with, and whatever the
+    /// store spends during that call (an event handler writing as the call answers) is given back to
+    /// the calls after it.</para>
     /// </summary>
-    public static long? DeadlineAt => Current.Value?.DeadlineAt;
+    public static long? DeadlineAt => Current.Value?.Effective;
 
     /// <summary>
     /// How long is left until an ABSOLUTE deadline — <see cref="TimeSpan.Zero"/> once it has passed,
@@ -80,9 +99,11 @@ public static class RiskReducingScope
 
     /// <summary>
     /// Opens the scope with NO operation deadline: the intent is marked, and each RPC inside keeps
-    /// its own per-call bound. For callers that want the urgency without a total.
+    /// its own per-call bound. For callers that want the urgency without a total. An outer deadline
+    /// is carried as it is — the store's refund with it, where it has one.
     /// </summary>
-    public static IDisposable Begin() => Open(new State(true, Current.Value?.DeadlineAt));
+    public static IDisposable Begin() =>
+        Open(Current.Value is { } outer ? outer with { Active = true } : new State(true, null));
 
     /// <summary>
     /// Opens the scope and starts the operation's clock. Nesting keeps the EARLIER deadline: an
@@ -91,8 +112,54 @@ public static class RiskReducingScope
     public static IDisposable Begin(TimeSpan budget)
     {
         var mine = Environment.TickCount64 + (long)budget.TotalMilliseconds;
-        var outer = Current.Value?.DeadlineAt;
-        return Open(new State(true, outer is { } o && o < mine ? o : mine));
+        return Open(Current.Value is { Effective: { } o } outer && o < mine
+            ? outer with { Active = true }
+            : new State(true, mine));
+    }
+
+    /// <summary>
+    /// THE APP'S OWN RISK-REDUCING OPERATION, ON THE PLATFORM'S CLOCK AND NOT ON ITS OWN DISK'S
+    /// (<c>U-fix-loss-reopen</c>).
+    ///
+    /// <para>Opens the scope and starts the operation's clock exactly as <see cref="Begin(TimeSpan)"/>
+    /// does, except that the time the operation spends inside the app's own store
+    /// (<c>TradeAgent.Core.Db.StoreTime</c>) is not charged to it: the deadline moves out by that much
+    /// as it is spent. What the budget bounds is then what it was set for — how long the operation may
+    /// wait on the PLATFORM — and a durable commit on a slow disk can no longer spend it.</para>
+    ///
+    /// <para><b>For an operation nobody is waiting at the keyboard for.</b> The loss budget's own
+    /// flatten is the caller: a confirmed breach, no person, and a book that must be closed. An
+    /// owner's press keeps <see cref="Begin(TimeSpan)"/>, because "two seconds" there is a promise to a
+    /// person about the whole operation, write-ahead rows included, and a leg its budget cannot reach
+    /// is shown to them flagged. The flatten has nobody to show: a budget its own bookkeeping spent
+    /// closed the day on windows-latest with nothing sent and the book open, which is the failure
+    /// this exists to make impossible.</para>
+    ///
+    /// <para><b>The bound on a stalled platform is unchanged</b> — every call is still clipped at the
+    /// deadline and a leg reached after it is still refused before the wire. What is no longer bounded
+    /// by the budget is the app's own disk, and that is finite on its own: each commit completes or
+    /// throws, and the store's busy timeout is five seconds.</para>
+    ///
+    /// <para>Inside another deadline it is <see cref="Begin(TimeSpan)"/>: an inner scope may not buy
+    /// the operation more time than the one it is inside, and the outer one charges the store.</para>
+    /// </summary>
+    public static IDisposable BeginExcludingTheStore(TimeSpan budget)
+    {
+        if (Current.Value?.Effective is not null) return Begin(budget);
+
+        var ticks = new StrongBox<long>();
+        var counting = StoreTime.CountInto(ticks);
+        var scope = Open(new State(true, Environment.TickCount64 + (long)budget.TotalMilliseconds, ticks));
+        return new Both(scope, counting);
+    }
+
+    sealed class Both(IDisposable first, IDisposable second) : IDisposable
+    {
+        public void Dispose()
+        {
+            first.Dispose();
+            second.Dispose();
+        }
     }
 
     static IDisposable Open(State state)

@@ -25,6 +25,11 @@ namespace TradeAgent.Gateway;
 /// of this record is what makes the startup sweep re-run a flatten that was killed before it
 /// finished, and a run that ended honestly in "TradeAgent could not confirm it" is not one to
 /// repeat over an unreconciled row.</para>
+///
+/// <para><b>Except an attempt that put nothing on the wire</b> (<c>U-fix-loss-reopen</c>): nothing
+/// happened, so there is no outcome to write and no row to reconcile. It writes a
+/// <see cref="LossFlattenOwed"/> note instead, this record stays absent, and the same sweep re-runs it
+/// on every later pass — unless it found the book already flat, which IS an outcome and is written.</para>
 /// </summary>
 public static class LossFlatten
 {
@@ -58,6 +63,69 @@ public static class LossFlatten
             ? DayKey(connectorId, breach.Account, breach.Day)
             : SymbolKey(connectorId, breach.Account, breach.Symbol, breach.Day);
     }
+
+    /// <summary>
+    /// The owed note's family (<see cref="LossFlattenOwed"/>) — its own prefix, so no scan of
+    /// outcomes can ever read a note as an outcome.
+    /// </summary>
+    public const string OwedPrefix = "loss_flatten_owed:";
+
+    /// <summary>
+    /// WHERE A FLATTEN THAT HAS NOT HAPPENED YET SAYS SO: <c>loss_flatten_owed:{connector}:{account}:[{symbol}:]{utcDay}</c>,
+    /// off the breach's own day exactly as the outcome is.
+    /// </summary>
+    public static string OwedKeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return OwedPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
+    }
+}
+
+/// <summary>
+/// A FLATTEN THAT IS OWED — written by an attempt that put NOTHING on the wire (<c>U-fix-loss-reopen</c>).
+///
+/// <para><b>Not an outcome, and deliberately not one.</b> <see cref="LossFlattenRecord"/> is written
+/// once, at the end, and it is final: a flatten that ended in "could not confirm" is never repeated
+/// over a row nobody has reconciled. An attempt whose transport record is still EMPTY at the end
+/// dispatched nothing at all — its budget went before its first close, or the platform could not be
+/// read — so there is no row to reconcile and nothing that happened to record. Writing the outcome
+/// for it is what closed the day on windows-latest with the book open and nothing ever trying again.
+/// So it writes this instead, the outcome stays absent, and the sweep that re-runs a flatten with no
+/// outcome does exactly that on every later pass.</para>
+///
+/// <para><b>It is the owner's words while the book is still open.</b> Every surface that shows what
+/// was done about a closure shows this when there is no outcome yet: not flat, not closed, and trying
+/// again. It is rewritten by each attempt that sends nothing — it is a standing obligation and not a
+/// fact about one instant — and it is left on disk once an outcome exists, which every reader prefers.</para>
+/// </summary>
+public sealed record LossFlattenOwed
+{
+    public string Account { get; init; } = "";
+
+    public string Connector { get; init; } = "";
+
+    public TradingMode Mode { get; init; }
+
+    /// <summary>The breach's UTC day, which this note is filed under.</summary>
+    public string Day { get; init; } = "";
+
+    public string? Symbol { get; init; }
+
+    public string BreachKey { get; init; } = "";
+
+    /// <summary>When the first attempt that sent nothing started, and when the latest one did.</summary>
+    public DateTimeOffset FirstTriedAt { get; init; }
+
+    public DateTimeOffset LastTriedAt { get; init; }
+
+    /// <summary>How many attempts have sent nothing so far.</summary>
+    public int Attempts { get; init; }
+
+    /// <summary>Why the latest attempt could send nothing, in the words its own steps recorded.</summary>
+    public string Reason { get; init; } = "";
+
+    /// <summary>The sentence the owner and the agent are shown.</summary>
+    public string Why { get; init; } = "";
 }
 
 /// <summary>

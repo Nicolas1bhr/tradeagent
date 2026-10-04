@@ -261,6 +261,15 @@ public class LossFlattenTests(ITestOutputHelper log)
     /// produced through it at all; the verdict that can be stated here is that no close reached the
     /// connector and the record says why. <see cref="TradeAgent.Tests.Fault.ReductionOnlyTests"/> is
     /// the arithmetic itself.</para>
+    ///
+    /// <para><b>And then the book is closed at the size that IS there (<c>U-fix-loss-reopen</c>).</b>
+    /// The refused leg put nothing on the wire, so the attempt is not an outcome: until that unit it
+    /// wrote one, final and flagged, and the remaining ES 1 stayed open over a closed day until a
+    /// person came — the app never pressed again. Now the attempt is owed and the next pass captures
+    /// the book afresh, so the one close that reaches the wire is sized against what the platform
+    /// shows then: a sell of 1, never the 2 that was captured, and the book ends flat rather than
+    /// short. The first attempt's assertions are the ones this test always made, read after that
+    /// attempt alone.</para>
     /// </summary>
     [Fact]
     public async Task A_position_that_shrinks_before_the_wire_is_not_closed_at_the_size_that_was_captured()
@@ -288,15 +297,19 @@ public class LossFlattenTests(ITestOutputHelper log)
             return Task.CompletedTask;
         };
 
+        // The first sighting on the health pass, and the CONFIRMING pull by name, so that what is read
+        // next is the one attempt the external fill landed inside — the sweep a health pass runs after
+        // its watch would otherwise try again before anything here could look.
         var closes = conn.Closes;
-        await Breach(gw, conn, clock);
+        conn.Broker.PriceOffset = -20m;
+        clock.Advance(Tick);
+        await gw.RefreshHealthAsync();
+        clock.Advance(Tick);
+        await gw.LossWatchAsync();
 
-        var flatten = gw.FlattenToday(account);
-        Assert.NotNull(flatten);
         log.WriteLine($"external fill landed  : {landed}");
         log.WriteLine($"closes on the wire    : {closes} -> {conn.Closes}");
         log.WriteLine($"position              : ES {Held(conn, "ES")}");
-        log.WriteLine($"why                   : {flatten.Why}");
 
         var leg = Assert.Single(gw.Requests.Query("request_id LIKE $p",
             ("$p", $"{TradingGateway.BudgetClosePress}-%")), r => r.Instrument == "ES");
@@ -307,9 +320,31 @@ public class LossFlattenTests(ITestOutputHelper log)
         Assert.Equal(1m, Held(conn, "ES"));                      // and the position is not reversed
         Assert.Equal(ExecutionState.REJECTED, leg.State);
         Assert.Contains("REVERSE", leg.LastError!, StringComparison.Ordinal);
-        Assert.False(flatten.Flat);
-        Assert.Contains("ES 1", flatten.Residual);
-        Assert.True(gw.HasUnconfirmedWork());
+
+        // NOTHING WAS SENT, SO NOTHING HAPPENED: no outcome, the owner told in words, and nothing of
+        // the attempt left to refuse the next one.
+        Assert.Null(gw.FlattenToday(account));
+        var owed = gw.FlattenStateToday();
+        log.WriteLine($"dashboard             : {owed.State} — {owed.Why}");
+        Assert.Equal("unresolved", owed.State);
+        Assert.Contains("has NOT closed your open positions yet", owed.Why!, StringComparison.Ordinal);
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // THE NEXT PASS CLOSES WHAT IS THERE: one close, a sell of 1, and the book flat — not short.
+        clock.Advance(Tick);
+        await gw.RefreshHealthAsync();
+
+        var flatten = gw.FlattenToday(account);
+        Assert.NotNull(flatten);
+        var sent = conn.Broker.Orders.Where(o => o.ClientOrderId?.StartsWith("TA-op-budget-close-", StringComparison.Ordinal) == true).ToList();
+        log.WriteLine($"after the next pass   : closes {conn.Closes}, ES {Held(conn, "ES")}, app closes "
+                      + $"[{string.Join(" | ", sent.Select(o => $"{o.Side} {o.Quantity} {o.State}"))}] — {flatten.Why}");
+        Assert.Equal(closes + 1, conn.Closes);
+        var close = Assert.Single(sent);
+        Assert.Equal(OrderSide.Sell, close.Side);
+        Assert.Equal(1m, close.Quantity);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.True(flatten.Flat);
 
         await gw.DisposeAsync();
     }

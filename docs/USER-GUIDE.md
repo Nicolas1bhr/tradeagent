@@ -965,6 +965,13 @@ and then TradeAgent stops all AI trading and leaves the records on the Dashboard
 it does after you press Close all positions. **Go and look at your platform when you see that.** It
 is the one case where the software is telling you it does not know where your money is.
 
+**And one more, which is not an answer yet: "has NOT closed your open positions yet".** That is
+TradeAgent saying it could send nothing at all to your platform — your account or your positions
+could not be read in time — so nothing was sent and there is nothing for you to confirm. It tries
+again on every pass, every few seconds, until the positions are closed, and the account stays closed
+to new risk meanwhile; the closure does not lift while anything is open. If the message stays, look
+at your platform and its connection.
+
 The defaults are deliberately small. Start there.
 
 *Note on order value:* for futures this limit is off by default, because a single contract is worth a

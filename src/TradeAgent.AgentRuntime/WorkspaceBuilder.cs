@@ -411,9 +411,12 @@ public static class WorkspaceBuilder
     open — by code, with nobody pressing anything, and it may only send orders that reduce a position.
     `trade status` carries `loss_flatten`: **`flat`** means those closes filled and a fresh read of
     the account says nothing is open, so **your positions are gone — do not plan around managing
-    them**; **`unresolved`** means TradeAgent cannot confirm that, and while it stands every order you
-    send is refused anyway, because the records behind it are flagged for the account owner to read.
-    Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
+    them**; **`unresolved`** means TradeAgent cannot confirm that, or has not done it yet. While a
+    record behind it is flagged for the account owner to read, every order you send is refused; when
+    no attempt so far could send anything to the platform, its sentence says TradeAgent "has NOT
+    closed" them and tries again on every pass until the book is flat — and the closure does not lift
+    while anything is open. Absent means nothing has been flattened. There is no command that starts,
+    stops or undoes it.
 
     ## Rules that matter
 

@@ -42,6 +42,13 @@ public static class OrderStateMachine
         //       that no byte of this mutation left the process and names the one report allowed to
         //       overrule a record. Nothing is at the broker to be inferred about. Reached only from a
         //       ConnectorTransportException carrying that proof; silence does not qualify.
+        //     - TradingGateway.SettleTheRowsOfAnAttemptThatSentNothing (U-fix-loss-reopen, added
+        //       2026-10-04), the loss budget's own flatten, and its evidence is of the same kind and
+        //       wider: the attempt's ONE transport record, which every dispatch inside it marks before
+        //       its call, is still EMPTY at the end — no cancel, no close and no settle was dispatched
+        //       at all, so no row the attempt wrote stands for an order at the platform. It takes this
+        //       edge from DISPATCHING and CREATED, and UNKNOWN by way of RECONCILING; reached only from
+        //       that proof, and a row in any other non-terminal state is left flagged.
         // Why widening a deliberately intent-agnostic table is acceptable: any OTHER caller that takes
         //   this edge wrongly is not silent — TradingGateway.Settle now files `illegal_settle` at error
         //   severity the first time a table refusal happens. The table stays a small pure function

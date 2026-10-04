@@ -2156,14 +2156,23 @@ public sealed class TradingGateway : IAsyncDisposable
             // silent, because "your positions were closed" said beside a scope that is trading again
             // is a sentence about last week.
             var records = new List<LossFlattenRecord>();
+            var owed = new List<LossFlattenOwed>();
             foreach (var breach in OpenClosures(account))
+            {
                 if (ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach)) is { } rec) records.Add(rec);
 
-            if (records.Count == 0) return (null, null);
+                // A FLATTEN THAT HAS NOT HAPPENED YET IS SAID, NOT LEFT OUT (U-fix-loss-reopen). Every
+                // attempt so far sent nothing, so there is no outcome to read — and a surface that read
+                // only outcomes showed the closure with no word about the book, while the closure's
+                // own sentence says TradeAgent closes it.
+                else if (ReadOwed(LossFlatten.OwedKeyFor(Connector.Id, breach)) is { } note) owed.Add(note);
+            }
+
+            if (records.Count == 0 && owed.Count == 0) return (null, null);
 
             var unresolved = records.Where(x => !x.Flat).ToList();
-            return unresolved.Count > 0
-                ? ("unresolved", string.Join(" ", unresolved.Select(x => x.Why)))
+            return unresolved.Count > 0 || owed.Count > 0
+                ? ("unresolved", string.Join(" ", owed.Select(x => x.Why).Concat(unresolved.Select(x => x.Why))))
                 : ("flat", string.Join(" ", records.Select(x => x.Why)));
         }
         catch (GatewayDeniedException ex) { return ("unresolved", ex.Message); }
@@ -4082,6 +4091,16 @@ public sealed class TradingGateway : IAsyncDisposable
             if (!flatten.Flat)
                 return "TradeAgent cannot confirm that what it closed for you is closed";
         }
+
+        // A FLATTEN THAT IS STILL OWED HAS NOT ANSWERED EITHER (U-fix-loss-reopen). Every attempt so
+        // far sent nothing, so there is no outcome above; the sweep is what finishes it, and until an
+        // outcome exists nothing here may decide the episode ended — even over a book that reads flat,
+        // which a person closing it by hand would leave and the sweep's next attempt will record.
+        else if (ReadOwed(LossFlatten.OwedKeyFor(Connector.Id, breach)) is { } owed)
+            return owed.Attempts > 0
+                ? $"TradeAgent has not yet closed what was open when the budget was reached — {owed.Attempts} "
+                  + "attempt(s) so far could send nothing, and it tries again on every pass"
+                : owed.Why;
 
         // NOTHING OF THE APP'S OWN IS STILL OPEN OR FLAGGED. The two app press kinds are asked by
         // name, because a leg of either one is an order this gateway put on the wire and cannot
@@ -8087,7 +8106,19 @@ public sealed class TradingGateway : IAsyncDisposable
             return null;
         }
 
-        var account = await AccountAsync(ct);
+        // AN ACCOUNT THAT CANNOT BE READ SENDS NOTHING, AND THAT IS SAID. The sweep already ran this
+        // again on every pass, because no outcome was written; what was missing was the owner being
+        // told, so the closure read as a day TradeAgent had closed AND flattened while it had done
+        // neither half of the second.
+        AccountInfo? account;
+        try { account = await AccountAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Owe(breach, startedAt, $"your account could not be read ({ex.Message})");
+            StateChanged?.Invoke();
+            return null;
+        }
+
         if (account is null || !string.Equals(account.Id, breach.Account, StringComparison.Ordinal))
         {
             _log.TryEngineering("Gateway", "loss_flatten_not_this_account", "warn",
@@ -8132,7 +8163,22 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // THE WHOLE FLATTEN IS THE EMERGENCY, NOT ITS LAST FRAME — OperatorCloseAllAsync's own
         // reasoning, and it applies here with nobody waiting at the keyboard to notice a stall.
-        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        //
+        // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-fix-loss-reopen). Everything this method writes
+        // before a close may go out — the press row, the composite, the leg's write-ahead row — is a
+        // durable commit, and on windows-latest those commits spent the whole two seconds before the
+        // first platform call: the call was refused before the wire and the day closed with the book
+        // open. The budget bounds what it was set for, the PLATFORM, and the app's own store is not
+        // charged to it. See RiskReducingScope.BeginExcludingTheStore.
+        using var emergency = RiskReducingScope.BeginExcludingTheStore(Connector.EmergencyBudget);
+
+        // ONE TRANSPORT RECORD FOR THE WHOLE ATTEMPT. Every dispatch inside it — each cancel, each
+        // close, the settle of an unresolved reducer — marks it before its call (MarkDispatch), and a
+        // conforming connector marks it again at the start of the mutation, so a record still EMPTY at
+        // the end is the proof that this attempt put nothing on the wire at all. Nothing inside reads
+        // a leg's own record back, so sharing one changes no leg's answer.
+        var wire = new TransportRecord();
+        using var attempt = TransportLedger.Attach(wire);
 
         // THE SENTENCE EVERY FLAGGED ROW CARRIES. It names the budget and the record; it never says
         // "you pressed", because nobody did, and an owner sent looking for a button they did not
@@ -8189,6 +8235,31 @@ public sealed class TradingGateway : IAsyncDisposable
                    && residual.Count == 0
                    && legs.All(l => l.Resolved);
 
+        // AN ATTEMPT THAT PUT NOTHING ON THE WIRE LEAVES NOTHING FLAGGED, AND IS NOT AN OUTCOME
+        // UNLESS IT FOUND NOTHING TO DO (U-fix-loss-reopen).
+        //
+        // Its rows account for nothing at the platform — the proof is the empty transport record —
+        // so they are settled as not sent rather than left UNKNOWN and flagged, where they refused
+        // the very sweep that would have tried again and told the owner to confirm records about an
+        // order that never existed. And unless the book read flat, nothing HAPPENED: the outcome stays
+        // absent, an owed note says so in words, and the sweep re-runs it on every later pass. An
+        // attempt that dispatched anything keeps U-flatten-2's rule exactly: its outcome is final and
+        // nothing is repeated over a row nobody has reconciled. A row this cannot settle leaves the
+        // attempt on that path too — flagged for the owner — which is the direction that sends nothing.
+        var sentNothing = wire.Outcome is null;
+
+        // The reason is taken BEFORE the rows are settled, off each leg's own account of why nothing
+        // went out for it — "answered REJECTED" would be a platform answering, and none did.
+        var owedBecause = sentNothing && !flat ? Trouble(openers, couldNotRead, residual, LegErrors(closeNonce)) : "";
+
+        if (sentNothing && SettleTheRowsOfAnAttemptThatSentNothing(openers.Nonce, closeNonce, breachKey) && !flat)
+        {
+            Owe(breach, startedAt, owedBecause);
+            RestoreExecutionIfNothingIsUnconfirmed();
+            StateChanged?.Invoke();
+            return null;
+        }
+
         var why = FlattenSentence(breach, openers, legs, residual, couldNotRead, flat);
 
         var record = new LossFlattenRecord
@@ -8236,12 +8307,201 @@ public sealed class TradingGateway : IAsyncDisposable
         // Guarded by the two conditions that are NOT about unconfirmed work — an unreadable settings
         // row and a mode this version does not know also pause here, and neither is a thing this
         // method has proved anything about.
-        if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
-            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
-            _health.Set(Components.ExecutionCapability, HealthState.READY);
+        RestoreExecutionIfNothingIsUnconfirmed();
 
         StateChanged?.Invoke();
         return record;
+    }
+
+    /// <summary>
+    /// ReconcileAsync's two lines for "nothing is pending", guarded as the flatten's end needs them:
+    /// see the comment where <see cref="FlattenForBreachAsync"/> writes its outcome.
+    /// </summary>
+    void RestoreExecutionIfNothingIsUnconfirmed()
+    {
+        if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
+            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+            _health.Set(Components.ExecutionCapability, HealthState.READY);
+    }
+
+    /// <summary>
+    /// THE ROWS OF AN ATTEMPT THAT PUT NOTHING ON THE WIRE, SETTLED AS WHAT THEY ARE: NOT SENT, AND
+    /// NOT WAITING FOR ANYBODY (<c>U-fix-loss-reopen</c>).
+    ///
+    /// <para><b>Only behind the proof.</b> The caller has checked the attempt's own transport record is
+    /// EMPTY — no cancel, no close and no settle of an unresolved reducer was ever dispatched under it
+    /// — so no row of either app kind written by this attempt stands for an order at the platform. A
+    /// row that is not yet terminal goes to <see cref="ExecutionState.CANCELLED"/> by the steps the
+    /// table allows (an UNKNOWN through RECONCILING, as the reconciler takes it), with its own last
+    /// error kept behind "nothing was sent"; a terminal one keeps its state; every one of them is
+    /// unflagged and unlatched. That is what lets the next attempt claim the kind, and what stops the
+    /// owner being asked to confirm an order nobody sent.</para>
+    ///
+    /// <para>False when any row could not be settled — a store that refused the write. The attempt then
+    /// takes U-flatten-2's path, flagged for the owner, and the row it could not settle keeps its flag:
+    /// the direction that sends nothing.</para>
+    /// </summary>
+    bool SettleTheRowsOfAnAttemptThatSentNothing(string cancelNonce, string closeNonce, string breachKey)
+    {
+        var settled = true;
+        foreach (var (kind, nonce) in new[] { (BudgetCancelPress, cancelNonce), (BudgetClosePress, closeNonce) })
+        {
+            if (nonce.Length == 0) continue;
+            foreach (var row in PressRows(kind, nonce))
+            {
+                try
+                {
+                    var why = $"nothing was sent: the loss budget's flatten for {breachKey} put nothing on the wire "
+                              + $"in this attempt{(row.LastError is { Length: > 0 } e ? $" ({e})" : "")}";
+                    if (row.State == ExecutionState.UNKNOWN)
+                        _requests.Transition(row.RequestId, ExecutionState.UNKNOWN, ExecutionState.RECONCILING);
+
+                    if (row.State is ExecutionState.UNKNOWN or ExecutionState.RECONCILING)
+                        _requests.Transition(row.RequestId, ExecutionState.RECONCILING, ExecutionState.CANCELLED,
+                            needsReconciliation: false, markReconciled: true, error: why);
+                    else if (row.State is ExecutionState.CREATED or ExecutionState.DISPATCHING)
+                        _requests.Transition(row.RequestId, row.State, ExecutionState.CANCELLED,
+                            needsReconciliation: false, markReconciled: true, error: why);
+                    else if (OrderStateMachine.IsTerminal(row.State))
+                    {
+                        if (row.NeedsReconciliation) _requests.ClearReconciliation(row.RequestId);
+                    }
+                    else
+                    {
+                        // A row the platform answered for cannot belong to an attempt that dispatched
+                        // nothing; this one is left exactly as it is, flagged, for the owner.
+                        settled = false;
+                        continue;
+                    }
+
+                    ClearLatch(row.RequestId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    settled = false;
+                    _log.TryEngineering("Gateway", "loss_flatten_not_sent_settle_failed", "warn",
+                        requestId: row.RequestId, ex: ex);
+                }
+            }
+        }
+
+        if (settled)
+            _log.TryEngineering("Gateway", "loss_flatten_nothing_sent", metadataJson: Json.Write(new
+            {
+                breach = breachKey, cancel = cancelNonce, close = closeNonce
+            }));
+        return settled;
+    }
+
+    /// <summary>
+    /// What stood in the way of an attempt that sent nothing, in the words its own steps recorded: the
+    /// read that failed, the openers that would not settle, each leg row's own error, and what is still
+    /// open — a residual entry a leg's error already says is not said twice.
+    /// </summary>
+    static string Trouble(OpenersCancelled openers, string? couldNotRead, IReadOnlyList<string> residual,
+        IReadOnlyList<string> legErrors)
+    {
+        var trouble = new List<string>();
+        if (couldNotRead is { Length: > 0 }) trouble.Add(couldNotRead);
+        trouble.AddRange(openers.NotSettled);
+        trouble.AddRange(legErrors);
+        foreach (var r in residual)
+            if (!legErrors.Any(e => r.Contains(e, StringComparison.Ordinal))) trouble.Add($"still open: {r}");
+        return trouble.Count == 0 ? "nothing could be sent" : string.Join("; ", trouble);
+    }
+
+    /// <summary>Each close leg's own last error, for the legs of one app close press.</summary>
+    List<string> LegErrors(string closeNonce) =>
+        closeNonce.Length == 0
+            ? []
+            : [.. PressRows(BudgetClosePress, closeNonce)
+                .Select(r => r.LastError).OfType<string>().Where(e => e.Length > 0).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// WRITES — or rewrites — THE NOTE THAT THIS BREACH'S FLATTEN IS OWED, and tells the owner the first
+    /// time and whenever the reason changes. See <see cref="LossFlattenOwed"/>.
+    ///
+    /// <para>The activity line is not written on every attempt: an attempt is made on every health
+    /// pass, and a platform that cannot be read for an hour would otherwise be seven hundred
+    /// identical lines. The note on the record, which every surface reads, says how many there have
+    /// been and when the last one was.</para>
+    /// </summary>
+    void Owe(LossBreachRecord breach, DateTimeOffset at, string reason)
+    {
+        var key = LossFlatten.OwedKeyFor(Connector.Id, breach);
+        var before = ReadOwed(key);
+        var attempts = (before?.Attempts ?? 0) + 1;
+        var first = before is { Attempts: > 0 } ? before.FirstTriedAt : at;
+
+        var note = new LossFlattenOwed
+        {
+            Account = breach.Account,
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
+            Day = breach.Day,
+            Symbol = breach.Symbol,
+            BreachKey = LossBreach.KeyFor(breach),
+            FirstTriedAt = first,
+            LastTriedAt = at,
+            Attempts = attempts,
+            Reason = reason,
+            Why = OwedSentence(breach, reason, first, at, attempts)
+        };
+
+        try { _db.SetKv(key, Json.Write(note)); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_owed_record_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+        }
+
+        if (before is null || !string.Equals(before.Reason, reason, StringComparison.Ordinal))
+            _log.Activity(note.Why, "warn");
+        _log.TryEngineering("Gateway", "loss_flatten_owed", "warn", metadataJson: Json.Write(new
+        {
+            key, breach = note.BreachKey, attempts, reason
+        }));
+    }
+
+    /// <summary>
+    /// The sentence an owed flatten is shown with: what has NOT happened, why, and that TradeAgent is
+    /// trying again — never a claim about the platform's book beyond "still open".
+    /// </summary>
+    static string OwedSentence(LossBreachRecord breach, string reason, DateTimeOffset first,
+        DateTimeOffset at, int attempts)
+    {
+        var what = breach.Symbol is null ? "your open positions" : $"your {breach.Symbol} position";
+        var budget = breach.Symbol is null ? "your daily loss budget" : $"your loss budget for {breach.Symbol}";
+        var tries = attempts == 1
+            ? $"its try at {at.UtcDateTime:HH:mm:ss} UTC"
+            : $"{attempts} tries since {first.UtcDateTime:HH:mm:ss} UTC, the last at {at.UtcDateTime:HH:mm:ss}";
+        return $"TradeAgent has NOT closed {what} yet: {budget} was reached at "
+               + $"{breach.ConfirmedAt.UtcDateTime:HH:mm} UTC and new risk is refused, but {tries} could send "
+               + $"nothing to your platform ({reason}). Nothing was sent, so there is nothing to confirm; "
+               + $"TradeAgent tries again on every pass until {what} {(breach.Symbol is null ? "are" : "is")} "
+               + "closed, and the closure does not lift while anything is open. Check the platform.";
+    }
+
+    /// <summary>
+    /// The owed note under <paramref name="key"/>, or null when there is none. An unreadable row
+    /// answers with a note that says so, because "TradeAgent cannot tell whether it still owes a
+    /// flatten" is not "it owes none".
+    /// </summary>
+    LossFlattenOwed? ReadOwed(string key)
+    {
+        string? json;
+        try { json = _db.GetKv(key); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new LossFlattenOwed { Why = $"TradeAgent could not read whether it still owes a flatten ({ex.Message})" };
+        }
+
+        if (json is null) return null;
+        try { return Json.Read<LossFlattenOwed>(json) ?? throw new InvalidOperationException("the note is empty"); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new LossFlattenOwed { Why = $"TradeAgent could not read its note about a flatten it owes ({ex.Message})" };
+        }
     }
 
     /// <summary>What the cancel half of one flatten did.</summary>

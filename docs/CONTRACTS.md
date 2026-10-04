@@ -3691,3 +3691,46 @@ modification re-runs is step 7 above, against the target as the book holds it at
 
 **Not in this unit:** the per-order limits above the gate (MED 7), the approval TTL and the mode
 re-check (unchanged), and any sweep — expiry is still evaluated only when a person presses Approve.
+
+## U-fix-loss-reopen — the app's flatten runs on the platform's clock, and an attempt that sent nothing is owed, never final
+
+**No schema.** Twice on windows-latest (runs 37098316726 and 37166688583) a confirmed breach closed the
+day and the book stayed open: the close was never sent, and a reopen a day later found ES still open.
+One cause: `FlattenForBreachAsync` ran on the connector's two-second emergency budget, a real wall clock
+(`RiskReducingScope`, `Environment.TickCount64`), and every write-ahead commit it makes before a close is
+on that clock too; on a slow disk they spent all of it, the first platform call was refused before the
+wire, and the outcome was written ONCE, final, over a book nothing had touched — with a flagged UNKNOWN
+row that refused the very sweep that would have tried again. Every instant the watch, the flatten and
+the reopen reason about is still `GatewayOptions.Clock`; the deadline is the one wall clock that decides.
+
+**The loss budget's flatten is charged for the platform, not for its own store** —
+`RiskReducingScope.BeginExcludingTheStore`, fed by `Core.Db.StoreTime`, which counts the time the
+counting flow spends inside `Database.Write`/`Read` (lock waits included, nested calls once). The
+deadline moves out by exactly that; every platform call is still clipped at it and a leg reached after
+it is still refused. The owner's presses and the agent's sweeps keep `Begin(budget)`: two seconds there
+is a promise to a person about the whole operation. A connector's own book in its own SQLite file (the
+paper connector's) is the platform from up here and stays on the platform's clock.
+
+**An attempt whose ONE transport record is still empty dispatched nothing, and is not an outcome.** The
+flatten attaches one `TransportRecord` for the attempt; every cancel, close and reducer settle inside it
+marks it before its call. Empty at the end, the attempt's own rows of both app kinds are settled as not
+sent (`CANCELLED`, through `RECONCILING` from `UNKNOWN`; a terminal row keeps its state), unflagged and
+unlatched; then, unless the book read flat, NO outcome is written, an owed note
+`loss_flatten_owed:{connector}:{account}:[{symbol}:]{utcDay}` (`LossFlattenOwed`: attempts, first and last
+try, the reason, the sentence) is written instead, and the sweep keyed on the outcome's absence re-runs
+it on every later pass — immediately, too, on the health pass that confirmed the breach. An account
+that cannot be read before the attempt starts is owed the same way. A row it cannot settle sends the
+attempt down U-flatten-2's path, flagged.
+
+**Said in words, and nothing reopens over it.** `FlattenStateToday` reads the owed note when there is no
+outcome: `unresolved`, "TradeAgent has NOT closed your open positions yet … tries again on every pass";
+the status, the Situation, section 4 and the closed line carry it. `HeldBy` holds the scope while a note
+stands without an outcome, even over a book that reads flat; the receipt comes on the pass after the one
+whose flatten is recorded flat. The activity line is written on the first owed attempt and when the
+reason changes, not on every pass.
+
+**Unchanged:** an attempt that dispatched ANYTHING writes its final outcome and is never repeated over a
+row nobody has reconciled (`LossFlattenOwedTests.An_attempt_that_put_a_close_on_the_wire_is_never_repeated_over_it`).
+**Not in this unit:** the data-loss exit (`U-flatten-3`) still opens `Begin(budget)` and charges its
+store; a close that MAY have reached the platform still waits for the owner rather than for an
+order-history read; the owner's press is byte for byte what it was.

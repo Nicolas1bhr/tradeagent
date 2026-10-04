@@ -80,20 +80,29 @@ public sealed class Database : IDisposable
     /// </summary>
     public T Write<T>(Func<SqliteConnection, T> body)
     {
-        lock (_gate)
+        // THE TIME IT TOOK, for a flow that is counting it (StoreTime) — from before the lock, so a
+        // wait behind another thread's commit is counted as the store's, which it is.
+        var started = StoreTime.Counting ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+        var outermost = false;
+        try
         {
-            if (_depth > 0) return body(_conn);
-
-            using var tx = _conn.BeginTransaction();
-            _depth++;
-            try
+            lock (_gate)
             {
-                var r = body(_conn);
-                tx.Commit();
-                return r;
+                if (_depth > 0) return body(_conn);
+                outermost = true;
+
+                using var tx = _conn.BeginTransaction();
+                _depth++;
+                try
+                {
+                    var r = body(_conn);
+                    tx.Commit();
+                    return r;
+                }
+                finally { _depth--; }
             }
-            finally { _depth--; }
         }
+        finally { if (outermost && started != 0L) StoreTime.Charge(started); }
     }
 
     /// <summary>
@@ -102,7 +111,19 @@ public sealed class Database : IDisposable
     /// </summary>
     public T Read<T>(Func<SqliteConnection, T> body)
     {
-        lock (_gate) return body(_conn);
+        // Counted on the same rule as Write, and not twice: a read inside a Write on this thread is
+        // inside that Write's time already.
+        var started = StoreTime.Counting ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+        var outermost = false;
+        try
+        {
+            lock (_gate)
+            {
+                outermost = _depth == 0;
+                return body(_conn);
+            }
+        }
+        finally { if (outermost && started != 0L) StoreTime.Charge(started); }
     }
 
     public SqliteCommand Cmd(string sql, params (string, object?)[] ps)
