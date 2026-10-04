@@ -127,6 +127,12 @@ public sealed class TapeCollector : IAsyncDisposable
         if (read.Sources.FirstOrDefault(r => r.Cadence <= TimeSpan.Zero) is { } still)
             throw new ArgumentException($"tape row '{still.Id}' has a cadence of {still.CadenceSeconds} s, which is not a cadence", nameof(catalog));
 
+        // A ROW WHOSE PARSER THIS BUILD DOES NOT HAVE CANNOT BE READ, so it is refused here in words for the
+        // same reason: the catalogue's own rows are fixed and a file's parser is checked, so only a caller
+        // can hand one over — and a look that guessed at a parser would record a guess as a delivery.
+        if (read.Sources.FirstOrDefault(r => r.Parser is not (TapeSourceCatalog.JsonParser or TapeSourceCatalog.AnnouncementParser)) is { } unread)
+            throw new ArgumentException($"tape row '{unread.Id}' names the parser '{unread.Parser}', which this build does not have", nameof(catalog));
+
         Rows = read.Sources;
         CatalogProblem = read.Unreadable;
         Refused = read.Refused;
@@ -228,8 +234,7 @@ public sealed class TapeCollector : IAsyncDisposable
                 IReadOnlyList<TapeItem> items = [];
                 if (note is null && status != 200)
                     note = $"the host answered {status} and nothing was read";
-                else if (note is null
-                         && !TapeParse.TryRead(body, series, symbol, TapeSourceCatalog.Universe, out items, out var why))
+                else if (note is null && !Read(row, series, body, symbol, out items, out var why))
                 {
                     note = $"the answer could not be read: {why}";
                     items = [];
@@ -264,6 +269,17 @@ public sealed class TapeCollector : IAsyncDisposable
         state.LastError = problem;
         return new TapeTick(false, attempts, delivered, stored, throttled);
     }
+
+    /// <summary>
+    /// THE ROW'S OWN PARSER, NEVER A GUESS AT ONE: the market family reads the body as its items and keeps
+    /// them to the universe; the announcement family reads the list at the series' path. The constructor
+    /// refused every other name, so there is no third arm for a row to fall into.
+    /// </summary>
+    static bool Read(TapeSourceEntry row, TapeSeriesEntry series, string? body, string? symbol,
+        out IReadOnlyList<TapeItem> items, out string? why) =>
+        row.Parser == TapeSourceCatalog.AnnouncementParser
+            ? TapeParse.TryReadItems(body, series, out items, out why)
+            : TapeParse.TryRead(body, series, symbol, TapeSourceCatalog.Universe, out items, out why);
 
     /// <summary>The URL for one series, built from the row's shape and never from a literal here.</summary>
     public static string Url(TapeSeriesEntry series, string root, string? symbol) =>
