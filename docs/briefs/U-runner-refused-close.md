@@ -38,3 +38,23 @@ Seen, not in this unit (read, not run): a rule exit goes out with the stop and t
 a paper short; an END whose flatten a gate refused is never re-sent (`TradingGateway.cs:1029-1031` sees a flatten op) and reads reconciled; a crash between `TryCreate` and `DISPATCHING` leaves its op unsettled for good (`:861`).
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Tip `52ad65fb`** (last code commit) on `main` `c15040a5` (`main` has since moved by docs only). Build Release `--no-incremental`: 0 Warning(s), 0 Error(s). Unit 1360 passed, 0 failed (7 m 39 s); Fault 415 passed, 0 failed (1 m 52 s);
+`ForwardRunnerTests` (all partials, Integration) 22/22 three times. CI 37169881900 on `52ad65fb`: ubuntu success (13 min), macos success (16 min), windows success (48 min), package success. Names vs `main`: base 2124, tip 2130, removed 0,
+added 6.
+**Condition: a paper short FREEZES the run, so 3b is folded in.** A sell into a flat book makes −1 (`PaperBook.cs:510`); the run's books close `Math.Min(0, q)` and stay flat (`ForwardRuns.cs:966`, base `:830`); the next entry passes as a
+reduce (`TradingGateway.cs:5317`): venue 0, books long 1; every close is then refused `POSITION_MOVED` (`:6033`). Seen on the base by a scratch probe (deleted, never committed): the stop, the target and the max hold's close on each of
+minutes 14–20 refused `POSITION_MOVED`, `pending=True` throughout.
+1 done, DEVIATION (stricter): out of flight only when `refused` AND the row is absent or still `CREATED` (`RefusedBeforeTheWire`), so a refused op whose row moved on (another process's `PlaceAsync` racing `SettleDeploymentOps`) is read off
+its row. (f) re-captured on purpose: m12 b `pending=True intents:3 whilePending:4` → `pending=False intents:4 whilePending:3`, plus `op +12#0 entry dispatched request=WORKING — ` and its `wire +12#0 … WORKING`; items 2–3b keep it.
+2 done, DEVIATION in (d) only: the 14:00 hour (exits `+179` refused, `+180` sent, filled at 182), since the evaluator's one-bar hold covers the 13:00 close after the 12:00 entry (the base wrote no exit at 119). The runner asks both bounds
+before re-sending; `DECISION_EXPIRED` still decides at the gateway.
+3 done: each live flat minute cancels every stop/target of the run still working, read off its own ops. 3b done: every exit (the program's or one sent again) cancels them once sized, before it goes; the tracked pair is not cleared. 4 done:
+`CONTRACTS.md` "The runner" (the minute's list, one new paragraph). (c) stores its minutes unannounced since `52ad65fb` (a queued announcement could settle minute 5 before the pass); re-verified red on the base code.
+RED before (base): (a) `Assert.False() Failure Expected: False Actual: True` (m12 b); (b) `Assert.Single() Failure: The collection did not contain any matching items` (no minute-13 entry); (c), (c2), (e) `Expected: 0 Actual: -1.000`; (d)
+`Expected ["+179#0", "+180#0"] Actual ["+179#0"]`; each also red at the commit before its own fix.
+Mutants, all watched again at `52ad65fb`: (i) refused-over-CREATED in flight again → (a) `Actual: True`, (b) no entry, (f) `pending=True`; (ii) item 3 removed → (c2) `Actual: -1.000`; (iii) re-send after any refused exit → (d) `Actual
+["+179#0", "+180#0", "+181#0"]`, `+181` refused `POSITION_MOVED`; (iv) 3b's cancel removed → (e) `Actual: -1.000`. (c) stays green under (ii) or (iv) alone, red under both.
+NOT done / NOT VERIFIED: protection put back after an exit refused once its cancel went through (stated NOT claimed); an END's refused flatten and the `TryCreate`→`DISPATCHING` crash window (`U-runner-exit-hygiene`); `STRATEGY-LANGUAGE.md`
+and the agents' text untouched (nothing there made false); the rest of Integration ran on CI only; no box run; `TradingGateway.cs` unchanged.
