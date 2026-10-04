@@ -463,6 +463,51 @@ public class DataLicenceTests
         await gw.DisposeAsync();
     }
 
+    // ---- item 5: what is and is not claimed ---------------------------------------------------------
+
+    /// <summary>
+    /// THE CONTRACT, THE GUIDE AND THE RESEARCH LIST SAY IT — the consequence plainly (live allocation is
+    /// closed, and the route that would reopen it), what is NOT claimed, the archive's credit (Terms § 4.5),
+    /// and the three open questions with how each closes. A rule only the code knows is not a rule anybody
+    /// made.
+    /// </summary>
+    [Fact]
+    public void The_contract_the_guide_and_the_research_list_say_what_is_and_is_not_claimed()
+    {
+        var root = RepoRoot();
+        var contracts = File.ReadAllText(Path.Combine(root, "docs", "CONTRACTS.md"));
+        var guide = File.ReadAllText(Path.Combine(root, "docs", "USER-GUIDE.md"));
+        var research = File.ReadAllText(Path.Combine(root, "docs", "RESEARCH-REQUIRED.md"));
+
+        Assert.Contains("## Data licences", contracts, StringComparison.Ordinal);
+        Assert.Contains("LIVE ALLOCATION IS CLOSED", contracts, StringComparison.Ordinal);
+        Assert.Contains("OKX Europe first", contracts, StringComparison.Ordinal);
+        Assert.Contains("*Legal advice*", contracts, StringComparison.Ordinal);
+        Assert.Contains("R19 § 6 Q1", contracts, StringComparison.Ordinal);
+        Assert.Contains("R19 § 6 Q9", contracts, StringComparison.Ordinal);
+        Assert.Contains("*The tape's class*", contracts, StringComparison.Ordinal);
+        Assert.Contains("**`unverified`**", contracts, StringComparison.Ordinal);
+
+        Assert.Contains("*Historical market data: Binance Vision (", guide, StringComparison.Ordinal);
+        Assert.Contains("under the Binance Vision Dataset Terms v1.0,", guide, StringComparison.Ordinal);
+        Assert.Contains("**This means no strategy can be given real money yet**", guide, StringComparison.Ordinal);
+        Assert.Contains("There is nothing for you to edit or change", guide, StringComparison.Ordinal);
+
+        Assert.Contains("## C7 — Data licences", research, StringComparison.Ordinal);
+        foreach (var q in new[] { "| Q1 |", "| Q2 |", "| Q9 |" })
+            Assert.Contains(q, research, StringComparison.Ordinal);
+    }
+
+    /// <summary>The repository root, found by walking up to the solution file.</summary>
+    static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
+
     // ---- fixtures -----------------------------------------------------------------------------------
 
     static readonly DateTimeOffset At = new(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);

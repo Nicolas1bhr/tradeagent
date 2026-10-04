@@ -2770,6 +2770,80 @@ unconfined could still edit `state/tape.db` itself (`docs/EDGE-FACTORY.md` § 6.
 row names is public or harmless: until containment the agent can reach it itself, and `R-containment` decides
 whether file rows survive containment.
 
+## Data licences — `src/TradeAgent.Core/Data/DataLicence.cs`, `Db/DataLicenceStore.cs`, `Db/DatasetStore.cs`, `Db/AllocationStore.cs`
+
+**Why.** Binance's public archive is now under the Binance Vision Dataset Terms v1.0 (CC BY-NC-SA 4.0, updated
+2026-08-26, read 2026-10-04): § 4.1 allows backtesting for purely personal non-production research, § 4.2 forbids
+live proprietary trading execution and automated commercial order generation, and § 4.4 forbids commercial
+trading-bot platforms. On the orchestrator's COMPLY decision of 2026-10-04 and R19
+(`docs/research/2026-10-04/R19-historical-data-licences.md`), archive datasets serve research — backtests, paper,
+M0 — and nothing that confers LIVE eligibility rests on them.
+
+**Every dataset records the terms its bars came under** (schema 30). `data_licence` holds a row per READING of a
+source's terms — source, class, terms URL, terms version, read date, note, recorded at — append-only, newest in
+force, written by schema rungs only: reclassifying a source is a new row in a later rung, never gate code, never an
+op or a verb, and `DataLicences` has no write method. Rung 30 seeds two: `binance-spot-monthly-klines`
+`research-only` (R19 S1) and `binance-spot-forward-klines` **`unverified`**, noted "R19 § 6 Q2 open: Binance API
+terms not read for live-gating use" — on the orchestrator's order of 2026-10-04, where the brief had `first-party`.
+The `dataset` row gains `licence_class`, `terms_url`, `terms_version` and `terms_read_on`, copied when the bars are
+collected and never joined at read time; the rung's one backfill gives every archive dataset the archive reading.
+
+**The collector stamps a reading only from its own origin.** `MarketDataService` copies the source's newest
+reading onto the row only when every period's URL has the origin of THIS BUILD's own catalogue row for that source
+(`DataLicence.Stamp`, `UrlOrigin.Of`). A `sources.json` row replaces a built-in one and sits where an unconfined
+agent can write, so bars fetched from wherever such a row points — or from a test's loopback — are recorded
+unrecorded, which reads research-only. A rebuild carries the row's own licence: the same raw files are the same
+bars, under the same terms.
+
+**The class is text, and only two words confer.** `first-party` and `commercial-ok` confer live eligibility; every
+other value — `research-only`, `unverified`, NULL, a misspelling — is research-only (`DataLicence.Confers`). Never a
+CHECK: a newer build's word reads as itself and opens nothing.
+
+**One decision, read at the gate and never hashed.** `DataLicence.LiveRefusal(set, newest)` is null only when the
+holdout row's class AND its source's newest reading, where one exists, both confer; otherwise it is one sentence
+naming the dataset (id, source, pair, interval, version), its class and terms (URL, version, read date) or "no
+licence recorded", and saying that backtests and paper go on. So a narrower reading appended later refuses, and a
+wider one never re-opens bars collected under narrower terms. It is not a tenth hashed fact — the nine facts and
+the promotion id are untouched, so reclassifying is not a re-judging. `Promotions.Standing` sets
+`PromotionStanding.LiveRefusal` (default: a refusal) wherever a verdict's evidence can be read; `IsPromoted` and the
+invalidation are unchanged.
+
+**Asked in live only, and it only refuses.** `Allocations.Record` — the owner's two presses on the Capital card —
+refuses after its `IsPromoted` and promotion-id checks, in that sentence, and writes nothing. The live arm of
+`AllocationStanding.Authorises` is `IsPromoted && LiveRefusal is null`, read when an order arrives in a live mode or
+in practice mode off an envelope, so an allocation written before its evidence was read research-only opens
+nothing from that moment: `ALLOCATION_NONE` with the sentence, the row stays on the table, and a close or a reduce
+always passes. Paper allocation, paper deployment and M0 ask nothing of a licence (Terms § 4.1), and a paper
+experiment confers no live authority either. The report's readiness blockers and allocation line, the Capital card
+and the Situation's promoted line say REFUSED FOR LIVE with the sentence, not WITHDRAWN; the report and the
+Situation give each dataset's class and terms, and section 7 the forward ledger's reading. `data-list` keeps its
+keys.
+
+**THE CONSEQUENCE, PLAINLY: LIVE ALLOCATION IS CLOSED.** After this unit no dataset this build collects can confer
+live eligibility — the archive reads research-only, the forward ledger is never a dataset and reads `unverified`,
+and every other source is unrecorded — so no version can be allocated capital until first-party or licensed
+evidence exists. **The planned route, a future unit:** datasets cut from the tape's recordings of a venue whose
+terms reach own-account use — OKX Europe first (its API Agreement § 9.3: trading your own account, even profitably,
+is not commercial resale; R19 § 0 item 3) — each dataset classed by that venue's own reading, read the day it is
+seeded.
+
+**Not seeded here: the tape.** Each tape source's reading is seeded per venue, on that venue's terms read the same
+day, by the unit that first lets tape evidence count (`U-features`); "first-party" in the orchestrator's earlier
+wording meant origin, not licence. No tape evidence reaches a verdict today, and the tape's rows say Binance's
+USDⓈ-M terms were not re-read.
+
+**NOT CLAIMED.** (1) *Legal advice*: a class records what the terms say as R19 read them, not a legal opinion.
+(2) *That TradeAgent is not "commercial"*: every class here assumes the owner's own use is not commercial use —
+counsel's question, R19 § 6 Q1 (`docs/RESEARCH-REQUIRED.md`, C7). (3) *That the forward host is outside the archive
+terms*: whether "data.binance.vision and associated endpoints" (§ 2.1) reaches `data-api.binance.vision` is R19 § 6
+Q2, open — hence `unverified`. (4) *The terms of archive files downloaded before v1.0 was public*: R19 § 6 Q9; they
+read research-only like every archive row. (5) *The tape's class*: not recorded by this unit. (6) That a
+research-only promotion opens no boundary: it still opens its consequential boundary with the default `deploy`
+(`Referee.OpenBoundary`), and no money path reads that disposition.
+
+**Attribution.** The archive's terms ask that Binance Vision be credited (§ 4.5); `docs/USER-GUIDE.md` carries the
+credit beside the Market data card's description.
+
 ## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
 
 **A holdout is a TIME CUTOFF on a dataset, not a second dataset, and that is a CHOICE this build made

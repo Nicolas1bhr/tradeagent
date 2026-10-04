@@ -278,6 +278,22 @@ price gets no row; and the read date changes on the same commit as any rate.
 
 ---
 
+## C7 — Data licences (open since 2026-10-04; R19 § 6; `docs/CONTRACTS.md` "Data licences")
+
+**Decided (the orchestrator's COMPLY decision, 2026-10-04):** the Binance archive's datasets read `research-only`
+and confer no live eligibility; the forward ledger reads `unverified`; live allocation is closed until a dataset
+whose terms reach own-account use exists. Each question below stays open until the step named beside it is done,
+and is closed by a schema rung that APPENDS a `data_licence` reading — never by editing a class in place, and never
+by gate code.
+
+| # | Question (R19 § 6) | What depends on it | How it closes |
+|---|---|---|---|
+| Q1 | Is TradeAgent, built for the owner and delivered to him, a "commercial" product or use under the venues' data terms (Binance §§ 3.4 and 4.4, OKX § 9.4(c), Coinbase's end-user clause, Kraken's "non-personal commercial use")? | Every class this build records assumes it is not; if it is, research use shrinks too. | Counsel's written answer, filed under `docs/research/` with its date; a "commercial" answer is a rung appending narrower readings, and a written licence (`commercial-ok`) is a rung appending that reading for the source it covers. The owner's call, asked by the orchestrator. |
+| Q2 | Does "data.binance.vision and associated endpoints" (Terms § 2.1), or § 7.1's "API base endpoints", reach `data-api.binance.vision`, the host the forward collector polls? | Whether the forward ledger could ever confer; it reads `unverified` meanwhile. | Binance's written answer, or counsel's reading of the Terms and of Binance's Spot API terms re-read on the day; the answer becomes a rung appending a `binance-spot-forward-klines` reading (`research-only` if the terms reach it). |
+| Q9 | Which terms governed archive files downloaded before v1.0 was public (a file served on 2026-09-07; the Terms are dated 26 Aug and were committed 30 Sep)? § 1.4 protects data downloaded under earlier terms, and no earlier dataset terms were found. | Only the archive rows collected before 30 Sep 2026; they read `research-only` like every archive row. | An earlier version of the dataset terms found in Binance's own history (the repository's commit log) or Binance's written answer; until then nothing here relies on the earlier terms being wider. |
+
+---
+
 ## D — AI list prices (read 2026-10-02 from OpenAI's own pages; re-read before every release)
 
 **File:** `src/TradeAgent.AgentRuntime/ListPrices.cs` — the whole catalogue, in `costs.json`'s shape.
