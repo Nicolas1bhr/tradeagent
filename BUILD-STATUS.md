@@ -7824,3 +7824,44 @@ and the merge's run): success on ubuntu-latest (12 min), macos-latest (15 min), 
 
 **NOT done, NOT verified:** the Capital card's dashboard line has no test and the app was not run; the tape not seeded (U-features, per venue); a
 research-only promotion still opens its `deploy` boundary — seen, not acted on (paper deployments are allowed by design and place nothing live); no box.
+
+## 2026-10-04 — U-fix-loss-reopen landed: one cause behind both Windows loss-watch sightings — the flatten's 2 s budget spent by its own store writes, then never retried — fixed product-side
+
+Built by one fresh Opus fixer under seat P (slot 2, reclaimed from seat A; the second sighting moved it to the front) from `docs/briefs/U-fix-loss-reopen.md`;
+rebased onto `e651eaa0` by the fixer, no conflict. Merge `14b5b907` (ff-only), 4 commits (item 1, item 2, the diagnostic's removal, the report), 13 files,
++1038/−39; no schema rung. MONEY PATH: the loss boundary's flatten (`U-flatten-2`) and the reopen's receipt (`LossReopen`); no flatten or reopen condition
+loosened (two-pull confirmation, `EligibleAt`); no sleep, test retry or timeout raise; the only re-send is of an attempt whose own record proves nothing went out.
+
+- **Diagnosis (item 1, `d50ce8d3`) — one cause behind both sightings:** windows `c15040a`, run 37166688583 (`LossWatchTests:133`, the day closed, no close sent)
+  and windows `3b03041`, run 37098316726 (`LossHoldSurfacesTests:79`, a due reopen did not happen). The flatten ran on the connector's 2 s emergency budget, a
+  real wall clock (`RiskReducingScope`, `TickCount64`; every instant otherwise reads `GatewayOptions.Clock`), and its own write-ahead commits were charged to it:
+  on a slow disk they spent it before the first platform call, refused before the wire; the outcome was written once, final, with a flagged row refusing the
+  sweep — nothing retried, and a day later the reopen was held by "ES 1 open". Runs 37170522369 + 37170524233 (branch-only `LossFlattenDiagTests` and a
+  windows-only `build.yml`, both removed in `d0d14159`): each flatten step a ~30 ms commit (first read 1922 ms left, close 1828 ms); 120 instrumented runs and
+  2×12 class loops green. **The CONTROL** (deadline gone at the first flatten call) **reproduced both sightings on windows exactly** (`closes=0, mutations 1/1`;
+  `reopened=[]`, ES 1). 23 s / 41 s = these fixtures (0.7–4.8 s there) on a disk 5–60× slower: 2–4 commits ≈ 2 s.
+- **Item 2 (`15c968c8`, product):** (A) as judgement 1. (B) one `TransportRecord` per attempt: empty ⇒ rows settled not-sent, unflagged (the CANCELLED edge
+  `SettleIfNothingWasSent` takes on `NothingWritten`), owed in words (`loss_flatten_owed:` "has NOT closed your open positions yet … tries again on every pass"),
+  re-run each pass, `HeldBy` holds the reopen; dispatched anything ⇒ final as before. Docs: CONTRACTS, USER-GUIDE, status schema, AGENTS.md.
+
+**Orchestrator judgements, recorded as judged.** (1) ACCEPTED as a product decision, not a timeout raise: for the app's own flatten, the 2 s emergency budget
+measures platform time and excludes the app's own `Database` writes (`RiskReducingScope.BeginExcludingTheStore` + `Core.Db.StoreTime`). The 2 s value, the
+owner's presses and the sweeps are unchanged; no test fixture's budget widened. (2) ACCEPTED as a declared gap: a close that MAY have reached the platform, its
+answer lost, still never retries and is not confirmed from order history; it stays flagged and paused for the owner, as `U-flatten-2` decided (money rule 3:
+ambiguity is never blind re-sent). **OWED, before any live use: `U-flatten-confirm`** — confirm such a close from the platform's order history, only where
+`SupportsOrderHistory`, and only then flatten again. (3) OWED in the same unit as (2): `U-flatten-3`'s data-loss exit still charges its own store writes to its
+budget — the same root cause; apply change (A) there. (4) ACCEPTED: `LossFlattenTests.A_position_that_shrinks…` had its assertions rewritten, not renamed. Its
+protected claim holds, asserted more tightly: never closed at the captured size, the book ends flat, not short.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** RED before: slow-store test `Expected: 1 Actual: 0` ("store held by another : 3050 ms
+against a 2000 ms budget"); owed test `Assert.Null() Failure` (final record, `UNKNOWN flagged=1`); every-pass test "1 attempts in all, 1 by the confirming
+pass". Mutants watched red: A, the refund removed ⇒ slow-store `Expected: 1 Actual: 0`; B, the empty-record proof removed ⇒ wire guard `Expected: 1 Actual: 2`,
+book `[Buy 1 ES FILLED | Sell 1 ES CANCELLED | Sell 1 ES WORKING]`, and 2 `LossFlattenTests` red; both restored identical. Fixer's gate at `d0d14159`: Release
+`--no-incremental` 0 warnings, 0 errors; Unit 1381/1381, Fault 420/420; 3× green: LossFlattenOwedTests, LossFlattenTests, LossWatchTests, LossHoldSurfacesTests,
+LossFlattenSurfacesTests. Manager's gate at `14b5b907`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1381/1381 (7 m 45 s, the slow Mac), Fault
+420/420 (2 m 5 s), Integration 718/719, 1 skipped (11 m 54 s) → 0 failed. Names vs `main` (git objects): 2153 → 2157, 0 removed, 4 added (all four in the new
+`LossFlattenOwedTests`). Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37185798775 at `d0d14159` (the code tip; `14b5b907` adds only the report): success on ubuntu-latest (13 min), macos-latest (16 min),
+windows-latest (44 min; Timing first try, per the report), package (3.5 min) — read by the manager with `gh run view`. Landing CI read by the orchestrator.
+
+**NOT done, NOT verified:** judgements 2 and 3 (owed); the Windows evidence is hosted CI only — no box (not granted to this unit; unreachable at its last check); the app not run.
