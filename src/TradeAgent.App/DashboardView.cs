@@ -2539,7 +2539,11 @@ sealed class SafetyPage
                 : string.Join("; ", standing.Select(s =>
                     $"{s.Allocation.VersionId[..Math.Min(12, s.Allocation.VersionId.Length)]} "
                     + $"up to {AllocationRow.Num(s.Allocation.MaxQuantity)}"
-                    + (s.Authorises ? "" : " — its promotion no longer stands, so it may trade nothing")));
+                    // REFUSED FOR LIVE IS NOT A WITHDRAWN PROMOTION (`U-data-licence`): the verdict stands
+                    // and the evidence under it confers no live eligibility, in the gate's own sentence.
+                    + (s.Authorises ? ""
+                        : s.RefusedForLive is { } refused ? $" — REFUSED FOR LIVE: {refused}"
+                        : " — its promotion no longer stands, so it may trade nothing")));
         }
         catch (Exception) { _allocationValue.Text = "could not be read"; }
     }

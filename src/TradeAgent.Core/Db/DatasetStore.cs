@@ -67,14 +67,30 @@ public static class BarAge
             : "market data";
     }
 
-    /// <summary>One dataset's freshness, named, with what it is a dataset OF and what class it is.</summary>
+    /// <summary>
+    /// THE TERMS THESE BARS CAME UNDER, in the words both surfaces print (<c>U-data-licence</c>): the class
+    /// and the terms — their address, version and read date — or "no licence recorded", and, where the class
+    /// does not confer, that no live capital can stand on it while backtests and paper go on. The row's own
+    /// licence: the gate also reads the source's newest reading (<see cref="Data.DataLicence.LiveRefusal"/>).
+    /// </summary>
+    public static string Licence(DatasetRecord set)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        return $"licence {Data.DataLicence.Words(set.Licence)}"
+               + (set.Licence.Confers ? "" : " — backtests and paper only, no live capital");
+    }
+
+    /// <summary>
+    /// One dataset's freshness, named, with what it is a dataset OF, what class it is and what terms its bars
+    /// came under.
+    /// </summary>
     public static string Line(DatasetRecord set, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(set);
         var age = Of(set, now);
         return $"{set.Source} {set.Pair} {set.Interval} v{set.Version}: "
                + (age is { } a ? $"freshest bar {Words(a)} old" : "no bars at all")
-               + $" ({Class(set)})";
+               + $" ({Class(set)}; {Licence(set)})";
     }
 }
 
