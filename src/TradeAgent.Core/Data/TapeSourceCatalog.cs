@@ -81,8 +81,15 @@ public sealed class TapeSourceEntry
 
     public List<TapeSeriesEntry> Series { get; set; } = [];
 
-    /// <summary>The terms this source is read under, in words.</summary>
+    /// <summary>The terms this source is read under, in words — on a row whose terms were read, the clause read and the day.</summary>
     public string Terms { get; set; } = "";
+
+    /// <summary>
+    /// THE TERMS BASIS: the vendor's own page that <see cref="Terms"/> was read from, on the day it names —
+    /// never inferred from an answer that came back without a key. EMPTY on a row whose terms were not
+    /// re-read, and such a row's <see cref="Terms"/> says so.
+    /// </summary>
+    public string TermsUrl { get; set; } = "";
 
     /// <summary>Where the vendor documents it.</summary>
     public string DocUrl { get; set; } = "";
@@ -93,6 +100,16 @@ public sealed class TapeSourceEntry
     /// <summary><see cref="CadenceSeconds"/> as a span. Not part of the file.</summary>
     [JsonIgnore]
     public TimeSpan Cadence => TimeSpan.FromSeconds(CadenceSeconds);
+
+    /// <summary>
+    /// HOW LATE THE VENDOR DOCUMENTS ITS ANSWER MAY BE AFTER THE SOURCE TIME: OKX writes that an
+    /// announcement's <c>pTime</c> is when it was first published and that the answer may be delayed around
+    /// five minutes. The live rule allows it on top of the cadence (<c>TapeStore.ClassOf</c>); a market row's
+    /// is zero. NOT part of the file: only a built-in row's rule is ever read, and a row the file adds is
+    /// archive whatever it claims.
+    /// </summary>
+    [JsonIgnore]
+    public TimeSpan PublicationDelay { get; set; }
 }
 
 /// <summary>
@@ -103,8 +120,9 @@ public sealed record TapeSourceCatalogRead(
     IReadOnlyList<TapeSourceEntry> Sources, string? Unreadable, IReadOnlyList<string> Refused);
 
 /// <summary>
-/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS (<c>U-tape-store</c>): five built-in rows over Binance
-/// USDⓈ-M public market data for six symbols, and whatever unkeyed rows <c>tape-sources.json</c> adds.
+/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS: two built-in families — five rows over Binance USDⓈ-M public
+/// market data for six symbols (<c>U-tape-store</c>) and OKX's announcements for EU users
+/// (<c>U-tape-events</c>) — and whatever unkeyed market rows <c>tape-sources.json</c> adds.
 ///
 /// <para><b>The file may ADD rows. It may never replace, redirect or remove a built-in one</b>, and
 /// that is the difference from <c>sources.json</c>, where a file row replaces the built-in with its id.
@@ -140,6 +158,21 @@ public static class TapeSourceCatalog
 
     /// <summary>Settled funding, per symbol.</summary>
     public const string Funding = "binance-um-funding";
+
+    /// <summary>OKX's announcements for EU users, its first page once a minute (<c>U-tape-events</c>).</summary>
+    public const string OkxEeaAnnouncements = "okx-eea-announcements";
+
+    /// <summary>
+    /// OKX'S DOMAIN FOR EU USERS, spelled in pieces for the reason <see cref="BinanceUmBaseUrl"/> is. Its
+    /// answer is restricted by the asking IP, and this is the domain OKX names for the EEA.
+    /// </summary>
+    public const string OkxEeaBaseUrl = "https://eea" + ".okx" + ".com";
+
+    /// <summary>
+    /// THE TERMS THE OKX ROW IS READ UNDER: OKX's API Agreement as published for the EEA, which its EEA
+    /// Terms of Service (§ 1.14) name as the terms of the API Services, public endpoints included.
+    /// </summary>
+    public const string OkxTermsUrl = "https://www" + ".okx" + ".com/en-eu/help/okx-api-agreement";
 
     /// <summary>
     /// BINANCE'S USDⓈ-M FUTURES HOST. Spelled in pieces so the test-tree scan that forbids a test naming
@@ -304,32 +337,96 @@ public static class TapeSourceCatalog
         }
     ];
 
+    const string OkxTerms =
+        "OKX's API Agreement for the EEA (last updated 28 July 2026), re-read 2026-10-04 (U-tape-events): § 3.2(a) lets "
+        + "its public endpoints be used without a key, under the Agreement and its § 9; § 9.4 keeps what they serve to the "
+        + "user's own personal, non-commercial trading, never redistributed, and allows automated means at a rate "
+        + "'reasonably necessary for your personal trading use' that puts no unreasonable load on OKX, binding callers "
+        + "without an OKX account the same way; § 9.3(b) asks OKX's written authorisation before the API Services are "
+        + "offered as part of a commercial product. TradeAgent asks for one page a minute, against a documented limit of "
+        + "five requests every two seconds, keeps what it reads on the owner's own machine for his own trading, and passes "
+        + "it to no one. Whether selling TradeAgent itself needs that authorisation is a legal question this row raises "
+        + "and does not settle (docs/RESEARCH-REQUIRED.md, C5c).";
+
     /// <summary>
-    /// What a built-in row lets the store call live: its ORIGIN and its CADENCE, read from this build's
-    /// rows once and never from a file. Value types, so no caller can edit the answer for the next one.
+    /// THE ANNOUNCEMENT ROWS THIS BUILD SHIPS (<c>U-tape-events</c>), a fresh copy on every call: OKX's
+    /// announcements for EU users, the first page once a minute — the twenty newest by first publication,
+    /// about a month of them. Page 1 only, by design: an announcement is first seen there, and one that has
+    /// moved past it is no longer being watched.
+    ///
+    /// <para><b>A source is here only with a terms basis re-read on the day.</b> Bybit's announcements were
+    /// measured with OKX's and are NOT here: Bybit EU's General Terms (12 June 2026, § 9.2.2) forbid bots,
+    /// scripts and other automatic means to access or monitor any part of its platform, so the row was dropped
+    /// rather than pointed at Bybit's non-EU host (<c>docs/RESEARCH-REQUIRED.md</c>, C5c).</para>
     /// </summary>
-    static readonly FrozenDictionary<string, (string Origin, TimeSpan Cadence)> LiveRules =
-        BuiltIn().ToFrozenDictionary(r => r.Id,
-            r => (UrlOrigin.Of(r.BaseUrl) ?? throw new InvalidOperationException($"built-in tape row '{r.Id}' has no origin"), r.Cadence),
+    public static List<TapeSourceEntry> Announcements() =>
+    [
+        new()
+        {
+            Id = OkxEeaAnnouncements,
+            DisplayName = "OKX announcements (EEA)",
+            BaseUrl = OkxEeaBaseUrl,
+            CadenceSeconds = 60,
+            PerSymbol = false,
+            Parser = AnnouncementParser,
+            Series =
+            [
+                new()
+                {
+                    Id = "announcements",
+                    UrlShape = "{base}/api/v5/support/announcements",
+                    ItemsPath = "data.details",
+                    IdField = "url",
+                    TimeField = "pTime"
+                }
+            ],
+            PublicationDelay = TimeSpan.FromSeconds(300),
+            Terms = OkxTerms,
+            TermsUrl = OkxTermsUrl,
+            DocUrl = "https://www" + ".okx" + ".com/docs-v5/en/#announcement-get-announcements",
+            Measured = "measured 2026-10-04 from the dev Mac with no API key (U-tape-events; docs/RESEARCH-REQUIRED.md, C5c): "
+                     + "GET /api/v5/support/announcements, pages 1 to 15, every answer HTTP 200 in 0.18-1.80 s and about 5 KB; "
+                     + "twenty items a page, newest pTime first, each {annType, title, url, pTime, businessPTime} in 175-343 "
+                     + "bytes, page 1 reaching back 32 days"
+        }
+    ];
+
+    /// <summary>
+    /// EVERY ROW THIS BUILD SHIPS, family by family — the market rows (<see cref="BuiltIn"/>) and the
+    /// announcement rows (<see cref="Announcements"/>) — a fresh copy on every call. The live rule, the ids a
+    /// file may not reuse and <see cref="Read"/> all take this list, so another family joins by being added
+    /// here and nowhere else.
+    /// </summary>
+    public static List<TapeSourceEntry> Shipped() => [.. BuiltIn(), .. Announcements()];
+
+    /// <summary>
+    /// What a built-in row lets the store call live: its ORIGIN, its CADENCE and its documented
+    /// PUBLICATION DELAY, read from this build's rows once and never from a file. Value types, so no caller
+    /// can edit the answer for the next one.
+    /// </summary>
+    static readonly FrozenDictionary<string, (string Origin, TimeSpan Cadence, TimeSpan Delay)> LiveRules =
+        Shipped().ToFrozenDictionary(r => r.Id,
+            r => (UrlOrigin.Of(r.BaseUrl) ?? throw new InvalidOperationException($"built-in tape row '{r.Id}' has no origin"),
+                  r.Cadence, r.PublicationDelay),
             StringComparer.Ordinal);
 
     /// <summary>
-    /// THE ORIGIN AND CADENCE THAT CAN MAKE A ROW OF <paramref name="sourceId"/> LIVE, or null because
-    /// it is not a built-in row and nothing it records can be. The store's evidence class reads this
-    /// and nothing else.
+    /// THE ORIGIN, CADENCE AND DOCUMENTED DELAY THAT CAN MAKE A ROW OF <paramref name="sourceId"/> LIVE, or
+    /// null because it is not a built-in row and nothing it records can be. The store's evidence class reads
+    /// this and nothing else.
     /// </summary>
-    public static (string Origin, TimeSpan Cadence)? BuiltInLiveRule(string? sourceId) =>
+    public static (string Origin, TimeSpan Cadence, TimeSpan Delay)? BuiltInLiveRule(string? sourceId) =>
         sourceId is not null && LiveRules.TryGetValue(sourceId, out var rule) ? rule : null;
 
     /// <summary>
-    /// The catalogue: the built-in rows and whatever valid rows the file adds, or the built-ins alone
+    /// The catalogue: every shipped row and whatever valid rows the file adds, or the shipped rows alone
     /// with the reason the file could not be read. See the type summary for why an unreadable file does
     /// not stop the built-ins.
     /// </summary>
     /// <param name="overridePath">The file to read instead of <see cref="OverridePath"/>. For tests.</param>
     public static TapeSourceCatalogRead Read(string? overridePath = null)
     {
-        var sources = BuiltIn();
+        var sources = Shipped();
 
         var file = VendorFile.Read<List<TapeSourceEntry?>>(overridePath ?? OverridePath);
         if (file.Unreadable is { } why)
@@ -385,8 +482,16 @@ public static class TapeSourceCatalog
             return $"'{id}' asks to be looked at every {row.CadenceSeconds} s; a row in tape-sources.json is looked "
                    + $"at no more often than every {MinCadence.TotalSeconds:0} s and no less often than once a day.";
 
+        // THE ANNOUNCEMENT PARSER IS BUILT-IN ONLY. It keeps an exchange's text as published, and this file
+        // is one an agent running on this computer can write: a row here that named it would let whatever
+        // address the row points at put text into the tape, beside the exchanges' own, for agents to read.
+        if (string.Equals(row.Parser, AnnouncementParser, StringComparison.Ordinal))
+            return $"'{id}' names the parser '{AnnouncementParser}', which only TradeAgent's built-in announcement rows use: "
+                   + "an announcement is an exchange's own text, and a row in tape-sources.json must not be able to put text "
+                   + $"into the tape from wherever it points. A row there may add market data read with '{JsonParser}'.";
+
         if (!string.IsNullOrEmpty(row.Parser) && row.Parser != JsonParser)
-            return $"'{id}' names the parser '{row.Parser}'; the one TradeAgent has is '{JsonParser}'.";
+            return $"'{id}' names the parser '{row.Parser}'; a row in tape-sources.json may name only '{JsonParser}'.";
 
         if (row.Series is not { Count: >= 1 } series || series.Count > MaxSeriesPerRow)
             return $"'{id}' must hold between 1 and {MaxSeriesPerRow} series.";
@@ -400,6 +505,9 @@ public static class TapeSourceCatalog
                 return $"'{id}' series '{s.Id}' must start its address with {{base}}, so the row's base is the only host it reaches.";
             if (row.PerSymbol != s.UrlShape.Contains("{symbol}", StringComparison.Ordinal))
                 return $"'{id}' series '{s.Id}': a per-symbol row names {{symbol}} in every series, and an all-symbol row names it in none.";
+            if (!string.IsNullOrEmpty(s.ItemsPath) || !string.IsNullOrEmpty(s.IdField))
+                return $"'{id}' series '{s.Id}' names an items path or an id field, which only the announcement parser reads, "
+                       + "and a row in tape-sources.json cannot name that parser.";
             if (!IsField(s.TimeField))
                 return $"'{id}' series '{s.Id}' must name the field that holds each item's time.";
             if (!string.IsNullOrEmpty(s.SymbolField) && !IsField(s.SymbolField))

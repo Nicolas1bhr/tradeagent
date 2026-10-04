@@ -25,19 +25,9 @@ public class TapeAnnouncementTests(ITestOutputHelper log)
 
     static string Ms(DateTimeOffset t) => t.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>OKX's announcements as a row, in the shape measured on 2026-10-04.</summary>
-    static TapeSourceEntry Okx() => new()
-    {
-        Id = "okx-eea-announcements",
-        BaseUrl = "http://127.0.0.1:9",
-        CadenceSeconds = 60,
-        PerSymbol = false,
-        Parser = TapeSourceCatalog.AnnouncementParser,
-        Series =
-        [
-            new() { Id = "announcements", UrlShape = "{base}/api/v5/support/announcements", ItemsPath = "data.details", IdField = "url", TimeField = "pTime" }
-        ]
-    };
+    /// <summary>The catalogue's own OKX row. Every collector here is pointed at the listener, never at its host.</summary>
+    static TapeSourceEntry Okx() =>
+        TapeSourceCatalog.Announcements().Single(r => r.Id == TapeSourceCatalog.OkxEeaAnnouncements);
 
     static string UrlOf(string slug) => $"https://example.invalid/en-eu/help/{slug}";
 

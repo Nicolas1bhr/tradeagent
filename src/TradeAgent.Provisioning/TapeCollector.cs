@@ -25,10 +25,12 @@ public sealed record TapeTick(bool Off, int Attempts, int Delivered, int Stored,
 /// <summary>
 /// THE TAPE'S COLLECTOR: while the app runs, the market's context — Binance USDⓈ-M premium index with
 /// the live funding rate, open interest, the 5-minute long/short and taker ratios, settled funding — for
-/// six symbols, into <c>state/tape.db</c> through <see cref="TapeStore"/> (<c>U-tape-store</c>).
+/// six symbols, into <c>state/tape.db</c> through <see cref="TapeStore"/> (<c>U-tape-store</c>), and OKX's
+/// announcements for EU users, its first page once a minute (<c>U-tape-events</c>). Every announcement URL
+/// it records is data: none is ever fetched.
 ///
 /// <para><b>It places no order, holds no credential and reaches nothing that could.</b> Every request
-/// is an unauthenticated GET of public market data; there is nothing to send a key with and no key to
+/// is an unauthenticated GET of a public endpoint; there is nothing to send a key with and no key to
 /// send. It writes only the tape. There is no verb and no pipe op that starts, stops, steers or writes
 /// it: the owner's one-press toggle on the Settings page — "Record market context" — is the only
 /// control, read at every look, and it is in-process.</para>
