@@ -3,8 +3,8 @@
 rule 7), and a pass may shorten the next pass's window only if it looked everywhere. Today a pass that could not list a folder still counts as complete, so
 the window moves past files it never saw, and a file an agent wrote there can be attested as the OWNER's by a later pass — the dangerous direction.
 **Seat P, FIRST in its slot 1 after `U-inbox-order`** (the orchestrator, 2026-10-04; that unit's builder found it, read-only, in its report).
-**Today (SOURCE at `4f670f7`, `U-inbox-order`'s code tip — re-check against `main` at dispatch; read by seat P, NOT runtime-verified):**
-`MaterialScanner.Walk` (`src/TradeAgent.Core/MaterialScanner.cs:405-413`) calls `Collect` with a local `unreadable` count and DISCARDS it; `Collect`
+**Today (SOURCE re-checked by seat P at dispatch on `main` `f7da3f4`, where `MaterialScanner.cs` equals `U-inbox-order`'s code tip `4f670f7`; NOT runtime-verified):**
+`MaterialScanner.Walk` (`src/TradeAgent.Core/MaterialScanner.cs:404-413`) calls `Collect` with a local `unreadable` count and DISCARDS it; `Collect`
 (`:415-445`) counts a directory whose listing threw `IOException` or `UnauthorizedAccessException` as both `skipped` and `unreadable`; `Scan` (`:141`) sets
 `truncated` only when the file budget runs out (`:182`), skips a file whose `FileInfo` throws (`:186-188`), runs `MarkMissing` when the group is
 `complete && !truncated` (`:238`) and advances the window — `material_scan_at` and `material_scan_mark` — whenever `!truncated` (`:241-253`).
