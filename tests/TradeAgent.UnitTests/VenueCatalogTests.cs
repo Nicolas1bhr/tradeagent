@@ -252,6 +252,11 @@ public class VenueCatalogTests
                 DROP TABLE org_position;
                 DROP TABLE org_unit;
                 DROP TABLE instrument_check;
+                ALTER TABLE dataset DROP COLUMN licence_class;
+                ALTER TABLE dataset DROP COLUMN terms_url;
+                ALTER TABLE dataset DROP COLUMN terms_version;
+                ALTER TABLE dataset DROP COLUMN terms_read_on;
+                DROP TABLE data_licence;
                 UPDATE meta SET value='16' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();

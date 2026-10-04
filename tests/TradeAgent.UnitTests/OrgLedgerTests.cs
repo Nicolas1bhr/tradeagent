@@ -266,6 +266,11 @@ public class OrgLedgerTests
                 DELETE FROM org_event WHERE position_id='research';
                 DELETE FROM org_position WHERE id='research';
                 DROP TABLE instrument_check;
+                ALTER TABLE dataset DROP COLUMN licence_class;
+                ALTER TABLE dataset DROP COLUMN terms_url;
+                ALTER TABLE dataset DROP COLUMN terms_version;
+                ALTER TABLE dataset DROP COLUMN terms_read_on;
+                DROP TABLE data_licence;
                 UPDATE meta SET value='{LedgerRung - 1}' WHERE key='schema_version';
                 """;
             c.ExecuteNonQuery();
@@ -586,6 +591,9 @@ public class OrgLedgerTests
         using var c = raw.CreateCommand();
         c.CommandText = (dropLedger ? "DROP TABLE org_event; DROP TABLE org_position; DROP TABLE org_unit; " : "")
                         + "DROP TABLE instrument_check; "
+                        + "ALTER TABLE dataset DROP COLUMN licence_class; ALTER TABLE dataset DROP COLUMN terms_url; "
+                        + "ALTER TABLE dataset DROP COLUMN terms_version; ALTER TABLE dataset DROP COLUMN terms_read_on; "
+                        + "DROP TABLE data_licence; "
                         + $"UPDATE meta SET value='{LedgerRung - 1}' WHERE key='schema_version';";
         c.ExecuteNonQuery();
     }
