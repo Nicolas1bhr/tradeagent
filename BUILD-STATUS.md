@@ -7710,3 +7710,42 @@ the merge: recorded when complete (`fleet/ci-ledger.md`, then the next record).
 **NOT done, NOT verified:** no box (CI only); an agent process orphaned by a crashed app is outside any register (a job object contains it on Windows,
 nothing does on macOS); a database deleted under a kept workspace attests old files as before; the Inbox page's new line not seen in the running app.
 Read-only finding, pre-existing, NOT fixed here → `U-inbox-unreadable` (briefed `54013b6`): `Scan` discards `Collect`'s unreadable-directory count.
+
+## 2026-10-04 — U-runner-refused-close landed: a close refused before the wire no longer freezes a paper run, a refused exit goes out again, and no stop or target rests under no position
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-runner-refused-close.md` (a pre-M0 unit decided by the orchestrator from
+U-timeframe-b's finding; briefed from a read-only survey on TB's tip; design accepted 2026-10-04; dispatched `7a7e5d8e`); built on `c15040a5`, rebased by
+the manager onto `5ed875ad`, `7068999f` (docs), src+tests patch-id identical. Merge `3958ab57` (ff-only), 7 commits (items 1, 2, 3, 3b, 4, a test fix, the report), 5 files, +656/−13. No schema change.
+MONEY PATH, the runner only: `TradingGateway.cs` unchanged; `refused` is terminal only over no request row or one still `CREATED` (never sent, outside the
+gateway's open set); an op `dispatched` or UNKNOWN stays in flight and is never re-sent (`CLAUDE.md` rule 3); each re-send is a new op with its own client id.
+
+- **Item 1 (`2f5af7e0`):** the books count an entry, exit or flatten in flight only while it is not refused before the wire. DEVIATION, stricter, accepted:
+  out of flight only when `refused` AND the row is absent or still `CREATED` (`RefusedBeforeTheWire`), so a refused op whose row moved on is read off its
+  row. Guard (f) re-captured on purpose: m12 `pending=True` → `pending=False`, the minute-12 entry now goes out (its transcript line ends in a deliberate trailing space).
+- **Item 2 (`19a36e82`):** a refused exit of a program on declared bars is sent again on the next live minute while the books read long, it is the run's latest
+  position-moving op, and its decision is inside both bounds (`DECISION_EXPIRED` still decides at the gateway). Test (d) uses the 14:00 hour (a deviation:
+  the evaluator's one-bar hold covers the 13:00 close).
+- **Item 3 (`83c9ac9a`):** every live minute whose books read flat cancels each stop or target of the run still working, read off its own ops.
+- **Item 3b (`d9aab640`), FOLDED IN on the orchestrator's condition:** the builder read that a paper short FREEZES the run — a sell into a flat book makes −1
+  (`PaperBook.cs:510`), the books stay flat, the next entry passes as a reduce, then every close is refused `POSITION_MOVED` (seen on the base by a scratch
+  probe, minutes 14–20, never committed) — so every exit (the program's or a re-send) now cancels the run's working stop and target first, as the max hold does.
+- **Judged by the orchestrator (2026-10-04):** 3b cancels the stop/target before the exit; if a gate then refuses the exit (quote age, rate limit,
+  `DECISION_EXPIRED`, `POSITION_MOVED`, `RISK_LIMIT_EXCEEDED`), the position is unprotected until the re-send, the next exit or the max hold (the kill
+  switch, mode and update window refuse the cancel too). ACCEPTED for paper and M0 (a bounded gap, no freeze); NOT for live: U-runner-exit-hygiene adds
+  protection put back at once (or exit-first with oversell impossible) and paper realism (a spot sell beyond holdings refused; reduce-only where shorting).
+- **Item 4 (`b8ab7b33`), test fix (`56b6ad89`):** `CONTRACTS.md` "The runner"; test (c) stores its minutes unannounced (a queued announcement could settle minute 5
+  before the pass), re-verified red on the base code.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `52ad65fb`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1360
+(7 m 39 s), Fault 415, 0 failed; `ForwardRunnerTests` (all partials) 22/22 three times. RED before (base): (a) "Assert.False() Failure Expected: False
+Actual: True" (m12); (b) "… did not contain any matching items" (no minute-13 entry); (c), (c2), (e) "Expected: 0 Actual: -1.000"; (d) "Expected
+["+179#0", "+180#0"] Actual ["+179#0"]". Mutants watched at `52ad65fb`: (i) refused-over-CREATED in flight again ⇒ (a), (b), (f) red; (ii) item 3
+removed ⇒ (c2) −1.000; (iii) re-send after any refused exit ⇒ (d) a third exit, refused `POSITION_MOVED`; (iv) 3b's cancel removed ⇒ (e) −1.000.
+Manager's gate at `78fd1ab`, carried to `3958ab57`, build tree identical, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1360/1360 (7 m 41 s, the slow Mac), Fault 415/415 (2 m 2 s), Integration 718/719, 1 skipped (11 m 57 s) → 0 failed.
+Names vs `main` (git objects): 2124 → 2130, 0 removed, 6 added. Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37169881900 at `52ad65fb` (on `c15040a5`; `main` has moved by docs only since): success on ubuntu-latest (13 min), macos-latest (16
+min), windows-latest (48 min), package. U-timeframe-b's landing push `4656b12`: run 37163377166 success; U-venue-verify `c18db14`: 37162165435 success.
+
+**NOT done, NOT verified:** protection put back after an exit refused once its cancel went through (stated NOT claimed in CONTRACTS); an END's refused
+flatten and the `TryCreate`→`DISPATCHING` crash window (`U-runner-exit-hygiene`, owed before any live use); the rest of Integration on CI and the gate
+only; no box run. M0's last precondition (the orchestrator): this unit.
