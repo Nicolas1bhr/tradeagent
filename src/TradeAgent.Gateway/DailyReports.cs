@@ -74,6 +74,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     readonly MissionEventStore _events = new(db);
     readonly PublicationStore _publications = new(db);
     readonly Promotions _promotions = new(db);
+    readonly DataLicences _licences = new(db);
     readonly CouncilBoundaries _boundaries = new(db);
     readonly AiAttemptStore _attempts = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.Now);
@@ -274,6 +275,21 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         if (newest is null)
             gaps.Add(new ReportGap("newest price", "TradeAgent has not seen a price on this run"));
 
+        // REFUSED FOR LIVE, AND NOT WITHDRAWN (`U-data-licence`): what stands promoted cannot be given
+        // capital on the evidence it stands on. The verdict stands; the bars under it came under terms that
+        // confer no live eligibility, and the blocker says which, in the gate's own sentence.
+        try
+        {
+            if (_promotions.Current() is { IsPromoted: true, LiveRefusal: { } refused, Promotion: { } promoted })
+                blockers.Add($"REFUSED FOR LIVE — version {Short(promoted.VersionId)}: {refused}");
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("live eligibility",
+                $"the promotion ledger could not be read ({ex.Message}), so whether the promoted version's "
+                + "evidence may carry capital is not in this report"));
+        }
+
         // HOW OLD THE BARS ARE, PER DATASET, AND WHETHER A PROMOTED STRATEGY COULD ACT ON THEM.
         //
         // `docs/COUNCIL.md`:14-15 puts freshness among the gates code enforces, and the gate itself
@@ -466,9 +482,15 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                    + (a.MaxNotional is { } n and > 0m ? $" and {Labels.Money(n, a.Currency)}" : "")
                    + $" {a.Currency}, from {a.EffectiveFrom:yyyy-MM-dd HH:mm:ssK}, policy {a.PolicyVersion}";
 
+        // REFUSED FOR LIVE IS NOT WITHDRAWN, and the line must not say it is (`U-data-licence`): the promotion
+        // stands and the evidence under it confers no live eligibility. The row is on the table, it opens
+        // nothing, and a close still passes — the gate's own sentence says which dataset under which terms.
         if (!standing.Authorises)
-            return line + " — WITHDRAWN: its promotion no longer stands, so it may trade nothing. "
-                        + standing.Promotion.Why;
+            return standing.RefusedForLive is { } refused
+                ? line + " — REFUSED FOR LIVE, so it may open nothing and closing and reducing still pass: "
+                       + refused
+                : line + " — WITHDRAWN: its promotion no longer stands, so it may trade nothing. "
+                       + standing.Promotion.Why;
 
         return standing.Promotion.Promotion is { Freshness: null }
             ? line + " — NO EXECUTION BOUNDS: its promotion declares no `timeframe`, no "
@@ -651,8 +673,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                     // THE SENTENCE TRAVELS WITH THE FIGURE. `trade report` serves this document to the
                     // AI as well as to the owner, and a bar count with no caveat beside it is a claim
                     // about evidence neither of them can check.
-                    + $" ({ForwardBars.Evidence}). No price: TradeAgent does not know what this "
-                    + "installation's bandwidth costs.";
+                    + $" ({ForwardBars.Evidence})"
+                    // AND THE TERMS IT IS READ UNDER (`U-data-licence`): the forward ledger's newest reading,
+                    // `unverified` while R19 § 6 Q2 is open, which confers no live eligibility.
+                    + (_licences.Newest(series.Source) is { } reading
+                        ? $"; licence {DataLicence.Words(reading.Licence)}"
+                          + (reading.Note is { Length: > 0 } note ? $" — {note}" : "")
+                        : "; no licence recorded")
+                    + ". No price: TradeAgent does not know what this installation's bandwidth costs.";
             }
         }
         catch (Exception ex)

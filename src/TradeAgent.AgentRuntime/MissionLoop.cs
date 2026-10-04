@@ -777,9 +777,10 @@ public sealed record MissionSituation
                // a promoted strategy's `data_freshness` has to be able to see that history collected
                // this morning may still be a year stale. And `docs/COUNCIL.md`:74-76 puts fixture
                // versus market data in the Situation, because a plan built on a fixture is a plan
-               // built on bars nobody traded.
+               // built on bars nobody traded. AND WHAT TERMS THEY CAME UNDER (`U-data-licence`): research on
+               // bars that confer no live eligibility can promote a version and can never give it capital.
                + $" Freshest bar {(BarAge.Of(set, now) is { } age ? BarAge.Words(age) + " old" : "none at all")}, "
-               + $"{BarAge.Class(set)}."
+               + $"{BarAge.Class(set)}, {BarAge.Licence(set)}."
                + " `trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
                + "evidence and establish no fill."
                // AND WHAT THEIR VOLUMES ARE, from the one place that sentence is written. The line is
@@ -830,7 +831,14 @@ public sealed record MissionSituation
             $"Promoted strategy: version {Short(standing!.Promotion!.VersionId)}, promoted by "
             + $"TradeAgent's referee on {standing.Promotion.At.UtcDateTime:yyyy-MM-dd} over months you "
             + "have never been shown. The figures behind it are your owner's and are not yours to see."
-            + (allocation is { } a
+            // WHY NO CAPITAL CAN STAND, BEFORE ANYTHING ABOUT CAPITAL (`U-data-licence`). A turn told only "no
+            // capital is allocated" would plan for an allocation the owner cannot make: the capital ledger
+            // refuses this version, in this sentence, because the bars it was judged on confer no live
+            // eligibility. The verdict stands and research goes on.
+            + (standing.LiveRefusal is { } refused
+                ? $" No capital can stand behind it: it is REFUSED FOR LIVE — {refused} Your owner cannot "
+                  + "allocate it capital either, and there is no command that changes this."
+                : allocation is { } a
                 ? $" Your owner has allocated it up to {AllocationRow.Num(a.MaxQuantity)} at a time"
                   + (a.MaxNotional is { } n and > 0m ? $", worth at most {Money(n, a.Currency)}" : "")
                   + ", and that ceiling is enforced when an order arrives."

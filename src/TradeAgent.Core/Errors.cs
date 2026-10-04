@@ -827,7 +827,9 @@ public static class Errors
         // the AI does changes the first: capital is allocated on the Safety page, by the owner, and no
         // command anywhere asks for it. The second is a ceiling doing its job and needs nothing done at
         // all, which the sentence says so that a working limit does not read as a fault.
-        [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocate capital to that version on the Safety page — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names.", false),
+        // A version refused for live is told apart in the hint, because "allocate capital" would send the
+        // owner to a card that refuses them: the evidence under it is research-only data (U-data-licence).
+        [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocate capital to that version on the Safety page — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names. If the message says REFUSED FOR LIVE, the evidence under that version is research-only data: no capital can stand on it, and backtests and paper go on.", false),
         [ErrorCode.ALLOCATION_EXCEEDED]            = ("This order would take a strategy past the capital you allocated to it, so it was not sent.", "Nothing was sent and your positions are untouched. There is nothing to do: the strategy may trade again once it is holding less, or you can raise its allocation on the Safety page.", false),
         // THE PAPER-ENVELOPE SENTENCE. Nothing is wrong and nothing needs pressing: the AI asked to
         // trade an account the owner set aside for TradeAgent's own experiments without saying which

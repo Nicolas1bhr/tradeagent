@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -353,6 +354,113 @@ public class DataLicenceTests
         Assert.False(DataLicence.Confers(DataLicence.ResearchOnly));
         Assert.True(DataLicence.Confers(DataLicence.FirstParty));
         Assert.True(DataLicence.Confers(DataLicence.CommercialOk));
+    }
+
+    // ---- item 4: the words --------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE REPORT AND THE SITUATION SAY EACH DATASET'S CLASS AND TERMS, and the report says the forward
+    /// ledger's reading.
+    ///
+    /// <para>One definition (<c>BarAge.Licence</c>) read by both surfaces, as the age is: the class, the terms'
+    /// address, version and read date — or "no licence recorded" — and, where the class does not confer, that
+    /// the bars serve backtests and paper and no live capital. The forward ledger's line carries its reading,
+    /// <c>unverified</c> with the reason, on the orchestrator's order.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_report_and_the_situation_say_each_datasets_class_and_terms()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var archive = new DataLicences(db).Newest(BinanceArchive.Source)!.Licence;
+
+        var research = Promote(db, BinanceArchive.Source, archive).Set;
+        var unrecorded = Promote(db, "a-source-nothing-has-read", DatasetLicence.Unrecorded, threshold: 107).Set;
+        var conferring = Promote(db, TestEnv.FirstPartySource, TestEnv.FirstParty, threshold: 111).Set;
+
+        var archiveWords = $"licence {DataLicence.ResearchOnly} (terms {DataLicence.ArchiveTermsUrl}, "
+                           + $"{DataLicence.ArchiveTermsVersion}, read {DataLicence.ArchiveTermsReadOn}) — backtests "
+                           + "and paper only, no live capital";
+
+        var ages = gw.Reports.Compose(At.AddDays(1)).Readiness.DataAges;
+        Assert.Contains(ages, l => l.StartsWith($"{BinanceArchive.Source} ", StringComparison.Ordinal)
+                                   && l.Contains(archiveWords, StringComparison.Ordinal));
+        Assert.Contains(ages, l => l.StartsWith("a-source-nothing-has-read ", StringComparison.Ordinal)
+                                   && l.Contains("licence no licence recorded — backtests and paper only, no live capital",
+                                       StringComparison.Ordinal));
+        Assert.Contains(ages, l => l.StartsWith($"{TestEnv.FirstPartySource} ", StringComparison.Ordinal)
+                                   && l.Contains($"licence {DataLicence.FirstParty} (terms", StringComparison.Ordinal)
+                                   && !l.Contains("no live capital", StringComparison.Ordinal));
+
+        Assert.Contains(archiveWords, MissionSituation.DataLine(research, At.AddDays(1)), StringComparison.Ordinal);
+        Assert.Contains("licence no licence recorded", MissionSituation.DataLine(unrecorded, At.AddDays(1)),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("no live capital", MissionSituation.DataLine(conferring, At.AddDays(1)),
+            StringComparison.Ordinal);
+
+        // THE FORWARD LEDGER'S READING, on its own line in section 7.
+        new ForwardBarStore(db).Append(new ForwardFetchAttempt
+        {
+            Source = ForwardBars.Source,
+            Symbol = gw.Settings.MarketDataPair,
+            Url = $"http://127.0.0.1:0/api/v3/klines?symbol={gw.Settings.MarketDataPair}&interval=1m",
+            RequestedAt = At.AddMinutes(3).AddSeconds(-1),
+            ReceivedAt = At.AddMinutes(3),
+            HttpStatus = 200,
+            BodySha256 = new string('c', 64)
+        }, [new ForwardBars.Kline(At, 100m, 101m, 99m, 100m, 1.5m, At.AddMinutes(1).AddMilliseconds(-1))]);
+
+        var forward = gw.Reports.Compose(At.AddMinutes(5)).OtherCosts.ForwardData;
+        Assert.NotNull(forward);
+        Assert.Contains($"licence {DataLicence.Unverified} (terms {DataLicence.ForwardTermsUrl}, "
+                        + $"{DataLicence.ForwardTermsVersion}, read {DataLicence.ForwardTermsReadOn}) — "
+                        + DataLicence.ForwardNote, forward, StringComparison.Ordinal);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// EVERY CAPITAL SURFACE SAYS REFUSED FOR LIVE, WITH THE SENTENCE, AND NOT WITHDRAWN.
+    ///
+    /// <para>An allocation written on first-party evidence, its row then narrowed to research-only by raw SQL:
+    /// the promotion still stands, so "withdrawn" would be false and would send the owner looking for a
+    /// re-collected dataset that does not exist. The report's allocation line and its readiness blockers say
+    /// REFUSED FOR LIVE with the gate's sentence; the Situation's promoted line says why no capital can stand
+    /// — never "no capital is allocated", which would have a turn plan for an allocation the owner cannot
+    /// make.</para>
+    /// </summary>
+    [Fact]
+    public async Task Every_capital_surface_says_refused_for_live_with_the_sentence_and_not_withdrawn()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var j = Promote(db, TestEnv.FirstPartySource, TestEnv.FirstParty);
+        var allocated = gw.Allocate(j.VersionId, 3m, null, "allocated by the account owner");
+        Assert.True(allocated.Ok, allocated.Why);
+
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("UPDATE dataset SET licence_class=$class WHERE id=$id",
+                ("$class", DataLicence.ResearchOnly), ("$id", j.Set.Id));
+            return c.ExecuteNonQuery();
+        });
+
+        var report = gw.Reports.Compose(DateTimeOffset.Now);
+        var line = Assert.Single(report.Performance.Allocations);
+        Assert.Contains("REFUSED FOR LIVE", line, StringComparison.Ordinal);
+        Assert.Contains($"dataset {j.Set.Id} ({TestEnv.FirstPartySource} {Pair} 1m v1)", line, StringComparison.Ordinal);
+        Assert.Contains("backtests and paper go on", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("WITHDRAWN", line, StringComparison.Ordinal);
+
+        Assert.Contains(report.Readiness.ActivationBlockers,
+            b => b.StartsWith($"REFUSED FOR LIVE — version {j.VersionId[..12]}: the evidence it stands on is dataset {j.Set.Id}",
+                StringComparison.Ordinal));
+
+        var promoted = MissionSituation.PromotedLine(gw.Promotions.Standing(j.VersionId), null);
+        Assert.StartsWith($"Promoted strategy: version {j.VersionId[..12]}", promoted, StringComparison.Ordinal);
+        Assert.Contains("No capital can stand behind it: it is REFUSED FOR LIVE", promoted, StringComparison.Ordinal);
+        Assert.Contains($"dataset {j.Set.Id}", promoted, StringComparison.Ordinal);
+        Assert.DoesNotContain("No capital is allocated to it", promoted, StringComparison.Ordinal);
+        await gw.DisposeAsync();
     }
 
     // ---- fixtures -----------------------------------------------------------------------------------
