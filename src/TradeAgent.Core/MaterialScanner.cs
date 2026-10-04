@@ -26,12 +26,15 @@ namespace TradeAgent.Core;
 /// </param>
 /// <param name="now">The wall clock the rows and <c>material_scan_at</c> are stamped with, for people
 /// to read. The machine's in the product; a test passes one it can step. No claim is decided by it.</param>
+/// <param name="reads">The reads this pass makes of the disk (<see cref="WorkspaceReads"/>). The
+/// machine's own in the product; a test passes one that refuses a folder or a file.</param>
 public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     Func<PresenceMark, bool>? noAgentSince = null, AppFileManifest? appFiles = null,
-    Func<DateTimeOffset>? now = null)
+    Func<DateTimeOffset>? now = null, WorkspaceReads? reads = null)
 {
     readonly string _root = workspaceRoot ?? Paths.Workspace;
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
+    readonly WorkspaceReads _reads = reads ?? WorkspaceReads.Disk;
     readonly MaterialStore _store = new(db);
     readonly Func<PresenceMark, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
 
@@ -145,6 +148,13 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         var addedBy = new Dictionary<MaterialOrigin, int>();
         var truncated = false;
 
+        // EVERY FOLDER THIS PASS COULD NOT READ IN FULL, relative to the workspace: a tracked folder the
+        // disk would not say is there, a folder it would not list, or the folder of a listed file it would
+        // not describe (WorkspaceReads). Any at all and this pass did not look everywhere — see the window
+        // below. Folders skipped ON PURPOSE are not here: they are `skipped`, skipped on every pass alike,
+        // and nothing in them is ever recorded under any word.
+        var unreadable = new HashSet<string>(StringComparer.Ordinal);
+
         // THIS PASS'S PLACE IN THE REGISTER'S ORDER, taken before it looks at anything — so an agent
         // that opens or closes a window while this walk runs is after it, inside the window the NEXT
         // pass measures, whatever the clock says. A question with no register behind it orders
@@ -172,20 +182,34 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             var complete = true;
             var isInbox = origins[0] == MaterialOrigin.Inbox;
 
+            // EVERY PLACE IN THIS GROUP COULD BE READ. A folder the disk would not list holds files this
+            // pass never saw, and "I could not look" is not "it is gone" — the reason a pass that ran out
+            // of budget marks nothing missing, reached from the other side.
+            var read = true;
+
             foreach (var (home, dir) in paths)
             {
                 var full = Path.Combine(_root, home, dir);
-                if (!Directory.Exists(full)) continue;
+                switch (LookAtFolder(full))
+                {
+                    case Look.NotThere: continue;
+                    case Look.CouldNotRead: read = false; unreadable.Add(Relative(full)); continue;
+                }
 
-                foreach (var file in Walk(full, 0, ref skipped, ct))
+                var (files, refused) = Walk(full, ref skipped, ct);
+                foreach (var folder in refused) { read = false; unreadable.Add(Relative(folder)); }
+
+                foreach (var file in files)
                 {
                     if (seen >= FileLimit) { complete = false; truncated = true; break; }
                     ct.ThrowIfCancellationRequested();
 
-                    FileInfo info;
-                    try { info = new FileInfo(file); if (!info.Exists) continue; }
-                    catch (IOException) { skipped++; continue; }
-                    catch (UnauthorizedAccessException) { skipped++; continue; }
+                    // A FILE THE LISTING NAMED AND THE DISK WILL NOT DESCRIBE is a place this pass could
+                    // not read, not a file that has gone: its row is not in `present`, so counting it gone
+                    // would stamp it removed. One that really has gone since the listing is skipped.
+                    var (look, size, modifiedUtc) = LookAtFile(file);
+                    if (look == Look.NotThere) continue;
+                    if (look == Look.CouldNotRead) { read = false; unreadable.Add(Relative(Path.GetDirectoryName(file)!)); continue; }
 
                     var rel = Relative(file);
                     // ONE QUESTION PER GROUP, ASKED PER SIGHTING and only for a row that is about to
@@ -209,9 +233,9 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // The store asks only for a row it is about to write, so this is set exactly
                     // when `isNew` is, and nothing about the row changes by being counted.
                     MaterialOrigin? written = null;
-                    var (isNew, id) = _store.Observe(rel, () => (written = origin()).Value, info.Length,
-                        new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero),
-                        RunnableExts.Contains(info.Extension), now);
+                    var (isNew, id) = _store.Observe(rel, () => (written = origin()).Value, size,
+                        new DateTimeOffset(modifiedUtc, TimeSpan.Zero),
+                        RunnableExts.Contains(new FileInfo(file).Extension), now);
 
                     present.Add(id);
                     seen++;
@@ -235,17 +259,30 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             // comes back empty after an earlier one ran out of budget — and removing it on its own
             // breaks nothing today. It stays because the cost is one boolean and the failure it
             // would cover is a silent false deletion. Do not read it as covered.
-            if (complete && !truncated) removed += _store.MarkMissing(origins, present, now);
+            //
+            // `read` is the same rule for a group with a place in it the disk would not read: the files
+            // there were not seen, so none of them is gone (U-inbox-unreadable). Per GROUP, so the other
+            // group — read in full — is still swept as it always was.
+            if (complete && !truncated && read) removed += _store.MarkMissing(origins, present, now);
         }
 
-        // THE WINDOW ADVANCES ONLY ON A PASS THAT WALKED THE WHOLE TREE AND GOT HERE. It carries
-        // the pass's START, so a file created while this walk was running is inside the window the
-        // NEXT pass measures it over. A pass that ran out of budget, or threw before this line,
-        // leaves the older and wider window in place: it did not look everywhere, so it cannot
-        // shorten the period the next pass has to account for. Fail-closed, in the direction that
-        // costs a weaker word on a row rather than a claim nobody can support. The mark and the
-        // wall time go in together, and a pass asked of no register leaves the mark where it was.
-        if (!truncated)
+        // THE WINDOW ADVANCES ONLY ON A PASS THAT WALKED THE WHOLE TREE, READ EVERY PLACE IN IT AND
+        // GOT HERE. It carries the pass's START, so a file created while this walk was running is inside
+        // the window the NEXT pass measures it over. A pass that ran out of budget, could not read a
+        // place it walked, or threw before this line, leaves the older and wider window in place: it did
+        // not look everywhere, so it cannot shorten the period the next pass has to account for.
+        //
+        // The unread place is the case that made this rule bite (U-inbox-unreadable): an agent alive in
+        // the window writes into a folder of the drop folder, this pass cannot list that folder, and a
+        // later pass that can — with no agent since this one — would attest the agent's file as the
+        // owner's over a window this pass had shortened past it. A folder that stays unreadable holds
+        // the window for as long as it does, and every file that arrives meanwhile gets the word that
+        // wider window allows; the result names the folders (ScanResult.UnreadableFolders).
+        //
+        // Fail-closed, in the direction that costs a weaker word on a row rather than a claim nobody can
+        // support. The mark and the wall time go in together, and a pass asked of no register leaves the
+        // mark where it was.
+        if (!truncated && unreadable.Count == 0)
             db.Write(_ =>
             {
                 db.SetKv(LastScanKey, Sql.T(now));
@@ -254,8 +291,27 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             });
 
         var hashed = HashPending(ct);
-        return new ScanResult(seen, added, hashed, removed, skipped, truncated) { AddedBy = addedBy };
+        return new ScanResult(seen, added, hashed, removed, skipped, truncated)
+        {
+            AddedBy = addedBy,
+            Unreadable = unreadable.Count,
+            // The owner's drop folder first, because that is the place they look after; then the homes.
+            UnreadableFolders =
+            [
+                .. unreadable
+                    .OrderBy(f => IsInInbox(f) ? 0 : 1)
+                    .ThenBy(f => f, StringComparer.Ordinal)
+                    .Take(UnreadableNamed)
+            ]
+        };
     }
+
+    /// <summary>How many of the folders a pass could not read its result names; the count is all of them.</summary>
+    public const int UnreadableNamed = 20;
+
+    /// <summary>Whether a path relative to the workspace is the owner's drop folder or inside it.</summary>
+    public static bool IsInInbox(string relative) =>
+        relative == InboxDir || relative.StartsWith(InboxDir + "/", StringComparison.Ordinal);
 
     /// <summary>
     /// WHERE THE WINDOW THIS PASS ATTESTS OVER OPENED, in the order of the register it asks — or a
@@ -364,12 +420,14 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// — for good, because a row is written once. The ledger has no clock in it: a file is recorded or
     /// it is not.</para>
     ///
-    /// <para><b>The same walk and the same identity as <see cref="Scan"/></b>: the same skipped
-    /// directories, depth and budget, the same relative spelling, and the tuple
-    /// <see cref="MaterialStore.Observe"/> matches. A file the scanner never records — inside a
-    /// package cache — is not news, or every turn would pay for a walk that cannot record it. A file
-    /// past the budget, a folder that cannot be read and a file that cannot be stat'ed are all
-    /// answered yes: a spurious pass costs a walk, and a missed one costs the owner the word.</para>
+    /// <para><b>The same walk, the same reads and the same identity as <see cref="Scan"/></b>: the same
+    /// skipped directories, depth and budget, the same three reads of the disk and the same rule for
+    /// what counts as unread (<see cref="LookAtFolder"/>, <see cref="Walk"/>, <see cref="LookAtFile"/>),
+    /// the same relative spelling, and the tuple <see cref="MaterialStore.Observe"/> matches. A file the
+    /// scanner never records — inside a package cache — is not news, or every turn would pay for a walk
+    /// that cannot record it. A file past the budget, a folder the disk would not list or say is there,
+    /// and a file it would not describe are all answered yes — exactly the places that make a pass
+    /// incomplete: a spurious pass costs a walk, and a missed one costs the owner the word.</para>
     ///
     /// <para>It writes nothing and asks the presence register nothing. Whether a sighting is the
     /// owner's is still decided by the pass, at the sighting, exactly as before; this only decides
@@ -378,45 +436,95 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     public bool InboxHoldsUnrecorded(CancellationToken ct = default)
     {
         var inbox = Path.Combine(_root, InboxDir);
-        if (!Directory.Exists(inbox)) return false;
+        switch (LookAtFolder(inbox))
+        {
+            case Look.NotThere: return false;
+            case Look.CouldNotRead: return true;
+        }
 
-        int skipped = 0, unreadable = 0;
-        var files = new List<string>();
-        Collect(inbox, 0, files, ref skipped, ref unreadable, ct);
-        if (unreadable > 0 || files.Count >= FileLimit) return true;
+        var skipped = 0;
+        var (files, refused) = Walk(inbox, ref skipped, ct);
+        if (refused.Count > 0 || files.Count >= FileLimit) return true;
 
         var recorded = _store.Live([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested]);
         foreach (var file in files)
         {
             ct.ThrowIfCancellationRequested();
 
-            FileInfo info;
-            try { info = new FileInfo(file); if (!info.Exists) continue; }
-            catch (IOException) { return true; }
-            catch (UnauthorizedAccessException) { return true; }
+            var (look, size, modifiedUtc) = LookAtFile(file);
+            if (look == Look.NotThere) continue;
+            if (look == Look.CouldNotRead) return true;
 
-            var tuple = (Relative(file), info.Length, Sql.T(new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero)));
+            var tuple = (Relative(file), size, Sql.T(new DateTimeOffset(modifiedUtc, TimeSpan.Zero)));
             if (!recorded.Contains(tuple)) return true;
         }
         return false;
     }
 
-    IEnumerable<string> Walk(string dir, int depth, ref int skipped, CancellationToken ct)
+    /// <summary>What one read of the disk found at a path.</summary>
+    enum Look
+    {
+        /// <summary>It is there, and the disk described it.</summary>
+        There,
+        /// <summary>The disk said nothing is there — an answer, and the only one that means absent.</summary>
+        NotThere,
+        /// <summary>The disk would not say: a refusal, a failing device, a share that went away.</summary>
+        CouldNotRead
+    }
+
+    /// <summary>
+    /// IS THIS TRACKED FOLDER THERE? Asked before a walk, and asked of the disk in a way that can refuse:
+    /// <see cref="Directory.Exists"/> answers false for a folder whose parent the disk will not search,
+    /// and a pass that took that for "there is no inbox" would stamp every file in it removed.
+    /// </summary>
+    Look LookAtFolder(string dir)
+    {
+        try { return _reads.FolderIsThere(dir) ? Look.There : Look.NotThere; }
+        catch (IOException) { return Look.CouldNotRead; }
+        catch (UnauthorizedAccessException) { return Look.CouldNotRead; }
+    }
+
+    /// <summary>
+    /// ONE LISTED FILE'S SIZE AND WRITE TIME, or why there are none: it has gone since the listing, or
+    /// the disk would not describe it — which <see cref="FileSystemInfo.Exists"/> cannot tell apart, so
+    /// it is not asked.
+    /// </summary>
+    (Look Look, long Size, DateTime ModifiedUtc) LookAtFile(string file)
+    {
+        try
+        {
+            return _reads.Stat(file) is { } stat
+                ? (Look.There, stat.Size, stat.WrittenUtc)
+                : (Look.NotThere, 0, default);
+        }
+        catch (IOException) { return (Look.CouldNotRead, 0, default); }
+        catch (UnauthorizedAccessException) { return (Look.CouldNotRead, 0, default); }
+    }
+
+    /// <summary>
+    /// THE WALK OF ONE TRACKED FOLDER: every file in it this pass would record, and every folder in it
+    /// the disk would not list — "what it could not read", returned beside what it could, because a
+    /// walk that dropped the second half let a pass that never saw a folder count itself complete.
+    /// </summary>
+    (List<string> Files, List<string> Unreadable) Walk(string dir, ref int skipped, CancellationToken ct)
     {
         // Recursion is written out rather than using EnumerateFiles(SearchOption.AllDirectories)
         // because that overload cannot skip a subtree — it would walk every node_modules it found
         // and only then let us discard the results.
         var files = new List<string>();
-        var unreadable = 0;
-        Collect(dir, depth, files, ref skipped, ref unreadable, ct);
-        return files;
+        var unreadable = new List<string>();
+        Collect(dir, 0, files, ref skipped, unreadable, ct);
+        return (files, unreadable);
     }
 
+    /// <param name="skipped">Folders left out ON PURPOSE — noise, dot-folders, past the depth limit —
+    /// on every pass alike, so nothing in them is ever recorded and they hold nothing open.</param>
     /// <param name="unreadable">
-    /// Directories that could not be listed, counted apart from the ones skipped on purpose:
-    /// <see cref="InboxHoldsUnrecorded"/> answers yes for the first and no for the second.
+    /// Folders the disk would not list, kept apart from the ones skipped on purpose: they hold files a
+    /// pass did not see, so <see cref="Scan"/> is incomplete and <see cref="InboxHoldsUnrecorded"/>
+    /// answers yes for them, and for the skipped ones neither.
     /// </param>
-    void Collect(string dir, int depth, List<string> into, ref int skipped, ref int unreadable, CancellationToken ct)
+    void Collect(string dir, int depth, List<string> into, ref int skipped, List<string> unreadable, CancellationToken ct)
     {
         if (depth > DepthLimit) { skipped++; return; }
         ct.ThrowIfCancellationRequested();
@@ -424,11 +532,10 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         string[] entries, subs;
         try
         {
-            entries = Directory.GetFiles(dir);
-            subs = Directory.GetDirectories(dir);
+            (entries, subs) = _reads.List(dir);
         }
-        catch (IOException) { skipped++; unreadable++; return; }
-        catch (UnauthorizedAccessException) { skipped++; unreadable++; return; }
+        catch (IOException) { unreadable.Add(dir); return; }
+        catch (UnauthorizedAccessException) { unreadable.Add(dir); return; }
 
         into.AddRange(entries);
         // Stop collecting, not just stop consuming. Enumerating a hundred thousand paths into a list
@@ -439,11 +546,67 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         {
             var name = Path.GetFileName(sub);
             if (NoiseDirs.Contains(name) || name.StartsWith('.')) { skipped++; continue; }
-            Collect(sub, depth + 1, into, ref skipped, ref unreadable, ct);
+            Collect(sub, depth + 1, into, ref skipped, unreadable, ct);
             if (into.Count >= FileLimit) return;
         }
     }
 
     string Relative(string full) =>
         Path.GetRelativePath(_root, full).Replace(Path.DirectorySeparatorChar, '/');
+}
+
+/// <summary>
+/// THE THREE READS A MATERIAL PASS MAKES OF THE DISK, and the only three: whether a tracked folder is
+/// there, what one folder lists, and one listed file's size and write time.
+///
+/// <para><b>"Not there" is an answer; a refusal is not.</b> Each read says absent — false, null — only
+/// when the disk said the path is not there, and THROWS for anything else: a permission refused, a
+/// device that failed, a share or a link target that went away. The pass counts a throw as a place it
+/// could not read (U-inbox-unreadable). The machine's convenient reads do not keep the two apart:
+/// <see cref="Directory.Exists"/> and <see cref="FileSystemInfo.Exists"/> answer false for a path the
+/// disk refused to describe — measured on macOS, .NET 10.0.400: in a folder that can be listed but not
+/// searched, <c>Directory.GetFiles</c> names the file, <c>FileInfo.Exists</c> answers false and
+/// <c>FileInfo.Length</c> throws <see cref="UnauthorizedAccessException"/> — so a file the pass found
+/// and could not inspect read as a file that had gone.</para>
+///
+/// <para>The machine's own in the product (<see cref="Disk"/>). A test passes one that refuses a folder
+/// or a file, because a permission bit is not a refusal every platform honours the same way. It is a
+/// constructor argument of the app's own code: nothing the agent can write, and nothing on the pipe or
+/// in <c>state/</c>, chooses it.</para>
+/// </summary>
+/// <param name="FolderIsThere">Whether this path is a folder: false only when the disk says nothing is
+/// there (or something that is not a folder); throws when it will not say.</param>
+/// <param name="List">The files and the folders directly inside one folder, as full paths. It has no
+/// "absent" answer: a folder that cannot be listed — refused, gone since its parent named it, or a link
+/// whose target cannot be reached — is a place the pass did not see, and the files under a share that
+/// went away are not gone.</param>
+/// <param name="Stat">One listed file's size and last write time (UTC), or null when the disk says the
+/// file is no longer there; throws when it will not say.</param>
+public sealed record WorkspaceReads(
+    Func<string, bool> FolderIsThere,
+    Func<string, (string[] Files, string[] Folders)> List,
+    Func<string, (long Size, DateTime WrittenUtc)?> Stat)
+{
+    /// <summary>The machine's own disk.</summary>
+    public static WorkspaceReads Disk { get; } = new(
+        FolderOnDisk,
+        dir => (Directory.GetFiles(dir), Directory.GetDirectories(dir)),
+        FileOnDisk);
+
+    static bool FolderOnDisk(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.Directory) != 0; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
+    static (long Size, DateTime WrittenUtc)? FileOnDisk(string path)
+    {
+        // Both from ONE look at the disk: the first property read fills the FileInfo's cache and the
+        // second is served from it, so the size and the time describe the same moment of the file.
+        var info = new FileInfo(path);
+        try { return (info.Length, info.LastWriteTimeUtc); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
 }
