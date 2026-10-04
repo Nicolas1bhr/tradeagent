@@ -325,7 +325,7 @@ public sealed class ForwardRuns
             // which is the evaluator's.
             if (live && resampler is not null && decided.Count == 0 && account.Position == PositionSide.Long
                 && ExitToSendAgain(deployment) is { } again
-                && await SendExitAgainAsync(deployment, bar, again, account, seq++, ct))
+                && await SendExitAgainAsync(deployment, bar, again, account, () => seq++, ct))
             {
                 planned = true;
                 account = RunBooks.Flat(account);
@@ -373,7 +373,7 @@ public sealed class ForwardRuns
                         + "the referee refuses such a program a promotion and this run is over", ct,
                         state, replayed, skipped, last, account);
 
-                if (live && await DispatchAsync(deployment, bar, signalled, decision, reading, seq++, ct))
+                if (live && await DispatchAsync(deployment, bar, signalled, decision, reading, () => seq++, ct))
                     planned = true;
             }
 
@@ -401,9 +401,19 @@ public sealed class ForwardRuns
     /// <c>OrderIntent.Close</c>, so the gateway sizes it against the position it reads at dispatch and
     /// refuses it if that has moved. An entry is an opening order and is sized by the program's own
     /// declared sizing, rounded DOWN to the venue's increment.</para>
+    ///
+    /// <para><b>And an exit takes the run's resting stop and target off the book before it goes</b>
+    /// (<see cref="CancelProtectionAsync"/>), as the maximum hold does before its close. A market exit fills at
+    /// the next open, and a protective order still resting there fills too — or on the minute in progress
+    /// before it — and the exit then sells into a flat account: a paper short the run's books cannot spell,
+    /// after which the venue never again matches the books and every close the run sends is refused
+    /// <c>POSITION_MOVED</c>. Only once the exit is sized, so an exit that rounds to nothing leaves the
+    /// protection standing; a gate that then refuses the exit itself leaves the position without it until the
+    /// exit goes out — sent again on declared bars, decided again by a one-minute program — or the maximum hold
+    /// closes it. The update window, the kill switch and the mode refuse the cancel too, and keep it.</para>
     /// </summary>
     async Task<bool> DispatchAsync(StrategyDeploymentRow deployment, KlineBar bar,
-        StrategyIntent signal, IntentDecision decision, AccountReading account, int seq,
+        StrategyIntent signal, IntentDecision decision, AccountReading account, Func<int> seq,
         CancellationToken ct)
     {
         var enter = signal.Kind == IntentKind.Enter;
@@ -411,6 +421,8 @@ public sealed class ForwardRuns
 
         if (Sized(deployment, bar, asked, enter ? "the declared size" : "the exit's close") is not { } quantity)
             return false;
+
+        var cancelled = !enter && await CancelProtectionAsync(deployment, bar, seq, ct);
 
         var intent = new PlaceIntent(deployment.Symbol,
             enter ? OrderSide.Buy : OrderSide.Sell, OrderType.Market, quantity,
@@ -421,9 +433,10 @@ public sealed class ForwardRuns
             StrategyVersionId = deployment.VersionId
         };
 
-        return await _gateway.RunDeploymentIntentAsync(deployment,
-            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
+        var sent = await _gateway.RunDeploymentIntentAsync(deployment,
+            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq()),
             enter ? DeploymentOpKind.Entry : DeploymentOpKind.Exit, bar.OpenTime, intent, ct);
+        return sent || cancelled;
     }
 
     /// <summary>
@@ -465,17 +478,20 @@ public sealed class ForwardRuns
     /// <summary>
     /// A REFUSED EXIT, SENT AGAIN: the same intent and the same decision, sized from what the books hold now and
     /// written under this minute's own request id — so its own <c>TA-</c> client order id, and a replay of this
-    /// minute collapses onto it rather than sending a second order.
+    /// minute collapses onto it rather than sending a second order. It is an exit like any other and takes the
+    /// run's resting stop and target off the book first (see <see cref="DispatchAsync"/>).
     /// </summary>
     async Task<bool> SendExitAgainAsync(StrategyDeploymentRow deployment, KlineBar bar, PlaceIntent refused,
-        AccountReading account, int seq, CancellationToken ct)
+        AccountReading account, Func<int> seq, CancellationToken ct)
     {
         if (Sized(deployment, bar, account.Quantity, "the refused exit's close, sent again") is not { } quantity)
             return false;
 
-        return await _gateway.RunDeploymentIntentAsync(deployment,
-            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq),
+        var cancelled = await CancelProtectionAsync(deployment, bar, seq, ct);
+        var sent = await _gateway.RunDeploymentIntentAsync(deployment,
+            Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq()),
             DeploymentOpKind.Exit, bar.OpenTime, refused with { Quantity = quantity }, ct);
+        return sent || cancelled;
     }
 
     /// <summary>Which run, and which of its own statements. It goes onto the broker order's comment.</summary>

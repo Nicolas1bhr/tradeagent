@@ -175,9 +175,10 @@ public partial class ForwardRunnerTests
     /// and the pair forgotten, and the target rested under no position until a rise through it opened a short
     /// the run's books cannot spell.</para>
     ///
-    /// <para><b>RED on the base</b>: the account ends short one. Every live minute whose books read flat cancels
-    /// any stop or target of the run still working (item 3), and minute 6 is the first after the stop's fill;
-    /// <b>mutant (ii)</b> — item 3 removed — goes red here and in (c2).</para>
+    /// <para><b>RED on the base</b>: the account ends short one. A guard of two items, each enough alone: the exit
+    /// takes the resting pair off first (item 3b; the stop's cancel finds it filled, the target's succeeds), and
+    /// minute 6, the first live minute whose books read flat, cancels any stop or target of the run still working
+    /// (item 3). With either removed it stays green; (c2) and (e) each isolate one of them.</para>
     /// </summary>
     [Fact]
     public async Task A_stop_fill_seen_after_its_minute_settled_still_cancels_the_target_and_no_paper_short_opens()
@@ -350,5 +351,62 @@ public partial class ForwardRunnerTests
         Assert.Equal(rig.Origin.AddHours(3), decided.BarClose);
 
         Assert.Equal(0m, await Position(rig));
+    }
+
+    // ---------------------------------------------------------------- (e) the rule exit and the resting pair
+
+    /// <summary>
+    /// (e) A RULE EXIT TAKES THE RUN'S RESTING STOP AND TARGET OFF THE BOOK BEFORE IT GOES OUT, AS THE MAXIMUM
+    /// HOLD DOES — AND NO PAPER SHORT OPENS.
+    ///
+    /// <para>The stop is wide (15 %), so minute 4 can close at 89 — the program's exit — without touching it. The
+    /// exit is a market order that fills at minute 6's open. Minute 5, in progress meanwhile, falls through the
+    /// stop: a stop still resting fills there, and the exit then fills into a flat account and opens a short the
+    /// run's books cannot spell — which freezes the run, every later close being refused <c>POSITION_MOVED</c>
+    /// against a venue that no longer matches its books.</para>
+    ///
+    /// <para><b>RED on the base</b>: the account ends short one. <b>Mutant (iv)</b> — the rule exit's cancel
+    /// removed — goes red here.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_rule_exit_cancels_the_resting_stop_and_target_first_and_no_paper_short_opens()
+    {
+        await using var rig = await ReadyAsync(
+            ProgramText("stop percent 15\ntarget percent 1\n", "entry when close > 99"));
+
+        await MinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 85, target 101
+        await MinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress
+        await MinuteAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);     // the entry fills at this open; protection goes on
+
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
+        var target = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Target);
+        Assert.Equal(85m, (await OrderOf(rig, stop)).StopPrice);
+
+        // MINUTE 4 CLOSES AT 89: `exit when close < 90`, nothing resting touched. MINUTE 5, IN PROGRESS WHEN THE
+        // EXIT WENT OUT, FALLS THROUGH WHERE THE STOP WAS; THE EXIT FILLS AT MINUTE 6'S OPEN.
+        await MinuteAsync(rig, 4, 100m, 100.4m, 88.5m, 89m);
+        await MinuteAsync(rig, 5, 89m, 89.5m, 84m, 86m);
+        await MinuteAsync(rig, 6, 86m, 86.5m, 85.5m, 86m);
+        await FlatMinuteAsync(rig, 7, 86m);
+        Show(log, rig);
+
+        // NO PAPER SHORT: two executions in all, the entry and the exit, and nothing held.
+        var executions = await rig.Conn.GetExecutionsAsync(PaperConnector.TheAccount, null);
+        foreach (var x in executions) log.WriteLine($"execution {x.ClientOrderId} {x.Side} {x.Quantity} at {x.Price}");
+        Assert.Equal(0m, await Position(rig));
+        Assert.Equal(2, executions.Count);
+
+        // BECAUSE THE PAIR CAME OFF FIRST, ON THE EXIT'S OWN MINUTE AND AHEAD OF IT IN ITS SEQUENCE.
+        var written = rig.Gw.Deployments.OpsOf(rig.Deployment.Id).Where(o => MinuteOf(rig, o) == 4).ToList();
+        foreach (var o in written) log.WriteLine($"minute 4: {Said(rig, o.RequestId)} {o.Kind} {o.State}");
+        Assert.Equal([DeploymentOpKind.Cancel, DeploymentOpKind.Cancel, DeploymentOpKind.Exit],
+            written.Select(o => o.Kind));
+        foreach (var resting in new[] { stop, target })
+        {
+            var order = await OrderOf(rig, resting);
+            Assert.Equal(ExecutionState.CANCELLED, order.State);
+            Assert.Equal(0m, order.FilledQuantity);
+        }
     }
 }
