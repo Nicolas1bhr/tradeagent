@@ -17,9 +17,10 @@ build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/
 
 Every agent is Opus (`model: "opus"`), by the owner's choice. A manager runs its builders itself (the Agent tool works one level down; two builders in
 one message run concurrently) and talks to the orchestrator by `SendMessage` to `main`. **A sub-agent is never woken by a background child agent finishing**
-(that notice goes to the orchestrator), **and a background Bash wakes it only late** (probed 2026-10-02: 5 m 40 s after a 50 s command), so no manager or
-builder ends its turn while work is pending: it waits in foreground slices of at most nine minutes (`fleet/bin/wait-for.sh`,
-`ci-wait.sh … 9`). Live seats, agent ids and allotments: `fleet/BOARD.md`.
+(that notice goes to the orchestrator), **and a background Bash wakes it only late** (probed 2026-10-02: 5 m 40 s after a 50 s command). So a BUILDER never ends its turn while its
+pass is pending: it waits in foreground slices of at most nine minutes (`fleet/bin/wait-for.sh`, `ci-wait.sh … 9`). A MANAGER, since 2026-10-04 (budget,
+below), does not poll while its builders work: it ends its turn, and the orchestrator — who receives every builder's completion notice — wakes it by
+`SendMessage` with the report; it waits in slices only for short work of its own (its landing gate, a lock). Live seats and allotments: `fleet/BOARD.md`.
 
 **The `fleet/` directory** is `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` — outside the repo and outside `/tmp`, which the OS empties after
 about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.md`, `gates/<label>/`, `locks/`, `ci-ledger.md`, `BOARD.md`.
@@ -35,7 +36,12 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
 
 ## This Mac (M3 Pro, 11 cores, 18 GB RAM, ~50 GB free disk)
 
-- **At most four builders at once, fleet-wide** — the orchestrator allots them per seat on the board; a seat never exceeds its allotment.
+- **At most four builders at once, fleet-wide, by machine — two by budget** (2026-10-04: two managers, four builders and the orchestrator emptied a 5-hour
+  usage window in ~75 min, and one full window cost ~12 % of the owner's weekly Claude allowance; check with `get_usage`). The orchestrator allots builders
+  per seat on the board; a seat never exceeds its allotment. Calls cost in proportion to context: a seat past ~60 % context is replaced by a fresh one.
+- **Local suites are slow and leak:** since 2026-10-03 the local Unit suite runs ~13× slower than on CI (swap-bound; environmental), so a red local gate in
+  a timing-sensitive test gets one fresh re-gate; every test process leaves a home in `$TMPDIR/tradeagent-tests`, purged by `fleet/bin/purge-test-homes.sh`
+  inside `gate.sh` and `suite.sh`.
 - **Locks** (`fleet/bin/lock.sh`): `suite` — any full local test suite (`gate.sh` takes it itself); `land` — one landing in flight, prep to record; `main` —
   any commit in the main checkout, held for seconds (dispatch, merge, record); `box` — the Windows machine, one leg at a time by grant.
 - Worktrees at `~/Projects/ai-trading-software-for-mihael-worktrees/<branch>`, branch = the unit's name in lower case; `git -C`, never `cd` into one inside
@@ -48,14 +54,15 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
    platforms) and `ci-wait.sh --run <id> 9` in foreground slices until it stops answering TIMEOUT (windows-latest takes 40–50 min). The report quotes the run id and every job's
    verdict. *Why:* one full suite at a time is this Mac's bottleneck, and CI adds Windows — the target, which the Mac cannot prove. `gate.sh` stays available
    to a builder that needs a local full run, under the suite lock.
-2. **A builder may push its own branch, and only through `ci-dispatch.sh`.** Never `main`, never a merge.
+2. **A builder may push its own branch, and only through `ci-dispatch.sh`.** Never `main`, never a merge. It never uses the app's built-in browser pane
+   (a site-permission prompt only the owner can answer hung a builder for 80 min on 2026-10-04): web sources are read with curl or WebFetch.
 
 Unchanged: red-first tests and one watched mutant on the money path; one commit per item with a one-sentence message; a `## Report` ≤ 20 lines appended to
 its brief and committed on its branch (tip sha, gate counts, CI run and verdicts, one line per item, what it did NOT do); the fresh-fixer rule, literally.
 
 ## Landing — the manager, HOW-WE-BUILD's checklist scripted in `fleet/bin/land.sh`
 
-`lock.sh acquire land <seat>:<unit>` → `land.sh prep` (clean tree, tip = report, rebase on `main`; a conflict goes back to a builder) → the local gate
+`lock.sh acquire land <seat>:<unit>` (turns: the seat that released `land` yields 120 s before re-taking it) → `land.sh prep` (clean tree, tip = report, rebase on `main`; a conflict goes back to a builder) → the local gate
 (Release, full, detached; or "GATE CARRIES" when only `docs/`/`*.md` moved since this unit's last gate) → `land.sh check` (PASS) → the branch's CI read:
 green on all three platforms (the W0 exception for `ResumeOnStartTests` ended when `U-fix-resume-on-start` landed at `c8d6642`: such a red is now a red);
 the run id named in the record → `land.sh merge` (ff-only) → `land.sh
@@ -74,6 +81,8 @@ gate, a known red) is written into the record as a judgement.
 - **Hand-off:** a manager whose context passes about 60 %, or whose scope ends, writes `fleet/handoff/<seat>.md` (≤ 40 lines: state, open judgements,
   traps met) and reports; the orchestrator opens a fresh seat from it. A killed leg is resumed by `SendMessage` naming its branch state, or re-briefed
   fresh from its brief and branch — the branch is the handoff.
+- **A new orchestrator session** starts from `fleet/handoff/ORCHESTRATOR.md`. Agent ids die with the session that spawned them: it opens FRESH seats from
+  `fleet/charters/`, `fleet/handoff/` and `fleet/status/`, and a paused builder's work is continued by a fresh builder from its branch and worktree.
 - **The repo is the checkpoint:** a `BUILD-STATUS.md` record per landing; the resume block at each wave's end and at every stop (the orchestrator); the
   memory files (the orchestrator).
 - Keep every context lean: the scripts print summaries; never print a whole log or a whole long file; read by range.

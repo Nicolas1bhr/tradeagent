@@ -15,16 +15,25 @@ builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allo
 every CI run read: `fleet/ci-ledger.md` (`fleet/` = `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`, outside `/tmp`). Resume from those and
 git; the plan and the waves below are unchanged, and this block is rewritten at each wave's end.
 
-**Checkpoint 2026-10-03 06:50 CEST (orchestrator).** LANDED on `main` (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69` · W0
-`U-fix-resume-on-start` `c8d6642` (the windows red fixed in the product) · `U-cost-model` rung 27 `afd1bb6` · `U-runner-forward` `f7f0b09` · `U-tape-store`
-`a912261` (tape.db v1 — built, but nothing records until an app runs with "Record market context" on) · `U-evidence-identity` `923fb28` ·
-`U-fix-inbox-boundary` `84a4664` (product fix: the yield asks the ledger) · `U-paper-friction` `923284e` · `U-meter-batch-1` `0e0ce82`. IN FLIGHT: seat P —
-`U-org-ledger` rung 28 landing (gate green), `U-inbox-order` building (an agent's file must never be recorded as the owner's after a backward clock step),
-`U-fix-bridge-heartbeat` queued (one macOS red); seat A — `U-paper-settle` reported (lands next), `U-timeframe-a` CI green (report), `U-venue-verify`
-(next free rung, expected 29) building; then `U-invariant-traces` (culture-proof evaluation path + version bump, BEFORE M0), `U-timeframe-b`, the tape
-CARDs (`U-tape-events` briefed: OKX EEA + Bybit EU announcements with a recorded terms basis; GDELT to `U-tape-archive`), then M0. Every agent stopped at
-the 5-hour usage limit three times (~18:15, ~22:20, ~03:40 CEST) and was resumed by SendMessage from `fleet/status/` with nothing lost. OWNER, pending:
-the Windows box is OFFLINE since 2026-10-02 01:42Z (blocks `R-containment`); may a tape recorder run on the box when back and on this Mac meanwhile.
+**Checkpoint 2026-10-04 12:40 CEST — the orchestrator's session closed by the owner ("wrap up … resuming later").** A NEW orchestrator starts from
+`fleet/handoff/ORCHESTRATOR.md`; this session's agent ids are dead — open FRESH seats. `main` `810b35af` is clean and pushed; schema rung 30; every
+landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the fleet (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69`
+· `U-fix-resume-on-start` `c8d6642` · `U-cost-model` (27) `afd1bb6` · `U-runner-forward` `f7f0b09` · `U-tape-store` `a912261` · `U-evidence-identity`
+`923fb28` · `U-fix-inbox-boundary` `84a4664` · `U-paper-friction` `923284e` · `U-meter-batch-1` `0e0ce82` · `U-org-ledger` (28) `3301781` · `U-paper-settle`
+`3b03041` · `U-timeframe-a` `88c5a2f` · `U-invariant-traces` `6a24e12` · `U-venue-verify` (29) `c18db14` · `U-timeframe-b` `4656b12` · `U-inbox-order`
+`f7da3f4` · `U-runner-refused-close` `f149ae07` · `U-inbox-unreadable` `a222f53` · `U-data-licence` (30) `e651eaa0` · `U-fix-loss-reopen` `810b35af`.
+**NEXT: M0** (`U-observed-loop`, attempt 3) is READY and not started: seat M's procedure is the brief (`7068999f`); the Debug bundle is built at `810b35af`
+(`worktrees/m0-bundle/`, from the detached worktree `worktrees/m0-run`; rebuild at the newest green `main` if it moved); GO needs only the owner at the Mac
+for two screen-control clicks; bounds ≤ 6 h from the work press inside one local day (start by 18:00), the app's 5 USD daily cap, paper only.
+**PAUSED:** `U-tape-events` (branch at `4fdcabb4`: 3 commits + 7 uncommitted files of item-4 work in its worktree — a fresh builder continues from them).
+**QUEUED** (`docs/queue/`): `U-test-hygiene-1` (the midnight-UTC meter-test flake + test-home cleanup) → `U-fix-bridge-heartbeat`; `U-tape-archive`;
+`R-containment` (the Windows box offline since 2026-10-02 01:42Z); the organisation lane's briefs (W5+). **OWED, unbriefed:** `U-runner-exit-hygiene` and
+`U-flatten-confirm`, both BEFORE ANY LIVE USE; `U-material-file-limit`; a conferring dataset path — live allocation is CLOSED by `U-data-licence` until
+datasets cut from the tape's recordings of a venue whose terms reach own-account use (OKX Europe first) exist. **DECIDED on the owner's behalf**
+(2026-10-04, his delegation; each on `fleet/BOARD.md`, his to overrule): the Binance archive licence → COMPLY (research-only; `U-archive-depth` paused);
+the forward klines `unverified`; the tape records during M0; organisation § 16 Q2/Q3/Q4. **OWNER, pending:** M0's two clicks; counsel's question — is
+TradeAgent "commercial" under the venues' data terms (R19 § 6 Q1); the Windows box. **BUDGET:** weekly allowance 34 % used at 11:36 on 4 Oct (resets
+2026-10-10 12:00 CEST) — ≤ 2 builders, managers end their turn when idle (`docs/FLEET.md`).
 
 **Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this
 was again a planning session ("bolted down" first, builders only when the owner says build). `docs/briefs/` holds ONE brief, `U-observed-loop`;
