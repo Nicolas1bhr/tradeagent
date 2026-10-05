@@ -40,6 +40,11 @@ namespace TradeAgent.Core.Db;
 /// (<see cref="TapeClass"/>). No caller passes one.</item>
 /// </list>
 ///
+/// <para><b>Every read is screened</b> (<c>U-tape-events</c>): each observation read carries
+/// <see cref="TapeScreen"/>'s verdict, computed then and stored nowhere, and <see cref="AsOf"/> withholds the
+/// payload of one it quarantines. A quarantined item is still written like any other — the record is what
+/// the vendor published.</para>
+///
 /// <para><b>It is app-owned.</b> There is no verb and no pipe op that writes here; the collector in the
 /// app's own process is the only caller of <see cref="Append"/>. Until containment an agent running
 /// unconfined could still edit the FILE — <c>docs/CONTRACTS.md</c> "The tape" says so and does not
@@ -398,6 +403,13 @@ public sealed class TapeStore : IDisposable
     /// caller having to remember a line. No tape holdout exists yet, so today every audience is served
     /// the same answer; the argument is what makes adding one a change to this method and not a hunt
     /// for every caller.</para>
+    ///
+    /// <para><b>A quarantined observation's payload is WITHHELD here</b> (<c>U-tape-events</c>): the answer
+    /// carries every field and the <see cref="TapeObservation.Quarantine"/> that says why, and a null
+    /// <see cref="TapeObservation.Payload"/>. That is <see cref="BarAudience.Pipe"/> — every caller on the
+    /// agent-facing channel — and, today, every audience there is: the referee's, the only other, never
+    /// reads the tape, and whether a quarantined item ever reaches a model is <c>U-annotator</c>'s decision,
+    /// to be made by a door of its own rather than inherited from this one.</para>
     /// </summary>
     public TapeObservation? AsOf(BarAudience audience, string source, string series, string subject,
         DateTimeOffset t)
@@ -414,11 +426,18 @@ public sealed class TapeStore : IDisposable
                 """,
                 ("$src", source), ("$ser", series), ("$subj", subject), ("$t", Sql.T(t)));
             using var r = c.ExecuteReader();
-            return r.Read() ? Obs(r) : null;
+            if (!r.Read()) return null;
+
+            var o = Obs(r);
+            return o.Quarantine is null ? o : o with { Payload = null };
         });
     }
 
-    /// <summary>Every revision held under one natural key, first reading first.</summary>
+    /// <summary>
+    /// Every revision held under one natural key, first reading first. An in-process read, payloads whole
+    /// and each with its quarantine: a reader that serves an agent withholds a quarantined payload, as
+    /// <see cref="AsOf"/> does.
+    /// </summary>
     public IReadOnlyList<TapeObservation> Revisions(string source, string series, string naturalKey) => Read(() =>
     {
         using var c = Cmd(
@@ -427,7 +446,7 @@ public sealed class TapeStore : IDisposable
         return (IReadOnlyList<TapeObservation>)ReadAll(c, Obs);
     });
 
-    /// <summary>The observations one fetch brought, in the order they were written.</summary>
+    /// <summary>The observations one fetch brought, in the order they were written. In-process, like <see cref="Revisions"/>.</summary>
     public IReadOnlyList<TapeObservation> ObservationsOf(long fetchId) => Read(() =>
     {
         using var c = Cmd($"SELECT {ObsCols} FROM tape_obs WHERE fetch_id=$id ORDER BY id", ("$id", fetchId));
@@ -454,10 +473,19 @@ public sealed class TapeStore : IDisposable
         return rows;
     }
 
-    static TapeObservation Obs(SqliteDataReader r) => new(
-        r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.Time(r.GetString(4)),
-        Sql.Time(r.GetString(5)), r.GetInt64(6), r.GetString(7), r.GetInt32(8), r.GetString(9), r.GetString(10),
-        r.GetString(11));
+    /// <summary>
+    /// ONE ROW, SCREENED AS IT IS READ. The verdict is computed here at every read and stored nowhere: no
+    /// column holds it, so a later version of the screen reads every row ever recorded, and nothing written
+    /// into the file can mark a row clean.
+    /// </summary>
+    static TapeObservation Obs(SqliteDataReader r)
+    {
+        var payload = r.GetString(10);
+        return new(
+            r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.Time(r.GetString(4)),
+            Sql.Time(r.GetString(5)), r.GetInt64(6), r.GetString(7), r.GetInt32(8), r.GetString(9), payload,
+            r.GetString(11), TapeScreen.Check(payload));
+    }
 
     static TapeFetchRecord Fetch(SqliteDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4),
