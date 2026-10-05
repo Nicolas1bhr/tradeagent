@@ -17,6 +17,10 @@ switch (verb)
         return Worker.Run(args.Length > 1 ? args[1] : "main");
     case "c1call":
         return SandboxC1.CallChild();
+    case "grantui":
+        return WindowStation.GrantByString(args[1]);
+    case "revokeui":
+        return WindowStation.RevokeByString(args[1]);
     case "host":
     default:
         var baseDir = args.Length > 1 ? args[1] : Path.Combine("C:\\ta", "containment-20261006");

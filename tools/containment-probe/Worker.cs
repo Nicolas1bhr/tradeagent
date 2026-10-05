@@ -25,6 +25,7 @@ internal static class Worker
                 case "net": NetCells(r, Env); break;
                 case "sleep": return Sleep(Env);
                 case "idle": Thread.Sleep(900); return 0;   // perf cell: just exist briefly
+                case "hold": Thread.Sleep(600000); return 0; // cell 16: a long-lived descendant
                 default: MainCells(r, Env); break;
             }
         }
@@ -157,14 +158,16 @@ internal static class Worker
         }
 
         // Cell 15 — compile and run a generated tool (in-box C# via Add-Type; no user-profile paths).
+        // Via a .ps1 file to avoid -Command quoting, with single-quoted C# source.
         try
         {
-            var src = "public class T{public static void M(){System.Console.Write(2+2);}}";
-            var ps = $"Add-Type -TypeDefinition \"{src}\"; [T]::M()";
-            var o = Run("powershell.exe", $"-NoProfile -Command \"{ps}\"");
-            var compiled = o.Trim() == "4";
+            var genPs = Path.Combine(ws, "gen.ps1");
+            File.WriteAllText(genPs,
+                "Add-Type -TypeDefinition 'public class T{public static void M(){System.Console.Write(2+2);}}'\r\n[T]::M()\r\n");
+            var o = Run("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{genPs}\"");
+            var compiled = o.Trim().EndsWith("4");
             r.Add(new Probe("15", "compile+run generated tool", "ALLOWED", compiled ? "ALLOWED" : "FAIL", compiled,
-                compiled ? "Add-Type compiled C# and ran it (printed 4)" : "compile/run failed: " + Trunc(o)));
+                compiled ? "Add-Type compiled C# in-container and ran it (printed 4)" : "compile/run failed: " + Trunc(o)));
         }
         catch (Exception ex) { r.Add(new Probe("15", "compile+run generated tool", "ALLOWED", "ERROR", false, ex.Message)); }
 
@@ -229,8 +232,10 @@ internal static class Worker
         try
         {
             var marker = Env("PROBE_MARKER");
-            // grandchild first, so we can record its pid alongside our own
-            var gc = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 600 127.0.0.1 > nul")
+            // grandchild first, so we can record its pid alongside our own. It is another copy of THIS
+            // probe in a long sleep — we know our exe runs in the container, and it inherits both the
+            // AppContainer token and the parent's job, so it is genuinely alive until the job is closed.
+            var gc = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "worker hold")
             { UseShellExecute = false, CreateNoWindow = true });
             if (!string.IsNullOrEmpty(marker))
                 File.WriteAllText(marker, $"{Environment.ProcessId},{gc?.Id ?? 0}");

@@ -65,13 +65,21 @@ internal sealed unsafe class AppContainer : IDisposable
         try { using var p = Process.Start(psi)!; p.WaitForExit(20000); } catch { /* best effort */ }
     }
 
-    public sealed record Launched(uint Pid, IntPtr Process, IntPtr Thread, IntPtr Job)
+    public sealed record Launched(uint Pid, IntPtr Process, IntPtr Thread, IntPtr Job,
+        System.IO.Pipes.AnonymousPipeServerStream? OutPipe = null)
     {
         public uint Wait(uint ms) { WaitForSingleObject(Process, ms); GetExitCodeProcess(Process, out var c); return c; }
         public bool Alive() => WaitForSingleObject(Process, 0) == 0x00000102; // WAIT_TIMEOUT => still running
         public void KillJob() { if (Job != IntPtr.Zero) CloseHandle(Job); }     // KILL_ON_JOB_CLOSE
+        /// <summary>Reads everything the captured child wrote. Call after Wait; output is small.</summary>
+        public string ReadOutput()
+        {
+            if (OutPipe is null) return "";
+            try { using var r = new StreamReader(OutPipe); return r.ReadToEnd(); } catch { return ""; }
+        }
         public void Close()
         {
+            try { OutPipe?.Dispose(); } catch { }
             if (Job != IntPtr.Zero) CloseHandle(Job);
             if (Thread != IntPtr.Zero) CloseHandle(Thread);
             if (Process != IntPtr.Zero) CloseHandle(Process);
@@ -87,7 +95,7 @@ internal sealed unsafe class AppContainer : IDisposable
     /// KILL_ON_JOB_CLOSE job (cell 16) — the job handle is returned so the caller can close it to kill
     /// the whole tree.
     /// </summary>
-    public Launched Launch(string commandLine, bool internet, bool inJob, string? workingDir = null)
+    public Launched Launch(string commandLine, bool internet, bool inJob, string? workingDir = null, bool capture = false)
     {
         var caps = new List<IntPtr>();
         if (internet)
@@ -128,12 +136,31 @@ internal sealed unsafe class AppContainer : IDisposable
             si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
             si.lpAttributeList = attr;
 
-            uint flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+            System.IO.Pipes.AnonymousPipeServerStream? outPipe = null;
+            if (capture)
+            {
+                // An inheritable pipe carries the child's stdout+stderr back, so an apphost that cannot
+                // even start inside the container reports WHY, instead of printing to the host console.
+                outPipe = new System.IO.Pipes.AnonymousPipeServerStream(
+                    System.IO.Pipes.PipeDirection.In, System.IO.HandleInheritability.Inheritable);
+                var wh = outPipe.ClientSafePipeHandle.DangerousGetHandle();
+                si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+                si.StartupInfo.hStdOutput = wh;
+                si.StartupInfo.hStdError = wh;
+                si.StartupInfo.hStdInput = IntPtr.Zero;
+            }
+
+            // CREATE_NO_WINDOW: a console app launched in an AppContainer dies 0xC0000142
+            // (STATUS_DLL_INIT_FAILED) when it tries to allocate a console the container cannot reach.
+            // No window also honours the product's own no-terminal rule.
+            uint flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
             if (inJob) flags |= CREATE_SUSPENDED;
 
-            if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, false, flags,
+            if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, capture, flags,
                     IntPtr.Zero, workingDir, ref si, out var pi))
                 throw new Win32Like("CreateProcess(AppContainer)");
+
+            if (capture) outPipe!.DisposeLocalCopyOfClientHandle();
 
             IntPtr job = IntPtr.Zero;
             if (inJob)
@@ -153,7 +180,7 @@ internal sealed unsafe class AppContainer : IDisposable
             DeleteProcThreadAttributeList(attr);
             Marshal.FreeHGlobal(attr);
             Marshal.FreeHGlobal(scPtr);
-            return new Launched(pi.dwProcessId, pi.hProcess, pi.hThread, job);
+            return new Launched(pi.dwProcessId, pi.hProcess, pi.hThread, job, outPipe);
         }
         finally
         {
