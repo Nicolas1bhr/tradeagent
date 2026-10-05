@@ -290,17 +290,18 @@ public class LossBudgetCompositionTests
     [InlineData(500, 2000, "down **500** may not be added to", "day is down **2,000**")]
     public void The_agents_own_instructions_name_both_budgets(decimal trade, decimal day, string first, string second)
     {
-        var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
+        // Deleted when the test lets go of it, pass or fail: the delete that stood after the asserts
+        // left the whole workspace behind whenever one of them failed.
+        using var root = TestEnv.NewScratch("agents");
         var home = WorkspaceBuilder.Build(new WorkspaceContext(
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
-            Risk: new RiskPolicy { MaxLossPerTrade = trade, MaxDailyLoss = day, InstrumentAllowlist = ["ES"] }), root);
+            Risk: new RiskPolicy { MaxLossPerTrade = trade, MaxDailyLoss = day, InstrumentAllowlist = ["ES"] }), root.Dir);
 
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains(first, agents, StringComparison.Ordinal);
         Assert.Contains(second, agents, StringComparison.Ordinal);
         Assert.Contains("never refuse a close or a reduce", agents, StringComparison.Ordinal);
-        Directory.Delete(root, true);
     }
 
     [Fact]

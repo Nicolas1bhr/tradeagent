@@ -241,18 +241,19 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
         Assert.Contains("reopens the account itself", reached.Repair, StringComparison.Ordinal);
         Assert.DoesNotContain("midnight UTC", reached.Repair, StringComparison.Ordinal);
 
-        var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
+        // Deleted when the test lets go of it, pass or fail: the delete that stood after the asserts
+        // left the whole workspace behind whenever one of them failed.
+        using var root = TestEnv.NewScratch("agents");
         var home = WorkspaceBuilder.Build(new WorkspaceContext(
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
-            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root);
+            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root.Dir);
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("loss_reopens_at", agents, StringComparison.Ordinal);
         // RE-PINNED with the schema above, and for the same reason.
         Assert.Contains("closure length the account owner had set when the breach was",
             agents, StringComparison.Ordinal);
         Assert.Contains("24 hours out of the", agents, StringComparison.Ordinal);
-        Directory.Delete(root, true);
     }
 
     static string Repo()

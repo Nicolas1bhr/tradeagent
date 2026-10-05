@@ -176,15 +176,16 @@ public class LossFlattenSurfacesTests(ITestOutputHelper log)
         Assert.Contains("loss_flatten", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("NOTHING WAS CLOSED", schema, StringComparison.Ordinal);
 
-        var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
+        // Deleted when the test lets go of it, pass or fail: the delete that stood after the asserts
+        // left the whole workspace behind whenever one of them failed.
+        using var root = TestEnv.NewScratch("agents");
         var home = WorkspaceBuilder.Build(new WorkspaceContext(
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
-            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root);
+            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root.Dir);
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("loss_flatten", agents, StringComparison.Ordinal);
         Assert.DoesNotContain("NOTHING WAS CLOSED FOR YOU", agents, StringComparison.Ordinal);
-        Directory.Delete(root, true);
     }
 
     static string Repo()
