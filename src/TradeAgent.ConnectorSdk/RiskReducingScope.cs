@@ -127,13 +127,15 @@ public static class RiskReducingScope
     /// as it is spent. What the budget bounds is then what it was set for — how long the operation may
     /// wait on the PLATFORM — and a durable commit on a slow disk can no longer spend it.</para>
     ///
-    /// <para><b>For an operation nobody is waiting at the keyboard for.</b> The loss budget's own
-    /// flatten is the caller: a confirmed breach, no person, and a book that must be closed. An
-    /// owner's press keeps <see cref="Begin(TimeSpan)"/>, because "two seconds" there is a promise to a
-    /// person about the whole operation, write-ahead rows included, and a leg its budget cannot reach
-    /// is shown to them flagged. The flatten has nobody to show: a budget its own bookkeeping spent
-    /// closed the day on windows-latest with nothing sent and the book open, which is the failure
-    /// this exists to make impossible.</para>
+    /// <para><b>For an operation nobody is waiting at the keyboard for.</b> The app's own two are the
+    /// callers: the loss budget's flatten — a confirmed breach, no person, and a book that must be
+    /// closed — and the data-loss exit (<c>U-flatten-3</c>), its precautionary cancel and its close,
+    /// which are the same mechanics under their own reason and were given this in
+    /// <c>U-flatten-confirm</c>. An owner's press keeps <see cref="Begin(TimeSpan)"/>, because "two
+    /// seconds" there is a promise to a person about the whole operation, write-ahead rows included,
+    /// and a leg its budget cannot reach is shown to them flagged. The app's own operations have
+    /// nobody to show: a budget its own bookkeeping spent closed the day on windows-latest with nothing
+    /// sent and the book open, which is the failure this exists to make impossible.</para>
     ///
     /// <para><b>The bound on a stalled platform is unchanged</b> — every call is still clipped at the
     /// deadline and a leg reached after it is still refused before the wire. What is no longer bounded

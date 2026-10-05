@@ -9061,7 +9061,10 @@ public sealed class TradingGateway : IAsyncDisposable
                      + $"{episode.Since.UtcDateTime:HH:mm} UTC, so it cancelled the working orders that could have "
                      + "made it bigger; it is waiting for you on the Dashboard";
 
-        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-flatten-confirm) — the budget flatten's rule, for
+        // its reason: nobody is waiting at the keyboard for this cancel, and its write-ahead rows are
+        // durable commits a slow disk can spend the whole budget on before the first platform call.
+        using var emergency = RiskReducingScope.BeginExcludingTheStore(Connector.EmergencyBudget);
         var cancelled = await CancelWorkingOrdersAsync(ValuationCancelPress, accountId, episode.Symbol,
             alsoEveryOrderOnAScopePosition: false, paused,
             $"your {episode.Symbol} position could not be valued", ct);
@@ -9153,7 +9156,13 @@ public sealed class TradingGateway : IAsyncDisposable
                      + $"{ValuationLoss.Spell(episode.Age(at))} and closed it; your loss budget was NOT reached. "
                      + "It is waiting for you on the Dashboard";
 
-        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-flatten-confirm, owed by U-fix-loss-reopen's
+        // judgement 3). This exit is the budget flatten's mechanics with nobody at the keyboard, and it
+        // had the budget flatten's fault: every write-ahead commit before its close was charged to the
+        // platform's budget, so on a slow disk the close was refused before the wire and the position
+        // nobody could value stayed open. The budget bounds the PLATFORM; see
+        // RiskReducingScope.BeginExcludingTheStore.
+        using var emergency = RiskReducingScope.BeginExcludingTheStore(Connector.EmergencyBudget);
 
         // EVERY WORKING ORDER ON THE INSTRUMENT, reducers included — the position they were for is
         // about to be removed, and a protective sell under a long that no longer exists is an opener.

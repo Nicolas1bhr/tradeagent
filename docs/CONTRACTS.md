@@ -3767,4 +3767,20 @@ reason changes, not on every pass.
 row nobody has reconciled (`LossFlattenOwedTests.An_attempt_that_put_a_close_on_the_wire_is_never_repeated_over_it`).
 **Not in this unit:** the data-loss exit (`U-flatten-3`) still opens `Begin(budget)` and charges its
 store; a close that MAY have reached the platform still waits for the owner rather than for an
-order-history read; the owner's press is byte for byte what it was.
+order-history read; the owner's press is byte for byte what it was. (Both owed items are
+`U-flatten-confirm`'s, below.)
+
+## U-flatten-confirm — the data-loss exit on the platform's clock, and a lost budget close asked of the platform's history
+
+**No schema.** `U-fix-loss-reopen` recorded two debts as owed before any live use, and this unit pays
+them.
+
+**The data-loss exit is charged for the platform, not for its own store.** Its precautionary cancel
+(`CancelWhileUnvaluableAsync`) and its close (`ExitLostValuationAsync`) now open
+`RiskReducingScope.BeginExcludingTheStore` exactly as the budget's flatten does: the same mechanics
+with nobody at the keyboard, and the same root cause — every write-ahead commit before the close was
+charged to the two-second budget, so on a slow disk the close was refused before the wire and the
+position nobody could value stayed open behind an exit record written once, final. The 2 s value is
+unchanged; every platform call is still clipped at the deadline and a leg reached after it is still
+refused. The owner's presses and the agent's sweeps keep `Begin(budget)`.
+
