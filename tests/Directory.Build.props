@@ -11,9 +11,17 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Shared/TestEnv.cs" Link="TestEnv.cs" />
+    <Compile Include="../Shared/TestHomeFramework.cs" Link="TestHomeFramework.cs" />
     <Compile Include="../Shared/Loopback.cs" Link="Loopback.cs" />
     <Compile Include="../Shared/TestTime.cs" Link="TestTime.cs" />
     <Compile Include="../Shared/RecordingConnector.cs" Link="RecordingConnector.cs" />
     <Compile Include="../Shared/DayOnePrograms.cs" Link="DayOnePrograms.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Where each assembly's test home is deleted at the end of its run: see Shared/TestHomeFramework.cs. -->
+    <AssemblyAttribute Include="Xunit.TestFrameworkAttribute">
+      <_Parameter1>TradeAgent.Tests.TestHomeFramework</_Parameter1>
+      <_Parameter2>$(AssemblyName)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

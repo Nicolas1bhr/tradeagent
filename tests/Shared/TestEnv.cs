@@ -10,16 +10,40 @@ namespace TradeAgent.Tests;
 /// <summary>
 /// Every test assembly redirects TRADEAGENT_HOME into a scratch directory before anything touches
 /// <see cref="Paths"/>, so tests can never read or write the real installation.
+///
+/// <para><b>And deletes it when its run is over</b> — every test finished, the result not yet
+/// reported — through <see cref="TestHomeFramework"/>, and again at process exit should that step
+/// never have run. Nothing deleted a home before: 34 GB of them had piled up on the dev Mac by
+/// 2026-10-04. Best effort and silent: a file a child process still holds on Windows stays where it
+/// is, because nothing about cleaning up may turn a run red.</para>
+///
+/// <para><b><c>TA_TEST_KEEP_HOME=1</c> keeps it</b> (<see cref="KeepVariable"/>), for a person to read
+/// what a run wrote. Its path is then printed once, on the test host's output — which
+/// <c>dotnet test</c> shows at <c>--logger "console;verbosity=normal"</c> and hides at its default.</para>
 /// </summary>
 public static class TestEnv
 {
+    /// <summary>
+    /// Where every test process makes its home, and the only directory this harness deletes anything
+    /// in. See <see cref="DeleteQuietly"/>.
+    /// </summary>
+    public static string Root { get; } = Path.Combine(Path.GetTempPath(), "tradeagent-tests");
+
     public static string Home { get; private set; } = "";
+
+    /// <summary>Keeps this process's home when set to anything but empty or <c>0</c>.</summary>
+    public const string KeepVariable = "TA_TEST_KEEP_HOME";
+
+    /// <summary>Whether <see cref="KeepVariable"/> asked for the home to be kept.</summary>
+    public static bool Keep { get; } = Environment.GetEnvironmentVariable(KeepVariable) is { Length: > 0 } and not "0";
 
     [ModuleInitializer]
     public static void Init()
     {
-        Home = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
+        Home = Path.Combine(Root, Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(Home);
+        if (Keep) Console.WriteLine($"{KeepVariable} is set: this test process's home is kept at {Home}");
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteHome();
         Environment.SetEnvironmentVariable("TRADEAGENT_HOME", Home);
         Environment.SetEnvironmentVariable("TRADEAGENT_PIPE", "ta-test-" + Guid.NewGuid().ToString("n")[..12]);
 
@@ -39,6 +63,53 @@ public static class TestEnv
     public static AgentGrant? Chair { get; private set; }
 
     public static Database NewDb() => new(Path.Combine(Home, $"db-{Guid.NewGuid():n}.db"));
+
+    static int _homeDeleted;
+
+    /// <summary>
+    /// DELETES THIS PROCESS'S HOME, once, unless <see cref="Keep"/> says otherwise. Called at the end
+    /// of the assembly's run (<see cref="TestHomeFramework"/>) and at process exit. Never throws.
+    /// </summary>
+    internal static void DeleteHome()
+    {
+        if (Keep || Interlocked.Exchange(ref _homeDeleted, 1) == 1) return;
+        DeleteQuietly(Home);
+    }
+
+    /// <summary>
+    /// Deletes a directory under <see cref="Root"/>, and refuses anything else rather than deleting it
+    /// — <see cref="Home"/> before <see cref="Init"/> has run is empty, and an empty path must never
+    /// become a deletion somewhere else. Best effort: never throws.
+    /// </summary>
+    public static void DeleteQuietly(string dir)
+    {
+        try
+        {
+            var full = Path.GetFullPath(dir);
+            var root = Path.GetFullPath(Root) + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(root, StringComparison.Ordinal) || full.Length == root.Length) return;
+            Directory.Delete(full, recursive: true);
+        }
+        catch (Exception) { /* a file still held — by a child process on Windows — stays where it is */ }
+    }
+
+    /// <summary>
+    /// A FRESH DIRECTORY FOR ONE TEST, inside this process's home, deleted when the test lets go of it
+    /// — after its asserts, whether they passed or not, which is what a <c>using</c> is for — unless
+    /// <see cref="Keep"/> keeps the home it is in.
+    /// </summary>
+    public static ScratchDir NewScratch(string name) => new(Path.Combine(Home, $"{name}-{Guid.NewGuid():n}"));
+
+    /// <summary>See <see cref="NewScratch"/>.</summary>
+    public sealed class ScratchDir(string dir) : IDisposable
+    {
+        public string Dir { get; } = dir;
+
+        public void Dispose()
+        {
+            if (!Keep) DeleteQuietly(Dir);
+        }
+    }
 
     /// <summary>
     /// TODAY'S LOCAL NOON, AS ONE INSTANT: what a test that records something and then reads "today"

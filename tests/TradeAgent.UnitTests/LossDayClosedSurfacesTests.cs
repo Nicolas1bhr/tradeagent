@@ -246,15 +246,16 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         Assert.Contains("A CLOSURE DOES NOT END AT MIDNIGHT", schema, StringComparison.Ordinal);
         Assert.Contains("CLOSES what is open", schema, StringComparison.Ordinal);
 
-        var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
+        // Deleted when the test lets go of it, pass or fail: the delete that stood after the asserts
+        // left the whole workspace behind whenever one of them failed.
+        using var root = TestEnv.NewScratch("agents");
         var home = WorkspaceBuilder.Build(new WorkspaceContext(
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
-            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root);
+            Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root.Dir);
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("loss_day_closed_at", agents, StringComparison.Ordinal);
         Assert.Contains("closes your open positions for you", agents, StringComparison.Ordinal);
-        Directory.Delete(root, true);
     }
 
     static string Repo()
