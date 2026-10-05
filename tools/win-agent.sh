@@ -13,9 +13,7 @@
 # nobody has to be asked to start it.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
-: "${TA_WIN_USER:?set TA_WIN_USER}"
+source "$HERE/win-env.sh"
 
 # The agent RUNS from outside the repo, and that is load-bearing rather than tidiness.
 #

@@ -14,9 +14,7 @@
 #   tools/win-ps.sh script.ps1
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
-: "${TA_WIN_USER:?set TA_WIN_USER}"
+source "$HERE/win-env.sh"
 
 # An argument that is not a file is a mistake, not a script: the old form fell through to reading
 # stdin, which under a heredoc-less caller is empty, and an empty script runs fine and prints
@@ -58,13 +56,6 @@ LOCAL="$(mktemp -t win-ps).ps1"
 # the first version of this branch was verified with pure ASCII and so never showed it.
 printf '\xEF\xBB\xBF%s' "$SRC" > "$LOCAL"
 trap 'rm -f "$LOCAL"' EXIT
-REMOTE='C:/ta/win-ps-tmp.ps1'
-SCP_OPTS=(-o StrictHostKeyChecking=accept-new -o LogLevel=ERROR)
-if [ -n "${TA_WIN_PASSWORD:-}" ]; then
-  SSHPASS="$TA_WIN_PASSWORD" sshpass -e scp "${SCP_OPTS[@]}" \
-    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-    "$LOCAL" "$TA_WIN_USER@$TA_WIN_HOST:$REMOTE" >/dev/null
-else
-  scp "${SCP_OPTS[@]}" "$LOCAL" "$TA_WIN_USER@$TA_WIN_HOST:$REMOTE" >/dev/null
-fi
-exec "$HERE/win-run.sh" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\ta\win-ps-tmp.ps1'
+win_scp "$LOCAL" 'C:/ta/win-ps-tmp.ps1' >/dev/null
+# Not exec: exec would replace this shell and the EXIT trap above would never delete $LOCAL.
+"$HERE/win-run.sh" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\ta\win-ps-tmp.ps1'

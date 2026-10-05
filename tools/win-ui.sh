@@ -23,9 +23,7 @@
 # PowerShell without a single escaped quote (trap 11, one layer deeper).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
-: "${TA_WIN_USER:?set TA_WIN_USER}"
+source "$HERE/win-env.sh"
 
 [ $# -ge 1 ] || { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
@@ -131,13 +129,6 @@ done
 echo "$RESULT"
 
 if [ -n "$LOCAL_OUT" ] && printf '%s' "$RESULT" | grep -q '"ok":true'; then
-  SCP_OPTS=(-o StrictHostKeyChecking=accept-new -o LogLevel=ERROR)
-  if [ -n "${TA_WIN_PASSWORD:-}" ]; then
-    SSHPASS="$TA_WIN_PASSWORD" sshpass -e scp "${SCP_OPTS[@]}" \
-      -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-      "$TA_WIN_USER@$TA_WIN_HOST:C:/ta/shots/ui.png" "$LOCAL_OUT" >/dev/null
-  else
-    scp "${SCP_OPTS[@]}" "$TA_WIN_USER@$TA_WIN_HOST:C:/ta/shots/ui.png" "$LOCAL_OUT" >/dev/null
-  fi
+  win_scp --get 'C:/ta/shots/ui.png' "$LOCAL_OUT" >/dev/null
   echo "saved $LOCAL_OUT"
 fi

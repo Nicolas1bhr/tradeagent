@@ -5,10 +5,8 @@
 # extended attributes, and csc rejects every one of them with "is a binary file instead of a text
 # file". That failure looks like a corrupted checkout, not like a tar flag.
 set -euo pipefail
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST}"
-: "${TA_WIN_USER:?set TA_WIN_USER}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/win-env.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 cd "$ROOT"
 
@@ -17,14 +15,7 @@ COPYFILE_DISABLE=1 tar --exclude='.git' --exclude='bin' --exclude='obj' --exclud
   -czf "$TARBALL" .
 echo "packed $(du -h "$TARBALL" | cut -f1)"
 
-if [ -n "${TA_WIN_PASSWORD:-}" ]; then
-  SSHPASS="$TA_WIN_PASSWORD" sshpass -e scp -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR \
-    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-    "$TARBALL" "$TA_WIN_USER@$TA_WIN_HOST:C:/ta/src.tgz"
-else
-  scp -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR \
-    "$TARBALL" "$TA_WIN_USER@$TA_WIN_HOST:C:/ta/src.tgz"
-fi
+win_scp "$TARBALL" 'C:/ta/src.tgz'
 rm -f "$TARBALL"
 
 # The delete used to run with -EA 0 and say nothing about what it could not remove. That is not a

@@ -13,8 +13,7 @@
 # so this script refuses to let that be discovered halfway through a trading test.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
+source "$HERE/win-env.sh"
 
 NAME="${TA_WIN_NAME:-$TA_WIN_HOST}"
 

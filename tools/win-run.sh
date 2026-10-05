@@ -1,17 +1,8 @@
 #!/bin/bash
-# Run a command on the Windows machine over SSH. See tools/README.md for configuration.
+# Run a command on the Windows machine over SSH. See tools/README.md for configuration;
+# TA_WIN_BOX=<name> picks a machine other than the default one (tools/win-env.sh).
 set -euo pipefail
-[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
-: "${TA_WIN_HOST:?set TA_WIN_HOST}"
-: "${TA_WIN_USER:?set TA_WIN_USER}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/win-env.sh"
 
-OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15
-      -o NumberOfPasswordPrompts=1 -o LogLevel=ERROR)
-
-if [ -n "${TA_WIN_PASSWORD:-}" ]; then
-  SSHPASS="$TA_WIN_PASSWORD" exec sshpass -e ssh "${OPTS[@]}" \
-    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-    "$TA_WIN_USER@$TA_WIN_HOST" "$@"
-else
-  exec ssh "${OPTS[@]}" "$TA_WIN_USER@$TA_WIN_HOST" "$@"
-fi
+win_ssh "$@"

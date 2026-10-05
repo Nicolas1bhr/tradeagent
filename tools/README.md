@@ -5,8 +5,8 @@ and this directory holds the scripts that ask both. **They are committed on purp
 lives in someone's shell history is not a proof, and every one of these was written because a claim
 in `BUILD-STATUS.md` needed evidence behind it.
 
-Nothing here contains a credential. Every script reads `~/.tradeagent/win.env` if it exists, so the
-machine is configured once and never passed on a command line:
+Nothing here contains a credential. Every script reads `~/.tradeagent/win.env` if it exists (through
+`win-env.sh`), so the machine is configured once and never passed on a command line:
 
 ```bash
 mkdir -p ~/.tradeagent && chmod 600 ~/.tradeagent/win.env    # create it with these contents:
@@ -21,6 +21,32 @@ be committed by accident.
 
 Prerequisites on the Mac: `sshpass` (only if you use a password rather than a key), and
 `pyobjc-framework-Quartz` for the screenshot script.
+
+### More than one machine
+
+`win.env` is the default machine — the ATAS box. Any other machine gets its own file, and every script
+is pointed at it by name:
+
+```bash
+TA_WIN_BOX=tests tools/win-state.sh         # reads ~/.tradeagent/win-tests.env instead of win.env
+```
+
+A name with no file behind it is refused (exit 2), never quietly answered by the default machine:
+acting on the wrong box — a full suite left running beside ATAS, a probe looking for ATAS where there
+is none — is the failure this guards. All the scripts share `win-env.sh` for this and for the ssh and
+scp options, so the two ways in cannot drift apart file by file.
+
+**A new machine gets a key, not a password.** Its file sets `TA_WIN_KEY=<private key path>` in place of
+`TA_WIN_PASSWORD`; what then sits on this Mac opens one account on one machine and is revoked by
+deleting one line over there. `win-bootstrap.ps1` is the one step done by hand on the machine itself —
+once, in an administrator PowerShell, as the account the Mac will use: it installs and starts OpenSSH
+Server, opens port 22 to Tailscale addresses only, puts the public key where sshd actually reads it
+(an administrator's keys live in `ProgramData`, and a key in `~\.ssh` is silently ignored), and stops
+the machine sleeping on mains power.
+
+**The machine must be on this Mac's tailnet.** A Mac is in one tailnet at a time, so switching it to
+another one cuts it off from every machine here. A box kept in its own tailnet is *shared* into this
+one from that tailnet's admin console instead (Machines → the box → Share).
 
 ## Start every Windows session here
 
