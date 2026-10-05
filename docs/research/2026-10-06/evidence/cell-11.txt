@@ -1,0 +1,15 @@
+# Cell 11 (C2 AppContainer) — a revoked or expired grant is refused
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: reasoned N/A — grant lifetime is app-layer (AgentGrants.Verify, re-checked every frame; grants held in memory only).
+
+Result(s):
+  [11] revoked/expired grant refused
+      expected=N/A  outcome=N/A  property-held=True
+      NOT APPLICABLE to the OS sandbox: grant lifetime is app-layer (AgentGrants.Verify re-checked every frame; grants in memory only — AgentGrants.cs). The sandbox adds no grant surface.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

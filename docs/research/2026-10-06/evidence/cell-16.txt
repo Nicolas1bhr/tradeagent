@@ -1,0 +1,15 @@
+# Cell 16 (C2 AppContainer) — cancelling kills the descendants
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: launches the worker in a KILL_ON_JOB_CLOSE Job Object; the worker spawns a long-lived descendant (another probe copy); host records both pids alive, closes the job, re-checks.
+
+Result(s):
+  [16] cancellation kills descendants
+      expected=all dead  outcome=ALL DEAD  property-held=True
+      pids=3964,7636 alive before kill=True,True after=False,False
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

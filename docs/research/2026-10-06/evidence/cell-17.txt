@@ -1,0 +1,15 @@
+# Cell 17 (C2 AppContainer) — a restart revives no authority
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: reasoned PASS — launch grants live in memory only (AgentGrants.cs); the AppContainer profile persists as an identity, not an authority.
+
+Result(s):
+  [17] restart revives no authority
+      expected=PASS  outcome=PASS  property-held=True
+      launch grants live in memory only (AgentGrants.cs: 'a restart has no launches in flight'); the AppContainer profile persists as an IDENTITY, not an authority — it carries no token and grants nothing.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

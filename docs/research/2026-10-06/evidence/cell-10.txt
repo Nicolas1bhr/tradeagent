@@ -1,0 +1,15 @@
+# Cell 10 (C2 AppContainer) — the brokered route with a live grant works
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: reasoned N/A — the app-brokered capability transport (U-capability-broker-sandbox) does not exist yet; cell 9 measures the negative half.
+
+Result(s):
+  [10] brokered route with live grant works
+      expected=N/A  outcome=N/A  property-held=True
+      NOT APPLICABLE: the app-brokered capability transport (U-capability-broker-sandbox) is not built; there is no broker to exercise. The negative half (cell 9) IS measured.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

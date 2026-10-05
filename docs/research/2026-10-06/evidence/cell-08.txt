@@ -1,0 +1,15 @@
+# Cell 8 (C2 AppContainer) — opening or injecting a host process fails
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: Native.OpenProcess(VM_READ|VM_WRITE|VM_OPERATION|QUERY_INFORMATION) on a dummy host cmd process the HOST started.
+
+Result(s):
+  [8] open/inject host process fails
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      OpenProcess(pid 21244) refused
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

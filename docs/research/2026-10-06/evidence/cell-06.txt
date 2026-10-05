@@ -1,0 +1,21 @@
+# Cell 6 (C2 AppContainer) — descendants (cmd, PowerShell, node) stay inside
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: spawns cmd.exe (type state), powershell (Get-Content state), node (-e readFileSync state); checks for the state sentinel in output.
+
+Result(s):
+  [6a] cmd descendant contained
+      expected=DENIED  outcome=DENIED  property-held=True
+      descendant could not read state/: Access is denied.  
+  [6b] powershell descendant contained
+      expected=DENIED  outcome=DENIED  property-held=True
+      descendant could not read state/: Get-Content : Access is denied  At line:1 char:1  + Get-Content -LiteralPath 'C:\ta\containment-20261006\home\state\trust ...  + ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  [6c] node descendant contained
+      expected=DENIED  outcome=DENIED  property-held=True
+      descendant launch/read refused: An error occurred trying to start process 'C:\Program Files\nodejs\node.exe' with working directory 'C:\ta\containment-20261006\workspace'. Access is denied.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

@@ -1,0 +1,18 @@
+# Cell 3 (C2 AppContainer) — TradeAgent state/ unreadable and unwritable
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: Native.TryOpenRead/TryOpenWrite against the probe TRADEAGENT_HOME\state (never the box's real home).
+
+Result(s):
+  [3a] state/ read blocked
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      read refused
+  [3b] state/ write blocked
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      write refused
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

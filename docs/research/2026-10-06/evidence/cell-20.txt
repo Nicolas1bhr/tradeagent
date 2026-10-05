@@ -1,0 +1,15 @@
+# Cell 20 (C2 AppContainer) — the app can set it up with no terminal
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: assessment — CreateAppContainerProfile + CreateProcess are per-user in-process API calls; the profile was created here with no elevation requested and no console.
+
+Result(s):
+  [20] app can set it up with no terminal
+      expected=PASS  outcome=PASS  property-held=True
+      CreateAppContainerProfile + CreateProcess are per-user, in-process API calls needing no elevation and no console (profile created here without requesting any new privilege); C3 by contrast needs feature enablement + reboot. No-terminal is satisfied by C2's primitives.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

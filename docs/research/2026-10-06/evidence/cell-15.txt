@@ -1,0 +1,15 @@
+# Cell 15 (C2 AppContainer) — compile and run a generated tool
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: writes gen.ps1 (Add-Type of a tiny C# type) and runs powershell -File; checks it printed 4. Uses the in-box compiler; TEMP redirected into the granted workspace.
+
+Result(s):
+  [15] compile+run generated tool
+      expected=ALLOWED  outcome=ALLOWED  property-held=True
+      Add-Type compiled C# in-container and ran it (printed 4)
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

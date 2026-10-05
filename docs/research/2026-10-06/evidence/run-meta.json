@@ -1,0 +1,28 @@
+{
+  "target_os": "Microsoft Windows 10.0.26200",
+  "target_arch": "X64",
+  "dotnet": "10.0.11",
+  "elevated": true,
+  "c1": {
+    "processmodel_dll_loaded": true,
+    "export_CreateProcessInSandbox": true,
+    "export_CreateProcessAsUserInSandbox": true,
+    "callable_child_exit": 0,
+    "callable_result": "C1CALL returned=False lasterr=13",
+    "status": "PRESENT but matrix NOT RUN: valid FlatBuffer SandboxSpec (SBOX/0.1.0) needs the non-public schema",
+    "experimental": true
+  },
+  "c2": {
+    "created": true,
+    "sid": "S-1-15-2-2878903122-2905290436-4008787484-3266020394-1775979201-1623927228-2437891648",
+    "profile_create_ms": 23.1322,
+    "grant_workspace": true,
+    "grant_romount": true,
+    "grant_probe_tree": true,
+    "grant_window_station": "exit=0 GRANTUI ws=True dt=True  GRANTUI winsta-inherit=True winsta=True desktop=True",
+    "temp_redirected_to": "C:\\ta\\containment-20261006\\workspace\\tmp",
+    "main_wall_ms": 2783.923,
+    "warm_launch_ms": 964.1261,
+    "worker_peak_working_set_mb": 21.1
+  }
+}

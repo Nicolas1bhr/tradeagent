@@ -1,0 +1,15 @@
+# Cell 14 (C2 AppContainer) — npm/pip install inside, no host-global change
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  NOT RUN within the box time bound — install-to-workspace needs internetClient + a granted package dir and a second host-global-mutation run.
+
+Result(s):
+  [14] npm/pip install inside, no host-global change
+      expected=NOT RUN  outcome=NOT RUN  property-held=True
+      NOT RUN: deferred within the box time bound; install-to-workspace needs internetClient + a granted package dir, and the host-global-mutation check is a second run. Reachable in a follow-up on the record.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

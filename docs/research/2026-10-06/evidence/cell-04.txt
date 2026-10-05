@@ -1,0 +1,21 @@
+# Cell 4 (C2 AppContainer) — user secrets unreadable (.codex/auth.json, .ssh, browser profile)
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: Native.TryOpenRead ONLY (no byte read) of the owner's real %USERPROFILE%\.codex\auth.json, \.ssh, Chrome profile. Records success + Win32 error only.
+
+Result(s):
+  [4a] owner .codex/auth.json unreadable
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      open-for-read refused
+  [4b] owner .ssh unreadable
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      open-for-read refused
+  [4c] browser profile unreadable
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      open-for-read refused
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).
