@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- R-containment's probe-only harness (docs/EDGE-FACTORY.md §6.11, factory plan §9.3). It measures
+       which Windows isolation route can confine an AI seat; it is NOT product code and is DELIBERATELY
+       NOT in TradeAgent.sln. It must never end up inside a packaged build.
+
+       It has no ProjectReference to any src/ project on purpose: the containment question is about the
+       operating system, not about TradeAgent's types, and a self-contained harness is the honest shape
+       for a leg that changes nothing under src/. Where it imitates the product (the cell-9 pipe is
+       ACL'd the way GatewayPipeServer.CreateServer ACLs the gateway pipe), it copies the pattern rather
+       than linking the code, and says so at the call site.
+
+       net10.0 (not net10.0-windows): it is built and run on the Windows box (dotnet 10.0.400) where the
+       P/Invoke runs, and it still compiles on the macOS dev machine. Analyzers are off because every
+       Win32 call below is Windows-only by construction and the platform-compat analyzer would warn on
+       each one; the Windows guards are the launcher's own (it refuses on a non-Windows host at run time). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>containment-probe</AssemblyName>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>
