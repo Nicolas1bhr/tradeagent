@@ -189,13 +189,13 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         Assert.Equal(TapeSourceCatalog.OkxTermsUrl, row.TermsUrl);
         Assert.StartsWith("https://", row.TermsUrl, StringComparison.Ordinal);
         Assert.EndsWith("/en-eu/help/okx-api-agreement", row.TermsUrl, StringComparison.Ordinal);
-        Assert.Contains("re-read 2026-10-04", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("re-read 2026-10-06", row.Terms, StringComparison.Ordinal);
         Assert.Contains("§ 9.4", row.Terms, StringComparison.Ordinal);
         Assert.Contains("personal trading use", row.Terms, StringComparison.Ordinal);
         Assert.Contains("§ 9.3(b)", row.Terms, StringComparison.Ordinal);
         Assert.Contains("one page a minute", row.Terms, StringComparison.Ordinal);
         Assert.Contains("/docs-v5/en/#announcement-get-announcements", row.DocUrl, StringComparison.Ordinal);
-        Assert.Contains("measured 2026-10-04", row.Measured, StringComparison.Ordinal);
+        Assert.Contains("measured 2026-10-06", row.Measured, StringComparison.Ordinal);
 
         // THE LIVE RULE TAKES THE ROW'S ORIGIN, CADENCE AND DOCUMENTED DELAY; a market row's delay is zero.
         Assert.Equal((UrlOrigin.Of(TapeSourceCatalog.OkxEeaBaseUrl)!, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(300)),
