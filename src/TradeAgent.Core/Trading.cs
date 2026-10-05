@@ -378,10 +378,13 @@ public sealed class TradeAgentSettings
     /// <summary>
     /// WHETHER TRADEAGENT RECORDS THE MARKET'S CONTEXT AS IT ARRIVES — the tape (<c>U-tape-store</c>):
     /// Binance USDⓈ-M premium index with the live funding rate, open interest, the 5-minute long/short
-    /// and taker ratios and settled funding, for six symbols, into <c>state/tape.db</c>.
+    /// and taker ratios and settled funding, for six symbols, into <c>state/tape.db</c>; and OKX's
+    /// announcements for EU users, page 1 once a minute (<c>U-tape-events</c>), every one screened at each
+    /// read and none of their links ever fetched. One switch for both: the second family is as public,
+    /// keyless and powerless as the first, and a switch of its own would be one more control to get wrong.
     ///
     /// <para>ON by default and ONE press, for the reasons <see cref="CollectLiveBars"/> is: it reads
-    /// public market data with no key, grants nothing, changes no limit and touches no order — and it
+    /// public endpoints with no key, grants nothing, changes no limit and touches no order — and it
     /// cannot be retrofitted, because a reading nobody recorded as it arrived can never be shown to have
     /// been known then. Off, the collector writes NOTHING, not even a failed attempt. It is the only
     /// control of the tape, and it is in-process: no verb and no pipe op starts, stops or writes it.</para>

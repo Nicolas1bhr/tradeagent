@@ -354,6 +354,16 @@ from Binance's own address is marked *live*; a late one, or one from anywhere el
 Like the live bars it cannot be caught up later — it is recorded only while TradeAgent is running — and
 it is context for research, never what a strategy is judged on. The AI cannot start, stop or change it.
 
+The same button also records **OKX's announcements for EU users** — listings, delistings, maintenance and
+the rest — by reading the first page of them, the twenty newest, once a minute. Each announcement is kept
+whole, as OKX published it, with the moment TradeAgent first saw it; an edit is kept beside the original, and
+the links in them are never opened. An announcement is just text an exchange wrote, and text can be written
+to steer an AI ("ignore your instructions…", "note to AI agents…", hidden characters). So TradeAgent checks
+every announcement each time it is read, and one that looks addressed to an AI is **kept but flagged**, and
+its text is withheld when the tape is read for the AI. The check catches the common tricks, not
+every one, and an announcement it does not flag is not thereby safe. Bybit's announcements are not recorded:
+TradeAgent could not read Bybit's terms for them.
+
 **The terms the history came under.** Binance now publishes its archive under the *Binance Vision Dataset
 Terms* (version 1.0, CC BY-NC-SA 4.0). They allow backtesting for personal research and do not allow live
 trading on that data. So TradeAgent records, with every dataset, the terms its bars came under, and the history

@@ -2704,12 +2704,14 @@ and a pressed kill switch all leave it collecting, because evidence is not a pai
 and no pipe op that starts it, stops it, points it somewhere else or writes a row; the owner's one-press
 toggle on the Settings page is the only control, and it is in-process.
 
-## The tape — `src/TradeAgent.Core/Db/TapeStore.cs`, `Data/Tape.cs`, `Data/TapeSourceCatalog.cs`, `Data/TapeParse.cs`, `Provisioning/TapeCollector.cs`
+## The tape — `src/TradeAgent.Core/Db/TapeStore.cs`, `Data/Tape.cs`, `Data/TapeSourceCatalog.cs`, `Data/TapeParse.cs`, `Data/TapeScreen.cs`, `Provisioning/TapeCollector.cs`
 
 **What it is.** While the app runs, TradeAgent records the market's context — Binance USDⓈ-M premium index
 with the live funding rate, open interest, the 5-minute long/short and taker ratios, settled funding — for
-six symbols into `state/tape.db` (`U-tape-store`; `docs/EDGE-FACTORY.md` § 4.1). It places no order, holds no
-credential and reaches nothing that could: every request is an unauthenticated GET of public market data.
+six symbols into `state/tape.db` (`U-tape-store`; `docs/EDGE-FACTORY.md` § 4.1) — and OKX's announcements for
+EU users, page 1 once a minute, each screened at every read for text addressed to an automated reader
+(`U-tape-events`; § 4.2). It places no order, holds no credential and reaches nothing that could: every request
+is an unauthenticated GET of a public endpoint.
 Reading the tape for agents and status is `U-tape-read`; history backfill is `U-tape-archive`.
 
 **ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
@@ -2744,20 +2746,46 @@ inside the reader, so a later tape holdout applies there; none exists yet, and e
 
 **CLAIMED — THE CLASS RULES.** Computed by the store per observation, from fields it recorded and from this
 build's rows, never accepted from a caller: `O-LIVE` iff the fetch's source is a built-in row, its origin is
-that row's built-in origin, and the reading arrived within the row's cadence plus 30 s of its source time,
-either side; everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
+that row's built-in origin, and the reading arrived no later than the row's cadence plus its documented
+publication delay plus 30 s after its source time, and no earlier than the cadence plus 30 s before it (the
+delay is 300 s for OKX's announcements, whose answer OKX documents may lag ~5 minutes, and 0 for every market
+row); everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
 included), and every row `tape-sources.json` added, at any address. A later revision is never above the one
 before it. `O-PIT` is `U-tape-archive`'s and `O-HIND` is never written here; both are in the column's `CHECK`
 so those units add a writer, not a table rebuild.
 
-**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in rows (`docs/RESEARCH-REQUIRED.md`, C5b):
+**CLAIMED — THE ANNOUNCEMENTS (`U-tape-events`).** One built-in row, `okx-eea-announcements`: `GET
+https://eea.okx.com/api/v5/support/announcements`, page 1 (the twenty newest by first publication, about a
+month), every 60 s, read by the `announcement-json` parser. Each item of `data[].details[]` is one observation:
+subject = the first 32 hex of the SHA-256 of its `url`, source time = its `pTime`, payload = the item whole. The
+same item again writes nothing, an edit is `revision + 1`, a new `url` or time is a new key, an item past page 1
+is no longer watched. A page whose path is missing (OKX's error envelope with an empty `data` included), or
+with an item lacking a text `url` or a readable `pTime`, over 64 KB, or naming one key twice with different
+contents, is a recorded failure that stores nothing; an empty list is an empty page. No item `url` is ever
+fetched. The row carries its terms basis — OKX's API Agreement (28 July 2026) §§ 3.2(a), 9.3(b), 9.4, which
+the Terms of Service – EEA § 1.14 incorporate — re-read on 2026-10-06 (`docs/RESEARCH-REQUIRED.md`, C5d).
+Bybit's are not recorded: its EU terms could not be re-read on the day, so it has no terms basis.
+
+**CLAIMED — THE SCREEN (`TapeScreen` v1).** Every observation read carries `Quarantine`: null, or the rule and
+the screen version, never the text — computed at that read from the payload's decoded property names and
+string values and stored nowhere, so a later screen reads every row ever recorded and nothing written into the
+file marks one clean. Quarantined: any zero-width, bidirectional-control or tag character; or, once folded
+(this build's own NFKC table — `string.Normalize` is the identity under invariant globalization — case-folded,
+format characters and combining marks dropped), an instruction override, an address to an automated reader or
+chat-role markup; a payload it cannot read is `unreadable`. A quarantined item is still recorded whole; `AsOf`
+serves it with a null payload to every audience — the pipe's, and the referee's, which never reads the tape;
+`Revisions` and `ObservationsOf` are in-process and return it whole with its verdict. The rules are code: no
+file, setting or verb adds, removes or relaxes one. It reads every source, the market rows included.
+
+**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b) and the announcement row above:
 `binance-um-premium` (60 s, one call for every symbol, kept to the six), `binance-um-oi` (60 s per symbol),
 `binance-um-oi-5m` and `binance-um-ratios-5m` (300 s), `binance-um-funding` (900 s); the universe is BTCUSDT
 ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms note, doc URL and measurement.
 `tape-sources.json` sits in TradeAgent's folder, which an unconfined agent can write, so it may add at most 8
 UNKEYED rows — no row type can hold a key and the collector sends none — at a cadence of 60 s to a day. A row
 naming a built-in id is refused in words and the built-in stands as shipped; so is one with a user name, query
-or fragment in its address, an unknown parser or a malformed series. An unreadable file stops only its own
+or fragment in its address, an unknown parser, the announcement parser (an exchange's own text must not
+enter the tape from wherever a file row points), an items path or id field, or a malformed series. An unreadable file stops only its own
 rows: unlike `sources.json`, the built-ins stand in for nothing it said, and a file anyone can corrupt must not
 be able to switch the tape off.
 
@@ -2774,11 +2802,17 @@ control, and no verb or pipe op starts, stops or writes it.
 **NOT CLAIMED.** (1) *Completeness while the app is closed*: the tape is as deep as the app has been running,
 nothing fills a gap, and a later reading of an old point is `O-ARCH`. (2) *A vendor checksum*: none is
 published for a live answer; every hash here is this build's, of what it received. (3) *Evaluation evidence*:
-no verdict is taken over the tape; it is research context. (4) *Protection from an agent editing the file
+no verdict is taken over the tape, announcements included; it is research context. (4) *Protection from an agent editing the file
 before containment*: "the store is the only writer" holds for the app's own paths, and an agent running
 unconfined could still edit `state/tape.db` itself (`docs/EDGE-FACTORY.md` § 6.11). (5) That an address a file
 row names is public or harmless: until containment the agent can reach it itself, and `R-containment` decides
-whether file rows survive containment.
+whether file rows survive containment. (6) *Completeness of announcements*: page 1 only and only while the app
+runs — an item published and pushed past page 1 while it was closed is never seen, and page 1 at the first look
+after a start is `O-ARCH`. (7) *That the screen catches every address to a reader, or that an unflagged item is
+safe*: look-alike letters from other scripts, a paraphrase, another language or an image pass it; whether a
+quarantined item ever reaches a model is `U-annotator`'s, and a later reader that serves agents (`U-tape-read`)
+must withhold as `AsOf` does — nothing here makes it. (8) *The sites' terms*: the row's basis is a reading on the
+day, not legal advice; whether selling TradeAgent needs OKX's written authorisation under § 9.3(b) is open (C5d).
 
 ## Data licences — `src/TradeAgent.Core/Data/DataLicence.cs`, `Db/DataLicenceStore.cs`, `Db/DatasetStore.cs`, `Db/AllocationStore.cs`
 
