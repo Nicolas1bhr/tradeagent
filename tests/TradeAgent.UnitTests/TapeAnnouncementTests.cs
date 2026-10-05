@@ -195,8 +195,8 @@ public class TapeAnnouncementTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A PATH THE ANSWER DOES NOT HOLD, AN ITEM WITH NO URL, OR ONE WITH NO TIME IS A RECORDED FAILURE; AN
-    /// EMPTY PAGE IS NOT. OKX's own error envelope — <c>code</c> 50011 with an empty <c>data</c>, which its
+    /// A PATH THE ANSWER DOES NOT HOLD, AN ITEM WITH NO URL, ONE WITH NO TIME OR ONE OVER 64 KB IS A RECORDED
+    /// FAILURE; AN EMPTY PAGE IS NOT. OKX's own error envelope — <c>code</c> 50011 with an empty <c>data</c>, which its
     /// documentation lists with HTTP 200 as well as 429 — is a path not held, never an empty page. Each
     /// failure is a fetch row with its reason and nothing stored; the empty page is a fetch row that delivered
     /// nothing new, and the look counts as working.
@@ -243,6 +243,12 @@ public class TapeAnnouncementTests(ITestOutputHelper log)
         Refused(await Look(Page(good, noTime)), "an item has no 'pTime' this build can read as a time");
         Refused(await Look(Page(Item("bad-time", Now, "Bad time").Replace(Ms(Now) + "\",\"businessPTime\"", "soon\",\"businessPTime\"", StringComparison.Ordinal))),
             "an item has no 'pTime' this build can read as a time");
+
+        // AN ITEM OVER 64 KB REFUSES THE PAGE, in words: the store would throw on it, and a look must record a reason instead.
+        var tooLong = await Look(Page(good, Item("too-long", Now.AddHours(-1), new string('x', TapeStore.MaxPayloadBytes))));
+        Refused(tooLong, "an item is ");
+        Assert.Contains($"bytes and the tape keeps at most {TapeStore.MaxPayloadBytes.ToString(CultureInfo.InvariantCulture)} per observation",
+            tooLong.Fetch.Note!, StringComparison.Ordinal);
 
         // AN ITEM THAT IS NOT AN OBJECT REFUSES THE PAGE.
         Refused(await Look("""{"code":"0","data":[{"details":["a headline"],"totalPage":"1"}],"msg":""}"""), "an item in 'data.details' is not an object");
