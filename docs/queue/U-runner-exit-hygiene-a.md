@@ -1,0 +1,40 @@
+# U-runner-exit-hygiene-a — an END whose close a gate refused stays owed and goes out again; an order stopped between its record and the wire is over, not a run frozen for good
+**Arrow closed:** the two live-blocking items `U-runner-refused-close`'s landing named, NOT claimed in `CONTRACTS.md` "The runner" (orchestrator, 2026-10-04 01:23 and 07:55). Owed BEFORE ANY LIVE USE. Money path: the
+gateway's deployment ledger and the runner's one predicate; `DispatchPlaceAsync`, `CloseAsync` and every gate unchanged. Self-contained; `U-runner-exit-hygiene-b` lands after it.
+**Protects (`CLAUDE.md`):** rule 3 — only what PROVABLY never left is sent again or settled as not sent: `refused` over no row, or over a row that never reached `DISPATCHING` (`dispatched_at` null; `DISPATCHING` is durable before the
+wire, `TradingGateway.cs:6274-6278`, `synchronous=FULL` `Database.cs:31`); a row `DISPATCHING`/UNKNOWN stays in flight, holds the frontier and the slot, never re-sent. Rule 1 — each attempt a new op, its own `dp-` id and `TA-`
+id. Every gate stands; no verb, no pipe op. EDGE § 6.6 — an envelope's slot frees only on a flat, reconciled end; § 6.9 — the owner reads it in the app.
+**Today (SOURCE at `2a12951c`, read by the survey leg; NOT runtime-verified; a bare `:n` is `TradingGateway.cs`).** Item 1, CONFIRMED: an END cancels what works (`:976-985`), closes through `CloseAsync` (`:987`, `:1010-1015`)
+and writes `End` whatever came back (`:989`). A gate before the wire leaves the close `refused` — update window, mode, kill switch, unconfirmed work, health (`:2664-2770`); allowlist, size, rate limit, quote age
+(`:2790-2826`); the unresolved reducer (`:7000`); `POSITION_MOVED` (`:6061-6073`). The reconcile pass finishes an ended run only if it has NO flatten op (`:1027-1037`); `IsReconciled` is "every op settled"
+(`DeploymentStore.cs:482-483`), so the slot frees (`:636-637`, `:656-657`), a replacement may start over the open position and the status drops the run (`:549-551`); cancels skip the risk check (`:6605-6625`): the
+position can be left open, unprotected, owned by nobody. Item 2, CONFIRMED — FROZEN for good, never lost, never doubled: the op is `dispatched` (`:1069`) before `TryCreate` (`:5604`) and the durable `DISPATCHING`
+(`:6277`); between them a close awaits the stale-close read (`:6066`, on the pass's token, which the paper read honours, `PaperConnector.cs:294-296`), so a crash — or the app closing (`AppHost.cs:1875` cancels the pass;
+`:1086` rethrows) — on any exit, flatten, stop or target (all `OrderIntent.Close`: `ForwardRuns.cs:431/567/642`, `:7005`) leaves op `dispatched` over row `CREATED`. Nothing reconciles it (startup reads `DISPATCHING`,
+`:1657-1659`; the open set excludes `CREATED`, `Stores.cs:263-264`); the settle skips it (`:862`); the cursor and the frontier stop at its bar (`:926-930`, `ForwardRuns.cs:165-168/232-233`): no exit, no max hold, no
+flat-minute cancel again, and an exit's cancel has gone (`ForwardRuns.cs:425`); the slot is held for good, UNRESOLVED (`:587-591`). Not doubled: the op and the row collapse a replay (`:1058-1067`, `:5551-5557`). The
+twin, same root: the settle refuses an op `dispatched` with NO row at once (`:851-854`) while its dispatcher may still be on the way to `TryCreate` (an END press beside the background pass) and then sends under it.
+**Observable result:** an END that could not close says so and closes once the gate lifts; nothing freezes a run for good; nothing is sent twice. **No schema change** (`CREATED → CANCELLED` is legal, `OrderStateMachine.cs:14`).
+Items, one commit each, one-sentence messages (read first: `CLAUDE.md`; `TradingGateway.cs:484-1270`, `:5544-5623`, `:6240-6310`, `:8340-8370`; `ForwardRuns.cs:813-874`; `Stores.cs:59-80`, `:270-310`):
+1. ONE predicate, shared by the runner and the gateway — refused before the wire: `refused` over no row or a row whose `DispatchedAt` is null (`Stores.cs:287`) — replaces `State == CREATED` (`ForwardRuns.cs:872-874`).
+   `CloseAsync`'s null RESOLVES the flatten op ("nothing to close", the outcome `:1006-1009` names; today `refused`, `:1075-1078`). An ended run whose latest flatten op is refused before the wire, or that has none (subsuming
+   `:1027-1037`, its `:1034` skip kept), is OWED: each reconcile pass finishes it as the END does — cancel what of it still works, then `CloseAsync` under a new op — at most once a minute, writing nothing while
+   `TryAuthorizeExecution` under its identity refuses (`:2656`); it holds its slot (`:636-637/656-657`) and the status says it in words (`:545-594`): ENDED, NOT closed, the refusal's code, retried each minute, no replacement till it closes.
+2. An op `dispatched` over a row `CREATED` older than `DispatchStrandedAfter` (`:2557-2562`, a stranded `DISPATCHING`'s bound) is settled BY THE STORE, never by a reading: the settle (`:832-871`; both passes, any process)
+   takes the row `CREATED → CANCELLED` by `Transition`'s CAS ("nothing was sent: …", as `:8362-8364` does) and only the CAS winner refuses the op, so a dispatcher still alive loses its own CAS (`:6277`, `:6625`), sending nothing.
+   The `dispatched`-with-no-row branch (`:851-854`) likewise past it: a terminal row goes under the id first, so a late dispatcher meets it and sends nothing (`:5551`, `:5606-5612`, `:6617`). An exit so
+   settled is re-sent by the existing rule (`ForwardRuns.cs:457-476`), an END's close by item 1.
+3. `CONTRACTS.md` "The runner": both NOT-claimed lines become claims, each with what it still leaves; `USER-GUIDE.md` on ending a run: the owed line.
+Red-first tests (`PaperDeploymentTests`, FaultTests: `RecordingConnector` and its `Seam`; a second gateway over the same database is the restart): (a) `An_end_whose_close_a_gate_refused_is_sent_again_and_holds_its_slot_until_flat`
+— a seeded position, the END under the update window (`InstallInProgress`, `:1377`): refused, no row; lifted, two reconcile passes in one minute and one in the next ⇒ exactly one new flatten, FILLED, the position 0;
+`StartPaperDeploymentsDue` 0 before it, 1 after (RED by reading: no second flatten, the position 1, a replacement at once); (b) `A_dispatch_stopped_between_its_record_and_the_wire_is_over_and_a_late_dispatcher_sends_nothing`
+— the END's close held at its stale-close read (`Seam` on `Positions` once its row is `CREATED`: the process that died); the second gateway past `DispatchStrandedAfter` reconciles ⇒ op `refused`, row `CANCELLED`, `DispatchedAt`
+null, cursor past its bar; the held call released ⇒ zero orders at either wire (RED by reading: `dispatched` over `CREATED` and cursor null on every pass; released, it sends one).
+Mutants to watch red and quote: (i) the slot reads an ended run accounted for once every op settles, as today ⇒ (a) red, a replacement while the account holds 1; (ii) the settle refuses the op and leaves the row `CREATED`
+⇒ (b) red, the released call sends one order under an op reading `refused`.
+Seen, not in this unit (read, not run): a close that MAY have reached the wire is never re-sent here (confirming one from history is seat P's `U-flatten-confirm`); an END closes the ACCOUNT's whole position in
+the symbol (`:6991`), not the run's books (one deployment per envelope, `:280`); two END callers at once can each send a close (`:963`, `:989`; the reducer refusal reads UNKNOWN only, `:6111-6114`) — a probe first.
+Shared with `U-flatten-confirm` (seat P, in flight): `TradingGateway.cs` (its hunks `:2147-10370`, these `:484-1270`), `CONTRACTS.md` (other sections), `RecordingConnector.cs` (only used); none with `U-test-hygiene-1`.
+Gate and report per `docs/HOW-WE-BUILD.md` pass 1 and `docs/FLEET.md` "The builder pass": rebase on `main` first; Release `--no-incremental` 0 warnings; Unit and Fault 0 failed locally, touched classes 3×; the full suite on
+CI via `fleet/bin/ci-dispatch.sh` (run id, every job's verdict); names vs `main` 0 removed (both set sizes printed); the tests box run or "tests box: NOT RUN — <ready's answer>"; `## Report` ≤ 20 lines appended here.
+No push to `main`, no merge; touch nothing in `docs/briefs/` but this file.
