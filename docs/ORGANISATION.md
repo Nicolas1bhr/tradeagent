@@ -11,6 +11,13 @@ factory plan (outside the repo) stays the substrate design except where § 0 say
 R12 code seams, R13 agent-organisation evidence, R14 multi-manager platforms and alpha factories, R15 control plane, seats and quota, R16 Belgium, R17 the
 red team of v1 (42 findings, all folded in or answered below), R18 the verification of the organisation's briefs.
 
+**2026-10-06 — `docs/VISION.md` is the end state this design grows toward,** from the owner's request for the best possible end state and the synthesis the
+owner agreed to: unbounded in what TradeAgent can represent, deliberately bounded in what it activates — every active seat, department and layer exists
+because current work requires it or a bounded experiment is testing it. It changes nothing in § 15 through M-org1. Where it describes the eventual shape
+differently, it is the direction: the audit line and the watcher (§§ 1, 2, 9) grow into a Security & Assurance Council — the independent third line, which
+holds the owner's private line — and a watcher beside every department, each a seat that costs nothing until it investigates; the chief stays the one
+accountable owner of strategy and gains a strategy council that assesses and never owns; § 3's numeric bounds are today's defaults, none permanent.
+
 ## 0. Where this comes from, and what it changes
 
 - **The owner has asked for this since September.** 2026-09-07: "a council of very smart top level manager agents with different tasks that run their own
@@ -96,10 +103,12 @@ owner's cap. **Order permission stays bound to the legacy `operations` id and ne
 - **Lifecycle:** proposed → chartered → active ⇄ dormant → merged or closed. Dormant costs nothing, and a team or family going dormant is a mandatory record
   scored against its charter's kill criteria, so dormancy cannot dodge a kill forecast. Closing never deletes: open assignments are re-assigned or cancelled
   with a disposition; trials, verdict counts and spend carry over (their keys carry no role, R12 § 3); the genome bank keeps why the unit closed.
-- **Bounds the app enforces (defaults):** manager depth 3 (chief, division, team) because deeper AI hierarchies measurably cost more and err more (R13 D2) —
-  the owner may raise it to 4 after a paired run shows the extra layer pays; 1–5 executors per head, cap 8 (R13 D3); at most 6 divisions; at most 10 positions
-  in total on plans (R14 § 3.1 recommends ≤ 10 in total and ≤ 3 levels awake per cycle; dormant positions cost nothing); the owner's ceiling on unconfined
-  seats (§ 10). Breadth is reported as the effective number of independent teams, k / (1 + (k − 1)·ρ̄), never as head-count (R14 § 3.1).
+- **Bounds the app enforces (defaults — policy data, none permanent; `docs/VISION.md` § 3):** manager depth 3 (chief, division, team) because deeper AI
+  hierarchies measurably cost more and err more (R13 D2) — a fourth layer, and each one after it, only after a bounded experiment (the proving ground, then a
+  paired run) shows it pays; 1–5 executors per head, cap 8 (R13 D3); at most 6 divisions; at most 10 positions in total on plans (R14 § 3.1 recommends ≤ 10
+  in total and ≤ 3 levels awake per cycle; dormant positions cost nothing); the owner's ceiling on unconfined seats (§ 10). The structural counts rise only by
+  VISION § 3's earning rule, never by a constant in code; the unconfined-seat ceiling stays the owner's. Breadth is reported as the effective number of
+  independent teams, k / (1 + (k − 1)·ρ̄), never as head-count (R14 § 3.1).
 - **Who restructures — "managers grow it", throttled:** the chief charters, merges and closes divisions; a division head charters and closes teams and, when
   earned, a sub-division; each change applies at once, is a decision record with a forecast (§ 5), shows on the owner's live chart, and can be vetoed — a veto
   closes or restores the unit with the owner as decider of record. A unit lives ≥ 14 days or until a precommitted kill criterion resolves; at most two

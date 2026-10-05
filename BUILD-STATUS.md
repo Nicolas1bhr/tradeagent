@@ -7966,3 +7966,25 @@ files: unchanged". **CI:** `08e7b871` (run 37369028929) ubuntu-latest success, m
 **NOT done, NOT verified:** no compatibility code was removed — that is work for the units that meet it, or a sweep the orchestrator may brief; the in-app
 fresh start for a refused older home does not exist yet (owed by the first change that refuses one); the "records are damaged" wording for a newer home is
 unchanged.
+
+## 2026-10-06 — the vision: `docs/VISION.md`, the end state of the organisation and the law it grows by; docs only
+
+**What happened.** On 2026-10-05 the owner asked, as brainstorming with no production action, to "take a leap and actually think of the best possible
+end state of the software where it genuinely becomes an AI organisation". Three passes followed in one session: an end-state brainstorm (the institutions a
+hierarchy needs to be a firm — a constitution in pace layers, one governance record, an economy with α-wealth and a contribution ledger, a metabolism, a
+proving ground of synthetic markets, beliefs and case law, an immune system); an upgrade drawn from the AI Concierge foundation documents the owner shared
+(outside the repo); and an assessment the owner agreed to on 2026-10-06 that kept the upgrade's control-plane primitives (authority lattice, invariant
+registry, enforcement classes, simulation boundaries, shadow evaluations, an independent accountability line) and rejected its structural expansion (a
+40-seat floor, unlimited active depth, a council in place of the chief) as not earned. Landed: `docs/VISION.md` (the law: representable without limit,
+active only when earned); in `docs/ORGANISATION.md` a header note and § 3's bounds made policy data under VISION's earning rule; pointers in `CLAUDE.md` and
+the resume block. NO product code, test or build changed; no unit before M-org1 changes; M0 is still next; the last gate figure in this file stands.
+
+**RUN, 2026-10-06:** `git fetch` → `main` = `origin/main` = `76896e1a`, `git rev-list --count HEAD..origin/main` → 0. `git status --short` before this
+section was appended → ` M CLAUDE.md`, ` M docs/ORGANISATION.md`, ` M docs/RESUME-HERE.md`, `?? docs/VISION.md` — no `src/`, `tests/` or `tools/` path.
+SOURCE, read and not run: rung 28's `org_unit` is a tree by `parent_id` (`Database.cs`) and `OrgStore.Ancestors` / `Subtree` walk a line of any length, so
+"representable without limit" needs no schema change for depth.
+
+**NOT VERIFIED:** everything in `docs/VISION.md` is DESIGN, its open questions listed in its § 14 — whether a manager layer pays, whether proving-ground
+skill transfers to real edges, whether splitting α-wealth keeps the global guarantee, whether fixed credit splits misallocate, what a model-layer watcher
+adds; the AI Concierge documents are cited as design references, not as verified facts about the systems they name. CI: run 37373465478 for `76896e1a` was
+cancelled at the owner's instruction on 2026-10-05 with no verdict; this commit's run covers both — pending at the close, for the next manager to record.

@@ -32,6 +32,13 @@ read or trusted), the owner's choice before anything is destroyed (an older home
 protections for the current build's own data. In the code: `Versions` (`src/TradeAgent.Core/Versioning.cs`), `Database.Migrate`, and the two undo-list
 tests.
 
+**2026-10-06 — `docs/VISION.md`: the end state of the organisation and the law it grows by (the owner's synthesis; docs only).** Unbounded in what
+TradeAgent represents, deliberately bounded in what it activates: every active seat, department and layer exists because current work requires it or a
+bounded experiment is testing it; one chief with a strategy council; a Security & Assurance Council and a watcher per department; the authority lattice,
+invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. **It changes no unit before M-org1 — M0 is still next.**
+When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-org-verbs` keeps the bounds as policy data under the earning rule (§ 3),
+`U-org-watcher` scopes its detectors per unit (§ 5.2).
+
 **Checkpoint 2026-10-04 12:40 CEST — the orchestrator's session closed by the owner ("wrap up … resuming later").** A NEW orchestrator starts from
 `fleet/handoff/ORCHESTRATOR.md`; this session's agent ids are dead — open FRESH seats. `main` `810b35af` is clean and pushed; schema rung 30; every
 landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the fleet (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69`

@@ -21,6 +21,12 @@ dated and sourced, is in `docs/research/2026-10-02/`.
 divisions, team heads who decide, executors who choose how and never what, an audit line, and an invisible watcher that reports only to him). It sets
 how the product's agents are organised, decide, work and improve, and the second build lane; a manager's authority is over work, and it outranks no protection.
 
+**`docs/VISION.md` is the end state the organisation grows toward** (2026-10-06, the owner's synthesis): unbounded in what TradeAgent can represent,
+deliberately bounded in what it activates — every active seat, department and management layer exists because current work requires it or a bounded
+experiment is testing it; one chief with a strategy council that assesses and never owns; a Security & Assurance Council and a watcher per department as the
+accountability line; the authority lattice, invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. It changes no
+unit before M-org1 and outranks no protection.
+
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
 
