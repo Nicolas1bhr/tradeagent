@@ -169,8 +169,9 @@ public static class TapeSourceCatalog
     public const string OkxEeaBaseUrl = "https://eea" + ".okx" + ".com";
 
     /// <summary>
-    /// THE TERMS THE OKX ROW IS READ UNDER: OKX's API Agreement as published for the EEA, which its EEA
-    /// Terms of Service (§ 1.14) name as the terms of the API Services, public endpoints included.
+    /// THE TERMS THE OKX ROW IS READ UNDER: OKX's API Agreement as published for the EEA, which OKX's Terms of
+    /// Service – EEA (last updated 26 May 2026, § 1.14; re-read 2026-10-06) name and incorporate as the terms of
+    /// the API Services, public endpoints included.
     /// </summary>
     public const string OkxTermsUrl = "https://www" + ".okx" + ".com/en-eu/help/okx-api-agreement";
 
@@ -338,7 +339,7 @@ public static class TapeSourceCatalog
     ];
 
     const string OkxTerms =
-        "OKX's API Agreement for the EEA (last updated 28 July 2026), re-read 2026-10-04 (U-tape-events): § 3.2(a) lets "
+        "OKX's API Agreement for the EEA (last updated 28 July 2026), re-read 2026-10-06 (U-tape-events): § 3.2(a) lets "
         + "its public endpoints be used without a key, under the Agreement and its § 9; § 9.4 keeps what they serve to the "
         + "user's own personal, non-commercial trading, never redistributed, and allows automated means at a rate "
         + "'reasonably necessary for your personal trading use' that puts no unreasonable load on OKX, binding callers "
@@ -346,7 +347,7 @@ public static class TapeSourceCatalog
         + "offered as part of a commercial product. TradeAgent asks for one page a minute, against a documented limit of "
         + "five requests every two seconds, keeps what it reads on the owner's own machine for his own trading, and passes "
         + "it to no one. Whether selling TradeAgent itself needs that authorisation is a legal question this row raises "
-        + "and does not settle (docs/RESEARCH-REQUIRED.md, C5c).";
+        + "and does not settle (docs/RESEARCH-REQUIRED.md, C5d).";
 
     /// <summary>
     /// THE ANNOUNCEMENT ROWS THIS BUILD SHIPS (<c>U-tape-events</c>), a fresh copy on every call: OKX's
@@ -355,9 +356,12 @@ public static class TapeSourceCatalog
     /// moved past it is no longer being watched.
     ///
     /// <para><b>A source is here only with a terms basis re-read on the day.</b> Bybit's announcements were
-    /// measured with OKX's and are NOT here: Bybit EU's General Terms (12 June 2026, § 9.2.2) forbid bots,
-    /// scripts and other automatic means to access or monitor any part of its platform, so the row was dropped
-    /// rather than pointed at Bybit's non-EU host (<c>docs/RESEARCH-REQUIRED.md</c>, C5c).</para>
+    /// measured with OKX's (2026-10-03) and are NOT here. Its EU General Terms were read on 2026-10-04 as
+    /// forbidding bots, scripts and other automatic means to access or monitor any part of its platform (the
+    /// 12 June 2026 version, § 9.2.2); on 2026-10-06 they could not be re-read at all — the page is drawn in a
+    /// browser from a service that answers a plain request "403 Access Denied" — so there is no terms basis on
+    /// the day, and the row stays out rather than pointed at Bybit's non-EU host
+    /// (<c>docs/RESEARCH-REQUIRED.md</c>, C5d).</para>
     /// </summary>
     public static List<TapeSourceEntry> Announcements() =>
     [
@@ -384,10 +388,10 @@ public static class TapeSourceCatalog
             Terms = OkxTerms,
             TermsUrl = OkxTermsUrl,
             DocUrl = "https://www" + ".okx" + ".com/docs-v5/en/#announcement-get-announcements",
-            Measured = "measured 2026-10-04 from the dev Mac with no API key (U-tape-events; docs/RESEARCH-REQUIRED.md, C5c): "
-                     + "GET /api/v5/support/announcements, pages 1 to 15, every answer HTTP 200 in 0.18-1.80 s and about 5 KB; "
-                     + "twenty items a page, newest pTime first, each {annType, title, url, pTime, businessPTime} in 175-343 "
-                     + "bytes, page 1 reaching back 32 days"
+            Measured = "measured 2026-10-06 from the dev Mac with no API key (U-tape-events; docs/RESEARCH-REQUIRED.md, C5d): "
+                     + "GET /api/v5/support/announcements, pages 1 to 15, every answer HTTP 200 in 0.16-0.21 s and 5.0-5.4 KB; "
+                     + "twenty items a page, newest pTime first, each {annType, title, url, pTime, businessPTime} in 175-347 "
+                     + "bytes, page 1 reaching back 33 days"
         }
     ];
 

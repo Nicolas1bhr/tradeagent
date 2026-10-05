@@ -13,7 +13,7 @@ namespace TradeAgent.Tests.Unit;
 
 /// <summary>
 /// AN EXCHANGE'S ANNOUNCEMENTS ON THE TAPE (<c>U-tape-events</c>), against a loopback listener and never the
-/// vendor. The bodies are OKX's own shape as measured on 2026-10-04 (<c>docs/RESEARCH-REQUIRED.md</c>, C5c):
+/// vendor. The bodies are OKX's own shape as measured on 2026-10-06 (<c>docs/RESEARCH-REQUIRED.md</c>, C5d):
 /// <c>{code, msg, data: [{details: [...], totalPage}]}</c>, each item five string fields. Every item URL is
 /// under <c>example.invalid</c>, a name that resolves nowhere: no item URL is ever fetched, and a test that
 /// named a real one would be one edit away from asking it.

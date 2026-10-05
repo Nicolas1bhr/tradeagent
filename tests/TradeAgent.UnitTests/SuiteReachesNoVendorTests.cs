@@ -82,8 +82,9 @@ public class SuiteReachesNoVendorTests
 
     /// <summary>
     /// BYBIT'S NAME, as the start of every host it runs — <c>bybit.com</c>, <c>bybit.eu</c> and the rest.
-    /// Its announcements were measured beside OKX's and DROPPED: Bybit EU's terms forbid automatic means to
-    /// access or monitor its platform (<c>docs/RESEARCH-REQUIRED.md</c>, C5c). No row reaches it, and no test may.
+    /// Its announcements were measured beside OKX's and DROPPED: no terms basis could be re-read on the day —
+    /// its EU General Terms, read on 2026-10-04 as forbidding automatic means to access or monitor its platform,
+    /// could not be read at all on 2026-10-06 (<c>docs/RESEARCH-REQUIRED.md</c>, C5d). No row reaches it, and no test may.
     /// </summary>
     const string BybitHost = "bybit" + ".";
 
