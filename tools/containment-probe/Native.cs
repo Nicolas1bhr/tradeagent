@@ -22,6 +22,7 @@ internal static unsafe class Native
     internal const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     internal const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     internal const uint CREATE_SUSPENDED = 0x00000004;
+    internal const uint CREATE_NO_WINDOW = 0x08000000;
     internal const uint STARTF_USESTDHANDLES = 0x00000100;
     // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = ProcThreadAttributeValue(9, FALSE, TRUE, FALSE)
     internal static readonly IntPtr PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = new(0x00020009);

@@ -85,7 +85,14 @@ internal sealed class Host
             // Grant the AppContainer into exactly the paths it is meant to reach, and nowhere else.
             acStatus["grant_workspace"] = ac.Grant(ws, write: true);
             acStatus["grant_romount"] = ac.Grant(ro, write: false);
-            acStatus["grant_probe_bin"] = ac.Grant(Path.GetDirectoryName(_exe)!, write: false); // so it can load the exe + runtime
+            // Grant the whole probe tree RX so the container can traverse into bin\Release\net10.0 and
+            // load the apphost, its runtimeconfig/deps and app DLLs.
+            acStatus["grant_probe_tree"] = ac.Grant(Path.Combine(_base, "probe"), write: false);
+            // A .NET worker needs the interactive window station/desktop or it dies 0xC0000142. Granted
+            // minimally and revoked on teardown. This is a real requirement for a contained seat. Done in
+            // a child process so raw ACL marshalling cannot fail-fast the host; the winsta is per-session,
+            // so the child's change is seen here.
+            acStatus["grant_window_station"] = RunChild($"grantui {ac.SidString}");
         }
         catch (Exception ex)
         {
@@ -115,6 +122,16 @@ internal sealed class Host
 
         // --- env the worker reads ---
         void Env(string k, string v) => Environment.SetEnvironmentVariable(k, v);
+        // A .NET process inside the AppContainer inherits the real %TEMP% (under the user profile),
+        // which the container cannot write — startup then fails "Access is denied". Point TEMP/TMP and
+        // the dotnet home at a granted dir in the workspace. This is itself a finding for cell 20/CLI
+        // compatibility: a contained CLI needs a writable temp granted to it, not the user's.
+        var tmp = Dir(Path.Combine("workspace", "tmp"));
+        Env("TEMP", tmp); Env("TMP", tmp);
+        Env("DOTNET_CLI_HOME", tmp);
+        Env("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
+        Env("DOTNET_NOLOGO", "1");
+        acStatus["temp_redirected_to"] = tmp;
         Env("PROBE_WORKSPACE", ws);
         Env("PROBE_ROMOUNT", ro);
         Env("PROBE_STATE", stateFile);
@@ -128,11 +145,13 @@ internal sealed class Host
         Env("PROBE_NODE", WhereIs("node.exe"));
 
         // --- run the main cell set inside the container ---
+        // The worker is launched through a .cmd that redirects its streams into the granted workspace:
+        // inherited-handle piping across the AppContainer boundary is finicky, and a file in a path the
+        // container can write is the robust capture. The .cmd carries the exit code back too.
         var mainOut = Path.Combine(ws, "out-main.json");
         Env("PROBE_OUT", mainOut);
         var sw = Stopwatch.StartNew();
-        var main = ac.Launch($"\"{_exe}\" worker main", internet: false, inJob: false, ws);
-        main.Wait(120000); main.Close();
+        RunWorkerCaptured(ac, "main", ws, internet: false);
         acStatus["main_wall_ms"] = sw.Elapsed.TotalMilliseconds;
         Collect(mainOut);
 
@@ -143,8 +162,7 @@ internal sealed class Host
             Env("PROBE_OUT", netOut);
             Env("PROBE_NET_TAG", tag);
             Env("PROBE_URL", "https://www.microsoft.com/robots.txt");
-            var n = ac.Launch($"\"{_exe}\" worker net", internet: cap, inJob: false, ws);
-            n.Wait(60000); n.Close();
+            RunWorkerCaptured(ac, "net", ws, internet: cap, suffix: tag);
             Collect(netOut);
         }
 
@@ -179,13 +197,39 @@ internal sealed class Host
         try { pipeStop.Cancel(); } catch { }
         try { listener.Stop(); } catch { }
         try { if (!hostProc.HasExited) hostProc.Kill(true); } catch { }
-        try { ac.Revoke(ws); ac.Revoke(ro); ac.Revoke(Path.GetDirectoryName(_exe)!); } catch { }
+        try { ac.Revoke(ws); ac.Revoke(ro); ac.Revoke(Path.Combine(_base, "probe")); RunChild($"revokeui {ac.SidString}"); } catch { }
 
         meta["c2"] = acStatus;
         Save(meta);
         Console.WriteLine($"done: {_all.Count} probes -> {Path.Combine(_base, "matrix.json")}");
         return 0;
     }
+
+    // Launch the worker inside the AppContainer via a .cmd that redirects stdout/stderr into the
+    // granted workspace, so a managed-runtime start failure is captured rather than lost.
+    void RunWorkerCaptured(AppContainer ac, string mode, string ws, bool internet, string? suffix = null)
+    {
+        var tag = suffix is null ? mode : $"{mode}-{suffix}";
+        var stdout = Path.Combine(ws, $"stdout-{tag}.txt");
+        try
+        {
+            // Launch the worker exe DIRECTLY in the container and capture its streams over an inheritable
+            // pipe — so a managed-runtime start failure reports itself instead of vanishing.
+            var p = ac.Launch($"\"{_exe}\" worker {mode}", internet, inJob: false, ws, capture: true);
+            var code = p.Wait(120000);
+            var output = p.ReadOutput();
+            p.Close();
+            File.WriteAllText(stdout, $"exit={code}\r\n{output}");
+            _lastWorkerExit = (int)code;
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(stdout, "LAUNCH FAILED: " + ex.Message);
+            _lastWorkerExit = -1;
+        }
+    }
+
+    int _lastWorkerExit;
 
     void CancellationCell(AppContainer ac, string ws)
     {
@@ -278,10 +322,31 @@ internal sealed class Host
         catch { /* stopped */ }
     }
 
+    // OpenProcess + GetExitCodeProcess, not Process.GetProcessById: the elevated host can query a
+    // container child this way, where the managed lookup can throw for a lowbox pid.
     static bool Alive(int pid)
     {
         if (pid <= 0) return false;
-        try { var p = Process.GetProcessById(pid); return !p.HasExited; } catch { return false; }
+        var h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (h == IntPtr.Zero) return false;
+        try { return Native.GetExitCodeProcess(h, out var code) && code == 259; } // STILL_ACTIVE
+        finally { Native.CloseHandle(h); }
+    }
+
+    // Runs the probe exe again OUT of the container (e.g. the window-station grant), capturing output so
+    // a fail-fast in raw P/Invoke stays in the child and is recorded rather than killing the host.
+    static string RunChild(string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(Environment.ProcessPath!, args)
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+            using var p = Process.Start(psi)!;
+            var o = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).Trim().Replace("\r", " ").Replace("\n", " ");
+            p.WaitForExit(30000);
+            return $"exit={p.ExitCode} {o}";
+        }
+        catch (Exception ex) { return "child failed: " + ex.Message; }
     }
 
     static string WhereIs(string exe)
