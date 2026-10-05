@@ -44,9 +44,11 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
   inside `gate.sh` and `suite.sh`.
 - **Locks** (`fleet/bin/lock.sh`): `suite` — any full local test suite (`gate.sh` takes it itself); `land` — one landing in flight, prep to record; `main` —
   any commit in the main checkout, held for seconds (dispatch, merge, record); `box` — the ATAS Windows machine, one leg at a time by grant.
-- **The tests box** (`TA_WIN_BOX=tests`, since 2026-10-05) runs the CI test job on Windows in ~22 min against windows-latest's 40–50: `tools/win-test.sh
-  start --src <worktree>`, then `wait` in slices (`tools/README.md`). It takes no `lock.sh` lock — a second `start` is refused by the box itself (exit 4,
-  wait or come back). It is someone else's laptop, lent: a run is a gate or a diagnosis, not a loop.
+- **The tests box** (`TA_WIN_BOX=tests`, since 2026-10-05; `tools/README.md`) runs the CI test job on real Windows in ~22 min against windows-latest's
+  40–50. **When it is available, it is used — the owner's rule:** `tools/win-test.sh ready` (0 yes · 1 unreachable · 4 a run in progress · 5 his own
+  apps open), then `start --src <worktree>` and `wait` in foreground slices. No `lock.sh` lock: the box refuses a second run itself (exit 4 — wait up to
+  30 min, then write NOT RUN). It is a lent laptop with its owner's own TradeAgent and ATAS installed: nothing of ours starts or touches them, a run is a
+  gate or a diagnosis, never a loop, and experiments (`R-containment`, the bridge, the app) go to the ATAS box, never there.
 - Worktrees at `~/Projects/ai-trading-software-for-mihael-worktrees/<branch>`, branch = the unit's name in lower case; `git -C`, never `cd` into one inside
   a compound command. Each agent keeps scratch files in its own `<scratchpad>/<seat-or-unit>/` subfolder; nothing durable lives in a scratchpad.
 
@@ -56,19 +58,21 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
    and Fault locally and its touched classes 3×; then `fleet/bin/ci-dispatch.sh <worktree>` (scan-gated push of ITS branch + the workflow on all three
    platforms) and `ci-wait.sh --run <id> 9` in foreground slices until it stops answering TIMEOUT (windows-latest takes 40–50 min). The report quotes the run id and every job's
    verdict. *Why:* one full suite at a time is this Mac's bottleneck, and CI adds Windows — the target, which the Mac cannot prove. `gate.sh` stays available
-   to a builder that needs a local full run, under the suite lock.
+   to a builder that needs a local full run, under the suite lock. **And on the tests box when `ready` says yes** (HOW-WE-BUILD pass 1): the same tip, the
+   run id, verdict and counts in the report — or "tests box: NOT RUN — <ready's answer>". Real Windows hardware, the target, in half CI's time.
 2. **A builder may push its own branch, and only through `ci-dispatch.sh`.** Never `main`, never a merge. It never uses the app's built-in browser pane
    (a site-permission prompt only the owner can answer hung a builder for 80 min on 2026-10-04): web sources are read with curl or WebFetch.
 
 Unchanged: red-first tests and one watched mutant on the money path; one commit per item with a one-sentence message; a `## Report` ≤ 20 lines appended to
-its brief and committed on its branch (tip sha, gate counts, CI run and verdicts, one line per item, what it did NOT do); the fresh-fixer rule, literally.
+its brief and committed on its branch (tip sha, gate counts, CI run and verdicts, the tests-box run or its NOT RUN line, one line per item, what it did
+NOT do); the fresh-fixer rule, literally.
 
 ## Landing — the manager, HOW-WE-BUILD's checklist scripted in `fleet/bin/land.sh`
 
 `lock.sh acquire land <seat>:<unit>` (turns: the seat that released `land` yields 120 s before re-taking it) → `land.sh prep` (clean tree, tip = report, rebase on `main`; a conflict goes back to a builder) → the local gate
 (Release, full, detached; or "GATE CARRIES" when only `docs/`/`*.md` moved since this unit's last gate) → `land.sh check` (PASS) → the branch's CI read:
 green on all three platforms (the W0 exception for `ResumeOnStartTests` ended when `U-fix-resume-on-start` landed at `c8d6642`: such a red is now a red);
-the run id named in the record → `land.sh merge` (ff-only) → `land.sh
+the run id named in the record → the tests-box run of the landed tree read (re-run after a rebase that moved code), or its NOT RUN line → `land.sh merge` (ff-only) → `land.sh
 record` (≤ 40 lines measured; the brief retired; pushed with the merge) → release `land` → a detached `nohup ci-wait.sh <sha> 100 &`, whose verdict lands
 in `fleet/ci-ledger.md` and the seat's next record → `land.sh cleanup`. Red CI on `main` in the product: tell the orchestrator, then HOW-WE-BUILD step 6 (reset, force-with-lease,
 a fixer on the branch). A hosted-runner red is seat P's fixer. **Schema rungs** are assigned in landing order on the board; a collision at rebase is a conflict.

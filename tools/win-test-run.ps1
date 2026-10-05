@@ -22,6 +22,7 @@ $statusFile = Join-Path $RunDir 'status.json'
 $state = [ordered]@{
   phase = 'starting'; verdict = $null; started = (Get-Date).ToString('o'); updated = $null
   finished = $null; pid = $PID; filter = $null; steps = @(); tests = @(); failed = @(); timing_rescued = $false
+  watched = $null; owner_files_changed = $null; backstop = $null
 }
 function Save {
   $state.updated = (Get-Date).ToString('o')
@@ -40,6 +41,41 @@ $env:DOTNET_NOLOGO = '1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $tmpDir = Join-Path $RunDir 'tmp'
 New-Item -ItemType Directory -Force -Path $tmpDir, $src | Out-Null
 $env:TMP = $tmpDir; $env:TEMP = $tmpDir
+
+# THE MACHINE IS SOMEBODY'S, WITH HIS OWN TRADEAGENT AND ATAS ON IT (tools/README.md). Every test
+# assembly already points TRADEAGENT_HOME and TRADEAGENT_PIPE at scratch values of its own (TestEnv);
+# the ATAS bridge pipe it leaves at the product default, `TradeAgent.Bridge` — the name his own app
+# hosts and his own ATAS bridge dials. No test opens it at the time of writing (five construct a
+# connector on the default name and never connect), so this is a backstop, and the one deliberate
+# difference from the CI job: a future test that does connect on the default meets a pipe of this run,
+# not his. The home and the gateway pipe get the same backstop for an assembly without TestEnv.
+$runName = Split-Path $RunDir -Leaf
+$env:TRADEAGENT_HOME = Join-Path $tmpDir 'home'
+$env:TRADEAGENT_PIPE = "ta-run-$runName-gateway"
+$env:TRADEAGENT_BRIDGE_PIPE = "ta-run-$runName-bridge"
+$state.backstop = [ordered]@{ TRADEAGENT_HOME = $env:TRADEAGENT_HOME; TRADEAGENT_PIPE = $env:TRADEAGENT_PIPE; TRADEAGENT_BRIDGE_PIPE = $env:TRADEAGENT_BRIDGE_PIPE }
+
+# A tripwire, not a guard: what the run must never change, measured before and after. A change is
+# reported, never repaired — it may be his own use of the machine during the run, and only he can say.
+$watched = [ordered]@{
+  'TradeAgent home'    = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TradeAgent'
+  'TradeAgent install' = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\TradeAgent'
+  'ATAS data'          = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'ATAS'
+}
+function Fingerprint {
+  $out = [ordered]@{}
+  foreach ($k in $watched.Keys) {
+    $w = $watched[$k]
+    if (Test-Path $w) {
+      $f = @(Get-ChildItem $w -Recurse -File -Force -EA SilentlyContinue)
+      $newest = $f | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+      $out[$k] = "{0} files, {1} bytes, newest {2}" -f $f.Count, ($f | Measure-Object Length -Sum).Sum, $(if ($newest) { $newest.LastWriteTimeUtc.ToString('o') } else { '-' })
+    } else { $out[$k] = 'absent' }
+  }
+  return $out
+}
+$before = Fingerprint
+$state.watched = $before
 
 # A laptop on battery idles to sleep after minutes, mid-suite, with nobody to notice. Asking Windows
 # to stay awake for as long as this thread lives costs nothing and ends with the run. (A closed lid
@@ -107,6 +143,10 @@ try {
   $state.error = $_.ToString()
 } finally {
   & dotnet build-server shutdown *> $null
+  try {
+    $after = Fingerprint
+    $state.owner_files_changed = @($watched.Keys | Where-Object { $before[$_] -ne $after[$_] } | ForEach-Object { "$($_): $($before[$_]) -> $($after[$_])" })
+  } catch { $state.owner_files_changed = @("the tripwire itself failed: $_") }
   Remove-Item -Recurse -Force -Path $tmpDir -EA SilentlyContinue
   $state.phase = 'done'
   $state.finished = (Get-Date).ToString('o')

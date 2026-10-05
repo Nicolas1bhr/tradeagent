@@ -18,11 +18,12 @@ and the honesty and deletes the passes.
   own worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. At most two heavy legs at once — from 2026-10-02 the fleet's
   allotment instead, with an orchestrator opening top-level manager seats above the legs (`docs/FLEET.md`).
 - **Honesty.** Every claim is "verified by running X → output" or "NOT VERIFIED". Banned: should work, looks correct,
-  probably, I believe, minor, trivial, static-verified. `BUILD-STATUS.md` stays the record and keeps that rule.
+  probably, I believe, minor, trivial, static-verified. `BUILD-STATUS.md` stays the record and keeps that rule. **A real
+  machine that is available is used** (the owner, 2026-10-05): a run it could have made and nobody made is NOT VERIFIED.
 - **Safety.** The rules in `CLAUDE.md`. A change on the money path (gateway, connectors, witness, updater, kill switch,
   approvals) ships with a test that was RED before the fix, and the builder watches ONE mutant of the guard go red and
   quotes it. That is the whole proof burden. There is no separate mutant sweep.
-- **Mechanics that paid for themselves.** Checkpoint into the repo, never the scratchpad. The Windows box is one leg's
+- **Mechanics that paid for themselves.** Checkpoint into the repo, never the scratchpad. The ATAS box is one leg's
   at a time, by explicit grant, tree proven by hash before a figure counts. Secret-scan as a gate before every commit.
   No `Co-Authored-By` trailers. `--ff-only` into `main`. `dotnet build --no-incremental`, because an incremental build
   once hid a warning. Two findings with one root cause get one structural fix.
@@ -33,25 +34,24 @@ and the honesty and deletes the passes.
 builder rebases onto `main` first and resolves any conflict itself, builds the whole unit, writes red-first tests where
 the money path is touched, runs the gate (`--no-incremental` build at 0 warnings, full suite to a file), commits per
 item with one-sentence messages, and appends a `## Report` of at most 20 lines to its own brief: tip sha, the gate
-counts pasted, one line per item, and what it did NOT do. The report is the record. The box is not part of a unit
-unless the brief grants it, for code that compiles only there; otherwise the box is used once, at the milestone.
+counts pasted, one line per item, and what it did NOT do. The report is the record. The ATAS box is not part of a unit
+unless the brief grants it, for code that compiles only there; otherwise it is used once, at the milestone. **The tests
+box is in every unit's gate when it is available** (`TA_WIN_BOX=tests tools/win-test.sh ready`, then `start` and `wait`
+on the tip): the report quotes the run id and its counts, or "tests box: NOT RUN — <ready's answer>".
 
 **Pass 2 — land.** The manager, in the same session, runs the landing checklist below on the reported tip, writes a
 `BUILD-STATUS.md` section of at most 40 lines from the report, and deletes the brief. `docs/briefs/` holds only work
 in flight; empty means nothing is. `docs/queue/` holds READY briefs not yet dispatched: re-check each pointer against `main`,
-then `git mv` it into `docs/briefs/` to dispatch.
-
-There is no verify leg, no Codex leg, no bounce, no combination verify and no scribe between the two passes. A unit is
-built once and landed once.
+then `git mv` it into `docs/briefs/` to dispatch. No verify leg, Codex leg, bounce, combination verify or scribe sits
+between the passes: a unit is built once and landed once.
 
 ## Ask questions later — the milestone review
 
 Once per milestone, as the last step before a release is cut: one fresh Opus reviewer told to break the money path on
 `main` at a named sha, and Codex read-only on the same sha in its own worktree, in parallel. Findings go to
 `docs/REVIEW-<date>.md` as one table, one line per finding: severity, file:line, the check that settles it. Each HIGH
-becomes a fix unit before the release. MED and LOW together become one batch unit. A fix unit goes through the two
-passes like any other; its red-first test is its proof, and the next milestone's review is what catches what it missed.
-Fixes are not re-reviewed.
+becomes a fix unit before the release; MED and LOW together one batch unit. A fix unit goes through the two passes like
+any other; its red-first test is its proof and the next milestone's review catches what it missed; no re-review.
 
 ## The fresh-fixer rule
 
@@ -62,14 +62,14 @@ line, and nothing of the previous builder's reasoning. A builder that has failed
 and more context makes that worse, not better. Two fresh fixers failing on the same item means the item is mis-stated
 or structural: the manager rewrites it as a class fix. It does not send a third fixer.
 
-A rate-limit or process kill is not a failure. If the process is alive, resume the leg with one message. If not,
-re-brief from the file on disk, and read the branch first, because the fixes may already be there.
+A rate-limit or process kill is not a failure: resume a live leg with one message; else re-brief from the file on disk,
+reading the branch first, because the fixes may already be there.
 
 ## What is gone
 
 Round numbers. Bounce briefs, verify briefs and Codex prompts as files. Verify records, unit records with per-round
 sections, the manager log, Codex transcripts in the repo. The pre-integration design challenge. Tiers as leg
-allocation. The combination verify. The integration scribe. A box run per round. The sibling standard as a read-gate.
+allocation. The combination verify. The integration scribe. An ATAS-box run per round. The sibling standard as a read-gate.
 `docs/hardening/` is frozen history: its unit table is still the backlog, its process is not ours.
 
 ## The manager's landing checklist
@@ -79,7 +79,8 @@ allocation. The combination verify. The integration scribe. A box run per round.
 3. `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; full suite in Release to a file → 0 failed;
    counts pasted. Release, because CI tests Release and a Debug-only green has already let a runner failure through.
    One gate at a time on this Mac: two suites overlapping flake the timing tests. Two units each green alone can be red
-   together; that is a one-item fixer brief on the landing branch, and neither unit's builder is reopened.
+   together; that is a one-item fixer brief on the landing branch, and neither unit's builder is reopened. The tests-box
+   run of the landed tree (re-run after a rebase that moved code) is read, or its NOT RUN line; red there is a red gate.
 4. Test-name diff against `main` → nothing removed. A deleted test cannot fail; it happened three times.
 5. Secret scan of the whole diff against `main`, as a gate, not a neighbouring command.
 6. `git merge --ff-only` with its exit status checked — never behind a pipe — then `git rev-list --count <branch>..main`

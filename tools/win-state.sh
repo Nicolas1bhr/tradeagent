@@ -37,9 +37,12 @@ function Say($k,$v){ Write-Output ("  {0,-17}: {1}" -f $k,$v) }
 # on a box that is only ever reached over RDP. Asking "is any LogonUI running" therefore answers
 # "yes" forever and reports a perfectly live remote desktop as locked, which is exactly the wrong
 # way round for the one check that decides whether GUI work is possible at all.
+# quser speaks the machine's language: a French Windows says "Actif" and "Déco" (the é arrives as
+# whatever the console code page makes of it), and an English-only match read a live console session
+# on the tests box as "unknown (id -1)" and "no active session".
 $session = (quser 2>&1 | Out-String)
-$state   = if ($session -match '\s(Active|Disc)\s') { $Matches[1] } else { 'unknown' }
-$sid     = if ($session -match '\s+(\d+)\s+(Active|Disc)\s') { [int]$Matches[1] } else { -1 }
+$state   = if ($session -match '\s(Active|Actif)\s') { 'Active' } elseif ($session -match '\s(Disc|D\S{1,3}co)\s') { 'Disc' } else { 'unknown' }
+$sid     = if ($session -match '\s+(\d+)\s+(Active|Actif|Disc|D\S{1,3}co)\s') { [int]$Matches[1] } else { -1 }
 $rdp     = $session -match 'rdp-tcp'
 $locked  = [bool](Get-Process LogonUI -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sid })
 

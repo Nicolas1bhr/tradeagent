@@ -7888,5 +7888,42 @@ session that started it; a second `start` during it was refused (exit 4); `stop`
 task Ready; `fetch` brought back the status, every step's log and the six trx files.
 
 **NOT done, NOT verified:** the box has not been restarted under the runner (a Windows Update restart is pending there), so a run across a restart is
-untested — by design it would read DIED; a closed lid sleeps the laptop whatever the runner asks; nothing GUI-bound was run there (no ATAS, no installer,
-no app; `win-agent`/`win-ui` not tried), and it is not a clean machine (.NET SDK 10.0.400 and Git were already installed); landing CI for this commit not read.
+untested — by design it would read DIED; a closed lid sleeps the laptop whatever the runner asks; nothing GUI-bound was run there (~~no ATAS~~ — WRONG, corrected in the
+next section: its owner's own ATAS and TradeAgent v0.1.0 are installed there; no installer and no app were run; `win-agent`/`win-ui` not tried), and it is not a clean machine (.NET SDK 10.0.400 and Git were already installed); landing CI for this commit not read.
+
+## 2026-10-05 (later) — the owner's rule: when a real machine is available, the real run is the evidence; the tests box joins every unit's gate, and its runner protects its owner's own install
+
+Docs and tooling only; no product or test code changed (`git diff 14b5b907 HEAD -- src tests packaging TradeAgent.sln Directory.Build.props` is empty).
+
+- **The rule, written where work is decided:** `CLAUDE.md` (Building and verifying); `docs/HOW-WE-BUILD.md` — Honesty (a run an available machine could
+  have made and nobody made is NOT VERIFIED), pass 1 (the tests box in every unit's gate when `ready` says yes, else "tests box: NOT RUN — <ready's
+  answer>"), landing step 3 reads it; still 100 lines; `docs/FLEET.md` (the box, the builder pass, landing); `manager-prompt.md` § 7; the resume block (and
+  the ATAS box back online, `R-containment` there and never on the tests box); `docs/DEPLOYMENT.md` § 6; `tools/README.md`. Local, outside git:
+  `fleet/BUILDER-PROMPT.md` gate step 5, `fleet/handoff/ORCHESTRATOR.md`, `fleet/BOARD.md`.
+
+- **CORRECTION to the section above, which said "no ATAS":** the tests box carries its owner's own ATAS (installed 2026-06-23) and TradeAgent v0.1.0
+  (2026-09-01, with its home and database) — read from `win-state.sh` and the folders' times. The first runs wrote nothing under his home, install or ATAS
+  data (0 items written 21:00–22:00).
+
+- **The runner, for a machine with his install on it:** `ready` (0 yes · 1 unreachable · 4 a run in progress · 5 his TradeAgent or ATAS open, a process of
+  ours under `C:\ta` excluded), and `start` refuses on 5; per run, `TRADEAGENT_BRIDGE_PIPE` — the tests leave the bridge pipe at the product's
+  `TradeAgent.Bridge` (read, not run: five tests build a connector on it and none connects; the one factory call builds Paper) — and the home and gateway
+  pipe as backstops; a before/after fingerprint of his three folders, printed by `status`. `win-state.sh` reads a French `quser`.
+
+**Verified by running.** `ready`: "YES" exit 0 when free; "NO - a run is in progress" exit 4 during one; "NO - the machine does not answer" exit 1 against
+an address that does not; with a stand-in `TradeAgent.exe` (a copy of `PING.EXE`) running from the user's temp folder, "NO - his own TradeAgent is open"
+exit 5, and `start` "REFUSED: his own TradeAgent is open …" exit 5 with no run created; the same stand-in under `C:\ta`, "YES" exit 0; both removed.
+`win-state.sh` on the tests box: "Active (id 1, console)", "desktop: live" (was "unknown (id -1)"); the ATAS box unchanged, "VERDICT: everything works".
+The runner's own `Fingerprint`, copied verbatim into a scratch check on the box: 0 differences unchanged, 1 after one write, "absent" for a missing folder.
+Full run `20261005-215240-db3082c6` with the pipes redirected and the tripwire on (the runner one revision before this commit — since then only the
+backstop's status line and the `C:\ta` exclusion, both exercised above and by run `20261005-221457-db3082c6`, "backstop: bridge pipe ta-run-…-bridge"):
+**GREEN in 21 m 05 s** — build 59 s, `Category!=Timing` 670 s, `Category=Timing` 527 s first try; 2,520 tests, 0 failed, 1 not run (the same skip); "his
+files: unchanged - TradeAgent home 192 files …; TradeAgent install 291 files …; ATAS data 299 files …".
+
+**CI** for `db3082c6` (run 37364863467): macos-latest success (15 min); ubuntu-latest never started — "The job was not acquired by Runner of type hosted
+even after multiple attempts" (GitHub's capacity, 0 steps run); windows-latest still running when this was written. This commit's push runs all three
+again.
+
+**NOT done, NOT verified:** a run across a restart of the box (it would read DIED); the tripwire against a real change to his files (never provoked — that
+is the thing not done); `ready` and `start` with his real TradeAgent or ATAS open (a stand-in only); `stop` on a builder's run; the rule itself is doctrine
+until a unit's report carries a box run.

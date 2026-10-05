@@ -228,7 +228,9 @@ the protocol refusal and `Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING).Repair`, whi
 
 Tailscale plus Windows OpenSSH. The scripts in `tools/` already assume it, and read
 `~/.tradeagent/win.env` — `TA_WIN_HOST`, `TA_WIN_NAME`, `TA_WIN_USER`, `TA_WIN_PASSWORD` — which lives
-outside the repository so a credential cannot be `git add`ed by accident (`tools/README.md`).
+outside the repository so a credential cannot be `git add`ed by accident (`tools/README.md`). A second
+machine gets its own `~/.tradeagent/win-<name>.env`, picked with `TA_WIN_BOX=<name>`, and an SSH key
+(`TA_WIN_KEY`) rather than a password; `tools/win-bootstrap.ps1` is the one step done by hand on it.
 
 ```bash
 tools/win-state.sh          # start every session here

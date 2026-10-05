@@ -15,6 +15,15 @@ builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allo
 every CI run read: `fleet/ci-ledger.md` (`fleet/` = `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`, outside `/tmp`). Resume from those and
 git; the plan and the waves below are unchanged, and this block is rewritten at each wave's end.
 
+**2026-10-05 — a second Windows machine, and the owner's rule that comes with it: when a real machine is available, the real run is the evidence.**
+The tests box (`TA_WIN_BOX=tests`) is a lent Windows 11 laptop in its own tailnet, shared into ours one-way; its owner's own TradeAgent v0.1.0 and
+ATAS are installed there, and nothing of ours starts or touches them (the runner refuses while either is open and reports whether his files changed
+during a run). `TA_WIN_BOX=tests tools/win-test.sh ready` says whether a run can start; `start` and `wait` run CI's test job there in ~22 min (first
+full run GREEN on `main`'s code: 2,520 tests, 0 failed, 1 skipped by its attribute). Every unit's gate now includes that run when the box is
+available, or a "tests box: NOT RUN" line with `ready`'s answer (`docs/HOW-WE-BUILD.md` pass 1, `docs/FLEET.md`). The ATAS box is back online too
+(2026-10-05: desktop live, the UI agent drives it) — `R-containment` can run there, never on the tests box. Setup, traps and the runner:
+`tools/README.md`; the record: `BUILD-STATUS.md`, 2026-10-05.
+
 **Checkpoint 2026-10-04 12:40 CEST — the orchestrator's session closed by the owner ("wrap up … resuming later").** A NEW orchestrator starts from
 `fleet/handoff/ORCHESTRATOR.md`; this session's agent ids are dead — open FRESH seats. `main` `810b35af` is clean and pushed; schema rung 30; every
 landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the fleet (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69`
@@ -27,12 +36,12 @@ landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the 
 for two screen-control clicks; bounds ≤ 6 h from the work press inside one local day (start by 18:00), the app's 5 USD daily cap, paper only.
 **PAUSED:** `U-tape-events` (branch at `4fdcabb4`: 3 commits + 7 uncommitted files of item-4 work in its worktree — a fresh builder continues from them).
 **QUEUED** (`docs/queue/`): `U-test-hygiene-1` (the midnight-UTC meter-test flake + test-home cleanup) → `U-fix-bridge-heartbeat`; `U-tape-archive`;
-`R-containment` (the Windows box offline since 2026-10-02 01:42Z); the organisation lane's briefs (W5+). **OWED, unbriefed:** `U-runner-exit-hygiene` and
+`R-containment` (the ATAS box, back online 2026-10-05; never the tests box); the organisation lane's briefs (W5+). **OWED, unbriefed:** `U-runner-exit-hygiene` and
 `U-flatten-confirm`, both BEFORE ANY LIVE USE; `U-material-file-limit`; a conferring dataset path — live allocation is CLOSED by `U-data-licence` until
 datasets cut from the tape's recordings of a venue whose terms reach own-account use (OKX Europe first) exist. **DECIDED on the owner's behalf**
 (2026-10-04, his delegation; each on `fleet/BOARD.md`, his to overrule): the Binance archive licence → COMPLY (research-only; `U-archive-depth` paused);
 the forward klines `unverified`; the tape records during M0; organisation § 16 Q2/Q3/Q4. **OWNER, pending:** M0's two clicks; counsel's question — is
-TradeAgent "commercial" under the venues' data terms (R19 § 6 Q1); the Windows box. **BUDGET:** weekly allowance 34 % used at 11:36 on 4 Oct (resets
+TradeAgent "commercial" under the venues' data terms (R19 § 6 Q1). The Windows box is back (2026-10-05). **BUDGET:** weekly allowance 34 % used at 11:36 on 4 Oct (resets
 2026-10-10 12:00 CEST) — ≤ 2 builders, managers end their turn when idle (`docs/FLEET.md`).
 
 **Session state at 2026-10-02, the second session's close: `main` is clean and pushed at the commit carrying this block. NO product code changed — this

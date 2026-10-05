@@ -88,14 +88,26 @@ them and do not let a note touch a material row — a record the observed party 
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # ~2,190 tests in three projects; the latest gate line in BUILD-STATUS.md
+dotnet test TradeAgent.sln        # ~2,520 tests in three projects; the latest gate line in BUILD-STATUS.md
                                   # is the figure. Green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```
 
-Windows is where the claims get proven. `tools/README.md` has the setup; `tools/probe` is the
-harness behind the two headline claims and is re-runnable.
+Windows is where the claims get proven, and **when a real machine is available, the real run is the
+evidence** (the owner, 2026-10-05): a run one could have made and nobody made is NOT VERIFIED. Two
+machines, both set up in `tools/README.md`: the **ATAS box** (the default — ATAS, the bridge, the GUI;
+one leg at a time, by grant) and the **tests box** (`TA_WIN_BOX=tests` — the full suite on real
+Windows in ~22 min, durably, one run at a time):
+
+```bash
+TA_WIN_BOX=tests tools/win-test.sh ready     # exit 0 = a run can start now; otherwise it says why not
+TA_WIN_BOX=tests tools/win-test.sh start     # this tree, uncommitted edits included; then `wait`
+```
+
+The tests box is a lent laptop with its owner's own TradeAgent and ATAS installed. Nothing of ours
+starts or touches them: the runner refuses while either is open and reports whether his files changed
+during a run. `tools/probe` is the harness behind the two headline claims, re-runnable on the ATAS box.
 
 ## Conventions
 

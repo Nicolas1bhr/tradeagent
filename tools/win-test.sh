@@ -6,6 +6,8 @@
 #   TA_WIN_BOX=tests tools/win-test.sh start [--src <tree>] [--filter <expr>]
 #                                        ship the tree (default: this checkout, uncommitted edits
 #                                        included) and start a run; prints the run id
+#   TA_WIN_BOX=tests tools/win-test.sh ready                can a run start now? exit 0 yes · 1 unreachable ·
+#                                        4 a run in progress · 5 his own TradeAgent or ATAS is open
 #   TA_WIN_BOX=tests tools/win-test.sh status [id]          where it is; the verdict once there is one
 #   TA_WIN_BOX=tests tools/win-test.sh wait [id] [minutes]  block up to N minutes (default 9), then
 #                                        exit 0 green · 1 red/died/stopped · 3 still running (call again)
@@ -16,6 +18,10 @@
 # [id] defaults to the latest run. One run at a time per machine: a second `start` is refused while
 # one is in progress, which is the lock — two suites at once on four cores turn the timing category
 # into a coin toss. Without --filter a run is the CI test job step for step (win-test-run.ps1 says how).
+#
+# The tests box is a lent machine with its owner's own TradeAgent and ATAS installed. `start` refuses
+# while either is open — a suite takes every core for twenty minutes, and nothing of ours runs beside
+# a trading platform — and every run reports whether his files changed while it ran.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -57,6 +63,14 @@ function Get-RunState([string]$dir) {
   }
   return $null
 }
+# His own TradeAgent and ATAS, by process name — minus anything running out of C:\ta, which is ours: a
+# test that ever launched a built TradeAgent.exe and leaked it would otherwise read as "his app is open"
+# and refuse every run after it, with a message that blames him.
+function Get-OwnerApps {
+  @(Get-Process -EA SilentlyContinue | Where-Object { $_.ProcessName -in 'TradeAgent', 'OFT.Platform', 'OFT.PlatformX' } |
+    Where-Object { $path = $null; try { $path = $_.Path } catch { }; -not ($path -and $path -like 'C:\ta\*') } |
+    ForEach-Object { $_.ProcessName } | Sort-Object -Unique)
+}
 # green | red | error | stopped | running | queued | died
 function Get-Verdict($s, [string]$dir) {
   if (-not $s) {
@@ -77,6 +91,7 @@ function Show-Run([string]$dir) {
     "source    : " + $m.src + "  " + $m.branch + " @ " + $m.sha + $(if ([int]$m.dirty -gt 0) { "  + " + $m.dirty + " uncommitted file(s)" } else { "" })
   }
   if ($s -and $s.filter) { "filter    : " + $s.filter }
+  if ($s -and $s.backstop) { "backstop  : bridge pipe " + $s.backstop.TRADEAGENT_BRIDGE_PIPE + ", home under the run's tmp" }
   $line = switch ($v) {
     'running' { "RUNNING - " + $s.phase }
     'queued'  { "QUEUED - the task has not reported yet" }
@@ -95,6 +110,11 @@ function Show-Run([string]$dir) {
     $f = @($s.failed | Where-Object { $_ })
     if ($f.Count) { "failed    : " + $f.Count; $f | Select-Object -First 40 | ForEach-Object { "  $_" } }
     if ($s.error) { "error     : " + $s.error }
+    if ($s.watched) {
+      $changed = @($s.owner_files_changed | Where-Object { $_ })
+      if ($changed.Count) { "OWNER'S FILES CHANGED DURING THE RUN (by the run, or by him using the machine - read before trusting):"; $changed | ForEach-Object { "  $_" } }
+      elseif ($s.phase -eq 'done' -and $null -ne $s.owner_files_changed) { "his files: unchanged - " + (($s.watched.PSObject.Properties | ForEach-Object { $_.Name + " " + ($_.Value -replace ', newest.*$', '') }) -join '; ') }
+    }
   }
 }
 PS
@@ -129,6 +149,11 @@ if ($t -and $t.State -eq 'Running') {
   $busy = Get-ChildItem $Runs -Directory -EA SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
   Write-Host "REFUSED: a run is in progress ($($busy.Name)). One at a time: wait for it, or stop it."
   exit 4
+}
+$apps = Get-OwnerApps
+if ($apps.Count) {
+  Write-Host ("REFUSED: his own " + ($apps -join ', ') + " is open on this machine. The suite does not run beside a trading platform.")
+  exit 5
 }
 New-Item -ItemType Directory -Force -Path $Runs | Out-Null
 # Older runs keep what is small (status, logs, trx) and lose what is not (sources, builds, temp):
@@ -168,7 +193,7 @@ $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDi
 # S4U: runs whether or not anybody is signed in, and stores no password. Priority 4 is NORMAL — the
 # Task Scheduler default (7) is below-normal CPU, I/O and memory priority, and would make every
 # timing test measure the scheduler instead of the product. The account comes from the token, not from
-# $env:USERDOMAIN: a key-authenticated SSH session reports WORKGROUP there, and "WORKGROUP\hp" maps to
+# $env:USERDOMAIN: a key-authenticated SSH session reports WORKGROUP there, and "WORKGROUP\<user>" maps to
 # no account at all (0x80070534).
 $who = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $p = New-ScheduledTaskPrincipal -UserId $who -LogonType S4U -RunLevel Limited
@@ -183,6 +208,31 @@ PS
     remote "\$Id = '$ID'" <<'PS'
 Show-Run (Resolve-Run $Id)
 PS
+    ;;
+
+  ready)
+    set +e
+    OUT="$(remote '' <<'PS'
+$sdk = (& dotnet --list-sdks 2>$null | ForEach-Object { ($_ -split ' ')[0] }) -join ', '
+$bat = Get-CimInstance Win32_Battery -EA SilentlyContinue
+"machine   : reachable; .NET SDK " + $(if ($sdk) { $sdk } else { 'NONE' }) + "; C: " + [math]::Round((Get-PSDrive C).Free / 1GB) + " GB free" + $(if ($bat) { "; " + $(if ($bat.BatteryStatus -eq 2) { 'on mains' } else { 'ON BATTERY' }) } else { '' })
+$t = Get-ScheduledTask -TaskName $Task -EA SilentlyContinue
+if ($t -and $t.State -eq 'Running') {
+  $busy = Get-ChildItem $Runs -Directory -EA SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+  "ready     : NO - a run is in progress ($($busy.Name)); wait for it"; exit 4
+}
+$apps = Get-OwnerApps
+if ($apps.Count) { "ready     : NO - his own " + ($apps -join ', ') + " is open; nothing of ours runs beside it"; exit 5 }
+if (-not $sdk) { "ready     : NO - no .NET SDK on the machine"; exit 1 }
+"ready     : YES - tools/win-test.sh start"
+exit 0
+PS
+)"; rc=$?
+    set -e
+    if [ "$rc" -eq 255 ] || [ -z "$OUT" ]; then
+      echo "ready     : NO - the machine does not answer (asleep, off Tailscale, or the share was removed)"; exit 1
+    fi
+    printf '%s\n' "$OUT"; exit "$rc"
     ;;
 
   status)

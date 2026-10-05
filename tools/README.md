@@ -53,10 +53,14 @@ MagicDNS's short name does not resolve for a shared machine; use its full `*.ts.
 ## win-test.sh — the suite on Windows, without holding a connection open
 
 The test box (`TA_WIN_BOX=tests`) exists to answer "is it green on Windows" without waiting 40–50
-minutes for `windows-latest`, and without spending this Mac's swap on a local suite.
+minutes for `windows-latest`, and without spending this Mac's swap on a local suite. **When it is
+available, it is used** — the owner's rule (2026-10-05), and every unit's gate since
+(`docs/HOW-WE-BUILD.md`): a Windows claim the box could have settled by running, and nobody ran, is
+NOT VERIFIED.
 
 ```bash
 export TA_WIN_BOX=tests
+tools/win-test.sh ready     # 0 can start · 1 does not answer · 4 a run in progress · 5 his own apps open
 tools/win-test.sh start                          # this checkout as it is, uncommitted edits included
 tools/win-test.sh start --src <worktree>         # a builder's tree
 tools/win-test.sh start --filter "FullyQualifiedName~LossBudget"
@@ -88,6 +92,39 @@ says `DIED`, never "still running".
   suite does not run beside ATAS, so `win-test.sh` refuses rather than defaulting.
 - Runs are kept awake on battery for as long as they last. A closed lid is a forced sleep, not an idle
   one, and only the machine's own lid setting prevents it.
+
+### It is somebody's machine, with his own TradeAgent and ATAS on it
+
+The tests box is a lent laptop. **ATAS (installed 2026-06-23) and TradeAgent v0.1.0 (installed
+2026-09-01, with its own home and database) are its owner's**, and the suite's runs have to leave them
+exactly as they were. What keeps that true, and how a reader can tell:
+
+- **Nothing of ours runs beside them.** `start` and `ready` refuse while his TradeAgent or ATAS is open
+  (exit 5): a suite takes every core for twenty minutes, and nothing of ours shares a machine with a
+  trading platform in use. The app itself and ATAS are never started there; GUI work, the bridge and
+  experiments such as `R-containment` belong to the ATAS box.
+- **The tests already isolate themselves** — every test assembly points `TRADEAGENT_HOME` and
+  `TRADEAGENT_PIPE` at scratch values (`tests/Shared/TestEnv.cs`). The ATAS bridge pipe they leave at
+  the product default, `TradeAgent.Bridge`, which is his app's and his ATAS bridge's name. No test opens
+  it today (five build a connector on the default and never connect — read, 2026-10-05), so the runner
+  sets `TRADEAGENT_BRIDGE_PIPE` per run as a backstop, and the home and gateway pipe likewise for an
+  assembly without `TestEnv`. That is the one deliberate difference from the CI job.
+- **A tripwire, not a promise:** each run fingerprints his TradeAgent home, his install and his ATAS
+  data before and after, and `status` prints "his files: unchanged" or every difference. A difference is
+  reported, never repaired — it may be his own use of the machine during the run, and only he can say.
+
+### Traps this machine has already charged for
+
+- **A key-authenticated SSH session reports `USERDOMAIN=WORKGROUP`.** A scheduled task registered for
+  `WORKGROUP\<user>` fails with 0x80070534 ("no mapping between account names and security IDs"). The
+  account is read from the token instead (`WindowsIdentity.GetCurrent().Name`).
+- **It speaks French.** `quser` says `Actif` and `Déco`, and an English-only match read a live console
+  as "no active session"; `win-state.sh` matches both now. The runner sets `DOTNET_CLI_UI_LANGUAGE=en`
+  so build and test logs read the same as CI's.
+- **`C:\ta` did not exist,** and the first long `win-ps.sh` script failed to upload ("dest open … No
+  such file or directory"). `win-bootstrap.ps1` creates it now.
+- **`win-state.sh` reports "no UI agent, console work only" there.** True and harmless: the suite needs
+  nothing more. Ask `win-test.sh ready` instead.
 
 ## Start every Windows session here
 
