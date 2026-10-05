@@ -78,6 +78,13 @@ public class VendorLimitTests : IDisposable
     readonly Database _db = TestEnv.NewDb();
     readonly string _records = Path.Combine(TestEnv.Home, $"vendor-limit-{Guid.NewGuid():n}.jsonl");
 
+    /// <summary>
+    /// The meter's one instant, and the one the launch row is read back around: its clock used to be
+    /// <c>DateTimeOffset.Now</c>, read once to begin a turn and again to sum the day. See
+    /// <see cref="TestEnv.LocalNoon"/>.
+    /// </summary>
+    readonly DateTimeOffset _at = TestEnv.LocalNoon();
+
     public void Dispose() => _db.Dispose();
 
     /// <summary>
@@ -268,12 +275,12 @@ public class VendorLimitTests : IDisposable
     const decimal Reservation = (1_200_000m * 1m + 20_000m * 4m) / 1_000_000m;   // 1.28
 
     TurnMeter Meter() =>
-        new(_db, () => 50m, runtimeId: () => "codex", now: () => DateTimeOffset.Now, recordPath: _records,
+        new(_db, () => 50m, runtimeId: () => "codex", now: () => _at, recordPath: _records,
             owner: () => Rate, model: () => "gpt-5.6-sol", share: _ => 1m);
 
     /// <summary>The one launch a test made, read back from the ledger.</summary>
     AiAttempt OnlyRow() =>
-        Assert.Single(new AiAttemptStore(_db).Between(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(1)));
+        Assert.Single(new AiAttemptStore(_db).Between(_at.AddDays(-1), _at.AddDays(1)));
 
     /// <summary>What the row's context says the vendor said, or null — read as JSON, as the report reads it.</summary>
     static string? RefusedOn(AiAttempt row)

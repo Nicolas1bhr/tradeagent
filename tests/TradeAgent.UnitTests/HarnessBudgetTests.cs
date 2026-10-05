@@ -28,6 +28,9 @@ public class HarnessBudgetTests : IDisposable
     readonly string _records = Path.Combine(TestEnv.Home, $"harness-turns-{Guid.NewGuid():n}.jsonl");
     readonly string _home = Path.Combine(TestEnv.Home, $"budget-{Guid.NewGuid():n}");
 
+    /// <summary>The meter's one instant: see <see cref="Meter"/>.</summary>
+    readonly DateTimeOffset _at = TestEnv.LocalNoon();
+
     /// <summary>Not a key. The fake reads the header back; nothing real is ever sent anywhere.</summary>
     const string Pretend = "not-a-real-credential";
 
@@ -64,8 +67,12 @@ public class HarnessBudgetTests : IDisposable
         runtime.OpenConversation(CouncilRoles.Research, () => _home,
             () => new Dictionary<string, string>(), () => null);
 
+    /// <summary>
+    /// On ONE instant, so the launch row it begins and the role's "today" it is read back through are
+    /// the same day — with the clock's default they were two reads. See <see cref="TestEnv.LocalNoon"/>.
+    /// </summary>
     TurnMeter Meter(decimal cap, TurnAllowance allowance) =>
-        new(_db, () => cap, runtimeId: () => ApiAgentRuntime.RuntimeId, recordPath: _records,
+        new(_db, () => cap, runtimeId: () => ApiAgentRuntime.RuntimeId, now: () => _at, recordPath: _records,
             owner: () => Rate, model: () => "gpt-5.6-luna", allowance: () => allowance,
             share: _ => 1m);
 

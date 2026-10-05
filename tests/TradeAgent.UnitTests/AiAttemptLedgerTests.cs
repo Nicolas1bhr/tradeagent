@@ -225,7 +225,9 @@ public class AiAttemptLedgerTests : IDisposable
     [Fact]
     public void A_turn_nobody_opened_is_still_recorded_and_reserves_nothing()
     {
-        var now = DateTimeOffset.Now;
+        // Noon, not the clock: the row starts three seconds before `now`, and the day read back is
+        // `now`'s. See TestEnv.LocalNoon.
+        var now = TestEnv.LocalNoon();
         var meter = Meter(() => now);
 
         meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(3), "…", now)

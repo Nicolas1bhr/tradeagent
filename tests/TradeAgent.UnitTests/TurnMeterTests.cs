@@ -252,6 +252,14 @@ public class TurnRecordTests : IDisposable
     readonly Database _db = TestEnv.NewDb();
     readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
 
+    /// <summary>
+    /// THE ONE INSTANT every turn here is recorded at and every "today" is read at — see
+    /// <see cref="TestEnv.LocalNoon"/>. Three of these tests read <c>DateTimeOffset.Now</c> once to
+    /// record and the meter's clock again to sum, and went red across midnight on a correct product.
+    /// The day's edge itself is asserted on purpose, through the seam, below.
+    /// </summary>
+    readonly DateTimeOffset _at = TestEnv.LocalNoon();
+
     public void Dispose()
     {
         NoCosts();
@@ -289,7 +297,7 @@ public class TurnRecordTests : IDisposable
 
     TurnMeter Meter(decimal cap = 5m, Func<DateTimeOffset>? now = null) =>
         new(_db, () => cap, session: () => "thread-1", runtimeId: () => "probe",
-            now: now ?? (() => DateTimeOffset.Now), recordPath: _records);
+            now: now ?? (() => _at), recordPath: _records);
 
     /// <summary>
     /// WHERE THE RECORD LIVES IS A SAFETY PROPERTY, not a tidiness one. The agent may write anywhere
@@ -308,7 +316,7 @@ public class TurnRecordTests : IDisposable
     public void One_line_per_turn_carries_what_was_measured_about_that_turn()
     {
         NoCosts();
-        var at = DateTimeOffset.Now;
+        var at = _at;
         var meter = Meter();
         meter.Record(CodexTurn(at));
         meter.Record(CodexTurn(at.AddSeconds(30), exitCode: 2));
@@ -345,14 +353,14 @@ public class TurnRecordTests : IDisposable
     {
         CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
         var meter = Meter();
-        meter.Record(CodexTurn(DateTimeOffset.Now));
-        meter.Record(CodexTurn(DateTimeOffset.Now));
+        meter.Record(CodexTurn(_at));
+        meter.Record(CodexTurn(_at));
 
         Assert.Equal(2, meter.Today.Turns);
         Assert.Equal(0, meter.Today.UnpricedTurns);
 
         var store = new AiAttemptStore(_db);
-        var (from, to) = LocalDayOf(DateTimeOffset.Now);
+        var (from, to) = LocalDayOf(_at);
         var rows = store.Between(from, to);
         Assert.Equal(2, rows.Count);
         Assert.All(rows, r => Assert.Equal(AiAttemptState.ENDED, r.State));
@@ -401,6 +409,32 @@ public class TurnRecordTests : IDisposable
     }
 
     /// <summary>
+    /// THE DAY'S EDGE, TO THE SECOND, THROUGH THE SEAM: a turn recorded at 23:59:59 local is in the
+    /// total read half a second later and is not in the one read at 00:00:01. It is the product's
+    /// semantics that the tests in this class used to meet by accident whenever they ran close to
+    /// midnight — the owner's day is local and it starts empty — asserted here on purpose, on a
+    /// date on which no zone moves its clocks.
+    /// </summary>
+    [Fact]
+    public void A_turn_recorded_a_second_before_local_midnight_is_in_that_days_total_and_not_the_next_days()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+        static DateTimeOffset Local(DateTime wall) => new(wall, TimeZoneInfo.Local.GetUtcOffset(wall));
+
+        var recorded = Local(new DateTime(2026, 7, 15, 23, 59, 59));
+        var read = recorded.AddMilliseconds(500);
+        var meter = Meter(now: () => read);
+
+        meter.Record(CodexTurn(recorded));
+        Assert.Equal(1, meter.Today.Turns);
+        Assert.Equal((4304m * 1.25m + 12928m * 0.125m + 6m * 10m) / 1_000_000m, meter.Today.Spent);
+
+        read = Local(new DateTime(2026, 7, 16, 0, 0, 1));
+        Assert.Equal(0, meter.Today.Turns);
+        Assert.Equal(0m, meter.Today.Spent);
+    }
+
+    /// <summary>
     /// The arithmetic, on the real event. Cached input is a SUBSET of the input count, so billing
     /// both in full would charge the cached three quarters of that turn twice.
     /// </summary>
@@ -418,7 +452,7 @@ public class TurnRecordTests : IDisposable
         Assert.Equal("USD", price.Currency);
 
         var meter = Meter();
-        meter.Record(CodexTurn(DateTimeOffset.Now));
+        meter.Record(CodexTurn(_at));
         Assert.Equal(expected, meter.Today.Spent);
     }
 
@@ -431,7 +465,7 @@ public class TurnRecordTests : IDisposable
     {
         NoCosts();
         var meter = Meter();
-        meter.Record(CodexTurn(DateTimeOffset.Now));
+        meter.Record(CodexTurn(_at));
 
         var record = Json.Read<TurnRecord>(File.ReadAllLines(_records)[0])!;
         Assert.Null(record.Cost);
@@ -734,6 +768,9 @@ public class UnknownModelIsPricedHighTests : IDisposable
     readonly Database _db = TestEnv.NewDb();
     readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
 
+    /// <summary>One instant for the meter's clock and the turns it records: <see cref="TestEnv.LocalNoon"/>.</summary>
+    readonly DateTimeOffset _at = TestEnv.LocalNoon();
+
     public void Dispose()
     {
         NoCosts();
@@ -775,10 +812,10 @@ public class UnknownModelIsPricedHighTests : IDisposable
     public void The_daily_cap_is_reached_by_turns_whose_model_was_never_named()
     {
         NoCosts();
-        var meter = new TurnMeter(_db, () => 0.05m, runtimeId: () => "codex", recordPath: _records);
+        var meter = new TurnMeter(_db, () => 0.05m, runtimeId: () => "codex", now: () => _at, recordPath: _records);
 
         Assert.False(meter.Today.CapReached);
-        meter.Record(CodexTurn(DateTimeOffset.Now));
+        meter.Record(CodexTurn(_at));
 
         Assert.Equal(HighestOnCodex, meter.Today.Spent);
         Assert.Equal(0, meter.Today.UnpricedTurns);
@@ -796,8 +833,8 @@ public class UnknownModelIsPricedHighTests : IDisposable
         Assert.Equal(Labels.PricedAtHighestListPrice,
             CostCatalog.Price(new TurnUsage(17232, 12928, 0, 6, 0, null), "codex").Estimated);
 
-        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records);
-        meter.Record(CodexTurn(DateTimeOffset.Now));
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", now: () => _at, recordPath: _records);
+        meter.Record(CodexTurn(_at));
 
         var record = Json.Read<TurnRecord>(File.ReadAllLines(_records)[0])!;
         Assert.Equal(Labels.PricedAtHighestListPrice, record.Estimated);
@@ -822,8 +859,8 @@ public class UnknownModelIsPricedHighTests : IDisposable
         Assert.Null(price.Estimated);
         Assert.NotNull(price.Cost);
 
-        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "custom", recordPath: _records);
-        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", DateTimeOffset.Now)
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "custom", now: () => _at, recordPath: _records);
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", _at)
         {
             Usage = new TurnUsage(10, 0, 0, 10, 0, "gpt-5.6-luna")
         });
@@ -863,6 +900,9 @@ public class OwnerPriceTests : IDisposable
 {
     readonly Database _db = TestEnv.NewDb();
     readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
+
+    /// <summary>One instant for the meter's clock and the turns it records: <see cref="TestEnv.LocalNoon"/>.</summary>
+    readonly DateTimeOffset _at = TestEnv.LocalNoon();
 
     public void Dispose()
     {
@@ -910,11 +950,11 @@ public class OwnerPriceTests : IDisposable
     public void The_owners_rate_prices_a_turn_nothing_named_a_model_for_and_is_not_an_estimate()
     {
         NoCosts();
-        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records,
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", now: () => _at, recordPath: _records,
             owner: () => OwnerPrice.From(Priced(1m, 4m)));
 
         // The measured Codex turn: 17,232 input (12,928 of it cached) and 6 output, no model.
-        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(12.5), "…", DateTimeOffset.Now)
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(12.5), "…", _at)
         {
             Usage = new TurnUsage(17232, 12928, 0, 6, 0, null)
         });
@@ -964,10 +1004,10 @@ public class OwnerPriceTests : IDisposable
         Assert.Null(OwnerPrice.From(Priced(2m, 0m)));
 
         NoCosts();
-        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records,
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", now: () => _at, recordPath: _records,
             owner: () => OwnerPrice.From(Priced(0m, 0m)));
 
-        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", DateTimeOffset.Now)
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", _at)
         {
             Usage = new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, null)
         });

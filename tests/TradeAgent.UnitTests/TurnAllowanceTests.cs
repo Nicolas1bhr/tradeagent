@@ -131,7 +131,10 @@ public class TurnAllowanceTests : IDisposable
     [Fact]
     public async Task The_turn_that_would_pass_the_ceiling_is_refused_before_it_runs()
     {
-        var now = DateTimeOffset.Now;
+        // ONE INSTANT, AT NOON, for the meter, the turns and the loop that measures the wait: a turn
+        // starts five seconds before it is recorded, and the wait is midnight minus the loop's clock.
+        // See TestEnv.LocalNoon.
+        var now = TestEnv.LocalNoon();
         var meter = Meter(() => now);
 
         for (var i = 0; i < 3; i++) meter.Record(PricedAt120(now));
@@ -140,7 +143,7 @@ public class TurnAllowanceTests : IDisposable
         Assert.Equal(Reservation, meter.Today.NextTurnReservation);
 
         var host = new Host(meter);
-        var loop = new MissionLoop(host);
+        var loop = new MissionLoop(host, now: () => now);
         var wait = await loop.TurnAsync();
 
         Assert.Empty(host.Conv.Sent);
@@ -157,7 +160,7 @@ public class TurnAllowanceTests : IDisposable
     [Fact]
     public async Task A_day_with_room_for_the_reservation_takes_its_turn_and_commits_it()
     {
-        var now = DateTimeOffset.Now;
+        var now = TestEnv.LocalNoon();   // recorded turns start before `now`: see TestEnv.LocalNoon
         var meter = new TurnMeter(_db, () => 50m, runtimeId: () => "codex", now: () => now,
             recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol");
 

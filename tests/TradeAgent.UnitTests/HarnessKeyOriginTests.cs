@@ -160,7 +160,9 @@ public class HarnessKeyOriginTests : IDisposable
         using var db = TestEnv.NewDb();
         var allowance = TurnAllowance.From(1_200_000, 20_000);
         // 1.20 M at 1.00 plus 20 k at 4.00 per million: a reservation of 1.28 a turn, well under the ceiling.
-        var meter = new TurnMeter(db, () => 50m, runtimeId: () => ApiAgentRuntime.RuntimeId,
+        // One instant for the launch row and the role's "today" read back below: see TestEnv.LocalNoon.
+        var noon = TestEnv.LocalNoon();
+        var meter = new TurnMeter(db, () => 50m, runtimeId: () => ApiAgentRuntime.RuntimeId, now: () => noon,
             recordPath: Path.Combine(_home, "turns.jsonl"), owner: () => new OwnerPrice(1m, 4m),
             model: () => "gpt-5.6-luna", allowance: () => allowance, share: _ => 1m);
 
