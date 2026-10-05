@@ -83,12 +83,17 @@ public sealed record TapeItem(string Subject, DateTimeOffset SourceTime, string 
 
 /// <summary>
 /// ONE STORED OBSERVATION: what the vendor said about one subject at one source time, which reading
-/// of it this is, when it arrived, which fetch brought it, and what it counts as.
+/// of it this is, when it arrived, which fetch brought it, what it counts as — and whether the screen,
+/// run at this read, quarantines it (<see cref="TapeScreen"/>).
+///
+/// <para><see cref="Payload"/> is the item as recorded, or NULL where this read withheld it: a quarantined
+/// item read through <c>TapeStore.AsOf</c>. <see cref="Quarantine"/> says why, by rule and screen version,
+/// and never with the text.</para>
 /// </summary>
 public sealed record TapeObservation(
     long Id, string Source, string Series, string Subject, DateTimeOffset SourceTime,
     DateTimeOffset ReceivedAt, long FetchId, string NaturalKey, int Revision, string PayloadSha256,
-    string Payload, string EvidenceClass);
+    string? Payload, string EvidenceClass, TapeQuarantine? Quarantine);
 
 /// <summary>One stored attempt, with the origin the store computed from its URL.</summary>
 public sealed record TapeFetchRecord(

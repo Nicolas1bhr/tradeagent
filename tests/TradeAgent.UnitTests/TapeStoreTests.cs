@@ -149,7 +149,7 @@ public class TapeStoreTests(ITestOutputHelper log)
 
         string? At(DateTimeOffset t, BarAudience? who = null) =>
             store.AsOf(who ?? research, Source, Series, Symbol, t) is { } o
-                ? $"{o.SourceTime:HH:mm} r{o.Revision} {o.Payload.Split('"')[3]}"
+                ? $"{o.SourceTime:HH:mm} r{o.Revision} {o.Payload!.Split('"')[3]}"
                 : null;
 
         foreach (var t in new[] { p1.AddSeconds(1), p1.AddSeconds(2), p1.AddMinutes(4), p2.AddSeconds(2), p2.AddMinutes(6) })
@@ -170,7 +170,7 @@ public class TapeStoreTests(ITestOutputHelper log)
         // ONE SUBJECT'S SERIES, never another's.
         Assert.Equal("12:10 r1 999.000",
             store.AsOf(research, Source, Series, "ETHUSDT", p2.AddMinutes(6)) is { } eth
-                ? $"{eth.SourceTime:HH:mm} r{eth.Revision} {eth.Payload.Split('"')[3]}" : null);
+                ? $"{eth.SourceTime:HH:mm} r{eth.Revision} {eth.Payload!.Split('"')[3]}" : null);
 
         // THE AUDIENCE IS REQUIRED. No tape holdout exists yet, so every audience reads the same.
         Assert.Throws<ArgumentNullException>(() => store.AsOf(null!, Source, Series, Symbol, p2));
@@ -427,7 +427,7 @@ public class TapeStoreTests(ITestOutputHelper log)
         Assert.Equal(
             $$"""{"ratio":1.50,"sumOpenInterest":"97045.28100000","symbol":"BTCUSDT","timestamp":{{Ms(Noon)}}}""",
             obs.Payload);
-        Assert.Equal(TapeJson.Sha256(obs.Payload), obs.PayloadSha256);
+        Assert.Equal(TapeJson.Sha256(obs.Payload!), obs.PayloadSha256);
         Assert.Equal(64, obs.PayloadSha256.Length);
         Assert.Equal($"{Symbol}|{Ms(Noon)}", obs.NaturalKey);
 
