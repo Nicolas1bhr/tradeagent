@@ -25,6 +25,31 @@ below), does not poll while its builders work: it ends its turn, and the orchest
 **The `fleet/` directory** is `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` — outside the repo and outside `/tmp`, which the OS empties after
 about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.md`, `gates/<label>/`, `locks/`, `ci-ledger.md`, `BOARD.md`.
 
+## The orchestrator — the owner's own seat, held on his grant (2026-10-06)
+
+**The owner, 2026-10-06 00:50 CEST, verbatim:** "for tonight i'm leaving you the highest possible position. mine, the orchestrator. you can now manage up
+to two top level managers and use orchestration standard just as inspiration and help as to how you should guide them. tonight i'd like you to continue
+the construction of the software. i really like your performance over the last few days as orchestrator especially with the hearbeat you programmed to
+wake you back up each time my rate limit resets. if tomorrow morning i see that you delivered again when it comes to progress and sheer build quality i'd
+like to make this permanent. make sure this is written down somewhere so we can upgrade the orchestration documents to incorporate all of this. if you
+need anything from me you can always ping me."
+
+- **What it is.** The orchestrator holds the owner's own seat over the BUILD: it runs up to two top-level manager seats at a time, decides sequencing,
+  allotments and cross-seat questions on his behalf (the 2026-10-04 delegation: conservative, compliant, reversible, each decision written on
+  `fleet/BOARD.md` for him to overrule) and alone talks to him. It does not hold his authority over money, credentials, legal status, paid commitments or
+  anything sent in his name — each still needs his explicit yes — and it changes no protection in `CLAUDE.md`.
+- **The orchestration standard** (the sibling projects', outside this repo) is inspiration and help for guiding the managers, not doctrine:
+  `docs/HOW-WE-BUILD.md` and this file govern.
+- **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across his usage stops: a ONE-SHOT wake at each 5-hour
+  window's reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake) and a RECURRING 2-hourly backstop. A cron fires only while the session
+  is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac (power, lid, disk) and the fleet's state, and resumes every seat
+  and builder that died at the stop by `SendMessage` naming its branch state — nothing is lost, because the branch is the handoff. CI and detached local
+  gates run on through a stop, so a builder that dispatches its CI before the window runs out finds the verdict waiting. Crons are session-only (they die
+  with the session; a recurring one expires after 7 days): a new orchestrator session arms them first.
+- **Status: a trial, the night of 2026-10-06** — permanent if his morning review says so. The upgrade then owed: this section becomes the orchestrator's
+  row in the seat table above; `fleet/handoff/ORCHESTRATOR.md` makes the heartbeat its resume step 5; `docs/HOW-WE-BUILD.md` names the orchestrator layer;
+  `CLAUDE.md`'s "How we build" points here. The night's record: `fleet/BOARD.md` (decisions) and the resume block's checkpoint at its end.
+
 ## Grounding — read before acting, verify before trusting
 
 - **A manager:** `CLAUDE.md`; `docs/HOW-WE-BUILD.md`; this file; `docs/RESUME-HERE.md` "Do this first"; `docs/PRINCIPLES.md`; its lane's plan (EDGE-FACTORY
