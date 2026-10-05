@@ -283,8 +283,10 @@ sealed class SettingsPage
                      + "— BTC, ETH, SOL, BNB, XRP and DOGE against USDT: the premium index with the live funding rate, "
                      + "open interest, the 5-minute long/short and taker ratios, and settled funding — each reading "
                      + "with the moment it arrived. Nothing is ever overwritten: a reading Binance later changes is "
-                     + "kept as a new revision beside the first."),
-            Ui.Micro("It reads public market data with no key and places nothing. A reading that arrived on time from "
+                     + "kept as a new revision beside the first. The same switch records OKX's announcements for EU "
+                     + "users, the newest twenty once a minute: each is kept whole, one that looks addressed to an AI "
+                     + "is flagged and its text withheld when the tape is read for the AI, and no link in them is opened."),
+            Ui.Micro("It reads public endpoints with no key and places nothing. A reading that arrived on time from "
                      + "Binance's own address is marked live; a late one, or one from any other address, is marked "
                      + "archive. It is context for research, not evaluation evidence, it is recorded only while "
                      + "TradeAgent is running, and the AI cannot start, stop or change it."),

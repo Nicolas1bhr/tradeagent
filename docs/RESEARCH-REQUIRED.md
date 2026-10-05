@@ -258,6 +258,31 @@ pair plus the owner's presses, which no published figure is likely to come near,
 
 ---
 
+## C5d — OKX's announcements for EU users on the tape (measured 2026-10-03 and 2026-10-06 from this Mac; re-verify at build time)
+
+**Decided: while it runs, TradeAgent records OKX's first page of announcements once a minute** (`U-tape-events`;
+`docs/EDGE-FACTORY.md` § 4.2), each item screened at every read (`TapeScreen` v1). `docs/CONTRACTS.md` "The tape"
+states what the record and the screen claim and do not.
+
+| Fact | Value |
+|---|---|
+| Host | `https://eea.okx.com` — OKX's domain for EU users. An unauthenticated GET: with no `OK-ACCESS-KEY` header the endpoint is public and its answer is restricted by the asking IP. No key is sent and none is held. |
+| Endpoint | `GET /api/v5/support/announcements` — page 1 only (`page` and `annType` are optional and not sent). |
+| Documentation | Read 2026-10-06 ~01:12 CEST at `https://www.okx.com/docs-v5/en/#announcement-get-announcements`: sorted by `pTime` and `businessPTime`, newest first, and "the sort will not be affected if the announcement is updated"; 20 records a page; rate limit 5 requests per 2 seconds per IP; `pTime` is "the actual time the announcement was first published" and the "response may be delayed around 5 minutes"; `businessPTime` is the time shown on the page. |
+| Measured (the brief) | RUN 2026-10-03 from this Mac, no key: HTTP 200 in 0.13 s, at most 20 items of at most 352 B, newest `pTime` first, 32 days a page. |
+| Re-measured (the second builder) | Pages 1 to 15, one GET a second, no key, 2026-10-05 23:06:38–23:06:55 UTC: every answer HTTP 200 in 0.16–0.21 s, 5,047–5,416 bytes, `code "0"`, `totalPage "92"`; twenty items a page, each exactly `{annType, businessPTime, pTime, title, url}` in 175–347 bytes, newest `pTime` first on every page; page 1 spans 32.99 days. Item URLs are under `https://my.okx.com/en-eu/help/` and none is ever fetched. The 300 items through this build's `TapeParse.TryReadItems`: all 15 pages read, 300 distinct subjects; through `TapeScreen.Check`: none flagged — "OKX will launch AI/USD and AI/EUR for spot trading" among them. The suite talks to a loopback listener, and `SuiteReachesNoVendorTests` refuses a test that names an OKX or a Bybit host. |
+| Terms basis | Re-read 2026-10-06 ~01:02 CEST. OKX API Agreement (`https://www.okx.com/en-eu/help/okx-api-agreement`, last updated 28 July 2026): § 3.2(a) public endpoints are usable without an API key, subject to the Agreement, the ToS and § 9; § 9.2 licenses use for one's own internal purposes; § 9.3(b) needs OKX's written authorisation to offer the API Services as part of a commercial product; § 9.4 keeps the data to one's own personal, non-commercial trading, never redistributed, and allows automated means at a rate not beyond what is "reasonably necessary for your personal trading use" and without unreasonable load, binding callers without an OKX account the same way. OKX's Terms of Service – EEA (`https://www.okx.com/en-eu/help/terms-of-service-eea`, last updated 26 May 2026) § 1.14 names that Agreement for the API Services and incorporates it; its body forbids no bot or script (the words occur only in the site's menu). One page a minute against 5 requests per 2 s, kept on the owner's machine for his own trading. |
+| Bybit — DROPPED | Measured by the survey on 2026-10-03 (`https://api.bybit.eu/v5/announcements/index?locale=en-US&limit=50` → HTTP 200 in 0.49 s). The first builder read Bybit EU's General Terms on 2026-10-04 as forbidding bots, scripts and other automatic means to access or monitor any part of its platform (12 June 2026 version, § 9.2.2) — NOT re-verified. On 2026-10-06 they could not be read at all: the help-centre page (last updated 2026-01-23) points to `https://www.bybit.eu/legal/terms-and-conditions/General-Terms-and-Conditions`, which is drawn in a browser from a service that answered a plain GET "403 Access Denied" (nothing was tried past it), and a WebFetch of the page timed out after 60 s. No terms basis on the day, so no row. |
+| Recorded as | `TapeSourceCatalog.Announcements()` — one row, `okx-eea-announcements`: cadence 60 s, `PublicationDelay` 300 s (its live window 60 + 300 + 30 s), the `announcement-json` parser, `Terms`, `TermsUrl`, `DocUrl`, `Measured`. `tape-sources.json` may not name that parser. No schema rung: `tape.db` stays at its own version. |
+
+**Still to re-verify at build time.** (1) Whether selling TradeAgent needs OKX's written authorisation under
+§ 9.3(b) is a legal question for the owner, NOT settled here. (2) Whether OKX's "around 5 minutes" holds: an
+item first seen more than 390 s after its `pTime` is `O-ARCH` by rule, and the tape's own `received_at` against
+`pTime` is the measurement. (3) Bybit EU's terms, read by a person in a browser, before any Bybit row is
+reconsidered. (4) The screen's misses and its false flags beyond these 300 items are not measured.
+
+---
+
 ## C6 — Venue fees the referee judges with (read 2026-10-02 from the venue's own page; re-read before every release)
 
 **File:** `src/TradeAgent.Core/Strategy/VenueCostModel.cs`, `PublishedFees` — a table in CODE on purpose: the
