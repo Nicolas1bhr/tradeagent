@@ -41,6 +41,22 @@ public static class TestEnv
     public static Database NewDb() => new(Path.Combine(Home, $"db-{Guid.NewGuid():n}.db"));
 
     /// <summary>
+    /// TODAY'S LOCAL NOON, AS ONE INSTANT: what a test that records something and then reads "today"
+    /// pins BOTH to — the meter's <c>now</c> seam, the turns it records, the window it reads back.
+    ///
+    /// <para>Two clock reads straddle midnight once a day, and a turn's row starts BEFORE the instant it
+    /// is recorded at, by its duration (12.5 s for the measured Codex turn). Run 37163465037 on main
+    /// <c>5a54452</c> crossed 00:00Z and six meter tests recorded yesterday and summed today: red on a
+    /// product that was right. Noon is as far from both midnights as a local day allows, and the offset
+    /// is the one in force AT noon, so a day either side of a daylight-saving change is read whole.</para>
+    /// </summary>
+    public static DateTimeOffset LocalNoon()
+    {
+        var noon = DateTimeOffset.Now.ToLocalTime().Date.AddHours(12);
+        return new DateTimeOffset(noon, TimeZoneInfo.Local.GetUtcOffset(noon));
+    }
+
+    /// <summary>
     /// THE INSTRUMENTS THIS SUITE TRADES. An empty allowlist used to mean "everything" and now means
     /// nothing (REVIEW 2026-09-05 finding 5), so a gateway a test has configured to trade has to
     /// name what it may trade — exactly as a configured installation does. Spelled once so that a

@@ -414,7 +414,9 @@ public class BudgetReservationTests : IDisposable
 
         var host = new StaleHost(meter);
         host.Conv.Typed.Add("what are you doing?");
-        var loop = new MissionLoop(host);
+        // On the meter's instant: the wait is the meter's midnight minus the LOOP's clock, and two
+        // clocks either side of midnight make it negative. See TestEnv.LocalNoon.
+        var loop = new MissionLoop(host, now: () => now);
 
         var wait = await loop.TurnAsync();
         Assert.Empty(host.Conv.Sent);
@@ -445,7 +447,7 @@ public class BudgetReservationTests : IDisposable
         Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);   // the room goes
 
         var host = new StaleHost(meter) { Wakes = events };
-        Assert.True(await new MissionLoop(host).TurnAsync() > TimeSpan.Zero);
+        Assert.True(await new MissionLoop(host, now: () => now).TurnAsync() > TimeSpan.Zero);   // the meter's instant, as above
         Assert.Empty(host.Conv.Sent);
 
         var row = events.Get("owner:1")!;
