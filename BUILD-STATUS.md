@@ -7927,3 +7927,42 @@ again.
 **NOT done, NOT verified:** a run across a restart of the box (it would read DIED); the tripwire against a real change to his files (never provoked — that
 is the thing not done); `ready` and `start` with his real TradeAgent or ATAS open (a stand-in only); `stop` on a builder's run; the rule itself is doctrine
 until a unit's report carries a box run.
+
+## 2026-10-05 (evening) — the owner's rule: no backward compatibility while we build, written into the code where compatibility gets decided
+
+Docs, comments and the fleet's own files; no behaviour changed — every line added under `src/` and `tests/` is a comment (`git diff -U0 -- src tests`,
+non-comment lines: none).
+
+- **The rule** (`CLAUDE.md`, new section "No backward compatibility while we build"): a new build owes nothing to an earlier release — schema and homes,
+  files, settings, config formats, wire protocols, the bridge DLL, CLI verbs — and nothing is designed so an older build can read newer data. No migration,
+  shim, fallback, dual reader, legacy branch, tolerant old-format parser, deprecated alias or kept-for-old-rows column; existing compatibility code binds
+  nothing; a test that exists only for an earlier release may be rewritten or deleted, named in the report; it outranks every older comment, brief, doc and
+  test that asks for compatibility. **Not relaxed:** refuse, never guess (another version refused with both versions named; `Versions.BridgeCompatible` the
+  model); nothing of the owner's destroyed without his choice in the app (an older home refused untouched; the first refusing change ships the in-app fresh
+  start); the money, credential, accounting, evidence and recovery protections for the current build's own data. The phase ends only when the owner ends
+  it, in writing, in `CLAUDE.md`.
+
+- **In the code, where the decisions are made:** `Versions` (`src/TradeAgent.Core/Versioning.cs`) carries the code-level statement; the head of
+  `DatabaseSchemaVersion`'s history says the 30 rungs' "additive — an older database gains it empty" is a record, not a template; `Database.Migrate` says
+  the ladder builds this build's schema and owes earlier releases nothing, only this build's crash recovery; the two undo-list tests (`VenueCatalogTests`,
+  `PaperEligibleVerdictTests`) say no new rung owes them a line.
+
+- **In the process:** `docs/HOW-WE-BUILD.md` landing step 4 (the one exception to "nothing removed": a test only an earlier release needed, named; still
+  100 lines); `manager-prompt.md` § 7; the resume block (a dated entry; R18's undo lines marked no longer owed). Local, outside git:
+  `fleet/BUILDER-PROMPT.md`, `fleet/bin/land.sh`'s judge message, `fleet/handoff/ORCHESTRATOR.md`, `fleet/BOARD.md`.
+
+**Found, not changed — compatibility already in the code, now free to go when it is in the way:** the ladder's 30 additive rungs and their backfills; rows
+"an older build wrote" still interpreted (`GatewayTypes.cs:115` and `:133`, `TradingGateway.cs:10059`, `Trading.cs:429`, `PaperBook.cs:177`); the "legacy
+frictionless judge" (`VenueCostModel.cs:100`, `Referee.cs`); "a value from a newer build reads as itself" — TEXT, never a CHECK — across nine files (e.g.
+`DataLicence.cs:13`, `OrgStore.cs:172`); the two undo-list tests. Also seen: a home NEWER than the build is refused as "TradeAgent's records are damaged.
+Press Repair." — the refusal is right, the words are not.
+
+**Verified by running.** `dotnet build TradeAgent.sln -c Release --no-incremental` on the Mac: 19 projects rebuilt, 0 warnings, 0 errors (no project
+compiles doc comments as XML, so a comment cannot reach the build). Tests box, run `20261005-224356-08e7b871` (this tree): **GREEN in 17 m 00 s** — build
+57 s with 0 warnings and 0 errors, `Category!=Timing` 467 s, `Category=Timing` 487 s first try; 2,520 tests, 0 failed, 1 not run (the attribute skip); "his
+files: unchanged". **CI:** `08e7b871` (run 37369028929) ubuntu-latest success, macos-latest success, windows-latest running when this was written;
+`db3082c6` (run 37364863467) macos success 14 min, windows success 51 min, ubuntu never acquired a runner (cancelled), package skipped.
+
+**NOT done, NOT verified:** no compatibility code was removed — that is work for the units that meet it, or a sweep the orchestrator may brief; the in-app
+fresh start for a refused older home does not exist yet (owed by the first change that refuses one); the "records are damaged" wording for a newer home is
+unchanged.

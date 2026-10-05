@@ -5,6 +5,22 @@ namespace TradeAgent.Core;
 /// <summary>
 /// Versions we compare explicitly. An ATAS update that moves the bridge protocol must pause
 /// trading and ask for a repair, not produce unpredictable execution.
+///
+/// <para><b>NO BACKWARD COMPATIBILITY WHILE WE BUILD — the owner's rule, 2026-10-05 (<c>CLAUDE.md</c>,
+/// "No backward compatibility while we build").</b> TradeAgent is in its building phase, and a new
+/// build owes NOTHING to an earlier release: not its schema or the homes it wrote, not its files,
+/// settings, wire protocols, bridge DLL or CLI verbs — and nothing is designed so that an older build
+/// can read what this one writes. No migration, shim, fallback, dual reader, legacy branch, tolerant
+/// parser or kept-for-old-rows column is written for an earlier release, and none that already exists is
+/// a reason to bend new logic around it. When the right design breaks an earlier release, break it:
+/// change the number here, and let the check refuse what no longer matches.</para>
+///
+/// <para><b>What survives is the refusal, because it is a protection and not compatibility.</b> A
+/// version this build does not speak is refused with a message naming both versions and the repair —
+/// never read, half-migrated or trusted; <see cref="BridgeCompatible"/>'s exact match is the model. An
+/// older home this build will not open is left untouched, and starting fresh is the owner's choice, in
+/// the app. The money, credential, accounting, evidence and recovery protections hold for this build's
+/// own data whatever a version change does.</para>
 /// </summary>
 public static class Versions
 {
@@ -35,6 +51,16 @@ public static class Versions
     public const int BridgeProtocolVersion = 3;
 
     /// <summary>
+    /// <para><b>A RUNG OWES NOTHING TO A HOME AN EARLIER RELEASE WROTE</b> (the policy on
+    /// <see cref="Versions"/>). The rungs recorded below were written additive — "an older database gains
+    /// it empty", backfilled, re-runnable over rows that predate them — because the ladder then promised
+    /// to carry any home forward. That promise is withdrawn, and the history below is a record of what
+    /// each rung did, not a template for the next. A new rung is written for the schema the logic wants:
+    /// it may drop, rename and restructure what an earlier rung made, and where it cannot carry an older
+    /// home it refuses it, untouched, the way <c>Database.Migrate</c> already refuses a home newer than
+    /// this build. What it still owes is this build's own recovery: a crash between its statements and
+    /// its stamp reopens cleanly.</para>
+    ///
     /// 1 -&gt; 2: the material ledger. Everything the account owner hands the agent, and everything
     /// the agent produces, is recorded with a hash and a timestamp. Purely additive — two new
     /// tables, nothing existing altered — so an older database opens and is migrated in place.

@@ -82,6 +82,42 @@ records it keeps **measurement and claim in different tables**: `material` is wr
 scanner and the agent cannot edit it; `material_note` is the agent's account of itself. Do not merge
 them and do not let a note touch a material row — a record the observed party can rewrite is not one.
 
+## No backward compatibility while we build
+
+**The owner's rule (2026-10-05): TradeAgent is in its building phase, and a new build owes nothing to
+an earlier release.** Not its database schema or the homes it wrote, not its files, settings or config
+formats, not its wire protocols, bridge DLL or CLI verbs — and not the other direction either: nothing
+is designed so that an older build can read what a newer one writes. Compatibility with an earlier
+release is never a reason to make the logic worse.
+
+- **Do not write** migrations, shims, fallbacks, dual readers, "legacy" branches, tolerant parsers for
+  old formats, deprecated aliases, or columns and fields kept because an older build wrote them; do not
+  keep a design additive, or a schema rung undoable, for an older home's sake. When the right design
+  breaks an earlier release, break it.
+- **Existing compatibility code binds nothing.** Delete it when it is in the way. A test that exists
+  only for an earlier release — reopening its data, undoing rungs to imitate it — may be rewritten or
+  deleted; the report names it and the landing accepts it on this rule.
+- **This outranks every older comment, brief, doc and test that asks for compatibility.** The 30
+  rungs' "additive — an older database gains it empty" in `Versioning.cs` and R18's undo lines are
+  history, not templates.
+
+**What it does not relax — these are protections, not compatibility:**
+
+- **Refuse, never guess.** Anything from another version that this build does not deliberately handle
+  — a home, a file, a bridge, a peer — is refused by an explicit check whose message names both versions
+  and the repair; it is never read on a guess, half-migrated or trusted. `Versions.BridgeCompatible`'s
+  exact match is the model.
+- **Never destroy without the owner's choice.** A build that will not open an older home refuses it and
+  leaves it untouched; starting fresh is something the owner chooses in the app — never a silent
+  rewrite, never a terminal. The first change that refuses older homes ships that in-app path with it.
+- **The money, credential, accounting, evidence and recovery protections hold for the current build's
+  own data:** a crash between a rung's statements and its stamp still recovers; ledgers stay
+  append-only within a home; evidence recorded in a home stays true about what ran — a change that
+  would make it mean something else refuses or re-labels it rather than bending the new design around it.
+
+The building phase ends only when the owner ends it, in writing, here; until then this section holds.
+The code-level statement is on `Versions` in `src/TradeAgent.Core/Versioning.cs`.
+
 ## Building and verifying
 
 `dotnet` is not on PATH on the dev Mac: `export PATH="$HOME/.dotnet:$PATH"`.

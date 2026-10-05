@@ -134,6 +134,17 @@ public sealed class Database : IDisposable
         return c;
     }
 
+    /// <summary>
+    /// THE LADDER BUILDS THIS BUILD'S SCHEMA; IT OWES NOTHING TO EARLIER RELEASES. A fresh home climbs
+    /// every rung from 1, a dev home stamped lower climbs the rest. The rungs below were written to carry
+    /// any older home forward — additive, idempotent, backfilled over rows that predate them — and that was
+    /// a choice of the time, not a contract: under the building-phase policy on <see cref="Versions"/>
+    /// (<c>CLAUDE.md</c>, "No backward compatibility while we build"), a new rung is written for the schema
+    /// the logic wants, may restructure what an earlier rung made, and refuses a home it cannot carry,
+    /// untouched, the way the end of this method refuses a home newer than this build. What stays owed is
+    /// this build's own recovery: a rung stamps last, and must run again cleanly after a crash before its
+    /// stamp — over a fresh home as much as an old one.
+    /// </summary>
     void Migrate()
     {
         Exec("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);");

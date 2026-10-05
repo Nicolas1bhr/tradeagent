@@ -24,6 +24,14 @@ available, or a "tests box: NOT RUN" line with `ready`'s answer (`docs/HOW-WE-BU
 (2026-10-05: desktop live, the UI agent drives it) — `R-containment` can run there, never on the tests box. Setup, traps and the runner:
 `tools/README.md`; the record: `BUILD-STATUS.md`, 2026-10-05.
 
+**2026-10-05 — no backward compatibility while we build (the owner's rule; `CLAUDE.md` has it in full).** A new build owes nothing to an earlier
+release — schema, homes, files, settings, protocols, bridge, verbs — and nothing is designed for an older build to read newer data: no migration,
+shim, fallback, legacy branch or kept-for-old-rows column, and existing compatibility code binds nothing (a test that exists only for an earlier
+release may be rewritten or deleted, named in the report). It does not relax the refusal (another version is refused with both versions named, never
+read or trusted), the owner's choice before anything is destroyed (an older home is refused untouched; starting fresh is his press in the app), or the
+protections for the current build's own data. In the code: `Versions` (`src/TradeAgent.Core/Versioning.cs`), `Database.Migrate`, and the two undo-list
+tests.
+
 **Checkpoint 2026-10-04 12:40 CEST — the orchestrator's session closed by the owner ("wrap up … resuming later").** A NEW orchestrator starts from
 `fleet/handoff/ORCHESTRATOR.md`; this session's agent ids are dead — open FRESH seats. `main` `810b35af` is clean and pushed; schema rung 30; every
 landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the fleet (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69`
@@ -61,7 +69,7 @@ paused.** What this session added: the owner's organisation direction and answer
    `U-cost-model` (27) · light `R-containment` (the Windows spike, factory plan § 9.3), `U-price-rows` (serialise the three builders' gates on this Mac); W2–W4b
    finish lane A with `U-org-ledger` (inert, next free rung) and the tape's light units beside it; then M0; then lane B (`U-org-principals`, `U-org-rights`,
    `U-org-envelopes`, `U-org-wakes`, …) paired with lane A's CARDs; M-org0 after W7; the chief at W11; containment's first enforcement unit and the execution environment before M-org1 (W11–W12). Rungs land contiguous, in landing order, each
-   rung's undo lines appended to the two roll-back tests (R18 § 2). Dispatch = re-check the brief's pointers against `main`, `git mv docs/queue/<unit>.md
+   rung's undo lines appended to the two roll-back tests (R18 § 2) — **no longer owed since 2026-10-05: no backward compatibility while we build, `CLAUDE.md`; a rung may rewrite or delete those tests instead**. Dispatch = re-check the brief's pointers against `main`, `git mv docs/queue/<unit>.md
    docs/briefs/`, a worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. `U-key-host-pin` first: an agent can redirect the owner's pasted
    key through `runtimes.json` (R10 #6, manager-checked).
 3. **M0 — the observed loop, attempt 3, after W4b — lane A only** (factory-plan Law 10; `docs/briefs/U-observed-loop.md`, "For attempt 3"; verify

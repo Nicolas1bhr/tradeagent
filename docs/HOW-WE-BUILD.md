@@ -42,8 +42,7 @@ on the tip): the report quotes the run id and its counts, or "tests box: NOT RUN
 **Pass 2 — land.** The manager, in the same session, runs the landing checklist below on the reported tip, writes a
 `BUILD-STATUS.md` section of at most 40 lines from the report, and deletes the brief. `docs/briefs/` holds only work
 in flight; empty means nothing is. `docs/queue/` holds READY briefs not yet dispatched: re-check each pointer against `main`,
-then `git mv` it into `docs/briefs/` to dispatch. No verify leg, Codex leg, bounce, combination verify or scribe sits
-between the passes: a unit is built once and landed once.
+then `git mv` it into `docs/briefs/` to dispatch. Nothing sits between the passes: built once, landed once.
 
 ## Ask questions later — the milestone review
 
@@ -81,7 +80,8 @@ allocation. The combination verify. The integration scribe. An ATAS-box run per 
    One gate at a time on this Mac: two suites overlapping flake the timing tests. Two units each green alone can be red
    together; that is a one-item fixer brief on the landing branch, and neither unit's builder is reopened. The tests-box
    run of the landed tree (re-run after a rebase that moved code) is read, or its NOT RUN line; red there is a red gate.
-4. Test-name diff against `main` → nothing removed. A deleted test cannot fail; it happened three times.
+4. Test-name diff against `main` → nothing removed. A deleted test cannot fail; it happened three times. The one
+   exception: a test that existed only for an earlier release, named in the report (`CLAUDE.md`, no backward compatibility).
 5. Secret scan of the whole diff against `main`, as a gate, not a neighbouring command.
 6. `git merge --ff-only` with its exit status checked — never behind a pipe — then `git rev-list --count <branch>..main`
    must print 0 before any record is written; push; CI green on all three platforms at the merge sha. Red CI in the product: `git reset

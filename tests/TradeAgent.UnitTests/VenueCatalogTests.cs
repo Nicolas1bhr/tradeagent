@@ -207,6 +207,10 @@ public class VenueCatalogTests
         // what a database collected on before this unit landed actually looks like. EVERY rung above
         // 16 has to be undone, not only 17's — a reopen runs all of them, and a half-rolled-back
         // database is one no installation has ever had.
+        // NOT OWED BY ANY NEW RUNG (CLAUDE.md, "No backward compatibility while we build"): this test
+        // imitates a home an earlier release wrote, and nothing obliges a rung to keep that possible. A rung
+        // whose undo line costs nothing may add it; one that would contort itself to stay undoable instead
+        // rewrites or deletes this test, and its report names it.
         using (var raw = new SqliteConnection($"Data Source={file}"))
         {
             raw.Open();

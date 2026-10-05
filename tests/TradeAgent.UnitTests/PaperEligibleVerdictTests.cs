@@ -262,6 +262,10 @@ public class PaperEligibleVerdictTests
             // EVERY RUNG ABOVE 22 HAS TO BE UNDONE, not only 23's — a reopen runs all of them, and a
             // half-rolled-back database is one no installation has ever had. `VenueCatalogTests` states
             // the same rule against schema 16.
+            // NOT OWED BY ANY NEW RUNG (CLAUDE.md, "No backward compatibility while we build"): this test
+            // imitates a home an earlier release wrote, and nothing obliges a rung to keep that possible. A rung
+            // whose undo line costs nothing may add it; one that would contort itself to stay undoable instead
+            // rewrites or deletes this test, and its report names it.
             c.CommandText = """
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
