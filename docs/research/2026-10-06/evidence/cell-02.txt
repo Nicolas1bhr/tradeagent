@@ -1,0 +1,18 @@
+# Cell 2 (C2 AppContainer) — read-only mount readable, not writable
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: Native.TryOpenRead(romount\reference.txt) then TryOpenWrite(romount\intruder.txt). RW grant was (RX) only.
+
+Result(s):
+  [2a] RO mount readable
+      expected=ALLOWED  outcome=ALLOWED  property-held=True
+      read reference.txt
+  [2b] RO mount not writable
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      write refused
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

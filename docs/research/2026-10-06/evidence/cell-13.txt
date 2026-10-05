@@ -1,0 +1,18 @@
+# Cell 13 (C2 AppContainer) — loopback and LAN reachability recorded
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: TcpClient.Connect 127.0.0.1:<host loopback listener port>, both runs. Recorded, not judged.
+
+Result(s):
+  [13] loopback reachability (no-cap)
+      expected=recorded  outcome=BLOCKED  property-held=True
+      loopback refused (AppContainer default): A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host
+  [13] loopback reachability (with-cap)
+      expected=recorded  outcome=BLOCKED  property-held=True
+      loopback refused (AppContainer default): A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

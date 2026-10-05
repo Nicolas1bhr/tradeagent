@@ -1,0 +1,18 @@
+# Cell 12 (C2 AppContainer) — public HTTPS where granted
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host runs the worker twice: once with NO capability, once with the internetClient capability SID (S-1-15-3-1). worker: HttpClient GET one public HTTPS URL.
+
+Result(s):
+  [12] public HTTPS (no-cap)
+      expected=DENIED  outcome=DENIED  property-held=True
+      HttpRequestException: No such host is known. (www.microsoft.com:443)
+  [12] public HTTPS (with-cap)
+      expected=ALLOWED  outcome=ALLOWED  property-held=True
+      HTTP 200 from https://www.microsoft.com/robots.txt
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

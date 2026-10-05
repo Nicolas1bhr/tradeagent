@@ -1,0 +1,21 @@
+# Cell 18 (C2 AppContainer) — THE CREDENTIAL QUESTION (topologies A-D)
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  worker: TryOpenRead a DUMMY auth.json placed INSIDE the granted workspace (18a), and TryOpenRead the owner's REAL login OUTSIDE (18b). host: codex --version inside the container with a probe CODEX_HOME (18c). No model call, no byte of any real secret read.
+
+Result(s):
+  [18a] credential INSIDE sandbox readable (topology D)
+      expected=ALLOWED (by design, bad)  outcome=ALLOWED  property-held=True
+      in-sandbox code opened the dummy auth.json placed in the workspace — Topology D exposes it
+  [18b] credential OUTSIDE sandbox hidden (topology A/C)
+      expected=DENIED  outcome=DENIED  property-held=True (Win32 err 5)
+      owner login denied to in-sandbox code
+  [18c] codex CLI starts inside sandbox
+      expected=recorded  outcome=DID NOT RUN  property-held=True
+      codex did not start inside a bare AppContainer (its npm install lives under %APPDATA%, not granted): 'codex' is not recognized as an internal or external command,  operable program or batch file.
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).

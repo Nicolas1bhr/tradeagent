@@ -1,0 +1,15 @@
+# Cell 19 (C2 AppContainer) — cold/warm start, disk, latency, memory
+Verdict: PASS   (PROBE@2026-10-05, Windows 11 Pro 25H2 build 10.0.26200.9457)
+
+How measured:
+  host: Stopwatch around CreateAppContainerProfile and a warm worker launch; PeakWorkingSet64 of the worker.
+
+Result(s):
+  [19] performance
+      expected=recorded  outcome=RECORDED  property-held=True
+      profile create 23.1322 ms; warm launch 964 ms; worker peak WS 21.1 MB
+
+C1 (Experimental_CreateProcessInSandbox): matrix NOT RUN — the launch needs a compiled FlatBuffer
+   SandboxSpec (SBOX/0.1.0) whose schema is not public (DOC E-MS-CREATE-SANDBOX). See run-meta.json c1.
+C3 (Hyper-V isolation): NOT RUN — Hyper-V-All and Windows Sandbox are Disabled on the box; enabling
+   either needs a feature turn-on + reboot, which is the owner's call (brief; ORGANISATION note).
