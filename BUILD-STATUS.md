@@ -7865,3 +7865,28 @@ LossFlattenSurfacesTests. Manager's gate at `14b5b907`, Release: build `--no-inc
 windows-latest (44 min; Timing first try, per the report), package (3.5 min) — read by the manager with `gh run view`. Landing CI read by the orchestrator.
 
 **NOT done, NOT verified:** judgements 2 and 3 (owed); the Windows evidence is hosted CI only — no box (not granted to this unit; unreachable at its last check); the app not run.
+
+## 2026-10-05 — a second Windows machine for the suite: `TA_WIN_BOX=tests`, and `tools/win-test.sh` runs CI's test job on it, durably
+
+Tooling and docs only: no product or test code changed (`git diff 14b5b907 HEAD -- src tests packaging TradeAgent.sln Directory.Build.props` is empty).
+The machine is a Windows 11 laptop (4 cores, 16 GB, French locale) in its own tailnet, shared into the owner's: that one machine crosses, quarantined (it
+cannot open a connection back). SSH by a key made for it; no password for it is held anywhere. The ATAS box is unchanged and stays the default machine.
+
+- **`tools/win-env.sh` (`9d263ff4`):** every `win-*.sh` picks its machine by name (`TA_WIN_BOX`; a name with no file is refused, exit 2) and connects by
+  key or password through one set of options. `win-bootstrap.ps1` is the one hand step on a new machine: OpenSSH on, port 22 from Tailscale addresses
+  only, the key where sshd reads it, no sleep on mains power, `C:\ta`.
+- **`tools/win-test.sh` + `win-test-run.ps1`:** a run is a scheduled task (S4U, normal priority) in its own `C:\ta\runs\<id>\`, CI's test job step for
+  step; `start` · `status` · `wait` · `log` · `list` · `fetch` · `stop`; one run per machine. `win-ps.sh` now uses one remote file name per call.
+
+**Verified by running.** The ATAS box after the refactor: `win-state.sh` "VERDICT: everything works", a plain command, a 4,000-character script by the
+file path, a download, and `TA_WIN_BOX=nosuch` refused with exit 2. The tests box, run `20261005-211439-9d263ff4` (tree `9d263ff4` plus the uncommitted
+`tools/` files): **GREEN in 22 m 10 s** — restore 5 s, Release build 69 s with 0 warnings and 0 errors, `Category!=Timing` 711 s, `Category=Timing` 537 s
+on the first attempt (no retry). Unit 1380/1380 + 1/1, Fault 415/415 + 5/5, Integration 628/629 + 90/90 with 1 not run — skipped by its own attribute
+(`PipeContractTests.A_hello_that_omits_the_version_field_is_read_as_the_current_one`, "Superseded by …") → 2,520 tests, 0 failed: the same counts as the
+manager's gate at `14b5b907` (1381, 420, 718/719). Speed probe on the box: cpu 1.55×, file-io 1.95×, pipe 4.44×, timer 1.20×. The run outlived the SSH
+session that started it; a second `start` during it was refused (exit 4); `stop` mid-build left no dotnet, testhost, MSBuild or compiler process and the
+task Ready; `fetch` brought back the status, every step's log and the six trx files.
+
+**NOT done, NOT verified:** the box has not been restarted under the runner (a Windows Update restart is pending there), so a run across a restart is
+untested — by design it would read DIED; a closed lid sleeps the laptop whatever the runner asks; nothing GUI-bound was run there (no ATAS, no installer,
+no app; `win-agent`/`win-ui` not tried), and it is not a clean machine (.NET SDK 10.0.400 and Git were already installed); landing CI for this commit not read.

@@ -43,7 +43,10 @@ about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.
   a timing-sensitive test gets one fresh re-gate; every test process leaves a home in `$TMPDIR/tradeagent-tests`, purged by `fleet/bin/purge-test-homes.sh`
   inside `gate.sh` and `suite.sh`.
 - **Locks** (`fleet/bin/lock.sh`): `suite` — any full local test suite (`gate.sh` takes it itself); `land` — one landing in flight, prep to record; `main` —
-  any commit in the main checkout, held for seconds (dispatch, merge, record); `box` — the Windows machine, one leg at a time by grant.
+  any commit in the main checkout, held for seconds (dispatch, merge, record); `box` — the ATAS Windows machine, one leg at a time by grant.
+- **The tests box** (`TA_WIN_BOX=tests`, since 2026-10-05) runs the CI test job on Windows in ~22 min against windows-latest's 40–50: `tools/win-test.sh
+  start --src <worktree>`, then `wait` in slices (`tools/README.md`). It takes no `lock.sh` lock — a second `start` is refused by the box itself (exit 4,
+  wait or come back). It is someone else's laptop, lent: a run is a gate or a diagnosis, not a loop.
 - Worktrees at `~/Projects/ai-trading-software-for-mihael-worktrees/<branch>`, branch = the unit's name in lower case; `git -C`, never `cd` into one inside
   a compound command. Each agent keeps scratch files in its own `<scratchpad>/<seat-or-unit>/` subfolder; nothing durable lives in a scratchpad.
 

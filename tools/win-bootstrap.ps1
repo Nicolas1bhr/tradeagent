@@ -12,6 +12,7 @@
 #   - port 22 open to Tailscale addresses (100.64.0.0/10) only; the stock any-address rule disabled
 #   - the key appended to the authorized-keys file sshd actually reads for this account
 #   - sleep and hibernate off on mains power, so a long test run is not cut off halfway
+#   - C:\ta created, the harness's working area
 param([Parameter(Mandatory = $true)][string]$PublicKey)
 $ErrorActionPreference = 'Stop'
 
@@ -41,6 +42,9 @@ if (-not ((Test-Path $file) -and (Select-String -Path $file -SimpleMatch $Public
   Add-Content -Path $file -Value $PublicKey -Encoding ascii
 }
 if ($isAdmin) { icacls $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null }
+
+# C:\ta is the harness's working area on every machine (tools/README.md); long scripts land there.
+New-Item -ItemType Directory -Force -Path 'C:\ta' | Out-Null
 
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0

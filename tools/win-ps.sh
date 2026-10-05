@@ -41,7 +41,7 @@ ENC="$(printf '%s' "$SRC" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
 # round trip rather than two.
 #
 # Both branches are verified end to end. An 8,440-byte script travelled as a file and ran:
-#   LONG SCRIPT PATH REACHED: C:\ta\win-ps-tmp.ps1
+#   LONG SCRIPT PATH REACHED: C:\ta\win-ps-<pid>-<n>.ps1
 #   host: <redacted: host names stay out of the repo>
 if [ "${#ENC}" -lt 7000 ]; then
   exec "$HERE/win-run.sh" "powershell -NoProfile -NonInteractive -EncodedCommand $ENC"
@@ -54,8 +54,13 @@ LOCAL="$(mktemp -t win-ps).ps1"
 # perfectly correct, which sends you hunting for an unbalanced quote that is not there. The
 # -EncodedCommand path above is immune because it declares UTF-16LE; only this branch needs it, and
 # the first version of this branch was verified with pure ASCII and so never showed it.
-printf '\xEF\xBB\xBF%s' "$SRC" > "$LOCAL"
+# One file name per call, not one per machine: two long scripts in flight at once (a `win-test.sh wait`
+# beside a `status`) would overwrite each other's C:\ta\win-ps-tmp.ps1, and the first one would run
+# the second one's script. The script deletes its own file as its first act — PowerShell has read the
+# whole file by then — so nothing piles up and the exit code stays the script's.
+NAME="win-ps-$$-$RANDOM.ps1"
+printf '\xEF\xBB\xBF%s\n%s' 'Remove-Item -LiteralPath $PSCommandPath -EA SilentlyContinue' "$SRC" > "$LOCAL"
 trap 'rm -f "$LOCAL"' EXIT
-win_scp "$LOCAL" 'C:/ta/win-ps-tmp.ps1' >/dev/null
+win_scp "$LOCAL" "C:/ta/$NAME" >/dev/null
 # Not exec: exec would replace this shell and the EXIT trap above would never delete $LOCAL.
-"$HERE/win-run.sh" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\ta\win-ps-tmp.ps1'
+"$HERE/win-run.sh" "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\ta\\$NAME"

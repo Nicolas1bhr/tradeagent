@@ -46,7 +46,48 @@ the machine sleeping on mains power.
 
 **The machine must be on this Mac's tailnet.** A Mac is in one tailnet at a time, so switching it to
 another one cuts it off from every machine here. A box kept in its own tailnet is *shared* into this
-one from that tailnet's admin console instead (Machines → the box → Share).
+one from that tailnet's admin console instead (Machines → the box → Share). A shared machine is
+quarantined by default: this Mac reaches it, it cannot open a connection back to anything here.
+MagicDNS's short name does not resolve for a shared machine; use its full `*.ts.net` name or its IP.
+
+## win-test.sh — the suite on Windows, without holding a connection open
+
+The test box (`TA_WIN_BOX=tests`) exists to answer "is it green on Windows" without waiting 40–50
+minutes for `windows-latest`, and without spending this Mac's swap on a local suite.
+
+```bash
+export TA_WIN_BOX=tests
+tools/win-test.sh start                          # this checkout as it is, uncommitted edits included
+tools/win-test.sh start --src <worktree>         # a builder's tree
+tools/win-test.sh start --filter "FullyQualifiedName~LossBudget"
+tools/win-test.sh wait                           # up to 9 min: exit 0 green, 1 red, 3 still running
+tools/win-test.sh status | log | list | fetch | stop
+```
+
+**A run belongs to the machine, not to the connection.** Win32-OpenSSH closes everything a session
+started when the session ends, so a suite run over SSH dies with the Wi-Fi, a sleeping Mac or the Bash
+tool's ten-minute ceiling. `start` ships the tree into `C:\ta\runs\<id>\` and hands it to a scheduled
+task (`win-test-run.ps1`), then returns; `wait` can be called as often as needed. The task is S4U —
+it runs whether or not anybody is signed in and stores no password — at **normal** priority, because
+Task Scheduler's default is below-normal CPU, I/O and memory priority, which every timing test would
+measure instead of the product.
+
+**Without `--filter`, a run is the CI test job, step for step**: restore, Release build, everything
+outside `Category=Timing` with no retry, then `Category=Timing` re-run once on a red, with the first
+failure kept in the record. With `--filter` it runs that filter once. `status` reports each step's
+exit and time, every trx's counts and the failed test names; a runner that vanished without a verdict
+says `DIED`, never "still running".
+
+- **One run at a time per machine**, and `start` refuses a second one (exit 4). That refusal is the
+  lock: two suites on one laptop turn the timing category into a coin toss.
+- **Each run has its own copy of the tree and its own temp directory**, so a run cannot be disturbed
+  by a push, and the scratch homes every test process leaves behind go with the run. Older runs keep
+  their status, logs and trx files; their sources and builds are deleted at the next `start`, and the
+  20 newest runs are kept at all.
+- **The machine is always named.** Without `TA_WIN_BOX` the default machine is the ATAS box, and the
+  suite does not run beside ATAS, so `win-test.sh` refuses rather than defaulting.
+- Runs are kept awake on battery for as long as they last. A closed lid is a forced sleep, not an idle
+  one, and only the machine's own lid setting prevents it.
 
 ## Start every Windows session here
 

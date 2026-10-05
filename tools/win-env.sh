@@ -30,7 +30,9 @@ fi
 : "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env (tools/README.md)}"
 : "${TA_WIN_USER:?set TA_WIN_USER}"
 
-_TA_SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o LogLevel=ERROR)
+# ServerAlive: `win-test.sh wait` holds a connection open for minutes with nothing to say.
+_TA_SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o LogLevel=ERROR
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
 if [ -n "${TA_WIN_KEY:-}" ]; then
   # BatchMode: a refused key must fail now, not wait on a password prompt nobody will answer.
   _TA_SSH_OPTS+=(-i "$TA_WIN_KEY" -o IdentitiesOnly=yes -o BatchMode=yes)
