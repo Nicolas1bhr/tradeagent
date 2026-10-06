@@ -1,6 +1,6 @@
 # U-runner-exit-hygiene-b — a refused exit puts the run's stop and target back on the same minute, and the paper book refuses a sell beyond its holding as the spot venue it simulates does
 **Arrow closed:** the other two halves of the orchestrator's 2026-10-04 judgement on `U-runner-refused-close`'s 3b ("NOT for live", `BUILD-STATUS.md`). Owed BEFORE ANY LIVE USE. Money path: the runner and the paper
-connector; `TradingGateway.cs` unchanged. Self-contained; lands after `U-runner-exit-hygiene-a` (both edit `ForwardRuns.cs` and `CONTRACTS.md` "The runner"; item 3 reads its "refused before the wire" once landed).
+connector; `TradingGateway.cs` unchanged. Self-contained; after `U-runner-exit-hygiene-a`, LANDED (both edit `ForwardRuns.cs` and `CONTRACTS.md` "The runner"): item 3 reuses its ONE predicate `Deployments.RefusedBeforeTheWire` (`DeploymentStore.cs:516`), never a second.
 **Protects (`CLAUDE.md`):** rule 3 — nothing refused is re-sent by this unit (the re-send rule stays as it is); the protection put back is new orders under that minute's ids, their own `TA-` ids, through every gate — the stale-close
 read too, a stop or target being `OrderIntent.Close` (`ForwardRuns.cs:567`); the paper book refuses only what it can prove (`ConnectorRejectedException`'s rule, `PaperConnector.cs:82-86`). 3b stays: no venue holds the exit
 and the protection at once. EDGE § 6.1 — protection by code, no model; § 6.5 — paper confers nothing.
@@ -10,19 +10,19 @@ Simulator (`FakeBroker.cs:148-164`) and ATAS, the live connector (a short there 
 protection through the kill switch, mode and update window; (a) keeps it when they are engaged before the cancel (they refuse it too) and loses it, until they lift, when engaged between the cancel and the exit.
 (a) also leaves no protection from the cancel to the re-place — on paper the minute in progress, an order being judged from the next bar opening after it (`PaperConnector.cs:555`) — nor while a gate refuses
 the re-place too (the rate limit; `POSITION_MOVED`): asked again each live minute until it works.
-**Today (SOURCE at `2a12951c`, read by the survey leg; NOT runtime-verified).** Item 3, CONFIRMED: every exit cancels the run's working stop and target first (`ForwardRuns.cs:425`, `:490`) and nothing puts them back
-when a gate then refuses it before the wire — `DECISION_EXPIRED`, quote age, rate limit, `POSITION_MOVED`, `RISK_LIMIT_EXCEEDED` (`TradingGateway.cs:5559-5602`, `:6245-6272`); protection is placed only when an entry
-fills (`ForwardRuns.cs:259-272`), the gap `:405-413` states; a refused re-send still marks its minute flat (`:326-332`; a refused op answers true, `TradingGateway.cs:1075-1120`). Item 4, CONFIRMED: the paper connector
+**Today (SOURCE at `2a12951c`, read by the survey leg; gateway pointers re-pointed at dispatch onto -a's landing; NOT runtime-verified).** Item 3, CONFIRMED: every exit cancels the run's working stop and target first (`ForwardRuns.cs:425`, `:490`) and nothing puts them back
+when a gate then refuses it before the wire — `DECISION_EXPIRED`, quote age, rate limit, `POSITION_MOVED`, `RISK_LIMIT_EXCEEDED` (`TradingGateway.cs:5814-5857`, `:6500-6527`); protection is placed only when an entry
+fills (`ForwardRuns.cs:259-272`), the gap `:405-413` states; a refused re-send still marks its minute flat (`:326-332`; a refused op answers true, `TradingGateway.cs:1322-1375`). Item 4, CONFIRMED: the paper connector
 trades spot rows (`PaperConnector.cs:201-229`), yet a sell into a flat book makes −quantity (`PaperBook.cs:510`) and one past a long crosses zero (`:511-520`); placement refuses only an unknown instrument or a size that
 rounds to nothing (`PaperConnector.cs:344-363`); settlement fills market, stops, then limits, each unconditionally (`:543-591`, `:611`). Shorting exists on those two venues only, and the runner reads Binance spot
 forward bars alone (`ForwardRuns.cs:93`, `ForwardBars.cs:29`), so no runner order reaches one today (read, not run).
 Items, one commit each, one-sentence messages (read first: `CLAUDE.md`; `ForwardRuns.cs`; `PaperConnector.cs:290-632`; `PaperBook.cs:380-560`; `ForwardRunnerRefusedCloseTests.cs`; `PaperSettlementTests.cs`):
 3. Last on each live minute, both clocks: while the books read long — re-read, not the minute's `account`, which a refused re-send marks flat — the run's latest entry, exit or flatten is an exit refused before the
-   wire, and no stop or target of the run works, its latest stop and target go back at their own levels (read off their ops), sized from the books, under that minute's ids (`RestAsync`, resolved on the venue's ack as
+   wire (`Deployments.RefusedBeforeTheWire`), and no stop or target of the run works, its latest stop and target go back at their own levels (read off their ops), sized from the books, under that minute's ids (`RestAsync`, resolved on the venue's ack as
    today): on the minute of the refusal itself. Never while an exit is in flight; never after the max hold, whose close re-asks each minute.
 4. Paper spot realism, decided where the holding is read: a sell never fills beyond the holding at its bar — it ends `REJECTED`, unfilled, "insufficient holdings", in `TryFill`'s own transaction — and a sell the book
    neither holds nor has buys working to cover is refused at placement. Reduce-only where shorting exists, as a GUARD: every reducing order a run or its END sends carries `OrderIntent.Close` (`ForwardRuns.cs:431/567/642`,
-   `TradingGateway.cs:7005`), the hook a futures connector would honour; the connector half DEFERRED — no runner order reaches a venue that shorts today, and whether ATAS can submit reduce-only is settled only on its box.
+   `TradingGateway.cs:7260`), the hook a futures connector would honour; the connector half DEFERRED — no runner order reaches a venue that shorts today, and whether ATAS can submit reduce-only is settled only on its box.
 5. `CONTRACTS.md` "The runner" (the put-back, what it leaves) and "The paper connector" (`:113`; NOT claimed: real spot locks a resting sell's holding at placement, so two sells on one holding need an OCO there — the
    paper book locks nothing); `USER-GUIDE.md`: a paper sell beyond the holding is refused.
 Red-first tests: (c) `A_refused_exit_puts_the_stop_and_target_back_on_the_minute_it_was_refused` (a `ForwardRunnerTests` partial) — `EnteredAsync`, a rule exit dispatched past its decision's bound: `DECISION_EXPIRED`,
