@@ -8070,3 +8070,37 @@ cancel-all press. `OperatorCancelAllAsync` opens `RiskReducingScope.Begin` with 
 nothing cancelled. A second sighting anywhere → a fresh fixer at the front of seat P's queue. Tests box: NOT RUN — `ready`: "the machine does not answer" (switched off).
 **NOT done, NOT verified:** C1's matrix; C3; cell 14; the codex CLI inside a container with a granted install (18c shows only that it does not start bare); anything on
 the owner's own machine. The decision holds for build 10.0.26200.9457; the revalidation trigger is in the decision record.
+
+## 2026-10-06 — U-test-hygiene-1 landed: the meter tests that went red across midnight now read "today" at the instant they record, and every test process deletes its home when its run ends
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-test-hygiene-1.md`; it batches the orchestrator's `U-fix-midnight-turns` and `U-test-home-cleanup`.
+Merge `c2aeb9a4` (ff-only): 3 commits, rebased over R-containment, U-tape-events and docs with an identical src+tests patch-id. Tests only: 15 files, +278/−40.
+No product file, no rung, no test removed or renamed. The product's day still turns at LOCAL midnight (`TurnMeter.LocalDay`), and that is unchanged.
+
+- **Item 1 (`54ede058`):** every meter test that records a turn and then reads "today" now pins ONE instant — `TestEnv.LocalNoon()` or the meter's `now` — in the three
+  classes run 37163465037 saw red (`TurnRecordTests`, `OwnerPriceTests`, `UnknownModelIsPricedHighTests`). The builder's own grep found the same pattern in
+  `TurnAllowanceTests` (2), `AiAttemptLedgerTests` (1), `HarnessBudgetTests`, `HarnessKeyOriginTests`, `VendorLimitTests` and `BudgetReservationTests` (2).
+  New GUARD `TurnRecordTests.A_turn_recorded_a_second_before_local_midnight_is_in_that_days_total_and_not_the_next_days`: a turn at 23:59:59 local is in the total read
+  0.5 s later and not in the one read at 00:00:01.
+- **Item 2 (`03135ee9`) — DECLARED DEVIATION, ACCEPTED (orchestrator and manager):** the brief asked for deletion at process exit. The home is instead deleted at the
+  END OF THE ASSEMBLY'S RUN, and again at process exit. The end-of-run step is `tests/Shared/TestHomeFramework.cs`, an xunit 2.9.3 framework step in
+  `BeforeTestAssemblyFinishedAsync`, registered for all three test projects in `tests/Directory.Build.props`. The reason, measured: VSTest kills the host
+  ~100 ms after asking it to stop, so a 2 s exit handler never finished, while deleting a full Unit home (316 MB, 1,375 files) took 136 ms. Errors are swallowed;
+  nothing outside `tradeagent-tests` is deleted; `TA_TEST_KEEP_HOME=1` keeps a home and prints its path once. The four `Loss*SurfacesTests` roots are now inside the home, in a try/finally.
+
+**Verified by running (the builder, quoted from its report):** item 1 on the real clock under a `zic` zone whose local midnight had just passed. At base `2a12951c`
+the three classes were 6 of 20 red — the six of run 37163465037 with its figures (2/0, 0.007056/0, 1/0, 0.017256/0, 1/0, 0.056268/0). With the fix: 21/21.
+`TurnAllowance` + `AiAttemptLedger`: 3 red at base, 13/13 with the fix. The four classes with a millisecond window were NOT shown red. Guard mutant (`LocalDay` summing
+the UTC day) → `Expected: 0 Actual: 1`, `src` restored. Item 2: at base a filtered run left 1 home. A full Unit run with the fix left 0 entries newer than a marker,
+and 0 with the exit handler disabled (the end-of-run step alone). The keep run printed its one kept home, which was then deleted by hand.
+Builder's gate: Release `--no-incremental` 0 warnings, 0 errors; Unit 1382/1382, Fault 420/420; the 13 touched classes 3×, 93/93 each.
+**Manager's gate** at `5baeda5d`, carried to `c2aeb9a4` (only docs moved; build tree identical), Release: build 0 warnings, 0 errors; Unit 1394/1394 (7 m 52 s);
+Fault 420/420 (1 m 46 s); Integration 718/719, 1 skipped (11 m 16 s) → 0 failed. Names vs `main`: 2169 → 2170, 0 removed, 1 added (the guard). Scan clean; no trailers.
+After the gate, 1 home in `$TMPDIR/tradeagent-tests` was newer than the gate's start. It was born at 04:24:05Z, 4 s after the gate's last suite ended — not attributable to
+the gate; whose it is, NOT VERIFIED.
+**CI:** branch run 37391490827 at `edb248c1` (code tip): ubuntu ✓ 13 m, macOS ✓ 16 m, windows ✓ 50 m (each Unit 1382, Fault 420, Integration 718 + 1 skipped; Timing
+first try), package ✓. That run was dispatched at 23:59:12Z, but its test steps began after 00:00:19Z, so it is NOT evidence of a midnight crossing (said in the report).
+Tests box: NOT RUN — `ready`: "the machine does not answer" (both the builder's check and the manager's at landing).
+**NOT done, NOT verified:** `RiskGateTests.A_day_past_its_loss_budget_refuses_…` (Fault) has the same fault on the UTC day, through `FakeBroker`'s own `UtcNow` (`:146`)
+with no seam; fixing it needs a product change, so it is OWED to seat P as a light unit. Leftover homes on Windows (files held by a child process) were not measured.
+A host killed mid-run still leaves its home to `fleet/bin/purge-test-homes.sh`. An IDE reusing one host for two runs is not handled.
