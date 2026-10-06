@@ -56,7 +56,8 @@ public class DataLicenceTests
         {
             var store = new DatasetStore(db);
             archive = store.Record(Row(BinanceArchive.Source));
-            other = store.Record(Row("some-other-candle-source"));
+            // A LABEL OF ITS OWN: the ledger refuses a second row under a (pair, interval, version) it holds.
+            other = store.Record(Row("some-other-candle-source") with { Version = "v2" });
         }
 
         // BACK TO THE RUNG BELOW: an installation that predates the unit.
@@ -533,8 +534,10 @@ public class DataLicenceTests
         Directory.CreateDirectory(Paths.Data);
         File.WriteAllText(file, KlineNormaliser.Header + "\n");
 
+        // THE NEXT LABEL IN THIS LEDGER: a test promotes more than once over one ledger, and the ledger refuses a
+        // second row under a (pair, interval, version) it holds.
         var id = datasets.Record(new DatasetRecord(
-            0, source, Pair, BinanceArchive.Interval, "v1", 12, 12, [],
+            0, source, Pair, BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []) { Licence = licence });
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);

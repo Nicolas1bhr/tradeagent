@@ -283,17 +283,84 @@ public sealed class DatasetStore(Database db)
     /// </summary>
     const string Cols = "id, " + Written + ", holdout_from, evaluation_class";
 
-    /// <summary>The next unused version name for this pair, e.g. <c>v3</c>.</summary>
-    public string NextVersion(string pair, string interval) => db.Read(_ =>
+    /// <summary>
+    /// THE ONE WRITER OF A NEW VERSION: its label, its file and its row, in ONE transaction
+    /// (<c>U-dataset-version-once</c>).
+    ///
+    /// <para><b>The label is allocated where it is written.</b> It was the ledger's row count plus one, read
+    /// before normalising and recorded in a later transaction, with nothing anywhere refusing a label the
+    /// ledger already held — so two writes could take one label, and a write whose file was already named
+    /// <c>v{n}.csv</c> wrote over it. Here it is <c>v{max+1}</c> over the ledger's labels for this pair and
+    /// interval, read as numbers on the store's one connection inside the transaction that inserts the row.</para>
+    ///
+    /// <para><b>A dataset file is never replaced.</b> A <c>v{n}.csv</c> that is already in
+    /// <paramref name="dir"/> with no row naming it is what a write that died between its file and its row
+    /// leaves behind: it is skipped, never written over and never deleted, and the label moves past it. The
+    /// staged file is MOVED onto the free name by a move that may not replace anything, so "free" is decided
+    /// by the move itself and not by a look beforehand.</para>
+    /// </summary>
+    /// <param name="normalised">
+    /// The dataset as the normaliser wrote it, its <see cref="DatasetRecord.NormalisedPath"/> a file in a
+    /// staging folder on <paramref name="dir"/>'s volume. Its <see cref="DatasetRecord.Version"/> is not read:
+    /// the label is this writer's to give.
+    /// </param>
+    /// <param name="dir">Where this pair's versions live, e.g. <c>state/data/binance/BTCUSDT/1m</c>.</param>
+    /// <returns>The row as recorded: its id, its label and the path its file now has.</returns>
+    public DatasetRecord RecordNew(DatasetRecord normalised, string dir) => db.Write(_ =>
     {
-        using var c = db.Cmd("SELECT COUNT(*) FROM dataset WHERE pair=$p AND interval=$i",
-            ("$p", pair), ("$i", interval));
-        return "v" + (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) + 1);
+        ArgumentNullException.ThrowIfNull(normalised);
+        Directory.CreateDirectory(dir);
+
+        for (var n = HighestLabel(normalised.Pair, normalised.Interval) + 1; ; n++)
+        {
+            var label = $"v{n.ToString(CultureInfo.InvariantCulture)}";
+            var file = Path.Combine(dir, label + ".csv");
+
+            // AN UNRECORDED FILE AT THIS NAME is never replaced and never deleted: the label moves past it.
+            if (File.Exists(file)) continue;
+            try { File.Move(normalised.NormalisedPath, file, overwrite: false); }
+            catch (IOException) when (File.Exists(file)) { continue; }
+
+            var row = normalised with { Id = 0, Version = label, NormalisedPath = file };
+            return row with { Id = Record(row) };
+        }
     });
 
-    /// <summary>Writes one dataset and its raw files, in one transaction. Returns the new id.</summary>
+    /// <summary>The highest label this ledger holds for one pair and interval, read as a number; 0 when none reads as one.</summary>
+    long HighestLabel(string pair, string interval)
+    {
+        using var c = db.Cmd("SELECT version FROM dataset WHERE pair=$p AND interval=$i", ("$p", pair), ("$i", interval));
+        using var r = c.ExecuteReader();
+        var highest = 0L;
+        while (r.Read())
+        {
+            var label = r.GetString(0);
+            if (label.Length > 1 && label[0] == 'v'
+                && long.TryParse(label.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+                && n > highest)
+                highest = n;
+        }
+        return highest;
+    }
+
+    /// <summary>
+    /// Writes one dataset and its raw files, in one transaction. Returns the new id.
+    ///
+    /// <para><b>A label names one dataset.</b> A (pair, interval, version) this ledger already holds is
+    /// refused, in words, inside the transaction that would have written it, and nothing is written: a run,
+    /// a promotion or a campaign that names a dataset by its label must never be able to mean two. A new
+    /// version's label is <see cref="RecordNew"/>'s to allocate.</para>
+    /// </summary>
     public long Record(DatasetRecord set) => db.Write(_ =>
     {
+        using (var held = db.Cmd("SELECT id FROM dataset WHERE pair=$p AND interval=$i AND version=$v LIMIT 1",
+                   ("$p", set.Pair), ("$i", set.Interval), ("$v", set.Version)))
+            if (held.ExecuteScalar() is { } existing and not DBNull)
+                throw new InvalidOperationException(
+                    $"the dataset ledger already holds {set.Pair} {set.Interval} {set.Version} (dataset "
+                    + $"{Convert.ToInt64(existing, CultureInfo.InvariantCulture)}), and a label names one dataset: a run, "
+                    + "a promotion or a campaign that names it must never be able to mean two. Nothing was written.");
+
         using var insert = db.Cmd($"""
             INSERT INTO dataset({Written})
             VALUES($src,$pair,$int,$ver,$att,$pres,$notpub,$npath,$nsha,$bars,$first,$last,$gaps,

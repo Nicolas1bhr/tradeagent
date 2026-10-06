@@ -139,8 +139,10 @@ public class CostModelPinTests(ITestOutputHelper log)
         }
         File.WriteAllText(csv, text.ToString());
 
+        // THE NEXT LABEL IN THIS LEDGER: `PaperFrictionTests` records more than one dataset over one gateway, and
+        // the ledger refuses a second row under a (pair, interval, version) it holds.
         var record = new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, $"v{gw.Datasets.All().Count + 1}", 12, 1, ["2025-09"],
             csv, DatasetStore.Sha256(csv)!, bars, Bar0, Bar0.AddMinutes(bars - 1), 0, [], false,
             0, 0, 0, Bar0, DatasetState.ACCEPTED, null,
             [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,

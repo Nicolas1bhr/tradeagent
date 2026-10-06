@@ -101,15 +101,42 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
         // forming when its own period was fetched pass as closed because a later period arrived
         // after it.
         var readAt = collected.Min(f => f.DownloadedAt);
-        var version = _store.NextVersion(symbol, source.Interval);
-        var dest = System.IO.Path.Combine(source.DatasetDir(symbol), $"{version}.csv");
+        var dir = source.DatasetDir(symbol);
+        var staged = Staged(dir);
 
-        var set = KlineNormaliser.Normalise(
-            [.. collected.Select(f => new RawArchiveFile(f.Month, f.Path))], readAt, dest,
-            source.CandlesCarryVolume, source.Interval);
+        try
+        {
+            var set = KlineNormaliser.Normalise(
+                [.. collected.Select(f => new RawArchiveFile(f.Month, f.Path))], readAt, staged,
+                source.CandlesCarryVolume, source.Interval);
 
-        var record = Recorded(source, symbol, version, periods, collected, set, DateTimeOffset.UtcNow);
-        return new DataCollection(record, periods, Describe(record, periods)) { Woke = Wake(record) };
+            var record = Recorded(source, symbol, periods, collected, set, dir, DateTimeOffset.UtcNow);
+            return new DataCollection(record, periods, Describe(record, periods)) { Woke = Wake(record) };
+        }
+        finally { TryDeleteStaged(staged); }
+    }
+
+    /// <summary>
+    /// WHERE A NEW VERSION IS NORMALISED BEFORE IT HAS A LABEL: a file of its own in a staging folder beside
+    /// the versions, so that becoming <c>v{n}.csv</c> is a rename on one volume. The label is allocated where
+    /// the row is written (<see cref="DatasetStore.RecordNew"/>), never before normalising.
+    /// </summary>
+    static string Staged(string dir)
+    {
+        var staging = System.IO.Path.Combine(dir, CandleSourceClient.StagingFolder);
+        Directory.CreateDirectory(staging);
+        return System.IO.Path.Combine(staging, $"{Guid.NewGuid():n}.csv");
+    }
+
+    /// <summary>
+    /// A staged file that never became a version — the normaliser or the ledger threw — is removed. It is in
+    /// the staging folder, so no row records it; once it has become a version it is no longer there.
+    /// </summary>
+    static void TryDeleteStaged(string staged)
+    {
+        try { if (File.Exists(staged)) File.Delete(staged); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>
@@ -133,44 +160,47 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
             return new DataCollection(verified, [],
                 $"The {pair} dataset was NOT rebuilt: {verified.RejectedReason}. Collect the months again.");
 
-        var version = _store.NextVersion(pair, verified.Interval);
-        var dest = System.IO.Path.Combine(
-            System.IO.Path.GetDirectoryName(verified.NormalisedPath) ?? "", $"{version}.csv");
+        var dir = System.IO.Path.GetDirectoryName(verified.NormalisedPath) ?? "";
+        var staged = Staged(dir);
         var readAt = verified.Files.Min(f => f.DownloadedAt);
 
-        // THE ROW'S OWN DECLARATION, not the catalogue's as it stands today. A rebuild has to
-        // reproduce the bytes the ledger recorded, and `sources.json` can have been edited since:
-        // reading the shape of the file out of a file the owner can change would make the one claim
-        // this method exists to make — same inputs, same SHA-256 — depend on something that is not an
-        // input.
-        var set = KlineNormaliser.Normalise(
-            [.. verified.Files.Select(f => new RawArchiveFile(f.Month, f.Path))], readAt, dest,
-            verified.SourceCarriesVolume, verified.Interval);
-
-        var record = new DatasetRecord(
-            0, verified.Source, pair, verified.Interval, version,
-            verified.MonthsAttempted, verified.MonthsPresent, verified.MonthsNotPublished,
-            set.Path, set.Sha256, set.Bars, set.FirstBar, set.LastBar,
-            set.Gaps, set.GapRuns, set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable,
-            DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null, verified.Files)
+        try
         {
-            // THE VENUE AND THE INSTRUMENT THESE BARS ARE OF, recorded with them — a fact about what
-            // was fetched, not a lookup, which is why it is carried from the row rather than derived
-            // at read time.
-            VenueId = verified.VenueId,
-            InstrumentSymbol = verified.InstrumentSymbol,
-            CoverageTargetDays = verified.CoverageTargetDays,
-            SourceCarriesVolume = verified.SourceCarriesVolume,
-            MidpointBars = set.MidpointDerived,
-            // THE TERMS THE BARS CAME UNDER ARE THE ROW'S OWN, carried and never re-stamped: a rebuild
-            // re-derives the same bars from the same raw files, so they came under exactly what the row
-            // recorded, and today's newest reading is a fact about today rather than about those files.
-            Licence = verified.Licence
-        };
+            // THE ROW'S OWN DECLARATION, not the catalogue's as it stands today. A rebuild has to
+            // reproduce the bytes the ledger recorded, and `sources.json` can have been edited since:
+            // reading the shape of the file out of a file the owner can change would make the one claim
+            // this method exists to make — same inputs, same SHA-256 — depend on something that is not an
+            // input.
+            var set = KlineNormaliser.Normalise(
+                [.. verified.Files.Select(f => new RawArchiveFile(f.Month, f.Path))], readAt, staged,
+                verified.SourceCarriesVolume, verified.Interval);
 
-        var id = _store.Record(record);
-        var stored = record with { Id = id };
-        return new DataCollection(stored, [], Describe(stored, [])) { Woke = Wake(stored) };
+            var record = new DatasetRecord(
+                // THE LABEL IS THE WRITER'S: allocated in the transaction that records the row.
+                0, verified.Source, pair, verified.Interval, "",
+                verified.MonthsAttempted, verified.MonthsPresent, verified.MonthsNotPublished,
+                set.Path, set.Sha256, set.Bars, set.FirstBar, set.LastBar,
+                set.Gaps, set.GapRuns, set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable,
+                DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null, verified.Files)
+            {
+                // THE VENUE AND THE INSTRUMENT THESE BARS ARE OF, recorded with them — a fact about what
+                // was fetched, not a lookup, which is why it is carried from the row rather than derived
+                // at read time.
+                VenueId = verified.VenueId,
+                InstrumentSymbol = verified.InstrumentSymbol,
+                CoverageTargetDays = verified.CoverageTargetDays,
+                SourceCarriesVolume = verified.SourceCarriesVolume,
+                MidpointBars = set.MidpointDerived,
+                // THE TERMS THE BARS CAME UNDER ARE THE ROW'S OWN, carried and never re-stamped: a rebuild
+                // re-derives the same bars from the same raw files, so they came under exactly what the row
+                // recorded, and today's newest reading is a fact about today rather than about those files.
+                Licence = verified.Licence
+            };
+
+            var stored = _store.RecordNew(record, dir);
+            return new DataCollection(stored, [], Describe(stored, [])) { Woke = Wake(stored) };
+        }
+        finally { TryDeleteStaged(staged); }
     }
 
     /// <summary>
@@ -215,15 +245,16 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     }
 
     DatasetRecord Recorded(
-        ICandleSource source, string symbol, string version, IReadOnlyList<MonthResult> periods,
-        IReadOnlyList<RawMonth> collected, NormalisedDataset set, DateTimeOffset acceptedAt)
+        ICandleSource source, string symbol, IReadOnlyList<MonthResult> periods,
+        IReadOnlyList<RawMonth> collected, NormalisedDataset set, string dir, DateTimeOffset acceptedAt)
     {
         var units = set.Months.ToDictionary(m => m.Month, m => m.Unit, StringComparer.Ordinal);
 
         var record = new DatasetRecord(
             // THE SOURCE'S OWN DECLARATIONS, every one of them, and not a constant: this is the line
-            // that used to read `BinanceArchive.Interval`.
-            0, source.Id, symbol, source.Interval, version,
+            // that used to read `BinanceArchive.Interval`. The label is the writer's, allocated in the
+            // transaction that records the row (`DatasetStore.RecordNew`).
+            0, source.Id, symbol, source.Interval, "",
             periods.Count, collected.Count,
             [.. periods.Where(m => m.Outcome != MonthOutcome.Collected).Select(m => Missing(source, m))],
             set.Path, set.Sha256, set.Bars, set.FirstBar, set.LastBar,
@@ -244,7 +275,7 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
             Licence = DataLicence.Stamp(source.Id, collected.Select(f => f.Url), _licences.Newest(source.Id))
         };
 
-        return record with { Id = _store.Record(record) };
+        return _store.RecordNew(record, dir);
     }
 
     /// <summary>
