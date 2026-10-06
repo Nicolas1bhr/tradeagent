@@ -40,6 +40,21 @@ public class TapeReadTests(ITestOutputHelper log)
 
         Assert.False(Ops.IsMutating(Ops.DataTape));
         Assert.DoesNotContain(Ops.DataTape, Ops.Mutating);
+
+        // AND AN AGENT DISCOVERS IT, as a read with its bounds, and finds the tape on the status it reads.
+        var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.DataTape);
+        Assert.False(spec.Mutating);
+        Assert.StartsWith("trade data tape --source S", spec.Cli, StringComparison.Ordinal);
+        Assert.Contains(spec.Args, a => a.Name == "source" && a.Required);
+        Assert.All(spec.Args.Where(a => a.Name != "source"), a => Assert.False(a.Required));
+        Assert.Equal(["as_of", "before", "from", "limit", "series", "source", "subject", "to"],
+            spec.Args.Select(a => a.Name).Order(StringComparer.Ordinal));
+        Assert.Contains("5000", spec.Description, StringComparison.Ordinal);
+        Assert.Contains("O-LIVE rows only are first-hand", spec.Description, StringComparison.Ordinal);
+        Assert.Contains("citation", spec.Description, StringComparison.Ordinal);
+        var status = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Status).Description;
+        Assert.Contains("tape says whether the market-context tape is recording", status, StringComparison.Ordinal);
+        Assert.Contains("daily_cap_reached_today", status, StringComparison.Ordinal);
     }
 
     /// <summary>

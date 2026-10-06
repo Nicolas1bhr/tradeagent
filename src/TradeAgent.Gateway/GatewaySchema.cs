@@ -160,7 +160,14 @@ public static class GatewaySchema
             + "NOT applied), checked_at and url when a check of seven days or less stands, and says — the "
             + "one line that states whether the pair is verified and why not. Research's default increment, "
             + "the judge's cost model, the paper platform and the forward runner all read the same served "
-            + "row; there is no operation here that asks for a check or changes one.", []),
+            + "row; there is no operation here that asks for a check or changes one. "
+            + "tape says whether the market-context tape is recording, read off its own rows: rows_today "
+            + "(rows that arrived since UTC midnight), failures_last_hour, and for each of the account owner's "
+            + "two switches — market_context ('Record market context') and gdelt_news ('Record GDELT news') — "
+            + "whether it is on, whether it is recording (on AND a delivery within within_seconds), its newest "
+            + "delivery, its failures in the last hour and what is failing now, with daily_cap_reached_today on "
+            + "GDELT's; sources gives the same per source. tape is ABSENT when no tape is open, which never "
+            + "means recording, and there is no operation here that starts, stops or writes it.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),
