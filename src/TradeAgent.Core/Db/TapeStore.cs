@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -223,10 +224,7 @@ public sealed class TapeStore : IDisposable
     /// </summary>
     public TapeAppend Append(TapeFetch fetch, IReadOnlyList<TapeItem>? items = null)
     {
-        ArgumentNullException.ThrowIfNull(fetch);
-        if (string.IsNullOrWhiteSpace(fetch.Source)) throw new ArgumentException("a fetch names its source", nameof(fetch));
-        if (string.IsNullOrWhiteSpace(fetch.Series)) throw new ArgumentException("a fetch names its series", nameof(fetch));
-        if (string.IsNullOrWhiteSpace(fetch.Url)) throw new ArgumentException("a fetch names the URL it asked", nameof(fetch));
+        CheckFetch(fetch);
 
         // EVERYTHING REFUSED IS REFUSED HERE, BEFORE THE TRANSACTION: see the type summary.
         var prepared = (items ?? []).Select(Prepare).ToList();
@@ -239,47 +237,166 @@ public sealed class TapeStore : IDisposable
         {
             var fetchId = InsertFetch(fetch, origin, prepared.Count);
 
-            int stored = 0, revised = 0, unchanged = 0;
+            var tally = new Tally();
             foreach (var item in prepared)
-            {
-                var latest = Latest(fetch.Source, fetch.Series, item.Key);
+                tally.Count(Insert(fetch.Source, fetch.Series, fetch.ReceivedAt, fetchId, item,
+                    previous => ClassOf(fetch.Source, origin, item.SourceTime, fetch.ReceivedAt, previous)));
 
-                // THE INSERT IS WHAT REFUSES, NOT A BRANCH ABOVE IT. A re-reading whose payload
-                // matches the latest revision is AIMED AT THAT REVISION'S OWN SLOT —
-                // (source, series, natural_key, revision) — so it is the conflict clause that writes
-                // nothing. A check-then-skip cannot state that nothing was overwritten, which
-                // `ForwardBarStore` measured: an earlier draft there skipped on a read and left
-                // `INSERT OR REPLACE` passing every test because the replacing statement was never
-                // reached. Here `INSERT OR REPLACE` would move the first reading's arrival instant and
-                // fetch onto the re-reading — an edited past — and the tests watch for exactly that.
-                var revision = latest is not { } held ? 1
-                    : held.Sha == item.Sha ? held.Revision
-                    : held.Revision + 1;
-
-                var evidence = ClassOf(fetch.Source, origin, item.SourceTime, fetch.ReceivedAt, latest?.Class);
-
-                using var c = Cmd("""
-                    INSERT INTO tape_obs(source, series, subject, source_time, received_at, fetch_id,
-                                         natural_key, revision, payload_sha256, payload, evidence_class)
-                    VALUES($src,$ser,$subj,$st,$recv,$fetch,$key,$rev,$sha,$payload,$class)
-                    ON CONFLICT(source, series, natural_key, revision) DO NOTHING
-                    """,
-                    ("$src", fetch.Source), ("$ser", fetch.Series), ("$subj", item.Subject),
-                    ("$st", Sql.T(item.SourceTime)), ("$recv", Sql.T(fetch.ReceivedAt)), ("$fetch", fetchId),
-                    ("$key", item.Key), ("$rev", revision), ("$sha", item.Sha), ("$payload", item.Payload),
-                    ("$class", evidence));
-
-                if (c.ExecuteNonQuery() == 1)
-                {
-                    stored++;
-                    if (revision > 1) revised++;
-                }
-                else unchanged++;
-            }
-
-            return new TapeAppend(fetchId, prepared.Count, stored, revised, unchanged);
+            return tally.Result(fetchId, prepared.Count);
         });
     }
+
+    /// <summary>
+    /// WRITES ONE FILE OF A VENDOR'S CHECKSUMMED ARCHIVE — the attempt, the file's own record and its kept rows — in
+    /// one transaction (<c>U-tape-archive</c>).
+    ///
+    /// <para><b>The record</b> is an observation like any other: series <see cref="TapeArchiveBatch.RecordSeries"/>,
+    /// subject <see cref="TapeArchiveBatch.RecordSubject"/>, source time the label, payload the file's address, size,
+    /// published and computed MD5, SHA-256, Last-Modified, rows, the kept count and kept bytes THIS STORE counted, and
+    /// the filter. Its arrival instant is its own <c>received_at</c>. So the first reading of a file stands as proof
+    /// of what was read when, without the file's bytes; the same file read again is the same record and writes
+    /// nothing, and a file that differs — a silent rebuild — is <c>revision + 1</c> beside the first.</para>
+    ///
+    /// <para><b>Every row is classed here and only here</b>, the record's and the kept rows' alike, by
+    /// <see cref="ArchiveClassOf"/>; and everything refused is refused before the transaction opens: a malformed
+    /// record, a row not at its file's label, a row named twice, and whatever <see cref="Append"/> refuses. The
+    /// published and computed MD5 are recorded as given and may differ — what a mismatch costs is the class; the
+    /// recorder writes no rows for one at all.</para>
+    /// </summary>
+    public TapeAppend AppendArchive(TapeFetch fetch, TapeArchiveBatch batch, IReadOnlyList<TapeItem> items)
+    {
+        CheckFetch(fetch);
+        ArgumentNullException.ThrowIfNull(batch);
+        ArgumentNullException.ThrowIfNull(items);
+
+        // EVERYTHING REFUSED IS REFUSED HERE, BEFORE THE TRANSACTION — the record's facts as well as its rows.
+        if (string.IsNullOrWhiteSpace(batch.RecordSeries) || string.IsNullOrWhiteSpace(batch.ItemsSeries)
+            || string.Equals(batch.RecordSeries, batch.ItemsSeries, StringComparison.Ordinal))
+            throw new ArgumentException("an archive file names two different series, its record's and its rows'", nameof(batch));
+        if (!IsHex(batch.PublishedMd5, 32) || !IsHex(batch.ComputedMd5, 32))
+            throw new ArgumentException("an archive file's published and computed MD5 are 32 hex digits each", nameof(batch));
+        if (!IsHex(batch.Sha256, 64))
+            throw new ArgumentException("an archive file's SHA-256 is 64 hex digits", nameof(batch));
+        if (batch.Bytes < 0 || batch.Rows < items.Count)
+            throw new ArgumentException($"an archive file of {batch.Bytes} bytes and {batch.Rows} rows cannot have kept {items.Count}", nameof(batch));
+        if (string.IsNullOrWhiteSpace(batch.Filter))
+            throw new ArgumentException("an archive file names the filter that kept its rows", nameof(batch));
+
+        var prepared = items.Select(Prepare).ToList();
+        if (prepared.FirstOrDefault(p => p.SourceTime != batch.Label) is { Subject: not null } off)
+            throw new ArgumentException($"the row '{off.Subject}' is not at its file's label {batch.Label:O}", nameof(items));
+        if (prepared.GroupBy(p => p.Key, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1) is { } twice)
+            throw new ArgumentException($"an archive file names the row '{twice.Key}' twice", nameof(items));
+
+        var keptBytes = prepared.Sum(p => (long)Encoding.UTF8.GetByteCount(p.Payload));
+        var record = Prepare(new TapeItem(batch.RecordSubject, batch.Label, RecordPayload(fetch.Url, batch, prepared.Count, keptBytes)));
+
+        var origin = UrlOrigin.Of(fetch.Url);
+        var verified = string.Equals(batch.PublishedMd5, batch.ComputedMd5, StringComparison.OrdinalIgnoreCase);
+        string ClassFor(string? previous) =>
+            ArchiveClassOf(fetch.Source, origin, batch.Label, fetch.ReceivedAt, verified, batch.LastModified, previous);
+
+        return Write(() =>
+        {
+            var fetchId = InsertFetch(fetch, origin, prepared.Count + 1);
+
+            var tally = new Tally();
+            tally.Count(Insert(fetch.Source, batch.RecordSeries, fetch.ReceivedAt, fetchId, record, ClassFor));
+            foreach (var item in prepared)
+                tally.Count(Insert(fetch.Source, batch.ItemsSeries, fetch.ReceivedAt, fetchId, item, ClassFor));
+
+            return tally.Result(fetchId, prepared.Count + 1);
+        });
+    }
+
+    static void CheckFetch(TapeFetch fetch)
+    {
+        ArgumentNullException.ThrowIfNull(fetch);
+        if (string.IsNullOrWhiteSpace(fetch.Source)) throw new ArgumentException("a fetch names its source", nameof(fetch));
+        if (string.IsNullOrWhiteSpace(fetch.Series)) throw new ArgumentException("a fetch names its series", nameof(fetch));
+        if (string.IsNullOrWhiteSpace(fetch.Url)) throw new ArgumentException("a fetch names the URL it asked", nameof(fetch));
+    }
+
+    /// <summary>
+    /// ONE OBSERVATION, AIMED AT ITS SLOT: its natural key, the latest revision already held under that key, and ONE
+    /// insert. True when it wrote.
+    ///
+    /// <para><b>THE INSERT IS WHAT REFUSES, NOT A BRANCH ABOVE IT.</b> A re-reading whose payload matches the latest
+    /// revision is AIMED AT THAT REVISION'S OWN SLOT — (source, series, natural_key, revision) — so it is the conflict
+    /// clause that writes nothing. A check-then-skip cannot state that nothing was overwritten, which
+    /// <c>ForwardBarStore</c> measured: an earlier draft there skipped on a read and left <c>INSERT OR REPLACE</c>
+    /// passing every test because the replacing statement was never reached. Here <c>INSERT OR REPLACE</c> would move
+    /// the first reading's arrival instant and fetch onto the re-reading — an edited past — and the tests watch for
+    /// exactly that.</para>
+    /// </summary>
+    (bool Wrote, int Revision) Insert(string source, string series, DateTimeOffset receivedAt, long fetchId, Prepared item,
+        Func<string?, string> classOf)
+    {
+        var latest = Latest(source, series, item.Key);
+        var revision = latest is not { } held ? 1
+            : held.Sha == item.Sha ? held.Revision
+            : held.Revision + 1;
+
+        var evidence = classOf(latest?.Class);
+
+        using var c = Cmd("""
+            INSERT INTO tape_obs(source, series, subject, source_time, received_at, fetch_id,
+                                 natural_key, revision, payload_sha256, payload, evidence_class)
+            VALUES($src,$ser,$subj,$st,$recv,$fetch,$key,$rev,$sha,$payload,$class)
+            ON CONFLICT(source, series, natural_key, revision) DO NOTHING
+            """,
+            ("$src", source), ("$ser", series), ("$subj", item.Subject),
+            ("$st", Sql.T(item.SourceTime)), ("$recv", Sql.T(receivedAt)), ("$fetch", fetchId),
+            ("$key", item.Key), ("$rev", revision), ("$sha", item.Sha), ("$payload", item.Payload),
+            ("$class", evidence));
+
+        return (c.ExecuteNonQuery() == 1, revision);
+    }
+
+    /// <summary>What one write's inserts came to: new rows, of them revisions, and re-readings that wrote nothing.</summary>
+    sealed class Tally
+    {
+        int _stored, _revised, _unchanged;
+
+        public void Count((bool Wrote, int Revision) insert)
+        {
+            if (!insert.Wrote) { _unchanged++; return; }
+            _stored++;
+            if (insert.Revision > 1) _revised++;
+        }
+
+        public TapeAppend Result(long fetchId, int items) => new(fetchId, items, _stored, _revised, _unchanged);
+    }
+
+    /// <summary>
+    /// THE ARCHIVE FILE'S RECORD, as this store writes it: what was read and from where, its hashes, and what was kept
+    /// of it — counted here. No arrival instant: that is the row's own <c>received_at</c>, so a second reading of the
+    /// same file is the same payload.
+    /// </summary>
+    static string RecordPayload(string url, TapeArchiveBatch b, int kept, long keptBytes)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            w.WriteString("url", url);
+            w.WriteNumber("bytes", b.Bytes);
+            w.WriteString("md5Published", b.PublishedMd5.ToLowerInvariant());
+            w.WriteString("md5Computed", b.ComputedMd5.ToLowerInvariant());
+            w.WriteString("sha256", b.Sha256.ToLowerInvariant());
+            if (b.LastModified is { } written) w.WriteString("lastModified", Sql.T(written));
+            else w.WriteNull("lastModified");
+            w.WriteNumber("rows", b.Rows);
+            w.WriteNumber("kept", kept);
+            w.WriteNumber("keptBytes", keptBytes);
+            w.WriteString("filter", b.Filter);
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    static bool IsHex(string? s, int length) =>
+        s is not null && s.Length == length && !s.AsSpan().ContainsAnyExcept("0123456789abcdefABCDEF");
 
     /// <summary>
     /// THE EVIDENCE CLASS OF ONE NEW ROW, from fields this store recorded and from THIS BUILD'S rows —
@@ -324,6 +441,33 @@ public sealed class TapeStore : IDisposable
         late >= TimeSpan.Zero
             ? late <= cadence + delay + TapeSourceCatalog.LiveTolerance
             : -late <= cadence + TapeSourceCatalog.LiveTolerance;
+
+    /// <summary>
+    /// THE EVIDENCE CLASS OF ONE ROW OF AN ARCHIVE FILE — its record's and every kept row's alike — from fields this
+    /// store recorded and from THIS BUILD'S rows (<c>U-tape-archive</c>; R07 § 5.1, "a vendor first-seen timestamp
+    /// with a declared basis").
+    ///
+    /// <para><c>O-LIVE</c> by <see cref="ClassOf"/>'s own rule, the label as the source time: the built-in row, its
+    /// built-in origin, within the cadence plus 30 s of the label. Else <c>O-PIT</c> iff all four: the built-in row;
+    /// its built-in origin; the MD5 the vendor published equal to the one this build computed; and a Last-Modified no
+    /// later than the label — the vendor's storage dates the file no later than the first-seen time the vendor
+    /// declares for it, so it was not written after it. Else <c>O-ARCH</c>: another origin, an MD5 that disagrees, a
+    /// file written after its label, or one whose storage gave no date. Never above the revision before it.</para>
+    /// </summary>
+    static string ArchiveClassOf(string source, string? origin, DateTimeOffset label, DateTimeOffset receivedAt,
+        bool verified, DateTimeOffset? lastModified, string? previous)
+    {
+        var own = ClassOf(source, origin, label, receivedAt, null) == TapeClass.Live
+            ? TapeClass.Live
+            : TapeSourceCatalog.BuiltInLiveRule(source) is { } rule
+              && string.Equals(origin, rule.Origin, StringComparison.Ordinal)
+              && verified
+              && lastModified is { } written && written <= label
+                ? TapeClass.Pit
+                : TapeClass.Arch;
+
+        return previous is null ? own : TapeClass.Lower(own, previous);
+    }
 
     /// <summary>
     /// THE NATURAL KEY OF AN OBSERVATION: its subject and the vendor's own time field for that series,

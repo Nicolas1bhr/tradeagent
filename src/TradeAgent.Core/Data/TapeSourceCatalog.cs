@@ -94,6 +94,12 @@ public sealed class TapeSourceEntry
     /// <summary>Where the vendor documents it.</summary>
     public string DocUrl { get; set; } = "";
 
+    /// <summary>
+    /// THE CREDIT THE SOURCE'S TERMS REQUIRE wherever its data is used or shown, in the words to show — GDELT's
+    /// terms ask every use to cite the GDELT Project and link to its site. EMPTY on a row whose terms ask none.
+    /// </summary>
+    public string Citation { get; set; } = "";
+
     /// <summary>Who says it answers, and when. Never empty on a row this build ships.</summary>
     public string Measured { get; set; } = "";
 
@@ -120,9 +126,10 @@ public sealed record TapeSourceCatalogRead(
     IReadOnlyList<TapeSourceEntry> Sources, string? Unreadable, IReadOnlyList<string> Refused);
 
 /// <summary>
-/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS: two built-in families — five rows over Binance USDⓈ-M public
-/// market data for six symbols (<c>U-tape-store</c>) and OKX's announcements for EU users
-/// (<c>U-tape-events</c>) — and whatever unkeyed market rows <c>tape-sources.json</c> adds.
+/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS: three built-in families — five rows over Binance USDⓈ-M public
+/// market data for six symbols (<c>U-tape-store</c>), OKX's announcements for EU users (<c>U-tape-events</c>) and
+/// GDELT's news items about crypto, from its fifteen-minute GKG files (<c>U-tape-archive</c>) — and whatever
+/// unkeyed market rows <c>tape-sources.json</c> adds.
 ///
 /// <para><b>The file may ADD rows. It may never replace, redirect or remove a built-in one</b>, and
 /// that is the difference from <c>sources.json</c>, where a file row replaces the built-in with its id.
@@ -191,6 +198,19 @@ public static class TapeSourceCatalog
     /// Built-in rows only.
     /// </summary>
     public const string AnnouncementParser = "announcement-json";
+
+    /// <summary>
+    /// THE ARCHIVE PARSER FAMILY (<c>U-tape-archive</c>): GDELT's fifteen-minute GKG zips, read by
+    /// <c>GdeltRecorder</c> through <see cref="GdeltGkg"/> on the owner's own switch — never by the tape's poller.
+    /// Built-in rows only.
+    /// </summary>
+    public const string GkgParser = "gdelt-gkg-zip";
+
+    /// <summary>GDELT's terms of use, as GDELT publishes them, spelled in pieces like every vendor address here.</summary>
+    public const string GdeltTermsUrl = "https://www" + ".gdeltproject" + ".org/about.html#termsofuse";
+
+    /// <summary>The credit GDELT's terms ask of every use: the project's name and a link to its site.</summary>
+    public const string GdeltCitation = "The GDELT Project, https://www" + ".gdeltproject" + ".org/";
 
     /// <summary>The symbols every row is recorded for, built-in and added alike.</summary>
     public static readonly IReadOnlyList<string> Universe =
@@ -395,13 +415,57 @@ public static class TapeSourceCatalog
         }
     ];
 
+    const string GdeltTerms =
+        "GDELT's Terms of Use (" + GdeltTermsUrl + "), read 2026-10-03 (the U-tape-archive survey) and re-read 2026-10-06 "
+        + "(U-tape-archive): every GDELT dataset may be used without fee for any academic, commercial or governmental purpose "
+        + "and may be redistributed in any form, provided every use or redistribution cites the GDELT Project and links to its "
+        + "site — the row's Citation, which every surface showing these items must show. TradeAgent reads one GKG file each "
+        + "fifteen minutes from GDELT's own data host, keeps only the crypto rows on the owner's own machine, and passes them to "
+        + "no one (docs/RESEARCH-REQUIRED.md, C5e).";
+
     /// <summary>
-    /// EVERY ROW THIS BUILD SHIPS, family by family — the market rows (<see cref="BuiltIn"/>) and the
-    /// announcement rows (<see cref="Announcements"/>) — a fresh copy on every call. The live rule, the ids a
-    /// file may not reuse and <see cref="Read"/> all take this list, so another family joins by being added
-    /// here and nowhere else.
+    /// THE ARCHIVE ROWS THIS BUILD SHIPS (<c>U-tape-archive</c>), a fresh copy on every call: GDELT's Global Knowledge
+    /// Graph, one fifteen-minute file at each label, of which only the crypto rows are kept (<see cref="GdeltGkg"/>).
+    /// Read by <c>GdeltRecorder</c> on its own switch, never by the tape's poller; here for the live rule — the origin,
+    /// the 900 s cadence and no delay, which also decide <c>O-PIT</c> — and for the ids a file may not reuse.
+    ///
+    /// <para><b>Binance's archive is not here, and no row reaches it</b>: its Dataset Terms v1.0 (CC BY-NC-SA 4.0,
+    /// no live proprietary trading without a written licence) were read on 2026-10-03, and the decision taken on the
+    /// owner's behalf on 2026-10-04 was to comply — research-only, and no request from this unit to that host.</para>
     /// </summary>
-    public static List<TapeSourceEntry> Shipped() => [.. BuiltIn(), .. Announcements()];
+    public static List<TapeSourceEntry> Archives() =>
+    [
+        new()
+        {
+            Id = GdeltGkg.Source,
+            DisplayName = "GDELT news, crypto items (GKG 2.1)",
+            BaseUrl = GdeltGkg.BaseUrl,
+            CadenceSeconds = 900,
+            PerSymbol = false,
+            Parser = GkgParser,
+            Series =
+            [
+                new() { Id = GdeltGkg.ItemsSeries, UrlShape = GdeltGkg.BatchShape, TimeField = "V2.1DATE", IdField = "GKGRECORDID" }
+            ],
+            Terms = GdeltTerms,
+            TermsUrl = GdeltTermsUrl,
+            Citation = GdeltCitation,
+            DocUrl = GdeltGkg.BaseUrl + "/documentation/GDELT-Global_Knowledge_Graph_Codebook-V2.1.pdf",
+            Measured = "measured 2026-10-06 from the dev Mac with no key (U-tape-archive; docs/RESEARCH-REQUIRED.md, C5e): "
+                       + "GET /gdeltv2/lastupdate.txt HTTP 200 in 0.83 s, 319 bytes, three lines; 24 GKG files, one an hour "
+                       + "labelled 2026-10-05T01:00Z to 2026-10-06T00:00Z, every answer HTTP 200 in 0.53-1.94 s and 2.1-6.7 MB, "
+                       + "each one's storage MD5 and ETag equal to this build's MD5 and its Last-Modified 569-724 s before its "
+                       + "label; 99 of 24,671 rows kept, 1.72 MB, about 6.9 MB a day"
+        }
+    ];
+
+    /// <summary>
+    /// EVERY ROW THIS BUILD SHIPS, family by family — the market rows (<see cref="BuiltIn"/>), the announcement
+    /// rows (<see cref="Announcements"/>) and the archive rows (<see cref="Archives"/>) — a fresh copy on every
+    /// call. The live rule, the ids a file may not reuse and <see cref="Read"/> all take this list, so another
+    /// family joins by being added here and nowhere else.
+    /// </summary>
+    public static List<TapeSourceEntry> Shipped() => [.. BuiltIn(), .. Announcements(), .. Archives()];
 
     /// <summary>
     /// What a built-in row lets the store call live: its ORIGIN, its CADENCE and its documented
