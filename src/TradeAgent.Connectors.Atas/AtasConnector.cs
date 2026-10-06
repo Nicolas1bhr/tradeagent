@@ -671,25 +671,28 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 {
                     pending ??= reader.ReadLineAsync(ct).AsTask();
                     var settled = await Task.WhenAny(pending, Task.Delay(IdlePoll, ct));
+                    PulseProbe.Note(_pipe, settled == pending ? "c.read" : "c.poll");
                     if (settled == pending)
                     {
                         var line = await pending;
                         pending = null;
-                        if (line is null) break;
-                        if (!await Dispatch(line)) break; // a peer we have refused gets no second frame
+                        if (line is null) { PulseProbe.Note(_pipe, "c.eof"); break; }
+                        if (!await Dispatch(line)) { PulseProbe.Note(_pipe, "c.refused"); break; } // a peer we have refused gets no second frame
                     }
 
                     if (PeerHasGoneQuiet())
                     {
+                        PulseProbe.Note(_pipe, $"c.quiet:{(DateTimeOffset.UtcNow - _lastHeartbeat).TotalMilliseconds:0}ms-since-last-beat");
                         if (pending is not null) Observe(pending);
                         break;
                     }
                 }
             }
             catch (OperationCanceledException) { break; }
-            catch (Exception) { /* the bridge died or ATAS closed; fall through and wait for it again */ }
+            catch (Exception ex) { PulseProbe.Note(_pipe, "c.threw:" + ex.GetType().Name); /* the bridge died or ATAS closed; fall through and wait for it again */ }
             finally
             {
+                PulseProbe.Note(_pipe, "c.drop");
                 Drop("the ATAS bridge disconnected");
                 _pipeStream?.Dispose();
                 _pipeStream = null;
@@ -957,6 +960,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             _compatible = true;
             _connected = true;
             _lastHeartbeat = DateTimeOffset.UtcNow;
+            PulseProbe.Note(_pipe, "c.hello");
             ConnectionChanged?.Invoke(HealthState.READY);
             return true;
         }
@@ -977,6 +981,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // The peer is plainly there, so the pulse is recorded whatever the payload turns out to
             // be: nothing below drops a connection or expires a clock.
             _lastHeartbeat = DateTimeOffset.UtcNow;
+            PulseProbe.Note(_pipe, f.Data.HasValue ? "c.beat+caps" : "c.beat");
 
             // A heartbeat carries the bridge's current answer, because capabilities are not settled
             // at the handshake: SupportsClientOrderId cannot be true until an order has proved it,

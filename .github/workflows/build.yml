@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The trading core, the gateway, the trade CLI, provisioning and the bridge protocol are all
-  # cross-platform, so they are tested on every OS. Only the ATAS adapter and the installer are
-  # Windows-bound. Every project in TradeAgent.sln is covered, so a new project is in this matrix as
-  # soon as it is in the solution.
+  # DIAGNOSTIC ONLY — U-fix-bridge-heartbeat, branch only, restored before the proving run.
+  # macOS only: (A) the solution's non-Timing step exactly as the failing run ran it, (B) the class
+  # looped, (C) the failing test's scenario repeated; every pulse's send and receipt time is written
+  # to pulse.log by the branch-only probe, and summarised at the end.
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -25,125 +25,67 @@ jobs:
       - run: dotnet restore TradeAgent.sln
       - run: dotnet build TradeAgent.sln -c Release --no-restore
 
-      # THE SUITE MINUS ONE CATEGORY — every platform, no retry, no rescue. A red here is a red run.
-      # This is 833 of the 914 tests, including every test that asserts what the product does.
-      - name: Test everything outside the timing category
-        run: dotnet test TradeAgent.sln -c Release --no-build --filter "Category!=Timing" --logger "trx;LogFileName=results.trx"
+      - name: Diag A - the non-Timing step as the failing run ran it
+        continue-on-error: true
+        env:
+          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
+        run: dotnet test TradeAgent.sln -c Release --no-build --filter "Category!=Timing&FullyQualifiedName!~Diag_pulse_gap_repeat" --logger "trx;LogFileName=diag-a.trx"
 
-      # THE TIMING CATEGORY — run everywhere, RE-RUN ONCE ON EVERY RUNNER.
-      #
-      # WHAT THE CATEGORY MEANS, ONCE, SO NOTHING ELSE DRIFTS INTO IT: a test belongs here when its
-      # verdict needs the RUNNER to keep a wall clock as well as the product to be right — it either
-      # measures a duration and asserts a ceiling on it, or asserts an outcome that the product only
-      # reaches while a deadline of its own is still open. Every other test in this repository
-      # decides on what the product DID, and a red there is a red run on the first attempt, on all
-      # three platforms, with no rescue. Membership is not a place to send a test that fails; it is
-      # a statement about what the test measures, and it is argued at the test with numbers.
-      #
-      # WHY A SECOND ATTEMPT AT ALL. `RunnerSpeedProbeTests` measures, on every run and every
-      # platform, how much slower the runner is than the machine these fixtures were tuned on. Over
-      # three runs of PR #4 the windows-latest figures were: arithmetic 1.20/1.22/1.06, timers
-      # 1.02/1.18/1.08, pipes 2.24/2.54/3.31 — and file IO 3.79/39.52/4.89. File IO is what the
-      # failures are made of and it is the one that will not hold still, so there is no factor to
-      # scale the fixtures by: covering the worst of those three needs more than 40x, applied to
-      # fixtures whose real bottleneck is 1.08x. Six windows-only reds across three fix units, one
-      # per run, each fixed by hand. This is the net under them.
-      #
-      # WHY IT IS NO LONGER WINDOWS-ONLY. That rule rested on the spread being Windows's alone, and
-      # U-press-stopwatch measured otherwise. A throwaway harness timed one emergency press per step
-      # on all three runners: the single SQLite settle it makes after its deadline —
-      # `SafelyRecordIndefinite`, at `synchronous=FULL` — cost 3 ms on ubuntu in two runs and 547 ms
-      # and 593 ms in a third, off the same code and the same fixture, which is the same 200x spread
-      # by a different name. A 20 ms tick on a dedicated thread and on the pool kept arriving at
-      # 21 ms through all of it and GC pause was 0, so the process was running: it is the runner's
-      # disk. Ubuntu had already spent one red on it (run 33986791747, 1243 ms over) and windows one
-      # more (33973192760). A rule that reads "windows is the flaky one" is now simply wrong.
-      #
-      # WHAT IT COSTS, SAID PLAINLY: inside this category a genuine regression that fails
-      # intermittently can be rescued by the second attempt. That is why membership is argued rather
-      # than granted, why the first failure is printed, named in the job summary, annotated on the
-      # run and uploaded as its own trx — and why a red twice in a row is still a red run, on every
-      # platform, with nothing left to try.
-      - name: Test the timing category
+      - name: Diag B - the class looped
+        continue-on-error: true
         shell: bash
+        env:
+          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
         run: |
-          set -uo pipefail
-          # THE WHOLE SOLUTION, not the one project that has timing tests today: a project with no
-          # match exits 0 with "No test matches the given testcase filter" (verified), so this stays
-          # correct if the trait ever lands outside the integration assembly. The two steps together
-          # run every test exactly once.
-          if dotnet test TradeAgent.sln -c Release --no-build \
-               --filter "Category=Timing" --logger "trx;LogFileName=results-timing.trx"; then
-            exit 0
-          fi
+          for i in $(seq 1 12); do
+            echo "class pass $i"
+            dotnet test tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj -c Release --no-build \
+              --filter "FullyQualifiedName~BridgeRoundTripTests&FullyQualifiedName!~Diag_pulse_gap_repeat" 2>&1 \
+              | grep -E "Passed!|Failed!|\[FAIL\]" || true
+          done
 
-          # THE FIRST FAILURE IS THE RECORD, whatever the second attempt goes on to say.
-          failed=$(cat tests/*/TestResults/results-timing.trx 2>/dev/null | tr '<' '\n' \
-                   | grep 'outcome="Failed"' | grep -o 'testName="[^"]*"' | cut -d'"' -f2 || true)
-          {
-            echo "### The timing category failed on its first attempt"
-            echo
-            echo '```'
-            echo "${failed:-(no test name in the trx - read the step log above)}"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning title=Timing category failed on its first attempt::${failed//$'\n'/, }"
+      - name: Diag C - the scenario repeated
+        continue-on-error: true
+        shell: bash
+        env:
+          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
+          TA_PULSE_REPS: '300'
+        run: |
+          dotnet test tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj -c Release --no-build \
+            --filter "FullyQualifiedName~Diag_pulse_gap_repeat" 2>&1 | grep -E "Passed!|Failed!|\[FAIL\]" || true
 
-          echo "Re-running the timing category once; the failure above stands in the record either way."
-          dotnet test TradeAgent.sln -c Release --no-build \
-            --filter "Category=Timing" --logger "trx;LogFileName=results-timing-retry.trx"
+      - name: The pulses
+        if: always()
+        shell: bash
+        env:
+          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
+        run: |
+          python3 - "$TA_PULSE_LOG" <<'EOF'
+          import re, sys
+          lines = open(sys.argv[1]).read().splitlines()
+          runs = [l for l in lines if l.startswith("PULSE ")]
+          def num(l, key):
+              m = re.search(r"\b" + key + r"=(-?[0-9.]+|NaN)", l)
+              return float(m.group(1)) if m and m.group(1) != "NaN" else float("nan")
+          def pct(xs, p):
+              xs = sorted(x for x in xs if x == x)
+              return xs[min(len(xs) - 1, int(round(p / 100.0 * (len(xs) - 1))))] if xs else float("nan")
+          print(f"runs={len(runs)} lost={sum('connected=False' in l for l in runs)}")
+          for key in ["maxRecvGap", "maxSendGap", "maxWakeLate", "trailing", "timerCanaryMaxLate", "sleepCanaryMaxLate", "poolDispatchMax", "gcPause"]:
+              xs = [num(l, key) for l in runs]
+              print(f"{key:20s} p50={pct(xs,50):6.0f} p90={pct(xs,90):6.0f} p99={pct(xs,99):6.0f} max={pct(xs,100):6.0f}  >300ms={sum(x > 300 for x in xs)}  >600ms={sum(x > 600 for x in xs)}")
+          print("--- every run whose verdict was lost or whose worst gap passed 300 ms, with its timeline ---")
+          show = False
+          for l in lines:
+              if l.startswith("PULSE "):
+                  show = "connected=False" in l or num(l, "maxRecvGap") > 300 or num(l, "trailing") > 300
+              if show: print(l)
+          EOF
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: test-results-${{ matrix.os }}
-          # results*.trx, so a rescued run uploads the attempt that failed as well as the one that
-          # passed. A green whose second trx exists is a green that needed two attempts.
-          path: '**/results*.trx'
-
-  package:
-    needs: test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '10.0.x'
-
-      # packaging/build.ps1 is run with -RequireInstaller below, so a missing Inno Setup fails the
-      # job instead of quietly uploading an artifact with no installer in it. This step makes that
-      # failure impossible for a reason nobody can act on: if the runner image stops shipping Inno
-      # Setup, install it here rather than discovering it as an empty release.
-      - name: Ensure Inno Setup 6 is available
-        shell: pwsh
-        run: |
-          $iscc = @(
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
-          if ($iscc) {
-            Write-Host "Inno Setup already on this image: $iscc"
-          } else {
-            Write-Host 'Inno Setup not found on this image; installing it.'
-            choco install innosetup --no-progress --yes
-            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed with exit code $LASTEXITCODE" }
-          }
-
-      # No ATAS on a hosted runner, so the bridge is published without its ATAS adapter and the
-      # artifact is labelled accordingly. A release build must be produced on a machine with ATAS.
-      # The script verifies the staged build before packaging and prints a manifest of what the
-      # artifact actually contains; read that in this step's log before trusting a release.
-      - name: Build the installer
-        run: pwsh packaging/build.ps1 -SkipTests -RequireInstaller
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: TradeAgent-windows-x64-NO-ATAS-ADAPTER
-          # if-no-files-found: error, because an artifact named after an installer that is not in it
-          # is worse than no artifact at all.
-          if-no-files-found: error
+          name: pulse-${{ matrix.os }}
           path: |
-            artifacts/*.exe
-            artifacts/SHA256SUMS.txt
+            ${{ github.workspace }}/pulse.log
+            **/diag-*.trx
