@@ -295,8 +295,9 @@ sealed class SettingsPage
                      + "kept as a new revision beside the first. The same switch records OKX's announcements for EU "
                      + "users, the newest twenty once a minute: each is kept whole, one that looks addressed to an AI "
                      + "is flagged and its text withheld when the tape is read for the AI, and no link in them is opened."),
-            Ui.Micro("It reads public endpoints with no key and places nothing. A reading that arrived on time from "
-                     + "Binance's own address is marked live; a late one, or one from any other address, is marked "
+            Ui.Micro("It reads public endpoints with no key and places nothing. A reading that arrived on time from its "
+                     + "source's own address — Binance's futures host for the market data, OKX's EU domain for its "
+                     + "announcements — is marked live; a late one, or one from any other address, is marked "
                      + "archive. It is context for research, not evaluation evidence, it is recorded only while "
                      + "TradeAgent is running, and the AI cannot start, stop or change it."),
             Ui.Divider(),

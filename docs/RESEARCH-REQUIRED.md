@@ -283,6 +283,33 @@ reconsidered. (4) The screen's misses and its false flags beyond these 300 items
 
 ---
 
+## C5e — GDELT's news items about crypto on the tape (measured 2026-10-06 from this Mac; re-verify at build time)
+
+**Decided: while it runs, TradeAgent records the crypto rows of GDELT's fifteen-minute GKG files, with GDELT's own
+first-seen time** (`U-tape-archive`; `docs/EDGE-FACTORY.md` § 4.1), on the owner's own "Record GDELT news" switch.
+`docs/CONTRACTS.md` "The tape" states what the record, the classes and the cap claim and do not.
+
+| Fact | Value |
+|---|---|
+| Host | `https://data.gdeltproject.org` — GDELT's data host, served from Google Cloud Storage (`via: 1.1 google`, `server: UploadServer`). No key exists and none is sent. `http://` answers 301 to `https://…:443`; the recorder asks `https://` only and follows no redirect. |
+| Listing | RUN 2026-10-06 00:42:08Z: `GET /gdeltv2/lastupdate.txt` → HTTP 200 in 0.83 s, 319 B, three lines `size md5 http://data.gdeltproject.org/gdeltv2/<label>.<feed>.zip` (export, mentions, gkg). Its GKG line named `20261006004500` — a label 2 min 52 s AHEAD of the clock: GDELT lists a file before its label. (The survey's RUN 2026-10-03: HTTP 200 in 0.46 s, 319 B.) |
+| One file, inspected | `20261006004500.gkg.csv.zip` at 00:42–00:43Z: HTTP 200, 4,126,527 B; `last-modified` 00:33:51 (11 min 09 s before its label); `etag` and `x-goog-hash: md5=` equal to the listing's MD5; one deflated entry `20261006004500.gkg.csv`, sizes in its header, 12,743,789 B inflated; 979 rows of exactly 27 tab-separated fields, V2.1DATE the label on every row; `V2EXTRASXML` carries `<PAGE_TITLE>` on 979 rows, written with character references (`&#x2013;` 39 times, 63 in all), `<PAGE_PRECISEPUBTIMESTAMP>` on 623; longest row 35,860 B; `gkg-crypto-v1` kept 17. |
+| The sample (the extract's size) | 24 files, one an hour, labelled 2026-10-05T01:00Z to 2026-10-06T00:00Z, streamed 00:58–01:00Z through this build's `GdeltGkg.ReadBatchAsync` and kept nowhere: every answer HTTP 200 in 0.53–1.94 s, 2,083,828–6,696,560 B (104,837,720 B in all — 4.37 MB a file, **419 MB a day** at 96 files); each storage MD5 and ETag equal to this build's MD5; Last-Modified 569–724 s BEFORE its label, none after; every GKGRECORDID `<label>-N` and every V2.1DATE the label; 24,671 rows, 99 kept (0–13 a file), 1,720,729 B as the tape keeps them — **6.88 MB a day (6.56 MiB), against the 25 MB cap** — the most a file kept 210,926 B, the longest kept row 44,294 B. 2 of the 24 files (labels `20261005040000`, `20261005090000`) held one row each with a raw Latin-1 byte (0xE1 in an address in `V2EXTRASXML`), neither kept: the first reading refused both files whole, so a row the filter does not keep is now read leniently and only a KEPT row must be UTF-8 — both re-read (01:00Z), 1 row kept each. |
+| The screen | `TapeScreen` v2 over the 99 kept rows: none flagged. v2 resolves character references before its rules read — under v1, a title's `&#x200B;` was not a zero-width space and `&lt;|im_start|&gt;` was not markup. |
+| Terms basis | GDELT's Terms of Use, `https://www.gdeltproject.org/about.html#termsofuse`: read by the survey on 2026-10-03 and re-read on 2026-10-06 00:42Z (HTTP 200 in 0.90 s, served from `https://gdeltproject.org/about.html`): every GDELT dataset is open to unlimited, unrestricted use — academic, commercial or governmental — without fee, and may be redistributed, rehosted, republished and mirrored in any form, provided any use or redistribution cites the GDELT Project and links to `https://www.gdeltproject.org/`. The row's `Citation` carries that credit; the Market data card and the user guide show it, and `U-tape-read` must show it wherever the items are shown. |
+| Codebook | GKG Codebook V2.1 (`https://data.gdeltproject.org/documentation/GDELT-Global_Knowledge_Graph_Codebook-V2.1.pdf`), read 2026-10-06: the 27 fields in the order `GdeltGkg.Fields` names them; each GKGRECORDID begins with the date and time of the fifteen-minute update batch its record was created in; V2.1DATE is the same on every row of a file. `<PAGE_TITLE>` is not in that 2015 codebook — it is what the files carry today. |
+| Binance archive — DROPPED | The survey read Binance's Dataset Terms v1.0 (2026-08-26; repository commit `bd110bb`, 2026-09-30) on 2026-10-03: CC BY-NC-SA 4.0, commercial use only under a written licence, no live proprietary trading or trading-bot platforms (§§ 3.1, 3.4, 4.2, 4.4). The decision taken on the owner's behalf on 2026-10-04 was to comply (C7). This unit makes no request to `data.binance.vision` and did not re-read those terms. |
+| Recorded as | `TapeSourceCatalog.Archives()` — one row, `gdelt-gkg`: cadence 900 s, no delay, parser `gdelt-gkg-zip` (built-in only; the tape's poller leaves it to `GdeltRecorder`), `Terms`, `TermsUrl`, `Citation`, `DocUrl`, `Measured`. No schema rung: `tape.db` stays at its own version 1. |
+
+**Still to re-verify at build time.** (1) GDELT's lead: 24 of 24 sampled files were dated 9.5–12 min before their
+labels; one dated after its label is `O-ARCH` by rule, and how often that happens is not measured. (2) Whether GDELT
+ever rebuilds a file it already served: the record's SHA-256 is the check, and only these files were read. (3) The
+filter's recall and precision: not measured — 99 rows in a day's sample, against the survey's INFERENCE of ~750 a day.
+(4) The screen's misses and false flags on GDELT beyond these 99 rows. (5) The terms reading is a reading on the day,
+not legal advice.
+
+---
+
 ## C6 — Venue fees the referee judges with (read 2026-10-02 from the venue's own page; re-read before every release)
 
 **File:** `src/TradeAgent.Core/Strategy/VenueCostModel.cs`, `PublishedFees` — a table in CODE on purpose: the
