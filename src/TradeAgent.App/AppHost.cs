@@ -508,6 +508,19 @@ public sealed class AppHost : IAsyncDisposable
     TapeStore? _tape;
 
     /// <summary>
+    /// THE SAME TAPE, AS THE GATEWAY READS IT (<c>U-tape-read</c>): read-only connections of its own, so nothing the
+    /// gateway reaches can write it. Null when the tape could not be opened.
+    /// </summary>
+    TapeReader? _tapeReader;
+
+    /// <summary>
+    /// PUTS THE TAPE'S READER ON THE GATEWAY — and again on every gateway a connector switch builds, because the
+    /// property is on the object, exactly like <see cref="ReportAiToTheGateway"/>. Forgetting this line is how
+    /// <c>trade data tape</c> starts answering that no tape is open while the collectors are recording.
+    /// </summary>
+    void ReportTapeToTheGateway() => Gateway.Tape = _tapeReader;
+
+    /// <summary>
     /// GDELT'S RECORDER — GDELT's news items about crypto, into the same tape on its own task (<c>U-tape-archive</c>).
     /// Started with the tape, on its own switch: the owner's "Record GDELT news" on the Settings page is its only control,
     /// in-process — no verb and no pipe op starts it, stops it, points it elsewhere or writes the tape. Null when the tape
@@ -622,6 +635,21 @@ public sealed class AppHost : IAsyncDisposable
                     Gdelt = new GdeltRecorder(_tape, () => Gateway.Settings.RecordGdeltNews,
                         say: text => Gateway.Log.Activity("GDELT news: " + text, "warn"));
                     Gdelt.Start();
+
+                    // AND THE GATEWAY READS IT, READ-ONLY (U-tape-read): a reader over the same file, never the
+                    // store, so `data-tape`, `data-list`, the status and the report can show it and nothing the pipe
+                    // reaches can write it. Its catalogue is the one the collectors are recording from. A reader that
+                    // cannot be made is said on its own line: the recording goes on, and only the serving stops.
+                    try
+                    {
+                        _tapeReader = new TapeReader(_tape.File, [.. Tape.Rows, .. Core.Data.TapeSourceCatalog.Archives()]);
+                        ReportTapeToTheGateway();
+                    }
+                    catch (Exception ex)
+                    {
+                        Gateway.Log.Activity("TradeAgent is recording market context but cannot show it to the AI: "
+                                             + ex.Message.ReplaceLineEndings(" "), "warn");
+                    }
                 }
             }
             catch (Exception ex)
@@ -903,6 +931,8 @@ public sealed class AppHost : IAsyncDisposable
         // A new gateway is a new object, and the hook is on the object. Forgetting this line is how
         // `trade status` starts reporting an AI that is stopped and free while it is working.
         ReportAiToTheGateway();
+        // AND THE TAPE'S READER, for the same reason (U-tape-read).
+        ReportTapeToTheGateway();
 
         try { await Connector.ConnectAsync(); } catch (Exception) { /* health reports it */ }
         await Gateway.RefreshHealthAsync();

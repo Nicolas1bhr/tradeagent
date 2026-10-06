@@ -97,6 +97,18 @@ public sealed class TradingGateway : IAsyncDisposable
     public ForwardBarStore Forward => _forward;
 
     /// <summary>
+    /// THE MARKET-CONTEXT TAPE, AS A READER AND NOTHING MORE (<c>U-tape-read</c>) — or null, because this host has no
+    /// tape open: the app could not open it (the activity log says why), or this is a host that records none.
+    ///
+    /// <para>It is a <see cref="TapeReader"/>, never the <see cref="TapeStore"/>: every read it makes opens the file
+    /// read-only, so nothing reachable from this gateway — no handler, no op — can write the tape. It is served over
+    /// <c>data-tape</c> and <c>data-list</c>, and read by the status and the daily report. Set by the composition root,
+    /// like <see cref="Ai"/>, because the tape is the app's own file and a connector switch builds a new gateway over
+    /// it: the app sets it again on the new one.</para>
+    /// </summary>
+    public TapeReader? Tape { get; set; }
+
+    /// <summary>
     /// The venue catalogue — what instruments this installation knows of, on which venue, with what
     /// grid and what step, and who said so. READ ONLY from here in the sense that matters: the rows
     /// come from <c>VenueCatalog</c> (the built-ins plus <c>venues.json</c>) at construction, overlaid at
