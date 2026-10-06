@@ -8260,3 +8260,35 @@ package. U-tape-archive's landing push `d89f9cdc`: run 37420286516 success on al
 
 **NOT done, NOT verified:** connector-side reduce-only on the Simulator and ATAS (the box's question); how often a catch-up re-places the pair while its exit
 keeps being refused; the put-back and the paper refusal seen in the running app; no box run.
+
+## 2026-10-06 — U-fix-bridge-heartbeat landed: the macOS red was the runner, not the bridge — 3,639 measured executions never lost a pulse, so the test moves to the Timing step with its asserts unchanged
+
+Built by one fresh Opus fixer under seat P from `docs/briefs/U-fix-bridge-heartbeat.md` (the red: main `5427746`, run 37058319403, macos-latest only,
+`BridgeRoundTripTests.A_failing_capability_read_does_not_stop_the_heartbeat`, "Expected: True / Actual: False", first sighting).
+Merge `313058e3` (ff-only), 5 commits: two diagnostic rounds, their removal, item 2 and the report, rebased over seat A's landings and docs with an identical
+src+tests patch-id. The net diff vs `main`: one `[Trait("Category","Timing")]` and 19 comment lines in `BridgeRoundTripTests.cs`. No product code, no rung, no assertion,
+timeout, interval or delay changed.
+
+- **Item 1 — the cause is the RUNNER (measured).** Six instrumented macos-latest runs (37413639706, 37413642258, 37413644218, 37415665297, 37415667586, 37415669858)
+  printed every pulse's send and receipt beside three canaries. 3,639 executions and 44,675 pulses with `Describe()` throwing showed 0 connections lost, 0 loop exits and
+  no pulse lost. The worst gap per execution was p50 166 ms and p99 189 ms (the VM wakes every timed wait up to ~90 ms late, a dedicated thread as much as `Task.Delay`).
+  Four gaps passed 300 ms; the worst was 511 ms, when the VM stopped running the process (38 ms of CPU in 1.6 s).
+- **Declared deviation, ACCEPTED by the manager:** the natural red never recurred, so the picture around the failing assert comes from an injected 750 ms SIGSTOP.
+  It reproduced the red in all 36 stalls, with the loop still running throughout. The original red's own gap cannot be recovered.
+- **Item 2 — `Timing` membership argued at the test with those numbers.** The Timing step runs the same test with the same asserts and deadlines, no tolerance. On a
+  failure it writes the names to the job summary, annotates the run, keeps the trx and re-runs the category ONCE, which decides; red twice in a row is a red run.
+  **Judged by the manager:** moved to Timing on 3,639 measured executions; an intermittent product stall rescued once per run stays possible, and it is annotated —
+  none was seen in 44,675 pulses.
+
+**Verified by running (the fixer, quoted).** Mutant (`Describe()` unguarded, its throw ending the loop): red on two runs in a row, `Assert.True() Failure Expected: True
+Actual: False` at `:342`; restored, green. `Category=Timing` selects the test and `Category!=Timing` does not; both were run.
+Fixer's gate at `0ffc1b3d`: Release 0 warnings, 0 errors; Unit 1410/1410, Fault 435/435; `BridgeRoundTripTests` 3×, 41 each.
+**Manager's gate** at `bccff30d`, carried to `313058e3` (only docs moved; build tree identical), Release: build 0 warnings; Unit 1410/1410 (8 m 27 s); Fault 436/436
+(1 m 48 s); Integration 721/722, 1 skipped (11 m 13 s) → 0 failed. Names vs `main`: 2203/2203, 0 removed, 0 added. Scan clean; no trailers.
+**CI:** branch run 37420396771 at `0ffc1b3d`: ubuntu ✓ 12 m, macOS ✓ 25 m, windows ✓ 52 m, package ✓; this test passed first time on all three. That run's macOS Timing
+first attempt failed ANOTHER test: `SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc`, NullReferenceException at `:333` (a CancelAll reply with no
+Data), green on its re-run. A diff of a trait and comments cannot reach it. It is recorded as a sighting in `fleet/ci-ledger.md` and was passed to `U-fix-press-budget`'s fixer.
+Tests box: NOT RUN — "the machine does not answer" (the fixer's check and the manager's at landing).
+**NOT done, NOT verified:** what stalls the macOS VM (host-side); no Windows hardware run. Outside the brief, found by the fixer and now OWED before any live use as
+`U-bridge-liveness-clock` (queued `a562283a`): liveness reads `DateTimeOffset.UtcNow` (`AtasConnector.cs:557`, `:1760`) while the write and answer deadlines read
+`TickCount64`, so a backward clock step would keep a silent bridge READY.
