@@ -8403,3 +8403,44 @@ Timing first try everywhere. Before the last rebase: 37444558954 and 37422916706
 concerns the AGENT's pipe sweep. A throwaway control (2100 ms latency) reproduced it: a book read clipped by the deadline answers `ok=False` with no Data, and the test casts
 `Data` without asserting `Ok` — a test fault, owed as a light fix. What spent ~100 ms on that runner: NOT VERIFIED.
 **NOT done, NOT verified:** a natural recurrence of the stall (the cause stands on per-step measurement and exact controls); any Windows box run; the app not run.
+
+## 2026-10-06 — U-dataset-version-once landed: a re-collection no longer deletes the raw files earlier datasets rest on, a dataset version is allocated where it is written and a dataset file is never replaced, and a file unreadable for a moment is no longer rejected for good
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-dataset-version-once.md`, written by seat P's survey of a windows-latest first sighting: main `c6a283e0`,
+run 37421444199, `DataLicenceTests.A_collection_takes_its_reading_only_from_the_built_in_origin` at `:168`, "v2"/"v1". The survey MEASURED that the evidence path was reachable.
+Merge `b78c6b41` (ff-only), 5 commits, rebased over U-fix-press-budget with an identical src+tests patch-id; 14 files, +739/−162; no rung.
+EVIDENCE PROTECTION (`CLAUDE.md`), held to the money-path proof burden.
+
+- **Item 1 (`219f1518`):** `TestEnv.NewPair` beside `NewDb`; every test that collects through `MarketDataService` gets a pair of its own. Before, two test classes shared one
+  home's `binance/BTCUSDT/1m/` folder, and one of them corrupted raw bytes there on purpose: the sighting's mechanism, reproduced every time by (iii).
+- **Item 2 (`0d0fcaa5`):** raw evidence is write-once. A fetch downloads into `raw/.staging/<guid>/`, now the only place a fetch deletes. The bytes are kept at the vendor's
+  name if that is free or already holds them; otherwise at `name.<sha16>.ext` by the same rule. **Declared deviation, accepted:** a new `MonthOutcome.NameTaken` for "both
+  names hold other bytes", refused in words.
+- **Item 3 (`3d96d9d6`):** `DatasetStore.RecordNew` does it all in one `db.Write`:
+  - takes `v{max+1}` over the ledger's labels read as numbers;
+  - skips any `v{n}.csv` that already exists (a crash orphan: never replaced or deleted);
+  - moves the staged file with `overwrite: false`, then inserts.
+  `Record` refuses, in words, a (pair, interval, version) the ledger holds, and `NextVersion` is gone. Fixture labels were made distinct and are named in the report
+  (`DataLicenceTests`, `VenueCatalogTests`, `DataOverPipeTests`, `PaperAllocationGateTests`, `PaperDeploymentTests`, `CostModelPinTests`). Each is a label, not an assert.
+- **Item 4 (`deb1f450`):** `FirstMismatch` → `Mismatch(Reason, Proven)`. A missing file and other bytes are persisted as REJECTED, as before. Any other IOException or
+  unauthorised access is REJECTED for THAT read only, saying "…could not be read just now (…); nothing was recorded, and it is checked again on the next read", with no
+  `Reject`. **Declared deviations, accepted:** the read goes past an unreadable file, so a proven mismatch elsewhere is still recorded; `DatasetRecord.RejectedThisReadOnly`
+  (init-only, never stored) lets `Rebuild` drop "Collect the months again".
+
+**Verified by running (the builder, quoted).** RED before, the new tests on the base product `d2943a82`:
+- (i) "the raw archive file for 2025-09 is no longer on disk at …";
+- (ii) "… no longer matches the hash recorded for it (c1089074… became 325a7b13…)";
+- (iii) "ledger B's collection wrote ledger A's file …";
+- (iv) an unrecorded `v2.csv` overwritten;
+- (v) "the normalised dataset file is no longer on disk …" while it was only held;
+- the label refusal: "No exception was thrown"; the both-names refusal: values equal.
+The guard `A_raw_file_that_is_gone_is_still_rejected_for_good` was green before and after. Mutant: staging dropped, so the fetch deletes and downloads at the vendor's name
+as before → (i) red; restored byte-identical.
+Builder's gate: Release 0 warnings; Unit 1419/1419; Fault 443/443; the touched classes 3×, all green.
+**Manager's gate** at `b78c6b41`, Release: build 0 warnings, 0 errors; Unit 1419/1419 (9 m 7 s); Fault 445/445 (1 m 54 s); Integration 721/722, 1 skipped (11 m 15 s)
+→ 0 failed. Names vs `main`: 2212 → 2220, 0 removed, 8 added. Scan clean; no trailers.
+**CI:** branch run 37481826449 at `deb1f450`: macOS ✓ 15 m, windows ✓ 53 m, ubuntu ✓ 13 m, package ✓. The run before it, 37480244910 at `3048df00`, was red on all three
+in `PaperFrictionTests…_is_refused` (two "BTCUSDT 1m v1" rows from `CostModelPinTests.Dataset`); the duplicate refusal caught it, and item 3 fixed it.
+Windows ran (g) green on both runs, which shows nothing either way about an intermittent red. Tests box: NOT RUN — "his own OFT.Platform is open" (the builder and the manager, once each).
+**NOT done, NOT verified:** `SettingsView`, the data-bars refusal and `MissionSituation.DataLine` still add re-collect advice to a REJECTED that holds for this read only
+(owed, light). A staging folder left by a crash is not swept. An interrupted download is no longer resumed by the next press. No app run, no box run.
