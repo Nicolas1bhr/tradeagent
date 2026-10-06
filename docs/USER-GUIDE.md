@@ -975,6 +975,15 @@ and then TradeAgent stops all AI trading and leaves the records on the Dashboard
 it does after you press Close all positions. **Go and look at your platform when you see that.** It
 is the one case where the software is telling you it does not know where your money is.
 
+**One of those it can answer for itself.** When a close went out and its answer was lost on the way
+back, TradeAgent asks your platform's own order history about it a few seconds later, where your
+platform can show that history. If the history says the close is finished, TradeAgent writes that
+down and clears its own records: the account reads flat, or — if something is still open — it closes
+what is still there once more, with the same checks as the first time. If the history cannot find
+the close, or it is still working, nothing is decided and the records stay on the Dashboard for you.
+On ATAS a close carries TradeAgent's reference only once it has been identified, so a lost close
+there often cannot be found, and then it is yours to confirm, as before.
+
 **And one more, which is not an answer yet: "has NOT closed your open positions yet".** That is
 TradeAgent saying it could send nothing at all to your platform — your account or your positions
 could not be read in time — so nothing was sent and there is nothing for you to confirm. It tries

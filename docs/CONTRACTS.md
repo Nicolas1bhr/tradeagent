@@ -3818,3 +3818,44 @@ position nobody could value stayed open behind an exit record written once, fina
 unchanged; every platform call is still clipped at the deadline and a leg reached after it is still
 refused. The owner's presses and the agent's sweeps keep `Begin(budget)`.
 
+
+**A budget close whose answer was lost is asked of the platform's order history — and the app now settles its
+own press rows from it.** Until this unit a close that went out with its answer lost made the flatten's outcome
+final (`Flat=false`) and left its row UNKNOWN and flagged for the owner, even where the platform's own history
+could say exactly what became of it; nothing moved it (`ReconcileAsync` leaves press rows to a person). Now, at
+the START of every health pass — so never inside the pass that sent the close — `ConfirmLostClosesAsync` takes
+each standing closure of this connector, mode and account whose first outcome is not flat, has no opener that
+would not settle, and has every row of its two nonces final except closes the outcome itself recorded UNKNOWN
+and that are still UNKNOWN (a lost close somebody else has since settled — the owner, on the card — is not this
+step's to answer). Only where `ReconciliationProvable`. Each lost close is asked by `ReconcileAsync`'s own
+window and first two questions, **without its third**: under its own client id in `GetOrdersAsync(account,
+true, CreatedAt − 5 min)` in a TERMINAL state → that state and fill; else fills under its id → FILLED; found
+live (WORKING, ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING), not found, or a read that threw → **undecided**:
+nothing settled, cancelled or sent, asked again next pass. Absence is never proof here — an ATAS close carries
+our id only as a label written after identification, so on ATAS most lost closes stay undecided and with the
+owner, as before (`U-flatten-absence` owns absence, behind a claim ATAS does not make). `ReconcileAsync` is
+unchanged.
+
+**Every lost close decided, then ONE write-once record, then its application.** The book is read back, and
+`loss_flatten_confirm:{connector}:{account}:[{symbol}:]{utcDay}` (`LossFlattenConfirm`: each verdict with its
+evidence, what still reads open, `Flat`, the sentence) is written by `AddKvOnce` BEFORE a single row is
+settled; then each lost close goes `UNKNOWN → RECONCILING → {the history's state}` (`SettleTheUnresolved`'s two
+steps, unflagged, reconciled) and the rows of the outcome's two nonces are unflagged as
+`AccountForTheFlattenAsync` unflags them when every leg resolves. A failed write settles and sends nothing; a
+pass killed between the record and the rows finishes from the record on the next pass; there is ONE confirm per
+breach. **Flat → nothing is sent.** **Still open → "closing again"**: the killed-flatten sweep, on its own two
+rules (keyed on an outcome's absence, never while anything is unconfirmed), runs the SAME
+`FlattenForBreachAsync` under a fresh nonce — every check of the first attempt, the reduction-only re-read at
+the wire included — and files its outcome under `loss_flatten_again:` and an owed note under
+`loss_flatten_again_owed:`, owed and retried on every pass on `U-fix-loss-reopen`'s rule. A lost answer to the
+closing again is never confirmed a second time: it stays flagged for the owner. The first `loss_flatten:` row,
+the breach row and every `op-valuation-` row are never touched.
+
+**One accessor for the latest word.** `HeldBy`, `FlattenStateToday` and `FlattenFlagFor` read what was last
+done about a breach through `LatestFlattenWord` — the closing again's outcome, its owed note, the confirm, the
+first outcome, the first owed note, newest first — so the reopen's hold and every surface cannot disagree. The
+status field, the Situation, section 4, `AGENTS.md` and the guide say so.
+
+**Not in this unit:** absence as proof (`U-flatten-absence`); the data-loss exit's own lost close
+(`op-valuation-close-` rows are not confirmed here); the hold a `Flat=false` outcome keeps after the owner has
+resolved its rows on the card — this step deliberately does not answer a lost close somebody else has settled.

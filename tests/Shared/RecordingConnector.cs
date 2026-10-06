@@ -197,8 +197,19 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
         return await Inner.GetPositionsAsync(a, ct);
     }
 
+    /// <summary>
+    /// AN ORDER-HISTORY READ THAT FAILS: a platform that is there and will not show its history back to
+    /// the instant asked for. A read with a <c>since</c> answers completely or THROWS — ATAS refuses a
+    /// window it cannot show to be covered — and this is the throw, on a connector that still CLAIMS it
+    /// can prove its history (unlike <c>FaultProfile.HideOrderHistory</c>, which withdraws the claim).
+    /// Only reads that carry a <c>since</c>: the working book still answers. Inert until set.
+    /// </summary>
+    public Exception? HistoryThrows;
+
     public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default) =>
-        Read(Inner.GetOrdersAsync(a, inactive, since, ct));
+        since is not null && HistoryThrows is { } boom
+            ? Read(Task.FromException<IReadOnlyList<OrderInfo>>(boom))
+            : Read(Inner.GetOrdersAsync(a, inactive, since, ct));
 
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
         Read(Inner.GetExecutionsAsync(a, since, ct));
