@@ -32,3 +32,24 @@ Done: the cause quoted; for a product fix the red-first test red before and gree
 on the final tip (run id); any narrowed stress run quoted with its count; the gate. Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder
 pass": rebase on `main` first; `--no-incremental` Release 0 warnings; Unit and Fault 0 failed; touched classes 3×; names vs `main` 0 removed (both set sizes
 printed); `## Report` ≤ 20 lines appended here. No push to `main`, no merge; touch nothing in `docs/briefs/` but this file.
+
+## Report
+**Tip (code) `0ffc1b3d`** on `main` `d89f9cdc` (since moved by docs only); rebased three times, no conflict. Commits: diagnostics `43c7bc85`, `c92d888a` (ran as `5e8d98a3`, `1ed90305`), removed by `940054ea` (item 1);
+`0ffc1b3d` (item 2); this report. Diff vs `main`: one trait and 19 comment lines in `BridgeRoundTripTests.cs` — no product code, no rung, so no RED-before is owed; the mutant below is the watched guard.
+**Gate at `0ffc1b3d`:** build `-c Release --no-incremental` → 0 Warning(s), 0 Error(s). Unit `Passed! - Failed: 0, Passed: 1410` (8 m 28 s); Fault `Passed! - Failed: 0, Passed: 435` (1 m 49 s); `BridgeRoundTripTests` 3× `Passed: 41`;
+`Category=Timing` selects the test, `Category!=Timing` does not (both run). CI 37420396771: ubuntu-latest success 12 min, macos-latest success 25 min, windows-latest success 52 min, package success 4 min — this test passed
+first time on all three; macos's Timing step was red first in ANOTHER test (below). Names: sets 2199/2199, removed 0, added 0. Tests box: NOT RUN — `ready : NO - the machine does not answer` (exit 1, asked once).
+**Item 1 — done: the cause is the RUNNER.** Six macos-latest runs printed every pulse's send/receipt time beside three canaries (pool Task.Delay, a dedicated thread's Thread.Sleep, pool dispatch) — 37413639706/-642258/-644218,
+37415665297/-667586/-669858: 3,639 executions, 44,675 pulses with Describe() throwing, 0 connections lost, 0 loop exits, no pulse lost; worst gap per execution p50 166 ms, p99 189 ms (the VM wakes every timed wait up to ~90 ms
+late, the dedicated thread as much as Task.Delay); four passed 300 ms, worst 511 ms (rep268, -667586: slept +651, woke +1038, the dedicated thread's sleep 285 ms late, 38 ms of CPU in 1.6 s — the VM stopped running it).
+**Declared deviation:** the natural red never recurred, so the times "around the failing assert" are an injected 750 ms SIGSTOP's: stall008 (-665297) pulsed every 100-154 ms to +1316, froze to +2276 (sleep canary 934 ms late),
+then b.wake, c.poll, `c.quiet:960ms-since-last-beat`, c.drop in one millisecond → `connected=False`, the loop still running; all 36 went red, 13 there and 23 one assert later (connected, not READY). The original red's own gap is unrecoverable.
+**Item 2 — done** (`0ffc1b3d`): `[Trait("Category","Timing")]`, the numbers argued at the test; no timeout, interval, delay or assertion changed. **What the Timing step does differently:** no tolerance — the same test,
+asserts and deadlines, run in the category's own `dotnet test` after the main step beside the other 96 Timing tests, which shelters it from nothing (the stalls above were measured in processes that small); on a failure it
+writes the names to the job summary, annotates the run, keeps that trx and re-runs the whole category ONCE, which decides the step; red twice in a row is a red run. **Why it is the fix, not a hiding:** nothing here can stop the VM stalling; what was ours was a test needing the runner to turn a 100 ms loop once per 600 ms, filed where a first red
+is taken as proof of what the product DID. A stall must now hit the same 1.5 s window twice (none reached 600 ms in 3,639 executions; one red in ~150 ledger macOS jobs), while what the test guards fails deterministically —
+**mutant** (Describe() unguarded, its throw ending the loop): red on two runs in a row, `Assert.True() Failure Expected: True Actual: False` at `:342`; restored, green. Still possible, as `build.yml` says: an intermittent
+product stall rescued once per run, its first failure still annotated — none in 44,675 pulses. **For the manager:** run 37420396771's macos Timing first attempt failed `SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc`,
+NullReferenceException at `:333` (`(JsonElement)reply.Data!`, a CancelAll reply with no Data after its duration asserts passed); green on the re-run and on ubuntu/windows; my diff cannot reach it; U-fix-press-budget's area.
+**NOT done / NOT verified:** what stalls the macOS VM (host-side); no Windows hardware run (tests box off, ATAS box not granted). Outside the brief, unchanged: liveness reads `DateTimeOffset.UtcNow` (`AtasConnector.cs:557`, `:1760`)
+where write/answer deadlines read `TickCount64`, so a backward clock step would keep a silent bridge READY; not this red (no poll ever won, so a forward step cannot drop this pair).
