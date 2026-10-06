@@ -17,7 +17,6 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class DatasetLedgerTests
 {
-    const string Pair = "BTCUSDT";
     static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>Rows for a whole month is too much for a test; three minutes is the same shape.</summary>
@@ -35,14 +34,16 @@ public class DatasetLedgerTests
         return b.ToString();
     }
 
-    static async Task<(MarketDataService Svc, DataCollection First, Database Db, FakeArchive Archive)> Collected()
+    /// <summary>One collection of twelve months, of a pair of the test's own (<see cref="TestEnv.NewPair"/>).</summary>
+    static async Task<(MarketDataService Svc, DataCollection First, Database Db, FakeArchive Archive, string Pair)> Collected()
     {
+        var pair = TestEnv.NewPair();
         var archive = new FakeArchive();
-        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Pair, m, Rows(m));
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(pair, m, Rows(m));
 
         var db = TestEnv.NewDb();
         var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
-        return (svc, await svc.CollectAsync(Pair, Now), db, archive);
+        return (svc, await svc.CollectAsync(pair, Now), db, archive, pair);
     }
 
     /// <summary>
@@ -83,7 +84,7 @@ public class DatasetLedgerTests
     [Fact]
     public async Task An_altered_raw_file_makes_the_dataset_rejected_and_it_is_never_renormalised()
     {
-        var (svc, first, _, archive) = await Collected();
+        var (svc, first, _, archive, pair) = await Collected();
         using var _a = archive;
         Assert.NotNull(first.Dataset);
         Assert.Equal(DatasetState.ACCEPTED, first.Dataset!.State);
@@ -94,27 +95,27 @@ public class DatasetLedgerTests
         bytes[^1] ^= 0xFF;
         File.WriteAllBytes(raw, bytes);
 
-        var reread = svc.Store.Checked(svc.Store.Newest(Pair)!);
+        var reread = svc.Store.Checked(svc.Store.Newest(pair)!);
 
         Assert.Equal(DatasetState.REJECTED, reread.State);
         Assert.Contains("no longer matches the hash recorded for it", reread.RejectedReason);
-        Assert.Equal(DatasetState.REJECTED, svc.Store.Newest(Pair)!.State);
+        Assert.Equal(DatasetState.REJECTED, svc.Store.Newest(pair)!.State);
 
         // NEVER RE-NORMALISED: no new version is written from bytes nobody can identify.
-        var rebuilt = svc.Rebuild(Pair);
+        var rebuilt = svc.Rebuild(pair);
         Assert.Contains("was NOT rebuilt", rebuilt.Summary);
         Assert.Equal(DatasetState.REJECTED, rebuilt.Dataset!.State);
-        Assert.Equal("v1", svc.Store.Newest(Pair)!.Version);
+        Assert.Equal("v1", svc.Store.Newest(pair)!.Version);
         Assert.Single(svc.Store.All());
     }
 
     [Fact]
     public async Task The_same_raw_files_rebuild_to_the_same_normalised_hash()
     {
-        var (svc, first, _, archive) = await Collected();
+        var (svc, first, _, archive, pair) = await Collected();
         using var _a = archive;
 
-        var again = svc.Rebuild(Pair);
+        var again = svc.Rebuild(pair);
 
         Assert.NotNull(again.Dataset);
         Assert.Equal(first.Dataset!.NormalisedSha256, again.Dataset!.NormalisedSha256);
@@ -126,7 +127,7 @@ public class DatasetLedgerTests
     [Fact]
     public async Task Every_raw_file_is_recorded_with_its_url_both_hashes_and_the_unit_it_was_written_in()
     {
-        var (_, first, _, archive) = await Collected();
+        var (_, first, _, archive, _) = await Collected();
         using var _a = archive;
 
         var set = first.Dataset!;
@@ -148,13 +149,13 @@ public class DatasetLedgerTests
     [Fact]
     public async Task A_dataset_whose_normalised_file_was_edited_is_rejected_too()
     {
-        var (svc, first, _, archive) = await Collected();
+        var (svc, first, _, archive, pair) = await Collected();
         using var _a = archive;
 
         File.AppendAllText(first.Dataset!.NormalisedPath,
             "2026-08-01T00:03:00Z,100.00000000,101.00000000,99.00000000,100.50000000,1.00000000\n");
 
-        var reread = svc.Store.Checked(svc.Store.Newest(Pair)!);
+        var reread = svc.Store.Checked(svc.Store.Newest(pair)!);
 
         Assert.Equal(DatasetState.REJECTED, reread.State);
         Assert.Contains("normalised dataset file no longer matches", reread.RejectedReason);

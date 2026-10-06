@@ -115,8 +115,9 @@ public class DataLicenceTests
     [Fact]
     public async Task A_collection_takes_its_reading_only_from_the_built_in_origin()
     {
+        var pair = TestEnv.NewPair();
         using var archive = new FakeArchive();
-        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Pair, m, Minutes(m));
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(pair, m, Minutes(m));
         using var db = TestEnv.NewDb();
         var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
 
@@ -125,21 +126,21 @@ public class DataLicenceTests
         Assert.Equal(DataLicence.ResearchOnly, newest.Class);
 
         // LOOPBACK: the archive's id, not the archive's origin — nothing stamped, on the record and on the row.
-        var collected = (await svc.CollectAsync(Pair, Now)).Dataset!;
+        var collected = (await svc.CollectAsync(pair, Now)).Dataset!;
         Assert.Equal(DatasetLicence.Unrecorded, collected.Licence);
         Assert.Equal(DatasetLicence.Unrecorded, svc.Store.ById(collected.Id)!.Licence);
         Assert.False(svc.Store.ById(collected.Id)!.Licence.Confers);
 
         // THE BUILT-IN ORIGIN, AND ONLY IT, TAKES THE READING.
         var months = BinanceArchive.RecentCompleteMonths(Now).ToList();
-        var vendor = months.Select(m => BinanceArchive.MonthUrl(BinanceArchive.BaseUrl, Pair, m)).ToList();
+        var vendor = months.Select(m => BinanceArchive.MonthUrl(BinanceArchive.BaseUrl, pair, m)).ToList();
         Assert.Equal(new DatasetLicence(DataLicence.ResearchOnly, DataLicence.ArchiveTermsUrl,
                 DataLicence.ArchiveTermsVersion, DataLicence.ArchiveTermsReadOn),
             DataLicence.Stamp(BinanceArchive.Source, vendor, newest));
 
         // ONE PERIOD FROM ANYWHERE ELSE and none of it is stamped; nothing fetched, nothing stamped.
         Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(BinanceArchive.Source,
-            [.. vendor.Skip(1), BinanceArchive.MonthUrl(archive.BaseUrl, Pair, months[0])], newest));
+            [.. vendor.Skip(1), BinanceArchive.MonthUrl(archive.BaseUrl, pair, months[0])], newest));
         Assert.Equal(DatasetLicence.Unrecorded, DataLicence.Stamp(BinanceArchive.Source, [], newest));
 
         // A SOURCE WITH NO BUILT-IN ROW, or a built-in row with no endpoint, takes nothing whatever it names;
@@ -163,7 +164,7 @@ public class DataLicenceTests
             return c.ExecuteNonQuery();
         });
 
-        var rebuilt = svc.Rebuild(Pair).Dataset!;
+        var rebuilt = svc.Rebuild(pair).Dataset!;
         var carried = new DatasetLicence(DataLicence.FirstParty, "terms of the row's own", "v9", "2026-10-01");
         Assert.Equal("v2", rebuilt.Version);
         Assert.Equal(carried, rebuilt.Licence);

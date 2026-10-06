@@ -64,6 +64,27 @@ public static class TestEnv
 
     public static Database NewDb() => new(Path.Combine(Home, $"db-{Guid.NewGuid():n}.db"));
 
+    /// <summary>
+    /// A PAIR OF ITS OWN, FOR ONE TEST THAT COLLECTS THROUGH <c>MarketDataService</c> — never a constant.
+    ///
+    /// <para><b>The home is the process's</b> (<see cref="Init"/>), so <c>Paths.Data</c> is too, while the
+    /// ledger is the test's (<see cref="NewDb"/>). A collection writes into folders keyed by the pair — the
+    /// vendor's own files under <c>raw/</c> and the dataset file beside them — so two tests that share a
+    /// pair share those folders while each ledger believes it is alone in them. Paid for twice:
+    /// <c>CandleSourceTests</c> and <c>DatasetLedgerTests</c> once wrote part files into one directory and
+    /// deleted each other's, and on windows-latest (run 37421444199) <c>DataLicenceTests</c>' rebuild met a
+    /// raw file <c>DatasetLedgerTests</c> alters on purpose. A pair per CLASS is not enough: xUnit runs
+    /// classes in parallel, and two tests of one class still share whatever the first one left.</para>
+    ///
+    /// <para>The default is valid for <c>BinanceArchive.IsPair</c> and <c>DataCandleSource.RequireSymbol</c>
+    /// alike — upper-case letters and digits, seventeen of them; a <paramref name="quote"/> with a hyphen
+    /// (<c>-USD</c>) spells it as venues outside Binance do, which only the second accepts. The normalised
+    /// file's bytes do not depend on the pair — they hold instants and prices — so a hash pinned over them
+    /// is the same whichever pair a test takes.</para>
+    /// </summary>
+    public static string NewPair(string quote = "USDT") =>
+        $"X{Guid.NewGuid():N}"[..13].ToUpperInvariant() + quote;
+
     static int _homeDeleted;
 
     /// <summary>
