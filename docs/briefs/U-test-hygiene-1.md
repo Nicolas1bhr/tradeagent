@@ -33,3 +33,23 @@ Proof: item 1 — show the crossing deterministically BEFORE the change (e.g. on
 (both counts quoted), and the kept-home variable shown working once.
 Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; Unit and
 Fault 0 failed; touched classes 3×; names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
+## Report
+**Tip** `edb248c1` (code; this report is the next commit), rebased on `main` `2a12951c`, no conflict. Tests only: no product file, no rung, no test removed or renamed.
+**Item 1, DONE:** every meter test that records a turn and then reads "today" pins ONE instant — `TestEnv.LocalNoon()` (today's local noon, the suite's own idiom) or the meter's
+`now` — in the three named classes and, by the brief's grep, `TurnAllowanceTests` ×2 and `AiAttemptLedgerTests` ×1 (a row starts 3–5 s before its record instant), plus four
+with two real-clock reads: `HarnessBudgetTests`, `HarnessKeyOriginTests`, `VendorLimitTests` (and its ±1-day `OnlyRow`), `BudgetReservationTests` ×2 (loop wait = meter's midnight − loop clock).
+GUARD `TurnRecordTests.A_turn_recorded_a_second_before_local_midnight_…`: 2026-07-15 23:59:59 local, read at +0.5 s → 1 turn at its exact cost; read at 00:00:01 → 0.
+**Item 1 proof (RUN, real clock, a `zic` zone whose local midnight had just passed):** base `2a12951c`, the three classes, bracketed 00:00:01→00:00:02 local: 6 of 20 red — the
+six of run 37163465037 with its figures (2/0, 0.007056/0, 1/0, 0.017256/0, 1/0, 0.056268/0); at the fix 21/21. `TurnAllowance`+`AiAttemptLedger` at 00:00:00→00:00:01: base 3 red
+(3.60/0, 4/1, `Single` on empty), fix 13/13. The four ms-window classes: NOT shown red (window too narrow). Guard mutant, `LocalDay` summing the UTC day: `Expected: 0 Actual: 1`, l. 433; `src` restored.
+**Item 2, DONE — declared deviation:** the home goes at the END OF THE ASSEMBLY'S RUN, `Shared/TestHomeFramework.cs` (xunit 2.9.3's executor and runner, its body checked against the IL,
+one step in `BeforeTestAssemblyFinishedAsync`; registered for all three projects in `tests/Directory.Build.props`), and again at process exit — not exit alone: VSTest kills the host ~100 ms after
+asking it to stop (a 2 s exit handler measured never finishing) and deleting a copy of a full Unit home (316 MB, 1,375 files) took 136 ms. Errors swallowed; nothing deleted outside `tradeagent-tests`.
+`TA_TEST_KEEP_HOME=1` keeps it, its path printed once on the host's output (`dotnet test` shows it at `--logger "console;verbosity=normal"`). The four Loss roots: `using var root = TestEnv.NewScratch(…)`, a try/finally, now inside the home.
+**Item 2 proof:** base, filtered run: 1 home left. Fix, full Unit: raw 28 → 28, 0 newer than the marker; exit handler disabled: 0 left (the hook alone); keep run: printed `…/88a551d2…`, the one new entry, its two scratch dirs inside; deleted by hand.
+**Gate:** `--no-incremental` Release 0 warnings, 0 errors. Local Unit 1382/1382, Fault 420/420 (the 2 entries newer than its marker hold other worktrees' paths: u-flatten-confirm, u-runner-exit-hygiene-a). 3× the 13 touched classes: 93/93 each.
+CI 37391490827 at `edb248c`: ubuntu ✓ 13 min, macos ✓ 16 min, windows ✓ 50 min (each: Unit 1382, Fault 420, Integration 718 + 1 skipped; Timing first try), package ✓. Names vs `main`: removed 0, added 1, 2157 → 2158.
+**Midnight:** that run was dispatched 23:59:12Z and crossed 00:00Z, but its test steps began 00:00:19Z (ubuntu), 00:00:45Z (macos), 00:00:48Z (windows) — past the 12.5 s window: the six passed there; NOT crossing evidence.
+**Tests box:** NOT RUN — ready: NO - the machine does not answer (…).
+**NOT done / NOT verified:** `RiskGateTests.A_day_past_its_loss_budget_refuses_…` (Fault) has the shape on the UTC day — fills stamped by `FakeBroker`'s own `UtcNow` (`:146`), no seam — so closing it needs a
+product change; left. Windows leftovers (held files) not measured; a host killed mid-run still leaves its home to `purge-test-homes.sh`; an IDE reusing one host for two runs is not handled.
