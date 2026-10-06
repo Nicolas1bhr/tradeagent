@@ -23,13 +23,6 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class CandleSourceTests
 {
-    /// <summary>
-    /// NOT BTCUSDT. The raw archive folder is app-owned and keyed by the PAIR, and xUnit runs test
-    /// classes in parallel: sharing a pair with <c>DatasetLedgerTests</c> had the two collections
-    /// writing part files into one directory and deleting each other's. The normalised file's bytes do
-    /// not depend on the pair — it holds instants and prices — so the hash below is unaffected.
-    /// </summary>
-    const string Pair = "XBTUSDT";
     static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>
@@ -38,7 +31,8 @@ public class CandleSourceTests
     ///
     /// It is a constant rather than a comparison against a second run because the claim is about a
     /// build that no longer exists: what has to stay true is that today's collector writes the SAME
-    /// bytes the old one did, and only a number carried over from the old one can say so.
+    /// bytes the old one did, and only a number carried over from the old one can say so. The pair is
+    /// the test's own (<see cref="TestEnv.NewPair"/>), and the bytes do not depend on it.
     /// </summary>
     const string BinanceNormalisedSha256Before =
         "6a5958f4f261e333136a652be9f95972726a34af42aefe66da8d19b75184b6bb";
@@ -60,12 +54,13 @@ public class CandleSourceTests
 
     static async Task<(DataCollection Got, Database Db, FakeArchive Archive)> CollectBinance()
     {
+        var pair = TestEnv.NewPair();
         var archive = new FakeArchive();
-        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Pair, m, Rows(m));
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(pair, m, Rows(m));
 
         var db = TestEnv.NewDb();
         var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
-        return (await svc.CollectAsync(Pair, Now), db, archive);
+        return (await svc.CollectAsync(pair, Now), db, archive);
     }
 
     /// <summary>
@@ -89,8 +84,11 @@ public class CandleSourceTests
 
     // ---- the second source, against the loopback harness and nothing else ----------------------
 
-    /// <summary>The instrument the second source is asked for. Hyphenated, as venues outside Binance spell it.</summary>
-    const string Symbol = "BTC-USD";
+    /// <summary>
+    /// The instrument the second source is asked for: the test's own (<see cref="TestEnv.NewPair"/>), and
+    /// hyphenated, as venues outside Binance spell it.
+    /// </summary>
+    static string NewSymbol() => TestEnv.NewPair("-USD");
 
     /// <summary>
     /// THE SHIPPED REVOLUT X ROW, POINTED AT A LOOPBACK LISTENER.
@@ -125,19 +123,19 @@ public class CandleSourceTests
     }
 
     /// <summary>The path the second source's URL resolves to on the loopback listener.</summary>
-    static string SecondPath(FakeArchive archive, ICandleSource source) =>
-        new Uri(source.Periods(Symbol, Now).Single().Url).AbsolutePath;
+    static string SecondPath(ICandleSource source, string symbol) =>
+        new Uri(source.Periods(symbol, Now).Single().Url).AbsolutePath;
 
     static async Task<(DataCollection Got, Database Db)> CollectSecond(
-        FakeArchive archive, int candles = 12, int withoutVolume = 0,
+        FakeArchive archive, string symbol, int candles = 12, int withoutVolume = 0,
         Action<string>? recordDecision = null)
     {
         var source = Second(archive);
-        archive.PublishAt(SecondPath(archive, source), Candles(Now.AddDays(-2), candles, withoutVolume));
+        archive.PublishAt(SecondPath(source, symbol), Candles(Now.AddDays(-2), candles, withoutVolume));
 
         var db = TestEnv.NewDb();
         var svc = new MarketDataService(db);
-        return (await svc.CollectAsync(source, Symbol, Now, recordDecision: recordDecision), db);
+        return (await svc.CollectAsync(source, symbol, Now, recordDecision: recordDecision), db);
     }
 
     /// <summary>
@@ -149,7 +147,8 @@ public class CandleSourceTests
     public async Task A_source_declaring_five_minutes_and_ninety_days_does_not_produce_a_one_minute_twelve_month_row()
     {
         using var archive = new FakeArchive();
-        var (got, db) = await CollectSecond(archive);
+        var symbol = NewSymbol();
+        var (got, db) = await CollectSecond(archive, symbol);
         using var _d = db;
 
         Assert.NotNull(got.Dataset);
@@ -162,7 +161,7 @@ public class CandleSourceTests
         // starting two days ago span one hour, which is one UTC day.
         Assert.Equal(1, got.Dataset.CoverageActualDays);
         Assert.Equal(CandleSourceCatalog.RevolutXCandles, got.Dataset.Source);
-        Assert.Equal("BTC-USD", got.Dataset.InstrumentSymbol);
+        Assert.Equal(symbol, got.Dataset.InstrumentSymbol);
 
         // A FIVE-MINUTE DATASET HAS NO GAPS BETWEEN CONSECUTIVE BARS. Counted a minute at a time, as
         // this build counted before the interval reached the normaliser, these twelve bars would read
@@ -178,7 +177,7 @@ public class CandleSourceTests
     public async Task A_volume_less_candle_is_flagged_in_the_file_and_counted_on_the_row()
     {
         using var archive = new FakeArchive();
-        var (got, db) = await CollectSecond(archive, candles: 10, withoutVolume: 4);
+        var (got, db) = await CollectSecond(archive, NewSymbol(), candles: 10, withoutVolume: 4);
         using var _d = db;
 
         Assert.NotNull(got.Dataset);
@@ -239,9 +238,10 @@ public class CandleSourceTests
     public async Task The_second_sources_dataset_records_its_raw_file_its_provenance_and_its_venue()
     {
         using var archive = new FakeArchive();
+        var symbol = NewSymbol();
         var source = Second(archive);
-        var url = source.Periods(Symbol, Now).Single().Url;
-        var (got, db) = await CollectSecond(archive);
+        var url = source.Periods(symbol, Now).Single().Url;
+        var (got, db) = await CollectSecond(archive, symbol);
         using var _d = db;
 
         Assert.NotNull(got.Dataset);
@@ -287,7 +287,7 @@ public class CandleSourceTests
         var decisions = new List<string>();
 
         using var archive = new FakeArchive();
-        var (got, db) = await CollectSecond(archive, recordDecision: decisions.Add);
+        var (got, db) = await CollectSecond(archive, NewSymbol(), recordDecision: decisions.Add);
         using var _d = db;
 
         Assert.Equal("", Assert.Single(got.Dataset!.Files).PublishedSha256);
@@ -312,16 +312,17 @@ public class CandleSourceTests
     [Fact]
     public async Task An_accepted_dataset_wakes_research_once_and_a_rebuild_wakes_nobody()
     {
+        var pair = TestEnv.NewPair();
         var archive = new FakeArchive();
         using var _a = archive;
-        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Wakes, m, Rows(m));
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(pair, m, Rows(m));
 
         using var db = TestEnv.NewDb();
         var nudges = 0;
         var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl), () => nudges++);
         var events = new MissionEventStore(db);
 
-        var got = await svc.CollectAsync(Wakes, Now);
+        var got = await svc.CollectAsync(pair, Now);
         Assert.NotNull(got.Dataset);
         Assert.True(got.Woke);
         Assert.Equal(1, nudges);
@@ -339,7 +340,7 @@ public class CandleSourceTests
             e => e.Kind == MissionEventKind.Data);
 
         // A REBUILD IS A RE-VERIFICATION, NOT NEWS: same raw files, same bytes, same id, no turn.
-        var again = svc.Rebuild(Wakes);
+        var again = svc.Rebuild(pair);
         Assert.Equal(got.Dataset.NormalisedSha256, again.Dataset!.NormalisedSha256);
         Assert.False(again.Woke);
         Assert.Equal(1, nudges);
@@ -347,14 +348,11 @@ public class CandleSourceTests
             e => e.Kind == MissionEventKind.Data);
 
         // AND THE SITUATION NAMES IT, which is where a turn reads what it has to work with.
-        var line = MissionSituation.DataLine(svc.Store.Newest(Wakes), DateTimeOffset.UtcNow);
-        Assert.Contains(Wakes, line);
+        var line = MissionSituation.DataLine(svc.Store.Newest(pair), DateTimeOffset.UtcNow);
+        Assert.Contains(pair, line);
         Assert.Contains(BinanceArchive.Interval, line);
         Assert.Contains($"{got.Dataset.Bars:N0} bars", line);
     }
-
-    /// <summary>A pair of its own: this class's other collections must not raise this one's wake.</summary>
-    const string Wakes = "WAKEUSDT";
 
     /// <summary>
     /// A DATASET WITH DIFFERENT BYTES IS DIFFERENT NEWS. The dedup is by the evidence and not by the
@@ -364,7 +362,8 @@ public class CandleSourceTests
     public async Task A_second_dataset_with_different_bytes_raises_a_second_wake()
     {
         using var archive = new FakeArchive();
-        var (first, db) = await CollectSecond(archive, candles: 6);
+        var symbol = NewSymbol();
+        var (first, db) = await CollectSecond(archive, symbol, candles: 6);
         using var _d = db;
 
         var events = new MissionEventStore(db);
@@ -373,8 +372,8 @@ public class CandleSourceTests
 
         // The same source and symbol, different bars: a new file, a new hash, a new reason to look.
         var source = Second(archive);
-        archive.PublishAt(SecondPath(archive, source), Candles(Now.AddDays(-3), 9));
-        var second = await new MarketDataService(db).CollectAsync(source, Symbol, Now);
+        archive.PublishAt(SecondPath(source, symbol), Candles(Now.AddDays(-3), 9));
+        var second = await new MarketDataService(db).CollectAsync(source, symbol, Now);
 
         Assert.NotEqual(first.Dataset!.NormalisedSha256, second.Dataset!.NormalisedSha256);
         Assert.True(second.Woke);
