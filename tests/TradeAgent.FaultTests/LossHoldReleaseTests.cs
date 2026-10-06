@@ -331,13 +331,18 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
     /// and the reason is named — to the engineering log, and on the surfaces in place of asking him to
     /// confirm records he has already answered.</para>
     ///
+    /// <para>A history read that does not answer is no better: it cannot say the close is not live, so it
+    /// decides nothing either, on the same drive (the second case).</para>
+    ///
     /// <para><b>The mutant this watches:</b> the live-order veto dropped. His CANCELLED is then taken, the
     /// confirm is written over a live close, the book reads open and the closing again cancels the resting
     /// close at the platform and sends another — <c>Closes</c> 2 and a confirm here, where nothing may
     /// move.</para>
     /// </summary>
-    [Fact]
-    public async Task A_lost_close_the_owner_answers_never_existed_while_the_platform_holds_it_working_decides_nothing()
+    [Theory]
+    [InlineData("history shows it")]
+    [InlineData("history read throws")]
+    public async Task A_lost_close_the_owner_answers_never_existed_while_the_platform_holds_it_working_decides_nothing(string history)
     {
         var (gw, conn, db, clock) = await Ready();
         using var _1 = db;
@@ -354,7 +359,10 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         var cancels = conn.Cancels;
 
         var said = AnswerEveryRecord(gw, lost.RequestId, ExecutionState.CANCELLED, "I checked in ATAS: no such order exists");
+        log.WriteLine($"[{history}]");
         log.WriteLine($"the owner answered    : {string.Join(" | ", said)}");
+        if (history == "history read throws")
+            conn.HistoryThrows = new ConnectorTransportException("this platform cannot show its order history back that far");
 
         clock.MoveTo(NoLongerOnItsWay(gw, lost));
         await Passes(gw, clock, 3);
@@ -377,14 +385,15 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         Assert.Empty(db.KvStartingWith("loss_flatten_again:"));
         Assert.NotNull(gw.DayClosed(account));
 
-        // NAMED: the platform holds it WORKING, and that outranks his answer — to the engineering log, and on
-        // the surfaces, which no longer ask him to confirm the records he has answered.
-        Assert.Contains(undecided, u => u.Contains("WORKING", StringComparison.Ordinal)
-                                         && u.Contains("outranks your answer", StringComparison.Ordinal));
+        // NAMED — to the engineering log, and on the surfaces, which no longer ask him to confirm the records
+        // he has answered: the platform holds it WORKING and that outranks his answer, or its history could
+        // not be read to check.
+        var why = history == "history shows it" ? "outranks your answer" : "could not be read to check that the close is not still live";
+        Assert.Contains(undecided, u => u.Contains(why, StringComparison.Ordinal));
         Assert.Equal("unresolved", state.State);
         Assert.Contains("You have answered every record it left on the Dashboard", state.Why!, StringComparison.Ordinal);
-        Assert.Contains("holds it as WORKING", state.Why!, StringComparison.Ordinal);
-        Assert.Contains("outranks your answer", state.Why!, StringComparison.Ordinal);
+        Assert.Contains(why, state.Why!, StringComparison.Ordinal);
+        if (history == "history shows it") Assert.Contains("holds it as WORKING", state.Why!, StringComparison.Ordinal);
         Assert.DoesNotContain("until you confirm those records", state.Why!, StringComparison.Ordinal);
     }
 
