@@ -463,4 +463,99 @@ public class AgentCloseOverAnUnknownCloseTests(ITestOutputHelper Out)
         Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
         await gw.DisposeAsync();
     }
+
+    // ---- U-close-once: an earlier market close that is still IN FLIGHT, answered and not yet filled ----------
+
+    /// <summary>
+    /// (U-close-once, a) A CLOSE THE PLATFORM ACKNOWLEDGED AND HAS NOT FILLED IS AN EARLIER CLOSE TOO. The
+    /// agent's first close RESTS — nothing was lost, the record says <c>WORKING</c>, nothing pauses — so the
+    /// position still reads 2 and the stale-close read agrees with a second close sized from it. The second
+    /// close and a plain market sell under the long are refused <c>CLOSE_IN_FLIGHT</c>, naming the first and
+    /// its state, before any record of theirs exists. One sell reaches the broker, and once it fills the
+    /// account is flat.
+    ///
+    /// <para><b>RED on the base</b> (the UNKNOWN rule alone): both go out — three sells at the broker, ES -3
+    /// once they fill. Seat A's probe measured the same at 2952c285 with one lot: "ok", two sells, -1.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_close_is_refused_while_an_earlier_market_close_of_the_position_still_works()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        var ai = new AgentContext("ai");
+        await gw.PlaceAsync(ai, "cif-open", TestEnv.Buy("ES", 2m));
+
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;     // the close RESTS, and its answer is in the book
+        var first = await gw.CloseAsync(ai, "cif-first", "ES");
+        Assert.Equal(ExecutionState.WORKING, first!.State);
+
+        var second = await Refusal(() => gw.CloseAsync(ai, "cif-second", "ES"));
+        var reduce = await Refusal(() => gw.PlaceAsync(ai, "cif-reduce",
+            new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+        var sells = c.Inner.Broker.Orders.Count(o => o.Side == OrderSide.Sell);
+        Out.WriteLine($"second close            : {second?.Code.ToString() ?? "ok"} — {second?.Message}");
+        Out.WriteLine($"plain market sell       : {reduce?.Code.ToString() ?? "ok"} — {reduce?.Message}");
+        Out.WriteLine($"orders at the broker    : {Unresolved.Book(c)}");
+
+        // Price arrives: every order still resting at the broker fills, as a real book's would.
+        foreach (var o in c.Inner.Broker.Orders.Where(o => o.State == ExecutionState.WORKING).ToList())
+            c.Inner.Broker.FillWorking(o.ConnectorOrderId);
+        Out.WriteLine($"position once they fill : {await Unresolved.Pos(c)}");
+
+        Assert.Equal(1, sells);
+        Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
+        foreach (var refused in new[] { second, reduce })
+        {
+            Assert.NotNull(refused);
+            Assert.Equal(ErrorCode.CLOSE_IN_FLIGHT, refused!.Code);
+            Assert.Contains(first.RequestId, refused.Message);
+            Assert.Contains(nameof(ExecutionState.WORKING), refused.Message);
+        }
+        Assert.Null(gw.GetRequest("cif-second"));
+        Assert.Null(gw.GetRequest("cif-reduce"));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (U-close-once, guard) ONLY THIS PLATFORM AND THIS ACCOUNT. A market sell another account of the same
+    /// platform holds <c>WORKING</c>, and one another platform left <c>WORKING</c> under the same account id, move
+    /// nothing this close is sized from — and the second is never moved by this platform's stream, so counting
+    /// it would hold this position's closes for good. Neither refuses anything here: the close goes out and
+    /// the account is flat. Green on the base, which has no in-flight rule to scope.
+    /// </summary>
+    [Fact]
+    public async Task A_working_sell_on_another_account_or_platform_refuses_nothing_here()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        var ai = new AgentContext("ai");
+        await gw.PlaceAsync(ai, "cif-open", TestEnv.Buy("ES", 2m));
+
+        var store = new ExecutionRequestStore(db);
+        Assert.True(store.TryCreate(AWorkingMarketSell("cif-other-account", c.Id, "SIM-002")).Created);
+        Assert.True(store.TryCreate(AWorkingMarketSell("cif-other-platform", "atas", c.Inner.Broker.AccountId)).Created);
+
+        var closed = await gw.CloseAsync(ai, "cif-here", "ES");
+        Out.WriteLine($"close beside them       : {closed?.State.ToString() ?? "null"}");
+
+        Assert.Equal(ExecutionState.FILLED, closed!.State);
+        Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
+        await gw.DisposeAsync();
+    }
+
+    static ExecutionRequest AWorkingMarketSell(string id, string connector, string account) => new()
+    {
+        RequestId = id, ConnectorId = connector, AccountId = account, Instrument = "ES",
+        Intent = RequestIntent.PLACE,
+        ParametersJson = Json.Write(new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 2m, null, null,
+            TimeInForce.Day, "close position") { Intent = OrderIntent.Close }),
+        ClientOrderId = TradingGateway.ClientOrderIdFor(id), CreatedAt = DateTimeOffset.UtcNow,
+        State = ExecutionState.WORKING, Mode = TradingMode.PAPER
+    };
+
+    static async Task<GatewayDeniedException?> Refusal(Func<Task> call)
+    {
+        try { await call(); return null; }
+        catch (GatewayDeniedException ex) { return ex; }
+    }
 }

@@ -35,6 +35,14 @@ public enum ErrorCode
     // CLOSE_UNRESOLVED_ON_INSTRUMENT is the word on the emergency press's leg, which refuses ONE
     // instrument and still closes the others.
     CLOSE_UNRESOLVED, CLOSE_UNRESOLVED_ON_INSTRUMENT,
+    // AN EARLIER MARKET ORDER ON THE POSITION A CLOSE IS BEING SIZED FROM THAT IS STILL IN FLIGHT, and
+    // in flight is the whole difference from CLOSE_UNRESOLVED (U-close-once). That code is an order
+    // nobody has an answer for; this one is an ordinary order on the same platform, account and
+    // instrument, moving the position the same way, that is being sent or that the platform holds and
+    // has not finished — resting to the next bar on paper, to its fill report on ATAS. It moves no
+    // position until it fills, so a second close sized from the position now closes it twice. Its own
+    // code because the repair differs: there is no card to confirm, only an answer to wait for.
+    CLOSE_IN_FLIGHT,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     // The caller is authenticated and is not allowed to do THIS. Its own code rather than
     // IPC_UNAUTHENTICATED, which reads "your token is wrong" and would send whoever owns that peer
@@ -847,6 +855,11 @@ public static class Errors
         // it prescribes a different reading: the press did close every other instrument, so what the
         // owner is being told is that this one is the exception and may still be open.
         [ErrorCode.CLOSE_UNRESOLVED_ON_INSTRUMENT] = ("One instrument was left alone by the emergency press: TradeAgent has an earlier order on it that it could not confirm and could not stop, so it sent nothing rather than close on top of it. That position may still be open.", "Every other position was closed. Open ATAS and look at this instrument, confirm the unconfirmed order on the Dashboard, then press Close all positions again.", false),
+        // THE THIRD READING OF THE SAME DOUBLING, and the one where nothing is wrong. Not a position
+        // that already moved, not an order nobody can account for: an earlier order that will close
+        // this position has been sent and has not filled yet. The repair names no button, because the
+        // answer is that order's own — and a run's END sends its close again by itself once it has one.
+        [ErrorCode.CLOSE_IN_FLIGHT]                = ("TradeAgent already has an earlier order on its way to close this position, and it has not filled yet, so it refused to send a second one sized from the position as it looks now.", "Nothing was sent and your position is untouched. There is nothing to do: once that earlier order has filled, been cancelled or been refused, whatever is left of the position can be closed.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         // NOT "you waited too long" and NOT "the budget is reached". The proposal was written against
         // a book TradeAgent has since closed for you, so approving it would put on a position sized
