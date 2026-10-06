@@ -398,7 +398,7 @@ public sealed class GdeltRecorder : IAsyncDisposable
                     storageMd5 = StorageMd5(response);
                     await using var body = await response.Content.ReadAsStreamAsync(leash.Token);
                     read = await GdeltGkg.ReadBatchAsync(body, label, MaxFileBytes, budget, leash.Token);
-                    if (read.Refused is { } why) note = read.OverBudget ? "not stored: " + why : "the file was not read: " + why;
+                    if (read.Refused is { } why) note = read.OverBudget ? GdeltGkg.CapNotePrefix + why : "the file was not read: " + why;
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

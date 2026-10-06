@@ -689,7 +689,41 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                 $"the forward ledger could not be read ({ex.Message})"));
         }
 
-        return new ReportOtherCosts { ForwardData = forward, Missing = gaps };
+        return new ReportOtherCosts { ForwardData = forward, Tape = TapeLine(from, to, gaps), Missing = gaps };
+    }
+
+    /// <summary>
+    /// THE TAPE'S DAY IN ONE LINE (<c>U-tape-read</c>): rows, gaps and errors, read off the tape's own rows through the
+    /// gateway's read-only reader. Null when no tape is open; a read that fails is a gap in the owner's words, never a
+    /// zero — a zero here would read as a day on which the tape worked and recorded nothing.
+    /// </summary>
+    string? TapeLine(DateTimeOffset from, DateTimeOffset to, List<ReportGap> gaps)
+    {
+        if (gateway.Tape is not { } tape) return null;
+        try
+        {
+            var day = tape.Day(from, to);
+            return $"{day.Rows:N0} rows recorded from {day.Requests:N0} requests, {day.Failed:N0} of them recorded a failure, "
+                   + $"{day.Gaps:N0} gaps (a source's deliveries further apart than twice its cadence plus 30 s)"
+                   + (day.LongestGap is { } longest
+                       ? $", the longest {longest.TotalMinutes:N0} min on {day.LongestGapSource}"
+                       : "")
+                   + (gateway.Settings.RecordMarketContext ? "" : " — Record market context is switched OFF")
+                   + (gateway.Settings.RecordGdeltNews ? "" : " — Record GDELT news is switched OFF")
+                   + (day.LastError is { Length: > 0 } why ? $" — last failure: {why.ReplaceLineEndings(" ")}" : "")
+                   // THE CREDIT TRAVELS WITH THE FIGURE. GDELT's terms ask every use of its data to cite the project
+                   // and link to its site, and this document is shown to the owner and served to the AI.
+                   + (day.GdeltRows > 0
+                       ? $"; {day.GdeltRows:N0} of the rows are GDELT's news items and file records ({TapeSourceCatalog.GdeltCitation})"
+                       : "")
+                   + ". Research context, never evaluation evidence: O-LIVE rows only are first-hand, and nothing fills a gap. "
+                   + "No price: TradeAgent does not know what this installation's bandwidth costs.";
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("market context tape", $"the tape could not be read ({ex.Message})"));
+            return null;
+        }
     }
 
     ReportResearch ComposeResearch(DateTimeOffset from, DateTimeOffset to)

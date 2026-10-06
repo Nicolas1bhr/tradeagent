@@ -633,7 +633,64 @@ public sealed record GatewayStatus(
     /// other unreadable ledger on this status does.</para>
     /// </summary>
     public IReadOnlyList<StatusDeployment>? Deployments { get; init; }
+
+    /// <summary>
+    /// WHETHER THE MARKET-CONTEXT TAPE IS RECORDING, read off its own rows (<c>U-tape-read</c>) — or ABSENT because this
+    /// installation has no tape open, which the activity log explains. Each of the owner's two switches is reported with
+    /// what it is actually getting: its newest delivery, its failures in the last hour, what is failing now, and for
+    /// GDELT whether the daily cap stopped it today.
+    ///
+    /// <para>It is on the status because an agent about to read the tape, or to reason from its newest rows, needs to
+    /// know whether they are current before it trusts them. ABSENT never means "recording"; there is no verb and no op
+    /// that starts, stops or writes it.</para>
+    /// </summary>
+    public TapeStatus? Tape { get; init; }
 }
+
+/// <summary>
+/// THE TAPE AS THE STATUS REPORTS IT. <paramref name="Recording"/> is true while either switch's recorder has delivered
+/// within its window (<see cref="TapeRecorderStatus.Recording"/>); <paramref name="RowsToday"/> counts the rows that
+/// arrived since UTC midnight and <paramref name="FailuresLastHour"/> the attempts in the last hour that delivered
+/// nothing.
+/// </summary>
+public sealed record TapeStatus(bool Recording, long RowsToday, int FailuresLastHour)
+{
+    /// <summary>The "Record market context" switch: Binance's market rows, OKX's announcements and any row tape-sources.json adds.</summary>
+    public required TapeRecorderStatus MarketContext { get; init; }
+
+    /// <summary>The "Record GDELT news" switch.</summary>
+    public required TapeRecorderStatus GdeltNews { get; init; }
+
+    /// <summary>Every source the tape holds attempts of: its newest delivery, its failures in the last hour, what is failing now.</summary>
+    public IReadOnlyList<TapeSourceStatus> Sources { get; init; } = [];
+}
+
+/// <summary>
+/// ONE OF THE OWNER'S TWO SWITCHES, AND WHAT ITS RECORDER IS GETTING. <paramref name="On"/> is the switch;
+/// <paramref name="Recording"/> is the switch on AND a delivery within <paramref name="WithinSeconds"/> — a recorder
+/// that is switched on and has been failing all morning is not recording, and this says so.
+/// </summary>
+public sealed record TapeRecorderStatus(
+    string Switch, bool On, bool Recording, long WithinSeconds,
+    // NEVER DROPPED WHEN NULL: "nothing has arrived yet" and "this build has no such field" are different answers.
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+    DateTimeOffset? LastReceivedAt,
+    int FailuresLastHour,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+    string? LastError)
+{
+    /// <summary>For GDELT's recorder: whether its daily cap stopped a file labelled today (UTC). Absent for the other switch.</summary>
+    public bool? DailyCapReachedToday { get; init; }
+}
+
+/// <summary>One source of the tape on the status: its switch, its newest delivery, its failures in the last hour, what is failing now.</summary>
+public sealed record TapeSourceStatus(
+    string Source, string Switch,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+    DateTimeOffset? LastReceivedAt,
+    int FailuresLastHour,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+    string? LastError);
 
 /// <summary>
 /// THE PAPER PLATFORM'S FRICTION AS THE STATUS REPORTS IT: the two fractions, where they came from,

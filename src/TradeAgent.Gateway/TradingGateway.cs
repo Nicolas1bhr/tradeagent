@@ -2758,8 +2758,54 @@ public sealed class TradingGateway : IAsyncDisposable
             InstrumentCheck = InstrumentCheckForStatus(),
             LossValuationLost = loss.ValuationLost.Count > 0 ? loss.ValuationLost : null,
             LossValuationExit = loss.ValuationExits.Count > 0 ? loss.ValuationExits : null,
-            AiModel = ai.Model
+            AiModel = ai.Model,
+            // WHETHER THE TAPE IS RECORDING, off its own rows (U-tape-read).
+            Tape = TapeForStatus()
         };
+    }
+
+    /// <summary>How recent a delivery has to be for the market-context recorder to count as recording: five of its one-minute looks.</summary>
+    public static readonly TimeSpan MarketContextRecordingWindow = TimeSpan.FromMinutes(5);
+
+    /// <summary>How recent a delivery has to be for GDELT's recorder to count as recording: two of its fifteen-minute looks.</summary>
+    public static readonly TimeSpan GdeltNewsRecordingWindow = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// THE TAPE, FOR THE STATUS: each switch with what its recorder is actually getting, read off the tape's rows through
+    /// the read-only reader. ABSENT when this gateway has no tape, and when the read throws — the status must render,
+    /// and an invented "recording" here would tell the agent the context it is about to reason from is current.
+    /// </summary>
+    TapeStatus? TapeForStatus()
+    {
+        if (Tape is not { } tape) return null;
+        try
+        {
+            var now = Now;
+            var seen = tape.Recording(now);
+
+            TapeRecorderStatus Recorder(string @switch, bool on, TimeSpan window, bool? cap)
+            {
+                var mine = seen.Sources.Where(s => s.Switch == @switch).ToList();
+                var last = mine.Max(s => s.LastReceivedAt);
+                var failing = mine.Where(s => s.LastError is not null).MaxBy(s => s.LastErrorAt);
+                return new TapeRecorderStatus(@switch, on, on && last is { } at && now - at <= window,
+                    (long)window.TotalSeconds, last, mine.Sum(s => s.FailuresLastHour), failing?.LastError)
+                {
+                    DailyCapReachedToday = cap
+                };
+            }
+
+            var market = Recorder(TapeReader.MarketContextSwitch, Settings.RecordMarketContext, MarketContextRecordingWindow, null);
+            var gdelt = Recorder(TapeReader.GdeltNewsSwitch, Settings.RecordGdeltNews, GdeltNewsRecordingWindow, seen.GdeltCapReachedToday);
+
+            return new TapeStatus(market.Recording || gdelt.Recording, seen.RowsToday, seen.FailuresLastHour)
+            {
+                MarketContext = market,
+                GdeltNews = gdelt,
+                Sources = [.. seen.Sources.Select(s => new TapeSourceStatus(s.Source, s.Switch, s.LastReceivedAt, s.FailuresLastHour, s.LastError))]
+            };
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>
