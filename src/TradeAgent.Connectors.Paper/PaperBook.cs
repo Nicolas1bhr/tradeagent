@@ -405,12 +405,25 @@ public sealed class PaperBook : IDisposable
     /// a second constraint enforcing the same fact — which means dropping the named one changes
     /// nothing, and the guarantee stops being the one anybody reading this file would check. The id
     /// names the ROW; the unique key names the FACT.</para>
+    ///
+    /// <para><b>A SELL NEVER FILLS BEYOND WHAT IS HELD AT ITS BAR</b> (<c>U-runner-exit-hygiene-b</c>). The
+    /// venues these prices come from are SPOT venues, where an account cannot sell what it does not hold —
+    /// and a book that let it would turn a held quantity of zero into minus one, a short no spot account can
+    /// carry. So a new sell fill is judged against the holding read INSIDE this transaction, after every
+    /// earlier fill of the bar: when it is more than is held, the attempt is taken back to the savepoint
+    /// (the fill row and its execution id with it) and the order ends <see cref="ExecutionState.REJECTED"/>,
+    /// unfilled, with the reason in words — one transaction, so nothing can land between the read and the
+    /// answer. Only a NEW fill is judged: a replay of a bar the order already filled on is still the unique
+    /// key's to answer, before the holding is read, so a sell that emptied the book is never rejected by its
+    /// own fill. <paramref name="rejected"/> says which of the two a null was.</para>
     /// </summary>
-    public PaperFill? TryFill(PaperFill fill)
+    public PaperFill? TryFill(PaperFill fill, out bool rejected)
     {
+        rejected = false;
         lock (_gate)
         {
             using var tx = _conn.BeginTransaction();
+            tx.Save("attempt");
             fill = fill with { ExecutionId = "PX-" + Next(tx, "xseq") };
 
             using (var ins = _conn.CreateCommand())
@@ -434,6 +447,28 @@ public sealed class PaperBook : IDisposable
                 ins.Parameters.AddWithValue("$at", T(fill.At));
                 ins.Parameters.AddWithValue("$fr", fill.Friction);
                 if (ins.ExecuteNonQuery() == 0) { tx.Rollback(); return null; }
+            }
+
+            var (held, _) = PositionOf(tx, fill.Symbol);
+            if (fill.Side == OrderSide.Sell && held < fill.Quantity)
+            {
+                tx.Rollback("attempt");
+
+                using var reject = _conn.CreateCommand();
+                reject.Transaction = tx;
+                reject.CommandText = """
+                    UPDATE paper_order SET state='REJECTED', reject_reason=$why
+                     WHERE client_order_id=$coid AND state NOT IN ('FILLED','CANCELLED','REJECTED')
+                    """;
+                reject.Parameters.AddWithValue("$why",
+                    $"insufficient holdings: a sell of {D(fill.Quantity)} {fill.Symbol} reached on the bar opening "
+                    + $"{T(fill.BarOpenTime)} found {D(held)} held. A spot account cannot sell what it does not hold, "
+                    + "and this book simulates one; nothing was filled.");
+                reject.Parameters.AddWithValue("$coid", fill.ClientOrderId);
+                rejected = reject.ExecuteNonQuery() == 1;
+
+                tx.Commit();
+                return null;
             }
 
             using (var ord = _conn.CreateCommand())
@@ -553,6 +588,39 @@ public sealed class PaperBook : IDisposable
         c.Parameters.AddWithValue("$s", symbol);
         using var r = c.ExecuteReader();
         return r.Read() ? (Dec(r.GetString(0)), Dec(r.GetString(1))) : (0m, 0m);
+    }
+
+    /// <summary>
+    /// WHAT A SELL PLACED NOW COULD BE COVERED BY: the quantity held in <paramref name="symbol"/> — none when the book
+    /// is flat — plus what the buys still working in it have left to fill. The paper connector refuses a sell beyond it
+    /// at placement (<c>U-runner-exit-hygiene-b</c>). It reserves nothing: what stops a sell filling past the holding is
+    /// <see cref="TryFill"/>, at its bar. A real spot venue locks a resting sell's holding when it accepts the order, so
+    /// two sells resting on one holding need an OCO there; this book lets both rest, and the second one reached is
+    /// rejected.
+    /// </summary>
+    public decimal HoldingAndWorkingBuys(string symbol)
+    {
+        lock (_gate)
+        {
+            var covered = 0m;
+
+            using (var held = _conn.CreateCommand())
+            {
+                held.CommandText = "SELECT quantity FROM paper_position WHERE symbol=$s";
+                held.Parameters.AddWithValue("$s", symbol);
+                if (held.ExecuteScalar() is string quantity) covered += Math.Max(Dec(quantity), 0m);
+            }
+
+            using var buys = _conn.CreateCommand();
+            buys.CommandText = """
+                SELECT quantity, filled_quantity FROM paper_order
+                 WHERE symbol=$s AND side='Buy' AND state NOT IN ('FILLED','CANCELLED','REJECTED')
+                """;
+            buys.Parameters.AddWithValue("$s", symbol);
+            using var r = buys.ExecuteReader();
+            while (r.Read()) covered += Dec(r.GetString(0)) - Dec(r.GetString(1));
+            return covered;
+        }
     }
 
     public IReadOnlyList<PaperPosition> Positions()
