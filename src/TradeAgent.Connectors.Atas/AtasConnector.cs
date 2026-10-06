@@ -249,7 +249,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     volatile BridgeHello? _hello;
 
     IncompatibleBridge? _incompatible;
-    DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// <see cref="LivenessClock"/>'s MONOTONIC reading when this peer last proved it is alive — an
+    /// accepted hello or a heartbeat, and nothing else — or <see cref="NoStamp"/>. A <c>long</c> and
+    /// not a wall time, so that subtracting a wall reading from it does not compile.
+    /// </summary>
+    long _lastHeartbeat = NoStamp;
 
     BridgeCredential? _credential;
     volatile bool _authenticated;
@@ -277,7 +283,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// all. Events and heartbeat refreshes both reach outside this class, so both wait for this.
     /// </summary>
     volatile bool _compatible;
-    DateTimeOffset _peerArrived = DateTimeOffset.MaxValue;
+
+    /// <summary>
+    /// <see cref="LivenessClock"/>'s MONOTONIC reading when the peer on the pipe was accepted, or
+    /// <see cref="NoStamp"/> with nobody there. The quiet-peer window and the auth grace both run
+    /// from it.
+    /// </summary>
+    long _peerArrived = NoStamp;
     UnauthenticatedBridge? _unauthenticated;
     string? _peerImage;
 
@@ -404,8 +416,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     (UnauthenticatedBridge? Peer, long At) UnauthenticatedNow(BridgeHello? hello)
     {
+        var arrived = Volatile.Read(ref _peerArrived);
         var silent = hello is null && !_authenticated
-                     && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
+                     && arrived != NoStamp && Since(arrived) > AuthGrace
             ? UnauthenticatedBridge.Silent
             : null;
         var refused = _unauthenticated;
@@ -453,11 +466,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <see cref="_authenticatedAt"/> outranks this, or the peer is refused and its own marker does.
     /// A hello ends it by ending the whole row.
     /// </summary>
-    string? Connecting(BridgeHello? hello) =>
-        _peerArrived != DateTimeOffset.MaxValue && hello is null && !_authenticated
-        && DateTimeOffset.UtcNow - _peerArrived <= AuthGrace
+    string? Connecting(BridgeHello? hello)
+    {
+        var arrived = Volatile.Read(ref _peerArrived);
+        return arrived != NoStamp && hello is null && !_authenticated && Since(arrived) <= AuthGrace
             ? "connecting — waiting for the add-on to authenticate"
             : null;
+    }
 
     /// <summary>
     /// A PEER WITH NO CURRENT DESCRIPTION OF ITSELF, in the two ways that happens — and they are not
@@ -551,10 +566,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // Snapshotted for the same reason everything else here is, even though this one is asked on
         // the read loop — the thread that writes it — so no interleaving is possible today. It is a
         // field the pulse path writes, and the next reader of it may not be on that thread.
-        var beat = _lastHeartbeat;
-        var arrived = _peerArrived == DateTimeOffset.MaxValue ? DateTimeOffset.MinValue : _peerArrived;
-        var lastHeard = beat > arrived ? beat : arrived;
-        return DateTimeOffset.UtcNow - lastHeard > HeartbeatTimeout;
+        var beat = Volatile.Read(ref _lastHeartbeat);
+        var arrived = Volatile.Read(ref _peerArrived);
+        // NoStamp is long.MinValue, so a stamp never taken never wins the comparison — and with
+        // neither taken, Since reads it as infinitely long ago, which is what it is.
+        return Since(Math.Max(beat, arrived)) > HeartbeatTimeout;
     }
 
     /// <summary>
@@ -568,17 +584,72 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     static void Observe(Task task) =>
         _ = task.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
 
-    /// <summary>Missing for longer than this and we treat the bridge as gone.</summary>
+    /// <summary>Missing for longer than this, on <see cref="LivenessClock"/>, and we treat the bridge as gone.</summary>
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
-    /// How long a peer may sit on the pipe saying nothing at all before the status row says so.
+    /// How long a peer may sit on the pipe saying nothing at all before the status row says so,
+    /// measured on <see cref="LivenessClock"/>.
     ///
     /// IT GOVERNS A SENTENCE ON A SCREEN AND NOTHING ELSE. No refusal depends on it, and none may:
     /// the refusal of an unproved hello is decided by whether the proof arrived, which is a fact
     /// this end already holds by the time the hello is read, not by how long anything took.
     /// </summary>
     public TimeSpan AuthGrace { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// THE CLOCK THE BRIDGE'S LIVENESS IS MEASURED ON, AND ONLY ITS MONOTONIC HALF IS READ — by
+    /// default the very <see cref="Environment.TickCount64"/> this connector's write and answer
+    /// deadlines already read, so in production there is one monotonic clock in this class, not two.
+    ///
+    /// It was the wall clock (<c>U-bridge-liveness-clock</c>), and a wall clock is a reading somebody
+    /// can set. An NTP correction or a clock put back by hand made <c>UtcNow − lastHeard</c> small or
+    /// negative, so a bridge that had stopped saying anything stayed READY and was never dropped for
+    /// as long as the step was wide — the DANGEROUS direction, a peer that answers nothing treated as
+    /// healthy by the gateway. A step forward dropped a live one. Now the heartbeat and arrival stamps,
+    /// <see cref="PeerHasGoneQuiet"/>, <see cref="GetHealthAsync"/> and both readings of
+    /// <see cref="AuthGrace"/> take <see cref="TimeProvider.GetTimestamp"/> and nothing else; the wall
+    /// half of this provider is never read here. How a dead bridge is declared is unchanged — the same
+    /// timeout, the same poll, the same comparisons — only the clock under them moved.
+    ///
+    /// EVERY OTHER DURATION HERE AND IN <c>BridgeServer</c> WAS ALREADY OFF THE WALL CLOCK, and is
+    /// left as it is: the write, frame, emergency and answer deadlines are <c>TickCount64</c>
+    /// arithmetic, and every wait — the idle poll, the accept pause, the send gate, the write, the
+    /// reply, and the bridge's heartbeat interval, reconnect delay, auth timeout and send gate — is a
+    /// <c>Task.Delay</c>, <c>CancelAfter</c> or <c>WaitAsync</c> on the runtime's timer queue, which
+    /// is monotonic. What still reads the wall clock is an INSTANT, never a duration, and has to:
+    /// <see cref="BridgeAuthFailure.When"/>, shown to the owner, and the <c>since</c> of an order or
+    /// execution history read, which is the broker's own timeline.
+    ///
+    /// A SEAM, so a test can step the wall half an hour either way while the monotonic half moves on
+    /// its own — the one difference this exists to see. The deadlines do not read it: they stay on
+    /// <see cref="Environment.TickCount64"/> itself, which is what this provider returns by default.
+    /// </summary>
+    public TimeProvider LivenessClock { get; init; } = TickCount.Provider;
+
+    /// <summary>A liveness stamp that was never taken: no heartbeat on record, or nobody on the pipe.</summary>
+    const long NoStamp = long.MinValue;
+
+    /// <summary>
+    /// How long ago a liveness stamp was taken, on <see cref="LivenessClock"/>'s monotonic half — the
+    /// ONE place a liveness duration is computed. <see cref="NoStamp"/> reads as
+    /// <see cref="TimeSpan.MaxValue"/>, which is what the <c>DateTimeOffset.MinValue</c> it replaces
+    /// read as: never heard is infinitely long ago. It is never subtracted, so a sentinel cannot
+    /// overflow into a peer that looks fresh.
+    /// </summary>
+    TimeSpan Since(long stamp) => stamp == NoStamp ? TimeSpan.MaxValue : LivenessClock.GetElapsedTime(stamp);
+
+    /// <summary>
+    /// <see cref="Environment.TickCount64"/> as a <see cref="TimeProvider"/>'s monotonic half, in
+    /// milliseconds — the counter the deadlines read, rather than <see cref="TimeProvider.System"/>'s
+    /// Stopwatch beside it. Its wall half and its timers are the base class's, and nothing reads them.
+    /// </summary>
+    sealed class TickCount : TimeProvider
+    {
+        public static readonly TimeProvider Provider = new TickCount();
+        public override long GetTimestamp() => Environment.TickCount64;
+        public override long TimestampFrequency => 1000;
+    }
 
     /// <summary>
     /// What the bridge says it can do, as of one instant. ONE SNAPSHOT: this used to read
@@ -636,7 +707,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 _pipeStream = CreateServer();
                 await _pipeStream.WaitForConnectionAsync(ct);
                 accepted = true;
-                _peerArrived = DateTimeOffset.UtcNow;
+                Volatile.Write(ref _peerArrived, LivenessClock.GetTimestamp());
                 // The stamp every state derived for THIS connection carries. See _peerArrivedAt.
                 _peerArrivedAt = Interlocked.Increment(ref _observed);
                 _peerImage = BridgePipeAuth.ClientImagePath(_pipeStream);
@@ -813,7 +884,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // that reconnects is accepted on its first hello.
         _refused = false;
         _compatible = false;
-        _peerArrived = DateTimeOffset.MaxValue;
+        Volatile.Write(ref _peerArrived, NoStamp);
         _peerArrivedAt = 0;
         _peerImage = null;
         _out = null;
@@ -965,7 +1036,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             NoteIncompatible(null);
             _compatible = true;
             _connected = true;
-            _lastHeartbeat = DateTimeOffset.UtcNow;
+            Volatile.Write(ref _lastHeartbeat, LivenessClock.GetTimestamp());
             ConnectionChanged?.Invoke(HealthState.READY);
             return true;
         }
@@ -985,7 +1056,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // LIVENESS IS ONE FACT AND ATTESTATION IS ANOTHER, AND THIS FRAME CARRIES BOTH.
             // The peer is plainly there, so the pulse is recorded whatever the payload turns out to
             // be: nothing below drops a connection or expires a clock.
-            _lastHeartbeat = DateTimeOffset.UtcNow;
+            Volatile.Write(ref _lastHeartbeat, LivenessClock.GetTimestamp());
 
             // A heartbeat carries the bridge's current answer, because capabilities are not settled
             // at the handshake: SupportsClientOrderId cannot be true until an order has proved it,
@@ -1766,7 +1837,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public Task<HealthState> GetHealthAsync(CancellationToken ct = default)
     {
         if (!_connected) return Task.FromResult(HealthState.FAILED);
-        var stale = DateTimeOffset.UtcNow - _lastHeartbeat > HeartbeatTimeout;
+        var stale = Since(Volatile.Read(ref _lastHeartbeat)) > HeartbeatTimeout;
         return Task.FromResult(stale ? HealthState.DEGRADED : HealthState.READY);
     }
 
