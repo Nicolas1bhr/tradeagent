@@ -1,3 +1,4 @@
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
@@ -7,13 +8,15 @@ using Xunit;
 namespace TradeAgent.Tests.Fault;
 
 /// <summary>
-/// AN END WHOSE CLOSE A GATE REFUSED STAYS OWED AND GOES OUT AGAIN (<c>U-runner-exit-hygiene-a</c>).
+/// AN END WHOSE CLOSE A GATE REFUSED STAYS OWED AND GOES OUT AGAIN, AND A DISPATCH STOPPED BETWEEN ITS RECORD AND
+/// THE WIRE IS OVER (<c>U-runner-exit-hygiene-a</c>).
 ///
 /// <para>Same harness as the rest of this class: the owner's grant, the app's own allocation and deployment,
 /// a filled long the owner placed by hand, every order through <see cref="TradingGateway.PlaceAsync"/> over
 /// <see cref="RecordingConnector"/> and the built-in simulator. A gate is staged with
 /// <see cref="TradingGateway.InstallInProgress"/> — the update window, refused before anything is written —
-/// or with the instrument allowlist, refused inside the order path. No venue is reached.</para>
+/// or with the instrument allowlist, refused inside the order path; a process that died is a call held on the
+/// connector's seam, and its restart a second gateway over the same database. No venue is reached.</para>
 /// </summary>
 public partial class PaperDeploymentTests
 {
@@ -124,6 +127,114 @@ public partial class PaperDeploymentTests
         // AND ONLY THEN IS THE SLOT FREE, and the run off the status.
         Assert.Equal(1, afterFlat);
         Assert.Null(listedAfter);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (b) A DISPATCH STOPPED BETWEEN ITS RECORD AND THE WIRE IS OVER, AND A LATE DISPATCHER SENDS NOTHING.
+    ///
+    /// <para>The END's close is held on a position read — the process that died. Two places: the stale-close read,
+    /// once its order row is <c>CREATED</c> (the write-ahead row is on disk, <c>DISPATCHING</c> is not); and
+    /// <c>CloseAsync</c>'s own read, before any order row exists. A second gateway over the same database is the
+    /// restart. Inside <c>DispatchStrandedAfter</c> it settles nothing — a dispatcher may still be on its way —
+    /// and past it the STORE settles it: the row <c>CANCELLED</c> by compare-and-swap (or written under the id
+    /// first and cancelled, when there was none), the operation <c>refused</c>, the cursor past its bar. The held
+    /// call is then released, meets the store's answer — its own compare-and-swap lost, or the id already taken —
+    /// and nothing reaches either wire.</para>
+    ///
+    /// <para><b>RED on the base</b>: over <c>CREATED</c> the operation stays <c>dispatched</c>, the cursor null
+    /// on every pass, and the released call sends one order; with no row the operation is refused at once
+    /// although its dispatcher is still on its way, and the released call sends one order under it.
+    /// <b>Mutant (ii)</b> — the settle refuses the operation and leaves the row <c>CREATED</c> — goes red: the
+    /// released call sends one order under an operation reading <c>refused</c>.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("at its stale-close read")]
+    [InlineData("before its order row")]
+    public async Task A_dispatch_stopped_between_its_record_and_the_wire_is_over_and_a_late_dispatcher_sends_nothing(
+        string stopped)
+    {
+        var (gw, conn, db, _) = await Ready();
+        using var _1 = db;
+
+        await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var deployment = gw.Deployments.Open().Single();
+        await SeedAPosition(gw, conn);
+        var placesBefore = conn.Places;
+
+        // THE PROCESS THAT DIED: the END's close, held on a position read once — on the stale-close read when its
+        // order row is CREATED, or on CloseAsync's own read while there is no order row yet.
+        var release = new TaskCompletionSource();
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
+        conn.Seam = async kind =>
+        {
+            if (kind != RecordingConnector.HeldCall.Positions) return;
+            if (Flattens(gw, deployment.Id).SingleOrDefault() is not { } op) return;
+            var order = gw.GetRequest(op.RequestId);
+            var here = stopped == "before its order row" ? order is null : order is { State: ExecutionState.CREATED };
+            if (!here || Interlocked.Exchange(ref held, 1) == 1) return;
+            reached.TrySetResult();
+            await release.Task;
+        };
+        var ending = gw.EndPaperDeploymentAsync(deployment.Id, "test: the owner stopped it");
+        await reached.Task;
+        var flatten = Assert.Single(Flattens(gw, deployment.Id));
+        var heldOn = gw.GetRequest(flatten.RequestId)?.State.ToString() ?? "no order row";
+
+        // THE RESTART: another gateway over the same database and the same book, with its own wire and clock.
+        var second = new RecordingConnector(new FakeConnector(conn.Broker));
+        var (restarted, _, _, clock) = await Ready(db: db, conn: second);
+        var bound = restarted.DispatchStrandedAfter;
+
+        await PassAt(restarted, clock, At + bound - TimeSpan.FromSeconds(5));
+        var inside = restarted.Deployments.OpById(flatten.RequestId)!;
+        var cursorInside = restarted.Deployments.ById(deployment.Id)!.CursorOpenTime;
+
+        await PassAt(restarted, clock, At + bound + TimeSpan.FromSeconds(1));
+        var past = restarted.Deployments.OpById(flatten.RequestId)!;
+        var row = restarted.GetRequest(flatten.RequestId);
+        var cursor = restarted.Deployments.ById(deployment.Id)!.CursorOpenTime;
+
+        // THE LATE DISPATCHER: the held call released, into the store's answer.
+        release.SetResult();
+        await ending;
+        var afterRelease = restarted.Deployments.OpById(flatten.RequestId)!;
+        var rowAfter = restarted.GetRequest(flatten.RequestId);
+        var owed = restarted.DeploymentReadings().Single(d => d.Id == deployment.Id).CloseOwed;
+
+        log.WriteLine($"held                 : {stopped} — order row {heldOn}");
+        log.WriteLine($"inside the bound     : {inside.State}, cursor {cursorInside?.ToString("u") ?? "none"} ({bound.TotalSeconds:0}s)");
+        log.WriteLine($"past the bound       : {past.State} — {past.Answer}");
+        log.WriteLine($"its order row        : {row?.State.ToString() ?? "none"}, dispatched_at {row?.DispatchedAt?.ToString("u") ?? "none"}");
+        log.WriteLine($"cursor               : {cursor?.ToString("u") ?? "none"} (the bar {flatten.BarOpenTime:u})");
+        log.WriteLine($"after the release    : {afterRelease.State}; row {rowAfter?.State.ToString() ?? "none"}");
+        log.WriteLine($"orders at the wire   : {conn.Places - placesBefore} at the first, {second.Places} at the second");
+        log.WriteLine($"the END's close      : {(owed is null ? "not owed" : $"owed — {owed}")}");
+
+        // INSIDE THE BOUND NOTHING IS SETTLED: a dispatcher may still be on its way.
+        Assert.Equal(DeploymentOpState.Dispatched, inside.State);
+        Assert.Null(cursorInside);
+
+        // NOTHING REACHES EITHER WIRE.
+        Assert.Equal(0, conn.Places - placesBefore);
+        Assert.Equal(0, second.Places);
+
+        // PAST IT THE STORE SETTLED IT: the row cancelled without ever reaching the wire, the operation refused,
+        // the cursor past its bar — and the late dispatcher changed none of it.
+        Assert.Equal(DeploymentOpState.Refused, past.State);
+        Assert.Equal(ExecutionState.CANCELLED, row!.State);
+        Assert.Null(row.DispatchedAt);
+        Assert.Equal(flatten.BarOpenTime, cursor);
+        Assert.Equal(DeploymentOpState.Refused, afterRelease.State);
+        Assert.Equal(ExecutionState.CANCELLED, rowAfter!.State);
+        Assert.Null(rowAfter.DispatchedAt);
+
+        // AND THE END'S CLOSE IS OWED, to go out again under a new operation (item 1).
+        Assert.NotNull(owed);
+        Assert.Equal(1m, Held(conn));
+        await restarted.DisposeAsync();
         await gw.DisposeAsync();
     }
 
