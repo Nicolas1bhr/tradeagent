@@ -385,6 +385,21 @@ public sealed class Deployments(Database db)
         return (IReadOnlyList<StrategyDeploymentRow>)Read(c);
     });
 
+    /// <summary>
+    /// Every deployment ever written on one platform, account and instrument, newest first, whichever grant it
+    /// ran under — the runs that share one position at the venue, because a close is a close of the account's
+    /// whole position in the instrument.
+    /// </summary>
+    public IReadOnlyList<StrategyDeploymentRow> OnInstrument(string connectorId, string accountId, string symbol) =>
+        db.Read(_ =>
+        {
+            using var c = db.Cmd(
+                $"SELECT {Cols} FROM strategy_deployment WHERE connector_id=$c AND account_id=$a AND symbol=$s "
+                + "ORDER BY started_at DESC, id DESC",
+                ("$c", connectorId), ("$a", accountId), ("$s", symbol));
+            return (IReadOnlyList<StrategyDeploymentRow>)Read(c);
+        });
+
     /// <summary>Every deployment ever written under one allocation, newest first.</summary>
     public IReadOnlyList<StrategyDeploymentRow> ForAllocation(string allocationId) => db.Read(_ =>
     {
@@ -481,6 +496,41 @@ public sealed class Deployments(Database db)
     /// </summary>
     public bool IsReconciled(string deploymentId) =>
         OpsOf(deploymentId).All(o => o.IsSettled);
+
+    /// <summary>
+    /// REFUSED BEFORE THE WIRE: <c>refused</c>, over no request row at all or over one that never reached
+    /// <c>DISPATCHING</c>. It is over, and nothing will ever be sent under its id. <b>THE ONE PREDICATE</b> — the
+    /// runner asks it of an entry, an exit and a flatten (<c>ForwardRuns</c>: not in flight; an exit to send
+    /// again), and the gateway of an END's latest flatten (<c>TradingGateway</c>: a close still owed) — so the
+    /// two can never read one operation two ways.
+    ///
+    /// <para><c>refused</c> is written only when nothing was sent (<c>TradingGateway.RunDeploymentOpAsync</c> and
+    /// <c>SettleDeploymentOps</c>), and <c>dispatched_at</c> only by the transition into <c>DISPATCHING</c>, which
+    /// is durable before the wire is touched and never undone. So this is not an absent answer read as a no,
+    /// which <c>CLAUDE.md</c> rule 3 forbids: it is a definite refusal.</para>
+    ///
+    /// <para><b>Both halves are asked, the operation's state and the row's.</b> An operation refused whose row has
+    /// since reached the wire — another flow's dispatch still on its way to <c>TryCreate</c> when the operation
+    /// was refused for having no row yet — is an order that may be live at the venue, and it is not this.</para>
+    /// </summary>
+    public static bool RefusedBeforeTheWire(DeploymentOpRow op, ExecutionRequest? request)
+    {
+        ArgumentNullException.ThrowIfNull(op);
+        return string.Equals(op.State, DeploymentOpState.Refused, StringComparison.Ordinal)
+               && NeverReachedTheWire(request);
+    }
+
+    /// <summary>
+    /// THE ROW'S HALF OF <see cref="RefusedBeforeTheWire"/>: no request row at all, or one whose
+    /// <c>dispatched_at</c> is empty and that no approval can still send.
+    ///
+    /// <para><c>CREATED</c> — a gate refused it between the write-ahead row and the wire, and only the dispatcher
+    /// that wrote it may move it to <c>DISPATCHING</c> — and a terminal state reached straight from one —
+    /// <c>CANCELLED</c> by the store's own settle of a stranded dispatch. Never <c>AWAITING_APPROVAL</c>: that row
+    /// has not reached the wire either, but a person's press can still send it.</para>
+    /// </summary>
+    public static bool NeverReachedTheWire(ExecutionRequest? request) =>
+        request is null or { DispatchedAt: null, State: not ExecutionState.AWAITING_APPROVAL };
 
     static List<StrategyDeploymentRow> Read(SqliteCommand c)
     {

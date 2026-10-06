@@ -28,7 +28,7 @@ namespace TradeAgent.Tests.Fault;
 /// <para>Everything is measured over <see cref="RecordingConnector"/> and the built-in simulator.
 /// Nothing here reaches a venue and no real money is involved.</para>
 /// </summary>
-public class PaperDeploymentTests(ITestOutputHelper log)
+public partial class PaperDeploymentTests(ITestOutputHelper log)
 {
     static readonly DateTimeOffset Cutoff = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
     static readonly DateTimeOffset At = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);

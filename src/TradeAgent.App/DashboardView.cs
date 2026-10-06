@@ -2675,8 +2675,10 @@ sealed class SafetyPage
         // both — the rule every other paired reading on these pages keeps.
         try
         {
+            // NOT OVER, OR OVER AND NOT YET ACCOUNTED FOR — an operation with no answer, or a close its END
+            // still owes — the question the status asks too (`DeploymentReading.Outstanding`).
             var running = _host.Gateway.DeploymentReadings()
-                .Where(d => d.State != DeploymentState.Ended || d.Unresolved > 0)
+                .Where(d => d.Outstanding)
                 .ToList();
 
             _deploymentValue.Text = running.Count == 0
