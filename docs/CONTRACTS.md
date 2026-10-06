@@ -3996,7 +3996,8 @@ the START of every health pass — so never inside the pass that sent the close 
 each standing closure of this connector, mode and account whose first outcome is not flat, has no opener that
 would not settle, and has every row of its two nonces final except closes the outcome itself recorded UNKNOWN
 and that are still UNKNOWN (a lost close somebody else has since settled — the owner, on the card — is not this
-step's to answer). Only where `ReconciliationProvable`. Each lost close is asked by `ReconcileAsync`'s own
+step's to answer). Only where `ReconciliationProvable`. (Both changed by `U-loss-hold-release`, below: a close the
+owner has answered is decided by his answer, and the gate now covers the history question only.) Each lost close is asked by `ReconcileAsync`'s own
 window and first two questions, **without its third**: under its own client id in `GetOrdersAsync(account,
 true, CreatedAt − 5 min)` in a TERMINAL state → that state and fill; else fills under its id → FILLED; found
 live (WORKING, ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING), not found, or a read that threw → **undecided**:
@@ -4056,6 +4057,44 @@ are unchanged.
 
 **Not in this unit:** ATAS (no claim made; nothing run on the box); the data-loss exit's own lost close
 (`U-valuation-close-confirm`); the hold a closure keeps after the owner settles a lost leg (`U-loss-hold-release`).
+
+## U-loss-hold-release — a lost budget close the owner has answered on the Dashboard is a decided leg, under the platform's live-order veto
+
+**No schema, no new record family.** `U-flatten-confirm` answered a lost close only while it was still UNKNOWN,
+and only where `ReconciliationProvable`. On ATAS the owner's answer on the card (`ForceResolve`, written with
+`ResolvedByOwnerPrefix`) is the only way a lost close is ever settled, and giving it ended the confirm's interest:
+the first outcome's `Flat=false` stayed the latest word, `HeldBy` held the closure for ever ("TradeAgent cannot
+confirm that what it closed for you is closed"), and the Dashboard went on asking him to confirm records with none
+left (seat P's survey; the RED of `LossHoldReleaseTests` (a), (b), (e)).
+
+**His answer decides the leg.** A close the outcome recorded UNKNOWN whose row is now terminal with his prefix,
+neither flagged nor latched (`SettledByTheOwner`), is decided by `TheOwnersAnswerAsync`: his state, the row's fill
+where it has one, evidence "you confirmed it on the Dashboard: <his note>", `LossFlattenVerdict.ByTheOwner`. It
+counts only once the close can no longer be on its way to the platform — `AbsenceGrace` past `AbsenceCountsFrom`,
+the clock absence is held to — because a close in transit is not there for him to see, and the closing again
+cannot cancel what has not arrived. **The platform's veto:** where `ReconciliationProvable`, `GetOrdersAsync(account,
+true, CreatedAt − 5 min)` is asked for the close's id; a close held in a state that is not final decides nothing
+("…holds it as WORKING: a close that is still live can still fill, and that outranks your answer"), and neither
+does a read that throws; a terminal state other than his is named beside his words. `ReconciliationProvable` now
+gates only the history question (`AskTheHistoryAsync` and the veto), so on ATAS a closure is confirmed once every
+lost close is answered. Then the landed confirm, unchanged: one write-once `loss_flatten_confirm:` record; flat →
+nothing is sent; open → the closing again under a fresh nonce through `FlattenForBreachAsync`, whose cancel-first
+takes every working order on a scope position — a close still resting there included — before any close goes out.
+A row flagged again because the platform answered differently after him (`RecordThePlatformsAnswerBesideTheOwnersClaim`)
+is not decided, and a written confirm applied on a later pass unflags nothing while one stands. The cancel half is
+as it was: a non-final cancel row means no confirm until the owner settles it.
+
+**Words.** The confirm's sentence names each verdict's source, and its headline what settled it — `CONFIRMED FROM
+YOUR PLATFORM'S ORDER HISTORY`, `… YOUR ANSWER ON THE DASHBOARD`, or both (`SettledFrom`); the closing again's
+sentence and the reopen's "closing again" hold say the same. A not-flat outcome's ask ("AI trading is paused until
+you confirm those records on the Dashboard") is said only while a row of its two nonces is still flagged or latched
+(`AsItStandsNow`); once none is, every surface says "You have answered every record it left on the Dashboard" and,
+where the confirm is waiting on something, what — kept in memory and recomputed on every pass. No record is
+rewritten. The status schema's `loss_flatten`, `AGENTS.md` and the guide say so.
+
+**Not in this unit:** the closing again's own lost close, once the owner answers it, still holds the closure —
+there is one confirm per breach, and answering it needs a record family this unit may not write; the data-loss
+exit's (`U-valuation-close-confirm`); ATAS (nothing run on the box).
 
 ## U-fix-press-budget — the owner's two presses run on the platform's clock
 

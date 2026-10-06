@@ -197,7 +197,18 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         log.WriteLine($"the owner answered    : {string.Join(" | ", said)}");
         Assert.False(gw.HasUnconfirmedWork());
 
-        clock.MoveTo(NoLongerOnItsWay(gw, lost));
+        // ONE SECOND SHORT OF THE CLOCK: nothing written yet — and nothing asks him to confirm records he has
+        // already answered; what the confirm is waiting on is said instead.
+        clock.MoveTo(NoLongerOnItsWay(gw, lost) - TimeSpan.FromSeconds(1));
+        await gw.RefreshHealthAsync();
+        var waiting = gw.FlattenStateToday();
+        log.WriteLine($"inside the clock      : confirms {Confirms(db)} — {waiting.State} — {waiting.Why}");
+        Assert.Equal(0, Confirms(db));
+        Assert.Equal("unresolved", waiting.State);
+        Assert.Contains("You have answered every record it left on the Dashboard", waiting.Why!, StringComparison.Ordinal);
+        Assert.Contains("can no longer be on its way", waiting.Why!, StringComparison.Ordinal);
+        Assert.DoesNotContain("until you confirm those records", waiting.Why!, StringComparison.Ordinal);
+
         await Passes(gw, clock, 1);
 
         var state = gw.FlattenStateToday();
@@ -208,6 +219,9 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
 
         Assert.Equal(1, Confirms(db));
         Assert.Equal("flat", state.State);
+        Assert.Contains("CONFIRMED FROM YOUR ANSWER ON THE DASHBOARD", state.Why!, StringComparison.Ordinal);
+        Assert.Contains("you confirmed it on the Dashboard: I checked in ATAS: the close filled", state.Why!, StringComparison.Ordinal);
+        Assert.DoesNotContain("ORDER HISTORY", state.Why!, StringComparison.Ordinal);
         Assert.Equal(1, conn.Closes);
         Assert.Equal(0m, Held(conn, "ES"));
         Assert.Equal(ExecutionState.FILLED, gw.Requests.Get(lost.RequestId)!.State);
@@ -289,6 +303,7 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         Assert.Equal(0m, Held(conn, "ES"));
         Assert.Equal("flat", state.State);
         Assert.Contains("CLOSED AGAIN", state.Why!, StringComparison.Ordinal);
+        Assert.Contains("your answer on the Dashboard settled it", state.Why!, StringComparison.Ordinal);
         Assert.False(gw.HasUnconfirmedWork());
 
         // HIS ANSWER STAYS HIS: the row keeps the state and the words he gave it.
@@ -313,7 +328,8 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
     /// <para>A live close can still fill. His word is his own measurement, and a platform that holds the
     /// order live outranks it: counting it decided would read the book open and close again on top of an
     /// order that may fill a second later. So pass after pass the close is left exactly where it rests,
-    /// and the reason is named.</para>
+    /// and the reason is named — to the engineering log, and on the surfaces in place of asking him to
+    /// confirm records he has already answered.</para>
     ///
     /// <para><b>The mutant this watches:</b> the live-order veto dropped. His CANCELLED is then taken, the
     /// confirm is written over a live close, the book reads open and the closing again cancels the resting
@@ -337,18 +353,21 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         Assert.True(conn.Capabilities.ReconciliationProvable);
         var cancels = conn.Cancels;
 
-        gw.ForceResolve(lost.RequestId, ExecutionState.CANCELLED, "I checked in ATAS: no such order exists");
+        var said = AnswerEveryRecord(gw, lost.RequestId, ExecutionState.CANCELLED, "I checked in ATAS: no such order exists");
+        log.WriteLine($"the owner answered    : {string.Join(" | ", said)}");
 
         clock.MoveTo(NoLongerOnItsWay(gw, lost));
         await Passes(gw, clock, 3);
 
         var resting = conn.Broker.Orders.Single(o => o.ConnectorOrderId == close.ConnectorOrderId);
         var undecided = Undecided(db);
+        var state = gw.FlattenStateToday();
         log.WriteLine($"the close at the book : {resting.Side} {resting.Quantity} {resting.State}");
         log.WriteLine($"closes on the wire    : {conn.Closes}, cancels {cancels} -> {conn.Cancels}, position ES {Held(conn, "ES")}");
         log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
         log.WriteLine($"confirms              : {Confirms(db)}");
         log.WriteLine($"undecided             : {string.Join(" | ", undecided)}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
 
         Assert.Equal(0, Confirms(db));
         Assert.Equal(1, conn.Closes);
@@ -358,9 +377,15 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         Assert.Empty(db.KvStartingWith("loss_flatten_again:"));
         Assert.NotNull(gw.DayClosed(account));
 
-        // NAMED: the platform holds it WORKING, and that outranks his answer.
+        // NAMED: the platform holds it WORKING, and that outranks his answer — to the engineering log, and on
+        // the surfaces, which no longer ask him to confirm the records he has answered.
         Assert.Contains(undecided, u => u.Contains("WORKING", StringComparison.Ordinal)
                                          && u.Contains("outranks your answer", StringComparison.Ordinal));
+        Assert.Equal("unresolved", state.State);
+        Assert.Contains("You have answered every record it left on the Dashboard", state.Why!, StringComparison.Ordinal);
+        Assert.Contains("holds it as WORKING", state.Why!, StringComparison.Ordinal);
+        Assert.Contains("outranks your answer", state.Why!, StringComparison.Ordinal);
+        Assert.DoesNotContain("until you confirm those records", state.Why!, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------- (d)
@@ -500,6 +525,8 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
         Assert.Equal(0m, Held(conn, "ES"));
         Assert.Equal(0m, lowest);
         Assert.Equal("flat", state.State);
+        Assert.Contains("your answer on the Dashboard settled it", state.Why!, StringComparison.Ordinal);
+        Assert.Contains("1 working order(s) were cancelled first", state.Why!, StringComparison.Ordinal);
         Assert.False(gw.HasUnconfirmedWork());
 
         // AND NOTHING MORE.

@@ -423,7 +423,10 @@ public static class WorkspaceBuilder
     a platform whose closes always carry TradeAgent's reference and whose history is complete
     (TradeAgent paper, the practice simulator), where a close it lists nothing for, once it can no
     longer be on its way, never reached the platform and what is open is closed once more. Anywhere
-    else, ATAS included, it stays for the account owner.
+    else, ATAS included, it stays for the account owner — and once they have answered it on the
+    Dashboard, their answer settles it the same way (`flat`, or closed once more with the same
+    checks), counted only once the close can no longer be on its way, and never while a platform
+    that can show its history holds that close still working, which outranks their answer.
     Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
 
     ## Rules that matter

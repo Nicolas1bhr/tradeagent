@@ -2475,8 +2475,9 @@ public sealed class TradingGateway : IAsyncDisposable
             // is a sentence about last week.
             //
             // Each breach's LATEST word (U-flatten-confirm), through the one accessor the reopen's hold
-            // reads: a confirm from the platform's history, or the closing again that followed it, says
-            // what is true of the breach now — the first outcome stays on disk, true of its own instant.
+            // reads: a confirm from the platform's history or the owner's answer, or the closing again that
+            // followed it, says what is true of the breach now — the first outcome stays on disk, true of its
+            // own instant, and its ask is said only while a record it left still waits (U-loss-hold-release).
             var flat = new List<string>();
             var unresolved = new List<string>();
             var owed = new List<string>();
@@ -4423,9 +4424,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // AND WHAT THE APP DID ABOUT THE CLOSURE HAS TO HAVE ANSWERED. A flat book with a flatten
         // that could not confirm itself is the state a killed run leaves; the sweep is what finishes
         // it, and until it has, nothing here may decide the episode ended well. It is the LATEST word
-        // that answers (U-flatten-confirm): a lost close the platform's history has since settled, or
-        // the closing again that followed, speaks for the breach from then on — through the same one
-        // accessor every surface reads, so the hold and the screen cannot read two different records.
+        // that answers (U-flatten-confirm): a lost close the platform's history — or the owner's answer on
+        // the Dashboard, under its veto (U-loss-hold-release) — has since settled, or the closing again that
+        // followed, speaks for the breach from then on — through the same one accessor every surface reads,
+        // so the hold and the screen cannot read two different records.
         FlattenWord? word;
         try { word = LatestFlattenWord(breach); }
         catch (GatewayDeniedException ex)
@@ -4441,10 +4443,11 @@ public sealed class TradingGateway : IAsyncDisposable
                        + string.Join(", ", word.OpenersNotSettled) + ")";
 
             // THE CLOSING AGAIN HAS NOT ANSWERED YET: the confirm read the book open, and the sweep has not
-            // run it — something else is unconfirmed, or it is this very pass.
+            // run it — something else is unconfirmed, or it is this very pass. It names what settled the lost
+            // close: the platform's history, or the owner's own answer (U-loss-hold-release).
             if (word.ClosingAgain)
-                return "TradeAgent confirmed from your platform's order history what became of the close it "
-                       + "sent, and it is closing again what is still open";
+                return $"TradeAgent confirmed from {word.ConfirmedFrom ?? "your platform's order history"} what became "
+                       + "of the close it sent, and it is closing again what is still open";
 
             if (!word.Flat)
                 return "TradeAgent cannot confirm that what it closed for you is closed";
@@ -8771,10 +8774,12 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         // THE CLOSING AGAIN RUNS ONLY BEHIND A CONFIRM THAT ASKED FOR IT (U-flatten-confirm): every
-        // close of the first attempt decided by the platform's own history, and a fresh read that still
-        // showed the book open. Nothing else reaches this attempt, and nothing about it is owed until
-        // that record exists. An unreadable confirm throws, and the sweep sends nothing on it.
-        if (again && ReadConfirm(LossFlatten.ConfirmKeyFor(Connector.Id, breach)) is not { Flat: false })
+        // close of the first attempt decided — by the platform's own history, or by the owner's answer on
+        // the Dashboard under its veto (U-loss-hold-release) — and a fresh read that still showed the book
+        // open. Nothing else reaches this attempt, and nothing about it is owed until that record exists.
+        // An unreadable confirm throws, and the sweep sends nothing on it.
+        var asked = again ? ReadConfirm(LossFlatten.ConfirmKeyFor(Connector.Id, breach)) : null;
+        if (again && asked is not { Flat: false })
         {
             _log.TryEngineering("Gateway", "loss_flatten_again_not_asked", "warn",
                 metadataJson: Json.Write(new { breach = breachKey }));
@@ -8938,7 +8943,8 @@ public sealed class TradingGateway : IAsyncDisposable
             return null;
         }
 
-        var why = FlattenSentence(breach, openers, legs, residual, couldNotRead, flat, again);
+        var why = FlattenSentence(breach, openers, legs, residual, couldNotRead, flat, again,
+            asked is null ? null : SettledFrom(asked.Verdicts));
 
         var record = new LossFlattenRecord
         {
@@ -9473,13 +9479,16 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// The one sentence, written once onto the record and shown everywhere unchanged. The closing again
-    /// (<paramref name="again"/>) says so first: what the owner reads next to it is that the first close's
-    /// answer was lost and the platform's history settled it, and this is TradeAgent finishing the job.
+    /// The one sentence, written once onto the record — and shown unchanged, except that its ask
+    /// (<see cref="ConfirmThoseRecords"/>) is said only while a record it left is still waiting for the owner
+    /// (<see cref="AsItStandsNow"/>). The closing again (<paramref name="again"/>) says so first: what the owner
+    /// reads next to it is that the first close's answer was lost and what settled it
+    /// (<paramref name="settledFrom"/>: the platform's history, his answer on the Dashboard, or both), and this
+    /// is TradeAgent finishing the job.
     /// </summary>
     static string FlattenSentence(LossBreachRecord breach, OpenersCancelled openers,
         IReadOnlyList<LossFlattenLeg> legs, IReadOnlyList<string> residual, string? couldNotRead, bool flat,
-        bool again = false)
+        bool again = false, string? settledFrom = null)
     {
         var what = breach.Symbol is null ? "your daily loss budget" : $"your loss budget for {breach.Symbol}";
         var cancels = openers.Cancelled.Count == 0 ? "no working order needed cancelling"
@@ -9487,9 +9496,9 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (flat && again)
             return $"TradeAgent CLOSED AGAIN what was still open because {what} was reached: the answer to its "
-                   + "first close had been lost, your platform's order history settled it and the account still "
-                   + $"read open, so {cancels}, {legs.Count} position(s) were closed, and the account reads flat. "
-                   + "It stays closed to new risk until TradeAgent reopens it.";
+                   + $"first close had been lost, {settledFrom ?? "your platform's order history"} settled it and the "
+                   + $"account still read open, so {cancels}, {legs.Count} position(s) were closed, and the account "
+                   + "reads flat. It stays closed to new risk until TradeAgent reopens it.";
 
         if (flat)
             return $"TradeAgent CLOSED YOUR OPEN POSITIONS because {what} was reached: {cancels}, "
@@ -9506,8 +9515,16 @@ public sealed class TradingGateway : IAsyncDisposable
 
         return $"TradeAgent tried {(again ? "AGAIN " : "")}to close your open positions because {what} was reached, and CANNOT CONFIRM "
                + $"the account is flat: {(trouble.Count == 0 ? "nothing was open to close" : string.Join("; ", trouble))}. "
-               + "AI trading is paused until you confirm those records on the Dashboard. Check the platform.";
+               + ConfirmThoseRecords;
     }
+
+    /// <summary>
+    /// WHAT A FLATTEN THAT COULD NOT CONFIRM ITSELF ASKS OF THE OWNER. Written onto its outcome once, true of its
+    /// instant — every record it left was waiting for him — and said by every surface only while one still is
+    /// (<c>U-loss-hold-release</c>, <see cref="AsItStandsNow"/>): no word asks him to confirm records that are no
+    /// longer there.
+    /// </summary>
+    const string ConfirmThoseRecords = "AI trading is paused until you confirm those records on the Dashboard. Check the platform.";
 
     // ------------------------- a lost close, asked of the platform's order history (app-owned, U-flatten-confirm)
 
@@ -9583,6 +9600,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // killed between the two halves did not finish. Nothing is asked of the platform a second time.
         if (ReadConfirm(confirmKey) is { } written)
         {
+            _confirmWaits.TryRemove(confirmKey, out _);
             ApplyTheConfirm(written);
             return;
         }
@@ -9591,7 +9609,11 @@ public sealed class TradingGateway : IAsyncDisposable
         // question — inside AskTheHistoryAsync and the owner's veto — and nothing else, so on a platform that
         // cannot show its history a closure is confirmed once the owner has answered every lost close.
         var outcomeKey = LossFlatten.KeyFor(Connector.Id, breach);
-        if (ReadFlattenRecord(outcomeKey) is not { } outcome || LostCloses(outcome) is not { } lost) return;
+        if (ReadFlattenRecord(outcomeKey) is not { } outcome || LostCloses(outcome) is not { } lost)
+        {
+            _confirmWaits.TryRemove(confirmKey, out _);
+            return;
+        }
 
         var verdicts = new List<LossFlattenVerdict>();
         foreach (var leg in lost)
@@ -9604,7 +9626,9 @@ public sealed class TradingGateway : IAsyncDisposable
             else (verdict, _, undecided) = await AskTheHistoryAsync(leg, ct);
             if (verdict is null)
             {
-                // UNDECIDED, AND NOTHING IS DONE ABOUT IT: not the other legs, not the book.
+                // UNDECIDED, AND NOTHING IS DONE ABOUT IT: not the other legs, not the book. Said to the
+                // engineering log once per change, and to the surfaces for as long as it stands.
+                _confirmWaits[confirmKey] = $"the {leg.Instrument} close — {undecided}";
                 Note(confirmKey, "loss_flatten_confirm_undecided", "info", $"{leg.RequestId} ({leg.Instrument}): {undecided}");
                 return;
             }
@@ -9617,6 +9641,7 @@ public sealed class TradingGateway : IAsyncDisposable
         try { positions = await Connector.GetPositionsAsync(accountId, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            _confirmWaits[confirmKey] = $"your account could not be read back to see what is still open ({ex.Message})";
             Note(confirmKey, "loss_flatten_confirm_undecided", "info", $"the account could not be read back ({ex.Message})");
             return;
         }
@@ -9653,6 +9678,7 @@ public sealed class TradingGateway : IAsyncDisposable
             return;
         }
 
+        _confirmWaits.TryRemove(confirmKey, out _);
         if (inserted)
         {
             _confirmNotes.TryRemove(confirmKey, out _);
@@ -9749,7 +9775,8 @@ public sealed class TradingGateway : IAsyncDisposable
         var said = $"you confirmed it on the Dashboard as {leg.State}";
 
         if (Now - AbsenceCountsFrom(leg) < _opt.AbsenceGrace)
-            return (null, $"{said}, and the close could still be on its way to your platform");
+            return (null, $"{said}, and TradeAgent counts that only once the close can no longer be on its way to "
+                          + "your platform");
 
         var evidence = $"you confirmed it on the Dashboard: {leg.LastError![ResolvedByOwnerPrefix.Length..]}";
         if (Connector.Capabilities.ReconciliationProvable)
@@ -9944,27 +9971,52 @@ public sealed class TradingGateway : IAsyncDisposable
         _log.TryEngineering("Gateway", @event, severity, metadataJson: Json.Write(new { key = confirmKey, why }));
     }
 
+    /// <summary>
+    /// WHAT A CONFIRM NOT WRITTEN YET IS WAITING ON, per confirm key, in the owner's words — the close could still
+    /// be on its way, the platform holds it live, a read did not answer (<c>U-loss-hold-release</c>). Memory only,
+    /// and it decides nothing: it is recomputed at the start of every health pass, and it is what
+    /// <see cref="AsItStandsNow"/> says in place of asking the owner to confirm records he has already answered.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _confirmWaits = new(StringComparer.Ordinal);
+
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _confirmNotes = new(StringComparer.Ordinal);
 
-    /// <summary>The confirm's sentence: what the history said, what the book reads, and what happens next.</summary>
+    /// <summary>
+    /// The confirm's sentence: what decided each lost close — the platform's history, or the owner's answer on the
+    /// Dashboard, each verdict naming its own (<c>U-loss-hold-release</c>) — what the book reads, and what happens next.
+    /// </summary>
     static string ConfirmSentence(LossBreachRecord breach, IReadOnlyList<LossFlattenVerdict> verdicts,
         IReadOnlyList<string> stillOpen)
     {
         var what = breach.Symbol is null ? "your daily loss budget" : $"your loss budget for {breach.Symbol}";
+        var from = SettledFrom(verdicts);
         var found = string.Join("; ", verdicts.Select(v =>
             $"the {v.Symbol} close is {v.State}{(v.Filled is > 0m ? $" ({v.Filled} filled)" : "")} — {v.Evidence}"));
 
         return stillOpen.Count == 0
-            ? "TradeAgent CONFIRMED FROM YOUR PLATFORM'S ORDER HISTORY what became of the close it sent when "
+            ? $"TradeAgent CONFIRMED FROM {from.ToUpperInvariant()} what became of the close it sent when "
               + $"{what} was reached, whose answer had been lost: {found}. A fresh read of the account says nothing "
               + "is open, so it reads flat and nothing more was sent. It stays closed to new risk until TradeAgent "
               + "reopens it."
-            : "TradeAgent found in your platform's order history what became of the close it sent when "
+            : $"TradeAgent learned from {from} what became of the close it sent when "
               + $"{what} was reached, whose answer had been lost: {found}. A fresh read still shows "
               + $"{string.Join(", ", stillOpen)} open, so TradeAgent is CLOSING IT AGAIN, with every check the "
               + "first close had — it may only send an order that reduces what is there. It stays closed to new "
               + "risk until TradeAgent reopens it.";
     }
+
+    /// <summary>
+    /// WHAT SETTLED A CONFIRM'S LOST CLOSES, in the owner's words (<c>U-loss-hold-release</c>): the platform's
+    /// order history, his own answer on the Dashboard, or both — one phrase, so the confirm, the closing again
+    /// and the reopen's hold name the same source.
+    /// </summary>
+    static string SettledFrom(IReadOnlyList<LossFlattenVerdict> verdicts) =>
+        (verdicts.Any(v => !v.ByTheOwner), verdicts.Any(v => v.ByTheOwner)) switch
+        {
+            (true, true) => "your platform's order history and your answer on the Dashboard",
+            (false, true) => "your answer on the Dashboard",
+            _ => "your platform's order history"
+        };
 
     /// <summary>
     /// The confirm under <paramref name="key"/>, or null because there is none. An unreadable row
@@ -10006,10 +10058,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// (an owed note is rewritten only while it is the latest), so the newest one present IS the latest
     /// word. An unreadable record throws on <see cref="ReadFlattenRecord"/>'s rule; an unreadable note
     /// answers with a note that says so, on <see cref="ReadOwed"/>'s.</para>
+    ///
+    /// <para>An outcome's word is its sentence AS IT STANDS NOW (<see cref="AsItStandsNow"/>,
+    /// <c>U-loss-hold-release</c>): once the owner has answered every record it left, it no longer asks him to.</para>
     /// </summary>
     FlattenWord? LatestFlattenWord(LossBreachRecord breach)
     {
-        if (ReadFlattenRecord(LossFlatten.AgainKeyFor(Connector.Id, breach)) is { } again) return FlattenWord.Of(again);
+        if (ReadFlattenRecord(LossFlatten.AgainKeyFor(Connector.Id, breach)) is { } again) return AsItStandsNow(again, null);
         if (ReadOwed(LossFlatten.AgainOwedKeyFor(Connector.Id, breach)) is { } againOwed) return FlattenWord.Of(againOwed);
         if (ReadConfirm(LossFlatten.ConfirmKeyFor(Connector.Id, breach)) is { } confirm)
         {
@@ -10026,15 +10081,48 @@ public sealed class TradingGateway : IAsyncDisposable
             return FlattenWord.Of(confirm);
         }
 
-        if (ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach)) is { } first) return FlattenWord.Of(first);
+        if (ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach)) is { } first)
+            return AsItStandsNow(first,
+                _confirmWaits.TryGetValue(LossFlatten.ConfirmKeyFor(Connector.Id, breach), out var waiting) ? waiting : null);
         return ReadOwed(LossFlatten.OwedKeyFor(Connector.Id, breach)) is { } owed ? FlattenWord.Of(owed) : null;
     }
+
+    /// <summary>
+    /// AN OUTCOME'S WORD AS IT STANDS NOW (<c>U-loss-hold-release</c>). Its own sentence, written once, while a
+    /// record it left is still waiting for the owner on the Dashboard. Once none is — he has answered every one —
+    /// the same sentence without its ask (<see cref="ConfirmThoseRecords"/>), which would send him to confirm
+    /// records that are no longer there, and in its place that he has answered them and, where the confirm is
+    /// still waiting on something, what (<paramref name="waiting"/>): the platform holding the close live, the
+    /// close possibly still on its way, a read that did not answer. The record on disk is never rewritten.
+    /// </summary>
+    FlattenWord AsItStandsNow(LossFlattenRecord outcome, string? waiting)
+    {
+        var word = FlattenWord.Of(outcome);
+        if (outcome.Flat || !outcome.Why.EndsWith(ConfirmThoseRecords, StringComparison.Ordinal)
+            || RecordsWaitingOn(outcome))
+            return word;
+
+        return word with
+        {
+            Why = outcome.Why[..^ConfirmThoseRecords.Length]
+                  + "You have answered every record it left on the Dashboard"
+                  + (waiting is { Length: > 0 } w ? $", and TradeAgent has not settled it from your answers yet: {w}." : ".")
+        };
+    }
+
+    /// <summary>Whether a row of an outcome's two nonces is still waiting for the owner: flagged, or latched.</summary>
+    bool RecordsWaitingOn(LossFlattenRecord outcome) =>
+        new[] { (Kind: BudgetCancelPress, Nonce: outcome.CancelNonce), (Kind: BudgetClosePress, Nonce: outcome.CloseNonce) }
+            .Where(p => p.Nonce.Length > 0)
+            .SelectMany(p => PressRows(p.Kind, p.Nonce))
+            .Any(r => r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId));
 
     /// <summary>One answer about one breach, whichever record gave it. See <see cref="LatestFlattenWord"/>.</summary>
     /// <param name="OwedAttempts">Non-null exactly when the word is an owed note: nothing has happened yet.</param>
     /// <param name="ClosingAgain">A confirm that read the book open, whose closing again has no word of its own yet.</param>
+    /// <param name="ConfirmedFrom">For a confirm, what settled its lost closes (<see cref="SettledFrom"/>).</param>
     sealed record FlattenWord(bool Flat, string Why, IReadOnlyList<string> OpenersNotSettled, int? OwedAttempts,
-        bool ClosingAgain)
+        bool ClosingAgain, string? ConfirmedFrom = null)
     {
         public bool Owed => OwedAttempts is not null;
 
@@ -10042,7 +10130,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         public static FlattenWord Of(LossFlattenOwed n) => new(false, n.Why, [], n.Attempts, false);
 
-        public static FlattenWord Of(LossFlattenConfirm c) => new(c.Flat, c.Why, [], null, !c.Flat);
+        public static FlattenWord Of(LossFlattenConfirm c) => new(c.Flat, c.Why, [], null, !c.Flat, SettledFrom(c.Verdicts));
     }
 
     // ------------------------------------------- the data-loss exit (app-owned, U-flatten-3)
