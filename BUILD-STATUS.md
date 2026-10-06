@@ -8253,7 +8253,7 @@ Fault 436, 0 failed; `ForwardRunnerTests` 3× 25/25, `PaperSettlementTests` 3× 
 The collection did not contain any matching items" — exit refused `DECISION_EXPIRED`, both cancels `CANCELLED`, the account `Long/1.000`, nothing working;
 (e) "Assert.Throws() Failure: No exception was thrown". Mutants watched red: (iii) the refused-exit condition dropped ⇒ (d) "Assert.Empty() Failure:
 Collection was not empty" (stop and target WORKING beside the exit in flight); (iv) the fill-time check removed ⇒ (e) "Expected: 0 Actual: -1.000".
-Manager's gate at `12882023` (carried to `5f03e81c`: build tree identical, docs only between`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1410/1410 (8 m 29 s, the slow Mac), Fault 436/436 (1 m 49 s), Integration 721/722, 1 skipped (11 m 13 s) → 0 failed.
+Manager's gate at `12882023` (carried to `5f03e81c`: build tree identical, docs only between), Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1410/1410 (8 m 29 s, the slow Mac), Fault 436/436 (1 m 49 s), Integration 721/722, 1 skipped (11 m 13 s) → 0 failed.
 Names vs `main` (git objects): 2199 → 2203, 0 removed, 4 added ([Fact]/[Theory] 2153 → 2157). Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
 **CI:** branch run 37420566289 at `208675e1` (on `21ba16b1`; docs only since): success on ubuntu-latest (12 min), macos-latest (24 min), windows-latest (53 min),
 package. U-tape-archive's landing push `d89f9cdc`: run 37420286516 success on all three and package. **Tests box:** NOT RUN — `ready` at 11:04 CEST: "NO - the machine does not answer (…)".
