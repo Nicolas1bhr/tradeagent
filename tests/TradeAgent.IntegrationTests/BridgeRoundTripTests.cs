@@ -314,7 +314,8 @@ public class BridgeRoundTripTests
     // DIAGNOSTIC ONLY — U-fix-bridge-heartbeat, branch only, removed before the proving run.
     [Theory]
     [MemberData(nameof(PulseReps))]
-    public async Task Diag_pulse_gap_repeat(int rep) => await FailingCapabilityReadScenario($"rep{rep:000}");
+    public async Task Diag_pulse_gap_repeat(int rep) =>
+        await FailingCapabilityReadScenario($"{Environment.GetEnvironmentVariable("TA_PULSE_LABEL") ?? "rep"}{rep:000}");
 
     static async Task FailingCapabilityReadScenario(string label)
     {

@@ -8,9 +8,9 @@ on:
 
 jobs:
   # DIAGNOSTIC ONLY — U-fix-bridge-heartbeat, branch only, restored before the proving run.
-  # macOS only: (A) the solution's non-Timing step exactly as the failing run ran it, (B) the class
-  # looped, (C) the failing test's scenario repeated; every pulse's send and receipt time is written
-  # to pulse.log by the branch-only probe, and summarised at the end.
+  # macOS only, round 2: (C) the failing test's scenario repeated 900 times, hunting a natural failure;
+  # (D) a positive control that freezes the test process 750 ms every 2 s; every pulse's send and
+  # receipt time is written to pulse.log by the branch-only probe, and summarised at the end.
   test:
     strategy:
       fail-fast: false
@@ -25,34 +25,36 @@ jobs:
       - run: dotnet restore TradeAgent.sln
       - run: dotnet build TradeAgent.sln -c Release --no-restore
 
-      - name: Diag A - the non-Timing step as the failing run ran it
-        continue-on-error: true
-        env:
-          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
-        run: dotnet test TradeAgent.sln -c Release --no-build --filter "Category!=Timing&FullyQualifiedName!~Diag_pulse_gap_repeat" --logger "trx;LogFileName=diag-a.trx"
-
-      - name: Diag B - the class looped
+      - name: Diag C - the scenario repeated, hunting a natural failure
         continue-on-error: true
         shell: bash
         env:
           TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
-        run: |
-          for i in $(seq 1 12); do
-            echo "class pass $i"
-            dotnet test tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj -c Release --no-build \
-              --filter "FullyQualifiedName~BridgeRoundTripTests&FullyQualifiedName!~Diag_pulse_gap_repeat" 2>&1 \
-              | grep -E "Passed!|Failed!|\[FAIL\]" || true
-          done
-
-      - name: Diag C - the scenario repeated
-        continue-on-error: true
-        shell: bash
-        env:
-          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
-          TA_PULSE_REPS: '300'
+          TA_PULSE_REPS: '900'
+          TA_PULSE_LABEL: rep
         run: |
           dotnet test tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj -c Release --no-build \
             --filter "FullyQualifiedName~Diag_pulse_gap_repeat" 2>&1 | grep -E "Passed!|Failed!|\[FAIL\]" || true
+
+      - name: Diag D - the positive control, the test process frozen 750 ms every 2 s
+        continue-on-error: true
+        shell: bash
+        env:
+          TA_PULSE_LOG: ${{ github.workspace }}/pulse.log
+          TA_PULSE_REPS: '12'
+          TA_PULSE_LABEL: stall
+        run: |
+          ( while true; do
+              sleep 1.3
+              for pid in $(pgrep -f testhost); do kill -STOP $pid; done
+              sleep 0.75
+              for pid in $(pgrep -f testhost); do kill -CONT $pid; done
+            done ) &
+          injector=$!
+          dotnet test tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj -c Release --no-build \
+            --filter "FullyQualifiedName~Diag_pulse_gap_repeat" 2>&1 | grep -E "Passed!|Failed!|\[FAIL\]|Assert|Expected|Actual" || true
+          kill $injector || true
+          for pid in $(pgrep -f testhost); do kill -CONT $pid; done
 
       - name: The pulses
         if: always()
@@ -63,22 +65,30 @@ jobs:
           python3 - "$TA_PULSE_LOG" <<'EOF'
           import re, sys
           lines = open(sys.argv[1]).read().splitlines()
-          runs = [l for l in lines if l.startswith("PULSE ")]
           def num(l, key):
               m = re.search(r"\b" + key + r"=(-?[0-9.]+|NaN)", l)
               return float(m.group(1)) if m and m.group(1) != "NaN" else float("nan")
           def pct(xs, p):
               xs = sorted(x for x in xs if x == x)
               return xs[min(len(xs) - 1, int(round(p / 100.0 * (len(xs) - 1))))] if xs else float("nan")
-          print(f"runs={len(runs)} lost={sum('connected=False' in l for l in runs)}")
-          for key in ["maxRecvGap", "maxSendGap", "maxWakeLate", "trailing", "timerCanaryMaxLate", "sleepCanaryMaxLate", "poolDispatchMax", "gcPause"]:
-              xs = [num(l, key) for l in runs]
-              print(f"{key:20s} p50={pct(xs,50):6.0f} p90={pct(xs,90):6.0f} p99={pct(xs,99):6.0f} max={pct(xs,100):6.0f}  >300ms={sum(x > 300 for x in xs)}  >600ms={sum(x > 600 for x in xs)}")
-          print("--- every run whose verdict was lost or whose worst gap passed 300 ms, with its timeline ---")
+          groups = {}
+          for l in lines:
+              if l.startswith("PULSE "):
+                  groups.setdefault(re.sub(r"[0-9]+$", "", l.split()[1]), []).append(l)
+          for g, runs in groups.items():
+              print(f"== {g}: runs={len(runs)} lost={sum('connected=False' in l for l in runs)} sent={sum(num(l, 'sent') for l in runs):.0f} exits={sum('exits=[]' not in l for l in runs)}")
+              for key in ["maxRecvGap", "maxSendGap", "maxWakeLate", "trailing", "timerCanaryMaxLate", "sleepCanaryMaxLate", "poolDispatchMax", "gcPause", "polls"]:
+                  xs = [num(l, key) for l in runs]
+                  print(f"   {key:20s} p50={pct(xs,50):6.0f} p90={pct(xs,90):6.0f} p99={pct(xs,99):6.0f} max={pct(xs,100):6.0f}  >300={sum(x > 300 for x in xs)}  >600={sum(x > 600 for x in xs)}")
+          print("--- every run whose verdict was lost or whose worst gap passed 300 ms, with its timeline (first 4 of each group) ---")
+          shown = {}
           show = False
           for l in lines:
               if l.startswith("PULSE "):
-                  show = "connected=False" in l or num(l, "maxRecvGap") > 300 or num(l, "trailing") > 300
+                  g = re.sub(r"[0-9]+$", "", l.split()[1])
+                  flagged = "connected=False" in l or num(l, "maxRecvGap") > 300 or num(l, "trailing") > 300
+                  show = flagged and shown.get(g, 0) < 4
+                  if show: shown[g] = shown.get(g, 0) + 1
               if show: print(l)
           EOF
 
