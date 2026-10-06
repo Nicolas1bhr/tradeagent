@@ -41,7 +41,9 @@ or explicitly marked not verified. **Keep it that way.** If you cannot quote the
 manager lands it in one pass, the money path is reviewed once per milestone, and a builder that cannot fix an item is
 replaced by a fresh one rather than asked again. It deliberately does not import the sibling projects' round-based
 triad; `docs/hardening/` is the frozen record of the three days that did. Work in flight is whatever is in `docs/briefs/`.
-**From 2026-10-02 the build runs as a fleet** — an orchestrator, top-level manager seats and their builders, all Opus — under `docs/FLEET.md`;
+**From 2026-10-02 the build runs as a fleet** — an orchestrator, top-level manager seats and their builders, all Opus — under `docs/FLEET.md`.
+**Since 2026-10-06 the orchestrator holds the owner's own seat over the build — the standard** (`docs/FLEET.md` § "The orchestrator"): up to two
+manager seats, decisions on his behalf within his delegation, and a heartbeat that carries the fleet across usage stops;
 live seats are on `fleet/BOARD.md` (`~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`).
 
 ## The product rule that overrides convenience

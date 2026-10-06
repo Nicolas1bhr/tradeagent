@@ -11,7 +11,7 @@ build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/
 
 | Seat | Decides | Never |
 |---|---|---|
-| **Orchestrator** (the main session) | which seats exist and their units; the waves, the builder allotment and the schema rungs; cross-seat conflicts; every question to the owner; memory, this file and the `docs/RESUME-HERE.md` "Do this first" block | product code; running a builder; landing a unit |
+| **Orchestrator** (the main session, holding the owner's own seat over the build — § below) | which seats exist (at most two manager seats at a time) and their units; the waves, the builder allotment and the schema rungs; cross-seat conflicts and rulings on the owner's behalf; every question to the owner; the heartbeat; memory, this file and the `docs/RESUME-HERE.md` "Do this first" block | product code; running a builder; landing a unit |
 | **Top-level manager** (one per seat, a fresh Opus agent) | inside its units: re-check the brief, dispatch, brief builders, judge reports, fresh fixers, land, record, read CI per sha; CARD briefs just before their turn, from a survey leg | product code; another seat's units or worktrees; asking the owner anything |
 | **Builder · fixer · survey leg** (fresh Opus, spawned by a manager) | how to build its one unit: one brief, one worktree, one pass | anything outside its brief; `main` |
 
@@ -25,30 +25,46 @@ below), does not poll while its builders work: it ends its turn, and the orchest
 **The `fleet/` directory** is `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` — outside the repo and outside `/tmp`, which the OS empties after
 about three days: `bin/` the tooling below, `status/<seat>.md`, `handoff/<seat>.md`, `gates/<label>/`, `locks/`, `ci-ledger.md`, `BOARD.md`.
 
-## The orchestrator — the owner's own seat, held on his grant (2026-10-06)
+## The orchestrator — the owner's own seat over the build (the standard since 2026-10-06)
 
 **The owner, 2026-10-06 00:50 CEST, verbatim:** "for tonight i'm leaving you the highest possible position. mine, the orchestrator. you can now manage up
 to two top level managers and use orchestration standard just as inspiration and help as to how you should guide them. tonight i'd like you to continue
 the construction of the software. i really like your performance over the last few days as orchestrator especially with the hearbeat you programmed to
 wake you back up each time my rate limit resets. if tomorrow morning i see that you delivered again when it comes to progress and sheer build quality i'd
 like to make this permanent. make sure this is written down somewhere so we can upgrade the orchestration documents to incorporate all of this. if you
-need anything from me you can always ping me."
+need anything from me you can always ping me." **01:12:** "No need to budget the weekly rate limit. If you use all that's no issue." **The morning after,
+making it the standard:** "when you decide your session was fruitful enough i'd suggest wrapping up slowly and then reworking the orchestration standards
+so this orchestration position becomes the standard."
 
-- **What it is.** The orchestrator holds the owner's own seat over the BUILD: it runs up to two top-level manager seats at a time, decides sequencing,
-  allotments and cross-seat questions on his behalf (the 2026-10-04 delegation: conservative, compliant, reversible, each decision written on
-  `fleet/BOARD.md` for him to overrule) and alone talks to him. It does not hold his authority over money, credentials, legal status, paid commitments or
-  anything sent in his name — each still needs his explicit yes — and it changes no protection in `CLAUDE.md`.
-- **The orchestration standard** (the sibling projects', outside this repo) is inspiration and help for guiding the managers, not doctrine:
-  `docs/HOW-WE-BUILD.md` and this file govern.
-- **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across his usage stops: a ONE-SHOT wake at each 5-hour
-  window's reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake) and a RECURRING 2-hourly backstop. A cron fires only while the session
-  is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac (power, lid, disk) and the fleet's state, and resumes every seat
-  and builder that died at the stop by `SendMessage` naming its branch state — nothing is lost, because the branch is the handoff. CI and detached local
-  gates run on through a stop, so a builder that dispatches its CI before the window runs out finds the verdict waiting. Crons are session-only (they die
-  with the session; a recurring one expires after 7 days): a new orchestrator session arms them first.
-- **Status: a trial, the night of 2026-10-06** — permanent if his morning review says so. The upgrade then owed: this section becomes the orchestrator's
-  row in the seat table above; `fleet/handoff/ORCHESTRATOR.md` makes the heartbeat its resume step 5; `docs/HOW-WE-BUILD.md` names the orchestrator layer;
-  `CLAUDE.md`'s "How we build" points here. The night's record: `fleet/BOARD.md` (decisions) and the resume block's checkpoint at its end.
+- **What it is.** The main session holds the owner's own seat over the BUILD. It runs at most two top-level manager seats at a time (a third, such as seat
+  M for a milestone, opens when one closes); it decides sequencing, allotments and cross-seat questions on his behalf (the 2026-10-04 delegation:
+  conservative, compliant, reversible, each decision on `fleet/BOARD.md` with its reason, his to overrule); it alone talks to him. It does not hold his
+  authority over money, credentials, legal status, paid commitments or anything sent in his name — each still needs his explicit yes — and it changes no
+  protection in `CLAUDE.md`. The sibling projects' orchestration standard is inspiration only; `docs/HOW-WE-BUILD.md` and this file govern.
+- **Starting a session** (the owner says "you are the orchestrator"): (1) arm the heartbeat, first, since crons die with the session that set them;
+  (2) the Mac — `pmset -g batt`, `ioreg -r -k AppleClamshellState -d 4`, `df -h /` (a closed lid on battery sleeps the fleet); (3) `get_usage` — the
+  5-hour window and its reset (the weekly figure is reported, not rationed); (4) the state — `fleet/BOARD.md`, `fleet/status/`, `fleet/handoff/`,
+  `git log origin/main`, `git worktree list`, `fleet/bin/lock.sh status`, `gh run list`, the resume block, `tools/win-state.sh` and
+  `TA_WIN_BOX=tests tools/win-test.sh ready`; (5) open FRESH manager seats (agent ids die with their session) whose prompts name the charter, handoff and
+  status files, the session's rules and a RANKED job list that overrides the charter's queue where they differ; write the board.
+- **Each wake.** A builder's completion notice reaches the orchestrator, not its manager: the orchestrator DIGESTS the report into the wake message (tips,
+  gate counts, CI per platform, deviations, NOT VERIFIED) with its rulings, so no manager re-reads a transcript. A ruling that does not change what a
+  running agent does waits for that agent's next wake instead of costing one. A red no diff can reach is a FIRST SIGHTING, recorded with its run id and a
+  one-line reading — never "a flake" by assertion (the fleet's Windows-only reds have twice been real defects); one that threatens a protection (money,
+  evidence) gets its survey at once, any other a fixer at its second sighting. The orchestrator reads reports, the board and status files, never code: on
+  2026-10-06 its context stood at 35 % of 1M after eleven hours, never compacted.
+- **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across usage stops: a ONE-SHOT wake at each 5-hour window's
+  reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake; deleted when the orchestrator resumes the fleet by hand first) and a RECURRING
+  2-hourly backstop. A cron fires only while the session is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac and the
+  fleet's state and resumes every seat and builder that died at the stop by one `SendMessage` naming its branch state and the CI runs that finished
+  meanwhile — nothing is lost, because the branch is the handoff. The window, not the week, binds: spend each window on the highest-value units first, and
+  let CI and detached gates run through the stop. Crons are session-only (a recurring one expires after 7 days).
+- **The morning report and the wrap-up.** The report: what landed (record shas, gate counts, CI per platform), what is building, what only the owner can
+  give, the budget spent, and every NOT VERIFIED — `BUILD-STATUS.md`'s honesty rule; a push only when he can act on it. The wrap-up, when he asks or the
+  orchestrator judges the session fruitful: seats land what is in flight and start nothing new but a protection's fix; each writes its status and handoff;
+  the orchestrator checkpoints the resume block, the board, `fleet/handoff/ORCHESTRATOR.md` and memory, removes its crons, and reports.
+- **The reference run, 2026-10-06** (01:00 to the wrap-up): two seats, four Mac builders and one ATAS-box leg, two usage stops bridged with nothing lost;
+  the units landed are listed in the resume block's checkpoint.
 
 ## Grounding — read before acting, verify before trusting
 
@@ -114,7 +130,7 @@ gate, a known red) is written into the record as a judgement.
 - **Hand-off:** a manager whose context passes about 60 %, or whose scope ends, writes `fleet/handoff/<seat>.md` (≤ 40 lines: state, open judgements,
   traps met) and reports; the orchestrator opens a fresh seat from it. A killed leg is resumed by `SendMessage` naming its branch state, or re-briefed
   fresh from its brief and branch — the branch is the handoff.
-- **A new orchestrator session** starts from `fleet/handoff/ORCHESTRATOR.md`. Agent ids die with the session that spawned them: it opens FRESH seats from
+- **A new orchestrator session** starts with § "The orchestrator" (*Starting a session*), then `fleet/handoff/ORCHESTRATOR.md` for the state. Agent ids die with the session that spawned them: it opens FRESH seats from
   `fleet/charters/`, `fleet/handoff/` and `fleet/status/`, and a paused builder's work is continued by a fresh builder from its branch and worktree.
 - **The repo is the checkpoint:** a `BUILD-STATUS.md` record per landing; the resume block at each wave's end and at every stop (the orchestrator); the
   memory files (the orchestrator).

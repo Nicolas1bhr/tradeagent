@@ -14,9 +14,9 @@ and the honesty and deletes the passes.
 
 ## What stays
 
-- **Hierarchy.** A manager directs, gates and lands; it writes no product code. Every leg is a fresh Opus agent on its
-  own worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`. At most two heavy legs at once — from 2026-10-02 the fleet's
-  allotment instead, with an orchestrator opening top-level manager seats above the legs (`docs/FLEET.md`).
+- **Hierarchy.** The orchestrator — the main session, holding the owner's own seat over the build, the standard since 2026-10-06 — runs up
+  to two top-level manager seats (`docs/FLEET.md`); a manager directs, gates and lands and writes no product code; every leg is a fresh Opus
+  agent on its own worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`, within the fleet's builder allotment.
 - **Honesty.** Every claim is "verified by running X → output" or "NOT VERIFIED". Banned: should work, looks correct,
   probably, I believe, minor, trivial, static-verified. `BUILD-STATUS.md` stays the record and keeps that rule. **A real
   machine that is available is used** (the owner, 2026-10-05): a run it could have made and nobody made is NOT VERIFIED.
