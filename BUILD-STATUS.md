@@ -8180,3 +8180,42 @@ Tests box: NOT RUN — "the machine does not answer" (the builder's check and th
 **NOT done, NOT verified:** ATAS (no box). That its lost closes mostly stay undecided is read from the adapter's code, not run. No test kills a pass between the
 confirm record and the settle, or fails the confirm write. Owed separately: absence as proof (`U-flatten-absence`), the data-loss exit's own lost close
 (`U-valuation-close-confirm`) and a closure held after the owner settles a lost leg (`U-loss-hold-release`). The app was not run.
+
+## 2026-10-06 — U-tape-archive landed: the tape records GDELT's crypto news items from its fifteen-minute files with GDELT's own first-seen time — live when seen in time, point-in-time when fetched late from a file its checksum proves — under a 25 MB daily cap, keeping no raw bytes
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-tape-archive.md` (a CARD from a read-only survey; amended at dispatch against
+U-tape-events' landing, `6b312430`; dispatched `0aba7279`); built on `cdb5df85`, rebased by the manager onto ``2952c285``, src+tests patch-id identical. Merge
+`90f74555` (ff-only), 6 commits (5 items + the report), 21 files, +2999/−86. No schema change: main 30, `tape.db` 1. Not the money path. Binance's archive stays
+dropped (its Dataset Terms; no request to its host).
+
+- **Item 1 (`18bd446b`):** `GdeltGkg` reads the GKG files: 15-minute labels; addresses built from a label on GDELT's own host; a listing line read for size, MD5
+  and label only; the zip streamed through MD5, SHA-256 and the inflater; every row checked against its label; filter `gkg-crypto-v1`; the 27 fields whole,
+  ≤ 64 KB. **Deviation, accepted:** a row the filter does NOT keep is read leniently (2 of 24 real files held a raw Latin-1 byte, so strict UTF-8 refused
+  them whole); a KEPT row that is not UTF-8 still refuses its file.
+- **Item 2 (`54a5c93c`):** `TapeStore.AppendArchive` — one transaction, refusals before it, the class rule there only: `O-LIVE` in time; else `O-PIT` iff own
+  origin, MD5s equal and Last-Modified ≤ label; else `O-ARCH`; never upgraded; a re-read writes nothing. **Deviation, accepted:** the `Archives()` catalogue
+  row lands here (the rule reads it); `TapeCollector` skips its parser's row; `TapeSourceCatalogTests`' shipped list and counts updated (5+1 → 5+1+1).
+- **Item 3 (`cc08cfbb`):** `GdeltRecorder` on its own task: a look at each label + 2 s; backfill ≤ 96 files a start, ≤ 7 days, ≤ 500 MB a UTC day, 2 s apart, live
+  backoff; nothing written before the MD5 matches; a 25 MB cap per label-day that stops that day and says so once. **Screen fix, accepted:** GDELT writes
+  titles with XML character references, which screen v1 read raw (`&#x200B;` and escaped chat-role markup passed); `TapeScreen` v2 resolves them first
+  (`TapeScreenTests`' literal version 1 became `TapeScreen.Version`).
+- **Item 4 (`a10492e7`):** "Record GDELT news", the owner's second one-press switch on the Market data card, ON by default under the orchestrator's bound of
+  2026-10-03 (measured 6.88 MB a day kept against the 25 MB cap; raw bytes never kept); `AppHost` starts the recorder beside the tape and stops it first.
+- **Item 5 (`9f09b1ed`):** `CONTRACTS.md` "The tape", `USER-GUIDE.md`, `RESEARCH-REQUIRED.md` **C5e**; the live/archive sentence U-tape-events left naming
+  Binance alone now names each source's own address, on the card and in the guide — the debt in U-tape-events' record is paid.
+- **GDELT's terms (re-read 2026-10-06 00:42Z): any use, commercial included, if the GDELT Project is credited with a link.** Checked at landing, the
+  orchestrator's condition: the Market data card (`SettingsView.cs:305-306`) and `USER-GUIDE.md:370` credit "the GDELT Project
+  (https://www.gdeltproject.org/)"; the row carries the same `Citation` for every later surface (`U-tape-read` must show it).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `c5cf36c6`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1410,
+Fault 420, 0 failed; nine tape classes 3× → 48/0 each. Mutants watched red: (i) Last-Modified ≤ label dropped ⇒ `TapeArchiveStoreTests.cs:81` "Expected
+"O-ARCH" Actual "O-PIT""; (ii) rows before the MD5 ⇒ `GdeltRecorderTests.cs:93`; (iii) the 7-day bound removed ⇒ `:182`, the plan held 2026-09-29T00:45;
+(iv) the daily cap removed ⇒ `:374` "Expected [3, 0, 0, 3] Actual [3, 3, 3, 3]". Measured (C5e): `lastupdate.txt` 200 in 0.83 s; 24 hourly files streamed,
+none kept: 419 MB a day on the wire, 99 of 24,671 rows kept; MD5 = storage header = ETag 24/24; files published 569–724 s before their label; 0 of 99 flagged.
+Manager's gate at `90f74555`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1410/1410 (8 m 27 s, the slow Mac), Fault 435/435 (1 m 51 s), Integration 718/719, 1 skipped (11 m 15 s) → 0 failed — on the tree with U-runner-exit-hygiene-a, U-test-hygiene-1 and U-flatten-confirm, which the branch run predates.
+Names vs `main` (git objects): 2182 → 2199, 0 removed, 17 added (16 tests + the `PublishFile` helper; [Fact]/[Theory] 2137 → 2153). Scan: seven judged false positives, a CancellationTokenSource's `.Token`, excluded by name (`leash`, `_stopping`); no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37414286696 at `c5cf36c6` (on `cdb5df85`): success on ubuntu-latest (13 min), macos-latest (16 min), windows-latest (39 min), package.
+U-runner-exit-hygiene-a's landing push `a76a30ed`: run 37415393690 success on all three and package. **Tests box:** NOT RUN — `ready` at 07:25 CEST: "NO - the machine does not answer (…)".
+
+**NOT done, NOT verified:** the recorder never ran against GDELT itself (only `GdeltGkg`, through the measurement harness), so no real `O-LIVE` or `O-PIT`
+row has been seen — the classes are proven at the store; the card not seen on screen; the filter's recall; a restart on a capped day may read one more file.
