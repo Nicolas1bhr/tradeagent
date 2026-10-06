@@ -327,6 +327,13 @@ public class GdeltRecorderTests(ITestOutputHelper log)
         on = true;
         var look = await recorder.LookOnceAsync();
         Assert.Equal((false, 2, 3), (look.Off, look.Attempts, look.Stored));
+
+        // THE OWNER'S SWITCH IN THE APP — "Record GDELT news", read before every request — IS ITS OWN, AND ON BY DEFAULT
+        // under the bound this recorder keeps: no raw file kept, each file's record, a daily cap.
+        var settings = new TradeAgentSettings();
+        Assert.True(settings.RecordGdeltNews);
+        settings.RecordMarketContext = false;
+        Assert.True(settings.RecordGdeltNews);
     }
 
     /// <summary>

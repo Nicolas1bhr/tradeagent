@@ -392,6 +392,22 @@ public sealed class TradeAgentSettings
     public bool RecordMarketContext { get; set; } = true;
 
     /// <summary>
+    /// WHETHER TRADEAGENT RECORDS GDELT'S NEWS ITEMS ABOUT CRYPTO (<c>U-tape-archive</c>): every fifteen minutes the
+    /// newest file of GDELT's Global Knowledge Graph, and at a start the files missed while TradeAgent was not running,
+    /// up to seven days back — each read once and thrown away, only its crypto rows and a record of the file kept in
+    /// <c>state/tape.db</c>, at most 25 MB a day. Its own switch, apart from <see cref="RecordMarketContext"/>: GDELT's
+    /// files weigh about 420 MB a day on the wire (measured 2026-10-06), and an owner on a metered connection must be
+    /// able to stop that alone.
+    ///
+    /// <para>ON by default and ONE press, for the reasons <see cref="RecordMarketContext"/> is — public data, no key, no
+    /// order, nothing granted — and under the bound that allows it: no raw file is ever kept, each file's record keeps its
+    /// hashes, size, address and arrival so the first reading stands as proof without the bytes, and the crypto rows of a
+    /// day are capped. Off, the recorder asks nothing and writes nothing. It is the only control of GDELT's recorder, and it
+    /// is in-process: no verb and no pipe op starts, stops or writes it.</para>
+    /// </summary>
+    public bool RecordGdeltNews { get; set; } = true;
+
+    /// <summary>
     /// THE ACCOUNT OWNER'S OVERRIDE OF WHAT A PAPER FILL IS CHARGED, as a FRACTION — <c>0.001</c> is
     /// ten basis points, the spelling a backtest's <c>--fees</c> uses — or NULL, which is "no override":
     /// the fill then pays TradeAgent's venue cost model for the venue the paper connector's prices are

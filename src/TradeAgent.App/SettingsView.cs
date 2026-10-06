@@ -91,6 +91,9 @@ sealed class SettingsPage
 
     /// <inheritdoc cref="ToggleMarketContext"/>
     readonly Button _marketContext;
+
+    /// <inheritdoc cref="ToggleGdeltNews"/>
+    readonly Button _gdeltNews;
     bool _collecting;
 
     /// <summary>
@@ -247,6 +250,12 @@ sealed class SettingsPage
         _marketContext = Ui.Secondary("Stop recording market context", ToggleMarketContext);
         _marketContext.HorizontalAlignment = HorizontalAlignment.Left;
 
+        // GDELT NEWS. ONE press, the same judgement — public data, no key, nothing granted, no order touched — and a
+        // switch of its own because it is the heavy one: GDELT's files weigh hundreds of megabytes a day on the wire,
+        // and an owner on a metered connection must be able to stop that without stopping the rest.
+        _gdeltNews = Ui.Secondary("Stop recording GDELT news", ToggleGdeltNews);
+        _gdeltNews.HorizontalAlignment = HorizontalAlignment.Left;
+
         var marketData = Ui.Section("Market data", Ui.Col(Theme.S4,
             Ui.KeyValueLive("History TradeAgent holds", _dataValue),
             _dataNote,
@@ -290,6 +299,18 @@ sealed class SettingsPage
                      + "Binance's own address is marked live; a late one, or one from any other address, is marked "
                      + "archive. It is context for research, not evaluation evidence, it is recorded only while "
                      + "TradeAgent is running, and the AI cannot start, stop or change it."),
+            Ui.Divider(),
+            _gdeltNews,
+            Ui.Muted("While TradeAgent is running it also records news items about crypto from the GDELT Project "
+                     + "(https://www.gdeltproject.org/), which publishes what the world's news media reported every fifteen "
+                     + "minutes. TradeAgent reads each fifteen-minute file once, from GDELT's own address, keeps only the items "
+                     + "about Bitcoin, Ethereum, Solana, Binance, BNB, XRP, Ripple or Dogecoin and throws the rest away; at a "
+                     + "start it fetches the files it missed, up to seven days back. Each item keeps the time GDELT first saw it."),
+            Ui.Micro("It downloads about 420 MB a day and keeps about 7 MB of it, never more than 25 MB a day — switch it off "
+                     + "on a metered connection. An item read on time from GDELT's own address is marked live; one fetched later "
+                     + "is marked point-in-time when GDELT's checksum matches and its file was published before its time, and "
+                     + "archive otherwise. One that looks addressed to an AI is flagged and its text withheld, no link in them is "
+                     + "opened, and the AI cannot start, stop or change it. Source: the GDELT Project."),
             Ui.Divider(),
             Ui.Muted("TradeAgent downloads the twelve most recent complete months of 1-minute bars from Binance's " +
                      "public archive and checks every file against the checksum Binance published beside it. A month " +
@@ -598,6 +619,7 @@ sealed class SettingsPage
 
         ApplyLiveBars();
         ApplyMarketContext();
+        ApplyGdeltNews();
         ApplyInstrumentCheck();
 
         try
@@ -691,6 +713,27 @@ sealed class SettingsPage
         _marketContext.Content = _host.Gateway.Settings.RecordMarketContext
             ? "Stop recording market context"
             : "Record market context";
+
+    /// <summary>
+    /// ONE PRESS, AND IT ONLY EVER CHANGES WHAT TRADEAGENT RECORDS. See <see cref="TradeAgentSettings.RecordGdeltNews"/>:
+    /// public data, no key, nothing a second press could protect. The recorder reads the setting before every request,
+    /// so nothing restarts: off, it asks nothing and writes nothing; back on, the next look at a quarter hour carries on.
+    /// </summary>
+    void ToggleGdeltNews()
+    {
+        var on = !_host.Gateway.Settings.RecordGdeltNews;
+        _host.Gateway.Update(s => s.RecordGdeltNews = on);
+        _host.Gateway.Log.Activity(on
+            ? "GDELT news: recording switched ON"
+            : "GDELT news: recording switched off");
+        ApplyGdeltNews();
+    }
+
+    /// <summary>The button says what pressing it will do.</summary>
+    void ApplyGdeltNews() =>
+        _gdeltNews.Content = _host.Gateway.Settings.RecordGdeltNews
+            ? "Stop recording GDELT news"
+            : "Record GDELT news";
 
     /// <summary>
     /// THE LIVE SERIES AS IT STANDS, off the rows and never off "when the collector last ran": a
