@@ -3379,14 +3379,16 @@ presents the same id for `ExecutionRequestStore.TryCreate` to collapse. It is `p
 `dispatched` immediately before the call, then `resolved` only on a TERMINAL answer or `refused` only
 when nothing was sent. **An UNKNOWN answer stays unresolved, holds the cursor and is never re-sent.**
 The cursor is the last bar every one of whose operations settled — not the newest settled bar, because
-an unresolved operation on an earlier bar is an order that may be live. An end whose flatten left NO
-record is the case the write-ahead row buys: with the row there a restart leaves the close alone; without
-one, "sent and lost" and "never sent" are the same picture.
+an unresolved operation on an earlier bar is an order that may be live. The write-ahead row is how a restart
+tells "sent and lost" from "never sent": a close that may have left is left alone, and an END whose close
+provably never left — refused before the wire, or never written — is owed and sent again (The runner,
+`U-runner-exit-hygiene-a`).
 
 **The app's own policy starts one, on a clock and not on a press.** `TradingGateway.StartPaperDeploymentsDue`
 runs on `MissionLoop`'s periodic seam straight after `AllocatePaperDue` and writes at most one run per
-standing paper allocation, while the envelope has room — and what occupies a slot is every run that is
-not over PLUS every ended run whose last operation has no answer, because **a replacement waits for a
+standing paper allocation, while the envelope has room — and what occupies a slot is every run on the
+grant's platform, account and instrument that is not over PLUS every ended one whose last operation has no
+answer or whose END still owes its close, whichever grant it ran under, because **a replacement waits for a
 flat, reconciled end**. `ReconcilePaperDeploymentsAsync` runs in the app's own background loop and in the
 gateway host's, at start-up and on every pass: it settles operations from their order rows, suspends,
 resumes, ends and dispatches. `EndPaperDeploymentAsync` cancels the run's working orders first — an end
@@ -3401,8 +3403,8 @@ is in `Ops.Mutating` and ENDS one, which is reachable from that channel because 
 exposure — the same reduction-only exception `close` and `cancel` already have. The owner's own press,
 **Stop paper deployment** on the Safety page, is one press plus a confirm for the reason Withdraw is:
 nothing takes it back. `status.deployments` lists what is not over plus every ended run with an
-unresolved operation, and section 4 of the owner's report prints one line per deployment under
-*running forward on paper*, every line marked PAPER and no live authority.
+unresolved operation or a close its END still owes, and section 4 of the owner's report prints one line
+per deployment under *running forward on paper*, every line marked PAPER and no live authority.
 
 ## The runner — `src/TradeAgent.Gateway/ForwardRuns.cs`, `src/TradeAgent.Platforms/ForwardBarSource.cs`
 
@@ -3509,16 +3511,18 @@ operation — `DECISION_EXPIRED`, `ALLOCATION_EXCEEDED` — and a request row st
 `refused`, because `DISPATCHING` is durable before the wire and a `CREATED` row provably never left the process.
 
 **A REFUSAL THAT SENT NOTHING IS OVER** (`U-runner-refused-close`). An entry, exit or flatten `refused` over no request
-row, or over one still `CREATED`, is not an order in flight: the run's books stopped counting it, so the next minute
-reads nothing pending and the program enters and exits by its rules again. It used to read as pending for ever — every
-exit suppressed while long, every entry while flat, the envelope's slot held — and the maximum hold's own second close,
+row, or over one that never reached `DISPATCHING` (`Deployments.RefusedBeforeTheWire`, the one predicate the runner and
+the gateway both ask, since `U-runner-exit-hygiene-a`), is not an order in flight: the run's books stopped counting it,
+so the next minute reads nothing pending and the program enters and exits by its rules again. It used to read as
+pending for ever — every exit suppressed while long, every entry while flat, the envelope's slot held — and the maximum hold's own second close,
 asked on the minute before the first one's fill is seen and refused `POSITION_MOVED`, did that to the one-minute guard's
 run at its first maximum-hold close. The row stays `CREATED`: outside the gateway's open set, never `REJECTED` (which
 says a broker refused), and never sent — nothing dispatches, approves or recovers a `CREATED` row, and a second
 `PlaceAsync` under its id answers with it. An operation refused whose row has since moved on is read off that row like
-any other; one still `dispatched` — UNKNOWN among them — stays in flight and holds the frontier; neither is sent again. **A refused exit
-on declared bars goes out again on the minute**: the evaluator is asked only at a declared close, and its one-bar hold
-then suppresses the exit it decided, so on a live minute that closes no declared bar, while the books read long and the
+any other; one still `dispatched` over a row that reached the wire — UNKNOWN among them — stays in flight and holds the
+frontier; neither is sent again. One still `dispatched` over a row that has not is settled by the store past its bound
+(below). **A refused exit on declared bars goes out again on the minute**: the evaluator is asked only at a declared
+close, and its one-bar hold then suppresses the exit it decided, so on a live minute that closes no declared bar, while the books read long and the
 run's latest entry, exit or flatten is an exit refused before the wire, that exit's intent is read back from its
 operation, sized from the books and sent as an `exit` under that minute's own id — its own `TA-` client order id — with
 its decision block unchanged, for as long as the decision is inside both of its bounds; the gateway still judges each
@@ -3534,9 +3538,39 @@ first connector read settled lands on a minute that pass then moved the cursor o
 refused before. **NOT claimed**: an exit sent again past its decision's bounds; a refused entry sent again (the program
 decides again on a later bar); protection put back after an exit a gate refused once its cancel had gone through — the
 position is then without its stop and target until the exit goes out or the maximum hold closes it (the update window,
-the kill switch and the mode refuse the cancel as well, and keep them); an END whose flatten a gate refused, which is not
-sent again and reads reconciled; and an operation left `dispatched` over a `CREATED` row by a crash between `TryCreate`
-and `DISPATCHING`, which holds the frontier for good. The last two are named for `U-runner-exit-hygiene`.
+the kill switch and the mode refuse the cancel as well, and keep them). That one is named for `U-runner-exit-hygiene-b`.
+
+**AN END THAT COULD NOT CLOSE IS OWED, AND CLOSES ONCE THE GATE LIFTS** (`U-runner-exit-hygiene-a`). An ended run whose
+latest flatten was refused before the wire, or that has none, OWES its close: each reconcile pass finishes it as the END
+does — what of the run still works is cancelled, then `CloseAsync` under a new operation with its own `dp-` and `TA-`
+ids — at most once a minute (a minute that already carries one of its flattens gets no other), and writes nothing while
+`TryAuthorizeExecution` refuses the run's identity (the update window, the mode, the kill switch, unconfirmed work,
+health), on a platform, mode or account that is not the run's, or while another run on the same account and instrument
+is not over or has an operation with no answer — a close is of the account's whole position, and sent later than the
+END it could close that run's position under it. A gate inside the order path is met by each attempt and recorded on
+it. `CloseAsync`'s "nothing to close" now RESOLVES the flatten, so a flat book owes nothing. Until it has closed the run
+holds its slot — counted on its platform, account and instrument, so a new grant there does not start a run over it —
+and its line and `status.deployments` say ENDED, NOT closed, what holds the close or what refused it last (code first),
+sent again each minute, no replacement until it has closed. **Still NOT claimed**: a close that MAY have reached the
+wire — `dispatched`, UNKNOWN, or answered without a fill — is never sent again here (confirming one from order history
+is `U-flatten-confirm`); the close is of the ACCOUNT's whole position in the instrument, not the run's books, so a
+position of the owner's own there goes with it, as it does at the END; two END callers at once can each send a close
+(a probe first); and an ended run written before this unit whose END found the book flat (`refused`, "there was nothing
+to send") now reads as owed, so its first pass sends that close once — a flat book resolves it.
+
+**A DISPATCH STOPPED BETWEEN ITS RECORD AND THE WIRE IS OVER, SETTLED BY THE STORE** (`U-runner-exit-hygiene-a`). An
+operation `dispatched` over a row still `CREATED`, or over no row at all, older than `DispatchStrandedAfter` (the stranded
+`DISPATCHING` bound, on the gateway's clock, from the row's `created_at` or the operation's) is settled by the store and
+never by a reading, by the reconcile pass and the runner's own settle alike, in any process: the row goes `CREATED →
+CANCELLED` by `Transition`'s compare-and-swap, "nothing was sent: …" — with no row, a `CREATED` row is written under the
+id first — and only the winner refuses the operation. A dispatcher still alive moves the same row `CREATED → DISPATCHING`
+by the same compare-and-swap before the wire, so it loses and sends nothing, or meets the row at the replay or at
+`TryCreate` and sends nothing; a row that ended without reaching the wire reads `refused`, never `resolved`. Inside the
+bound nothing is settled: an operation with no row is no longer refused on sight, which let a dispatcher still on its way
+send under an operation that read `refused`. The cursor and the frontier move past the bar; an exit so settled is sent
+again by the rule above, an END's close as an owed close. **Still NOT claimed**: a dispatch slower than the bound from its
+row's `created_at` — written before the dispatch gate and its reads — is settled under it: it sends nothing, and goes out
+again as above.
 
 **WHAT THE RECORD MAY CLAIM: forward paper observation under declared bar-fill assumptions, and nothing more.**
 The price existed at the open of a minute. No executability, no queue position, no intrabar ordering, and
