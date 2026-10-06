@@ -9179,14 +9179,18 @@ public sealed class TradingGateway : IAsyncDisposable
     /// sitting for ever over a book TradeAgent could close, waiting for a person to read a row the
     /// platform could have answered, is the budget not doing its job.</para>
     ///
-    /// <para><b><see cref="ReconcileAsync"/>'s rules, WITHOUT absence.</b> Found under its own client id,
-    /// in a history read back to five minutes before the close, in a TERMINAL state: that state and that
-    /// fill. Not found, but fills under its id: FILLED. Found still live, not found at all, or a read that
-    /// did not answer: UNDECIDED — nothing settled, nothing cancelled, nothing sent, and asked again on
-    /// the next pass. "Not there" is never read as "never sent" here: on ATAS a close carries the id only
-    /// as a label written after the fact, so its absence proves nothing (that question is
-    /// <c>U-flatten-absence</c>'s). And only where the connector claims it can prove its own history at
-    /// all — <see cref="ConnectorCapabilities.ReconciliationProvable"/>, ReconcileAsync's own gate.</para>
+    /// <para><b><see cref="ReconcileAsync"/>'s rules, and its absence only behind one more claim.</b> Found
+    /// under its own client id, in a history read back to five minutes before the close, in a TERMINAL
+    /// state: that state and that fill. Not found, but fills under its id: FILLED. Found still live, or a
+    /// read that did not answer: UNDECIDED — nothing settled, nothing cancelled, nothing sent, and asked
+    /// again on the next pass. Not found at all is UNDECIDED too, except where the connector claims its
+    /// closes carry the id they are handed (<see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/>,
+    /// <c>U-flatten-absence</c>): there, once the close can no longer be on its way and the grace has
+    /// passed, it never reached the platform — CANCELLED. Elsewhere "not there" is never read as "never
+    /// sent": on ATAS a close carries the id only as a label written after the fact, so its absence
+    /// proves nothing (<see cref="AbsenceDecidesALostClose"/>). And only where the connector claims it can
+    /// prove its own history at all — <see cref="ConnectorCapabilities.ReconciliationProvable"/>,
+    /// ReconcileAsync's own gate.</para>
     ///
     /// <para><b>All or nothing, and once per breach.</b> Nothing is written until EVERY lost close is
     /// decided. Then one record, at the SQL layer, before a single row is settled: the verdicts and a
@@ -9352,9 +9356,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>
     /// What the platform's history says about ONE lost close: a verdict, or null and why not.
     /// <see cref="ReconcileAsync"/>'s window and its first two questions in its order — the order under
-    /// the close's own client id, then the fills under it — and NOT its third: absence decides nothing
-    /// here. A read that throws decides nothing either; the window is never null, so a platform that
-    /// cannot show a history back that far throws rather than answering short.
+    /// the close's own client id, then the fills under it — and its third, absence, only where
+    /// <see cref="AbsenceDecidesALostClose"/> holds and only on <see cref="ReconcileAsync"/>'s own clock:
+    /// past <see cref="GatewayOptions.AbsenceGrace"/>, counted from <see cref="AbsenceCountsFrom"/>
+    /// (<c>U-flatten-absence</c>). A read that throws decides nothing, and never reaches the absence
+    /// question; the window is never null, so a platform that cannot show a history back that far throws
+    /// rather than answering short.
     /// </summary>
     async Task<(LossFlattenVerdict? Verdict, string Undecided)> AskTheHistoryAsync(ExecutionRequest leg,
         CancellationToken ct)
@@ -9390,9 +9397,36 @@ public sealed class TradingGateway : IAsyncDisposable
             return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, nameof(ExecutionState.FILLED),
                 mine.Sum(f => f.Quantity), mine[0].ConnectorOrderId, "your platform's fills account for it"), "");
 
-        // NOT THERE, AND THAT IS NOT AN ANSWER.
-        return (null, "your platform lists no order and no fill under its id, and on its own that proves nothing");
+        // NOT THERE — BOTH READS ANSWERED, AND NEITHER LISTS IT. On its own that proves nothing: on ATAS a
+        // close carries our id only as a label written after the fact. It is an answer only where the
+        // connector claims its closes carry the id they are handed (U-flatten-absence).
+        if (!AbsenceDecidesALostClose(Connector.Capabilities))
+            return (null, "your platform lists no order and no fill under its id, and on its own that proves nothing");
+
+        // AND ONLY ONCE THE CLOSE CAN NO LONGER BE ON ITS WAY THERE: ReconcileAsync's own clock for
+        // absence, the later of the dispatch and the bound, then the grace after it.
+        if (Now - AbsenceCountsFrom(leg) < _opt.AbsenceGrace)
+            return (null, "your platform lists no order and no fill under its id yet, and the close could still be "
+                          + "on its way there");
+
+        // NEVER REACHED THE PLATFORM: not working, never filled, nothing to undo — ReconcileAsync's mapping.
+        return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, nameof(ExecutionState.CANCELLED), null, null,
+            "it never reached the platform: your platform's order history, whose closes carry TradeAgent's "
+            + "reference, lists no order and no fill under it"), "");
     }
+
+    /// <summary>
+    /// THE ONE GUARD ON WHAT ABSENCE MAY DECIDE (<c>U-flatten-absence</c>). A lost close that the
+    /// platform's history lists no order and no fill for never reached the platform ONLY on a connector
+    /// that claims both halves of that sentence: that its history is complete and carries our ids
+    /// (<see cref="ConnectorCapabilities.ReconciliationProvable"/>, which the confirm already required
+    /// before it read anything), and that its closes carry the id they are handed
+    /// (<see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/>). Anywhere else — ATAS first of all —
+    /// "not under our id" is not "not there", and reading it as such would send a second close over a
+    /// first that may have filled.
+    /// </summary>
+    static bool AbsenceDecidesALostClose(ConnectorCapabilities capabilities) =>
+        capabilities.ReconciliationProvable && capabilities.ClosesCarryClientOrderId;
 
     /// <summary>
     /// THE ONE GUARD ON WHAT DECIDES A LOST CLOSE: a state the platform holds it in that cannot change

@@ -133,8 +133,24 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     /// <summary>See <see cref="PlatformIsPaper"/>: the other witness, on the account row itself.</summary>
     public bool? AccountIsSimulated { get; init; }
 
-    public ConnectorCapabilities Capabilities =>
-        PlatformIsPaper is { } p ? Inner.Capabilities with { IsPaper = p } : Inner.Capabilities;
+    /// <summary>
+    /// THE CLAIM THAT A CLOSE CARRIES THE ID IT IS HANDED, AS THIS PLATFORM STATES IT
+    /// (<c>U-flatten-absence</c>). The simulator makes
+    /// <see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/>, and earns it; ATAS does not, because
+    /// its close carries our id only as a label written after the fact. False is a platform that does
+    /// not make the claim: the simulator's closes are unchanged and only what is SAID about them moves,
+    /// so a test can show that the claim, and nothing else, is what lets absence decide. Inert until set.
+    /// </summary>
+    public bool? ClosesCarryTheId;
+
+    public ConnectorCapabilities Capabilities
+    {
+        get
+        {
+            var caps = PlatformIsPaper is { } p ? Inner.Capabilities with { IsPaper = p } : Inner.Capabilities;
+            return ClosesCarryTheId is { } c ? caps with { ClosesCarryClientOrderId = c } : caps;
+        }
+    }
 
     public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;
     public TimeSpan EmergencyBudget => Inner.EmergencyBudget;

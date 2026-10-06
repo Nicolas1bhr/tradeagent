@@ -425,6 +425,21 @@ public class CapabilityTests
         Assert.False(new ConnectorCapabilities(true, false, true, true, true, true).ReconciliationProvable);
         Assert.False(new ConnectorCapabilities(true, true, false, true, true, true).ReconciliationProvable);
     }
+
+    /// <summary>
+    /// A CLOSE CARRIES THE CLIENT ID ONLY WHERE A CONNECTOR SAYS SO (<c>U-flatten-absence</c>). The claim
+    /// lets the absence of a lost close settle it, so its default is the safe one: a connector that says
+    /// nothing about its closes — ATAS, with rule 1 proven on its placements and its history provable —
+    /// claims nothing.
+    /// </summary>
+    [Fact]
+    public void A_close_carries_the_client_id_only_where_a_connector_says_so()
+    {
+        var everything = new ConnectorCapabilities(true, true, true, true, true, true);
+        Assert.True(everything.ReconciliationProvable);
+        Assert.False(everything.ClosesCarryClientOrderId);
+        Assert.True((everything with { ClosesCarryClientOrderId = true }).ClosesCarryClientOrderId);
+    }
 }
 
 /// <summary>
