@@ -9,17 +9,21 @@ namespace TradeAgent.Core.Data;
 /// WHAT A TAPE OBSERVATION COUNTS AS — computed by the app per observation from fields it recorded
 /// itself, and never accepted from a caller (<c>docs/EDGE-FACTORY.md</c> § 4.1, R07 § 5).
 ///
-/// <para>Four words, of which this build writes two: <see cref="Live"/> and <see cref="Arch"/>.
-/// <see cref="Pit"/> is <c>U-tape-archive</c>'s — a vendor-checksummed print whose overlap with our own
-/// live record matches — and <see cref="Hind"/> is built with hindsight. All four are spelled here, and
-/// in the column's <c>CHECK</c>, so the later units add a WRITER and never a table rebuild.</para>
+/// <para>Four words, of which this build writes three: <see cref="Live"/>, <see cref="Pit"/> — since
+/// <c>U-tape-archive</c>, for a file of a vendor's archive fetched late, whose vendor checksum verifies and which
+/// the vendor's storage says was written no later than the first-seen time it declares — and <see cref="Arch"/>.
+/// <see cref="Hind"/> is built with hindsight. All four are spelled here, and in the column's <c>CHECK</c>, so a
+/// later unit adds a WRITER and never a table rebuild.</para>
 /// </summary>
 public static class TapeClass
 {
     /// <summary>First received from the source's built-in origin within its cadence, its documented publication delay and 30 s of its source time.</summary>
     public const string Live = "O-LIVE";
 
-    /// <summary>An exchange-published print checked against its vendor checksum and our own live record. <c>U-tape-archive</c>'s.</summary>
+    /// <summary>
+    /// A vendor-checksummed file fetched late from the source's built-in origin: its published MD5 matches this build's
+    /// and the vendor's storage dates it no later than its declared first-seen time (<c>U-tape-archive</c>).
+    /// </summary>
     public const string Pit = "O-PIT";
 
     /// <summary>Anything else fetched after the fact — late, from another origin, or from a row a file added.</summary>
@@ -99,6 +103,51 @@ public sealed record TapeObservation(
 public sealed record TapeFetchRecord(
     long Id, string Source, string Series, string Url, string? Origin, DateTimeOffset RequestedAt,
     DateTimeOffset ReceivedAt, int? HttpStatus, int Items, string? BodySha256, string? Note);
+
+/// <summary>
+/// ONE FILE OF A VENDOR'S CHECKSUMMED ARCHIVE, AS THE RECORDER READ IT (<c>U-tape-archive</c>): the facts
+/// <c>TapeStore.AppendArchive</c> writes into the file's own record and classes every row of it from.
+///
+/// <para>It carries no class, no kept count and no kept size: the store computes all three from what it writes.
+/// It carries no arrival instant either — that is the fetch's <see cref="TapeFetch.ReceivedAt"/>, the record's
+/// own <c>received_at</c> — so the same file read twice is the same record, and the second reading writes
+/// nothing.</para>
+/// </summary>
+public sealed record TapeArchiveBatch
+{
+    /// <summary>The series of the file's record, e.g. <c>gkg-batch</c>.</summary>
+    public required string RecordSeries { get; init; }
+
+    /// <summary>The subject of the file's record, e.g. <c>gdelt</c>.</summary>
+    public required string RecordSubject { get; init; }
+
+    /// <summary>The series of the file's kept rows, e.g. <c>gkg-items</c>.</summary>
+    public required string ItemsSeries { get; init; }
+
+    /// <summary>The vendor's first-seen time for the file — the source time of its record and of every row.</summary>
+    public required DateTimeOffset Label { get; init; }
+
+    /// <summary>The bytes of the file, all of which the hashes below cover.</summary>
+    public required long Bytes { get; init; }
+
+    /// <summary>The MD5 the vendor published for the file, hex.</summary>
+    public required string PublishedMd5 { get; init; }
+
+    /// <summary>This build's MD5 of the bytes it read, hex.</summary>
+    public required string ComputedMd5 { get; init; }
+
+    /// <summary>This build's SHA-256 of the bytes it read, hex.</summary>
+    public required string Sha256 { get; init; }
+
+    /// <summary>When the vendor's storage says the file was last written, or null where it did not say.</summary>
+    public DateTimeOffset? LastModified { get; init; }
+
+    /// <summary>The rows the file held, kept or not.</summary>
+    public required int Rows { get; init; }
+
+    /// <summary>The name and version of the filter that chose the kept rows, e.g. <c>gkg-crypto-v1</c>.</summary>
+    public required string Filter { get; init; }
+}
 
 /// <summary>
 /// WHAT ONE <c>Append</c> DID. <see cref="Items"/> is what the answer carried; <see cref="Stored"/> is

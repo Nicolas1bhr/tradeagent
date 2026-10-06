@@ -123,24 +123,29 @@ public sealed class TapeCollector : IAsyncDisposable
         // change what it records mid-series with nothing in the record saying when.
         var read = catalog ?? TapeSourceCatalog.Read();
 
+        // THE ARCHIVE FAMILY IS NOT LOOKED AT HERE (U-tape-archive). GDELT's fifteen-minute zips are read by
+        // GdeltRecorder on the owner's own "Record GDELT news" switch; this collector polls answers it reads
+        // whole. The row is in the catalogue for the live rule and for the ids a file may not reuse.
+        var rows = read.Sources.Where(r => r.Parser != TapeSourceCatalog.GkgParser).ToList();
+
         // A ROW WITH NO CADENCE HAS NO NEXT LOOK. The catalogue never yields one — its own rows are fixed
         // and a file's are held to a minute or more — so this is a caller's mistake, refused here in words
         // rather than discovered as a loop that died on its first wait.
-        if (read.Sources.FirstOrDefault(r => r.Cadence <= TimeSpan.Zero) is { } still)
+        if (rows.FirstOrDefault(r => r.Cadence <= TimeSpan.Zero) is { } still)
             throw new ArgumentException($"tape row '{still.Id}' has a cadence of {still.CadenceSeconds} s, which is not a cadence", nameof(catalog));
 
         // A ROW WHOSE PARSER THIS BUILD DOES NOT HAVE CANNOT BE READ, so it is refused here in words for the
         // same reason: the catalogue's own rows are fixed and a file's parser is checked, so only a caller
         // can hand one over — and a look that guessed at a parser would record a guess as a delivery.
-        if (read.Sources.FirstOrDefault(r => r.Parser is not (TapeSourceCatalog.JsonParser or TapeSourceCatalog.AnnouncementParser)) is { } unread)
+        if (rows.FirstOrDefault(r => r.Parser is not (TapeSourceCatalog.JsonParser or TapeSourceCatalog.AnnouncementParser)) is { } unread)
             throw new ArgumentException($"tape row '{unread.Id}' names the parser '{unread.Parser}', which this build does not have", nameof(catalog));
 
-        Rows = read.Sources;
+        Rows = rows;
         CatalogProblem = read.Unreadable;
         Refused = read.Refused;
     }
 
-    /// <summary>The rows this collector records: the built-ins and whatever valid rows the file added.</summary>
+    /// <summary>The rows this collector records: the built-ins it polls — every family but the archive's — and whatever valid rows the file added.</summary>
     public IReadOnlyList<TapeSourceEntry> Rows { get; }
 
     /// <summary>Why <c>tape-sources.json</c> could not be read, or null. The app writes it as an activity line.</summary>

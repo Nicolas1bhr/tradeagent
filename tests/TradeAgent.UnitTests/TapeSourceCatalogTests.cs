@@ -143,9 +143,10 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         Assert.Contains("built-in rows go on", broken.Unreadable!, StringComparison.Ordinal);
         Assert.Empty(broken.Refused);
 
-        // AN ABSENT FILE IS THE SHIPPED ROWS — the five market rows and the announcement row — and says nothing.
+        // AN ABSENT FILE IS THE SHIPPED ROWS — the five market rows, the announcement row and, since U-tape-archive,
+        // GDELT's archive row — and says nothing.
         var absent = TapeSourceCatalog.Read(Path.Combine(TestEnv.Home, $"absent-{Guid.NewGuid():n}.json"));
-        Assert.Equal(5 + 1, absent.Sources.Count);
+        Assert.Equal(5 + 1 + 1, absent.Sources.Count);
         Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id), absent.Sources.Select(r => r.Id));
         Assert.Null(absent.Unreadable);
         Assert.Empty(absent.Refused);
@@ -156,7 +157,7 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
               "series": [ { "id": "s", "url_shape": "{base}/x?symbol={symbol}", "time_field": "t" } ] }
             """));
         var capped = TapeSourceCatalog.Read(NewFile("[" + many + "]"));
-        Assert.Equal(5 + 1 + TapeSourceCatalog.MaxFileRows, capped.Sources.Count);
+        Assert.Equal(5 + 1 + 1 + TapeSourceCatalog.MaxFileRows, capped.Sources.Count);
         Assert.Equal(2, capped.Refused.Count);
         Assert.All(capped.Refused, r => Assert.Contains("is past the 8 rows", r, StringComparison.Ordinal));
     }
@@ -202,10 +203,11 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
             TapeSourceCatalog.BuiltInLiveRule(TapeSourceCatalog.OkxEeaAnnouncements));
         Assert.All(TapeSourceCatalog.BuiltIn(), r => Assert.Equal(TimeSpan.Zero, TapeSourceCatalog.BuiltInLiveRule(r.Id)!.Value.Delay));
 
-        // BUILT-IN STAYS THE FIVE MARKET ROWS; THE SHIPPED LIST IS BOTH FAMILIES, IN THAT ORDER.
+        // BUILT-IN STAYS THE FIVE MARKET ROWS; THE SHIPPED LIST IS EVERY FAMILY, IN ORDER — since U-tape-archive,
+        // GDELT's archive row after the announcements.
         Assert.Equal(5, TapeSourceCatalog.BuiltIn().Count);
         Assert.DoesNotContain(TapeSourceCatalog.BuiltIn(), r => r.Id == TapeSourceCatalog.OkxEeaAnnouncements);
-        Assert.Equal(TapeSourceCatalog.BuiltIn().Select(r => r.Id).Append(TapeSourceCatalog.OkxEeaAnnouncements),
+        Assert.Equal(TapeSourceCatalog.BuiltIn().Select(r => r.Id).Append(TapeSourceCatalog.OkxEeaAnnouncements).Append(GdeltGkg.Source),
             TapeSourceCatalog.Shipped().Select(r => r.Id));
 
         // A FRESH COPY EVERY CALL, and an edited copy moves nothing the store decides by.
@@ -254,5 +256,62 @@ public class TapeSourceCatalogTests(ITestOutputHelper log)
         var added = read.Sources[^1];
         Assert.Equal((TapeSourceCatalog.JsonParser, TimeSpan.Zero), (added.Parser, added.PublicationDelay));
         Assert.Null(TapeSourceCatalog.BuiltInLiveRule(added.Id));
+    }
+
+    /// <summary>
+    /// THE ARCHIVE FAMILY AS SHIPPED (<c>U-tape-archive</c>): one row, GDELT's GKG files on GDELT's own data host every
+    /// 900 s, read by the archive parser — which the tape's poller leaves to GDELT's own recorder — with its terms basis
+    /// read on the day, the citation GDELT's terms ask of every use, the codebook it is read by and the measurement. It
+    /// joins the shipped list and the live rule, never <see cref="TapeSourceCatalog.BuiltIn"/>; a file may neither
+    /// reuse its id nor name its parser.
+    /// </summary>
+    [Fact]
+    public void The_archive_row_is_gdelts_gkg_with_its_terms_citation_and_codebook_and_joins_only_the_shipped_list()
+    {
+        var row = Assert.Single(TapeSourceCatalog.Archives());
+        log.WriteLine($"{row.Id} {row.CadenceSeconds}s parser={row.Parser} citation={row.Citation}");
+        log.WriteLine("terms: " + row.Terms);
+
+        Assert.Equal(("gdelt-gkg", GdeltGkg.BaseUrl, 900, false, TapeSourceCatalog.GkgParser, TimeSpan.Zero),
+            (row.Id, row.BaseUrl, row.CadenceSeconds, row.PerSymbol, row.Parser, row.PublicationDelay));
+        Assert.StartsWith("https://", row.BaseUrl, StringComparison.Ordinal);
+        var series = Assert.Single(row.Series);
+        Assert.Equal((GdeltGkg.ItemsSeries, GdeltGkg.BatchShape, "V2.1DATE", "GKGRECORDID"),
+            (series.Id, series.UrlShape, series.TimeField, series.IdField));
+
+        Assert.Equal(TapeSourceCatalog.GdeltTermsUrl, row.TermsUrl);
+        Assert.EndsWith("/about.html#termsofuse", row.TermsUrl, StringComparison.Ordinal);
+        Assert.Contains("re-read 2026-10-06", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("commercial", row.Terms, StringComparison.Ordinal);
+        Assert.Contains("cites the GDELT Project", row.Terms, StringComparison.Ordinal);
+        Assert.Equal(TapeSourceCatalog.GdeltCitation, row.Citation);
+        Assert.StartsWith("The GDELT Project, https://", row.Citation, StringComparison.Ordinal);
+        Assert.EndsWith("/GDELT-Global_Knowledge_Graph_Codebook-V2.1.pdf", row.DocUrl, StringComparison.Ordinal);
+        Assert.Contains("measured 2026-10-06", row.Measured, StringComparison.Ordinal);
+
+        // THE LIVE RULE TAKES ITS ORIGIN AND CADENCE; IT IS SHIPPED, NEVER BUILT-IN, AND THE POLLER DOES NOT LOOK AT IT.
+        Assert.Equal((UrlOrigin.Of(GdeltGkg.BaseUrl)!, TimeSpan.FromSeconds(900), TimeSpan.Zero), TapeSourceCatalog.BuiltInLiveRule(GdeltGkg.Source));
+        Assert.Contains(TapeSourceCatalog.Shipped(), r => r.Id == GdeltGkg.Source);
+        Assert.DoesNotContain(TapeSourceCatalog.BuiltIn(), r => r.Id == GdeltGkg.Source);
+
+        // A FILE MAY NOT REUSE THE ID OR NAME THE PARSER, and the row stands as shipped.
+        var read = TapeSourceCatalog.Read(NewFile("""
+            [
+              { "id": "gdelt-gkg", "base_url": "http://127.0.0.1:9", "cadence_seconds": 900,
+                "series": [ { "id": "gkg-items", "url_shape": "{base}/x", "time_field": "t", "symbol_field": "s" } ] },
+              { "id": "my-news", "base_url": "http://127.0.0.1:9", "cadence_seconds": 900, "parser": "gdelt-gkg-zip",
+                "series": [ { "id": "gkg-items", "url_shape": "{base}/x", "time_field": "t", "symbol_field": "s" } ] }
+            ]
+            """));
+        foreach (var why in read.Refused) log.WriteLine("refused: " + why);
+        Assert.Equal(2, read.Refused.Count);
+        Assert.Contains(read.Refused, r => r.Contains("'gdelt-gkg' is one of TradeAgent's built-in rows", StringComparison.Ordinal));
+        Assert.Contains(read.Refused, r => r.Contains("'my-news' names the parser 'gdelt-gkg-zip'", StringComparison.Ordinal));
+        Assert.Equal(GdeltGkg.BaseUrl, read.Sources.Single(r => r.Id == GdeltGkg.Source).BaseUrl);
+        Assert.Equal(TapeSourceCatalog.Shipped().Select(r => r.Id), read.Sources.Select(r => r.Id));
+
+        // A FRESH COPY EVERY CALL.
+        row.BaseUrl = "http://127.0.0.1:9";
+        Assert.Equal(GdeltGkg.BaseUrl, TapeSourceCatalog.Archives()[0].BaseUrl);
     }
 }
