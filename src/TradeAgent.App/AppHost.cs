@@ -508,6 +508,14 @@ public sealed class AppHost : IAsyncDisposable
     TapeStore? _tape;
 
     /// <summary>
+    /// GDELT'S RECORDER — GDELT's news items about crypto, into the same tape on its own task (<c>U-tape-archive</c>).
+    /// Started with the tape, on its own switch: the owner's "Record GDELT news" on the Settings page is its only control,
+    /// in-process — no verb and no pipe op starts it, stops it, points it elsewhere or writes the tape. Null when the tape
+    /// could not be opened.
+    /// </summary>
+    public GdeltRecorder? Gdelt { get; private set; }
+
+    /// <summary>
     /// THE APP'S INSTRUMENT CHECK (<c>U-venue-verify</c>): the configured pair, read against Binance spot's
     /// own published definition from the built-in origin. In-process only, like the collectors: no verb and
     /// no pipe op starts a check or writes its row. Null when it could not be built — the activity log says
@@ -608,6 +616,12 @@ public sealed class AppHost : IAsyncDisposable
                     if (Tape.CatalogProblem is { } unreadable) Gateway.Log.Activity("Market context: " + unreadable, "warn");
                     foreach (var refused in Tape.Refused) Gateway.Log.Activity("Market context: " + refused, "warn");
                     Tape.Start();
+
+                    // AND GDELT'S RECORDER, BESIDE IT ON THE SAME FILE AND ITS OWN SWITCH. What it has to tell the owner —
+                    // a day's cap reached, the backfill's daily bound — is an activity line.
+                    Gdelt = new GdeltRecorder(_tape, () => Gateway.Settings.RecordGdeltNews,
+                        say: text => Gateway.Log.Activity("GDELT news: " + text, "warn"));
+                    Gdelt.Start();
                 }
             }
             catch (Exception ex)
@@ -1886,6 +1900,7 @@ public sealed class AppHost : IAsyncDisposable
         // THE TAPE THE SAME WAY: the collector first, which waits for the look in flight and its
         // transaction, then the tape's own connection.
         if (Tape is not null) { await Tape.DisposeAsync(); Tape = null; }
+        if (Gdelt is not null) { await Gdelt.DisposeAsync(); Gdelt = null; }
         _tape?.Dispose();
         _tape = null;
         if (_server is not null) await _server.DisposeAsync();
