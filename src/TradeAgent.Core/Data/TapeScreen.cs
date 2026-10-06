@@ -12,8 +12,8 @@ namespace TradeAgent.Core.Data;
 public sealed record TapeQuarantine(string Rule, int Version);
 
 /// <summary>
-/// THE TAPE'S SCREEN, VERSION 1 (<c>U-tape-events</c>; <c>docs/EDGE-FACTORY.md</c> § 6.4, the inbox rule
-/// generalised to every source): whether an observation's text is addressed to an automated reader, and is
+/// THE TAPE'S SCREEN, VERSION 2 (<c>U-tape-events</c>; <c>U-tape-archive</c>; <c>docs/EDGE-FACTORY.md</c> § 6.4, the
+/// inbox rule generalised to every source): whether an observation's text is addressed to an automated reader, and is
 /// therefore quarantined.
 ///
 /// <para><b>What quarantines an item.</b> Any zero-width, bidirectional-control or tag character in its
@@ -24,6 +24,11 @@ public sealed record TapeQuarantine(string Rule, int Version);
 /// are the payload's DECODED property names and values: the canonical payload escapes every non-ASCII
 /// character and <c>&lt;</c>, so a screen that read the stored text would never see the markup it is
 /// looking for.</para>
+///
+/// <para><b>Version 2 (<c>U-tape-archive</c>) resolves character references first</b> (<see cref="Decode"/>): GDELT
+/// writes its page titles inside XML, with <c>&amp;#x2013;</c> for a dash, so under version 1 a title's
+/// <c>&amp;#x200B;</c> was not a zero-width space, <c>&amp;lt;|im_start|&amp;gt;</c> was not markup, and
+/// <c>&amp;#x69;gnore</c> was not a word. The rules are unchanged; they read what a reader of the markup reads.</para>
 ///
 /// <para><b>What quarantine does and does not do.</b> The item is still recorded, whole, like any other —
 /// the tape keeps what the vendor published, and a flag is not a reason to lose the record. Every read
@@ -41,8 +46,11 @@ public sealed record TapeQuarantine(string Rule, int Version);
 /// </summary>
 public static partial class TapeScreen
 {
-    /// <summary>The version every verdict names. A change to any rule is a new version.</summary>
-    public const int Version = 1;
+    /// <summary>
+    /// The version every verdict names. A change to any rule, or to what the rules read, is a new version: 2 since
+    /// <c>U-tape-archive</c>, which resolves character references before the rules read.
+    /// </summary>
+    public const int Version = 2;
 
     /// <summary>A zero-width, bidirectional-control or tag character anywhere in the item's strings.</summary>
     public const string InvisibleCharacter = "invisible-character";
@@ -200,7 +208,7 @@ public static partial class TapeScreen
 
     static TapeQuarantine Quarantined(string rule) => new(rule, Version);
 
-    /// <summary>Every property name and every string value in the document, decoded, in document order.</summary>
+    /// <summary>Every property name and every string value in the document, decoded — JSON's escapes, then any character references — in document order.</summary>
     static void Collect(JsonElement e, List<string> into)
     {
         switch (e.ValueKind)
@@ -208,7 +216,7 @@ public static partial class TapeScreen
             case JsonValueKind.Object:
                 foreach (var p in e.EnumerateObject())
                 {
-                    into.Add(p.Name);
+                    into.Add(Decode(p.Name));
                     Collect(p.Value, into);
                 }
                 break;
@@ -216,7 +224,7 @@ public static partial class TapeScreen
                 foreach (var item in e.EnumerateArray()) Collect(item, into);
                 break;
             case JsonValueKind.String:
-                into.Add(e.GetString() ?? "");
+                into.Add(Decode(e.GetString() ?? ""));
                 break;
         }
     }

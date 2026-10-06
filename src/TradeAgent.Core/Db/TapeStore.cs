@@ -597,6 +597,37 @@ public sealed class TapeStore : IDisposable
         return (IReadOnlyList<TapeObservation>)ReadAll(c, Obs);
     });
 
+    /// <summary>
+    /// THE SOURCE TIMES HELD FOR ONE SUBJECT OF ONE SERIES at or after <paramref name="from"/> — for an archive, which
+    /// of its files the tape already holds a record of (<c>U-tape-archive</c>), so a recorder resumes from the tape and
+    /// never from a memory of its own.
+    /// </summary>
+    public IReadOnlySet<DateTimeOffset> SourceTimes(string source, string series, string subject, DateTimeOffset from) => Read(() =>
+    {
+        using var c = Cmd(
+            "SELECT DISTINCT source_time FROM tape_obs WHERE source=$src AND series=$ser AND subject=$subj AND source_time >= $from",
+            ("$src", source), ("$ser", series), ("$subj", subject), ("$from", Sql.T(from)));
+        var times = new HashSet<DateTimeOffset>();
+        using var r = c.ExecuteReader();
+        while (r.Read()) times.Add(Sql.Time(r.GetString(0)));
+        return (IReadOnlySet<DateTimeOffset>)times;
+    });
+
+    /// <summary>
+    /// WHAT ONE SERIES' ROWS WEIGH whose source time is in [<paramref name="from"/>, <paramref name="to"/>): the UTF-8
+    /// bytes of every revision's payload, as stored — for an archive, what a day of its kept rows costs the owner's disk
+    /// (<c>U-tape-archive</c>'s daily cap).
+    /// </summary>
+    public long PayloadBytes(string source, string series, DateTimeOffset from, DateTimeOffset to) => Read(() =>
+    {
+        using var c = Cmd("""
+            SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tape_obs
+            WHERE source=$src AND series=$ser AND source_time >= $from AND source_time < $to
+            """,
+            ("$src", source), ("$ser", series), ("$from", Sql.T(from)), ("$to", Sql.T(to)));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
     /// <summary>Attempts, newest first, optionally of one source and series.</summary>
     public IReadOnlyList<TapeFetchRecord> Fetches(string? source = null, string? series = null, int limit = 100) => Read(() =>
     {

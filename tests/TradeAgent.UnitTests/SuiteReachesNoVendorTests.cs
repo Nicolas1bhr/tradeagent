@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using TradeAgent.Core;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Provisioning;
 using Xunit;
 
@@ -88,6 +89,13 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string BybitHost = "bybit" + ".";
 
+    /// <summary>
+    /// GDELT'S NAME (<c>U-tape-archive</c>), spelled the same way: the archive row ships pointing at GDELT's data host,
+    /// and <see cref="GdeltRecorder"/>'s base URL defaults to it. A test that named any GDELT host would be one edit away
+    /// from a request to it — a GKG file is megabytes — so the name is refused outright.
+    /// </summary>
+    const string GdeltHost = "gdeltproject" + ".org";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -154,6 +162,9 @@ public class SuiteReachesNoVendorTests
                 if (code.Contains(BybitHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names a Bybit host, a source dropped on its terms that nothing here may reach");
 
+                if (code.Contains(GdeltHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names a GDELT host, which the tape's archive recorder reaches");
+
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
                 if (Regex.IsMatch(code, @"new\s+BinanceArchiveClient\s*\(\s*\)"))
@@ -193,6 +204,13 @@ public class SuiteReachesNoVendorTests
                 && !body.Contains("baseUrl:", StringComparison.Ordinal))
                 offenders.Add($"{name} builds a TapeCollector and never names a baseUrl, so it would ask "
                               + "the vendor's futures host every look");
+
+            // AND GDELT'S RECORDER, THE SAME TRAP A SIXTH TIME (U-tape-archive): its `baseUrl` is optional and null
+            // means GDELT's own data host — megabytes a look. The same file-level rule, the same lookahead.
+            if (Regex.IsMatch(body, @"\bGdeltRecorder\b(?!\s*\.)")
+                && !body.Contains("baseUrl:", StringComparison.Ordinal))
+                offenders.Add($"{name} builds a GdeltRecorder and never names a baseUrl, so it would ask GDELT's data "
+                              + "host for its files");
 
             // AND THE INSTRUMENT VERIFIER, THE SAME TRAP A FIFTH TIME (U-venue-verify): its built-in
             // definition address defaults to the one compiled into this build — the vendor's market-data
@@ -323,6 +341,27 @@ public class SuiteReachesNoVendorTests
             Assert.DoesNotContain(BybitHost, r.DocUrl, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(BybitHost, r.TermsUrl, StringComparison.OrdinalIgnoreCase);
         });
+    }
+
+    /// <summary>
+    /// AND THE ARCHIVE ROW SHIPS POINTING AT GDELT (<c>U-tape-archive</c>), its terms and codebook too, and the recorder's
+    /// default root is GDELT's own — asserted through the name spelled in this file, which is why the recorder's own rule
+    /// above exists. Building one here asks nothing: only <c>Start</c> or a look does.
+    /// </summary>
+    [Fact]
+    public async Task The_archive_source_and_the_recorders_default_really_are_gdelt()
+    {
+        var row = Assert.Single(TapeSourceCatalog.Archives());
+        Assert.Contains(GdeltHost, row.BaseUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", row.BaseUrl);
+        Assert.Contains(GdeltHost, row.TermsUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(GdeltHost, row.DocUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(GdeltHost, row.Citation, StringComparison.OrdinalIgnoreCase);
+
+        using var store = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+        await using var recorder = new GdeltRecorder(store);
+        Assert.Equal(row.BaseUrl, recorder.Root);
+        Assert.Empty(store.Fetches());
     }
 
     /// <summary>
