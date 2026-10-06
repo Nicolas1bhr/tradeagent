@@ -1009,6 +1009,29 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   what happened to it, and that record is still an order that can fill. The refusal lifts when the
   record gets an outcome — the owner confirming it as filled, cancelled or rejected, or an emergency
   press settling it by the rule above.
+- **And while an earlier market close is still in flight** (`U-close-once`) — `CLOSE_IN_FLIGHT`,
+  naming the earlier request and its state. A close or reduce sized from the position — every caller
+  through `PlaceAsync`: the agent's `close`, reduce and `close-all` legs, a run's END and its owed
+  close, the runner's exit and maximum hold, an approval — is refused BEFORE its record exists while a
+  `PLACE` **market** order on the same platform, account and instrument that would move the position
+  the same way is `DISPATCHING`, `ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED`, `CANCEL_PENDING` or
+  `RECONCILING`; `UNKNOWN` keeps the rule above. The same doubling with an answer in the book: a market
+  close the platform acknowledged and has not filled — paper rests one until its next closed bar, ATAS
+  until its fill report — has moved no position, so the stale-close read agrees with a second close
+  sized beside it, and two ENDs of one run at once put two closes on the wire and a long 1 became a
+  short 1. It is asked again inside the dispatch gate, where the earlier close's answer is already
+  written, so the check and the send are one step; nothing in flight is cancelled, re-sent or
+  recomputed to make room; the refusal lifts once that order has filled, been cancelled or been
+  rejected, and a refusal is still proof that nothing left. **Market only** — a resting stop or target
+  is protection a market close cancels first, and a run's two would refuse each other — and **this
+  platform and account only**: a row another platform left `WORKING` is never moved by this one's
+  stream, and counted it would hold the position's closes for good. **NOT claimed**: the emergency
+  presses (Close all positions, the loss flatten and its close-again, the data-loss exit) do not read
+  this rule, so a press while a close rests still sizes a second close beside it — the press's
+  settle-before-send is to take such an order as it takes an `UNKNOWN` one, after
+  `U-fix-press-budget`; a `WORKING` row this platform's stream never moves — a fill or a cancel the
+  platform never reports — holds that position's closes until the row is settled; and a fill the
+  platform's position read has not caught up with is seen by neither rule.
 - **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
   computes a side and a size from a reading and sends a market order for them, so a reading that is
   stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it
@@ -3643,9 +3666,28 @@ and its line and `status.deployments` say ENDED, NOT closed, what holds the clos
 sent again each minute, no replacement until it has closed. **Still NOT claimed**: a close that MAY have reached the
 wire — `dispatched`, UNKNOWN, or answered without a fill — is never sent again here (confirming one from order history
 is `U-flatten-confirm`); the close is of the ACCOUNT's whole position in the instrument, not the run's books, so a
-position of the owner's own there goes with it, as it does at the END; two END callers at once can each send a close
-(a probe first); and an ended run written before this unit whose END found the book flat (`refused`, "there was nothing
-to send") now reads as owed, so its first pass sends that close once — a flat book resolves it.
+position of the owner's own there goes with it, as it does at the END; and an ended run written before this unit whose
+END found the book flat (`refused`, "there was nothing to send") now reads as owed, so its first pass sends that close
+once — a flat book resolves it. Two END callers at once are below.
+
+**A RUN IS ENDED ONCE, AND ITS CLOSE GOES OUT ONCE** (`U-close-once`). Every END — the owner's Stop, the agent's
+`deployment-stop`, the reconcile pass ending a run whose grant or verdict went, the runner's fault end — holds the run's
+own in-process gate from the re-read of its row to its last write. A second END while one is in progress records
+`deployment_end_waits`, waits for it, re-reads the row and answers the run as the first left it — the first END's
+reason, its one flatten — writing no operation and cancelling nothing. An owed close only TRIES the gate, so it writes
+nothing beside an END or another owed close of the run and the background loop never waits on one; the gate is per
+run, so nothing waits on another run's END. Beside it every close sized from the position meets `CLOSE_IN_FLIGHT` ("Order state
+machine", the agent's own close), so neither an END nor an owed close goes out beside an earlier market close of the
+account's position that is still resting: refused before the wire, the END's close is owed and goes out once that
+order has an answer, and a flat book then resolves it. Measured (`Two_ENDs_at_once_send_one_close_and_the_second_writes_nothing`):
+the owner's Stop held inside its place call and the agent's stop let go beside it put one flatten and one order on the
+wire, the account flat once it fills and nothing owed — where before this unit two closes went out and left a short 1
+when the close rests, and the run read "NOT closed" over a flat book when it fills. **NOT claimed**: the gate is one process's, and
+one gateway per installation is what makes that the whole of it; a runner pass begun before an END still dispatches
+for that run — its exit and maximum hold then meet `CLOSE_IN_FLIGHT` beside the END's close, but an entry it decided
+goes out as the opening order it is; the emergency presses do not read the in-flight rule (there); a fill the venue's
+position read has not caught up with is the ATAS box's to measure; and a `WORKING` row the venue's stream never moves
+holds that position's closes, the run's END and owed close among them.
 
 **A DISPATCH STOPPED BETWEEN ITS RECORD AND THE WIRE IS OVER, SETTLED BY THE STORE** (`U-runner-exit-hygiene-a`). An
 operation `dispatched` over a row still `CREATED`, or over no row at all, older than `DispatchStrandedAfter` (the stranded
