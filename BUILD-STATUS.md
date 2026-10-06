@@ -8292,3 +8292,37 @@ Tests box: NOT RUN — "the machine does not answer" (the fixer's check and the 
 **NOT done, NOT verified:** what stalls the macOS VM (host-side); no Windows hardware run. Outside the brief, found by the fixer and now OWED before any live use as
 `U-bridge-liveness-clock` (queued `a562283a`): liveness reads `DateTimeOffset.UtcNow` (`AtasConnector.cs:557`, `:1760`) while the write and answer deadlines read
 `TickCount64`, so a backward clock step would keep a silent bridge READY.
+
+## 2026-10-06 — U-flatten-absence landed: where a connector's closes provably carry our client id, a lost loss-budget close that a complete history never saw is settled as never sent and the book is closed again; ATAS never claims it
+
+Built by one fresh Opus builder under seat P from `docs/briefs/U-flatten-absence.md`: the survey's item 3, split off from `U-flatten-confirm` at its dispatch, with
+pointers re-checked against that landing (`abcb758a`). Merge `f65c4ba8` (ff-only), 2 commits, rebased over U-fix-bridge-heartbeat and docs with an identical src+tests
+patch-id; 15 files, +417/−43; no rung. MONEY PATH: this is the one place where absence becomes proof and a second close goes on the wire.
+
+- **Item (`56408b19`):** `ConnectorCapabilities.ClosesCarryClientOrderId` (init-only, default `false`). The simulator and TradeAgent paper claim it, each with its own test
+  that its close and the close's fill carry the given id (`LossFlattenConfirmTests.The_simulators_close_carries_the_id_it_is_handed_onto_the_order_and_its_fill`,
+  `PaperConnectorTests.A_close_carries_the_id_it_is_handed_onto_the_order_and_its_fill`). ATAS never claims it, and its `Capabilities` doc says why: ATAS builds the close
+  itself, and our id goes on only as a best-effort label afterwards (a filled close measured on the box bore ATAS's own "Close position"). That ATAS change is doc-only.
+  The rule sits in the confirm's history question (`AskTheHistoryAsync`), behind `AbsenceDecidesALostClose` = `ReconciliationProvable && ClosesCarryClientOrderId`. If both
+  `since` reads answered with no order and no fill under the leg's id, past `AbsenceGrace` from `AbsenceCountsFrom`, the leg is CANCELLED, "it never reached the platform",
+  and the confirm proceeds as for any decided leg. `SupportsClientOrderId`, `ReconcileAsync` and the rest of `U-flatten-confirm` are untouched. CONTRACTS and the SDK's docs say so.
+- **The one assertion flipped, by design:** the `"plain"` case of `A_lost_close_the_platform_never_saw_decides_nothing_past_the_grace` left that theory. It is now (ii),
+  `A_lost_close_the_platform_never_saw_is_settled_as_never_sent_past_the_grace_and_closed_again_once`. Its old claim lives on as (vii), the theory's new case "closes do not
+  carry the id". (iii) "history hidden" and (iv) "history read throws" are unchanged. The theory's NAME stays, so no test name was removed.
+- **Declared deviations, ACCEPTED by the manager:**
+  (a) The mutant bites (iv), not (iii): `HideOrderHistory` withdraws `ReconciliationProvable`, so `U-flatten-confirm`'s gate returns before any history read and no mutant
+  of this guard can reach (iii). That is a correct finding about where the guard bites.
+  (b) USER-GUIDE, the status schema's `loss_flatten` text and AGENTS.md said that a close the history cannot find settles nothing; they are corrected (paper and the simulator settle it, ATAS does not).
+  (c) Added `CapabilityTests.A_close_carries_the_client_id_only_where_a_connector_says_so` (the default stays false) and the `RecordingConnector.ClosesCarryTheId` knob.
+
+**Verified by running (the builder, quoted).** RED before (product stashed, test only): (ii) `Assert.Equal() Failure: Expected: CANCELLED Actual: UNKNOWN`
+(`LossFlattenConfirmTests.cs:359`), its inside-the-grace half passing. The guards at base, 3/3, passed.
+Mutant "a history read that threw read as absent" → (iv) `Expected: 1 Actual: 2` closes, "lost close: CANCELLED flagged=False", a second close on the wire; (ii), (iii)
+and (vii) green under it; restored, sha256 equal.
+Builder's gate at `0c260181`: Release 0 warnings; Unit 1411/1411; Fault 439/439; touched classes 3×, 15/15 and 2/2.
+**Manager's gate** at `f65c4ba8`, Release: build 0 warnings, 0 errors; Unit 1411/1411 (41 m 6 s — the Mac was in clamshell sleep from 12:42 CEST during the run); Fault 439/439
+(1 m 49 s); Integration 721/722, 1 skipped (11 m 16 s) → 0 failed. Names vs `main`: 2203 → 2207, 0 removed, 4 added. Scan clean; no trailers.
+**CI:** branch run 37444607427 at `0c260181`: ubuntu ✓ 13 m, macOS ✓ 15 m, windows ✓ 51 m, package ✓. Tests box: NOT RUN. The builder's check at 12:09 CEST: "the machine
+does not answer". The manager's check at landing: "NO - his own OFT.Platform is open; nothing of ours runs beside it" (respected, not retried).
+**NOT done, NOT verified:** ATAS (nothing claimed or run there). Integration ran on CI and in the manager's gate only. No test covers an absent close over a book someone else
+already flattened (flat → confirmed, nothing sent). The app was not run.
