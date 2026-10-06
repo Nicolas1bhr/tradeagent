@@ -80,6 +80,20 @@ public static class CliReplayContract
         _ => null
     };
 
+    /// <summary>
+    /// THE CREDIT LINE THE HUMAN OUTPUT PRINTS BENEATH AN ANSWER, or null (<c>U-tape-read</c>): an answer whose data
+    /// carries a <c>citation</c> — <c>data-tape</c> over GDELT's rows — gets it on a line of its own, because GDELT's terms
+    /// ask every use of its data to cite the project and link to its site, and a credit buried in a JSON field is one a
+    /// person reading the screen does not see. <c>--json</c> carries the same field in <c>data</c>.
+    /// </summary>
+    public static string? CreditLine(object? data) =>
+        data is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Object } e
+        && e.TryGetProperty("citation", out var c)
+        && c.ValueKind == System.Text.Json.JsonValueKind.String
+        && c.GetString() is { Length: > 0 } credit
+            ? "source credit: " + credit
+            : null;
+
     /// <summary>The --json object for a reply that came back, whatever it said.</summary>
     public static object AnsweredJson(string? requestId, IpcResponse reply) =>
         new { ok = reply.Ok, request_id = requestId, data = reply.Data, error = reply.Error };

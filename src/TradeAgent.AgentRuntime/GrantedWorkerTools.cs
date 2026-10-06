@@ -116,8 +116,12 @@ public sealed class GrantedWorkerTools(
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 
-    /// <summary>The two ops <c>data</c> will carry. Both reads; there is no op that writes a dataset.</summary>
-    public static readonly string[] DataOps = [Ops.DataList, Ops.DataBars];
+    /// <summary>
+    /// The three ops <c>data</c> will carry. All reads; there is no op that writes a dataset or the tape. The tape's
+    /// (<c>U-tape-read</c>) joins for every role for the reason the other two are here: it is research context, held
+    /// back from no one, and the gateway serves it read-only.
+    /// </summary>
+    public static readonly string[] DataOps = [Ops.DataList, Ops.DataBars, Ops.DataTape];
 
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
@@ -425,12 +429,22 @@ public sealed class GrantedWorkerTools(
             + "byte came from, 'data-bars' for the bars, each with a 'quality' — a 'midpoint_derived' "
             + "bar had no volume published for it at all and is never trade evidence. Bars are "
             + "hypothesis evidence — they establish "
-            + "no fill, no queue position and no intrabar ordering. Nothing here collects or changes "
-            + "data; the account owner does that in TradeAgent.",
-            Schema(("op", "string", "data-list or data-bars"),
+            + "no fill, no queue position and no intrabar ordering. 'data-tape' reads the market's context "
+            + "as TradeAgent recorded it arriving — each row a measurement with the vendor's source time, "
+            + "its arrival, its revision and an evidence class (O-LIVE alone is first-hand), newest arrival "
+            + "first, at most 5,000 rows; a flagged item comes without its text, and GDELT's rows carry the "
+            + "citation its terms require. Nothing here collects or changes data; the account owner does "
+            + "that in TradeAgent.",
+            Schema(("op", "string", "data-list, data-bars or data-tape"),
                    ("pair", "string", "For data-bars, e.g. BTCUSDT"),
                    ("from", "string", "ISO-8601 date or instant, inclusive"),
-                   ("to", "string", "ISO-8601 date or instant, inclusive"))),
+                   ("to", "string", "ISO-8601 date or instant, inclusive"),
+                   ("source", "string", "For data-tape: the tape source, e.g. binance-um-oi. 'data-list' names them"),
+                   ("series", "string", "For data-tape: the source's series, when it records more than one"),
+                   ("subject", "string", "For data-tape: one subject, e.g. BTCUSDT. Omit it for every subject"),
+                   ("as_of", "string", "For data-tape: only rows that had arrived by this ISO-8601 instant"),
+                   ("limit", "string", "For data-tape: how many rows, 1 to 5000; 1000 when omitted"),
+                   ("before", "string", "For data-tape: an answer's next_before, to continue it"))),
 
         new(Report,
             "The account owner's daily report for a local day, exactly as they read it. It is a READ: "

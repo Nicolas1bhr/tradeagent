@@ -84,6 +84,10 @@ try
     Console.WriteLine(reply.Data is null ? "(nothing)" : Json.Write(reply.Data, true));
     if (CliReplayContract.SuccessNote(op) is { } note)
         Console.WriteLine($"\n{note}");
+    // THE CREDIT A SOURCE'S TERMS ASK FOR, ON ITS OWN LINE BENEATH ITS ROWS (U-tape-read): GDELT's terms ask every use
+    // of its data to cite the project and link to its site, so a person reading the answer sees it without looking.
+    if (CliReplayContract.CreditLine(reply.Data) is { } credit)
+        Console.WriteLine($"\n{credit}");
     return 0;
 }
 catch (TradeAgentException ex)
@@ -200,6 +204,17 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         {
             var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
             if (sub is "list" or "ls") return (Ops.DataList, a);
+
+            // `trade data tape --source binance-um-oi --subject BTCUSDT --from D --as-of D`: the market's context as
+            // it arrived, newest first, bounded (U-tape-read). A READ like the other two: there is no `trade data
+            // record`, because the account owner's two switches are the only control of what the tape records.
+            if (sub is "tape")
+            {
+                a["source"] = flags.GetValueOrDefault("source") ?? pos.ElementAtOrDefault(1) ?? "";
+                Opt("series"); Opt("subject"); Opt("from"); Opt("to"); Opt("as-of", "as_of"); Opt("limit"); Opt("before");
+                return (Ops.DataTape, a);
+            }
+
             if (sub is not "bars") return (null, a);
 
             a["pair"] = flags.GetValueOrDefault("pair") ?? pos.ElementAtOrDefault(1) ?? "";
@@ -317,6 +332,12 @@ static void Usage()
                                                      and whether anybody has checked the numbers
       trade data list                                what history you have, and where it came from
       trade data bars --pair BTCUSDT [--from D] [--to D]   the bars themselves, at most 10000 a call
+      trade data tape --source binance-um-oi [--series S] [--subject BTCUSDT] [--from D] [--to D]
+                     [--as-of D] [--limit 1000] [--before ID]
+                     the market's context as it ARRIVED, newest first: each row with the vendor's
+                     time, the instant TradeAgent received it, its revision and its evidence class.
+                     At most 5000 rows a call; an answer that stopped early says so and gives the
+                     --before that continues it. --as-of reads only what had arrived by then
       trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D]
                      [--fees 0.001] [--slippage 0.0005] [--increment 0.001] [--capital 10000]
                      run one of your own programs over that history and record it. The four

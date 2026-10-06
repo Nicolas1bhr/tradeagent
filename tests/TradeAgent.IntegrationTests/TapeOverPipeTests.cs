@@ -445,6 +445,105 @@ public class TapeOverPipeTests(ITestOutputHelper log)
         TapeParse.ItemSubject(url), published,
         $$"""{"annType":"announcements-latest-announcements","businessPTime":"{{Ms(published)}}","pTime":"{{Ms(published)}}","title":"{{title}}","url":"{{url}}"}""");
 
+    // ---------------------------------------------------------------------------------------------- (f)
+
+    /// <summary>
+    /// (f) GDELT'S ROWS CARRY THEIR CITATION THROUGH THE OP AND THE CLI. GDELT's terms ask every use of its data to cite
+    /// the project and link to its site. One GDELT file is recorded — its record and two kept items — beside a Binance
+    /// reading. Every answer holding GDELT's rows, items or file records, carries the catalogue row's own citation; an
+    /// answer holding Binance's carries none. And the real CLI, as an agent runs it, prints the credit on its own line
+    /// beneath the rows, and carries it in <c>data</c> under <c>--json</c>.
+    /// </summary>
+    [Fact]
+    public async Task Gdelt_rows_carry_their_citation_through_the_op_and_the_cli()
+    {
+        await using var rig = await Ready();
+
+        var label = new DateTimeOffset(2026, 10, 5, 4, 0, 0, TimeSpan.Zero);
+        var file = rig.Store.AppendArchive(GdeltFetch(label, label.AddDays(1)), GdeltBatch(label), [GkgRow(label, 3), GkgRow(label, 17)]);
+        Assert.Equal(3, file.Stored);
+        rig.Store.Append(OiFetch(Noon.AddSeconds(2)), [OiPoint(Noon, "97045.281")]);
+
+        await using (var wire = await Wire.As(rig, CouncilRoles.Research))
+        {
+            var items = Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries)));
+            Assert.Equal(TapeSourceCatalog.GdeltCitation, items.GetProperty("citation").GetString());
+            Assert.Equal(2, items.GetProperty("count").GetInt32());
+            Assert.All(Rows(items), r => Assert.Equal(TapeClass.Pit, r.GetProperty("evidence_class").GetString()));
+
+            var records = Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.BatchSeries)));
+            Assert.Equal(TapeSourceCatalog.GdeltCitation, records.GetProperty("citation").GetString());
+            Assert.Equal(GdeltGkg.BatchSubject, Assert.Single(Rows(records)).GetProperty("subject").GetString());
+
+            // A GDELT SOURCE WITHOUT A SERIES NAMES ITS TWO, and a GKG record id is a subject it holds.
+            var two = await wire.TapeAsync(("source", GdeltGkg.Source));
+            Assert.Contains(GdeltGkg.ItemsSeries, two.Error!.Message);
+            Assert.Contains(GdeltGkg.BatchSeries, two.Error.Message);
+            var one = Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries),
+                ("subject", $"{GdeltGkg.LabelText(label)}-17")));
+            Assert.Equal(TapeSourceCatalog.GdeltCitation, one.GetProperty("citation").GetString());
+
+            var binance = Data(await wire.TapeAsync(("source", TapeSourceCatalog.OpenInterest)));
+            Assert.Equal(JsonValueKind.Null, binance.GetProperty("citation").ValueKind);
+        }
+
+        // THE REAL CLI, on the default pipe, with no launch grant: a reader like any other.
+        await using var server = new GatewayPipeServer(rig.Gw, IpcToken.Ensure());
+        server.Start();
+
+        var human = await Build.RunTradeAsync("data", "tape", "--source", GdeltGkg.Source, "--series", GdeltGkg.ItemsSeries);
+        log.WriteLine(human.Out.Length > 600 ? human.Out[..300] + " … " + human.Out[^300..] : human.Out);
+        Assert.True(human.Code == 0, human.Err);
+        Assert.Contains("source credit: " + TapeSourceCatalog.GdeltCitation, human.Out, StringComparison.Ordinal);
+
+        var json = await Build.RunTradeAsync("data", "tape", "--source", GdeltGkg.Source, "--series", GdeltGkg.ItemsSeries,
+            "--subject", $"{GdeltGkg.LabelText(label)}-3", "--json");
+        Assert.True(json.Code == 0, json.Err);
+        using (var doc = JsonDocument.Parse(json.Out))
+        {
+            var data = doc.RootElement.GetProperty("data");
+            Assert.Equal(TapeSourceCatalog.GdeltCitation, data.GetProperty("citation").GetString());
+            Assert.Equal(1, data.GetProperty("count").GetInt32());
+        }
+
+        var oi = await Build.RunTradeAsync("data", "tape", "--source", TapeSourceCatalog.OpenInterest, "--as-of", Iso(Noon.AddMinutes(1)));
+        Assert.True(oi.Code == 0, oi.Err);
+        Assert.DoesNotContain("source credit", oi.Out, StringComparison.Ordinal);
+        Assert.Contains("\"as_of\"", oi.Out, StringComparison.Ordinal);
+    }
+
+    static TapeFetch GdeltFetch(DateTimeOffset label, DateTimeOffset receivedAt) => new()
+    {
+        Source = GdeltGkg.Source,
+        Series = "gkg-backfill",
+        Url = GdeltGkg.BatchUrl(GdeltGkg.BaseUrl, label),
+        RequestedAt = receivedAt.AddSeconds(-1),
+        ReceivedAt = receivedAt,
+        HttpStatus = 200,
+        BodySha256 = new string('5', 64)
+    };
+
+    static TapeArchiveBatch GdeltBatch(DateTimeOffset label) => new()
+    {
+        RecordSeries = GdeltGkg.BatchSeries,
+        RecordSubject = GdeltGkg.BatchSubject,
+        ItemsSeries = GdeltGkg.ItemsSeries,
+        Label = label,
+        Bytes = 4_126_527,
+        PublishedMd5 = "2b4bc982748899a2ce73887198e0d9a0",
+        ComputedMd5 = "2b4bc982748899a2ce73887198e0d9a0",
+        Sha256 = new string('5', 64),
+        LastModified = label.AddSeconds(-600),
+        Rows = 900,
+        Filter = GdeltGkg.Filter
+    };
+
+    static TapeItem GkgRow(DateTimeOffset label, int serial)
+    {
+        var id = $"{GdeltGkg.LabelText(label)}-{serial}";
+        return new(id, label, $$"""{"GKGRECORDID":"{{id}}","V2.1DATE":"{{GdeltGkg.LabelText(label)}}","V2EXTRASXML":"<PAGE_TITLE>Bitcoin and the week ahead</PAGE_TITLE>"}""");
+    }
+
     // ---------------------------------------------------------------------------------------------- the byte cap
 
     /// <summary>
