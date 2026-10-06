@@ -415,8 +415,12 @@ public static class WorkspaceBuilder
     record behind it is flagged for the account owner to read, every order you send is refused; when
     no attempt so far could send anything to the platform, its sentence says TradeAgent "has NOT
     closed" them and tries again on every pass until the book is flat — and the closure does not lift
-    while anything is open. Absent means nothing has been flattened. There is no command that starts,
-    stops or undoes it.
+    while anything is open. When the answer to one of those closes was lost, TradeAgent settles its
+    own record from the platform's order history on its next pass, where the platform can show it:
+    a close the history holds as finished decides it — `flat` once the account reads flat, and
+    otherwise TradeAgent closes what is still open once more, with the same checks; a close the
+    history cannot find, or holds as still working, decides nothing and stays for the account owner.
+    Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
 
     ## Rules that matter
 

@@ -79,6 +79,114 @@ public static class LossFlatten
         ArgumentNullException.ThrowIfNull(breach);
         return OwedPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
     }
+
+    /// <summary>
+    /// The confirm's family (<see cref="LossFlattenConfirm"/>, <c>U-flatten-confirm</c>) — its own
+    /// prefix, written ONCE per breach at the SQL layer, and never a field on the outcome it answers.
+    /// </summary>
+    public const string ConfirmPrefix = "loss_flatten_confirm:";
+
+    /// <summary><c>loss_flatten_confirm:{connector}:{account}:[{symbol}:]{utcDay}</c>, off the breach's own day.</summary>
+    public static string ConfirmKeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return ConfirmPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
+    }
+
+    /// <summary>
+    /// The CLOSING AGAIN's outcome family: the <see cref="LossFlattenRecord"/> of the flatten a confirm
+    /// asked for when the book was still open. Its own prefix, because the first outcome is written once
+    /// and a second flatten is a second fact, not an edit of the first.
+    /// </summary>
+    public const string AgainPrefix = "loss_flatten_again:";
+
+    /// <summary><c>loss_flatten_again:{connector}:{account}:[{symbol}:]{utcDay}</c>.</summary>
+    public static string AgainKeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return AgainPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
+    }
+
+    /// <summary>The closing again's owed note family (<see cref="LossFlattenOwed"/>), on the first attempt's rule.</summary>
+    public const string AgainOwedPrefix = "loss_flatten_again_owed:";
+
+    /// <summary><c>loss_flatten_again_owed:{connector}:{account}:[{symbol}:]{utcDay}</c>.</summary>
+    public static string AgainOwedKeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return AgainOwedPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
+    }
+}
+
+/// <summary>
+/// WHAT THE PLATFORM'S ORDER HISTORY SAID ABOUT ONE CLOSE WHOSE ANSWER WAS LOST.
+/// </summary>
+/// <param name="RequestId">The flagged write-ahead row the close was sent under.</param>
+/// <param name="Symbol">The instrument.</param>
+/// <param name="State">The TERMINAL state the platform holds the close in — nothing else is a verdict.</param>
+/// <param name="Filled">What the platform says filled, where it says.</param>
+/// <param name="ConnectorOrderId">The platform's own reference, where the history named one.</param>
+/// <param name="Evidence">Which read said it, in the owner's words.</param>
+public sealed record LossFlattenVerdict(string RequestId, string Symbol, string State, decimal? Filled,
+    string? ConnectorOrderId, string Evidence);
+
+/// <summary>
+/// THE CONFIRM — WHAT BECAME OF A FLATTEN'S LOST CLOSES, ASKED OF THE PLATFORM'S ORDER HISTORY, AND THE
+/// BOOK READ BACK AFTER IT (<c>U-flatten-confirm</c>).
+///
+/// <para><b>A third record, and deliberately not an edit of the outcome.</b> <see cref="LossFlattenRecord"/>
+/// was true when its flatten finished — a close went out and its answer was lost — and it stays true:
+/// nothing rewrites it. This is a later fact about the same breach, from a different source: the
+/// platform's own history, read on a later pass, and a fresh read of the book after it.</para>
+///
+/// <para><b>Written once per breach, at the SQL layer, BEFORE a single row is settled</b>, so it is the
+/// decision and the rows are its application: a pass killed between the two finishes on the next one
+/// from the record, and a second lost answer — the closing again's — is never confirmed a second time.
+/// It stays flagged for the owner.</para>
+///
+/// <para><b>Only every lost close decided by the platform's own word, never by absence.</b> A close the
+/// history holds in a terminal state, or whose fills it lists, is decided; one still working, one it
+/// does not list, and a read that did not answer decide nothing, and no confirm is written.</para>
+/// </summary>
+public sealed record LossFlattenConfirm
+{
+    public string Account { get; init; } = "";
+
+    public string Connector { get; init; } = "";
+
+    public TradingMode Mode { get; init; }
+
+    /// <summary>The breach's UTC day, which this record is filed under.</summary>
+    public string Day { get; init; } = "";
+
+    public string? Symbol { get; init; }
+
+    public string BreachKey { get; init; } = "";
+
+    /// <summary>The outcome this answers for: the first flatten's <c>loss_flatten:</c> key.</summary>
+    public string OutcomeKey { get; init; } = "";
+
+    /// <summary>The first flatten's two press nonces, whose rows this record settles and unflags.</summary>
+    public string CancelNonce { get; init; } = "";
+
+    public string CloseNonce { get; init; } = "";
+
+    public DateTimeOffset At { get; init; }
+
+    /// <summary>One verdict per close whose answer was lost.</summary>
+    public IReadOnlyList<LossFlattenVerdict> Verdicts { get; init; } = [];
+
+    /// <summary>What a fresh read of the platform showed open in the breach's scope, as <c>"ES 1"</c>.</summary>
+    public IReadOnlyList<string> StillOpen { get; init; } = [];
+
+    /// <summary>
+    /// The read-back was flat: nothing is sent. False is CLOSING AGAIN — the sweep runs the same flatten
+    /// once nothing is unconfirmed, and files it under <see cref="LossFlatten.AgainPrefix"/>.
+    /// </summary>
+    public bool Flat { get; init; }
+
+    /// <summary>The sentence the owner and the agent are shown.</summary>
+    public string Why { get; init; } = "";
 }
 
 /// <summary>

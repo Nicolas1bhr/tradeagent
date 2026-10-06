@@ -36,6 +36,7 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public void Advance(TimeSpan by) => _now += by;
+        public void MoveTo(DateTimeOffset to) => _now = to;
     }
 
     static readonly DateTimeOffset Noon = new(2026, 3, 10, 12, 0, 0, TimeSpan.Zero);
@@ -124,6 +125,56 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>The app's own budget rows, whole, oldest first: id, state, flag and the row's own why.</summary>
+    static List<string> AppRows(Database db)
+    {
+        using var c = db.Cmd("SELECT request_id, execution_state, needs_reconciliation, COALESCE(last_error,'') "
+                             + "FROM execution_request WHERE request_id LIKE 'op-budget-%' ORDER BY created_at");
+        using var r = c.ExecuteReader();
+        var rows = new List<string>();
+        while (r.Read()) rows.Add($"{r.GetString(0)} {r.GetString(1)} flagged={r.GetInt64(2)} '{r.GetString(3)}'");
+        return rows;
+    }
+
+    /// <summary>The app's own budget rows that still refuse order flow: flagged.</summary>
+    static List<string> FlaggedAppRows(Database db)
+    {
+        using var c = db.Cmd("SELECT request_id, execution_state FROM execution_request "
+                             + "WHERE request_id LIKE 'op-budget-%' AND needs_reconciliation=1 ORDER BY created_at");
+        using var r = c.ExecuteReader();
+        var rows = new List<string>();
+        while (r.Read()) rows.Add($"{r.GetString(0)} {r.GetString(1)}");
+        return rows;
+    }
+
+    /// <summary>Every close the app put on the broker's book, in the order it arrived.</summary>
+    static List<OrderInfo> AppCloses(RecordingConnector conn) =>
+        [.. conn.Broker.Orders.Where(o => o.ClientOrderId?.StartsWith("TA-op-budget-close-", StringComparison.Ordinal) == true)];
+
+    /// <summary>The confirms written so far, by their family's prefix: there is at most one per breach.</summary>
+    static int Confirms(Database db) => db.KvStartingWith("loss_flatten_confirm:").Count;
+
+    /// <summary>
+    /// A confirmed daily breach whose flatten put ONE close on the wire and lost its answer — the fault
+    /// armed by the caller — on the health pass every host runs: the first sighting, then the
+    /// confirming pass, whose watch flattens at the end of it. Answers the lost close's row id.
+    /// </summary>
+    static async Task<string> BreachWithALostClose(TradingGateway gw, RecordingConnector conn, TestClock clock)
+    {
+        conn.Broker.PriceOffset = -20m;
+        await Passes(gw, clock, 2);
+
+        var account = conn.Broker.AccountId;
+        Assert.NotNull(gw.DayClosed(account));
+        var first = gw.FlattenToday(account);
+        Assert.NotNull(first);
+        Assert.False(first.Flat);
+        var leg = Assert.Single(first.Legs);
+        Assert.Equal(nameof(ExecutionState.UNKNOWN), leg.State);
+        Assert.Equal(1, conn.Closes);
+        return leg.RequestId;
+    }
+
     // ---------------------------------------------------------------- item 1
 
     /// <summary>
@@ -185,5 +236,336 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         Assert.Equal(0m, Held(conn, "ES"));
         Assert.True(exit.Flat);
         Assert.Null(gw.DayClosed(conn.Broker.AccountId));
+    }
+
+    // ---------------------------------------------------------------- item 2
+
+    /// <summary>
+    /// (i) THE PLATFORM TOOK THE CLOSE AND FILLED IT, AND THE ANSWER WAS LOST: CONFIRMED FROM ITS ORDER
+    /// HISTORY, FLAT, AND NOTHING MORE IS SENT (item 2).
+    ///
+    /// <para>The book is flat and TradeAgent is holding a close it never got an answer for. Until this
+    /// unit that was final: the outcome said "cannot confirm", the row stayed flagged and every order
+    /// stayed refused until a person read a record the platform could have answered. Now the next pass
+    /// asks the platform's history for the close under its own id, finds it FILLED, reads the book back
+    /// flat, writes that down once and unflags the app's own rows. One close on the wire, never two — and
+    /// the closure stands: a confirm ends the flatten's doubt, not the closure.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_lost_close_the_platform_filled_is_confirmed_from_its_history_and_nothing_more_is_sent()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "lost-filled-open", TestEnv.Buy("ES"));
+        conn.Faults.DropAfterBrokerAccept = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.True(gw.HasUnconfirmedWork());
+
+        await Passes(gw, clock, 1);
+
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(ExecutionState.FILLED, gw.Requests.Get(lost)!.State);
+        Assert.Equal("flat", state.State);
+        Assert.Contains("ORDER HISTORY", state.Why!, StringComparison.Ordinal);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Empty(FlaggedAppRows(db));
+        Assert.False(gw.HasUnconfirmedWork());
+        Assert.Equal(1, Confirms(db));
+
+        // THE FIRST OUTCOME IS UNTOUCHED — it was true when it was written — AND THE CLOSURE STANDS.
+        Assert.False(gw.FlattenToday(account)!.Flat);
+        Assert.NotNull(gw.DayClosed(account));
+
+        // AND LATER PASSES SEND NOTHING AND WRITE NOTHING MORE.
+        await Passes(gw, clock, 2);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(1, Confirms(db));
+        Assert.Equal("flat", gw.FlattenStateToday().State);
+    }
+
+    /// <summary>
+    /// (ii)–(iv) A CLOSE THE PLATFORM NEVER SAW DECIDES NOTHING — PAST THE GRACE, WITH THE HISTORY THERE,
+    /// HIDDEN, OR FAILING (the guards: green before this unit and after it).
+    ///
+    /// <para>The connection died before the broker saw the close, so the platform lists no order and
+    /// no fill under its id. That is NOT proof it was never sent — on ATAS a close carries the id only
+    /// as a label written after the fact — and "absence as proof" is not this unit's
+    /// (<c>U-flatten-absence</c>). So: well past any grace, the row stays UNKNOWN and flagged, nothing
+    /// is settled, nothing is written, nothing more goes on the wire, and the dashboard says
+    /// unresolved. The same where the connector withdraws its claim to a provable history, and where
+    /// a history read that carries a <c>since</c> throws instead of answering.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("history hidden")]
+    [InlineData("history read throws")]
+    public async Task A_lost_close_the_platform_never_saw_decides_nothing_past_the_grace(string history)
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "never-seen-open", TestEnv.Buy("ES"));
+        conn.Faults.DropBeforeBrokerAccept = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+
+        if (history == "history hidden") conn.Faults.HideOrderHistory = true;
+        if (history == "history read throws")
+            conn.HistoryThrows = new ConnectorTransportException("this platform cannot show its order history back that far");
+
+        // PAST THE GRACE, by minutes: the absence grace is fifteen seconds after the dispatch bound.
+        await Passes(gw, clock, 9);
+
+        var row = gw.Requests.Get(lost)!;
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"[{history}]");
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"lost close            : {row.State} flagged={row.NeedsReconciliation}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(ExecutionState.UNKNOWN, row.State);
+        Assert.True(row.NeedsReconciliation);
+        Assert.True(gw.HasUnconfirmedWork());
+        Assert.Equal("unresolved", state.State);
+        Assert.Equal(0, Confirms(db));
+        Assert.Equal(1m, Held(conn, "ES"));
+        Assert.NotNull(gw.DayClosed(account));
+    }
+
+    /// <summary>
+    /// (v) A CLOSE STILL WORKING AT THE PLATFORM IS LEFT ALONE — NOT SETTLED, NOT CANCELLED, NOT SENT
+    /// OVER — AND ONCE IT FILLS IT IS CONFIRMED EXACTLY AS (i) (item 2, and the mutant).
+    ///
+    /// <para>The platform took the close and it rests there, untouched or half filled, and the answer
+    /// was lost. A live close is not an answer: it can still fill, so counting it decided would settle
+    /// a live order and close again on top of it — a second close on the wire, which is the
+    /// long-2-becomes-short-2 failure arrived at from the history's side. So pass after pass it is
+    /// asked and left exactly where it is. Then price arrives, it fills, and the next pass confirms it
+    /// and reads the book flat.</para>
+    ///
+    /// <para><b>The mutant this watches:</b> a close found WORKING counted as decided. The confirm then
+    /// reads the book open and closes again: the re-close cancels the resting close and sends a second
+    /// one, and <c>Closes</c> reads 2 here where it must read 1.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(FillBehaviour.LeaveWorking)]
+    [InlineData(FillBehaviour.PartialFill)]
+    public async Task A_lost_close_still_working_is_left_alone_and_confirmed_once_it_fills(FillBehaviour resting)
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "working-open", TestEnv.Buy("ES", 2m));
+        conn.Faults.Fill = resting;
+        conn.Faults.DropAfterBrokerAccept = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+        var close = Assert.Single(AppCloses(conn));
+        var cancels = conn.Cancels;
+
+        await Passes(gw, clock, 3);
+
+        var resting1 = conn.Broker.Orders.Single(o => o.ConnectorOrderId == close.ConnectorOrderId);
+        log.WriteLine($"[{resting}]");
+        log.WriteLine($"the close at the book : {resting1.Side} {resting1.Quantity} {resting1.State} (filled {resting1.FilledQuantity})");
+        log.WriteLine($"closes on the wire    : {conn.Closes}, cancels {cancels} -> {conn.Cancels}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+
+        // LEFT ALONE: the close rests where it was, its row still UNKNOWN and flagged, nothing written.
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(cancels, conn.Cancels);
+        Assert.False(OrderStateMachine.IsTerminal(resting1.State));
+        Assert.Equal(ExecutionState.UNKNOWN, gw.Requests.Get(lost)!.State);
+        Assert.True(gw.Requests.Get(lost)!.NeedsReconciliation);
+        Assert.Equal(0, Confirms(db));
+        Assert.Equal("unresolved", gw.FlattenStateToday().State);
+
+        // PRICE ARRIVES AND IT FILLS — and the next pass confirms it, exactly as (i).
+        conn.Broker.FillWorking(close.ConnectorOrderId);
+        await Passes(gw, clock, 1);
+
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"after it fills        : closes {conn.Closes}, ES {Held(conn, "ES")}, {state.State} — {state.Why}");
+        Assert.Equal(ExecutionState.FILLED, gw.Requests.Get(lost)!.State);
+        Assert.Equal("flat", state.State);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Empty(FlaggedAppRows(db));
+        Assert.False(gw.HasUnconfirmedWork());
+        Assert.NotNull(gw.DayClosed(account));
+    }
+
+    /// <summary>
+    /// (viii) THE PLATFORM REFUSED THE CLOSE AND THE ANSWER WAS LOST: CONFIRMED REJECTED FROM ITS
+    /// HISTORY, THE BOOK STILL OPEN, AND IT IS CLOSED AGAIN — ONCE, UNDER A NEW ID — AND READS FLAT
+    /// (item 2).
+    ///
+    /// <para>The shared close path records a refused close as UNKNOWN (it cannot tell a refusal from a
+    /// lost answer in that arm, and the safe word is the unknown one), so until this unit the position
+    /// stayed open behind a closed day for as long as nobody came. The history holds the close
+    /// REJECTED: decided, and it closed nothing. The book still reads open, so the confirm says
+    /// "closing again" and the sweep — nothing else being unconfirmed — runs the SAME flatten under a
+    /// fresh nonce: one more close, re-read at the wire, and the book flat. The first outcome stays
+    /// exactly as it was written.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_lost_close_the_platform_refused_is_confirmed_and_the_book_is_closed_again_once()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "refused-open", TestEnv.Buy("ES"));
+        conn.Faults.RejectNext = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+        Assert.Equal(1m, Held(conn, "ES"));
+
+        await Passes(gw, clock, 1);
+
+        var closes = AppCloses(conn);
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app closes at the book: [{string.Join(" | ", closes.Select(o => $"{o.ClientOrderId} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(ExecutionState.REJECTED, gw.Requests.Get(lost)!.State);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(2, closes.Count);
+        Assert.Equal(ExecutionState.REJECTED, closes[0].State);
+        Assert.Equal(ExecutionState.FILLED, closes[1].State);
+        Assert.NotEqual(closes[0].ClientOrderId, closes[1].ClientOrderId);
+        Assert.All(closes, o => Assert.Equal(1, conn.Broker.CountByClientOrderId(o.ClientOrderId!)));
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal("flat", state.State);
+        Assert.Contains("CLOSED AGAIN", state.Why!, StringComparison.Ordinal);
+        Assert.Empty(FlaggedAppRows(db));
+        Assert.False(gw.HasUnconfirmedWork());
+        Assert.False(gw.FlattenToday(account)!.Flat);
+        Assert.NotNull(gw.DayClosed(account));
+
+        // AND NOTHING MORE: later passes send nothing.
+        await Passes(gw, clock, 2);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(1, Confirms(db));
+    }
+
+    /// <summary>
+    /// ONE CONFIRM PER BREACH: A LOST ANSWER TO THE CLOSING AGAIN STAYS FOR THE OWNER (item 2).
+    ///
+    /// <para>The first close was refused and the confirm closes again; that second close is taken by
+    /// the platform and ITS answer is lost too. A second confirm would be the app settling its own
+    /// closes in a loop — so there is none: the second close's row stays UNKNOWN and flagged, order
+    /// flow stays paused, the dashboard says unresolved, and pass after pass nothing more is sent.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_lost_answer_to_the_closing_again_stays_for_the_owner()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "twice-lost-open", TestEnv.Buy("ES"));
+        conn.Faults.RejectNext = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+
+        // THE CLOSING AGAIN'S ANSWER IS LOST TOO.
+        conn.Faults.DropAfterBrokerAccept = 1;
+        await Passes(gw, clock, 4);
+
+        var again = AppCloses(conn).Last();
+        var row = gw.Requests.GetByClientOrderId(again.ClientOrderId!)!;
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(ExecutionState.REJECTED, gw.Requests.Get(lost)!.State);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(ExecutionState.UNKNOWN, row.State);
+        Assert.True(row.NeedsReconciliation);
+        Assert.True(gw.HasUnconfirmedWork());
+        Assert.Equal(1, Confirms(db));
+        Assert.Equal("unresolved", state.State);
+        Assert.NotNull(gw.DayClosed(account));
+    }
+
+    /// <summary>
+    /// A SYMBOL'S CLOSING AGAIN THAT THE DAY'S OWN FLATTEN SUBSUMED IS NOT "CLOSING AGAIN", AND DOES NOT
+    /// HOLD THE SYMBOL'S CLOSURE FOR EVER (item 2, the one accessor).
+    ///
+    /// <para>ES breaches its per-trade budget and its close is refused with the answer lost; the day's
+    /// budget goes through a pull later. On the next pass the confirm finds the ES close REJECTED and the
+    /// book still open, so the symbol is owed a closing again — and in the same pass the day's breach is
+    /// confirmed and the day's own flatten closes ES. A symbol's flatten is subsumed by the day's, so the
+    /// closing again is declined and never runs. Its word must say nothing then, exactly as a subsumed
+    /// first attempt leaves none: otherwise the symbol's closure would be held for ever by a sentence —
+    /// "closing again what is still open" — that never comes true, over a book that reads flat.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_symbols_closing_again_the_days_flatten_subsumed_does_not_hold_the_symbol_for_ever()
+    {
+        var (gw, conn, db, clock) = await Ready(s =>
+        {
+            s.Risk.MaxDailyLoss = 1_500m;
+            s.Risk.MaxLossPerTrade = 500m;
+        });
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "subsumed-open", TestEnv.Buy("ES"));
+        conn.Faults.RejectNext = 1;
+
+        // ES THROUGH ITS OWN BUDGET FIRST, THEN THE DAY'S: ES is confirmed and flattened (the close
+        // refused, its answer lost) on the pull the day is first seen on.
+        conn.Broker.PriceOffset = -20m;
+        await Passes(gw, clock, 1);
+        conn.Broker.PriceOffset = -40m;
+        await Passes(gw, clock, 1);
+        Assert.NotNull(gw.SymbolClosed(account, "ES"));
+        Assert.Null(gw.DayClosed(account));
+        Assert.Equal(1, conn.Closes);
+
+        // THE CONFIRM, THE DAY'S BREACH AND THE DAY'S FLATTEN, IN ONE PASS.
+        await Passes(gw, clock, 1);
+
+        var state = gw.FlattenStateToday();
+        var symbol = gw.SymbolClosed(account, "ES")!;
+        var day = gw.DayClosed(account)!;
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal(1, Confirms(db));
+        Assert.Empty(db.KvStartingWith("loss_flatten_again:"));
+        Assert.Equal("flat", state.State);
+        Assert.DoesNotContain("CLOSING IT AGAIN", state.Why!, StringComparison.Ordinal);
+
+        // AND BOTH CLOSURES LIFT ON THEIR RECEIPTS ONCE THEIR TIME HAS RUN, OVER A FLAT BOOK.
+        var eligible = new[] { symbol, day }.Max(b => LossReopen.EligibleAt(b.ConfirmedAt, TimeSpan.FromHours(24)));
+        clock.MoveTo(eligible + TimeSpan.FromMinutes(1));
+        conn.Broker.PriceOffset = 0m;
+        var reopen = await gw.LossWatchAsync();
+        log.WriteLine($"reopened              : [{string.Join(", ", reopen.Reopened)}]");
+        Assert.Equal(2, reopen.Reopened.Count);
+        Assert.Null(gw.SymbolClosed(account, "ES"));
+        Assert.Null(gw.DayClosed(account));
     }
 }
