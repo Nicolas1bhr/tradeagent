@@ -31,6 +31,7 @@ public sealed class FakeArchive : IDisposable
     readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
     readonly Dictionary<string, byte[]> _exact = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
+    readonly ConcurrentDictionary<string, (string Name, string Value)[]> _headers = new(StringComparer.Ordinal);
     readonly ConcurrentQueue<string> _marks = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
 
@@ -98,6 +99,8 @@ public sealed class FakeArchive : IDisposable
 
                     ctx.Response.StatusCode = body is null ? 404 : 200;
                     if (body is not null) ctx.Response.ContentLength64 = body.Length;
+                    if (body is not null && _headers.TryGetValue(path, out var headers))
+                        foreach (var (name, value) in headers) ctx.Response.AppendHeader(name, value);
 
                     // A HEAD IS ANSWERED WITH THE HEADERS AND NOTHING ELSE. Writing the entity body
                     // to a HEAD response is what cost windows-latest thirty minutes, measured on the
@@ -203,6 +206,17 @@ public sealed class FakeArchive : IDisposable
     /// <see cref="PublishAt"/>'s path-only answers; the query is matched as the client sent it.
     /// </summary>
     public void PublishAtExactly(string pathAndQuery, string body) => _exact[pathAndQuery] = Encoding.UTF8.GetBytes(body);
+
+    /// <summary>
+    /// PUBLISHES A FILE'S BYTES AT ONE PATH WITH THE HEADERS ITS STORAGE SENDS (<c>U-tape-archive</c>): GDELT's storage
+    /// answers a GKG file with <c>Last-Modified</c> and <c>x-goog-hash: md5=&lt;base64&gt;</c>, which the recorder reads.
+    /// A second call at the same path replaces the first.
+    /// </summary>
+    public void PublishFile(string path, byte[] bytes, params (string Name, string Value)[] headers)
+    {
+        _headers[path] = headers;
+        _files[path] = bytes;
+    }
 
     /// <summary>Publishes the zip and no sidecar at all.</summary>
     public void PublishWithoutSidecar(string pair, DateOnly month, string csv)

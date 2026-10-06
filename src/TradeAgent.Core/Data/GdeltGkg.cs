@@ -55,8 +55,8 @@ public sealed record GkgBatchRead
 /// the rows the crypto filter keeps.
 ///
 /// <para><b>The label is GDELT's own first-seen time.</b> A file is named for the fifteen-minute batch its rows
-/// were created in, and the codebook (GKG V2.1) says each GKGRECORDID begins with "the full date+time of the
-/// 15 minute update batch that this record was created in". So a row's source time is its file's label — a
+/// were created in, and the codebook (GKG V2.1) says each GKGRECORDID begins with the date and time of the
+/// fifteen-minute update batch its record was created in. So a row's source time is its file's label — a
 /// vendor first-seen time with a declared basis — and a file whose rows name any other batch is refused whole:
 /// a row filed under a time it does not carry is a row whose time this build would be guessing.</para>
 ///
