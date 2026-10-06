@@ -119,18 +119,23 @@ public static class LossFlatten
 }
 
 /// <summary>
-/// WHAT THE PLATFORM'S ORDER HISTORY SAID ABOUT ONE CLOSE WHOSE ANSWER WAS LOST.
+/// WHAT DECIDED ONE CLOSE WHOSE ANSWER WAS LOST: THE PLATFORM'S ORDER HISTORY, OR THE OWNER'S ANSWER ON THE
+/// DASHBOARD (<c>U-loss-hold-release</c>).
 /// </summary>
 /// <param name="RequestId">The flagged write-ahead row the close was sent under.</param>
 /// <param name="Symbol">The instrument.</param>
 /// <param name="State">The TERMINAL state the platform holds the close in — or CANCELLED, "never reached
 /// the platform", where a connector whose closes carry our id lists no order and no fill under it past the
-/// grace (<c>U-flatten-absence</c>). Nothing else is a verdict.</param>
+/// grace (<c>U-flatten-absence</c>) — or, where <paramref name="ByTheOwner"/>, the terminal state the owner gave
+/// the row on the Dashboard. Nothing else is a verdict.</param>
 /// <param name="Filled">What the platform says filled, where it says.</param>
 /// <param name="ConnectorOrderId">The platform's own reference, where the history named one.</param>
-/// <param name="Evidence">Which read said it, in the owner's words.</param>
+/// <param name="Evidence">Which read said it, or the owner's own words, in the owner's words.</param>
+/// <param name="ByTheOwner">True when the owner's answer on the Dashboard decided it: his own measurement, through
+/// operator authority in-process, counted only once the close could no longer be on its way to the platform and
+/// never over a close the platform's history holds live.</param>
 public sealed record LossFlattenVerdict(string RequestId, string Symbol, string State, decimal? Filled,
-    string? ConnectorOrderId, string Evidence);
+    string? ConnectorOrderId, string Evidence, bool ByTheOwner = false);
 
 /// <summary>
 /// THE CONFIRM — WHAT BECAME OF A FLATTEN'S LOST CLOSES, ASKED OF THE PLATFORM'S ORDER HISTORY, AND THE
@@ -146,12 +151,16 @@ public sealed record LossFlattenVerdict(string RequestId, string Symbol, string 
 /// from the record, and a second lost answer — the closing again's — is never confirmed a second time.
 /// It stays flagged for the owner.</para>
 ///
-/// <para><b>Only every lost close decided by the platform's own word, and by absence only behind a
-/// claim.</b> A close the history holds in a terminal state, or whose fills it lists, is decided; one
-/// still working, and a read that did not answer, decide nothing, and no confirm is written. One the
-/// history does not list decides nothing either — except on a connector that claims its closes carry the
-/// id they are handed (<c>ConnectorCapabilities.ClosesCarryClientOrderId</c>), where, past the grace, it
-/// never reached the platform (<c>U-flatten-absence</c>). ATAS makes no such claim.</para>
+/// <para><b>Only every lost close decided by the platform's own word, by absence only behind a claim, or
+/// by the owner's answer under the platform's veto.</b> A close the history holds in a terminal state, or
+/// whose fills it lists, is decided; one still working, and a read that did not answer, decide nothing, and
+/// no confirm is written. One the history does not list decides nothing either — except on a connector that
+/// claims its closes carry the id they are handed (<c>ConnectorCapabilities.ClosesCarryClientOrderId</c>),
+/// where, past the grace, it never reached the platform (<c>U-flatten-absence</c>). ATAS makes no such claim.
+/// A close the OWNER has answered on the Dashboard is decided by his answer (<c>U-loss-hold-release</c>) — once
+/// it can no longer be on its way to the platform, and never while a history that can be asked holds it
+/// live — so where no history can be asked, ATAS first, a closure is confirmed once he has answered every lost
+/// close.</para>
 /// </summary>
 public sealed record LossFlattenConfirm
 {

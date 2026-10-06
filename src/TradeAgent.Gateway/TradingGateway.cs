@@ -9589,9 +9589,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <c>U-flatten-absence</c>): there, once the close can no longer be on its way and the grace has
     /// passed, it never reached the platform — CANCELLED. Elsewhere "not there" is never read as "never
     /// sent": on ATAS a close carries the id only as a label written after the fact, so its absence
-    /// proves nothing (<see cref="AbsenceDecidesALostClose"/>). And only where the connector claims it can
-    /// prove its own history at all — <see cref="ConnectorCapabilities.ReconciliationProvable"/>,
-    /// ReconcileAsync's own gate.</para>
+    /// proves nothing (<see cref="AbsenceDecidesALostClose"/>). And the history is asked only where the
+    /// connector claims it can prove its own history at all — <see cref="ConnectorCapabilities.ReconciliationProvable"/>,
+    /// ReconcileAsync's own gate, which since <c>U-loss-hold-release</c> gates that question and nothing else.</para>
+    ///
+    /// <para><b>A lost close the owner has answered on the Dashboard is decided by his answer</b>
+    /// (<c>U-loss-hold-release</c>, <see cref="TheOwnersAnswerAsync"/>): his own measurement, once the close can
+    /// no longer be on its way to the platform, and never over a close the platform's history holds live. On
+    /// ATAS his answer is the only way a lost close is ever settled; before this, giving it ended the confirm's
+    /// interest in the closure, and the closure was held for ever over a book he had accounted for.</para>
     ///
     /// <para><b>All or nothing, and once per breach.</b> Nothing is written until EVERY lost close is
     /// decided. Then one record, at the SQL layer, before a single row is settled: the verdicts and a
@@ -9639,15 +9645,21 @@ public sealed class TradingGateway : IAsyncDisposable
             return;
         }
 
-        if (!Connector.Capabilities.ReconciliationProvable) return;
-
+        // NO GATE ON THE PLATFORM HERE (U-loss-hold-release). ReconciliationProvable gates the HISTORY
+        // question — inside AskTheHistoryAsync and the owner's veto — and nothing else, so on a platform that
+        // cannot show its history a closure is confirmed once the owner has answered every lost close.
         var outcomeKey = LossFlatten.KeyFor(Connector.Id, breach);
         if (ReadFlattenRecord(outcomeKey) is not { } outcome || LostCloses(outcome) is not { } lost) return;
 
         var verdicts = new List<LossFlattenVerdict>();
         foreach (var leg in lost)
         {
-            var (verdict, _, undecided) = await AskTheHistoryAsync(leg, ct);
+            // HIS ANSWER OR THE PLATFORM'S: a lost close the owner has settled on the Dashboard is decided by
+            // what he said, under the platform's live-order veto; one still UNKNOWN by the platform's history.
+            LossFlattenVerdict? verdict;
+            string undecided;
+            if (SettledByTheOwner(leg)) (verdict, undecided) = await TheOwnersAnswerAsync(leg, ct);
+            else (verdict, _, undecided) = await AskTheHistoryAsync(leg, ct);
             if (verdict is null)
             {
                 // UNDECIDED, AND NOTHING IS DONE ABOUT IT: not the other legs, not the book.
@@ -9723,10 +9735,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para>It is one only when the answer to a close was LOST and nothing else stands unexplained: the
     /// outcome is not flat, no opener refused to settle (an order still working at the platform is the
     /// owner's to look at), every row of its cancel half has a final state, and every close row it wrote
-    /// either has a final state or is one of the closes the outcome itself recorded as UNKNOWN and is
-    /// still UNKNOWN. A lost close somebody else has since settled — the owner on the Dashboard is the
-    /// only other hand that can touch these rows — is not this one's to answer, and neither is a close
-    /// the platform answered and has not finished.</para>
+    /// either has a final state or is one of the closes the outcome itself recorded as UNKNOWN — and that
+    /// one is still UNKNOWN, for the platform's history to answer, or has been settled by the OWNER on the
+    /// Dashboard and nothing has contradicted him since, for his answer to decide (<c>U-loss-hold-release</c>,
+    /// <see cref="SettledByTheOwner"/>). A lost close the platform has answered some other way, or one flagged
+    /// again because the platform answered differently from him, is not this one's to answer, and neither is
+    /// a close the platform answered and has not finished.</para>
     /// </summary>
     List<ExecutionRequest>? LostCloses(LossFlattenRecord outcome)
     {
@@ -9745,13 +9759,82 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             if (lostIds.Contains(row.RequestId))
             {
-                if (row.State != ExecutionState.UNKNOWN) return null;
+                if (row.State != ExecutionState.UNKNOWN && !SettledByTheOwner(row)) return null;
                 lost.Add(row);
             }
             else if (!OrderStateMachine.IsTerminal(row.State)) return null;
         }
 
         return lost.Count == lostIds.Count ? lost : null;
+    }
+
+    /// <summary>
+    /// A LOST CLOSE THE OWNER HAS ANSWERED ON THE DASHBOARD, AND NOTHING HAS CONTRADICTED HIM SINCE
+    /// (<c>U-loss-hold-release</c>): a terminal row <see cref="ForceResolve"/> wrote — his
+    /// <see cref="ResolvedByOwnerPrefix"/> on it — that is neither flagged nor latched. Flagged again is the
+    /// platform having answered something else after him (<see cref="RecordThePlatformsAnswerBesideTheOwnersClaim"/>),
+    /// which is his to read and not the confirm's to decide.
+    /// </summary>
+    bool SettledByTheOwner(ExecutionRequest row) =>
+        OrderStateMachine.IsTerminal(row.State) && OwnerResolved(row)
+        && !row.NeedsReconciliation && !_unconfirmed.ContainsKey(row.RequestId);
+
+    /// <summary>
+    /// WHAT THE OWNER SAID ABOUT ONE LOST CLOSE ON THE DASHBOARD: a verdict, or null and why not
+    /// (<c>U-loss-hold-release</c>).
+    ///
+    /// <para><b>His answer is his own measurement</b>, given through operator authority in-process: the card is
+    /// the only route into <see cref="ForceResolve"/>, and nothing an agent can reach writes one. The verdict is
+    /// the state he gave the row and whatever fill it carries, and its evidence is his own words.</para>
+    ///
+    /// <para><b>Counted only once the close can no longer be on its way to the platform.</b> He answered what
+    /// the platform showed him when he looked, and a close still in transit is not there to be seen — nor can
+    /// the closing again a verdict may lead to cancel an order that has not arrived. So his answer waits on the
+    /// clock absence is held to: <see cref="GatewayOptions.AbsenceGrace"/> past <see cref="AbsenceCountsFrom"/>,
+    /// which for a press leg, whose dispatch nothing holds, is the dispatch plus the bound.</para>
+    ///
+    /// <para><b>A platform that holds the close LIVE outranks him</b>, wherever its history can be asked
+    /// (<see cref="ConnectorCapabilities.ReconciliationProvable"/>): the first question <see cref="AskTheHistoryAsync"/>
+    /// asks, and an order held in a state that is not final decides nothing — it can still fill, and a verdict
+    /// would read the book open and close again on top of it. A read that does not answer decides nothing
+    /// either. Where no history can be asked his answer stands alone, and what stops a close still resting at
+    /// the platform from filling under the closing again is that flatten's own first step: every working order
+    /// on an instrument it is about to close is cancelled, and settled, before a single close goes out.</para>
+    /// </summary>
+    async Task<(LossFlattenVerdict? Verdict, string Undecided)> TheOwnersAnswerAsync(ExecutionRequest leg,
+        CancellationToken ct)
+    {
+        var said = $"you confirmed it on the Dashboard as {leg.State}";
+
+        if (Now - AbsenceCountsFrom(leg) < _opt.AbsenceGrace)
+            return (null, $"{said}, and the close could still be on its way to your platform");
+
+        var evidence = $"you confirmed it on the Dashboard: {leg.LastError![ResolvedByOwnerPrefix.Length..]}";
+        if (Connector.Capabilities.ReconciliationProvable)
+        {
+            OrderInfo? match;
+            try
+            {
+                match = (await Connector.GetOrdersAsync(leg.AccountId, true, leg.CreatedAt - TimeSpan.FromMinutes(5), ct))
+                    .FirstOrDefault(o => o.ClientOrderId == leg.ClientOrderId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return (null, $"{said}, and your platform's order history could not be read to check that the "
+                              + $"close is not still live ({ex.Message})");
+            }
+
+            // THE VETO: a live close decides nothing, whatever he said.
+            if (match is not null && !DecidesALostClose(match.State))
+                return (null, $"{said}, but your platform's order history holds it as {match.State}: a close that "
+                              + "is still live can still fill, and that outranks your answer");
+
+            if (match is not null && match.State != leg.State)
+                evidence += $"; your platform's order history holds it as {match.State}";
+        }
+
+        return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, leg.State.ToString(),
+            leg.FilledQuantity > 0m ? leg.FilledQuantity : null, leg.ConnectorOrderId, evidence, ByTheOwner: true), "");
     }
 
     /// <summary>
@@ -9773,6 +9856,11 @@ public sealed class TradingGateway : IAsyncDisposable
     async Task<(LossFlattenVerdict? Verdict, OrderInfo? Live, string Undecided)> AskTheHistoryAsync(ExecutionRequest leg,
         CancellationToken ct, string absence = LostCloseAbsence)
     {
+        // ReconcileAsync's own gate, and since U-loss-hold-release the confirm's only one: a platform that
+        // cannot prove its history is not asked about it, and the close stays for the owner to answer.
+        if (!Connector.Capabilities.ReconciliationProvable)
+            return (null, null, "your platform cannot show its order history, so only your answer on the Dashboard can settle it");
+
         var since = leg.CreatedAt - TimeSpan.FromMinutes(5);
 
         OrderInfo? match;
@@ -9853,6 +9941,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// every leg resolves (its nonces' rows only, never another attempt's). It writes no state but the
     /// platform's, and only onto a row still as the flatten left it. Idempotent: a row already settled is
     /// passed over, so a pass killed half way finishes on the next.
+    ///
+    /// <para>A verdict the OWNER gave (<c>U-loss-hold-release</c>) settles nothing — his row is already
+    /// terminal — and while the platform has since contradicted him (his row flagged again, see
+    /// <see cref="SettledByTheOwner"/>) nothing is unflagged either: a record applied on every pass must not
+    /// clear a disagreement written after it.</para>
     /// </summary>
     void ApplyTheConfirm(LossFlattenConfirm record)
     {
@@ -9861,7 +9954,11 @@ public sealed class TradingGateway : IAsyncDisposable
         foreach (var verdict in record.Verdicts)
         {
             var row = _requests.Get(verdict.RequestId);
-            if (row is not null && OrderStateMachine.IsTerminal(row.State)) continue;
+            if (row is not null && OrderStateMachine.IsTerminal(row.State))
+            {
+                if (verdict.ByTheOwner && !SettledByTheOwner(row)) settled = false;
+                continue;
+            }
 
             if (row is null
                 || row.State is not (ExecutionState.UNKNOWN or ExecutionState.RECONCILING)
