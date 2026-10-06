@@ -38,3 +38,22 @@ still closed; (viii) `RejectNext` → REJECTED, one fresh close, flat; (v) `Leav
 close on the wire. ATAS: NOT VERIFIED (no box for this unit), said.
 Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; Unit, Fault 0 failed; touched
 classes 3×; branch CI on all three platforms; tests box or NOT RUN; names vs `main` 0 removed (both sizes); `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
+
+## Report
+**Tip (code) `ac62ca92`** on `main` `69589886` — rebased once after the first `ci-dispatch.sh` was refused by the scan on a line of R-containment's brief, deleted on `main` meanwhile (no conflict, nothing excluded); commits `0d830a2b` (item 1), `ac62ca92` (item 2), then this report. No rung.
+**Gate at `ac62ca92`:** build `-c Release --no-incremental` → 0 Warning(s), 0 Error(s). Unit `Passed! - Failed: 0, Passed: 1393` (7 m 52 s); Fault `Passed! - Failed: 0, Passed: 430` (1 m 50 s); `LossFlattenConfirmTests` 3× `Passed: 10`
+each (pre-rebase also LossFlatten/LossFlattenOwed/ValuationLoss/LossReopen/LossRelease 3× `Passed: 28`). CI run 37396439616 at `ac62ca9`: ubuntu-latest success (12 min), macos-latest success (16 min), windows-latest success (52 min),
+package success (4 min). Names vs `main`: base 2169 → tip 2177, removed 0, added 7 tests + the helper `Seam`; [Fact]/[Theory] 2125 → 2132. Tests box: NOT RUN — `ready : NO - the machine does not answer` (exit 1, asked once).
+**Item 1 — done** (`0d830a2b`): `CancelWhileUnvaluableAsync` and `ExitLostValuationAsync` open `BeginExcludingTheStore`; `RiskReducingScope` doc and CONTRACTS say so. RED before (item reverted): (vi) `Expected: 1 Actual: 0` closes,
+"store held by another : 3004 ms against a 2000 ms budget", exit flat=False "… the operation deadline had already passed and nothing was sent to the simulator"; green after.
+**Item 2 — done** (`ac62ca92`): `ConfirmLostClosesAsync` at the start of the health pass (after the account read, before the execution row and the watch); per lost leg `ReconcileAsync`'s window and first two questions, no absence,
+only where `ReconciliationProvable`; ONE `AddKvOnce` `loss_flatten_confirm:` record (verdicts + read-back) written BEFORE any row is settled, then `SettleTheUnresolved`'s two steps and the outcome's two nonces unflagged; still open →
+the sweep runs the same `FlattenForBreachAsync` (`again`, fresh nonce, `loss_flatten_again:` / `loss_flatten_again_owed:`); `LatestFlattenWord` feeds `HeldBy`, `FlattenStateToday`, `FlattenFlagFor`; CONTRACTS, schema, AGENTS.md say so.
+RED before (item reverted): (i) `Expected: FILLED Actual: UNKNOWN`; (v) both arms `Expected: FILLED Actual: UNKNOWN` after `FillWorking`; (viii) `Expected: REJECTED Actual: UNKNOWN`, closes 1, ES 1; the one-confirm test the same.
+Guards green at base product code (7/7) and after, unchanged: (ii)–(iv), `LossFlattenTests.cs:439`, `LossFlattenOwedTests.cs:372`, `LossReopenTests.cs:194`, `LossReleaseTests.cs:128`. **Mutant:** `DecidesALostClose(s) => IsTerminal(s)
+|| s == WORKING` → (v)[LeaveWorking] red `Expected: 1 Actual: 2` closes ("the close at the book : Sell 2 CANCELLED", cancels 0 -> 1); restored, sha256 OK.
+**Declared deviations:** (a) beyond the brief: a symbol's closing again that the day's flatten subsumed never runs, so `LatestFlattenWord` gives it no word (as a subsumed first attempt) instead of holding it for ever on a false
+"closing again" — own test, RED with that hunk alone `Expected: "flat" Actual: "unresolved"`; (b) `SettleTheUnresolved` takes only the second step for a row already RECONCILING (a killed confirm) — every other caller passes
+UNKNOWN rows, unchanged; (c) "only UNKNOWN close legs unresolved" read strictly: a non-final cancel-half row, or a lost leg someone else (the owner) has since settled, means no confirm — that hold stays owed; (d) a USER-GUIDE paragraph.
+**NOT done / NOT verified:** ATAS NOT VERIFIED (no box; that its lost closes mostly stay undecided is read from the adapter's code, not run); no test drives a pass killed between record and settle, or a failed `AddKvOnce`;
+the data-loss exit's own lost close (`op-valuation-close-`) and absence as proof not built (owed: U-valuation-close-confirm, U-flatten-absence); the Integration suite ran only on CI; the app was not run.
