@@ -508,13 +508,25 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para>Composed in ONE place for the reason the allocation line is: four surfaces describing the
     /// same row in four sentences is four places for one of them to say something the ledger does not.
     /// <see cref="Unresolved"/> is the count that matters most — an operation this app cannot account
-    /// for is an order that may be live at the platform, and it is what a replacement waits on.</para>
+    /// for is an order that may be live at the platform, and it is what a replacement waits on.
+    /// <see cref="CloseOwed"/> is the other thing a replacement waits on: an END whose close has not gone
+    /// out, in words — what is holding it now, or what refused it last — and null when nothing is owed.</para>
     /// </summary>
     public sealed record DeploymentReading(
         string Id, string VersionId, string AllocationId, string EnvelopeId, string ConnectorId,
         string AccountId, string Symbol, string Mode, string State, DateTimeOffset StartedAt,
         DateTimeOffset? CursorOpenTime, string? SuspendedReason, DateTimeOffset? EndedAt,
-        string? EndReason, int Operations, int Unresolved, string Line);
+        string? EndReason, int Operations, int Unresolved, string? CloseOwed, string Line)
+    {
+        /// <summary>
+        /// WHAT THE STATUS AND THE DASHBOARD LIST: a run that is not over, and an ended one that is not yet
+        /// accounted for — an operation with no answer, or a close its END still owes. One question, so the
+        /// two surfaces cannot list different runs.
+        /// </summary>
+        public bool Outstanding =>
+            !string.Equals(State, DeploymentState.Ended, StringComparison.Ordinal)
+            || Unresolved > 0 || CloseOwed is not null;
+    }
 
     /// <summary>
     /// EVERY DEPLOYMENT THIS INSTALLATION HAS RECORDED, newest first — running, suspended and ended
@@ -530,28 +542,31 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             var ops = _deployments.OpsOf(d.Id);
             var unresolved = ops.Count(o => !o.IsSettled);
+            var owed = CloseOwedBecause(d, ops);
             return new DeploymentReading(
                 d.Id, d.VersionId, d.AllocationId, d.EnvelopeId, d.ConnectorId, d.AccountId, d.Symbol,
                 d.Mode, d.State, d.StartedAt, d.CursorOpenTime, d.SuspendedReason, d.EndedAt,
-                d.EndReason, ops.Count, unresolved, DeploymentLine(d, ops.Count, unresolved));
+                d.EndReason, ops.Count, unresolved, owed, DeploymentLine(d, ops.Count, unresolved, owed));
         })];
 
     /// <summary>
     /// The deployments the STATUS lists: everything that is not over, plus every ended run that still
-    /// has an operation nobody can account for. Null when there are none, and null when the ledger
-    /// could not be read — "nothing is deployed" and "TradeAgent could not look" are both absent here
-    /// and the second is said in the engineering log rather than guessed at on the wire.
+    /// has an operation nobody can account for or a close its END still owes. Null when there are none,
+    /// and null when the ledger could not be read — "nothing is deployed" and "TradeAgent could not
+    /// look" are both absent here and the second is said in the engineering log rather than guessed at
+    /// on the wire.
     /// </summary>
     IReadOnlyList<StatusDeployment>? DeploymentsForStatus()
     {
         try
         {
             var shown = DeploymentReadings()
-                .Where(d => !string.Equals(d.State, DeploymentState.Ended, StringComparison.Ordinal)
-                            || d.Unresolved > 0)
+                .Where(d => d.Outstanding)
                 .Select(d => new StatusDeployment(d.Id, Short(d.VersionId), d.Symbol, d.State,
-                    d.SuspendedReason ?? d.EndReason, d.StartedAt, d.CursorOpenTime, d.Operations,
-                    d.Unresolved))
+                    d.CloseOwed is { } owed
+                        ? $"{d.EndReason ?? "no reason recorded"}. {OwedSentence(owed)}"
+                        : d.SuspendedReason ?? d.EndReason,
+                    d.StartedAt, d.CursorOpenTime, d.Operations, d.Unresolved))
                 .ToList();
             return shown.Count == 0 ? null : shown;
         }
@@ -568,7 +583,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// "this is being watched on a practice account" are the two facts this product most needs never
     /// to blur.
     /// </summary>
-    static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved)
+    static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved, string? closeOwed)
     {
         var line = $"{Short(d.VersionId)} in {d.Symbol} on account {d.AccountId} at {d.ConnectorId}, "
                    + $"{d.State} since {d.StartedAt:yyyy-MM-dd HH:mm:ssK}, {operations} operation"
@@ -584,6 +599,9 @@ public sealed class TradingGateway : IAsyncDisposable
         if (d.IsEnded)
             line += $". ENDED at {d.EndedAt:yyyy-MM-dd HH:mm:ssK}: {d.EndReason ?? "no reason recorded"}.";
 
+        if (closeOwed is not null)
+            line += $" {OwedSentence(closeOwed)}";
+
         if (unresolved > 0)
             line += $" {unresolved} operation{(unresolved == 1 ? " is" : "s are")} UNRESOLVED — "
                     + "TradeAgent cannot yet say what happened to "
@@ -592,6 +610,14 @@ public sealed class TradingGateway : IAsyncDisposable
 
         return line;
     }
+
+    /// <summary>
+    /// AN END THAT HAS NOT CLOSED, IN THE OWNER'S WORDS — on the deployment's line and in the status — with
+    /// what is holding the close or what refused it last (<see cref="CloseOwedBecause"/>).
+    /// </summary>
+    static string OwedSentence(string why) =>
+        $"NOT closed: the close this end owes has not gone out ({why}). TradeAgent sends it again at most "
+        + "once each minute while nothing refuses it, and no replacement run starts until it has closed.";
 
     /// <summary>
     /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every standing paper allocation
@@ -606,10 +632,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// cannot duplicate exposure".</para>
     ///
     /// <para><b>The bound is the ENVELOPE'S <c>max_deployments</c> and is never a constant in here.</b>
-    /// What occupies a slot is every deployment in the grant that is not over — and every deployment
-    /// that IS over but whose last operation has no answer, because "a replacement waits for a flat,
-    /// reconciled end": an order that may be live at the platform is precisely what a second run would
-    /// be started on top of.</para>
+    /// What occupies a slot is every deployment on the grant's platform, account and instrument that is
+    /// not over — and every one that IS over but whose last operation has no answer, or whose END still
+    /// owes its close, because "a replacement waits for a flat, reconciled end" (<see cref="HoldsItsSlot"/>):
+    /// an order that may be live at the platform, or a position nobody closed, is precisely what a second
+    /// run would be started on top of — whichever grant the first was started under.</para>
     ///
     /// <para><b>It never throws.</b> It runs on the mission loop's periodic seam, after
     /// <see cref="AllocatePaperDue"/>, and a sweep that could not run must leave the ledger alone
@@ -633,8 +660,11 @@ public sealed class TradingGateway : IAsyncDisposable
         if (ClosureAccountId is not { Length: > 0 } account) return 0;
         if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
 
-        var occupied = _deployments.ForEnvelope(envelope.Id)
-            .Count(d => !d.IsEnded || !_deployments.IsReconciled(d.Id));
+        // ON THIS PLATFORM, ACCOUNT AND INSTRUMENT, WHICHEVER GRANT A RUN WAS STARTED UNDER. One envelope stands on
+        // an account at a time, so these are this envelope's runs plus what an earlier grant left there: an END
+        // of a withdrawn grant still owing its close is a position nobody has closed, and a run of the new grant
+        // started over it is the replacement that waits for a flat end.
+        var occupied = _deployments.OnInstrument(Connector.Id, account, envelope.Symbol).Count(HoldsItsSlot);
         var started = 0;
 
         foreach (var standing in _allocations.PaperStanding(now))
@@ -654,7 +684,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // ALREADY RUNNING, OR STILL BEING ACCOUNTED FOR. Both are "not now": the first would be a
             // second run of one allocation, and the second is the replacement waiting for a flat end.
             var runs = _deployments.ForAllocation(allocation.Id);
-            if (runs.Any(d => !d.IsEnded || !_deployments.IsReconciled(d.Id))) continue;
+            if (runs.Any(HoldsItsSlot)) continue;
 
             // AND NO REPLACEMENT FOR A VERSION THIS BUILD'S RUNNER CANNOT RUN AT ALL — no row, a text that no
             // longer parses, or one that parses to another id (`ForwardRuns.CannotRun`). The first run is
@@ -679,6 +709,75 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         return started;
+    }
+
+    /// <summary>
+    /// WHETHER A RUN STILL OCCUPIES ITS ENVELOPE'S SLOT: it is not over; or it is over and an operation of it
+    /// has no answer — an order that may be live at the platform; or it is over and its END still owes its
+    /// close (<see cref="OwesItsClose"/>) — a position nobody has closed. A replacement waits for a flat,
+    /// reconciled end, and "every operation settled" is not that while the close was refused before the wire:
+    /// the run then reads accounted for over a position still open, owned by nobody.
+    /// </summary>
+    bool HoldsItsSlot(StrategyDeploymentRow deployment)
+    {
+        if (!deployment.IsEnded) return true;
+        var ops = _deployments.OpsOf(deployment.Id);
+        return ops.Any(o => !o.IsSettled) || OwesItsClose(deployment, ops);
+    }
+
+    /// <summary>
+    /// AN END THAT STILL OWES ITS CLOSE: the run is ended, and its latest flatten was refused before the wire
+    /// (<see cref="Deployments.RefusedBeforeTheWire"/>) — or it never wrote one at all.
+    ///
+    /// <para>Only what provably never left is owed, so it is the one thing that may be sent again. A flatten
+    /// with an answer is over whatever the answer was; one still <c>dispatched</c> — UNKNOWN among them — may be
+    /// live at the platform, holds the slot as an unresolved operation, and is never sent again here; and
+    /// <see cref="CloseAsync"/>'s "nothing to close" resolves the flatten, so a flat book owes nothing.</para>
+    /// </summary>
+    bool OwesItsClose(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow> ops)
+    {
+        if (!deployment.IsEnded) return false;
+        return LatestFlatten(ops) is not { } latest
+               || Deployments.RefusedBeforeTheWire(latest, _requests.Get(latest.RequestId));
+    }
+
+    /// <summary>The run's latest flatten — its END's, or the maximum hold's before it — or null because it has none.</summary>
+    static DeploymentOpRow? LatestFlatten(IReadOnlyList<DeploymentOpRow> ops) =>
+        ops.LastOrDefault(o => string.Equals(o.Kind, DeploymentOpKind.Flatten, StringComparison.Ordinal));
+
+    /// <summary>
+    /// ANOTHER RUN ON THE SAME POSITION, or null: a run on this one's platform, account and instrument that is not
+    /// over, or is over with an operation that has no answer.
+    ///
+    /// <para>An END's close is a close of the ACCOUNT'S whole position in the instrument (<see cref="CloseAsync"/>),
+    /// and at the END that position is the run's own, because a replacement waits for a flat end. An owed close
+    /// goes out LATER, and by then another run may be trading the same position — one a larger grant carries
+    /// beside it, or one started over this run before its close was owed — or may have a close of its own on the
+    /// wire. Sent then, it would close that run's position under it, or close the position twice; so it waits,
+    /// and the deployment's line says for whom.</para>
+    /// </summary>
+    StrategyDeploymentRow? AnotherRunOnItsPosition(StrategyDeploymentRow deployment) =>
+        _deployments.OnInstrument(deployment.ConnectorId, deployment.AccountId, deployment.Symbol)
+            .FirstOrDefault(d => !string.Equals(d.Id, deployment.Id, StringComparison.Ordinal)
+                                 && (!d.IsEnded || _deployments.OpsOf(d.Id).Any(o => !o.IsSettled)));
+
+    /// <summary>
+    /// WHY AN OWED CLOSE HAS NOT GONE OUT, or null because nothing is owed: what holds it NOW — a platform, mode
+    /// or account that is not the run's, or a gate that refuses its identity, either of which keeps the
+    /// reconcile pass from writing anything — and otherwise what refused the last attempt, in that operation's
+    /// own words, code first.
+    /// </summary>
+    string? CloseOwedBecause(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow> ops)
+    {
+        if (!OwesItsClose(deployment, ops)) return null;
+        if (DeploymentMovedFrom(deployment) is { Length: > 0 } moved) return moved;
+        if (AnotherRunOnItsPosition(deployment) is { } other)
+            return $"held while run {Short(other.Id)} on the same account and instrument "
+                   + (other.IsEnded ? "has an order with no answer" : "is not over")
+                   + $": a close is of the account's whole position in {deployment.Symbol}";
+        if (!TryAuthorizeExecution(AgentContext.Deployment(deployment.Id), out var reason, out var code))
+            return $"{code} — {reason}";
+        return LatestFlatten(ops)?.Answer ?? "no close has been written for it yet";
     }
 
     /// <summary>
@@ -721,11 +820,12 @@ public sealed class TradingGateway : IAsyncDisposable
 
             if (row.IsEnded)
             {
-                // AN END WHOSE FLATTEN LEFT NO RECORD HAS FLATTENED NOTHING. With the write-ahead row
-                // there, this does nothing at all — which is the point: the row is how a restart tells
-                // "sent and lost" from "never sent", and without it the only safe reading of an ended
-                // deployment would be to close again over a position the first close may have taken.
-                if (await FinishAnEndWithNoRecordAsync(row, now, ct)) changed++;
+                // AN END WHOSE CLOSE NEVER LEFT HAS CLOSED NOTHING — refused before the wire, or never
+                // written. With a flatten that may have reached the wire, this does nothing at all, which is
+                // the point: the write-ahead row is how a restart tells "sent and lost" from "never sent",
+                // and closing again over a position the first close may have taken is the one reading that
+                // must not be made.
+                if (await FinishAnOwedEndAsync(row, now, ct)) changed++;
                 continue;
             }
 
@@ -970,20 +1070,9 @@ public sealed class TradingGateway : IAsyncDisposable
             return _deployments.ById(deployment.Id);
         }
 
-        var ctx = AgentContext.Deployment(deployment.Id);
         var bar = DeploymentBar(Now);
 
-        foreach (var op in _deployments.OpsOf(deployment.Id))
-        {
-            if (_requests.Get(op.RequestId) is not
-                { State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } working) continue;
-            if (working.ConnectorOrderId is not { Length: > 0 } order) continue;
-
-            await RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
-                rid => CancelAsync(ctx, rid, order, ct)!, ct,
-                DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = order }));
-        }
-
+        await CancelWhatStillWorksAsync(deployment, bar, ct);
         await FlattenDeploymentAsync(deployment, bar, ct);
 
         _deployments.End(deployment.Id, reason, Now);
@@ -1003,9 +1092,32 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// The FIRST HALF OF AN END: every order of the run still working at the venue, cancelled under this bar's
+    /// own ids. Cancelling comes first because a close that leaves a working opener on the book has flattened
+    /// nothing (see <see cref="EndPaperDeploymentAsync"/>).
+    /// </summary>
+    async Task CancelWhatStillWorksAsync(StrategyDeploymentRow deployment, DateTimeOffset bar,
+        CancellationToken ct)
+    {
+        var ctx = AgentContext.Deployment(deployment.Id);
+
+        foreach (var op in _deployments.OpsOf(deployment.Id))
+        {
+            if (_requests.Get(op.RequestId) is not
+                { State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } working) continue;
+            if (working.ConnectorOrderId is not { Length: > 0 } order) continue;
+
+            await RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
+                rid => CancelAsync(ctx, rid, order, ct)!, ct,
+                DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = order }));
+        }
+    }
+
+    /// <summary>
     /// The one close an end sends, written down before it goes. <see cref="CloseAsync"/> answers null
     /// on a book that is already flat, and the operation records that rather than inventing an order:
-    /// "there was nothing to close" is an outcome and it settles the bar.
+    /// "there was nothing to close" is an outcome, it RESOLVES the flatten (<see cref="RunDeploymentOpAsync"/>)
+    /// and it settles the bar — and an END whose latest flatten resolved owes nothing.
     /// </summary>
     Task<bool> FlattenDeploymentAsync(StrategyDeploymentRow deployment, DateTimeOffset bar,
         CancellationToken ct) =>
@@ -1015,25 +1127,48 @@ public sealed class TradingGateway : IAsyncDisposable
             ct, DeploymentOpKind.Flatten, bar, Json.Write(new { close = deployment.Symbol }));
 
     /// <summary>
-    /// AN END WHOSE FLATTEN LEFT NO RECORD HAS FLATTENED NOTHING — so the flatten is written and sent
-    /// now, once, and the record is what stops it happening twice.
+    /// AN END THAT STILL OWES ITS CLOSE IS FINISHED AS THE END DOES IT — what of the run still works is
+    /// cancelled, then <see cref="CloseAsync"/> under a NEW operation, its own <c>dp-</c> id and its own
+    /// <c>TA-</c> client order id — at most once a minute, and nothing at all while a gate refuses the run's
+    /// identity. Answers whether it wrote anything.
     ///
-    /// <para>This is the recovery the write-ahead row buys. With the operation on disk a restart can
-    /// see that a close was attempted and can leave it alone while its answer is missing; without one,
-    /// "sent and lost" and "never sent" are the same picture, and the only readings available are to
-    /// close again over a position the first close may have taken, or to walk away from a position the
-    /// owner was told had been closed.</para>
+    /// <para><b>Owed means provably never sent</b> (<see cref="OwesItsClose"/>): the latest flatten refused before
+    /// the wire, or none written. A flatten that may have reached the wire is never sent again here — the
+    /// write-ahead row is how a restart tells "sent and lost" from "never sent", and closing again over a
+    /// position the first close may have taken is the one reading that must not be made.</para>
+    ///
+    /// <para><b>At most once a minute</b>: an attempt is written on its minute's bar, and a minute that already
+    /// carries a flatten of this run — the END's own, or an earlier attempt's — gets no other, however often the
+    /// background loop comes round. <b>Nothing while <c>TryAuthorizeExecution</c> refuses the run's identity</b>
+    /// — the update window, the mode, the kill switch, unconfirmed work, health — because every one of those
+    /// would refuse the close before it is written, and a row a minute saying so is noise; the deployment's
+    /// line says what is holding it instead. A gate inside the order path (the allowlist, a size, a quote, a
+    /// moved position) is met by the attempt itself and recorded on it.</para>
+    ///
+    /// <para><b>Not on a platform, a mode or an account that is not the run's</b>, as the END itself refuses: a
+    /// close sent where the run was not started is an order on somebody else's book. <b>And not while another run
+    /// trades the same position</b> (<see cref="AnotherRunOnItsPosition"/>): the close is of the account's whole
+    /// position in the instrument, and sent later than the END it could close that run's position under it.</para>
     /// </summary>
-    async Task<bool> FinishAnEndWithNoRecordAsync(StrategyDeploymentRow deployment, DateTimeOffset now,
+    async Task<bool> FinishAnOwedEndAsync(StrategyDeploymentRow deployment, DateTimeOffset now,
         CancellationToken ct)
     {
-        if (_deployments.OpsOf(deployment.Id)
-            .Any(o => string.Equals(o.Kind, DeploymentOpKind.Flatten, StringComparison.Ordinal)))
-            return false;
+        var ops = _deployments.OpsOf(deployment.Id);
+        if (!OwesItsClose(deployment, ops)) return false;
 
         if (DeploymentMovedFrom(deployment) is { Length: > 0 }) return false;
+        if (AnotherRunOnItsPosition(deployment) is not null) return false;
 
-        return await FlattenDeploymentAsync(deployment, DeploymentBar(now), ct);
+        var bar = DeploymentBar(now);
+        if (LatestFlatten(ops) is { } latest && latest.BarOpenTime >= bar) return false;
+
+        if (!TryAuthorizeExecution(AgentContext.Deployment(deployment.Id), out _, out _)) return false;
+
+        _log.TryEngineering("Gateway", "deployment_end_close_owed",
+            metadataJson: Json.Write(new { deployment = deployment.Id, bar }));
+
+        await CancelWhatStillWorksAsync(deployment, bar, ct);
+        return await FlattenDeploymentAsync(deployment, bar, ct);
     }
 
     /// <summary>
@@ -1072,9 +1207,12 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             var request = await dispatch(requestId);
 
+            // NULL IS CLOSEASYNC'S "NOTHING TO CLOSE" — the one dispatch here that can answer null, on a book
+            // its own read found flat. An OUTCOME, not a refusal: it resolves the flatten, and an END whose
+            // latest flatten resolved owes nothing (OwesItsClose). Refused, it read as a close still owed.
             if (request is null)
             {
-                _deployments.Refuse(requestId, "there was nothing to send", Now);
+                _deployments.Resolve(requestId, "there was nothing to close: the position was already flat", Now);
                 return true;
             }
 
@@ -1103,19 +1241,16 @@ public sealed class TradingGateway : IAsyncDisposable
                 _ => ex.Message
             };
 
-            if (row is null)
+            // AND A ROW THAT NEVER REACHED `DISPATCHING` IS THE SAME CASE, NOT AN AMBIGUOUS ONE
+            // (Deployments.NeverReachedTheWire, the one rule the runner reads a refusal by). `DISPATCHING` is
+            // written durably before the wire is touched (`DispatchPlaceAsync`), so a record still CREATED when
+            // the call threw is a gate that refused BETWEEN the write-ahead row and the wire — DECISION_EXPIRED
+            // is the one this runner meets — and nothing left this process. Reading it as unresolved would hold
+            // the cursor forever over an order that provably does not exist.
+            if (Deployments.NeverReachedTheWire(row))
                 _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
-            else if (OrderStateMachine.IsTerminal(row.State))
+            else if (OrderStateMachine.IsTerminal(row!.State))
                 _deployments.Resolve(requestId, row.State.ToString(), Now);
-
-            // AND A ROW STILL IN `CREATED` IS A THIRD CASE, NOT AN AMBIGUOUS ONE. `DISPATCHING` is
-            // written durably before the wire is touched (`DispatchPlaceAsync`), so a record that is
-            // still CREATED when the call threw is a gate that refused BETWEEN the write-ahead row
-            // and the wire — DECISION_EXPIRED is the one this runner meets — and nothing left this
-            // process. Reading it as unresolved would hold the cursor forever over an order that
-            // provably does not exist.
-            else if (row.State == ExecutionState.CREATED)
-                _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
 
             return true;
         }
