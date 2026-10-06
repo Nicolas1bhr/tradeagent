@@ -10648,29 +10648,45 @@ public sealed class TradingGateway : IAsyncDisposable
         var req = _requests.GetByClientOrderId(order.ClientOrderId);
         if (req is null || OrderStateMachine.IsTerminal(req.State)) return;
 
+        ApplyAPlatformAnswer(req, order.State, order.ConnectorOrderId, order.FilledQuantity);
+    }
+
+    /// <summary>
+    /// THE ONE WRITER OF A PLATFORM'S LATER ANSWER ONTO A ROW IT ALREADY ANSWERED ONCE — the event stream's
+    /// write, and since <c>U-inflight-settle</c> the same write for an answer read back from the platform's own
+    /// order list (<see cref="SettleAnOrderInFlightAsync"/>), so the two can never write one fact two ways.
+    /// True when it wrote <paramref name="to"/>; false when the row is not one it may move or the store refused.
+    ///
+    /// <para><paramref name="error"/> is null from the stream, which leaves the row's last error as it was, and
+    /// the read-back's account of where its answer came from otherwise.</para>
+    /// </summary>
+    bool ApplyAPlatformAnswer(ExecutionRequest req, ExecutionState to, string? connectorOrderId, decimal? filled,
+        string? error = null)
+    {
         // A connector may raise OrderChanged from inside PlaceOrderAsync, before that call has even
         // returned — and a real bridge delivers events on its own thread, arriving whenever. So the
         // stream stays out of any request that the dispatcher or the reconciler currently owns.
         // Whoever holds the request writes its outcome; the stream only reports later changes.
         if (req.State is ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL
-                      or ExecutionState.DISPATCHING or ExecutionState.RECONCILING) return;
+                      or ExecutionState.DISPATCHING or ExecutionState.RECONCILING) return false;
 
-        if (!OrderStateMachine.CanTransition(req.State, order.State)) return; // the reconciler is the authority, not the stream
+        if (!OrderStateMachine.CanTransition(req.State, to)) return false; // the reconciler is the authority, not the stream
         try
         {
-            _requests.Transition(req.RequestId, req.State, order.State,
-                connectorOrderId: order.ConnectorOrderId, filled: order.FilledQuantity);
+            _requests.Transition(req.RequestId, req.State, to,
+                connectorOrderId: connectorOrderId, filled: filled, error: error);
             StateChanged?.Invoke();
 
             // A REQUEST THAT HAS FINISHED IS A REASON TO WAKE, and one that is merely working is
             // not: an order moving through WORKING and PARTIALLY_FILLED would otherwise buy a turn
             // per tick of the book. The id carries the state as well as the request, so a stream
             // that repeats the same transition — which a reconnecting bridge does — costs nothing.
-            if (OrderStateMachine.IsTerminal(order.State))
-                Wake(MissionEventIds.Order(req.RequestId, order.State.ToString()), MissionEventKind.Order,
-                    new { request = req.RequestId, state = order.State.ToString() });
+            if (OrderStateMachine.IsTerminal(to))
+                Wake(MissionEventIds.Order(req.RequestId, to.ToString()), MissionEventKind.Order,
+                    new { request = req.RequestId, state = to.ToString() });
+            return true;
         }
-        catch (TradeAgentException) { /* raced with the dispatcher; reconciliation will settle it */ }
+        catch (TradeAgentException) { return false; /* raced with the dispatcher; reconciliation will settle it */ }
     }
 
     /// <summary>
