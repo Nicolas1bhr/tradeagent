@@ -254,9 +254,7 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
             {
                 try
                 {
-                    PulseProbe.Note(_pipe, "b.delay");
                     await Task.Delay(HeartbeatInterval, token);
-                    PulseProbe.Note(_pipe, "b.wake");
                     // The heartbeat carries the current Describe(), not just a pulse.
                     //
                     // Two of those fields are answered at runtime and only become true *after* the
@@ -285,11 +283,9 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
                     await SendRaw(caps is null
                         ? new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat }
                         : (object)new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat, data = caps }, token);
-                    PulseProbe.Note(_pipe, caps is null ? "b.sent" : "b.sent+caps");
                 }
-                catch (Exception ex) { PulseProbe.Note(_pipe, "b.exit:threw:" + ex.GetType().Name); return; }
+                catch (Exception) { return; }
             }
-            PulseProbe.Note(_pipe, $"b.exit:loop connected={Connected} cancelled={token.IsCancellationRequested}");
         }, token);
         return cts;
     }
@@ -475,12 +471,12 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
     async Task SendRaw(object frame, CancellationToken ct)
     {
         var w = _writer;
-        if (w is null) { PulseProbe.Note(_pipe, "b.sendraw:no-writer"); return; }
+        if (w is null) return;
 
         // The queue for the writer is bounded too. Without it, one stuck frame makes every later
         // caller wait behind it for as long as the peer feels like — the heartbeat included, which
         // is the signal TradeAgent uses to decide this bridge is alive.
-        if (!await _send.WaitAsync(WriteTimeout, ct)) { PulseProbe.Note(_pipe, "b.sendraw:queue-timeout"); DropConnection(); return; }
+        if (!await _send.WaitAsync(WriteTimeout, ct)) { DropConnection(); return; }
         try
         {
             var write = w.WriteLineAsync(Json.Write(frame));
@@ -490,12 +486,11 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
             }
             catch (TimeoutException)
             {
-                PulseProbe.Note(_pipe, "b.sendraw:write-timeout");
                 Observe(write);
                 DropConnection();
             }
         }
-        catch (Exception ex) { PulseProbe.Note(_pipe, "b.sendraw:threw:" + ex.GetType().Name); Connected = false; }
+        catch (Exception) { Connected = false; }
         finally { _send.Release(); }
     }
 

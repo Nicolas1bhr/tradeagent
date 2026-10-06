@@ -305,22 +305,9 @@ public class BridgeRoundTripTests
     /// stale capability this frame exists to fix. A failed read must degrade to the plain pulse.
     /// </summary>
     [Fact]
-    public async Task A_failing_capability_read_does_not_stop_the_heartbeat() => await FailingCapabilityReadScenario("original");
-
-    // DIAGNOSTIC ONLY — U-fix-bridge-heartbeat, branch only, removed before the proving run.
-    public static IEnumerable<object[]> PulseReps =>
-        Enumerable.Range(1, int.TryParse(Environment.GetEnvironmentVariable("TA_PULSE_REPS"), out var n) ? n : 1).Select(i => new object[] { i });
-
-    // DIAGNOSTIC ONLY — U-fix-bridge-heartbeat, branch only, removed before the proving run.
-    [Theory]
-    [MemberData(nameof(PulseReps))]
-    public async Task Diag_pulse_gap_repeat(int rep) =>
-        await FailingCapabilityReadScenario($"{Environment.GetEnvironmentVariable("TA_PULSE_LABEL") ?? "rep"}{rep:000}");
-
-    static async Task FailingCapabilityReadScenario(string label)
+    public async Task A_failing_capability_read_does_not_stop_the_heartbeat()
     {
         var pipe = NewPipe();
-        await using var rec = new PulseRecorder(pipe, label, intervalMs: 100);
         var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromMilliseconds(600) };
         await connector.ConnectAsync();
         await using var _1 = connector;
@@ -329,19 +316,13 @@ public class BridgeRoundTripTests
             { HeartbeatInterval = TimeSpan.FromMilliseconds(100) };
         bridge.Start();
         await Wait(async () => await connector.IsConnectedAsync());
-        rec.Mark("waited");
 
         // Well past several heartbeat timeouts, every one of which failed to read Describe().
         await Task.Delay(1500);
-        rec.Mark("delayed");
-
-        var connected = await connector.IsConnectedAsync();
-        var health = await connector.GetHealthAsync();
-        rec.Report(connected, health, connector.Capabilities.ReconciliationProvable);
 
         // THE PULSE IS WHAT THIS TEST IS ABOUT, and it is still arriving.
-        Assert.True(connected);
-        Assert.Equal(HealthState.READY, health);
+        Assert.True(await connector.IsConnectedAsync());
+        Assert.Equal(HealthState.READY, await connector.GetHealthAsync());
 
         // What the pulse does NOT carry is a capability proof, and it never did — see
         // Capabilities_do_not_outlive_the_bridges_ability_to_attest_them, which is where the two
