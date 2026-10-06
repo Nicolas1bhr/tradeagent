@@ -368,4 +368,57 @@ public class DatasetLedgerTests
         store.Record(row with { Pair = "ETHUSDT" });
         Assert.Equal(3, store.All().Count);
     }
+
+    /// <summary>
+    /// (v) A FILE THAT CANNOT BE READ JUST NOW IS NOT SERVED, AND NOTHING IS RECORDED AGAINST IT: the next read
+    /// checks it again. Held here the way a scanner or a second reader holds one, with no sharing at all.
+    ///
+    /// <para>RED before (seat P's P3): an unreadable file read as an absent one, so the dataset was rejected
+    /// for good in false words — "the normalised dataset file is no longer on disk" — and stayed rejected once
+    /// the file was released with every byte still matching.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_dataset_file_nobody_can_read_just_now_is_not_served_and_not_rejected_for_good()
+    {
+        var (svc, first, _, archive, pair) = await Collected();
+        using var _a = archive;
+        var set = first.Dataset!;
+
+        using (new FileStream(set.NormalisedPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var open = BarFeed.Open(svc.Store, set.Id, BarAudience.Pipe(CouncilRoles.Research), null, null);
+            Assert.False(open.Ok, "a dataset whose file could not be read was served");
+            var row = svc.Store.ById(set.Id)!;
+            Assert.True(row.State == DatasetState.ACCEPTED, row.RejectedReason);
+            Assert.Contains("could not be read just now", open.Why, StringComparison.Ordinal);
+            Assert.Contains("nothing was recorded, and it is checked again on the next read", open.Why,
+                StringComparison.Ordinal);
+        }
+
+        var released = svc.Store.Checked(svc.Store.ById(set.Id)!);
+        Assert.True(released.State == DatasetState.ACCEPTED, released.RejectedReason);
+        var rebuilt = svc.Rebuild(pair).Dataset!;
+        Assert.True(rebuilt.State == DatasetState.ACCEPTED, rebuilt.RejectedReason);
+        Assert.Equal("v2", rebuilt.Version);
+    }
+
+    /// <summary>
+    /// AND A FILE THAT IS GONE IS STILL REJECTED FOR GOOD. Absence and other bytes are the two things a read can
+    /// prove about evidence, and both stay permanent: only a read that proved neither is this read's alone.
+    /// </summary>
+    [Fact]
+    public async Task A_raw_file_that_is_gone_is_still_rejected_for_good()
+    {
+        var (svc, first, _, archive, _) = await Collected();
+        using var _a = archive;
+        var set = first.Dataset!;
+        var gone = set.Files[0];
+        File.Delete(gone.Path);
+
+        var reread = svc.Store.Checked(svc.Store.ById(set.Id)!);
+
+        Assert.Equal(DatasetState.REJECTED, reread.State);
+        Assert.Contains($"the raw archive file for {gone.Month} is no longer on disk", reread.RejectedReason);
+        Assert.Equal(DatasetState.REJECTED, svc.Store.ById(set.Id)!.State);
+    }
 }

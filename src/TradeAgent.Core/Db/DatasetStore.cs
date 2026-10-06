@@ -241,6 +241,16 @@ public sealed record DatasetRecord(
     /// <see cref="Data.DataLicence"/>.</para>
     /// </summary>
     public Data.DatasetLicence Licence { get; init; } = Data.DatasetLicence.Unrecorded;
+
+    /// <summary>
+    /// WHETHER <see cref="State"/> IS REJECTED FOR THIS READ ALONE (<c>U-dataset-version-once</c>): a file
+    /// could not be read just now — it was neither gone nor different, the read simply did not get its bytes —
+    /// so no bar is served, nothing was recorded, and the next read checks again
+    /// (<see cref="DatasetStore.Checked"/>). Never stored and never read from the ledger, which holds only what
+    /// a read proved. <c>MarketDataService.Rebuild</c> reads it, so its advice to collect the months again is
+    /// given only for a rejection the ledger holds.
+    /// </summary>
+    public bool RejectedThisReadOnly { get; init; }
 }
 
 /// <summary>
@@ -255,10 +265,11 @@ public sealed record DatasetRecord(
 ///
 /// <para><b>Reproducible, and checked rather than asserted.</b> A row carries the SHA-256 of every
 /// raw archive file it was built from and of the normalised file it produced. <see cref="Checked"/>
-/// re-reads those hashes off the disk on every read; a file that no longer matches moves the row to
-/// <see cref="DatasetState.REJECTED"/>, permanently, and the bars stop being served. It is never
+/// re-reads those hashes off the disk on every read; a file that is gone or no longer matches moves the row
+/// to <see cref="DatasetState.REJECTED"/>, permanently, and the bars stop being served. It is never
 /// re-normalised from the changed bytes — a dataset derived from a file nobody can identify has no
-/// provenance, whatever the derivation produces.</para>
+/// provenance, whatever the derivation produces. A file that merely could not be read just now proves
+/// neither, and is answered for that read alone.</para>
 /// </summary>
 public sealed class DatasetStore(Database db)
 {
@@ -442,51 +453,103 @@ public sealed class DatasetStore(Database db)
     /// <summary>
     /// THE DATASET AS IT IS NOW, not as it was recorded.
     ///
-    /// Every raw file and the normalised file are re-hashed and compared with the row. A single
-    /// disagreement moves the row to <see cref="DatasetState.REJECTED"/> — written down, so the next
-    /// read need not re-measure to reach the same verdict — and the returned record says so. A row
-    /// already rejected stays rejected: an altered file that is put back is not the same evidence
+    /// Every raw file and the normalised file are re-hashed and compared with the row. A file that is
+    /// GONE, or whose bytes DIFFER, moves the row to <see cref="DatasetState.REJECTED"/> — written down,
+    /// so the next read need not re-measure to reach the same verdict — and the returned record says so.
+    /// A row already rejected stays rejected: an altered file that is put back is not the same evidence
     /// having been restored, it is a file somebody changed twice.
+    ///
+    /// <para><b>A file that could not be read just now proves neither</b> (<c>U-dataset-version-once</c>):
+    /// held by another reader, a scanner, a disk that did not answer. It used to read as an absent file,
+    /// so a moment's lock rejected the dataset for good in false words — "no longer on disk" about a file
+    /// that was there with every byte matching. Now this read answers REJECTED, and serves nothing, in a
+    /// sentence that says what happened; nothing is recorded, and the next read checks again
+    /// (<see cref="DatasetRecord.RejectedThisReadOnly"/>). A file proven gone or different elsewhere in the
+    /// same dataset is still recorded on this read.</para>
     /// </summary>
     public DatasetRecord Checked(DatasetRecord set)
     {
         if (set.State == DatasetState.REJECTED) return set;
 
-        var reason = FirstMismatch(set);
-        if (reason is null) return set;
+        var found = FirstMismatch(set);
+        if (found is null) return set;
 
-        Reject(set.Id, reason);
-        return set with { State = DatasetState.REJECTED, RejectedReason = reason };
+        if (!found.Proven)
+            return set with { State = DatasetState.REJECTED, RejectedReason = found.Reason, RejectedThisReadOnly = true };
+
+        Reject(set.Id, found.Reason);
+        return set with { State = DatasetState.REJECTED, RejectedReason = found.Reason };
     }
 
     /// <summary>
-    /// What no longer hashes to what the ledger recorded, in words, or null when everything does.
+    /// What a read found wrong with a dataset, in words, and whether the read PROVED it: a file that is
+    /// gone or whose bytes differ is proven, and recorded for good; a file the read could not read for any
+    /// other reason is not, and is answered for that read alone.
+    /// </summary>
+    public sealed record Mismatch(string Reason, bool Proven);
+
+    /// <summary>
+    /// What no longer hashes to what the ledger recorded, or null when everything does.
     ///
     /// THE RAW FILES ARE CHECKED, not only the normalised one. The normalised file is what the bars
     /// are served from and the raw files are what makes it REPRODUCIBLE — checking only the output
     /// would leave a dataset whose inputs nobody can identify still reading as accepted, which is
     /// precisely the claim this ledger exists to be able to make.
+    ///
+    /// <para>A PROVEN mismatch anywhere outranks a file that merely could not be read: the read goes on past
+    /// an unreadable file, so a file that is gone is never masked by another that is only held.</para>
     /// </summary>
-    public static string? FirstMismatch(DatasetRecord set)
+    public static Mismatch? FirstMismatch(DatasetRecord set)
     {
+        Mismatch? unread = null;
+
         foreach (var f in set.Files)
+            if (Compare($"the raw archive file for {f.Month}", f.Path, f.ComputedSha256, ref unread) is { } proven)
+                return proven;
+
+        return Compare("the normalised dataset file", set.NormalisedPath, set.NormalisedSha256, ref unread) ?? unread;
+    }
+
+    /// <summary>
+    /// One file against its recorded hash: a proven mismatch, or null — with a read that proved nothing kept
+    /// in <paramref name="unread"/> (the first one) rather than returned.
+    /// </summary>
+    static Mismatch? Compare(string what, string path, string recorded, ref Mismatch? unread)
+    {
+        var (now, absent, failure) = Measure(path);
+
+        if (absent)
+            return new($"{what} is no longer on disk at {path}", Proven: true);
+
+        if (failure is not null)
         {
-            var now = Sha256(f.Path);
-            if (now is null)
-                return $"the raw archive file for {f.Month} is no longer on disk at {f.Path}";
-            if (!string.Equals(now, f.ComputedSha256, StringComparison.OrdinalIgnoreCase))
-                return $"the raw archive file for {f.Month} no longer matches the hash recorded for it " +
-                       $"({f.ComputedSha256} became {now})";
+            unread ??= new($"{what} at {path} could not be read just now ({failure}); nothing was recorded, "
+                           + "and it is checked again on the next read", Proven: false);
+            return null;
         }
 
-        var normalised = Sha256(set.NormalisedPath);
-        if (normalised is null)
-            return $"the normalised dataset file is no longer on disk at {set.NormalisedPath}";
-        if (!string.Equals(normalised, set.NormalisedSha256, StringComparison.OrdinalIgnoreCase))
-            return $"the normalised dataset file no longer matches the hash recorded for it " +
-                   $"({set.NormalisedSha256} became {normalised})";
+        return string.Equals(now, recorded, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : new($"{what} no longer matches the hash recorded for it ({recorded} became {now})", Proven: true);
+    }
 
-        return null;
+    /// <summary>
+    /// A FILE'S SHA-256, OR WHAT STOPPED THIS READ OF IT: absent — the file or its folder is not there — or a
+    /// failure that says nothing about the bytes, in the words of the exception that said so.
+    /// <see cref="Sha256"/> answers null for both, which is right for a caller recording provenance and
+    /// wrong for one deciding whether evidence still exists.
+    /// </summary>
+    static (string? Sha256, bool Absent, string? Failure) Measure(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return (Sha256Hex.Of(stream), false, null);
+        }
+        catch (FileNotFoundException) { return (null, true, null); }
+        catch (DirectoryNotFoundException) { return (null, true, null); }
+        catch (IOException ex) { return (null, false, ex.Message); }
+        catch (UnauthorizedAccessException ex) { return (null, false, ex.Message); }
     }
 
     /// <summary>
