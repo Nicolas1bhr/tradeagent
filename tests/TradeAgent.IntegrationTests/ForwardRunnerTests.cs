@@ -163,7 +163,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     }
 
     static async Task<Rig> ReadyAsync(string program, string? bookFile = null, Database? db = null,
-        DateTimeOffset? origin = null)
+        DateTimeOffset? origin = null, Func<PaperConnector, ITradingConnector>? through = null)
     {
         db ??= TestEnv.NewDb();
 
@@ -187,7 +187,8 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
             Catalogue = Catalogue()
         });
 
-        var gw = new TradingGateway(db, conn, new HealthRegistry(),
+        // THE GATEWAY DRIVES THE PAPER CONNECTOR — or, for a test that reads what reaches it, a pass-through around it.
+        var gw = new TradingGateway(db, through?.Invoke(conn) ?? conn, new HealthRegistry(),
             new GatewayOptions { Clock = clock, MaxQuoteAge = TimeSpan.FromDays(3650) });
 
         gw.Update(s =>

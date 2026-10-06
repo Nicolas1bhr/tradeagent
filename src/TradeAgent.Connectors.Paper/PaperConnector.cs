@@ -80,10 +80,14 @@ public sealed record PaperConnectorOptions
 /// really reaches back to any timestamp asked for and
 /// <see cref="ConnectorCapabilities.SupportsOrderHistory"/> is earned. A
 /// <see cref="ConnectorRejectedException"/> is thrown for a DEFINITE refusal only — an instrument
-/// this catalogue does not hold, a size that rounds down to nothing, a cancellation of an order that
-/// has already filled — and everything ambiguous, an I/O error on the book or a bar source that
-/// throws, propagates so the gateway records UNKNOWN and reconciles. And nothing here drives a user
-/// interface.</para>
+/// this catalogue does not hold, a size that rounds down to nothing, a sell the book neither holds nor
+/// has buys working to cover, a cancellation of an order that has already filled — and everything
+/// ambiguous, an I/O error on the book or a bar source that throws, propagates so the gateway records
+/// UNKNOWN and reconciles. And nothing here drives a user interface.</para>
+///
+/// <para><b>It is a SPOT account, as the venues its prices come from are</b> (<c>U-runner-exit-hygiene-b</c>): a
+/// sell never fills beyond what the book holds at its bar — it ends <see cref="ExecutionState.REJECTED"/>,
+/// unfilled — so the book never goes short.</para>
 ///
 /// <para><b>A paper fill is a declared simulation and never evidence.</b> It says a price existed at
 /// the open of a bar; it says nothing about whether that price was executable, what the queue looked
@@ -364,6 +368,19 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
                 + $"increment of {row.QuantityIncrement}");
         }
 
+        // AND A SELL THE BOOK CANNOT COVER (`U-runner-exit-hygiene-b`). These are SPOT rows, and a spot account cannot
+        // sell what it neither holds nor has a buy working to bring in: a no the book proves off its own file, the
+        // way a spot venue refuses it. What keeps an accepted sell from filling past the holding later — two sells
+        // resting on one holding, a buy cancelled — is the fill's own check (PaperBook.TryFill).
+        if (cmd.Side == OrderSide.Sell && Book.HoldingAndWorkingBuys(cmd.Symbol) is var covered && quantity > covered)
+        {
+            TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorRejectedException(
+                $"insufficient holdings: a sell of {quantity} {cmd.Symbol} is more than this paper account holds "
+                + $"and has buys working to bring in ({covered}). TradeAgent paper simulates a spot account, which "
+                + "cannot sell what it does not hold.");
+        }
+
         var order = new OrderInfo(Book.NextOrderId(), cmd.ClientOrderId, Book.AccountId, cmd.Symbol,
             cmd.Side, cmd.Type, quantity, 0m, cmd.LimitPrice, cmd.StopPrice, ExecutionState.WORKING,
             null, _opt.Clock());
@@ -607,8 +624,15 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
             At: _opt.Clock(),
             Friction: friction.Sentence);
 
-        // The constraint decides. A re-served bar gets here and writes nothing at all.
-        if (Book.TryFill(attempt) is not { } fill) return;
+        // The constraint decides. A re-served bar gets here and writes nothing at all — and a sell beyond what is held
+        // at this bar is not filled either: it ends REJECTED, and that is said once, as a fill is.
+        var filled = Book.TryFill(attempt, out var rejected);
+        if (rejected)
+        {
+            OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);
+            return;
+        }
+        if (filled is not { } fill) return;
 
         OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);
         ExecutionReceived?.Invoke(Executed(fill));

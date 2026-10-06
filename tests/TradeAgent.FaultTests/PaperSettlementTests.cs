@@ -110,18 +110,19 @@ public class PaperSettlementTests(ITestOutputHelper log)
     [Fact]
     public async Task A_stop_fills_at_the_open_on_a_gap_a_target_at_its_level_and_both_touched_is_the_stop()
     {
-        // The target alone: a bar that never reached the stop.
+        // The target alone: a bar that never reached the stop — over the one unit each of them protects, bought first,
+        // because a sell of what the book does not hold is refused (U-runner-exit-hygiene-b).
         var quiet = new MemoryBarSource();
         await using var one = Paper(quiet, () => T0.AddSeconds(30), NewFile());
         await one.ConnectAsync();
-        quiet.Add("BTCUSDT", Bar(T0, 100m, 101m, 99m, 100m));
+        await HoldOneAsync(one, quiet);
         await one.PlaceOrderAsync(new PlaceOrderCommand("b-target", PaperConnector.TheAccount, "BTCUSDT",
             OrderSide.Sell, OrderType.Limit, 1m, 110m, null, TimeInForce.Day, null));
         await one.PlaceOrderAsync(new PlaceOrderCommand("b-stop-untouched", PaperConnector.TheAccount, "BTCUSDT",
             OrderSide.Sell, OrderType.Stop, 1m, null, 90m, TimeInForce.Day, null));
-        quiet.Add("BTCUSDT", Bar(T0.AddMinutes(1), 100m, 115m, 95m, 112m));
+        quiet.Add("BTCUSDT", Bar(T0.AddMinutes(2), 100m, 115m, 95m, 112m));
 
-        var target = Assert.Single(await one.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        var target = Assert.Single(await Sells(one));
         log.WriteLine($"target filled at {target.Price} on order {target.ClientOrderId}");
         Assert.Equal("b-target", target.ClientOrderId);
         Assert.Equal(110m, target.Price);
@@ -130,17 +131,92 @@ public class PaperSettlementTests(ITestOutputHelper log)
         var violent = new MemoryBarSource();
         await using var two = Paper(violent, () => T0.AddSeconds(30), NewFile());
         await two.ConnectAsync();
-        violent.Add("BTCUSDT", Bar(T0, 100m, 101m, 99m, 100m));
+        await HoldOneAsync(two, violent);
         await two.PlaceOrderAsync(new PlaceOrderCommand("b-both-stop", PaperConnector.TheAccount, "BTCUSDT",
             OrderSide.Sell, OrderType.Stop, 1m, null, 90m, TimeInForce.Day, null));
         await two.PlaceOrderAsync(new PlaceOrderCommand("b-both-target", PaperConnector.TheAccount, "BTCUSDT",
             OrderSide.Sell, OrderType.Limit, 1m, 110m, null, TimeInForce.Day, null));
-        violent.Add("BTCUSDT", Bar(T0.AddMinutes(1), 85m, 115m, 84m, 100m));
+        violent.Add("BTCUSDT", Bar(T0.AddMinutes(2), 85m, 115m, 84m, 100m));
 
-        var fill = Assert.Single(await two.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        var fill = Assert.Single(await Sells(two));
         log.WriteLine($"both touched: filled {fill.ClientOrderId} at {fill.Price}");
         Assert.Equal("b-both-stop", fill.ClientOrderId);
         Assert.Equal(85m, fill.Price);
+    }
+
+    /// <summary>
+    /// ONE UNIT HELD, BOUGHT AT MARKET: placed after the bar at T0 closed and filled at the next bar's open, T0 + 1
+    /// minute, a bar that reaches no level any test here rests at.
+    /// </summary>
+    static async Task HoldOneAsync(PaperConnector paper, MemoryBarSource source)
+    {
+        source.Add("BTCUSDT", Bar(T0, 100m, 101m, 99m, 100m));
+        await paper.PlaceOrderAsync(Market("hold-1"));
+        source.Add("BTCUSDT", Bar(T0.AddMinutes(1), 100m, 101m, 99m, 100m));
+        Assert.Equal(1m, Assert.Single(await paper.GetPositionsAsync(PaperConnector.TheAccount)).Quantity);
+    }
+
+    /// <summary>The book's sell executions, oldest first.</summary>
+    static async Task<List<ExecutionInfo>> Sells(PaperConnector paper) =>
+        [.. (await paper.GetExecutionsAsync(PaperConnector.TheAccount, null)).Where(x => x.Side == OrderSide.Sell)];
+
+    /// <summary>
+    /// A SELL BEYOND THE HOLDING IS REFUSED, AND THE PAPER BOOK NEVER GOES SHORT (<c>U-runner-exit-hygiene-b</c>).
+    ///
+    /// <para>The prices are a spot venue's, and a spot account cannot sell what it does not hold. A lone market sell on
+    /// a flat book is a no the book can prove, at placement. Two sells resting on one holding are each covered when
+    /// placed — the book reserves nothing, as a spot venue's OCO would — and the bar that reaches both fills the first,
+    /// the market sell at its open, and REJECTS the second, unfilled, because by then nothing is held: the book used to
+    /// fill it too and hold minus one.</para>
+    ///
+    /// <para><b>RED on the base</b>: the lone sell accepted; the pair both filled, the position −1.000. <b>Mutant
+    /// (iv)</b> — the fill-time check removed, placement's kept — goes red here at −1.000.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_sell_beyond_the_holding_is_refused_and_the_paper_book_never_goes_short()
+    {
+        var source = new MemoryBarSource();
+        var now = T0.AddSeconds(30);
+        await using var paper = Paper(source, () => now, NewFile());
+        await paper.ConnectAsync();
+        source.Add("BTCUSDT", Bar(T0, 100m, 101m, 99m, 100m));
+
+        // A LONE MARKET SELL ON A FLAT BOOK: refused, definite, nothing written.
+        var refused = await Assert.ThrowsAsync<ConnectorRejectedException>(
+            () => paper.PlaceOrderAsync(Market("s-alone", OrderSide.Sell)));
+        log.WriteLine(refused.Message);
+        Assert.Contains("insufficient holdings", refused.Message, StringComparison.Ordinal);
+        Assert.Null((await paper.GetOrdersAsync(PaperConnector.TheAccount, true, null))
+            .FirstOrDefault(o => o.ClientOrderId == "s-alone"));
+
+        // BOUGHT 1, FILLED AT T0 + 1'S OPEN. THEN A MARKET SELL OF 1 AND A SELL STOP OF 1 AT 95, BOTH ACCEPTED.
+        await paper.PlaceOrderAsync(Market("s-buy"));
+        source.Add("BTCUSDT", Bar(T0.AddMinutes(1), 100m, 101m, 99m, 100m));
+        Assert.Equal(1m, Assert.Single(await paper.GetPositionsAsync(PaperConnector.TheAccount)).Quantity);
+
+        now = T0.AddMinutes(1).AddSeconds(30);
+        Assert.Equal(ExecutionState.WORKING, (await paper.PlaceOrderAsync(Market("s-sell", OrderSide.Sell))).State);
+        Assert.Equal(ExecutionState.WORKING, (await paper.PlaceOrderAsync(new PlaceOrderCommand("s-stop",
+            PaperConnector.TheAccount, "BTCUSDT", OrderSide.Sell, OrderType.Stop, 1m, null, 95m, TimeInForce.Day, null))).State);
+
+        // THE NEXT BAR REACHES BOTH: it opens at 96 and falls to 90.
+        source.Add("BTCUSDT", Bar(T0.AddMinutes(2), 96m, 97m, 90m, 92m));
+
+        var held = (await paper.GetPositionsAsync(PaperConnector.TheAccount)).Sum(p => p.Quantity);
+        var orders = await paper.GetOrdersAsync(PaperConnector.TheAccount, true, null);
+        foreach (var o in orders) log.WriteLine($"{o.ClientOrderId} {o.Side} {o.Type} {o.State} filled={o.FilledQuantity} — {o.RejectReason}");
+        log.WriteLine($"held {held}");
+
+        Assert.Equal(0m, held);
+        var sold = Assert.Single(await Sells(paper));
+        Assert.Equal(("s-sell", 96m), (sold.ClientOrderId, sold.Price));
+        var stop = Assert.Single(orders, o => o.ClientOrderId == "s-stop");
+        Assert.Equal((ExecutionState.REJECTED, 0m), (stop.State, stop.FilledQuantity));
+        Assert.Contains("insufficient holdings", stop.RejectReason, StringComparison.Ordinal);
+
+        // AND A SECOND READ OF THE SAME BARS CHANGES NOTHING: the rejection is the order's, once.
+        Assert.Equal(2, (await paper.GetExecutionsAsync(PaperConnector.TheAccount, null)).Count);
+        Assert.Empty(await paper.GetPositionsAsync(PaperConnector.TheAccount));
     }
 
     /// <summary>
