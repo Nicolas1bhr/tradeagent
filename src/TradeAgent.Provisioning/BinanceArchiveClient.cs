@@ -27,7 +27,16 @@ public enum MonthOutcome
     /// as "Binance has not published 2026-08". A guess wearing the words of an answer is the defect
     /// <c>IAtasAdapter</c> rule 3 forbids on the order path; the data path gets the same rule.
     /// </summary>
-    Unreachable
+    Unreachable,
+
+    /// <summary>
+    /// THE BYTES ARRIVED, AND NEITHER NAME THEY MAY BE KEPT AT WILL TAKE THEM — the vendor's own and the one
+    /// carrying their hash (<see cref="CandleSourceClient.HashedName"/>) each hold a file that is not these
+    /// bytes, or that could not be read just now to say whether it is. A file this installation kept is never
+    /// replaced, because a dataset may record it, so the period is not collected; the detail names the file in
+    /// the way. It says nothing about the vendor.
+    /// </summary>
+    NameTaken
 }
 
 /// <summary>
