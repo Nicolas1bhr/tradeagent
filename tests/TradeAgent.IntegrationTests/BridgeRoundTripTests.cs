@@ -303,8 +303,28 @@ public class BridgeRoundTripTests
     /// catches by returning, so a throw there would stop the pulse and TradeAgent would declare a
     /// perfectly healthy bridge dead once the heartbeat timeout expired — a worse failure than the
     /// stale capability this frame exists to fix. A failed read must degrade to the plain pulse.
+    ///
+    /// CATEGORY "Timing", ARGUED WITH NUMBERS (U-fix-bridge-heartbeat). The verdict is an outcome the
+    /// product keeps only while a deadline of its own is open — the connection stays up while every
+    /// pulse lands inside the 600 ms <c>HeartbeatTimeout</c> — so it needs the RUNNER to turn a 100 ms
+    /// loop at least once every 600 ms as well as the product to be right. It went red once, on
+    /// macos-latest (main 5427746, run 37058319403). Six macos-latest runs that printed every pulse's
+    /// send and receipt time through a probe since removed (37413639706, 37413642258, 37413644218,
+    /// 37415665297, 37415667586, 37415669858) measured 3,639 executions and 44,675 pulses sent while
+    /// Describe() threw: the loop never stopped, every pulse sent was received, no connection was lost,
+    /// and an execution's worst gap was 166 ms at the median and 189 ms at p99 — that VM wakes every
+    /// timed wait up to ~90 ms late, a dedicated thread's Thread.Sleep(10) as much as Task.Delay, so
+    /// the OS rather than .NET or this loop. Four executions had a gap over 300 ms, the worst 511 ms
+    /// (run 37415667586: the bridge slept at +651 ms and woke at +1038); in each the dedicated thread's
+    /// sleep came back 154-285 ms late too while the process used 29-38 ms of CPU in 1.6 s — the VM
+    /// was not running it. A freeze injected with SIGSTOP for 750 ms reproduced this red exactly: 13
+    /// of 36 lost the connection, the bridge's loop waking the instant the freeze ended and the
+    /// connector's poll finding 960 ms of silence in the same millisecond. The second attempt rescues
+    /// none of what this test is for: with Describe()'s throw ending the loop again, it is red on two
+    /// runs in a row at the same assertion.
     /// </summary>
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task A_failing_capability_read_does_not_stop_the_heartbeat()
     {
         var pipe = NewPipe();
