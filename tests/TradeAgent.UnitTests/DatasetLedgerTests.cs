@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -19,8 +20,11 @@ public class DatasetLedgerTests
 {
     static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
-    /// <summary>Rows for a whole month is too much for a test; three minutes is the same shape.</summary>
-    static string Rows(DateOnly month)
+    /// <summary>
+    /// Rows for a whole month is too much for a test; three minutes is the same shape. A different
+    /// <paramref name="closePrice"/> is the same month with other bytes — what a vendor that re-published it serves.
+    /// </summary>
+    static string Rows(DateOnly month, string closePrice = "100.50000000")
     {
         var start = new DateTimeOffset(month.Year, month.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var b = new StringBuilder();
@@ -28,7 +32,7 @@ public class DatasetLedgerTests
         {
             var open = start.AddMinutes(i).ToUnixTimeMilliseconds() * 1000L;
             var close = start.AddMinutes(i + 1).ToUnixTimeMilliseconds() * 1000L - 1;
-            b.Append(open).Append(",100.00000000,101.00000000,99.00000000,100.50000000,1.00000000,")
+            b.Append(open).Append(",100.00000000,101.00000000,99.00000000,").Append(closePrice).Append(",1.00000000,")
              .Append(close).Append(",1000.00000000,10,0.50000000,500.00000000,0\n");
         }
         return b.ToString();
@@ -159,5 +163,115 @@ public class DatasetLedgerTests
 
         Assert.Equal(DatasetState.REJECTED, reread.State);
         Assert.Contains("normalised dataset file no longer matches", reread.RejectedReason);
+    }
+
+    // ---- U-dataset-version-once: what a dataset records is never deleted, replaced or reused -------
+
+    /// <summary>Whether the file at <paramref name="path"/> is still exactly <paramref name="bytes"/>.</summary>
+    static bool Still(string path, byte[] bytes) => File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes);
+
+    /// <summary>Where a period whose vendor name holds other bytes is kept: the first 16 hex of its hash before the extension.</summary>
+    static string HashedName(string pair, DateOnly month, byte[] bytes)
+    {
+        var name = BinanceArchive.FileName(pair, month);
+        return Path.Combine(BinanceArchive.RawDir(pair),
+            $"{Path.GetFileNameWithoutExtension(name)}.{FakeArchive.Sha256(bytes)[..16]}{Path.GetExtension(name)}");
+    }
+
+    /// <summary>
+    /// (i) A PRESS THAT REACHES NO VENDOR LEAVES THE DATASET BEFORE IT EXACTLY AS IT WAS.
+    ///
+    /// <para>RED before this unit (seat P's P4): the fetch deleted each period's raw file at its one path
+    /// before it asked the vendor anything, so one press with the vendor unreachable took all twelve files
+    /// of the dataset before it, and the next read rejected that dataset for good — "the raw archive file for
+    /// 2025-09 is no longer on disk". The press itself recorded nothing, so nothing said why.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_press_that_reaches_no_vendor_leaves_the_dataset_before_it_as_it_was()
+    {
+        var (svc, first, _, archive, pair) = await Collected();
+        using var _a = archive;
+        var set = first.Dataset!;
+        var raw = set.Files.ToDictionary(f => f.Path, f => File.ReadAllBytes(f.Path));
+        Assert.Equal(12, raw.Count);
+
+        archive.AlwaysAnswer = HttpStatusCode.ServiceUnavailable;
+        var offline = await svc.CollectAsync(pair, Now);
+        Assert.Null(offline.Dataset);
+        Assert.All(offline.Months, m => Assert.Equal(MonthOutcome.Unreachable, m.Outcome));
+
+        var reread = svc.Store.Checked(svc.Store.ById(set.Id)!);
+        Assert.True(reread.State == DatasetState.ACCEPTED, reread.RejectedReason);
+        foreach (var (path, bytes) in raw)
+            Assert.True(Still(path, bytes), $"{path} is no longer the file dataset {set.Id} recorded");
+
+        var rebuilt = svc.Rebuild(pair).Dataset!;
+        Assert.True(rebuilt.State == DatasetState.ACCEPTED, rebuilt.RejectedReason);
+        Assert.Equal("v2", rebuilt.Version);
+        Assert.Equal(set.NormalisedSha256, rebuilt.NormalisedSha256);
+    }
+
+    /// <summary>
+    /// (ii) A PERIOD THE VENDOR RE-PUBLISHED WITH OTHER BYTES IS KEPT BESIDE THE FIRST, NEVER OVER IT: at the
+    /// vendor's name with the first 16 hex of its SHA-256 before the extension. The eleven periods whose bytes
+    /// did not change are the same files, reused.
+    ///
+    /// <para>RED before: the second press replaced the period's file at its one path, and the dataset recorded
+    /// over the first bytes was rejected for good — "…no longer matches the hash recorded for it".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_period_republished_with_other_bytes_is_kept_beside_the_first_and_never_over_it()
+    {
+        var (svc, first, _, archive, pair) = await Collected();
+        using var _a = archive;
+        var set = first.Dataset!;
+        var raw = set.Files.ToDictionary(f => f.Path, f => File.ReadAllBytes(f.Path));
+
+        var month = BinanceArchive.RecentCompleteMonths(Now).Last();
+        var republished = archive.Publish(pair, month, Rows(month, closePrice: "100.75000000"));
+        var second = (await svc.CollectAsync(pair, Now)).Dataset!;
+
+        var reread = svc.Store.Checked(svc.Store.ById(set.Id)!);
+        Assert.True(reread.State == DatasetState.ACCEPTED, reread.RejectedReason);
+        foreach (var (path, bytes) in raw)
+            Assert.True(Still(path, bytes), $"{path} is no longer the file dataset {set.Id} recorded");
+
+        var kept = Assert.Single(second.Files, f => f.Month == BinanceArchive.MonthName(month));
+        Assert.Equal(HashedName(pair, month, republished), kept.Path);
+        Assert.Equal(FakeArchive.Sha256(republished), kept.ComputedSha256);
+        Assert.True(Still(kept.Path, republished), $"{kept.Path} does not hold the bytes the vendor re-published");
+        Assert.Equal(11, second.Files.Count(f => raw.ContainsKey(f.Path)));
+        Assert.NotEqual(set.NormalisedSha256, second.NormalisedSha256);
+        Assert.Equal(DatasetState.ACCEPTED, svc.Store.Checked(svc.Store.ById(second.Id)!).State);
+    }
+
+    /// <summary>
+    /// OTHER BYTES ON BOTH NAMES REFUSE THE PERIOD, IN A SENTENCE NAMING THE FILE, and both files stay as they
+    /// are. Nothing a fetch places is ever deleted or replaced, so a name that holds something else is never
+    /// a name these bytes may take.
+    /// </summary>
+    [Fact]
+    public async Task Other_bytes_on_both_names_refuse_the_period_in_words_and_are_left_as_they_are()
+    {
+        var pair = TestEnv.NewPair();
+        var month = BinanceArchive.RecentCompleteMonths(Now).Last();
+        using var archive = new FakeArchive();
+        var published = archive.Publish(pair, month, Rows(month));
+
+        var raw = BinanceArchive.RawDir(pair);
+        Directory.CreateDirectory(raw);
+        var vendorName = Path.Combine(raw, BinanceArchive.FileName(pair, month));
+        var hashed = HashedName(pair, month, published);
+        File.WriteAllText(vendorName, "other bytes at the vendor's name");
+        File.WriteAllText(hashed, "other bytes at the hashed name");
+
+        var result = await new BinanceArchiveClient(archive.BaseUrl).FetchMonthAsync(pair, month, raw);
+
+        Assert.NotEqual(MonthOutcome.Collected, result.Outcome);
+        Assert.Equal(MonthOutcome.NameTaken, result.Outcome);
+        Assert.Null(result.File);
+        Assert.Contains(hashed, result.Detail, StringComparison.Ordinal);
+        Assert.Equal("other bytes at the vendor's name", File.ReadAllText(vendorName));
+        Assert.Equal("other bytes at the hashed name", File.ReadAllText(hashed));
     }
 }

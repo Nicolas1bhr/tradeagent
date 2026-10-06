@@ -26,6 +26,14 @@ namespace TradeAgent.Provisioning;
 ///
 /// <para>The folder is under <c>state/data/</c> and is NOT in the agent's workspace: nothing the AI
 /// can write reaches it, and there is no verb and no pipe op that puts a file there.</para>
+///
+/// <para><b>WHAT IS PLACED THERE IS WRITE-ONCE</b> (<c>U-dataset-version-once</c>). Every dataset row records
+/// the paths and hashes of the raw files it was built from, and a later press of the same pair used to
+/// delete each period's file at its one path before asking the vendor anything: one press with the vendor
+/// unreachable took every file the dataset before it rested on, and a period the vendor re-published was
+/// written over the bytes that dataset recorded. Either way the earlier evidence was rejected for good.
+/// So a fetch downloads into a staging folder of its own — the only place it deletes — and places the
+/// bytes beside what is already there, never over it: see <see cref="Place"/>.</para>
 /// </summary>
 public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
 {
@@ -62,11 +70,29 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(period);
 
-        var name = period.FileName;
-        var dest = Path.Combine(rawDir, name);
+        // A STAGING FOLDER OF THIS FETCH'S OWN, under the raw folder so that placing the bytes is a rename on
+        // one volume: the only place this fetch deletes anything, and nothing in it is anyone else's.
+        var staging = Path.Combine(rawDir, StagingFolder, Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(staging);
+        try
+        {
+            return await FetchIntoAsync(source, period, rawDir, staging, progress, ct, recordDecision);
+        }
+        finally
+        {
+            TryDeleteFolder(staging);
+        }
+    }
 
-        Directory.CreateDirectory(rawDir);
-        TryDelete(dest);
+    /// <summary>The folder under the raw folder that fetches download into. Nothing recorded is ever in it.</summary>
+    public const string StagingFolder = ".staging";
+
+    async Task<MonthResult> FetchIntoAsync(
+        ICandleSource source, CandlePeriod period, string rawDir, string staging,
+        IProgress<ProvisionProgress>? progress, CancellationToken ct, Action<string>? recordDecision)
+    {
+        var name = period.FileName;
+        var staged = Path.Combine(staging, name);
 
         string? published = null;
 
@@ -103,13 +129,12 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
 
         try
         {
-            await Downloader.DownloadAsync(period.Url, dest,
+            await Downloader.DownloadAsync(period.Url, staged,
                 published is null ? Unpinned(source, name) : Integrity.Pinned(published),
                 progress, ct, ErrorCode.MARKET_DATA_UNAVAILABLE, recordDecision);
         }
         catch (TradeAgentException ex) when (published is not null && ex.Info.Code == ErrorCode.MARKET_DATA_UNAVAILABLE)
         {
-            TryDelete(dest);
             return new MonthResult(period.Name, MonthOutcome.ChecksumMismatch, null,
                 $"{name} did not match the checksum {source.DisplayName} published for it, so it was thrown away");
         }
@@ -117,8 +142,7 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         {
             // WHATEVER WENT WRONG WITH THE BYTES, IT WAS NOT THE VENDOR SAYING THERE IS NO SUCH
             // PERIOD. This branch used to answer "not published" to a CDN 503 and to a body that
-            // stopped short.
-            TryDelete(dest);
+            // stopped short. What arrived of them is in the staging folder, and goes with it.
 
             // A SOURCE WITH NO SIDECAR HAS NO OTHER WAY TO SAY "there is no such period", so the one
             // question that distinguishes the two is asked here — and only here, where a download has
@@ -135,13 +159,72 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         // Computed here as well as inside the download, and recorded BESIDE the published hash rather
         // than in place of it: the ledger's reproducibility check re-reads THIS number off the file
         // later, and a row carrying only the vendor's figure could not tell a file that changed on
-        // disk from one that was never right.
-        var computed = await Downloader.Sha256Async(dest, ct);
+        // disk from one that was never right. It is also what decides where the bytes are kept.
+        var computed = await Downloader.Sha256Async(staged, ct);
+        var length = new FileInfo(staged).Length;
+
+        var (kept, refused) = Place(staged, rawDir, name, computed);
+        if (kept is null)
+            return new MonthResult(period.Name, MonthOutcome.NameTaken, null, refused!);
+
         return new MonthResult(period.Name, MonthOutcome.Collected,
             // THE PUBLISHED HASH IS EMPTY WHERE THE VENDOR PUBLISHES NONE. Never the computed one.
-            new RawMonth(period.Name, period.Url, published ?? "", computed, new FileInfo(dest).Length,
-                DateTimeOffset.UtcNow, dest),
+            new RawMonth(period.Name, period.Url, published ?? "", computed, length, DateTimeOffset.UtcNow, kept),
             $"{name} collected");
+    }
+
+    /// <summary>
+    /// WHERE THESE BYTES ARE KEPT — and never over anything already there.
+    ///
+    /// <para>At the vendor's own name when it is free, or when the file there already has exactly these
+    /// bytes (then it is reused, and the staged copy goes with the staging folder). Otherwise at that name
+    /// with the first 16 hex of the bytes' SHA-256 before the extension (<see cref="HashedName"/>), by the same
+    /// rule. A name that holds OTHER bytes is never a name these bytes may take, because some dataset may
+    /// record that file: when both do, the period is refused, in a sentence naming the file in the way, and
+    /// both files stay exactly as they are.</para>
+    ///
+    /// <para>"Free" is decided by the move itself, never by a look beforehand: a move that may not replace
+    /// anything either lands on a free name or fails, so nothing written between a check and a move can be
+    /// written over.</para>
+    /// </summary>
+    static (string? Kept, string? Refused) Place(string staged, string rawDir, string name, string sha256)
+    {
+        var hashed = Path.Combine(rawDir, HashedName(name, sha256));
+        foreach (var at in new[] { Path.Combine(rawDir, name), hashed })
+        {
+            if (MovedOnto(staged, at)) return (at, null);
+            if (string.Equals(Sha256Hex.OfFile(at), sha256, StringComparison.OrdinalIgnoreCase)) return (at, null);
+        }
+
+        return (null, Sha256Hex.OfFile(hashed) is null
+            ? $"{name} arrived, and {hashed} — the name these bytes are kept at when the vendor's own is taken — "
+              + "is already there and could not be read just now, so nothing was kept. TradeAgent never replaces "
+              + "a file it has kept; the next press tries again."
+            : $"{name} arrived, and {hashed} — the name these bytes are kept at when the vendor's own is taken — "
+              + "already holds other bytes, so nothing was kept. TradeAgent never replaces a file it has kept: "
+              + "a dataset may record that one.");
+    }
+
+    /// <summary>
+    /// The vendor's file name with the first 16 hex of the bytes' SHA-256 before its extension —
+    /// <c>BTCUSDT-1m-2026-08.0123456789abcdef.zip</c> — for bytes whose vendor name already holds other bytes.
+    /// The extension stays last because it is what says how the file is read.
+    /// </summary>
+    public static string HashedName(string name, string sha256) =>
+        $"{Path.GetFileNameWithoutExtension(name)}.{sha256[..16]}{Path.GetExtension(name)}";
+
+    /// <summary>Moves the staged bytes onto <paramref name="at"/> only if nothing is there; false when something is.</summary>
+    static bool MovedOnto(string staged, string at)
+    {
+        try
+        {
+            File.Move(staged, at, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(at))
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -192,9 +275,14 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         return results;
     }
 
-    static void TryDelete(string file)
+    /// <summary>
+    /// Removes this fetch's own staging folder and whatever is left in it — a part file, a copy that was
+    /// reused, bytes that failed their checksum. Best effort: a folder something still holds is left, and it
+    /// holds nothing any dataset records.
+    /// </summary>
+    static void TryDeleteFolder(string folder)
     {
-        try { if (File.Exists(file)) File.Delete(file); }
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }

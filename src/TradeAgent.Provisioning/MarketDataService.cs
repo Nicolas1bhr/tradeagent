@@ -260,6 +260,7 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
         MonthOutcome.NotPublished => month.Month,
         MonthOutcome.ChecksumNotPublished => $"{month.Month} (published with no checksum)",
         MonthOutcome.ChecksumMismatch => $"{month.Month} (checksum mismatch)",
+        MonthOutcome.NameTaken => $"{month.Month} (other bytes already hold its names here)",
         _ => $"{month.Month} ({source.DisplayName} could not be reached)"
     };
 
@@ -270,11 +271,15 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     static string NothingArrived(ICandleSource source, IReadOnlyList<MonthResult> periods)
     {
         var unreachable = periods.Count(m => m.Outcome == MonthOutcome.Unreachable);
+        var taken = periods.Count(m => m.Outcome == MonthOutcome.NameTaken);
 
-        return unreachable == 0
-            ? $"{source.DisplayName} published none of the {periods.Count} periods asked for, so there is no dataset to record."
-            : $"None of the {periods.Count} periods asked for arrived, and {unreachable} of them could not be reached "
-              + $"at all, so nothing was recorded. That is not evidence that {source.DisplayName} has no data for them.";
+        return unreachable > 0
+            ? $"None of the {periods.Count} periods asked for arrived, and {unreachable} of them could not be reached "
+              + $"at all, so nothing was recorded. That is not evidence that {source.DisplayName} has no data for them."
+            : taken > 0
+                ? $"None of the {periods.Count} periods asked for was kept: {taken} of them arrived and other bytes "
+                  + "already hold their names here, which TradeAgent never replaces, so nothing was recorded."
+                : $"{source.DisplayName} published none of the {periods.Count} periods asked for, so there is no dataset to record.";
     }
 
     /// <summary>
@@ -288,6 +293,7 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     {
         var missing = months.Count == 0 ? set.MonthsNotPublished.Count : months.Count - set.MonthsPresent;
         var unreachable = months.Count(m => m.Outcome == MonthOutcome.Unreachable);
+        var taken = months.Count(m => m.Outcome == MonthOutcome.NameTaken);
         var period = set.FirstBar is { } first && set.LastBar is { } last
             ? $"{first.UtcDateTime:yyyy-MM-dd HH:mm} to {last.UtcDateTime:yyyy-MM-dd HH:mm} UTC"
             : "no bars";
@@ -297,7 +303,9 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
                (missing > 0
                    ? unreachable > 0
                        ? $" ({missing} missing, {unreachable} of them because the source could not be reached)"
-                       : $" ({missing} not published)"
+                       : taken > 0
+                           ? $" ({missing} missing, {taken} of them because other bytes already hold their names here)"
+                           : $" ({missing} not published)"
                    : "") +
                $". {set.CoverageActualDays:N0} days deep against a target of {set.CoverageTargetDays:N0}. " +
                $"{set.Gaps:N0} minutes missing inside that period, {set.Duplicates:N0} duplicate rows dropped, " +
