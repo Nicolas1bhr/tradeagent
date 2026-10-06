@@ -66,8 +66,8 @@ so this orchestration position becomes the standard."
   give, the budget spent, and every NOT VERIFIED — `BUILD-STATUS.md`'s honesty rule; a push only when he can act on it. The wrap-up, when he asks or the
   orchestrator judges the session fruitful: seats land what is in flight and start nothing new but a protection's fix; each writes its status and handoff;
   the orchestrator checkpoints the resume block, the board, `fleet/handoff/ORCHESTRATOR.md` and memory, removes its crons, and reports.
-- **The reference run, 2026-10-06** (01:00 to the wrap-up): two seats, four Mac builders and one ATAS-box leg, two usage stops bridged with nothing lost;
-  the units landed are listed in the resume block's checkpoint.
+- **The reference run, 2026-10-06** (00:50 to 18:30): two seats, four Mac builders and one ATAS-box leg; three usage stops and a clamshell sleep bridged
+  with nothing lost; twelve units landed (the resume block's checkpoint lists them).
 
 ## Grounding — read before acting, verify before trusting
 

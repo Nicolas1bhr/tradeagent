@@ -10,6 +10,9 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
+**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the newest
+checkpoint below (2026-10-06 18:30) and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+
 **2026-10-02 evening — THE BUILD IS ON.** The owner made the session the orchestrator of the whole build, with top-level manager seats and Opus
 builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allotments and rungs: `fleet/BOARD.md`; each seat's state: `fleet/status/`;
 every CI run read: `fleet/ci-ledger.md` (`fleet/` = `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`, outside `/tmp`). Resume from those and
@@ -48,8 +51,9 @@ an ATAS-box leg; three usage stops and a clamshell sleep (12:42–14:34) bridged
 every branch CI green on all three platforms (R-containment's windows red was the PressIdShapeTests sighting `U-fix-press-budget` then fixed), no test name
 removed; the tests box NOT RUN in every record (off all night; from 16:04 its owner's own app was open). Landing CI on `main`: green except two
 windows-latest reds on record/docs shas, each read and owed — `e01198d6` CoidWitnessTests (the 5-attempt bound held; a < 2 s wall-clock assert on a
-starved runner) and `22df95a7` VenueOpsTests (an `IpcToken.Ensure` first-write race on a shared test home → `U-ipc-token-once`); `4da881c4` and `081ab302`
-were running at this checkpoint (`fleet/ci-ledger.md`). **NEXT:** M0 (READY; the owner's two clicks; bundle at the newest green `main` BEFORE `U-tape-read`'s
+starved runner) and `22df95a7` VenueOpsTests (an `IpcToken.Ensure` first-write race on a shared test home → `U-ipc-token-once`); `4da881c4` green (run 37491400258);
+`081ab302` red on windows-latest only in SweepRequestIdTests.A_five_order_sweep_… (run 37494849714; the test's own message: the runner spread its wave
+over more than its 750 ms of room) with the same code green on all three at `b94fc212` (run 37495039407) — a first sighting, in seat P's handoff. **NEXT:** M0 (READY; the owner's two clicks; bundle at the newest green `main` BEFORE `U-tape-read`'s
 merge). Seat P's queue (`fleet/handoff/P.md`; the first four BEFORE ANY LIVE USE): `U-bridge-liveness-clock` → `U-press-close-once` → `U-loss-hold-release` →
 `U-valuation-close-confirm` → six light items. Seat A's (`fleet/handoff/A.md`): `U-tape-read` (READY) → `U-tape-chain` (CARD) → the conferring-dataset unit;
 owed before live: in-flight MARKET rows re-read against the platform. Lane B after M0. Weekly budget: no ceiling (the owner, 2026-10-06).
