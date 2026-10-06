@@ -392,6 +392,17 @@ included, as long as the GDELT Project is credited with a link to its site — s
 items, it says where they came from. Binance's own archive of market statistics is not recorded: its terms
 allow research but not a product that trades real money without a written licence.
 
+**Seeing that it is recording.** Your daily report (the Report page, and the file TradeAgent writes for each day)
+has a line under *Other operating costs* called **market context tape**: how many readings arrived that day, from how
+many requests, how many of those failed and the newest reason in words, and the **gaps** — times one of the sources
+went quiet for longer than twice its usual interval, including while TradeAgent was closed, with the longest named.
+It says when either button is switched off, and when some of the readings are GDELT's it credits GDELT with its link.
+A day with nothing recorded reads as zero readings, never as a blank. The AI sees the same thing live: its status
+says whether each of your two buttons is on, whether it is actually getting answers, how many attempts failed in the
+last hour, and whether GDELT's daily limit stopped it today. The AI can **read** what was recorded — every part of it
+equally, each reading with the moment it arrived and whether it was *live*, *point-in-time* or *archive* — but it
+cannot record, change or delete any of it, and an item the check flagged reaches it without its text.
+
 **The terms the history came under.** Binance now publishes its archive under the *Binance Vision Dataset
 Terms* (version 1.0, CC BY-NC-SA 4.0). They allow backtesting for personal research and do not allow live
 trading on that data. So TradeAgent records, with every dataset, the terms its bars came under, and the history
