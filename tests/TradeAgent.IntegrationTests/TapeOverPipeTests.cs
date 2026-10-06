@@ -583,6 +583,88 @@ public class TapeOverPipeTests(ITestOutputHelper log)
         Assert.Equal(80, all.Distinct().Count());
     }
 
+    // ---------------------------------------------------------------------------------------------- data-list
+
+    /// <summary>
+    /// <c>data-list</c> NAMES EVERY TAPE SERIES WITH ITS FIRST AND LAST ARRIVAL, ROWS AND LAST ERROR, in a list of its own
+    /// under the brief's own sentence. Binance's open interest delivered twice; OKX's announcements were only ever
+    /// attempted and failed; GDELT delivered one file. Every catalogue series is named, the ones that hold nothing yet
+    /// included; symbols are enumerated and digests are not — those say what their keys are; GDELT's series carry GDELT's
+    /// credit; and a gateway with no tape says so with a null, never an empty list that would read as nothing recorded.
+    /// </summary>
+    [Fact]
+    public async Task Data_list_names_every_tape_series_with_its_arrivals_rows_and_last_error()
+    {
+        await using var rig = await Ready();
+
+        rig.Store.Append(OiFetch(Noon.AddSeconds(2)), [OiPoint(Noon, "1.000"), OiPoint(Noon, "2.000", "ETHUSDT")]);
+        rig.Store.Append(OiFetch(Noon.AddMinutes(1).AddSeconds(2)), [OiPoint(Noon.AddMinutes(1), "1.500")]);
+        rig.Store.Append(new TapeFetch
+        {
+            Source = TapeSourceCatalog.OkxEeaAnnouncements,
+            Series = "announcements",
+            Url = "http://127.0.0.1:9/api/v5/support/announcements",
+            RequestedAt = Noon.AddMinutes(2),
+            ReceivedAt = Noon.AddMinutes(2).AddSeconds(10),
+            Note = "the host did not answer within 10 s"
+        });
+        var label = new DateTimeOffset(2026, 10, 2, 11, 45, 0, TimeSpan.Zero);
+        rig.Store.AppendArchive(GdeltFetch(label, Noon.AddMinutes(3)), GdeltBatch(label), [GkgRow(label, 1), GkgRow(label, 2)]);
+
+        await using var wire = await Wire.As(rig, null);
+        var reply = await wire.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "agent-tape" });
+        var tape = Data(reply).GetProperty("tape");
+        log.WriteLine(JsonSerializer.Serialize(tape, Json.Pretty)[..Math.Min(4000, JsonSerializer.Serialize(tape, Json.Pretty).Length)]);
+
+        Assert.StartsWith("TAPE — recorded by TradeAgent as it arrived; O-LIVE rows only are first-hand; not evaluation evidence",
+            tape.GetProperty("note").GetString(), StringComparison.Ordinal);
+
+        var series = tape.GetProperty("series").EnumerateArray()
+            .ToDictionary(s => (s.GetProperty("source").GetString()!, s.GetProperty("series").GetString()!));
+
+        // EVERY CATALOGUE SERIES, the ones with nothing yet included, and GDELT's file records beside its items.
+        foreach (var row in TapeSourceCatalog.Shipped())
+            foreach (var s in row.Series)
+                Assert.True(series.ContainsKey((row.Id, s.Id)), $"{row.Id} {s.Id} is not named");
+        Assert.True(series.ContainsKey((GdeltGkg.Source, GdeltGkg.BatchSeries)));
+
+        var oi = series[(TapeSourceCatalog.OpenInterest, OiSeries)];
+        Assert.Equal(3, oi.GetProperty("rows").GetInt64());
+        Assert.Equal(Noon.AddSeconds(2), oi.GetProperty("first_arrival").GetDateTimeOffset());
+        Assert.Equal(Noon.AddMinutes(1).AddSeconds(2), oi.GetProperty("last_arrival").GetDateTimeOffset());
+        Assert.Equal(JsonValueKind.Null, oi.GetProperty("last_error").ValueKind);
+        Assert.Equal(["BTCUSDT", "ETHUSDT"], oi.GetProperty("subjects").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(JsonValueKind.Null, oi.GetProperty("subject_key").ValueKind);
+        Assert.Equal(JsonValueKind.Null, oi.GetProperty("citation").ValueKind);
+        Assert.Equal(TapeReader.MarketContextSwitch, oi.GetProperty("switch").GetString());
+
+        var okx = series[(TapeSourceCatalog.OkxEeaAnnouncements, "announcements")];
+        Assert.Equal(0, okx.GetProperty("rows").GetInt64());
+        Assert.Equal(JsonValueKind.Null, okx.GetProperty("first_arrival").ValueKind);
+        Assert.Equal("the host did not answer within 10 s", okx.GetProperty("last_error").GetString());
+        Assert.Equal(JsonValueKind.Null, okx.GetProperty("subjects").ValueKind);
+        Assert.Contains("32 hex", okx.GetProperty("subject_key").GetString(), StringComparison.Ordinal);
+
+        var premium = series[(TapeSourceCatalog.Premium, "premium-index")];
+        Assert.Equal(0, premium.GetProperty("rows").GetInt64());
+        Assert.Equal(JsonValueKind.Null, premium.GetProperty("last_error").ValueKind);
+
+        foreach (var (name, rows) in new[] { (GdeltGkg.ItemsSeries, 2L), (GdeltGkg.BatchSeries, 1L) })
+        {
+            var gdelt = series[(GdeltGkg.Source, name)];
+            Assert.Equal(rows, gdelt.GetProperty("rows").GetInt64());
+            Assert.Equal(TapeSourceCatalog.GdeltCitation, gdelt.GetProperty("citation").GetString());
+            Assert.Equal(TapeReader.GdeltNewsSwitch, gdelt.GetProperty("switch").GetString());
+            Assert.Equal(JsonValueKind.Null, gdelt.GetProperty("subjects").ValueKind);
+            Assert.Equal(Noon.AddMinutes(3), gdelt.GetProperty("last_arrival").GetDateTimeOffset());
+        }
+
+        // NO TAPE OPEN IS A NULL, said, not an empty list.
+        rig.Gw.Tape = null;
+        var none = Data(await wire.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "agent-tape" }));
+        Assert.Equal(JsonValueKind.Null, none.GetProperty("tape").ValueKind);
+    }
+
     // ---------------------------------------------------------------------------------------------- words
 
     /// <summary>

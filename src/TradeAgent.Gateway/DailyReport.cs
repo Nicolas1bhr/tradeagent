@@ -364,6 +364,15 @@ public sealed record ReportOtherCosts
     /// </summary>
     public string? ForwardData { get; init; }
 
+    /// <summary>
+    /// WHAT THE MARKET-CONTEXT TAPE RECORDED TODAY, in one line (<c>U-tape-read</c>): the rows that arrived, the requests
+    /// and the failed ones, the gaps, the newest failure, either switch that is off, and GDELT's credit when any of the
+    /// rows are GDELT's — or null because this installation has no tape open. Here beside the live bars for the same
+    /// reason they are here: it runs continuously and is paid for in requests, and this is the part TradeAgent can count.
+    /// A COUNT, never a price.
+    /// </summary>
+    public string? Tape { get; init; }
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -727,6 +736,7 @@ public static class DailyReportText
 
         Section(b, "7. Other operating costs");
         Kv(b, "live market data", r.OtherCosts.ForwardData ?? "not collected");
+        Kv(b, "market context tape", r.OtherCosts.Tape ?? "no tape open — the activity log says why");
         Gaps(b, r.OtherCosts.Missing);
 
         Section(b, "8. Research evidence");

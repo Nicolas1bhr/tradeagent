@@ -93,6 +93,13 @@ public static class GdeltGkg
     public const string Filter = "gkg-crypto-v1";
 
     /// <summary>
+    /// HOW AN ATTEMPT'S NOTE BEGINS WHEN THE DAILY CAP STOPPED ITS FILE: the recorder writes it, and the status reads it
+    /// back off the tape (<c>U-tape-read</c>) — one spelling, so "the cap stopped GDELT today" survives a restart and is
+    /// never a second guess at what the recorder meant.
+    /// </summary>
+    public const string CapNotePrefix = "not stored: ";
+
+    /// <summary>
     /// GDELT'S DATA HOST, spelled in pieces so the test-tree scan that forbids a test naming a vendor host
     /// (<c>SuiteReachesNoVendorTests</c>) can look for it without finding this line.
     /// </summary>

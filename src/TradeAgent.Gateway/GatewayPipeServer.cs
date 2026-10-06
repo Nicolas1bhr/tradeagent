@@ -2673,10 +2673,51 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "evaluation evidence and no verdict is ever taken over them. No holdout applies to them "
             + "either, and that is a fact about what they are rather than a relaxation: every forward "
             + "bar post-dates every freeze on this installation, because it did not exist when the "
-            + "freeze was taken. Read them with 'data-bars --source forward'.",
+            + "freeze was taken. Read them with 'data-bars --source forward'. "
+            // AND THE TAPE, NAMED HERE AND KEPT APART FROM BOTH (U-tape-read): readings of the market's context, not
+            // bars, with three times each and a class — a third kind of thing in a third list.
+            + "'tape' is a THIRD kind of thing, in its own list: the market's context as TradeAgent recorded it "
+            + "arriving. Read a series of it with 'data-tape'.",
             [.. sets.Select(Describe)],
-            [.. gateway.Forward.All().Select(Describe)]);
+            [.. gateway.Forward.All().Select(Describe)],
+            TapeList());
     }
+
+    /// <summary>
+    /// THE TAPE'S SERIES, FOR <c>data-list</c> (<c>U-tape-read</c>): every series with the switch that records it, its
+    /// rows, the arrival of its first and newest row, what its newest attempt got wrong, its symbols where its subjects
+    /// are symbols and what its keys are where they are not, and the credit its source's terms require. Null when this
+    /// gateway has no tape open. A tape that cannot be read just now says so in its note rather than taking the
+    /// datasets' list down with it.
+    /// </summary>
+    DataListReplyTape? TapeList()
+    {
+        if (gateway.Tape is not { } tape) return null;
+        try
+        {
+            return new DataListReplyTape(TapeListNote, [.. tape.Series().Select(s => new DataListReplyTapeSeries(
+                s.Source, s.Series, s.Switch, s.Rows, s.FirstArrival, s.LastArrival, s.LastError, s.Subjects,
+                SubjectKey(tape, s.Source, s.Series), CitationOf(tape, s.Source)))]);
+        }
+        catch (Exception ex)
+        {
+            return new DataListReplyTape(
+                TapeListNote + " THE TAPE COULD NOT BE READ just now, so no series is listed: "
+                + ex.Message.ReplaceLineEndings(" "), []);
+        }
+    }
+
+    /// <summary>What the tape's list says about itself, in the brief's words first.</summary>
+    static readonly string TapeListNote =
+        "TAPE — recorded by TradeAgent as it arrived; O-LIVE rows only are first-hand; not evaluation evidence. "
+        + "These are the market's context series — Binance USDⓈ-M premium index and funding, open interest and the "
+        + "long/short and taker ratios for six pairs, OKX's announcements for EU users, GDELT's news items about crypto — "
+        + "each with the owner's switch that records it ('switch'), its 'rows', the arrival of its first and newest row in "
+        + "the order the tape wrote them, and what its newest attempt got wrong ('last_error', null when it delivered). "
+        + "'subjects' lists a series' symbols; a series keyed by digests or record ids lists none and 'subject_key' says "
+        + "what its keys are — leave 'subject' out of 'data-tape' to read every subject. 'citation' is the credit the "
+        + "source's terms require wherever its rows are used or shown. Read a series with 'data-tape'. The tape is as deep "
+        + "as TradeAgent has been running with a switch on; nothing on this channel records, edits or deletes a row.";
 
     /// <summary>One forward series on the wire. See <see cref="ForwardBars"/>.</summary>
     static DataListReplyForward Describe(ForwardSeries series) => new(
@@ -3117,7 +3158,29 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// build does not have rather than as "there is no reason because nothing is wrong".
     /// </summary>
     sealed record DataListReply(int Count, string Note, IReadOnlyList<DataListReplyItem> Datasets,
-        IReadOnlyList<DataListReplyForward> Forward);
+        IReadOnlyList<DataListReplyForward> Forward,
+        // NEVER DROPPED WHEN NULL: "this installation has no tape open" and "this build has no tape" are different
+        // answers, and the first is one the account owner's activity log explains.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DataListReplyTape? Tape);
+
+    /// <summary>
+    /// THE TAPE'S LIST, IN ITS OWN SHAPE, for the reason <see cref="DataListReplyForward"/> is its own: a tape series has
+    /// no bars, no version and no holdout, and a reply that reused either shape with those fields empty would let a
+    /// caller read readings of the market's context as though they were bars.
+    /// </summary>
+    sealed record DataListReplyTape(string Note, IReadOnlyList<DataListReplyTapeSeries> Series);
+
+    /// <summary>One series of the tape. See <see cref="TapeList"/>.</summary>
+    sealed record DataListReplyTapeSeries(
+        string Source, string Series, string Switch, long Rows,
+        // NEVER DROPPED WHEN NULL: "nothing has arrived yet", "nothing is failing", "these keys are symbols" and "this
+        // source asks no credit" are answers, and an absent key would read as a build without the field.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? FirstArrival,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastArrival,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? LastError,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<string>? Subjects,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? SubjectKey,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Citation);
 
     /// <summary>
     /// ONE FORWARD SERIES, IN ITS OWN LIST. It is deliberately NOT a <see cref="DataListReplyItem"/>
