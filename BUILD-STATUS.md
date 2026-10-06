@@ -8029,3 +8029,44 @@ Names vs `main` (git objects): 2157 → 2169, 0 removed, 12 added ([Fact]/[Theor
 
 **NOT done, NOT verified:** the card's sentence not seen on screen (no `mac-run`); Bybit's terms; OKX's "~5 minutes" lag against `received_at`; what the
 screen misses (an unflagged item is not thereby safe — CONTRACTS says so); completeness (page 1 only, only while the app runs); no box run.
+
+## 2026-10-06 — R-containment landed: a stable AppContainer (C2) confines an AI seat on the owner's Windows build, so `U-contain-seats` builds on it; C1 is benchmark-only, C3 deferred; a credential placed inside is readable, so seats run Topology A
+
+Probe-only leg on the ATAS box, built by one fresh Opus leg under seat P from `docs/briefs/R-containment.md`. Seat P held the `box` lock for the whole leg, from 22:57:59Z
+until the report. No product code. Merge `c71dee4e` (ff-only): 4 commits rebased over seat A's `U-tape-events` landing with no conflict; 37 files, +2159.
+They are `docs/research/2026-10-06/` (the decision record in the factory plan's § 22 template, 20 per-cell evidence files, `matrix.json`, `run-meta.json`, raw stdout)
+and `tools/containment-probe/` (a standalone .NET harness, outside `TradeAgent.sln`, with no credential in it).
+
+- **Decision, for `U-contain-seats` only (`docs/ORGANISATION.md` § 15):** build on **C2**, `CreateProcess` + `SECURITY_CAPABILITIES` AppContainer, measured on the ATAS
+  box (Windows 11 Pro 25H2, build 10.0.26200.9457). A seat was kept from TradeAgent's `state/`, the owner's login, `.ssh` and browser profile, host processes and the
+  gateway-ACL'd pipe. Persistence (a scheduled task, a Run key) was denied, and egress went only where a capability granted it. Descendants stayed inside, and cancelling
+  killed them.
+- **Matrix:** C2 17 pass · 0 fail · 2 N/A (cell 10: the broker is not built yet; cell 11: the grant lives in the app) · 1 NOT RUN (cell 14, an npm/pip install inside,
+  cut by the leg's box-time bound). C1 (`Experimental_CreateProcess[AsUser]InSandbox`) was checked for availability only: both exports are present and callable, and an
+  invalid spec is rejected (err 13). Its matrix was NOT RUN because the valid FlatBuffer spec schema is not public — refused, not guessed — so C1 is benchmark-only.
+  C3 (Hyper-V isolation) was NOT RUN: Hyper-V and Windows Sandbox are disabled, and turning either on needs a feature change and a reboot, which is the owner's call. Deferred.
+- **The credential question (cell 18):** the owner's login OUTSIDE the container cannot be opened from inside (open-for-read denied, err 5; cells 4a and 18b). A credential
+  placed INSIDE the container is readable by code there (18a). So Topology D, the owner's ChatGPT login dropped into the sandbox, is unsafe: seats run Topology A (an
+  app-owned harness) or a narrow, disposable token. The codex CLI does not start in a bare AppContainer (18c: it is installed under `%APPDATA%`, which is not granted).
+- **The box before and after** (the leg's evidence; not re-run by the manager): `win-state.sh` said "everything works" both times. ATAS is installed, not running, with
+  14 strategies, and the installed TradeAgent is unchanged. Created and then removed: `C:\ta\containment-20261006`, the AppContainer profile `TA.RContain.Probe` (hr=0),
+  and a window-station/desktop ACE (revoked). Cell 7's persistence attempts were denied, so no task or Run key is left. `C:\ta\repo` and `win-push.sh` were never used.
+
+**Verified by running.** The leg's gate, quoted from its report: (a) `git diff --stat main -- src tests TradeAgent.sln Directory.Build.props` → empty; (b) the
+`tools/containment-probe` build on the Mac and on the box → 0 warnings, 0 errors, not in the solution; (c) `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings,
+0 errors. The manager's checks at the landed tip: src, tests, sln, `Directory.*.props`, `global.json` and `.github` vs main → empty; the only non-docs files are 9 under
+`tools/containment-probe/`; names → removed 0, added 0 (2169/2169). The scan of the whole diff vs main found 31 hits, each judged a false positive and excluded BY NAME:
+prose about secrets and tokens, the fake `sk-DUMMY-…` strings and the `OPENAI_API_KEY` field name of the dummy auth file, the `PROBE_SECRET_*` variable names,
+`pipeStop.Token`, "lowbox token" and "narrow token". A grep of the diff for host names, IPs, Windows user names and machine SIDs found none.
+**Gate CARRIED by judgement (the orchestrator's ruling, 2026-10-06).** Nothing in the solution changes: its build tree is main's byte for byte, and only `docs/` and
+`tools/containment-probe/` differ, both outside it. So no local full suite was run, and main's own green carries: `0c510689`, run 37388890179, success on ubuntu, macOS and
+windows + package. The landed tree also carries seat A's `U-tape-events`, whose landing CI is seat A's to read.
+**CI.** Branch run 37391256380 at `74025d51` (the leg's evidence tip; the final tip adds only the report): ubuntu-latest success (12 m), macos-latest success (25 m),
+**windows-latest FAILURE** (36 m), package skipped. The failing test is `PressIdShapeTests.The_operator_cancel_all_names_its_legs_without_the_brokers_order_id`
+(`PressIdShapeTests.cs:123`, `Expected: 2 / Actual: 0`; the test took 46 s and the Fault suite 31 m 54 s on that runner). A diff with no change in src or tests cannot
+reach it. **A first sighting, recorded as one (the orchestrator's ruling), not called a flake.** It suggests, NOT VERIFIED, the `U-fix-loss-reopen` failure on the OWNER's
+cancel-all press. `OperatorCancelAllAsync` opens `RiskReducingScope.Begin` with store time included (`TradingGateway.cs:7709`) and writes its press row before
+`GetOrdersAsync` (`:7729`). On a slow disk its own commits could spend the 2 s budget and refuse the read, which is caught as "could not read your working orders": no leg,
+nothing cancelled. A second sighting anywhere → a fresh fixer at the front of seat P's queue. Tests box: NOT RUN — `ready`: "the machine does not answer" (switched off).
+**NOT done, NOT verified:** C1's matrix; C3; cell 14; the codex CLI inside a container with a granted install (18c shows only that it does not start bare); anything on
+the owner's own machine. The decision holds for build 10.0.26200.9457; the revalidation trigger is in the decision record.
