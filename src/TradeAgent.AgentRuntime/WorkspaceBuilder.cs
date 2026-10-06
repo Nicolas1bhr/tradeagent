@@ -297,6 +297,9 @@ public static class WorkspaceBuilder
       launch grant alike, so give `--to` an earlier instant. That is not a fault to work around: it is
       how a result you produce can mean anything later, and TradeAgent judges a finished strategy on
       those months precisely because you never saw them;
+    - **the market's context is on the tape** — Binance futures funding, open interest and long/short ratios for six pairs, OKX's announcements and GDELT's crypto news, recorded as they arrived; `trade data list` names every tape series;
+      its rows are MEASUREMENTS, not bars: each carries the vendor's `source_time`, the `received_at` instant TradeAgent got it, its `revision` and an `evidence_class` — `O-LIVE` alone is first-hand — and none of it is evaluation evidence;
+      read one with `trade data tape --source <id> [--subject BTCUSDT] [--from D] [--as-of D]`, newest arrival first and at most 5,000 rows; `--as-of` is what had arrived by then, a `quarantine` row comes without its text, and GDELT's rows carry a `citation` you keep with them;
     - **the strategy language is written down in `{ResearchLibrary.ReferencePath}`** — the grammar,
       what each indicator computes, the limits and every refusal. TradeAgent writes that file on every
       start and overwrites anything you change in it, so read it rather than working the syntax out

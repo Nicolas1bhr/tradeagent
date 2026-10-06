@@ -231,6 +231,38 @@ public static class GatewaySchema
                     + "'forward' for the closed minutes TradeAgent collected itself. Any other word is refused.")
             ]),
 
+        new(Core.Ops.DataTape,
+            "trade data tape --source S [--series S] [--subject X] [--from D] [--to D] [--as-of D] [--limit N] [--before ID]",
+            false,
+            "The market's context as TradeAgent RECORDED IT ARRIVING — the tape: Binance USDⓈ-M premium index with the "
+            + "live funding rate, open interest, the 5-minute long/short and taker ratios and settled funding for six "
+            + "pairs; OKX's announcements for EU users; GDELT's news items about crypto. 'trade data list' names every "
+            + "series with its rows, first and last arrival and last error. Each row is a MEASUREMENT of what arrived "
+            + "when: 'source_time' is the vendor's own time, 'received_at' the instant TradeAgent received it, 'revision' "
+            + "which reading of that datum it is (a re-reading that differed is kept beside the first; nothing is "
+            + "overwritten), and 'evidence_class' is TradeAgent's: O-LIVE rows only are first-hand — received on time "
+            + "from the source's own address — O-PIT is a vendor-checksummed archive file fetched late whose storage "
+            + "dates it no later than its first-seen time, and O-ARCH is anything else fetched after the fact. None of "
+            + "it is evaluation evidence and no verdict is taken over it. Read it the way a decision would have: "
+            + "'as_of' serves only what had ARRIVED by then. Rows come newest arrival first, at most "
+            + $"{Core.Db.TapeReader.MaxRows} a call and a byte cap; an answer either bound stopped says so in 'more' and "
+            + "'capped_by', and 'before' set to its 'next_before' continues exactly. A limit over the cap is REFUSED, "
+            + "never clamped. An item TradeAgent's screen flagged as addressed to an automated reader comes with its "
+            + "'quarantine' rule and WITHOUT its payload, for every role. GDELT's rows carry 'citation' — the credit "
+            + "GDELT's terms require wherever its data is used or shown; keep it with anything you derive from them. "
+            + "Every role may read it; nothing on this channel records, edits or deletes a row — the account owner's two "
+            + "switches in TradeAgent are the only control of what is recorded.",
+            [
+                new("source", "string", true, "Which source, e.g. binance-um-oi, okx-eea-announcements, gdelt-gkg. 'trade data list' names them; an unknown one is refused naming them."),
+                new("series", "string", false, "Which of the source's series. Optional when it records one; required, and named in the refusal, when it records several."),
+                new("subject", "string", false, "One subject — a symbol such as BTCUSDT. Omit it to read every subject of the series, newest arrival first: announcements and news items are keyed by a digest or a record id nobody can guess."),
+                new("from", "string", false, "ISO-8601 date or instant: the earliest SOURCE time served, inclusive. Present and unreadable is refused."),
+                new("to", "string", false, "ISO-8601 date or instant: the latest SOURCE time served, inclusive. Present and unreadable is refused."),
+                new("as_of", "string", false, "ISO-8601 instant: serve only rows that had ARRIVED by then, inclusive — what TradeAgent knew at that moment. Omit it for everything that has arrived."),
+                new("limit", "number", false, $"How many rows, a whole number from 1 to {Core.Db.TapeReader.MaxRows}; {Core.Db.TapeReader.DefaultRows} when omitted. More is refused, never clamped."),
+                new("before", "number", false, "A row id: serve only rows the tape recorded before it. Pass an answer's 'next_before' to continue it exactly.")
+            ]),
+
         new(Core.Ops.VenueList, "trade venue list", false,
             "The venues and instruments this installation knows of, with the provenance of every row: "
             + "the venue's id, display name and calendar kind, and per instrument the symbol, the price "
