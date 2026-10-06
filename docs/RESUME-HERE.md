@@ -39,6 +39,21 @@ invariant registry, enforcement classes, simulation boundaries and a proving gro
 When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-org-verbs` keeps the bounds as policy data under the earning rule (§ 3),
 `U-org-watcher` scopes its detectors per unit (§ 5.2).
 
+**2026-10-06 night — the orchestrator held the owner's own seat (his grant, 00:50; `docs/FLEET.md` § "The orchestrator — the owner's own seat").**
+Seats P and A, four Mac builders and an ATAS-box leg; one usage stop (02:50–06:00) bridged by the heartbeat, nothing lost. LANDED (record shas):
+`U-tape-events` `71c8a2b0` (OKX EEA announcements on the tape; Bybit left out — its EU terms could not be read on the day) · `R-containment` `69589886`
+(the box decided C2, a stable AppContainer, for `U-contain-seats`; seats run an app-owned harness — a credential placed inside is readable; C3 is the owner's
+call) · `U-test-hygiene-1` `cdb5df85` (the midnight meter flake; test homes deleted at the run's end) · `U-runner-exit-hygiene-a` `a76a30ed` (BEFORE LIVE: a
+refused END close is owed and sent again, its slot held; a stranded row is CAS-cancelled) · `U-flatten-confirm` `2952c285` (BEFORE LIVE: a possibly-sent
+loss close is confirmed from history by id or fills, never by absence) · `U-tape-archive` `d89f9cdc` (GDELT's crypto items, credited with its link). Each
+gate green (R-containment's carried: no product code); every branch CI green on all three platforms but R-containment's, red on windows-latest in
+`PressIdShapeTests` on source identical to `main` (a first sighting, now `U-fix-press-budget`); no test name removed; the tests box did not answer all
+night (NOT RUN in every record). IN FLIGHT
+and QUEUED: `fleet/BOARD.md` — `U-runner-exit-hygiene-b`, `U-fix-press-budget` (a first Windows sighting: the owner's cancel-all may spend its 2 s on its own
+writes), `U-fix-bridge-heartbeat`, `U-close-once`, `U-flatten-absence`, `U-loss-hold-release`, `U-valuation-close-confirm`, `U-material-file-limit`, then
+`U-tape-read` (approved) and `U-tape-chain`. **M0 is still READY and waits only for the owner's two clicks;** its bundle is built at the newest green `main`
+BEFORE `U-tape-read`'s merge (observe the loop before its inputs widen). Weekly budget: no ceiling (the owner, 01:12).
+
 **Checkpoint 2026-10-04 12:40 CEST — the orchestrator's session closed by the owner ("wrap up … resuming later").** A NEW orchestrator starts from
 `fleet/handoff/ORCHESTRATOR.md`; this session's agent ids are dead — open FRESH seats. `main` `810b35af` is clean and pushed; schema rung 30; every
 landing's CI green on all three platforms (`fleet/ci-ledger.md`). LANDED by the fleet (record shas): `U-price-rows` `492ae79` · `U-key-host-pin` `9a63a69`

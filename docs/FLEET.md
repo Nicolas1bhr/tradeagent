@@ -61,9 +61,10 @@ need anything from me you can always ping me."
 
 ## This Mac (M3 Pro, 11 cores, 18 GB RAM, ~50 GB free disk)
 
-- **At most four builders at once, fleet-wide, by machine — two by budget** (2026-10-04: two managers, four builders and the orchestrator emptied a 5-hour
-  usage window in ~75 min, and one full window cost ~12 % of the owner's weekly Claude allowance; check with `get_usage`). The orchestrator allots builders
-  per seat on the board; a seat never exceeds its allotment. Calls cost in proportion to context: a seat past ~60 % context is replaced by a fresh one.
+- **At most four builders at once, fleet-wide, by machine.** The 2026-10-04 "two by budget" throttle is WITHDRAWN — the owner, 2026-10-06 01:12: "No need
+  to budget the weekly rate limit. If you use all that's no issue." What still binds is the 5-hour usage window (two managers, four builders and the
+  orchestrator empty it in ~75–110 min; `get_usage`): spend each window on the highest-value units first, and let CI run through the stop. The orchestrator
+  allots builders per seat on the board; a seat never exceeds its allotment. Calls cost in proportion to context: a seat past ~60 % context is replaced.
 - **Local suites are slow and leak:** since 2026-10-03 the local Unit suite runs ~13× slower than on CI (swap-bound; environmental), so a red local gate in
   a timing-sensitive test gets one fresh re-gate; every test process leaves a home in `$TMPDIR/tradeagent-tests`, purged by `fleet/bin/purge-test-homes.sh`
   inside `gate.sh` and `suite.sh`.
