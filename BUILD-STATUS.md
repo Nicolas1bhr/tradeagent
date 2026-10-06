@@ -7988,3 +7988,44 @@ SOURCE, read and not run: rung 28's `org_unit` is a tree by `parent_id` (`Databa
 skill transfers to real edges, whether splitting α-wealth keeps the global guarantee, whether fixed credit splits misallocate, what a model-layer watcher
 adds; the AI Concierge documents are cited as design references, not as verified facts about the systems they name. CI: run 37373465478 for `76896e1a` was
 cancelled at the owner's instruction on 2026-10-05 with no verdict; this commit's run covers both — pending at the close, for the next manager to record.
+
+## 2026-10-06 — U-tape-events landed: the tape records OKX's official announcements for EU users from first sight, each screened at every read for text addressed to an automated reader
+
+Built by two fresh Opus builders under build-fleet seat A from `docs/briefs/U-tape-events.md` (a CARD from a read-only survey; dispatched `b757bbd3`). The
+first builder stopped at the 2026-10-04 throttle with items 1–3 committed and item 4 uncommitted; a fresh second builder re-read and kept 1–3 and finished
+4 and 5. Built on `2a12951c`, rebased by the manager onto `11a14999` (docs only between), src+tests patch-id identical. Merge `19d04ab4` (ff-only), 8 commits,
+18 files, +1680/−59. No schema change: main schema 30, `tape.db` 1. Not the money path: no gateway, connector, witness, updater, kill switch or approval.
+
+- **Item 1 (`f0f23f6e`, `6707e045`):** the `announcement-json` parser reads the list at a series' `ItemsPath` into one `tape_obs` row per item, keyed by
+  the first 32 hex of SHA-256 of its `url` and its own `pTime`; a missing path, id or time, an item over 64 KB, or one key named twice with different
+  contents refuses the page in words; an empty list is an empty page; the collector dispatches on the row's parser.
+- **Item 2 (`5859a987`, `2dc30cf6`) — DECLARED DEVIATION, accepted:** ONE row, `okx-eea-announcements` (page 1 a minute, a documented ~5-minute delay), its
+  terms basis re-read 2026-10-06: OKX API Agreement (28 July 2026) §§ 3.2(a), 9.2–9.4; Terms of Service – EEA (26 May 2026) § 1.14. **Bybit DROPPED:** its
+  EU General Terms could not be read on the day (a plain GET 403, WebFetch timed out), so it has no terms basis and no row (EDGE § 2: dropped, not evaded);
+  the first builder's § 9.2.2 reading is not re-verified. A file row naming the parser is refused; the vendor scan refuses OKX and Bybit hosts in tests.
+- **Item 3 (`bb2adfe3`):** `ClassOf` measures lateness against cadence + the row's documented delay + 30 s (OKX: 390 s live, 391 s archive); a market row
+  (delay 0) is classed exactly as before.
+- **Item 4 (`8ec5c087`):** `TapeScreen` v1 folds decoded strings through the build's own NFKC table (`Normalize(FormKC)` is the identity under
+  InvariantGlobalization on .NET 10.0.11, measured; the 1,986-entry table regenerates from ICU to its pinned hash), case-folds them and drops invisible
+  characters; an instruction override, an address to an automated reader, chat-role markup, or any zero-width, bidi or tag character quarantines the item,
+  which is still recorded; every read carries `Quarantine` (rule and version, never the text). A quadratic backtrack in the markup rule was fixed (20,000
+  `" \n"`: 210 ms → 4 ms a read). **Judged deviation, stricter, accepted:** `AsOf` withholds a quarantined payload from EVERY audience, not only `Pipe` (the
+  referee never reads the tape; whether a quarantined item ever reaches a model is `U-annotator`'s decision).
+- **Item 5 (`b410dfd3`):** `CONTRACTS.md` "The tape", `USER-GUIDE.md`, `RESEARCH-REQUIRED.md` **C5d** (C5c is U-venue-verify's), the toggle's comment, and
+  one sentence on the Market data card (`SettingsView.cs`).
+- **Judged at landing — an owner-facing sentence this unit made untrue, owed by the next tape unit:** the Market data card (`SettingsView.cs:289-290`) and
+  `USER-GUIDE.md:353` still say a reading is live only "from Binance's own address" and archive from any other; an OKX announcement read on time from
+  OKX's own origin is now `O-LIVE`. Folded into `U-tape-archive` at its dispatch (the same card and paragraph); no build the owner runs carries it before then.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `d8bf87a6`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1393,
+Fault 420, 0 failed; TapeAnnouncementTests, TapeScreenTests, TapeStoreTests, TapeSourceCatalogTests, SuiteReachesNoVendorTests 3× → 28/0 each. Mutants
+watched red, then reverted: (i) the delay dropped ⇒ (c) `TapeStoreTests.cs:305` "Expected: "O-LIVE" Actual: "O-ARCH"" at 390 s; (ii) `AsOf` serving the
+payload ⇒ (e) `TapeAnnouncementTests.cs:327` "Assert.Null() Failure"; (iii) the twice-named refusal off ⇒ (b) `:177` "Assert.False() Failure" (2 stored).
+Real data (C5d): 15 keyless OKX pages, HTTP 200 in 0.16–0.21 s, 300 items read, 0 flagged.
+Manager's gate at `19d04ab4`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1393/1393 (7 m 53 s, the slow Mac), Fault 420/420 (1 m 47 s), Integration 718/719, 1 skipped (11 m 16 s) → 0 failed.
+Names vs `main` (git objects): 2157 → 2169, 0 removed, 12 added ([Fact]/[Theory] 2113 → 2125). Scan: seven judged false positives, the crypto sense of the word in comments, the screen's benign-word list and test strings, excluded by name ('is a token|this token|as a token|token holders|ONE token|hunters'); no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37387700466 at `d8bf87a6` (on `2a12951c`; docs-only moves since): success on ubuntu-latest (13 min), macos-latest (24 min), windows-latest
+(48 min), package. **Tests box:** NOT RUN — `ready` at 02:13 CEST: "NO - the machine does not answer (…)", as at the builder's ask.
+
+**NOT done, NOT verified:** the card's sentence not seen on screen (no `mac-run`); Bybit's terms; OKX's "~5 minutes" lag against `received_at`; what the
+screen misses (an unflagged item is not thereby safe — CONTRACTS says so); completeness (page 1 only, only while the app runs); no box run.
