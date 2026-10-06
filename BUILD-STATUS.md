@@ -8326,3 +8326,42 @@ Builder's gate at `0c260181`: Release 0 warnings; Unit 1411/1411; Fault 439/439;
 does not answer". The manager's check at landing: "NO - his own OFT.Platform is open; nothing of ours runs beside it" (respected, not retried).
 **NOT done, NOT verified:** ATAS (nothing claimed or run there). Integration ran on CI and in the manager's gate only. No test covers an absent close over a book someone else
 already flattened (flat → confirmed, nothing sent). The app was not run.
+
+## 2026-10-06 — U-close-once landed: one close of a position at a time — a close sized from the position is refused while an earlier same-side market order on that account and instrument has no final answer — and a paper run is ended once
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-close-once.md` (written by seat A's probe leg, which RAN two ENDs at once at
+`2952c285` into "orders at the wire: 2" and a short; queued `c6a283e0`; dispatched `32d654b7` beside -b on the orchestrator's ruling); the builder rebased
+over -b's landing onto `22df95a7`; rebased by the manager onto ``8d293dae` (with U-fix-bridge-heartbeat and U-flatten-absence)`, src+tests patch-id identical. Merge `e52fa8de` (ff-only), 4 commits (3 items + the
+report), 6 files, +436/−21. No schema change. MONEY PATH: the gateway's close guard and the deployment END; the press path and `ForwardRuns.cs` untouched;
+rule 3 kept — the new refusal comes BEFORE any order row, so `refused` stays proof nothing left; nothing in flight is closed over, re-sent or cancelled.
+
+- **Item 1 (`4ff2b5cf`):** `ClosesInFlightOn` beside `UnresolvedReducersOn`, read by both `RefuseAnUnresolvedReducerOrThrow` overloads (`CloseAsync`'s early
+  check, and inside `_dispatchGate`, the approval path too): a `PLACE` MARKET order on the same connector, account and instrument, same side, `DISPATCHING`,
+  `ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED`, `CANCEL_PENDING` or `RECONCILING` ⇒ `CLOSE_IN_FLIGHT` naming it and its state; UNKNOWN keeps its rule and code.
+  MARKET only, so the run's stop and target still rest side by side.
+- **Item 2 (`92683729`):** a paper run is ended once — one gate per run (`EndGateOf`): `EndPaperDeploymentAsync` takes it after its ended check and re-reads the
+  row inside, so a second END writes no operation, cancels nothing and answers the run as the first left it; -a's owed close only TRIES it.
+- **Item 3 (`1c9afa0e`):** `CONTRACTS.md` — the agent's-close rule gains the in-flight arm; "two ENDs at once" becomes a claim, the rest stays NOT claimed.
+- **Declared deviations, accepted:** (1) the predicate skips the caller's OWN request id, so a repeated `close` gets the normal replay; (2) a waiting END
+  writes `deployment_end_waits` to the engineering log; (3) the owed close tries the gate rather than waiting on it; (4) test (a) holds 2 and adds a market sell
+  (−3 on the base); (5) `close-all`'s schema sentence (`GatewaySchema.cs:424`) names the new code.
+- **Judged at landing — a `WORKING` market row the platform's stream never moves holds that position's AUTOMATED closes** (END, owed close, runner
+  exits, the agent's close), refused `CLOSE_IN_FLIGHT` each minute with the blocker named on the run's line. Read on the shipped connectors: the Simulator
+  fills a market order at once (`FakeBroker` `Fill = FillImmediately`; only the developer host `GatewayHost/Program.cs:124-125` can leave one working), and
+  paper reports a cancel inside the call (`PaperConnector.cs:443`), so the END's own cancel cannot block its close there; on ATAS a cancel or fill arrives by
+  the stream and the owed close goes out on the next pass — a LOST update (a bridge drop) is the residual. The owner's Close all positions and the loss
+  flatten are outside this guard and still close. OWED before any live use: in-flight MARKET rows re-read against the platform's order list so a stale
+  row settles (a unit to brief); and seat P's press-path settle-before-send for a same-side close in flight.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `e225a9fc`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1410,
+Fault 440, 0 failed; `AgentCloseOverAnUnknownCloseTests`, `PressSettlesAnUnknownCloseTests`, `PaperDeploymentTests` 3× 23/23. RED before: (a) "Expected: 1
+Actual: 3" — the second close "ok", a market sell "ok", "ES -3"; (b) rests — 2 flattens, "orders at the wire : 2", "-1 after"; fills — B refused
+`POSITION_MOVED`, the run owing over 0. Mutants watched red: (i) the in-flight arm dropped ⇒ (a) "Expected: 1 Actual: 3"; (ii) the END's gate a fresh
+semaphore per call ⇒ (b) "Assert.Single() Failure: The collection contained 2 items" in both arms.
+Manager's gate at `e52fa8de`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1411/1411 (8 m 27 s, the slow Mac), Fault 443/443 (1 m 49 s), Integration 721/722, 1 skipped (11 m 15 s) → 0 failed — on the tree with U-fix-bridge-heartbeat and U-flatten-absence, which the branch run predates.
+Names vs `main` (git objects): 2207 → 2210, 0 removed, 3 added ([Fact]/[Theory] 2161 → 2164). Scan: one judged false positive, a cancellation token named `looking` in test (b), excluded by name; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37445685733 at `e225a9fc` (on `22df95a7`): success on ubuntu-latest (13 min), macos-latest (16 min), windows-latest (60 min), package.
+U-runner-exit-hygiene-b's landing push `e01198d6`: run 37443797669 RED on windows-latest only — `CoidWitnessTests.A_refused_rename_is_attempted_exactly_five_times_and_then_gives_up` (both cases) "the retry took 2335 ms — the budget is not bounded", a wall-clock bound in a run whose Windows suites took 25–47 min; -b touched no witness code, and the same code is green on Windows at `8029b53c` and `003c0a76` (runs 37443830809, 37443899668) — a hosted-runner red, recorded red, the fixer seat P's (FLEET). **Tests box:** NOT RUN — `ready` at 16:04 CEST: "NO - his own OFT.Platform is open; nothing of ours runs beside it" (its owner's ATAS was open; nothing of ours started).
+
+**NOT done, NOT verified:** the press path still sizes a close beside a resting one (seat P, owed); a runner pass begun before an END; a fill the position
+read lags (ATAS, the box); the stale-row reading above was read, not run; no box run, no app run.
