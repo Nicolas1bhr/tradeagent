@@ -1048,6 +1048,13 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   UNKNOWN and flagged, the cancel REJECTED).
 - **Completion and outcome read the ACCOUNT stored on the records**, never whichever account is
   selected now — the owner can change that between the press and the card.
+- **A press's two seconds are the PLATFORM's** (`U-fix-press-budget`, below). Both presses open
+  `RiskReducingScope.BeginExcludingTheStore(EmergencyBudget)`: ONE deadline for the whole press, every
+  platform call clipped at it and a leg reached after it refused before the wire, as before — and the
+  time the press spends inside TradeAgent's own store (its write-ahead rows, the pause it latches, its
+  settles) is given back to it as it is spent. A press is therefore two seconds of the platform's time
+  plus what the app's own disk costs, and the disk is finite on its own: each commit completes or
+  throws, and the store's busy timeout is five seconds.
 
 **Every mutating operation is idempotent by request id, including the multi-target ones.** A `buy`,
 `cancel`, `modify` or `close` keys one `execution_request` on the caller's id and a repeat dispatches
@@ -3913,9 +3920,11 @@ the reopen reason about is still `GatewayOptions.Clock`; the deadline is the one
 `RiskReducingScope.BeginExcludingTheStore`, fed by `Core.Db.StoreTime`, which counts the time the
 counting flow spends inside `Database.Write`/`Read` (lock waits included, nested calls once). The
 deadline moves out by exactly that; every platform call is still clipped at it and a leg reached after
-it is still refused. The owner's presses and the agent's sweeps keep `Begin(budget)`: two seconds there
-is a promise to a person about the whole operation. A connector's own book in its own SQLite file (the
-paper connector's) is the platform from up here and stays on the platform's clock.
+it is still refused. The owner's presses and the agent's sweeps kept `Begin(budget)` — two seconds there
+was held to be a promise to a person about the whole operation — until `U-fix-press-budget` (below)
+moved the owner's presses to the platform's clock too; the agent's sweeps keep it. A connector's own
+book in its own SQLite file (the paper connector's) is the platform from up here and stays on the
+platform's clock.
 
 **An attempt whose ONE transport record is still empty dispatched nothing, and is not an outcome.** The
 flatten attaches one `TransportRecord` for the attempt; every cancel, close and reducer settle inside it
@@ -3954,7 +3963,8 @@ with nobody at the keyboard, and the same root cause — every write-ahead commi
 charged to the two-second budget, so on a slow disk the close was refused before the wire and the
 position nobody could value stayed open behind an exit record written once, final. The 2 s value is
 unchanged; every platform call is still clipped at the deadline and a leg reached after it is still
-refused. The owner's presses and the agent's sweeps keep `Begin(budget)`.
+refused. The owner's presses and the agent's sweeps kept `Begin(budget)`; the owner's presses moved in
+`U-fix-press-budget`, below.
 
 
 **A budget close whose answer was lost is asked of the platform's order history — and the app now settles its
@@ -4025,3 +4035,37 @@ are unchanged.
 
 **Not in this unit:** ATAS (no claim made; nothing run on the box); the data-loss exit's own lost close
 (`U-valuation-close-confirm`); the hold a closure keeps after the owner settles a lost leg (`U-loss-hold-release`).
+
+## U-fix-press-budget — the owner's two presses run on the platform's clock
+
+**No schema.** On windows-latest (run 37391256380, a branch with no src or tests change) the owner's
+Cancel all working orders cancelled nothing: `PressIdShapeTests` held two working orders and the press
+wrote no leg (`Expected: 2 / Actual: 0`), in 46 s against 1.25 s on main's green windows run of the same
+src (37388890179), in a minute when every test on that runner ran 3–37× slower than there. Measured in
+three branch-only diagnostic runs on windows-latest (37413619642, 37413622132, 37413624368; 270
+instrumented presses of each kind): before its orders read the press makes no platform call, only three
+durable commits — the press row, the health event its pause writes, the DISPATCHING transition — and
+its budget moves only at them (26 + 18 + 18 ms → 1937 ms left at the read, for one); across the 270, a
+press's wall time minus its commits' was −2 to 26 ms. One close-all press there ran its nine commits to
+2688 ms of 2689, reached its close with 688 ms left, and its next platform call was refused before the
+wire at −31 ms; one bare one-row commit on the same image took 5207 ms. The control — the deadline gone
+at the first platform call — reproduced the sighting's message byte for byte, 78 times out of 78.
+
+**The owner's presses are charged for the platform, not for their own store** — the orchestrator's
+ruling on the owner's behalf (2026-10-06). `OperatorCancelAllAsync` and `OperatorCloseAllAsync` open
+`RiskReducingScope.BeginExcludingTheStore`, as the loss budget's flatten and the data-loss exit do. Two
+seconds had been kept as a promise to a person about the whole operation, write-ahead rows included;
+that promise is withdrawn, because a press that refuses itself on a slow disk leaves working the orders,
+or open the book, that the owner pressed to remove — and then refuses the next press until the owner
+has resolved it on the card. Unchanged: the 2 s value; the bound on a stalled platform
+(`OperatorPressIsAnEmergencyTests`); the two-press confirmation; the refusal while another press of the
+same control is open; how a leg the budget cannot reach is flagged. `PressPlatformClockTests` holds the
+store with a second writer for a second longer than the budget across each press: the cancel-all cancels
+both orders, the close-all leaves the book flat.
+
+**The agent's risk-reducing pipe ops keep `Begin(budget)`.** The pipe's handler table and shutdown drain
+(above) are derived from E bounding the whole risk-reducing part of a handler on the wall clock — at the
+instant a sweep's last wave is issued, less than E has elapsed — and a store refund there would let that
+wave start the store's time later than the drain allows, which is the handler the drain exists not to
+walk away from. The owner's presses are not pipe handlers: the Dashboard's buttons and
+`tradeagent-gateway.exe cancel-all|close-all` call them in process, and the drain does not count them.

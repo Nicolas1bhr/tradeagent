@@ -33,9 +33,10 @@ namespace TradeAgent.Tests.Fault;
 ///
 /// NOT AT RISK from the emergency budget, structurally rather than by measurement: neither test here
 /// presses. They drive `BeginCompositeAsync` and a `CancelAsync` per leg straight against the
-/// gateway, and `RiskReducingScope.Begin` exists at exactly three places in the product — the pipe
-/// server's risk-reducing ops and the two `Operator*AllAsync` presses — none of which is on that
-/// path. With no operation deadline open there is no budget for a runner's disk to spend, and the
+/// gateway, and an operation deadline is opened at exactly six places in the product — the pipe
+/// server's risk-reducing ops, the two `Operator*AllAsync` presses, the loss budget's flatten and the
+/// data-loss exit's cancel and close — none of which is on that path. With no operation deadline
+/// open there is no budget for a runner's disk to spend, and the
 /// `Guard` waits below are the only clock these tests keep.
 /// </summary>
 public class CompositeOwnerTests(ITestOutputHelper log)

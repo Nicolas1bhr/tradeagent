@@ -458,6 +458,15 @@ public class OperatorPressIsAnEmergencyTests
     /// the simulator's two the press's capture read can instead be refused by a budget the runner's
     /// disk spent, which throws out of the press and asserts nothing at all. The class keeps its
     /// `Timing` trait: it is per class, and the three tests that measure the deadline still need it.
+    ///
+    /// <para>U-fix-press-budget: "ONE" IS NOW READ OFF THE DEADLINE AS OPENED. The press runs on the
+    /// platform's clock, so the deadline a read sees is the press's one deadline moved out by the time
+    /// the press has spent in its own store — a different number at each read whenever a commit between
+    /// them took a millisecond. Measured on the dev Mac with commits made durable
+    /// (<c>PRAGMA fullfsync=1</c>, an experiment, not kept): the old <c>Assert.Single</c> read
+    /// <c>[1432220661, 1432220677, 1432220775]</c> with the fix and <c>[1432969469 × 3]</c> without it.
+    /// The facts asserted are the same three: every read has a deadline, it is the one the press opened,
+    /// and the store only ever moves it later.</para>
     /// </summary>
     [Fact]
     public async Task The_position_read_before_the_close_inherits_the_scope()
@@ -466,16 +475,17 @@ public class OperatorPressIsAnEmergencyTests
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "st-2", TestEnv.Buy("ES", 2m));
 
-        var deadlines = new List<long?>();
-        c.BeforePositionsRead = () => deadlines.Add(RiskReducingScope.DeadlineAt);
+        var deadlines = new List<(long? At, long? Opened)>();
+        c.BeforePositionsRead = () => deadlines.Add((RiskReducingScope.DeadlineAt, RiskReducingScope.OpenedDeadlineAt));
 
         await gw.OperatorCloseAllAsync();
 
         Assert.NotEmpty(deadlines);
-        Assert.All(deadlines, d => Assert.NotNull(d));
+        Assert.All(deadlines, d => Assert.NotNull(d.At));
         // One deadline for the whole press, not a fresh budget per read: that is what stops the
         // promise scaling with the number of positions.
-        Assert.Single(deadlines.Distinct());
+        Assert.Single(deadlines.Select(d => d.Opened).Distinct());
+        Assert.All(deadlines, d => Assert.True(d.At >= d.Opened, $"a read saw {d.At}, earlier than the {d.Opened} the press opened"));
     }
 
     /// <summary>

@@ -69,6 +69,16 @@ public static class RiskReducingScope
     public static long? DeadlineAt => Current.Value?.Effective;
 
     /// <summary>
+    /// The operation's deadline AS IT WAS OPENED — <see cref="DeadlineAt"/> before any of the store's
+    /// time is given back — or null outside a scope with a deadline. Every call inside one operation
+    /// reads the same value here, and that is what makes it ONE operation's budget rather than a fresh
+    /// one per call: under <see cref="BeginExcludingTheStore"/> <see cref="DeadlineAt"/> moves out as
+    /// the store is used, and this does not (<c>U-fix-press-budget</c>). Under
+    /// <see cref="Begin(TimeSpan)"/> the two are equal.
+    /// </summary>
+    public static long? OpenedDeadlineAt => Current.Value?.DeadlineAt;
+
+    /// <summary>
     /// How long is left until an ABSOLUTE deadline — <see cref="TimeSpan.Zero"/> once it has passed,
     /// and never negative.
     ///
@@ -118,8 +128,8 @@ public static class RiskReducingScope
     }
 
     /// <summary>
-    /// THE APP'S OWN RISK-REDUCING OPERATION, ON THE PLATFORM'S CLOCK AND NOT ON ITS OWN DISK'S
-    /// (<c>U-fix-loss-reopen</c>).
+    /// A RISK-REDUCING OPERATION ON THE PLATFORM'S CLOCK AND NOT ON ITS OWN DISK'S
+    /// (<c>U-fix-loss-reopen</c>, <c>U-fix-press-budget</c>).
     ///
     /// <para>Opens the scope and starts the operation's clock exactly as <see cref="Begin(TimeSpan)"/>
     /// does, except that the time the operation spends inside the app's own store
@@ -127,15 +137,24 @@ public static class RiskReducingScope
     /// as it is spent. What the budget bounds is then what it was set for — how long the operation may
     /// wait on the PLATFORM — and a durable commit on a slow disk can no longer spend it.</para>
     ///
-    /// <para><b>For an operation nobody is waiting at the keyboard for.</b> The app's own two are the
-    /// callers: the loss budget's flatten — a confirmed breach, no person, and a book that must be
-    /// closed — and the data-loss exit (<c>U-flatten-3</c>), its precautionary cancel and its close,
-    /// which are the same mechanics under their own reason and were given this in
-    /// <c>U-flatten-confirm</c>. An owner's press keeps <see cref="Begin(TimeSpan)"/>, because "two
-    /// seconds" there is a promise to a person about the whole operation, write-ahead rows included,
-    /// and a leg its budget cannot reach is shown to them flagged. The app's own operations have
-    /// nobody to show: a budget its own bookkeeping spent closed the day on windows-latest with nothing
-    /// sent and the book open, which is the failure this exists to make impossible.</para>
+    /// <para><b>Who opens it.</b> The app's own two — the loss budget's flatten (a confirmed breach, no
+    /// person, and a book that must be closed) and the data-loss exit (<c>U-flatten-3</c>), its
+    /// precautionary cancel and its close, given this in <c>U-flatten-confirm</c> — and the owner's two
+    /// emergency presses. The presses kept <see cref="Begin(TimeSpan)"/> until <c>U-fix-press-budget</c>,
+    /// because "two seconds" was held to be a promise to a person about the whole operation,
+    /// write-ahead rows included. The measurement retired that promise: on windows-latest the
+    /// cancel-all's orders read was refused before the wire and the owner's Cancel all working orders
+    /// cancelled nothing (run 37391256380), and measured since, the budget before that read moves at
+    /// the press's own three commits and nowhere else. A press that refuses itself on a slow disk
+    /// fails the emergency it exists for — and then refuses the next press until the owner has
+    /// resolved this one on the card. So, on the orchestrator's ruling for the owner (2026-10-06), the
+    /// presses are charged for the platform's time only: two seconds of waiting on ATAS, which is what
+    /// the user guide has always told the owner they are.</para>
+    ///
+    /// <para><b>Who does not.</b> The agent's risk-reducing pipe ops keep <see cref="Begin(TimeSpan)"/>.
+    /// The pipe's shutdown drain is derived from the budget bounding the whole risk-reducing part of a
+    /// handler on the wall clock, and a refund there would let a sweep's last wave start later than the
+    /// drain allows for (<c>docs/CONTRACTS.md</c>, U-fix-press-budget).</para>
     ///
     /// <para><b>The bound on a stalled platform is unchanged</b> — every call is still clipped at the
     /// deadline and a leg reached after it is still refused before the wire. What is no longer bounded

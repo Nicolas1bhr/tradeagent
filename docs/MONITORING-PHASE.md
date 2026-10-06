@@ -210,9 +210,10 @@ In this order.
 **Do not use "Close all positions" as the panic button while you are already unsure.** It writes a
 record per target, sends the closes, and pauses trading until every one of those records is
 confirmed by a person — which is the correct design and exactly the wrong thing to add to a situation
-you are already trying to simplify. Its own answer arrives inside two seconds or not at all
-(`AtasConnector.cs:118`), and "not at all" reads *"'close-all' is NOT confirmed — check your positions
-and orders in ATAS"*, which is the sentence sending you to ATAS anyway.
+you are already trying to simplify. ATAS's answer to it arrives inside two seconds or not at all
+(`AtasConnector.cs:121`; the time TradeAgent spends writing its own records is not part of those two
+seconds, `U-fix-press-budget`), and "not at all" reads *"'close-all' is NOT confirmed — check your
+positions and orders in ATAS"*, which is the sentence sending you to ATAS anyway.
 
 ---
 

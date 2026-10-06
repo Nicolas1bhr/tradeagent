@@ -1202,6 +1202,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // not own, so it travels on the execution context instead of through a signature. It only
         // ever WIDENS urgency, and Place/Modify are excluded at the far end, so the worst a stray
         // scope can do is make a read give up in two seconds and report UNKNOWN.
+        //
+        // ON THE WALL CLOCK, deliberately, where the owner's presses are on the platform's
+        // (U-fix-press-budget): the shutdown drain is derived from this budget bounding the whole
+        // risk-reducing part of a handler, store included — see CloseAllHandlerPath — and refunding
+        // the store's time here would let a sweep's last wave start later than the drain allows for.
         using var riskReducing = IsRiskReducing(req.Op)
             ? RiskReducingScope.Begin(gateway.Connector.EmergencyBudget)
             : null;

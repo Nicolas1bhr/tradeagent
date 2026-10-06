@@ -893,6 +893,14 @@ An emergency press waits **two seconds** for ATAS, and no longer. Two seconds is
 not meant to be: someone pressing this button is trying to stop, and a button that sits there for
 thirty seconds is a button that has failed them.
 
+**The two seconds are ATAS's, and only ATAS's.** Before and while it sends, TradeAgent writes down
+what it is about to do — that record is what keeps trading paused until you have seen the outcome —
+and the time those writes take on your computer is not taken out of the two seconds. On a slow or
+busy disk the press can therefore take a little longer to finish, but it never gives up on ATAS
+early because TradeAgent's own writing was slow. It used to: on a test machine whose disk had
+stalled, "Cancel all working orders" ran out of its two seconds writing down what it was about to do,
+before it had asked ATAS anything, and cancelled nothing.
+
 If the two seconds run out, you get this, and it is worth reading slowly:
 
 > **'cancel-all' is NOT confirmed — check your positions and orders in ATAS.** The bridge is …; ….

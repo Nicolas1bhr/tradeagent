@@ -8136,7 +8136,15 @@ public sealed class TradingGateway : IAsyncDisposable
         // Opened here, where the intent is known, all three callers get it — and it is ONE absolute
         // deadline for the operation rather than a fresh budget per RPC, so the promise does not
         // scale with the size of the book.
-        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        //
+        // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-fix-press-budget). Before its orders read this
+        // press makes three durable commits — its row, the pause's health event, the DISPATCHING
+        // transition — and every leg writes and settles its own. On windows-latest the read was
+        // refused before the wire and the owner's press cancelled nothing (run 37391256380); measured
+        // since, the budget before that read moves at those three commits and nowhere else. The
+        // budget bounds what the owner waits on the PLATFORM; the app's own store is not charged to
+        // it. See RiskReducingScope.BeginExcludingTheStore.
+        using var emergency = RiskReducingScope.BeginExcludingTheStore(Connector.EmergencyBudget);
 
         RefuseWhileAPressIsOpen(CancelPress);
 
@@ -8404,7 +8412,14 @@ public sealed class TradingGateway : IAsyncDisposable
         // Opened here, where the intent is known, all three callers get it — and it is ONE absolute
         // deadline for the operation rather than a fresh budget per RPC, so the promise does not
         // scale with the size of the book.
-        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        //
+        // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-fix-press-budget), for OperatorCancelAllAsync's
+        // reason. This press writes after its capture rather than before it — the composite, each
+        // leg's write-ahead row, each settle — so a slow disk spends its budget between the capture
+        // and the close: measured on windows-latest, one press's nine commits took 2688 ms of its
+        // 2689 and ran the deadline to −31 ms (run 37413619642). The close went out with 688 ms left
+        // that time; one slower commit and it is refused before the wire with the book still open.
+        using var emergency = RiskReducingScope.BeginExcludingTheStore(Connector.EmergencyBudget);
 
         RefuseWhileAPressIsOpen(ClosePress);
 

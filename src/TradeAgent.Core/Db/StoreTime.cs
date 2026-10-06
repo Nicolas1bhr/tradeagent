@@ -7,15 +7,17 @@ namespace TradeAgent.Core.Db;
 /// THE TIME A FLOW HAS SPENT WAITING ON THIS APP'S OWN STORE — counted for the flow that asked, and
 /// for nobody else (<c>U-fix-loss-reopen</c>).
 ///
-/// <para><b>Why anything counts it.</b> The app's own flatten runs on the connector's emergency
-/// budget, and that budget is a real wall clock. Everything the flatten writes before a close may go
-/// out — the press row, the composite, the leg's write-ahead row — is a durable commit at
-/// <c>synchronous=FULL</c> on the same clock, and a commit is the machine's disk, not the platform. On
-/// windows-latest one commit has measured 2234 ms, which is the whole of two seconds: the budget was
-/// gone before the first platform call, the call was refused before the wire, and a confirmed breach
-/// closed the day with the book still open. A slow Windows PC is exactly where this product runs, so
-/// a budget that the app's own bookkeeping can spend is a budget that decides nothing about the
-/// platform it was set for. <c>RiskReducingScope.BeginExcludingTheStore</c> is the one reader.</para>
+/// <para><b>Why anything counts it.</b> The app's own flatten and exit, and the owner's two emergency
+/// presses, run on the connector's emergency budget, and that budget is a real wall clock. Everything
+/// they write before a close or a cancel may go out — the press row, the composite, the leg's
+/// write-ahead row — is a durable commit at <c>synchronous=FULL</c> on the same clock, and a commit is
+/// the machine's disk, not the platform. On windows-latest one commit has measured 2234 ms, and since
+/// 5207 ms, which is more than the whole of two seconds: the budget was gone before the first platform
+/// call, the call was refused before the wire, and a confirmed breach closed the day with the book
+/// still open — and, the same way, the owner's Cancel all working orders cancelled nothing
+/// (<c>U-fix-press-budget</c>). A slow Windows PC is exactly where this product runs, so a budget that
+/// the app's own bookkeeping can spend is a budget that decides nothing about the platform it was set
+/// for. <c>RiskReducingScope.BeginExcludingTheStore</c> is the one reader.</para>
 ///
 /// <para><b>What is counted.</b> Every outermost <see cref="Database.Write{T}"/> and
 /// <see cref="Database.Read{T}"/> on the counting flow, from before its lock to after its commit — so
