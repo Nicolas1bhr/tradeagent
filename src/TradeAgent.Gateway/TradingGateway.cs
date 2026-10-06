@@ -8114,13 +8114,6 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception) { /* latched in memory by Settle; the background retry carries the reason */ }
     }
 
-    // ===== DIAGNOSTIC — U-fix-press-budget item 1, BRANCH ONLY, removed before the proving run =====
-    /// <summary>Set only by the branch-only PressBudgetDiagTests, on its own flow; inert while null.</summary>
-    public static readonly AsyncLocal<Action<string, long?>?> DiagPressProbe = new();
-
-    static void DiagStep(string step) => DiagPressProbe.Value?.Invoke(step, RiskReducingScope.DeadlineAt);
-    // ===== END DIAGNOSTIC =====
-
     /// <summary>
     /// Deliberately separate from the kill switch: stopping the AI must not move money.
     ///
@@ -8144,13 +8137,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // deadline for the operation rather than a fresh budget per RPC, so the promise does not
         // scale with the size of the book.
         using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
-        DiagStep("after Begin");
 
         RefuseWhileAPressIsOpen(CancelPress);
-        DiagStep("after the open-press check");
 
         var accountId = await RequireAccountId(ct);
-        DiagStep("after RequireAccountId");
         var nonce = NewPressNonce();
         var pressId = PressPrefix(CancelPress, nonce);
         var paused = $"you pressed Cancel all working orders at {Now.ToLocalTime():HH:mm}; it is waiting for you on the Dashboard";
@@ -8162,18 +8152,15 @@ public sealed class TradingGateway : IAsyncDisposable
         // so the refusal above and this row are one step rather than two (finding 2 / Codex F6).
         OpenPressRow(pressId, accountId, RequestIntent.CANCEL_ALL, "-",
             Json.Write(new { order = (string?)null, press = nonce }), paused, claims: CancelPress);
-        DiagStep("after the press row, at the read");
 
         List<string> captured;
         try
         {
             captured = (await Connector.GetOrdersAsync(accountId, false, null, ct))
                 .Select(o => o.ConnectorOrderId).ToList();
-            DiagStep($"after the read: {captured.Count} order(s)");
         }
         catch (Exception ex)
         {
-            DiagStep($"the read THREW: {ex.Message}");
             // NOTHING CAN BE SENT, AND THAT IS THE HONEST ANSWER. The wire call is per-order now, so
             // a book that cannot be read names no orders to cancel. It used to send an account-wide
             // sweep anyway on the argument that a failed READ must not stop an emergency — but that
@@ -8193,7 +8180,6 @@ public sealed class TradingGateway : IAsyncDisposable
         // here is the record: what the press captured, and what it answered, as one durable object
         // beside the per-target rows.
         BeginComposite(AgentContext.Operator, pressId, Ops.CancelAll, captured, () => nonce);
-        DiagStep("after the composite");
 
         var cancelled = new List<string>();
         for (var i = 0; i < captured.Count; i++)
@@ -8202,7 +8188,6 @@ public sealed class TradingGateway : IAsyncDisposable
             var rid = PressLegId(CancelPress, nonce, i);
             OpenPressRow(rid, accountId, RequestIntent.CANCEL, "-",
                 Json.Write(new { order = target, press = nonce }), paused);
-            DiagStep($"leg {i}: after its row, at the cancel");
             try
             {
                 using var dispatch = TransportLedger.MarkDispatch();
@@ -8217,18 +8202,15 @@ public sealed class TradingGateway : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                DiagStep($"leg {i}: the cancel THREW: {ex.Message}");
                 // ONE ORDER FAILING SAYS NOTHING ABOUT THE NEXT ONE — the same lesson close-all
                 // learned. It is recorded, the pause is already latched, and the loop goes on.
                 SafelyRecordIndefinite(rid, ex.Message,
                     $"TradeAgent could not confirm whether order {target} was cancelled.", ex);
                 continue;
             }
-            DiagStep($"leg {i}: cancelled");
             SafelySettle(rid, ExecutionState.CANCELLED, error: "the platform accepted the cancel for this order");
             cancelled.Add(target);
         }
-        DiagStep("after the legs");
 
         if (cancelled.Count == captured.Count)
             SafelySettle(pressId, ExecutionState.CANCELLED,
@@ -8423,13 +8405,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // deadline for the operation rather than a fresh budget per RPC, so the promise does not
         // scale with the size of the book.
         using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
-        DiagStep("after Begin");
 
         RefuseWhileAPressIsOpen(ClosePress);
-        DiagStep("after the open-press check");
 
         var accountId = await RequireAccountId(ct);
-        DiagStep("after RequireAccountId, at the capture");
         var nonce = NewPressNonce();
         var paused = $"you pressed Close all positions at {Now.ToLocalTime():HH:mm}; it is waiting for you on the Dashboard";
 
@@ -8437,7 +8416,6 @@ public sealed class TradingGateway : IAsyncDisposable
             .Where(p => p.Quantity != 0)
             .Select(p => (p.Symbol, p.Quantity))
             .ToList();
-        DiagStep($"after the capture: {captured.Count} position(s)");
 
         if (captured.Count == 0)
         {
@@ -8449,11 +8427,9 @@ public sealed class TradingGateway : IAsyncDisposable
         // See OperatorCancelAllAsync: the plan is written down before any close goes out.
         BeginComposite(AgentContext.Operator, PressPrefix(ClosePress, nonce), Ops.CloseAll,
             captured.Select(p => p.Symbol).ToList(), () => nonce);
-        DiagStep("after the composite");
 
         var run = await CloseCapturedAsync(ClosePress, nonce, accountId, captured, paused,
             reductionOnly: false, ct);
-        DiagStep("after the legs");
         var (drifted, waited, unsettled) = (run.Drifted, run.Waited, run.Unsettled);
 
         var drift = drifted.Count == 0 ? ""
@@ -10518,13 +10494,12 @@ public sealed class TradingGateway : IAsyncDisposable
             // owner makes decisions here — they press again, against what is actually there.
             decimal? live = null;
             Exception? unreadable = null;
-            DiagStep($"leg {i} {symbol}: at the re-read");
             try
             {
                 live = (await Connector.GetPositionsAsync(accountId, ct))
                     .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
             }
-            catch (Exception ex) { unreadable = ex; DiagStep($"leg {i} {symbol}: the re-read THREW: {ex.Message}"); }
+            catch (Exception ex) { unreadable = ex; }
 
             // A DEFINITE DIFFERENT ANSWER AND NO ANSWER AT ALL ARE NOT THE SAME NEWS, and they get
             // different treatment. A position the platform says is 1 when the press captured 2 is a
@@ -10603,16 +10578,13 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             OrderInfo? order;
-            DiagStep($"leg {i} {symbol}: after its row, at the close");
             try
             {
                 using var dispatch = TransportLedger.MarkDispatch();
                 order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
-                DiagStep($"leg {i} {symbol}: the close answered {order?.State}");
             }
             catch (Exception ex)
             {
-                DiagStep($"leg {i} {symbol}: the close THREW: {ex.Message}");
                 // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
                 // press that hit trouble on the first symbol left every other position open and
                 // unrecorded — an emergency control that stops half way through the emergency.
