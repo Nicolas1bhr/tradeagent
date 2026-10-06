@@ -1055,10 +1055,11 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   that decides nothing changes nothing, and nothing is sent, re-sent, cancelled, flagged or paused by
   it; the refusal above lifts once the row has its answer. **Still NOT claimed**: on ATAS, a filled
   order the platform no longer lists under our id and whose fill it does not list under it either
-  holds that position's closes until the owner settles the row — absence decides nothing there — and
-  whether ATAS still lists a filled `PLACE` market order under its id after a bridge drop has not been
-  measured on the box; and a fill the platform's position read has not caught up with is still seen
-  by neither rule.
+  keeps holding that position's closes — absence decides nothing there, this read flags nothing, so
+  the row is not on the owner's unconfirmed card (which lists flagged rows), and only the platform's
+  own update, should it arrive, moves it; whether ATAS still lists a filled `PLACE` market order under
+  its id after a bridge drop has not been measured on the box; and a fill the platform's position read
+  has not caught up with is still seen by neither rule.
 - **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
   computes a side and a size from a reading and sends a market order for them, so a reading that is
   stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it
