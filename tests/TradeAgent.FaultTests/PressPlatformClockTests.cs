@@ -18,8 +18,8 @@ namespace TradeAgent.Tests.Fault;
 /// tests change): <c>PressIdShapeTests.The_operator_cancel_all_names_its_legs_without_the_brokers_
 /// order_id</c> failed "Expected: 2 / Actual: 0" after 46 s — two working orders, and the owner's
 /// Cancel all working orders press wrote no cancel leg. The same test took 1.25 s on main's green
-/// windows run of the same src (37388890179), and every test running beside it in that minute was
-/// 3–37× slower than there too: the whole runner had stalled.</para>
+/// windows run of the same src (37388890179), and the six other tests that ran through those same
+/// 46 s on that runner took 3–7× their time there: the runner had slowed, not the test.</para>
 ///
 /// <para><b>The cause, measured on windows-latest</b> (three branch-only diagnostic runs, 37413619642,
 /// 37413622132 and 37413624368: the sighting's fixture and its close-all twin, 270 presses of each,
@@ -30,8 +30,9 @@ namespace TradeAgent.Tests.Fault;
 /// 1937 ms left at the read, for one). Over the 270, a press's wall time minus its commits' was −2 to
 /// 26 ms. A stall puts all of it in the store: one close-all press there spent 2688 ms of its 2689 in
 /// nine commits, and its next platform call was refused before the wire at −31 ms; one bare one-row
-/// commit on the same image took 5207 ms. The control — the deadline gone at the first platform call —
-/// reproduced the sighting's message byte for byte 78 times out of 78: the read is refused "the
+/// commit on the same image took 5207 ms. The controls — the deadline gone at the first platform call,
+/// by holding that call or by a second writer holding the store across the press row — reproduced the
+/// sighting's message byte for byte 78 times out of 78: the read is refused "the
 /// operation deadline had already passed and nothing was sent", the press records that it could not
 /// read the orders, and nothing is cancelled.</para>
 ///

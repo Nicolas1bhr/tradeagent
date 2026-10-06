@@ -4041,15 +4041,17 @@ are unchanged.
 **No schema.** On windows-latest (run 37391256380, a branch with no src or tests change) the owner's
 Cancel all working orders cancelled nothing: `PressIdShapeTests` held two working orders and the press
 wrote no leg (`Expected: 2 / Actual: 0`), in 46 s against 1.25 s on main's green windows run of the same
-src (37388890179), in a minute when every test on that runner ran 3–37× slower than there. Measured in
+src (37388890179), while the six other tests that ran through those same 46 s on that runner took 3–7×
+their time there: the runner had slowed, not the test. Measured in
 three branch-only diagnostic runs on windows-latest (37413619642, 37413622132, 37413624368; 270
 instrumented presses of each kind): before its orders read the press makes no platform call, only three
 durable commits — the press row, the health event its pause writes, the DISPATCHING transition — and
 its budget moves only at them (26 + 18 + 18 ms → 1937 ms left at the read, for one); across the 270, a
 press's wall time minus its commits' was −2 to 26 ms. One close-all press there ran its nine commits to
 2688 ms of 2689, reached its close with 688 ms left, and its next platform call was refused before the
-wire at −31 ms; one bare one-row commit on the same image took 5207 ms. The control — the deadline gone
-at the first platform call — reproduced the sighting's message byte for byte, 78 times out of 78.
+wire at −31 ms; one bare one-row commit on the same image took 5207 ms. The controls — the deadline gone
+at the first platform call, by holding that call or by a second writer holding the store across the
+press row — reproduced the sighting's message byte for byte, 78 times out of 78.
 
 **The owner's presses are charged for the platform, not for their own store** — the orchestrator's
 ruling on the owner's behalf (2026-10-06). `OperatorCancelAllAsync` and `OperatorCloseAllAsync` open
