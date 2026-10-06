@@ -132,6 +132,10 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     /// summary. <see cref="ConnectorCapabilities.SupportsStreaming"/> is FALSE because this connector
     /// publishes no quote of its own between bars: a price only exists here when a bar closes, and a
     /// stream that repeated the last close would be inventing ticks.
+    ///
+    /// <para><see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> is earned the same way:
+    /// <see cref="ClosePositionAsync"/> places the close under the id it is handed, the book's primary key,
+    /// and its fill is keyed by it too — <c>PaperConnectorTests</c> proves it.</para>
     /// </summary>
     public ConnectorCapabilities Capabilities => new(
         IsPaper: true,
@@ -139,7 +143,10 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         SupportsOrderHistory: true,
         SupportsModify: true,
         SupportsClosePosition: true,
-        SupportsStreaming: false);
+        SupportsStreaming: false)
+    {
+        ClosesCarryClientOrderId = true
+    };
 
     /// <summary>
     /// The book is a local file and the bar source is a query; the longest single thing one operation

@@ -54,13 +54,22 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public TimeSpan EmergencyBudget { get; init; } = TimeSpan.FromSeconds(2);
     public string DisplayName => "Simulator (built in)";
 
+    /// <summary>
+    /// <see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> is earned here: <see cref="ClosePositionAsync"/>
+    /// places the close under the id it is handed, so the broker's book and every fill carry it, and
+    /// <c>LossFlattenConfirmTests</c> proves it against this connector. Whether a history read may then be
+    /// believed is still <see cref="FaultProfile.HideOrderHistory"/>'s to say.
+    /// </summary>
     public ConnectorCapabilities Capabilities => new(
         IsPaper: Broker.IsSimulated,
         SupportsClientOrderId: true,
         SupportsOrderHistory: !Faults.HideOrderHistory,
         SupportsModify: true,
         SupportsClosePosition: true,
-        SupportsStreaming: true);
+        SupportsStreaming: true)
+    {
+        ClosesCarryClientOrderId = true
+    };
 
     public event Action<HealthState>? ConnectionChanged;
     public event Action<QuoteInfo>? QuoteChanged;

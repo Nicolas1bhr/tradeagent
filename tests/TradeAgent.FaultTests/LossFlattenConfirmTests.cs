@@ -43,6 +43,9 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
     static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
 
+    /// <summary>The absence grace every gateway here runs with: the product's own default.</summary>
+    static readonly TimeSpan Grace = new GatewayOptions().AbsenceGrace;
+
     /// <summary>A feed that has stopped: every quote is older than <see cref="GatewayOptions.MaxQuoteAge"/>.</summary>
     static readonly TimeSpan Silent = TimeSpan.FromMinutes(10);
 
@@ -293,21 +296,110 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (ii)–(iv) A CLOSE THE PLATFORM NEVER SAW DECIDES NOTHING — PAST THE GRACE, WITH THE HISTORY THERE,
-    /// HIDDEN, OR FAILING (the guards: green before this unit and after it).
+    /// (ii) A CLOSE THE PLATFORM NEVER SAW, ON A PLATFORM WHOSE CLOSES CARRY THE ID THEY ARE GIVEN:
+    /// NOTHING INSIDE THE GRACE, THEN SETTLED AS NEVER SENT, AND THE BOOK CLOSED AGAIN — ONCE, UNDER A
+    /// NEW ID (<c>U-flatten-absence</c>).
     ///
     /// <para>The connection died before the broker saw the close, so the platform lists no order and
-    /// no fill under its id. That is NOT proof it was never sent — on ATAS a close carries the id only
-    /// as a label written after the fact — and "absence as proof" is not this unit's
-    /// (<c>U-flatten-absence</c>). So: well past any grace, the row stays UNKNOWN and flagged, nothing
-    /// is settled, nothing is written, nothing more goes on the wire, and the dashboard says
-    /// unresolved. The same where the connector withdraws its claim to a provable history, and where
-    /// a history read that carries a <c>since</c> throws instead of answering.</para>
+    /// no fill under its id. On the simulator that IS an answer: its close goes out under the id it is
+    /// handed, onto the order and onto every fill, and its history is complete — so a history read that
+    /// answered and holds nothing under that id, once the close can no longer be on its way there, says
+    /// it never reached the platform. Until this unit that stayed flagged for ever (the guard below
+    /// asserted it in a case called "plain"), over a book the budget had closed and nothing had
+    /// flattened.</para>
+    ///
+    /// <para>Absence counts from the moment the close could last have been on its way —
+    /// <c>ReconcileAsync</c>'s own bound, the dispatch plus <see cref="TradingGateway.DispatchStrandedAfter"/>,
+    /// because nothing holds a press leg's dispatch — and only past the grace after it. One second short
+    /// of that nothing is decided, written or sent. Past it the close is CANCELLED, "never reached the
+    /// platform"; the book still reads open, so the confirm closes it again: one more close, under a
+    /// new id, filled, and the book flat. Later passes send nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_lost_close_the_platform_never_saw_is_settled_as_never_sent_past_the_grace_and_closed_again_once()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "never-seen-open", TestEnv.Buy("ES"));
+        conn.Faults.DropBeforeBrokerAccept = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+        var row = gw.Requests.Get(lost)!;
+        Assert.Equal(0, conn.Broker.CountByClientOrderId(row.ClientOrderId));
+        Assert.Equal(1m, Held(conn, "ES"));
+
+        // ONE SECOND SHORT OF THE GRACE: nothing decided, nothing written, nothing sent.
+        var countsFrom = row.DispatchedAt!.Value + gw.DispatchStrandedAfter;
+        clock.MoveTo(countsFrom + Grace - TimeSpan.FromSeconds(1));
+        await gw.RefreshHealthAsync();
+
+        var inside = gw.Requests.Get(lost)!;
+        log.WriteLine($"inside the grace      : {inside.State} flagged={inside.NeedsReconciliation}, closes {conn.Closes}, "
+                      + $"{gw.FlattenStateToday().State}");
+        Assert.Equal(ExecutionState.UNKNOWN, inside.State);
+        Assert.True(inside.NeedsReconciliation);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(0, Confirms(db));
+        Assert.Equal("unresolved", gw.FlattenStateToday().State);
+
+        // PAST IT.
+        await Passes(gw, clock, 1);
+
+        var settled = gw.Requests.Get(lost)!;
+        var closes = AppCloses(conn);
+        var state = gw.FlattenStateToday();
+        log.WriteLine($"closes on the wire    : {conn.Closes}, position ES {Held(conn, "ES")}");
+        log.WriteLine($"app closes at the book: [{string.Join(" | ", closes.Select(o => $"{o.ClientOrderId} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"lost close            : {settled.State} flagged={settled.NeedsReconciliation} — {settled.LastError}");
+        log.WriteLine($"app rows              : {string.Join(" | ", AppRows(db))}");
+        log.WriteLine($"dashboard             : {state.State} — {state.Why}");
+
+        Assert.Equal(ExecutionState.CANCELLED, settled.State);
+        Assert.False(settled.NeedsReconciliation);
+        Assert.Contains("never reached the platform", settled.LastError!, StringComparison.Ordinal);
+        Assert.Equal(2, conn.Closes);
+        var again = Assert.Single(closes);
+        Assert.NotEqual(row.ClientOrderId, again.ClientOrderId);
+        Assert.Equal(ExecutionState.FILLED, again.State);
+        Assert.Equal(0, conn.Broker.CountByClientOrderId(row.ClientOrderId));
+        Assert.Equal(1, conn.Broker.CountByClientOrderId(again.ClientOrderId!));
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal("flat", state.State);
+        Assert.Contains("CLOSED AGAIN", state.Why!, StringComparison.Ordinal);
+        Assert.Empty(FlaggedAppRows(db));
+        Assert.False(gw.HasUnconfirmedWork());
+        Assert.Equal(1, Confirms(db));
+
+        // THE FIRST OUTCOME IS UNTOUCHED AND THE CLOSURE STANDS.
+        Assert.False(gw.FlattenToday(account)!.Flat);
+        Assert.NotNull(gw.DayClosed(account));
+
+        // AND NOTHING MORE: later passes send nothing and write nothing.
+        await Passes(gw, clock, 2);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(1, Confirms(db));
+        Assert.Equal("flat", gw.FlattenStateToday().State);
+    }
+
+    /// <summary>
+    /// (iii), (iv), (vii) WHERE ABSENCE IS NOT PROOF, A CLOSE THE PLATFORM NEVER SAW DECIDES NOTHING —
+    /// ON (ii)'S OWN DRIVE, PAST THE GRACE BY MINUTES (the guards: green before this unit and after it).
+    ///
+    /// <para>The same close, lost the same way. (iii) The connector withdraws its claim to a provable
+    /// history. (iv) A history read that carries a <c>since</c> throws instead of answering, on a
+    /// connector that still claims one. (vii) The connector does not claim that its closes carry the id
+    /// they are given — ATAS's case, whose close carries our id only as a label written after the fact,
+    /// so its absence proves nothing — which is what this test's "plain" case asserted of every
+    /// connector before <c>U-flatten-absence</c>. In each, the row stays UNKNOWN and flagged, nothing is
+    /// settled, nothing is written, nothing more goes on the wire, and the dashboard says
+    /// unresolved.</para>
     /// </summary>
     [Theory]
-    [InlineData("plain")]
     [InlineData("history hidden")]
     [InlineData("history read throws")]
+    [InlineData("closes do not carry the id")]
     public async Task A_lost_close_the_platform_never_saw_decides_nothing_past_the_grace(string history)
     {
         var (gw, conn, db, clock) = await Ready();
@@ -319,9 +411,14 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         conn.Faults.DropBeforeBrokerAccept = 1;
         var lost = await BreachWithALostClose(gw, conn, clock);
 
+        // EACH CASE MOVES ONE THING, and says which: the history's claim, the read, or the closes' claim.
         if (history == "history hidden") conn.Faults.HideOrderHistory = true;
         if (history == "history read throws")
             conn.HistoryThrows = new ConnectorTransportException("this platform cannot show its order history back that far");
+        if (history == "closes do not carry the id") conn.ClosesCarryTheId = false;
+        var caps = conn.Capabilities;
+        Assert.Equal(history != "history hidden", caps.ReconciliationProvable);
+        Assert.Equal(history != "closes do not carry the id", caps.ClosesCarryClientOrderId);
 
         // PAST THE GRACE, by minutes: the absence grace is fifteen seconds after the dispatch bound.
         await Passes(gw, clock, 9);
@@ -341,6 +438,46 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         Assert.Equal(0, Confirms(db));
         Assert.Equal(1m, Held(conn, "ES"));
         Assert.NotNull(gw.DayClosed(account));
+    }
+
+    /// <summary>
+    /// THE SIMULATOR'S CLAIM, EARNED: ITS CLOSE CARRIES THE ID IT IS HANDED, ONTO THE ORDER AND ITS FILL
+    /// (<c>U-flatten-absence</c>).
+    ///
+    /// <para>(ii) reads "no order and no fill under the close's id" as "it never reached the platform",
+    /// and that is true only of a connector whose close goes out under the id it was handed.
+    /// <see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> says so, and this is the simulator
+    /// proving it through the two history reads the confirm asks: the close on the book and its fill
+    /// carry exactly that id, once.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_simulators_close_carries_the_id_it_is_handed_onto_the_order_and_its_fill()
+    {
+        await using var fake = new FakeConnector(new FakeBroker());
+        await fake.ConnectAsync();
+        var account = fake.Broker.AccountId;
+        var since = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5);
+
+        await fake.PlaceOrderAsync(new PlaceOrderCommand("TA-carried-open", account, "ES", OrderSide.Buy,
+            OrderType.Market, 2m, null, null, TimeInForce.Day, null));
+        const string id = "TA-op-budget-close-0123456789abcdef-0";
+        var close = await fake.ClosePositionAsync(account, "ES", id);
+
+        var orders = await fake.GetOrdersAsync(account, true, since);
+        var fills = await fake.GetExecutionsAsync(account, since);
+        log.WriteLine($"the close             : {close?.ClientOrderId} {close?.Side} {close?.Quantity} {close?.State}");
+        log.WriteLine($"history               : [{string.Join(" | ", orders.Select(o => $"{o.ClientOrderId} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"fills                 : [{string.Join(" | ", fills.Select(f => $"{f.ClientOrderId} {f.Side} {f.Quantity}"))}]");
+
+        Assert.True(fake.Capabilities.ClosesCarryClientOrderId);
+        Assert.NotNull(close);
+        Assert.Equal(id, close.ClientOrderId);
+        Assert.Equal(OrderSide.Sell, close.Side);
+        Assert.Equal(2m, close.Quantity);
+        Assert.Equal(id, Assert.Single(orders, o => o.ConnectorOrderId == close.ConnectorOrderId).ClientOrderId);
+        Assert.Equal(id, Assert.Single(fills, f => f.ConnectorOrderId == close.ConnectorOrderId).ClientOrderId);
+        Assert.Equal(1, fake.Broker.CountByClientOrderId(id));
+        Assert.Empty(fake.Broker.Positions);
     }
 
     /// <summary>

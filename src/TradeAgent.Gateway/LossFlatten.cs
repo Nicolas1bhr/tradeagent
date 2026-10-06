@@ -123,7 +123,9 @@ public static class LossFlatten
 /// </summary>
 /// <param name="RequestId">The flagged write-ahead row the close was sent under.</param>
 /// <param name="Symbol">The instrument.</param>
-/// <param name="State">The TERMINAL state the platform holds the close in — nothing else is a verdict.</param>
+/// <param name="State">The TERMINAL state the platform holds the close in — or CANCELLED, "never reached
+/// the platform", where a connector whose closes carry our id lists no order and no fill under it past the
+/// grace (<c>U-flatten-absence</c>). Nothing else is a verdict.</param>
 /// <param name="Filled">What the platform says filled, where it says.</param>
 /// <param name="ConnectorOrderId">The platform's own reference, where the history named one.</param>
 /// <param name="Evidence">Which read said it, in the owner's words.</param>
@@ -144,9 +146,12 @@ public sealed record LossFlattenVerdict(string RequestId, string Symbol, string 
 /// from the record, and a second lost answer — the closing again's — is never confirmed a second time.
 /// It stays flagged for the owner.</para>
 ///
-/// <para><b>Only every lost close decided by the platform's own word, never by absence.</b> A close the
-/// history holds in a terminal state, or whose fills it lists, is decided; one still working, one it
-/// does not list, and a read that did not answer decide nothing, and no confirm is written.</para>
+/// <para><b>Only every lost close decided by the platform's own word, and by absence only behind a
+/// claim.</b> A close the history holds in a terminal state, or whose fills it lists, is decided; one
+/// still working, and a read that did not answer, decide nothing, and no confirm is written. One the
+/// history does not list decides nothing either — except on a connector that claims its closes carry the
+/// id they are handed (<c>ConnectorCapabilities.ClosesCarryClientOrderId</c>), where, past the grace, it
+/// never reached the platform (<c>U-flatten-absence</c>). ATAS makes no such claim.</para>
 /// </summary>
 public sealed record LossFlattenConfirm
 {

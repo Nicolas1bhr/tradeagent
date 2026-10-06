@@ -111,6 +111,55 @@ public class PaperConnectorTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// ITS CLAIM ABOUT CLOSES, EARNED: A CLOSE CARRIES THE ID IT IS HANDED, ONTO THE ORDER IN THE BOOK AND
+    /// ONTO ITS FILL (<c>U-flatten-absence</c>).
+    ///
+    /// <para><see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> lets the gateway read a lost close
+    /// that a complete history does not list as one that never reached the platform. That is true here only
+    /// because a close is a placement under the id it is handed — the book's primary key — and its fill is
+    /// keyed by the same id; this holds the connector to it through the two history reads the gateway asks,
+    /// each with a <c>since</c>.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_close_carries_the_id_it_is_handed_onto_the_order_and_its_fill()
+    {
+        var source = new MemoryBarSource();
+        var now = T0.AddSeconds(30);
+        await using var paper = Paper(source, () => now, NewFile());
+        await paper.ConnectAsync();
+
+        // A POSITION TO CLOSE: a buy, filled at the next bar's open.
+        source.Add("BTCUSDT", Bar(T0, 100m, 106m, 99m, 105m));
+        await paper.PlaceOrderAsync(Market("carried-open"));
+        source.Add("BTCUSDT", Bar(T0.AddMinutes(1), 110m, 112m, 109m, 111m));
+        Assert.Equal(1m, Assert.Single(await paper.GetPositionsAsync(PaperConnector.TheAccount)).Quantity);
+
+        // THE CLOSE, under the id the gateway would have recorded it under, filled at the bar after it.
+        now = T0.AddMinutes(1).AddSeconds(30);
+        const string id = "TA-op-budget-close-0123456789abcdef-0";
+        var close = await paper.ClosePositionAsync(PaperConnector.TheAccount, "BTCUSDT", id);
+        source.Add("BTCUSDT", Bar(T0.AddMinutes(2), 120m, 121m, 119m, 120m));
+
+        var since = now - TimeSpan.FromMinutes(5);
+        var orders = await paper.GetOrdersAsync(PaperConnector.TheAccount, true, since);
+        var fills = await paper.GetExecutionsAsync(PaperConnector.TheAccount, since);
+        log.WriteLine($"the close : {close?.ClientOrderId} {close?.Side} {close?.Quantity} {close?.State}");
+        log.WriteLine($"history   : [{string.Join(" | ", orders.Select(o => $"{o.ClientOrderId} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"fills     : [{string.Join(" | ", fills.Select(f => $"{f.ClientOrderId} {f.Side} {f.Quantity} @ {f.Price}"))}]");
+
+        Assert.True(paper.Capabilities.ClosesCarryClientOrderId);
+        Assert.NotNull(close);
+        Assert.Equal(id, close.ClientOrderId);
+        Assert.Equal(OrderSide.Sell, close.Side);
+        Assert.Equal(1m, close.Quantity);
+        var listed = Assert.Single(orders, o => o.ConnectorOrderId == close.ConnectorOrderId);
+        Assert.Equal(id, listed.ClientOrderId);
+        Assert.Equal(ExecutionState.FILLED, listed.State);
+        Assert.Equal(id, Assert.Single(fills, f => f.ConnectorOrderId == close.ConnectorOrderId).ClientOrderId);
+        Assert.Empty(await paper.GetPositionsAsync(PaperConnector.TheAccount));
+    }
+
+    /// <summary>
     /// THE ASSEMBLY REFERENCES NO HTTP CLIENT — and no socket, no vendor SDK and no other connector.
     ///
     /// <para>"This connector cannot reach a venue" is the whole safety argument for letting it place

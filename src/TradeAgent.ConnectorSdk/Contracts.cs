@@ -111,7 +111,9 @@ public sealed record ModifyOrderCommand(string ConnectorOrderId, decimal? Quanti
 /// <summary>
 /// What a backend can actually promise. The gateway reads this to decide how much autonomy is safe:
 /// without a client order id or order history it cannot prove after a disconnect whether an order
-/// landed, so it refuses LIVE_AUTONOMOUS on that connector rather than guessing.
+/// landed, so it refuses LIVE_AUTONOMOUS on that connector rather than guessing. And it reads
+/// <see cref="ClosesCarryClientOrderId"/> beside <see cref="ReconciliationProvable"/> before it lets the
+/// ABSENCE of a close settle anything (<c>U-flatten-absence</c>).
 /// </summary>
 public sealed record ConnectorCapabilities(
     bool IsPaper,
@@ -122,6 +124,29 @@ public sealed record ConnectorCapabilities(
     bool SupportsStreaming)
 {
     public bool ReconciliationProvable => SupportsClientOrderId && SupportsOrderHistory;
+
+    /// <summary>
+    /// A CLOSE THIS CONNECTOR SENDS CARRIES THE CLIENT ORDER ID IT IS HANDED — onto the order at the
+    /// platform and onto every fill of it, exactly as a placement does — so that, where
+    /// <see cref="ReconciliationProvable"/> also holds, NO order and NO fill under a close's id, in a
+    /// history read that answered, proves the close never reached the platform (<c>U-flatten-absence</c>).
+    ///
+    /// <para><b>A claim about CLOSES, and only closes.</b> <see cref="SupportsClientOrderId"/> is proven on
+    /// PLACE orders, and a close need not go the same way: a platform that builds the closing order itself
+    /// gives it an identity of its own, and an adapter can at best label it afterwards. ATAS is that
+    /// platform — <c>ITradingManager.ClosePosition</c> builds the order, <c>AtasStrategyAdapter.ClosePosition</c>
+    /// finds it afterwards by diffing what ATAS added and writes our id onto it only as a best-effort label,
+    /// and only onto an EMPTY comment; a filled close measured on the box bore ATAS's own "Close position".
+    /// There, "no order under our id" is not "no order", and reading it as one would send a second close over
+    /// a first that filled — so the ATAS connector never makes this claim, whatever its hello says.</para>
+    ///
+    /// <para><b>False unless a connector says otherwise, and said only with a test.</b> A connector sets it
+    /// only with a test of its own proving that the order its <see cref="ITradingConnector.ClosePositionAsync"/>
+    /// puts on the book, and every fill of it, carry the id it was handed. Init-only with a default, so a
+    /// connector that says nothing about its closes claims nothing, and no construction site had to
+    /// change.</para>
+    /// </summary>
+    public bool ClosesCarryClientOrderId { get; init; }
 }
 
 /// <summary>The broker gave a definitive answer: no. Safe to record as REJECTED; nothing is working.</summary>
@@ -234,6 +259,15 @@ public interface ITradingConnector : IAsyncDisposable
     Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default);
     Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> CancelAllOrdersAsync(string accountId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Closes the position in <paramref name="symbol"/>. <paramref name="clientOrderId"/> is the id the
+    /// gateway recorded this close under before sending it. A connector whose closing order, and every
+    /// fill of it, carry exactly that id may say so with
+    /// <see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> — and only then does a complete history
+    /// that lists nothing under it prove the close never reached the platform. A connector that cannot put
+    /// it there says nothing, and a lost close stays for a person (<c>U-flatten-absence</c>).
+    /// </summary>
     Task<OrderInfo?> ClosePositionAsync(string accountId, string symbol, string clientOrderId, CancellationToken ct = default);
 
     event Action<HealthState>? ConnectionChanged;

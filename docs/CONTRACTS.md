@@ -17,7 +17,13 @@ rather than as a refusal, so the ambiguity cannot become a false outcome.
 **`ConnectorCapabilities`** — what a backend can actually promise. `ReconciliationProvable` is
 `SupportsClientOrderId && SupportsOrderHistory`. The gateway reads it to decide how much autonomy is
 safe, and refuses `LIVE_AUTONOMOUS` when it is false. A connector must report this truthfully;
-overstating it is the most dangerous lie a connector can tell.
+overstating it is the most dangerous lie a connector can tell. **`ClosesCarryClientOrderId`**
+(init-only, default `false`; `U-flatten-absence`) is a separate claim about CLOSES: the order
+`ClosePositionAsync` puts on the book, and every fill of it, carry the client id it was handed. Only with
+it, beside `ReconciliationProvable`, does a complete history that lists nothing under a lost close's id
+prove that close never reached the platform. `SupportsClientOrderId` is proven on PLACE orders and says
+nothing about closes; a connector makes this claim only with a test of its own proving it, and the ATAS
+connector never makes it (see "U-flatten-absence" below).
 
 **The residual under `SupportsClientOrderId`, and it is a write permission rather than a bug.** The
 capability is `ClientOrderIdProof.ProvesRoundTrip() && AdapterTeardown.Trouble is null`, and `Trouble`
@@ -183,7 +189,8 @@ is precisely what this has to survive.
 `TradeAgent.Core` and nothing else — no HTTP client, no socket, no vendor SDK — and a test reads the
 reference list back and holds it there. `SupportsClientOrderId` and `SupportsOrderHistory` are true
 because the id is the book's primary key and nothing prunes either table, not because paper fills are
-harmless. `SupportsStreaming` is **false**: a price exists here only when a bar closes, and a stream
+harmless; `ClosesCarryClientOrderId` is true because a close is a placement under the id it is handed and
+its fill is keyed by it (`U-flatten-absence`, `PaperConnectorTests`). `SupportsStreaming` is **false**: a price exists here only when a bar closes, and a stream
 repeating the last close would be inventing ticks. A `ConnectorRejectedException` is a definite refusal
 only — an instrument the catalogue does not hold verified, a size below the increment, a sell the book
 neither holds nor has buys working to cover, a cancellation of an order that has already filled — and an
@@ -3920,10 +3927,10 @@ step's to answer). Only where `ReconciliationProvable`. Each lost close is asked
 window and first two questions, **without its third**: under its own client id in `GetOrdersAsync(account,
 true, CreatedAt − 5 min)` in a TERMINAL state → that state and fill; else fills under its id → FILLED; found
 live (WORKING, ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING), not found, or a read that threw → **undecided**:
-nothing settled, cancelled or sent, asked again next pass. Absence is never proof here — an ATAS close carries
+nothing settled, cancelled or sent, asked again next pass. Absence was no proof here — an ATAS close carries
 our id only as a label written after identification, so on ATAS most lost closes stay undecided and with the
-owner, as before (`U-flatten-absence` owns absence, behind a claim ATAS does not make). `ReconcileAsync` is
-unchanged.
+owner, as before; `U-flatten-absence`, below, makes "not found" an answer behind a claim ATAS does not make.
+`ReconcileAsync` is unchanged.
 
 **Every lost close decided, then ONE write-once record, then its application.** The book is read back, and
 `loss_flatten_confirm:{connector}:{account}:[{symbol}:]{utcDay}` (`LossFlattenConfirm`: each verdict with its
@@ -3948,3 +3955,31 @@ status field, the Situation, section 4, `AGENTS.md` and the guide say so.
 **Not in this unit:** absence as proof (`U-flatten-absence`); the data-loss exit's own lost close
 (`op-valuation-close-` rows are not confirmed here); the hold a `Flat=false` outcome keeps after the owner has
 resolved its rows on the card — this step deliberately does not answer a lost close somebody else has settled.
+
+## U-flatten-absence — where a connector's closes carry our id, a lost budget close its complete history never saw is settled as never sent
+
+**No schema.** `U-flatten-confirm` left one lost close for the owner that the platform could answer: a close
+whose connection died before the platform saw it, so its history lists no order and no fill under the close's
+id. **`ConnectorCapabilities.ClosesCarryClientOrderId`** (init-only, default `false`) is the claim that makes
+that absence an answer: the order a connector's `ClosePositionAsync` puts on the book, and every fill of it,
+carry the client id it was handed. It is a claim about CLOSES — `SupportsClientOrderId` is proven on PLACE
+orders and is unchanged everywhere — and it is made only with a test of the connector's own: the simulator
+(`LossFlattenConfirmTests`) and TradeAgent paper (`PaperConnectorTests`) make it. **ATAS never does, whatever its
+hello says:** ATAS builds a close itself (`ITradingManager.ClosePosition`), the adapter finds it afterwards by
+diffing what ATAS added and writes our id onto it only as a best-effort label on an empty comment, and a filled
+close measured on the box bore ATAS's own "Close position".
+
+**The rule, in the confirm step and nowhere else.** Where `ReconciliationProvable` AND
+`ClosesCarryClientOrderId` (`AbsenceDecidesALostClose`), a lost close for which `GetOrdersAsync(account, true,
+CreatedAt − 5 min)` and then `GetExecutionsAsync(account, CreatedAt − 5 min)` both ANSWERED and neither lists
+anything under its id is decided **CANCELLED — "it never reached the platform"** once `AbsenceGrace` (15 s) has
+passed since `AbsenceCountsFrom` — for a press leg, whose dispatch nothing holds, the dispatch plus
+`DispatchStrandedAfter`: `ReconcileAsync`'s own mapping and clock. The confirm then proceeds as for any decided
+leg: one write-once record, the rows settled and unflagged, the book read back — flat, nothing is sent; open,
+the closing again, ONE fresh close under a new nonce. Inside the grace, after a read that threw, where the
+history is not provable, or on a connector without the claim, "not found" decides nothing and the close stays
+for the owner, as before. `ReconcileAsync`, `SupportsClientOrderId` and every other rule of `U-flatten-confirm`
+are unchanged.
+
+**Not in this unit:** ATAS (no claim made; nothing run on the box); the data-loss exit's own lost close
+(`U-valuation-close-confirm`); the hold a closure keeps after the owner settles a lost leg (`U-loss-hold-release`).

@@ -1007,10 +1007,13 @@ is the one case where the software is telling you it does not know where your mo
 back, TradeAgent asks your platform's own order history about it a few seconds later, where your
 platform can show that history. If the history says the close is finished, TradeAgent writes that
 down and clears its own records: the account reads flat, or — if something is still open — it closes
-what is still there once more, with the same checks as the first time. If the history cannot find
-the close, or it is still working, nothing is decided and the records stay on the Dashboard for you.
-On ATAS a close carries TradeAgent's reference only once it has been identified, so a lost close
-there often cannot be found, and then it is yours to confirm, as before.
+what is still there once more, with the same checks as the first time. If the close is still
+working, nothing is decided and the records stay on the Dashboard for you. If the history cannot find
+the close at all, that settles it only on TradeAgent's paper account and the practice simulator, where
+every close carries TradeAgent's reference and the history is complete: once the close can no longer
+be on its way there, TradeAgent records that it never reached your platform and closes what is still
+open once more. On ATAS a close carries TradeAgent's reference only once it has been identified, so a
+lost close there that cannot be found proves nothing, and it is yours to confirm, as before.
 
 **And one more, which is not an answer yet: "has NOT closed your open positions yet".** That is
 TradeAgent saying it could send nothing at all to your platform — your account or your positions

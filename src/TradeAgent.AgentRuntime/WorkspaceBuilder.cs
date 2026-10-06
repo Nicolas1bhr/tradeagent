@@ -419,7 +419,11 @@ public static class WorkspaceBuilder
     own record from the platform's order history on its next pass, where the platform can show it:
     a close the history holds as finished decides it — `flat` once the account reads flat, and
     otherwise TradeAgent closes what is still open once more, with the same checks; a close the
-    history cannot find, or holds as still working, decides nothing and stays for the account owner.
+    history holds as still working decides nothing, and neither does one it cannot find — except on
+    a platform whose closes always carry TradeAgent's reference and whose history is complete
+    (TradeAgent paper, the practice simulator), where a close it lists nothing for, once it can no
+    longer be on its way, never reached the platform and what is open is closed once more. Anywhere
+    else, ATAS included, it stays for the account owner.
     Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
 
     ## Rules that matter

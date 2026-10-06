@@ -585,6 +585,15 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <see cref="_hello"/> six times, and a pulse that cleared it between the null test and the
     /// first field threw a NullReferenceException out of the getter the gateway consults before it
     /// will permit anything. See <see cref="_hello"/> for why that became possible.
+    ///
+    /// <para><b><see cref="ConnectorCapabilities.ClosesCarryClientOrderId"/> is never claimed here, whatever
+    /// the hello says</b> (<c>U-flatten-absence</c>). <c>SupportsClientOrderId</c> is proven on PLACE orders;
+    /// a close on ATAS is built by ATAS itself (<c>ITradingManager.ClosePosition</c>), does not carry our id
+    /// when it is submitted, and is found afterwards by diffing what ATAS added — after which
+    /// <c>AtasStrategyAdapter.ClosePosition</c> writes our id onto it only as a best-effort label, and only
+    /// onto an EMPTY comment. A filled market close measured on the box (2026-09-06) was in none of ATAS's
+    /// order collections and its fill bore ATAS's own "Close position". So on ATAS, no order under our id
+    /// proves nothing about whether a close reached the platform, and a lost close stays for the owner.</para>
     /// </summary>
     public ConnectorCapabilities Capabilities
     {
