@@ -923,11 +923,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// TAKES EVERY UNSETTLED OPERATION'S ANSWER OFF ITS OWN <c>execution_request</c> ROW, and takes
     /// nothing from a row that has no answer.
     ///
-    /// <para>A terminal state is an outcome and settles the operation. UNKNOWN, DISPATCHING and
-    /// RECONCILING are not outcomes: they are left exactly as they are, they hold the cursor where it
-    /// is, and nothing re-sends them. An operation with NO row at all is the other case — a gate
-    /// refused it before the record existed, so nothing was sent and it is <c>refused</c> rather than
-    /// left hanging.</para>
+    /// <para>A terminal state is an outcome and settles the operation — <c>resolved</c>, or <c>refused</c>
+    /// when the row never reached the wire (<see cref="Deployments.NeverReachedTheWire"/>). UNKNOWN,
+    /// DISPATCHING and RECONCILING are not outcomes: they are left exactly as they are, they hold the
+    /// cursor where it is, and nothing re-sends them.</para>
+    ///
+    /// <para><b>A dispatch stopped between its record and the wire is settled BY THE STORE</b>
+    /// (<see cref="SettleAStrandedDispatch"/>): an operation <c>dispatched</c> over a row still
+    /// <c>CREATED</c>, or over no row at all, past <see cref="DispatchStrandedAfter"/>. Before the bound it is
+    /// left alone — its dispatcher may still be on its way to <c>TryCreate</c> or to the wire, and a gate
+    /// that refused it is recorded by that dispatcher itself.</para>
     /// </summary>
     int SettleDeploymentOps(StrategyDeploymentRow deployment, DateTimeOffset now)
     {
@@ -948,18 +953,40 @@ public sealed class TradingGateway : IAsyncDisposable
                     && _deployments.Refuse(op.RequestId,
                         "the deployment was no longer running when this would have been dispatched; "
                         + "nothing was sent", now)) settled++;
-                else if (op.IsDispatched
-                         && _deployments.Refuse(op.RequestId,
-                             "a gate refused it before any record was written; nothing was sent", now))
+
+                // DISPATCHED WITH NO ROW is a dispatcher still on its way to TryCreate, or one that stopped
+                // before it — never "a gate refused it" on sight: a gate's refusal is recorded by the
+                // dispatcher that met it, and refusing this one early let a dispatcher still on its way send
+                // under an operation that read `refused`. Past the bound the store settles it.
+                else if (op.IsDispatched && SettleAStrandedDispatch(deployment, op, null, now))
                     settled++;
                 continue;
             }
 
             if (op.IsPlanned) _deployments.MarkDispatched(op.RequestId);
 
+            // CREATED IS A DISPATCH THAT HAS NOT REACHED THE WIRE: still on its way, or stopped for good
+            // between its record and the wire — the stale-close read is an awaited connector call in that
+            // window, and a crash or the app closing there left it frozen. Past the bound, by the store.
+            if (request.State == ExecutionState.CREATED)
+            {
+                if (SettleAStrandedDispatch(deployment, op, request, now)) settled++;
+                continue;
+            }
+
             // UNKNOWN IS NOT TERMINAL AND NEVER WILL BE UNTIL SOMETHING SETTLES IT. This is the whole
             // of the rule: no branch below reads a missing answer as a no.
             if (!OrderStateMachine.IsTerminal(request.State)) continue;
+
+            // A ROW THAT ENDED WITHOUT EVER REACHING THE WIRE is a refusal, not an outcome: the store's own
+            // settle, when the pass that won its compare-and-swap stopped before it refused the operation.
+            if (Deployments.NeverReachedTheWire(request))
+            {
+                if (_deployments.Refuse(op.RequestId,
+                        request.LastError ?? $"nothing was sent: the order record is {request.State} and never "
+                        + "reached the wire", now)) settled++;
+                continue;
+            }
 
             if (_deployments.Resolve(op.RequestId,
                     request.LastError is { Length: > 0 } e
@@ -968,6 +995,88 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         return settled;
+    }
+
+    /// <summary>
+    /// AN OPERATION WHOSE DISPATCH STOPPED BETWEEN ITS RECORD AND THE WIRE, SETTLED BY THE STORE AND NEVER BY A
+    /// READING — and only past <see cref="DispatchStrandedAfter"/>, a stranded <c>DISPATCHING</c>'s own bound,
+    /// measured on this gateway's clock from the instant the row (or, with no row, the operation) was written.
+    /// Answers whether it settled it.
+    ///
+    /// <para><b>The row goes <c>CREATED → CANCELLED</c> by <c>Transition</c>'s compare-and-swap, and only the
+    /// winner refuses the operation.</b> A dispatcher still alive moves the same row <c>CREATED → DISPATCHING</c>
+    /// by the same compare-and-swap before it touches the wire (<see cref="DispatchPlaceAsync"/>,
+    /// <see cref="CancelAsync"/>), so exactly one of the two wins: the settle, and the dispatcher's own
+    /// transition throws and it sends nothing; or the dispatcher, and the settle leaves the row to be read off
+    /// like any other. Nothing here reads the venue: an answer nobody has is never read as a no.</para>
+    ///
+    /// <para><b>With no row yet, a row goes under the id first</b> — <c>CREATED</c>, then cancelled as above —
+    /// so a dispatcher still on its way meets it at the replay or at <c>TryCreate</c> and sends nothing: an id
+    /// already in the table answers with its row. If its own row got there first, the insert loses and the
+    /// operation is read off that row from then on. The row says what the operation was for, under the run's
+    /// identity and its own <c>TA-</c> id, and that it never reached the wire.</para>
+    ///
+    /// <para>What happens next is the existing rule: an exit so settled is sent again by the runner
+    /// (<c>ForwardRuns.ExitToSendAgain</c>), an END's close by the reconcile pass (<see cref="OwesItsClose"/>),
+    /// each under a new operation and a new id; the cursor moves past the bar, and the run is not frozen.</para>
+    /// </summary>
+    bool SettleAStrandedDispatch(StrategyDeploymentRow deployment, DeploymentOpRow op, ExecutionRequest? request,
+        DateTimeOffset now)
+    {
+        var age = Now - (request?.CreatedAt ?? op.CreatedAt);
+        if (age <= DispatchStrandedAfter) return false;
+
+        var why = $"nothing was sent: this {op.Kind} stopped between its record and the wire — it had not reached "
+                  + $"the wire {age.TotalSeconds:0}s after it was written, past the {DispatchStrandedAfter.TotalSeconds:0}s "
+                  + "a dispatch can take — and TradeAgent settled it so that nothing will ever send it";
+
+        if (request is null)
+        {
+            if (StrandedRowOf(deployment, op) is not { } row || !_requests.TryCreate(row).Created) return false;
+        }
+
+        try
+        {
+            _requests.Transition(op.RequestId, ExecutionState.CREATED, ExecutionState.CANCELLED,
+                needsReconciliation: false, markReconciled: true, error: why);
+        }
+        catch (TradeAgentException ex) when (ex.Code == ErrorCode.ILLEGAL_STATE_TRANSITION)
+        {
+            // THE DISPATCHER WON: the row reached DISPATCHING first and is read off like any other.
+            return false;
+        }
+
+        _log.TryEngineering("Gateway", "deployment_dispatch_stranded", "warn", requestId: op.RequestId,
+            metadataJson: Json.Write(new { deployment = deployment.Id, kind = op.Kind, age_seconds = age.TotalSeconds }));
+        return _deployments.Refuse(op.RequestId, why, now);
+    }
+
+    /// <summary>
+    /// The row a dispatcher of this operation would have written, as far as the operation says: the run's
+    /// identity, its platform, account and instrument, the operation's own intent and its own <c>TA-</c> id —
+    /// or null because the run's mode is not a word this build knows, which is refused rather than guessed.
+    /// </summary>
+    ExecutionRequest? StrandedRowOf(StrategyDeploymentRow deployment, DeploymentOpRow op)
+    {
+        if (!Enum.TryParse<TradingMode>(deployment.Mode, ignoreCase: false, out var mode)
+            || !Enum.IsDefined(mode)) return null;
+
+        var cancel = string.Equals(op.Kind, DeploymentOpKind.Cancel, StringComparison.Ordinal);
+        return new ExecutionRequest
+        {
+            RequestId = op.RequestId,
+            AgentSessionId = AgentContext.Deployment(deployment.Id).SessionId,
+            ConnectorId = deployment.ConnectorId,
+            AccountId = deployment.AccountId,
+            Instrument = cancel ? "-" : deployment.Symbol,
+            Intent = cancel ? RequestIntent.CANCEL : RequestIntent.PLACE,
+            ParametersJson = op.IntentJson,
+            ClientOrderId = ClientOrderIdFor(op.RequestId),
+            CreatedAt = Now,
+            State = ExecutionState.CREATED,
+            Mode = mode,
+            StrategyVersionId = cancel ? null : deployment.VersionId
+        };
     }
 
     /// <summary>
@@ -1216,7 +1325,13 @@ public sealed class TradingGateway : IAsyncDisposable
                 return true;
             }
 
-            if (OrderStateMachine.IsTerminal(request.State))
+            // A ROW THE STORE SETTLED BEFORE IT REACHED THE WIRE, met by this late dispatcher at the replay or
+            // at TryCreate (SettleAStrandedDispatch): nothing was sent by anyone, so it is refused — never
+            // resolved, which would make an exit or an END's close read as answered.
+            if (OrderStateMachine.IsTerminal(request.State) && Deployments.NeverReachedTheWire(request))
+                _deployments.Refuse(requestId, request.LastError ?? $"nothing was sent: the order record is "
+                    + $"{request.State} and never reached the wire", Now);
+            else if (OrderStateMachine.IsTerminal(request.State))
                 _deployments.Resolve(requestId, request.State.ToString(), Now);
 
             return true;
@@ -1245,10 +1360,15 @@ public sealed class TradingGateway : IAsyncDisposable
             // (Deployments.NeverReachedTheWire, the one rule the runner reads a refusal by). `DISPATCHING` is
             // written durably before the wire is touched (`DispatchPlaceAsync`), so a record still CREATED when
             // the call threw is a gate that refused BETWEEN the write-ahead row and the wire — DECISION_EXPIRED
-            // is the one this runner meets — and nothing left this process. Reading it as unresolved would hold
-            // the cursor forever over an order that provably does not exist.
+            // is the one this runner meets — and one CANCELLED with no dispatch behind it is the store's own
+            // settle of a stranded dispatch, whose compare-and-swap this late dispatcher lost. Nothing left this
+            // process either way. Reading it as unresolved would hold the cursor forever over an order that
+            // provably does not exist.
             if (Deployments.NeverReachedTheWire(row))
-                _deployments.Refuse(requestId, $"nothing was sent: {why}", Now);
+                _deployments.Refuse(requestId,
+                    row is { LastError: { Length: > 0 } settled } && OrderStateMachine.IsTerminal(row.State)
+                        ? settled
+                        : $"nothing was sent: {why}", Now);
             else if (OrderStateMachine.IsTerminal(row!.State))
                 _deployments.Resolve(requestId, row.State.ToString(), Now);
 
