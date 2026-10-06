@@ -155,10 +155,13 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
         if (existing is null)
             return new DataCollection(null, [], $"There is no {pair} dataset to rebuild.");
 
+        // A FILE THAT COULD NOT BE READ JUST NOW is not a reason to collect anything again: the reason says so,
+        // and the advice is for a dataset the ledger has rejected for good.
         var verified = _store.Checked(existing);
         if (verified.State == DatasetState.REJECTED)
             return new DataCollection(verified, [],
-                $"The {pair} dataset was NOT rebuilt: {verified.RejectedReason}. Collect the months again.");
+                $"The {pair} dataset was NOT rebuilt: {verified.RejectedReason}."
+                + (verified.RejectedThisReadOnly ? "" : " Collect the months again."));
 
         var dir = System.IO.Path.GetDirectoryName(verified.NormalisedPath) ?? "";
         var staged = Staged(dir);
