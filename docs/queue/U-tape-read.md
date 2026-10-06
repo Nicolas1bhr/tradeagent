@@ -1,11 +1,11 @@
 # U-tape-read — every role can read the tape, bounded and read-only, and the owner can see it is recording
 **Arrow closed:** tape → agents and owner (`docs/EDGE-FACTORY.md` § 4.1, § 4.9). **Depends on `U-tape-store`.** **Today:** the agent-facing data surface is
-`data-list` and `data-bars` (`Core/Protocol.cs:47`), handled in `GatewayPipeServer.cs` (drain table `:331-332`, dispatch `:1228-1229`); a new op needs a
-drain-table row (`HandlerPaths`, `:308`), which `GatewayPipeBackpressureTests.cs:1083` and `PnlOverPipeTests.cs:188` enforce. **Observable result:** an agent runs `trade data tape --source binance-um-oi --subject
+`data-list` and `data-bars` (`Core/Protocol.cs:47`), handled in `GatewayPipeServer.cs` (drain table `:331-332`, dispatch `:1233-1234`); a new op needs a
+drain-table row (`HandlerPaths`, `:308`), which `GatewayPipeBackpressureTests.cs:1084` and `PnlOverPipeTests.cs:186` enforce. **Observable result:** an agent runs `trade data tape --source binance-um-oi --subject
 BTCUSDT --from … --as-of …` and gets at most 5,000 rows, each with source time, arrival time, revision, class and payload; `trade data list` names every
 tape series with first and last arrival, rows and last error; `status` and the daily report show whether the tape is recording; nothing can write it.
 **No schema change.**
-**Since this brief (re-checked at dispatch, 2026-10-06, after `U-tape-events` and `U-tape-archive` landed):** (i) an item `TapeScreen` quarantines is
+**Since this brief (re-checked after `U-tape-events` and `U-tape-archive` landed; pointers again at `9cd0f5e5`, 2026-10-06 21:55):** (i) an item `TapeScreen` quarantines is
 served to EVERY audience WITHOUT its payload and WITH its `Quarantine` (rule, version) — `AsOf` already withholds; no new read path may bypass it; (ii)
 announcement and GDELT series key their subjects by a URL digest or a GKG record id, so `--subject` is OPTIONAL: without it, every subject of the series in
 from–to, newest arrival first, under the same limit; `data-list` names such series without enumerating subjects; (iii) GDELT's terms require credit with a
@@ -14,8 +14,8 @@ link wherever its data is used or shown: every answer and `data-list` entry hold
 switches record now ("Record market context", "Record GDELT news"): `status` reports each recorder's switch, last arrival, failures and whether GDELT's
 daily cap stopped it today.
 Read first: `CLAUDE.md`; `Core/Protocol.cs:14-141` (the op table and its comments — "an agent that could edit the provenance…"); `GatewayPipeServer.cs:300-360,
-1180-1240,2640-2820` (`data-list` / `data-bars` handlers: the pattern, the caps, the role handling); `Gateway/GatewaySchema.cs`; `TradeCli/Program.cs` (the
-`data` verbs); `GatewayTypes.cs:398` (`GatewayStatus`); `TradingGateway.cs:2631` (`StatusAsync`); `Gateway/DailyReport.cs:547-752`; `DatasetReader.cs:49-86`
+1180-1245,2640-2900` (`data-list` / `data-bars` handlers: the pattern, the caps, the role handling); `Gateway/GatewaySchema.cs`; `TradeCli/Program.cs` (the
+`data` verbs); `GatewayTypes.cs:398` (`GatewayStatus`); `TradingGateway.cs:2694` (`StatusAsync`); `Gateway/DailyReport.cs:547-752`; `DatasetReader.cs:49-86`
 (the required audience argument); the `TapeStore` as landed (`AsOf` `TapeStore.cs:558`).
 Items, one commit each, one-sentence messages:
 1. Op `data-tape` (read-only, every role) with a drain-table row: arguments source, series, subject, from, to, as-of, limit (≤ 5,000, default 1,000);
