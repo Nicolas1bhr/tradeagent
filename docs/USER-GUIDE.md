@@ -350,7 +350,9 @@ address it came from. It reads public market data, needs no key and places nothi
 once to stop and once more to start again. **Nothing in it is ever overwritten**: if Binance later
 changes a reading TradeAgent already has, the change is kept as a new revision beside the first, so what
 TradeAgent knew at a given moment stays apart from what it learned later. A reading that arrived on time
-from Binance's own address is marked *live*; a late one, or one from anywhere else, is marked *archive*.
+from its source's own address — Binance's futures host for this market data, OKX's EU domain for its
+announcements, GDELT's data host for the news below — is marked *live*; a late one, or one from anywhere
+else, is marked *archive* (a GDELT file fetched late can be marked *point-in-time* instead, below).
 Like the live bars it cannot be caught up later — it is recorded only while TradeAgent is running — and
 it is context for research, never what a strategy is judged on. The AI cannot start, stop or change it.
 
@@ -363,6 +365,26 @@ every announcement each time it is read, and one that looks addressed to an AI i
 its text is withheld when the tape is read for the AI. The check catches the common tricks, not
 every one, and an announcement it does not flag is not thereby safe. Bybit's announcements are not recorded:
 TradeAgent could not read Bybit's terms for them.
+
+**Record GDELT news** is the fourth, and it is **on to start with** too. While TradeAgent is running it
+records news items about crypto from the GDELT Project (<https://www.gdeltproject.org/>), a free and open
+record of what the world's news media report, published as one file every fifteen minutes. TradeAgent reads
+each file once, from GDELT's own address, keeps only the items about Bitcoin, Ethereum, Solana, Binance, BNB,
+XRP, Ripple or Dogecoin, and throws the rest away. It never keeps the files themselves — only, for each one, a
+record of its checksums, size and address, so what it read can be shown later without them. Each item keeps
+the time GDELT first saw it, an item GDELT changes later is kept beside the first, and the links in them are
+never opened. When TradeAgent starts it also fetches the files it missed while it was closed, up to seven days
+back. **It is the heavy one**: GDELT's files come to about 420 MB a day of download (measured on 6 October
+2026), of which TradeAgent keeps about 7 MB and never more than 25 MB a day — when a day's items reach that,
+TradeAgent stops reading that day's files and the activity log says so. On a metered connection, press the button once to stop
+it; the rest of the market context goes on. An item read on time from GDELT's address is marked *live*; one
+fetched later is marked *point-in-time* when GDELT's own checksum matches and its file was published before its
+time, and *archive* otherwise. Items are checked like announcements: one that looks addressed to an AI is kept
+but flagged, and withheld when the tape is read for the AI. It is context for research, never what a strategy
+is judged on, and the AI cannot start, stop or change it. GDELT's terms let anyone use its data, commercially
+included, as long as the GDELT Project is credited with a link to its site — so wherever TradeAgent shows these
+items, it says where they came from. Binance's own archive of market statistics is not recorded: its terms
+allow research but not a product that trades real money without a written licence.
 
 **The terms the history came under.** Binance now publishes its archive under the *Binance Vision Dataset
 Terms* (version 1.0, CC BY-NC-SA 4.0). They allow backtesting for personal research and do not allow live

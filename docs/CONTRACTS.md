@@ -2704,15 +2704,16 @@ and a pressed kill switch all leave it collecting, because evidence is not a pai
 and no pipe op that starts it, stops it, points it somewhere else or writes a row; the owner's one-press
 toggle on the Settings page is the only control, and it is in-process.
 
-## The tape — `src/TradeAgent.Core/Db/TapeStore.cs`, `Data/Tape.cs`, `Data/TapeSourceCatalog.cs`, `Data/TapeParse.cs`, `Data/TapeScreen.cs`, `Provisioning/TapeCollector.cs`
+## The tape — `src/TradeAgent.Core/Db/TapeStore.cs`, `Data/Tape.cs`, `Data/TapeSourceCatalog.cs`, `Data/TapeParse.cs`, `Data/TapeScreen.cs`, `Data/GdeltGkg.cs`, `Provisioning/TapeCollector.cs`, `Provisioning/GdeltRecorder.cs`
 
 **What it is.** While the app runs, TradeAgent records the market's context — Binance USDⓈ-M premium index
 with the live funding rate, open interest, the 5-minute long/short and taker ratios, settled funding — for
 six symbols into `state/tape.db` (`U-tape-store`; `docs/EDGE-FACTORY.md` § 4.1) — and OKX's announcements for
 EU users, page 1 once a minute, each screened at every read for text addressed to an automated reader
-(`U-tape-events`; § 4.2). It places no order, holds no credential and reaches nothing that could: every request
-is an unauthenticated GET of a public endpoint.
-Reading the tape for agents and status is `U-tape-read`; history backfill is `U-tape-archive`.
+(`U-tape-events`; § 4.2) — and GDELT's news items about crypto, from its fifteen-minute GKG files, with GDELT's
+own first-seen time, on a switch of their own (`U-tape-archive`). It places no order, holds no credential and
+reaches nothing that could: every request is an unauthenticated GET of a public endpoint.
+Reading the tape for agents and status is `U-tape-read`.
 
 **ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
 `Versions.DatabaseSchemaVersion` does not move for it: its own connection, WAL, `synchronous=FULL`,
@@ -2751,8 +2752,21 @@ publication delay plus 30 s after its source time, and no earlier than the caden
 delay is 300 s for OKX's announcements, whose answer OKX documents may lag ~5 minutes, and 0 for every market
 row); everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
 included), and every row `tape-sources.json` added, at any address. A later revision is never above the one
-before it. `O-PIT` is `U-tape-archive`'s and `O-HIND` is never written here; both are in the column's `CHECK`
-so those units add a writer, not a table rebuild.
+before it. `O-PIT` is written only for a file of a vendor's checksummed archive (`AppendArchive`, below);
+`O-HIND` is never written here and stays in the column's `CHECK` for the unit that adds its writer.
+
+**CLAIMED — AN ARCHIVE FILE (`U-tape-archive`, `AppendArchive`).** One file is one transaction: the attempt, the
+file's own record (series `gkg-batch`, subject `gdelt`, source time the label) and its kept rows. The record's
+payload is the file's URL, size, the MD5 the vendor published, the MD5 and SHA-256 this build computed, the storage's
+Last-Modified, the rows the file held, the kept count and kept bytes the STORE counted, and the filter — no arrival
+instant, which is the row's own `received_at`, so the same file read twice is the same record and the second
+reading writes its attempt and nothing else; a rebuilt file is the record's `revision + 1`. A row not at its file's
+label, a row named twice or a malformed record is refused before the transaction opens. Every row of the file is
+classed there and only there: `O-LIVE` by the rule above with the label as source time (900 s cadence, so within
+930 s either side); else `O-PIT` iff the built-in row, its own origin, the published MD5 equal to this build's, and a
+Last-Modified no later than the label — the vendor's storage dates the file no later than the first-seen time it
+declares; else `O-ARCH`; never above the revision before it. `TapeArchiveStoreTests` watches the Last-Modified
+condition's mutant go red.
 
 **CLAIMED — THE ANNOUNCEMENTS (`U-tape-events`).** One built-in row, `okx-eea-announcements`: `GET
 https://eea.okx.com/api/v5/support/announcements`, page 1 (the twenty newest by first publication, about a
@@ -2766,9 +2780,33 @@ fetched. The row carries its terms basis — OKX's API Agreement (28 July 2026) 
 the Terms of Service – EEA § 1.14 incorporate — re-read on 2026-10-06 (`docs/RESEARCH-REQUIRED.md`, C5d).
 Bybit's are not recorded: its EU terms could not be re-read on the day, so it has no terms basis.
 
-**CLAIMED — THE SCREEN (`TapeScreen` v1).** Every observation read carries `Quarantine`: null, or the rule and
+**CLAIMED — GDELT'S NEWS ITEMS (`U-tape-archive`).** One built-in archive row, `gdelt-gkg` on `https://data.gdeltproject.org`,
+read by `GdeltRecorder` on the owner's own **Record GDELT news** switch (default ON, one press, in-process; off, it asks
+nothing and writes nothing) — never by the tape's poller. At each label + 2 s it reads `/gdeltv2/lastupdate.txt` (≤ 4 KB)
+for the GKG file's label, size and MD5 only, refusing a line that does not name GDELT's own host and a
+`<14 digits>.gkg.csv.zip` file at a fifteen-minute label, and asks for the file at the address the LABEL builds on its own
+origin: the listed address is never fetched. A file is streamed once (≤ 16 MB, 120 s leash, no redirect, no
+decompression on the way) through MD5, SHA-256 and `GdeltGkg`: its one deflated entry `<label>.gkg.csv`, every row's
+GKGRECORDID and V2.1DATE its label's or the file is refused; the filter `gkg-crypto-v1` keeps a row whose themes name
+`ECON_BITCOIN`, or whose names (`V1PERSONS`, `V1ORGANIZATIONS`, `V2.1ALLNAMES`) or page title name Bitcoin, Ethereum,
+Solana, Binance, BNB, XRP, Ripple or Dogecoin as a word; a kept row is its 27 codebook-named fields whole (≤ 64 KB, UTF-8
+throughout, or the file is refused), subject its GKGRECORDID, source time the label; a row the filter does not keep is
+read leniently and dropped. The file is appended only once its MD5 equals the one GDELT published — the listing's live,
+the storage's `x-goog-hash` on the backfill; otherwise its attempt is the only row. A 404 is "not published". **Backfill:**
+once a start, its own task, newest first, at most 96 files the tape holds no record of, none labelled more than 7 days
+ago, at most 500 MB asked in a UTC day counted from the tape (an attempt answered with a body, or cut off, that left no
+record counts at the 16 MB it may have cost), one request
+at a time ≥ 2 s apart with the live loop's doubling backoff. **The daily cap:** the kept rows of one UTC day's files (by
+label) take at most 25 MB; a file that would pass it is not stored, no more of that day's files are asked for while the
+app runs, and an activity line says so. **No raw bytes are kept**: no file is written; the record stands as proof of
+what was read. Measured on 2026-10-06 (`docs/RESEARCH-REQUIRED.md`, C5e): about 420 MB a day on the wire, 6.9 MB a day
+kept. GDELT's terms ask every use to cite the GDELT Project and link to its site: the row's `Citation`, which the Market
+data card and the user guide show and `U-tape-read` must show wherever these items are shown.
+
+**CLAIMED — THE SCREEN (`TapeScreen` v2).** Every observation read carries `Quarantine`: null, or the rule and
 the screen version, never the text — computed at that read from the payload's decoded property names and
-string values and stored nowhere, so a later screen reads every row ever recorded and nothing written into the
+string values, their character references resolved since v2 (`&#x200B;`, `&lt;`, `&amp;lt;` — GDELT writes its titles
+inside XML that way), and stored nowhere, so a later screen reads every row ever recorded and nothing written into the
 file marks one clean. Quarantined: any zero-width, bidirectional-control or tag character; or, once folded
 (this build's own NFKC table — `string.Normalize` is the identity under invariant globalization — case-folded,
 format characters and combining marks dropped), an instruction override, an address to an automated reader or
@@ -2777,7 +2815,7 @@ serves it with a null payload to every audience — the pipe's, and the referee'
 `Revisions` and `ObservationsOf` are in-process and return it whole with its verdict. The rules are code: no
 file, setting or verb adds, removes or relaxes one. It reads every source, the market rows included.
 
-**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b) and the announcement row above:
+**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b), the announcement row and the archive row above:
 `binance-um-premium` (60 s, one call for every symbol, kept to the six), `binance-um-oi` (60 s per symbol),
 `binance-um-oi-5m` and `binance-um-ratios-5m` (300 s), `binance-um-funding` (900 s); the universe is BTCUSDT
 ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms note, doc URL and measurement.
@@ -2785,11 +2823,11 @@ ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms no
 UNKEYED rows — no row type can hold a key and the collector sends none — at a cadence of 60 s to a day. A row
 naming a built-in id is refused in words and the built-in stands as shipped; so is one with a user name, query
 or fragment in its address, an unknown parser, the announcement parser (an exchange's own text must not
-enter the tape from wherever a file row points), an items path or id field, or a malformed series. An unreadable file stops only its own
+enter the tape from wherever a file row points), the archive parser, an items path or id field, or a malformed series. An unreadable file stops only its own
 rows: unlike `sources.json`, the built-ins stand in for nothing it said, and a file anyone can corrupt must not
 be able to switch the tape off.
 
-**THE COLLECTOR.** One loop per row. On the working path the next look is at the next multiple of the row's
+**THE COLLECTOR.** One loop per row, the archive row excepted (it is `GdeltRecorder`'s). On the working path the next look is at the next multiple of the row's
 cadence plus `ForwardBars.LookOffset` (2 s), through `TickAlignment` — the one helper the forward collector
 also looks on; a request is on a 10 s leash; a body over 4 MB is refused; a failing row backs off on a doubling wait
 that stops at 5 minutes and is back on its cadence at the first look that works; a 429 or 418 ends the look at
@@ -2813,6 +2851,15 @@ safe*: look-alike letters from other scripts, a paraphrase, another language or 
 quarantined item ever reaches a model is `U-annotator`'s, and a later reader that serves agents (`U-tape-read`)
 must withhold as `AsOf` does — nothing here makes it. (8) *The sites' terms*: the row's basis is a reading on the
 day, not legal advice; whether selling TradeAgent needs OKX's written authorisation under § 9.3(b) is open (C5d).
+(9) *GDELT's coverage* (`U-tape-archive`): the filter's recall — an item about a coin it does not name, or that GDELT did
+not tag, is not kept; files GDELT skipped, or that were not published, refused or capped, stay missing; history further
+back than 7 days, which no backfill reaches; and any Binance archive — its Dataset Terms (CC BY-NC-SA 4.0, no live
+proprietary trading without a written licence) were read on 2026-10-03, the decision taken for the owner on 2026-10-04
+was to comply, and nothing here asks `data.binance.vision`. (10) *An article's own publication time*: the source time is
+GDELT's label — when GDELT first saw the item — and `PAGE_PRECISEPUBTIMESTAMP` inside the payload is the publisher's claim,
+not checked. (11) *That an `O-PIT` item was knowable at its label*: it rests on GDELT's MD5 and its storage's Last-Modified,
+both GDELT's; reading `O-PIT` as known at its label is `U-features`'. GDELT's items are research context like everything
+else here — no verdict is taken over them — and the screen's limits in (7) hold for them.
 
 ## Data licences — `src/TradeAgent.Core/Data/DataLicence.cs`, `Db/DataLicenceStore.cs`, `Db/DatasetStore.cs`, `Db/AllocationStore.cs`
 
