@@ -8219,3 +8219,44 @@ U-runner-exit-hygiene-a's landing push `a76a30ed`: run 37415393690 success on al
 
 **NOT done, NOT verified:** the recorder never ran against GDELT itself (only `GdeltGkg`, through the measurement harness), so no real `O-LIVE` or `O-PIT`
 row has been seen — the classes are proven at the store; the card not seen on screen; the filter's recall; a restart on a capped day may read one more file.
+
+## 2026-10-06 — U-runner-exit-hygiene-b landed: an exit a gate refused before the wire puts the run's stop and target back on that same minute, and the paper book trades as the spot account it simulates — never short
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-runner-exit-hygiene-b.md` (the second half of seat A's survey at `2a12951c`;
+queued `200acb4c`; amended at dispatch against -a's landing, `fde82e34`; dispatched `3d7b566c`); rebased by the builder onto `21ba16b1`, then by the
+manager onto `a562283a` (docs only between), src+tests patch-id identical. Merge `5f03e81c` (ff-only), 4 commits (3 items + the report), 8 files, +648/−32. No
+schema change. MONEY PATH: the runner and the paper connector; `TradingGateway.cs` untouched; nothing refused is re-sent here (rule 3) — the protection put
+back is new orders under that minute's own ids, through every gate, the stale-close read included.
+
+- **Item 3 (`cb6866b1`):** `ForwardRuns.PutProtectionBackAsync`, last on each live minute, both clocks: while the books, re-read afresh, read long, the run's latest
+  entry, exit or flatten is an exit refused before the wire by `Deployments.RefusedBeforeTheWire` (-a's one predicate, reused) and the maximum hold is not
+  reached, the latest stop and target since the position's entry go back at their own levels, sized from the books, through `RestAsync` — on the refusal's
+  own minute, never while an exit is in flight. **Design (a), ruled by the orchestrator: put back at once, not exit-first** (on the Simulator and ATAS a
+  sell past the position is a short; the SDK has no reduce-only). **Declared deviations, accepted:** (a) PER KIND — the stop goes back while no stop of the
+  run may be working (UNKNOWN counts as working), the target likewise, so a half-refused re-place is asked again; (b) a cheap pre-check (the run wrote an
+  exit and the minute opened long) before the ledger read, so a long catch-up reads nothing more for a run that never exited.
+- **DECLARED GAPS of design (a), the orchestrator's ruling:** (1) the position is unprotected from the exit's cancel to the re-place — on paper the minute
+  in progress, an order being judged from the next bar's open; (2) a gate refusing the re-place too (the rate limit, `POSITION_MOVED`) leaves it unprotected,
+  asked again each live minute, a refused row per order meanwhile; (3) the kill switch, mode or update window engaged between the cancel and the exit refuse
+  the re-place too — unprotected until they lift (engaged before the cancel, they refuse the cancel and keep the protection).
+- **Item 4 (`a01bfbe8`):** `PaperConnector` refuses a sell beyond `PaperBook.HoldingAndWorkingBuys` ("insufficient holdings", a definite refusal); `TryFill`
+  re-reads the holding inside its own transaction and rolls a sell fill beyond it back to a savepoint, the order `REJECTED`, unfilled. The agent's own paper
+  sells beyond the holding are refused too, by design. Reduce-only as a GUARD, (f): every sell the runner or its END sends carries `OrderIntent.Close`, every
+  buy `Open`; the connector half is DEFERRED to the ATAS box — owed before the runner reaches a venue that shorts, or live.
+- **Item 5 (`612dc9c1`):** `CONTRACTS.md` "The runner" (the put-back, its three gaps, why not exit-first, the close intent as the reduce-only hook) and "The paper
+  connector" (never short; NOT claimed: no holding lock — two sells on one holding need an OCO on a real spot venue; buys not held to cash); `USER-GUIDE.md`.
+- **Rewritten, not renamed:** `PaperSettlementTests.A_stop_fills_at_the_open_on_a_gap_a_target_at_its_level_and_both_touched_is_the_stop` sold into an empty
+  book — each half now buys its unit first, assertions unchanged; no other test did (`LossFlatten*Tests` run on the Simulator, untouched).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `208675e1`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1410,
+Fault 436, 0 failed; `ForwardRunnerTests` 3× 25/25, `PaperSettlementTests` 3× 11/11. RED before (src stashed on `2952c285`): (c) "Assert.Single() Failure:
+The collection did not contain any matching items" — exit refused `DECISION_EXPIRED`, both cancels `CANCELLED`, the account `Long/1.000`, nothing working;
+(e) "Assert.Throws() Failure: No exception was thrown". Mutants watched red: (iii) the refused-exit condition dropped ⇒ (d) "Assert.Empty() Failure:
+Collection was not empty" (stop and target WORKING beside the exit in flight); (iv) the fill-time check removed ⇒ (e) "Expected: 0 Actual: -1.000".
+Manager's gate at `12882023` (carried to `5f03e81c`: build tree identical, docs only between`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1410/1410 (8 m 29 s, the slow Mac), Fault 436/436 (1 m 49 s), Integration 721/722, 1 skipped (11 m 13 s) → 0 failed.
+Names vs `main` (git objects): 2199 → 2203, 0 removed, 4 added ([Fact]/[Theory] 2153 → 2157). Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37420566289 at `208675e1` (on `21ba16b1`; docs only since): success on ubuntu-latest (12 min), macos-latest (24 min), windows-latest (53 min),
+package. U-tape-archive's landing push `d89f9cdc`: run 37420286516 success on all three and package. **Tests box:** NOT RUN — `ready` at 11:04 CEST: "NO - the machine does not answer (…)".
+
+**NOT done, NOT verified:** connector-side reduce-only on the Simulator and ATAS (the box's question); how often a catch-up re-places the pair while its exit
+keeps being refused; the put-back and the paper refusal seen in the running app; no box run.
