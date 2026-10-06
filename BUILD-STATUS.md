@@ -8144,3 +8144,39 @@ U-tape-events' landing push `71c8a2b0`: run 37395067722 success on all three and
 **NOT done, NOT verified:** two END callers at once can each send a close (base `TradingGateway.cs:963`, `:989`) — OWED, a probe then a unit, before any live
 use, after -b; a close that MAY have reached the wire is never sent again here (seat P's `U-flatten-confirm`); a dispatch slower than the bound is settled under
 it and sends nothing (a missed order, never a double); the Safety-page list and the new lines were built, not seen in the running app; no box run.
+
+## 2026-10-06 — U-flatten-confirm landed: a loss-budget close whose answer was lost is now settled from the platform's order history when that history finds it, and the book is closed again only once every leg is decided; the data-loss exit no longer charges its own store writes to its budget
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-flatten-confirm.md`, written by seat P's survey. "Absence as proof" was split off at dispatch as `U-flatten-absence`.
+Merge `f461b19f` (ff-only): 3 commits, rebased over U-test-hygiene-1, U-runner-exit-hygiene-a and docs with an identical src+tests patch-id; 10 files, +1356/−63; no rung.
+MONEY PATH: the loss boundary's flatten (`U-flatten-2`), the data-loss exit (`U-flatten-3`) and the health pass. This is `U-fix-loss-reopen`'s owed judgements 2–3.
+The orchestrator ruled on the survey's decisions 1–8 on the owner's behalf: if the book is still open once every leg is decided, it is closed again, not left for the owner.
+
+- **Item 1 (`da11b2b2`):** `CancelWhileUnvaluableAsync` and `ExitLostValuationAsync` open `BeginExcludingTheStore`, so the data-loss exit's budget measures platform time.
+  `RiskReducingScope`'s doc and CONTRACTS say so.
+- **Item 2 (`7d8e1205`):** `ConfirmLostClosesAsync` runs at the start of each health pass (after the account read, before the execution row and the loss watch), and only
+  where `ReconciliationProvable`. For each lost close leg it asks `ReconcileAsync`'s two questions over `ReconcileAsync`'s window: is our id in the history, then are
+  there fills. It never decides from absence. A leg found working or not found stays undecided.
+  When every leg is decided, ONE write-once `loss_flatten_confirm:` record (the verdicts and a fresh read-back of the book) is written BEFORE any row is settled. Then
+  `SettleTheUnresolved`'s two steps run and the outcome's nonces are unflagged. A flat book is confirmed and nothing is sent. A book still open is closed by the same
+  `FlattenForBreachAsync` under a fresh nonce, with its outcome in `loss_flatten_again:` / `…_owed:`. One confirm per breach. `LatestFlattenWord` now feeds `HeldBy`,
+  `FlattenStateToday` and `FlattenFlagFor`; CONTRACTS, the status schema, AGENTS.md and a USER-GUIDE paragraph say so.
+- **Declared deviations, ACCEPTED (orchestrator):** (a) when the day's flatten already closed a symbol, that symbol's "closing again" leaves no word of its own; otherwise
+  a false "closing again" would hold the closure for ever. Its own test went red with that hunk alone (`Expected: "flat" Actual: "unresolved"`). (b) `SettleTheUnresolved`
+  takes only the second step for a row already RECONCILING (a confirm killed mid-settle); every other caller is unchanged. (c) "Only UNKNOWN close legs unresolved" is read
+  strictly: a non-final cancel-half row, or a lost leg the owner has since settled, means no confirm, and that hold stays (`U-loss-hold-release`, owed). (d) A USER-GUIDE paragraph.
+
+**Verified by running (the builder, quoted).** RED before, with the item reverted:
+- (vi) `Expected: 1 Actual: 0` closes, "store held by another : 3004 ms against a 2000 ms budget";
+- (i) `Expected: FILLED Actual: UNKNOWN`; (v) both arms `Expected: FILLED Actual: UNKNOWN` after `FillWorking`;
+- (viii) `Expected: REJECTED Actual: UNKNOWN`, closes 1, ES 1; the one-confirm test the same.
+Guards green at base and after, unchanged: (ii)–(iv), `LossFlattenTests.cs:439`, `LossFlattenOwedTests.cs:372`, `LossReopenTests.cs:194`, `LossReleaseTests.cs:128`.
+Mutant `DecidesALostClose(s) => IsTerminal(s) || s == WORKING` → (v)[LeaveWorking] `Expected: 1 Actual: 2` closes ("Sell 2 CANCELLED", cancels 0 → 1); restored, sha256 equal.
+Builder's gate at `ac62ca92`: Release 0 warnings; Unit 1393/1393, Fault 430/430; `LossFlattenConfirmTests` 3× 10/10; five neighbouring loss classes 3× 28/28 (before the rebase).
+**Manager's gate** at `ec99474e`, carried to `f461b19f` (only docs moved; build tree identical), Release: build 0 warnings, 0 errors; Unit 1394/1394 (7 m 52 s);
+Fault 435/435 (1 m 49 s); Integration 718/719, 1 skipped (11 m 15 s) → 0 failed. Names vs `main`: 2174 → 2182, 0 removed, 8 added (7 tests and the helper `Seam`). Scan clean; no trailers.
+**CI:** branch run 37396439616 at `ac62ca92` (the code tip): ubuntu ✓ 12 m, macOS ✓ 16 m, windows ✓ 52 m, package ✓ (read by the manager with `gh run view`).
+Tests box: NOT RUN — "the machine does not answer" (the builder's check and the manager's at landing). Landing CI: a waiter is armed.
+**NOT done, NOT verified:** ATAS (no box). That its lost closes mostly stay undecided is read from the adapter's code, not run. No test kills a pass between the
+confirm record and the settle, or fails the confirm write. Owed separately: absence as proof (`U-flatten-absence`), the data-loss exit's own lost close
+(`U-valuation-close-confirm`) and a closure held after the owner settles a lost leg (`U-loss-hold-release`). The app was not run.
