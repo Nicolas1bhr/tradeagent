@@ -11,8 +11,8 @@ build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/
 
 | Seat | Decides | Never |
 |---|---|---|
-| **Orchestrator** (the main session, holding the owner's own seat over the build — § below) | which seats exist (at most two manager seats at a time) and their units; the waves, the builder allotment and the schema rungs; cross-seat conflicts and rulings on the owner's behalf; every question to the owner; the heartbeat; memory, this file and the `docs/RESUME-HERE.md` "Do this first" block | product code; running a builder; landing a unit |
-| **Top-level manager** (one per seat, a fresh Opus agent) | inside its units: re-check the brief, dispatch, brief builders, judge reports, fresh fixers, land, record, read CI per sha; CARD briefs just before their turn, from a survey leg | product code; another seat's units or worktrees; asking the owner anything |
+| **Orchestrator** (the main session, holding the owner's own seat over the build — § below) | what sits ABOVE the seats, on the owner's behalf: which seats exist (at most two at a time) and their lanes; the session's priorities across seats, the builder allotment and the schema rungs; cross-seat conflicts; the channel to the owner; the heartbeat; memory, this file and the `docs/RESUME-HERE.md` "Do this first" block | product code; running a builder; landing a unit; deciding inside a manager's lane |
+| **Top-level manager** (one per seat, a fresh Opus agent) — a top-level manager in the full sense of the older standard | everything inside its lane: which units to brief, run and land and in what order within the session's priorities, and the units it judges owed; how each is briefed and built; every report and every deviation judged; surveys, fixers and fresh fixers; landing, the record, CI per sha | product code (its builders write it); another seat's lane |
 | **Builder · fixer · survey leg** (fresh Opus, spawned by a manager) | how to build its one unit: one brief, one worktree, one pass | anything outside its brief; `main` |
 
 Every agent is Opus (`model: "opus"`), by the owner's choice. A manager runs its builders itself (the Agent tool works one level down; two builders in
@@ -38,7 +38,8 @@ so this orchestration position becomes the standard."
 
 - **What it is.** The main session holds the owner's own seat over the BUILD. It runs at most two top-level manager seats at a time (a third, such as seat
   M for a milestone, opens when one closes); it decides sequencing, allotments and cross-seat questions on his behalf (the 2026-10-04 delegation:
-  conservative, compliant, reversible, each decision on `fleet/BOARD.md` with its reason, his to overrule); it alone talks to him. It does not hold his
+  conservative, compliant, reversible, each decision on `fleet/BOARD.md` with its reason, his to overrule); it is the channel to him. Its managers are top-level managers in the full sense of the older standard: the orchestrator
+  adds a layer above them and takes nothing from their authority, freedom or judgement inside their lanes. It does not hold his
   authority over money, credentials, legal status, paid commitments or anything sent in his name — each still needs his explicit yes — and it changes no
   protection in `CLAUDE.md`. The sibling projects' orchestration standard is inspiration only; `docs/HOW-WE-BUILD.md` and this file govern.
 - **Starting a session** (the owner says "you are the orchestrator"): (1) arm the heartbeat, first, since crons die with the session that set them;
@@ -46,13 +47,15 @@ so this orchestration position becomes the standard."
   5-hour window and its reset (the weekly figure is reported, not rationed); (4) the state — `fleet/BOARD.md`, `fleet/status/`, `fleet/handoff/`,
   `git log origin/main`, `git worktree list`, `fleet/bin/lock.sh status`, `gh run list`, the resume block, `tools/win-state.sh` and
   `TA_WIN_BOX=tests tools/win-test.sh ready`; (5) open FRESH manager seats (agent ids die with their session) whose prompts name the charter, handoff and
-  status files, the session's rules and a RANKED job list that overrides the charter's queue where they differ; write the board.
-- **Each wake.** A builder's completion notice reaches the orchestrator, not its manager: the orchestrator DIGESTS the report into the wake message (tips,
-  gate counts, CI per platform, deviations, NOT VERIFIED) with its rulings, so no manager re-reads a transcript. A ruling that does not change what a
-  running agent does waits for that agent's next wake instead of costing one. A red no diff can reach is a FIRST SIGHTING, recorded with its run id and a
-  one-line reading — never "a flake" by assertion (the fleet's Windows-only reds have twice been real defects); one that threatens a protection (money,
-  evidence) gets its survey at once, any other a fixer at its second sighting. The orchestrator reads reports, the board and status files, never code: on
-  2026-10-06 its context stood at 35 % of 1M after eleven hours, never compacted.
+  status files, the session's rules and its priorities across seats — each manager plans its lane from them on its own judgement and says so when it
+  sees a better order; write the board.
+- **Each wake.** A builder's completion notice reaches the orchestrator, not its manager: the orchestrator wakes the manager with the report's facts
+  (tips, gate counts, CI per platform, deviations, NOT VERIFIED) and, where it helps, its view. The manager judges the report itself — the whole report
+  is on the branch — and decides everything inside its lane; the orchestrator rules only on what sits above a seat (priorities across seats, a
+  protection's urgency, a product question the owner's documents leave open) and says which is which. A message that changes nothing for a running agent
+  waits for its next wake instead of costing one. A red no diff can reach is a FIRST SIGHTING, recorded with its run id and a one-line reading — never "a
+  flake" by assertion (the fleet's Windows-only reds have twice been real defects); one that threatens a protection (money, evidence) is surveyed at
+  once. The orchestrator reads reports, the board and status files, never code: on 2026-10-06 its context stood at 35 % of 1M after eleven hours.
 - **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across usage stops: a ONE-SHOT wake at each 5-hour window's
   reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake; deleted when the orchestrator resumes the fleet by hand first) and a RECURRING
   2-hourly backstop. A cron fires only while the session is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac and the
@@ -139,8 +142,9 @@ gate, a known red) is written into the record as a judgement.
 ## Escalation
 
 Builder → its manager (the final report, a blocker named in it). Manager → orchestrator, `SendMessage` to `main`, first line self-contained, for: a landing,
-a blocker, a decision outside the seat, an owner question, a budget or machine problem — routine progress goes in the status file. **Only the orchestrator
-asks the owner,** and only for what he alone can give: real-money authority, credentials, a paid commitment, a release, a product decision the docs leave open.
+a blocker, a decision outside the seat, an owner question, a budget or machine problem — routine progress goes in the status file. **A question for the
+owner travels through the orchestrator,** which carries it to him whole — one voice to him, nothing dropped — for what he alone can give: real-money
+authority, credentials, a paid commitment, a release, a product decision the docs leave open.
 
 ## Rules every seat carries
 
