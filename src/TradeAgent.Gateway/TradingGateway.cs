@@ -6601,6 +6601,90 @@ public sealed class TradingGateway : IAsyncDisposable
             : "its outcome could not be written down");
     }
 
+    /// <summary>
+    /// EVERY MARKET ORDER IN FLIGHT ON THIS PLATFORM AND ACCOUNT THAT HAS GONE STALE, ASKED OF THE PLATFORM'S OWN
+    /// ORDER LIST — on the health pass, and from nowhere an agent can reach (<c>U-inflight-settle</c>).
+    ///
+    /// <para><b>Which rows.</b> Every row <see cref="SettleAnOrderInFlightAsync"/> takes — a PLACE on this platform,
+    /// unflagged, not a press's own, <c>ACKNOWLEDGED</c>, <c>WORKING</c>, <c>PARTIALLY_FILLED</c> or
+    /// <c>CANCEL_PENDING</c> — on this account, that is a MARKET order or unreadable: the rows
+    /// <see cref="ClosesInFlightOn"/> counts on some side. A resting stop or target is not asked about; a market
+    /// order is the one that holds a close.</para>
+    ///
+    /// <para><b>Stale is the reconciler's own clock, and no new number.</b> Past
+    /// <see cref="GatewayOptions.AbsenceGrace"/>, counted from <see cref="AbsenceCountsFrom"/>: the dispatch, or the
+    /// dispatch plus <see cref="DispatchStrandedAfter"/> when this process did not watch it end. Inside it the
+    /// platform's update is still the ordinary answer, and the platform is not asked every five seconds about every
+    /// market order that is merely resting.</para>
+    ///
+    /// <para><b>What a settle does next.</b> It marks the fill pull due, so a fill the stream never reported reaches
+    /// the ledger through <see cref="RecordFill"/> on this same pass, and says so in the engineering log. What is
+    /// undecided is said once per change, as <see cref="Note"/> says the confirm's.</para>
+    ///
+    /// <para>It never throws, except to stop when asked to: a row that cannot be asked about is a row left exactly as
+    /// it was, and the next pass asks again.</para>
+    /// </summary>
+    async Task SettleStaleOrdersInFlightAsync(string accountId, CancellationToken ct)
+    {
+        if (!Connector.Capabilities.ReconciliationProvable) return;
+
+        List<ExecutionRequest> stale;
+        try
+        {
+            stale = _requests.Query("connector_id = $c AND account_id = $a AND intent = 'PLACE' "
+                                    + "AND needs_reconciliation = 0 AND execution_state IN "
+                                    + "('ACKNOWLEDGED','WORKING','PARTIALLY_FILLED','CANCEL_PENDING')",
+                    ("$c", Connector.Id), ("$a", accountId))
+                .Where(r => !IsPressRecord(r.RequestId) && IsAMarketOrderOrUnreadable(r)
+                            && Now - AbsenceCountsFrom(r) >= _opt.AbsenceGrace)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "inflight_settle_failed", "warn", ex: ex);
+            return;
+        }
+
+        foreach (var row in stale)
+        {
+            InFlightAnswer answer;
+            try { answer = await SettleAnOrderInFlightAsync(row, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.TryEngineering("Gateway", "inflight_settle_failed", "warn", requestId: row.RequestId, ex: ex);
+                continue;
+            }
+
+            if (!answer.Settled)
+            {
+                var said = answer.Why;
+                if (!_inflightNotes.TryGetValue(row.RequestId, out var before)
+                    || !string.Equals(before, said, StringComparison.Ordinal))
+                {
+                    _inflightNotes[row.RequestId] = said;
+                    _log.TryEngineering("Gateway", "inflight_undecided", "info", requestId: row.RequestId,
+                        metadataJson: Json.Write(new { why = said }));
+                }
+                continue;
+            }
+
+            _inflightNotes.TryRemove(row.RequestId, out _);
+            _fillPullDue = true;
+            _log.TryEngineering("Gateway", "inflight_settled", "info", requestId: row.RequestId,
+                metadataJson: Json.Write(new { state = _requests.Get(row.RequestId)?.State.ToString(), why = answer.Why }));
+        }
+    }
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _inflightNotes = new(StringComparer.Ordinal);
+
+    /// <summary>A MARKET order, or one whose parameters this build cannot read — which the guard counts too.</summary>
+    static bool IsAMarketOrderOrUnreadable(ExecutionRequest r)
+    {
+        try { return Json.Read<PlaceIntent>(r.ParametersJson) is not { } intent || intent.Type == OrderType.Market; }
+        catch (Exception) { return true; }
+    }
+
     /// <summary>An order in flight's absence: the history no longer lists it, and nothing filled under it.</summary>
     const string InFlightAbsence = "your platform's order history, whose orders carry TradeAgent's reference, lists no "
                                    + "order and no fill under it any more";
@@ -11377,6 +11461,12 @@ public sealed class TradingGateway : IAsyncDisposable
             // inside the pass that sent it. And the execution row below is then computed from rows this
             // has just settled, rather than one pass late. It never throws: see ConfirmLostClosesAsync.
             if (account is not null) await ConfirmLostClosesAsync(account.Id, ct);
+
+            // AN ORDER IN FLIGHT WHOSE PLATFORM UPDATE WAS LOST, READ BACK FROM THE PLATFORM'S OWN ORDER LIST
+            // (U-inflight-settle) — here for the confirm's second reason: the rows below are then computed from
+            // rows it has just settled, and the fill pull it marks due runs on this same pass. It never throws:
+            // see SettleStaleOrdersInFlightAsync.
+            if (account is not null) await SettleStaleOrdersInFlightAsync(account.Id, ct);
 
             var symbol = Settings.Risk.InstrumentAllowlist.FirstOrDefault()
                          ?? (await InstrumentsAsync(ct)).FirstOrDefault()?.Symbol;
