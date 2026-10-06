@@ -8104,3 +8104,43 @@ Tests box: NOT RUN — `ready`: "the machine does not answer" (both the builder'
 **NOT done, NOT verified:** `RiskGateTests.A_day_past_its_loss_budget_refuses_…` (Fault) has the same fault on the UTC day, through `FakeBroker`'s own `UtcNow` (`:146`)
 with no seam; fixing it needs a product change, so it is OWED to seat P as a light unit. Leftover homes on Windows (files held by a child process) were not measured.
 A host killed mid-run still leaves its home to `fleet/bin/purge-test-homes.sh`. An IDE reusing one host for two runs is not handled.
+
+## 2026-10-06 — U-runner-exit-hygiene-a landed: an END whose close a gate refused before the wire stays owed and goes out again, and an order stopped between its record and the wire is over, not a run frozen for good
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-runner-exit-hygiene-a.md` (briefed from a read-only survey at `2a12951c`, split
+in two on the orchestrator's ruling; queued `200acb4c`, dispatched `11a14999`); rebased by the builder onto `69589886`, then by the manager onto `cdb5df85` (U-test-hygiene-1, test infrastructure), src+tests patch-id identical. Merge `fe6a95fd` (ff-only), 4
+commits (3 items + the report), 9 files, +830/−115. No schema change. MONEY PATH: the gateway's deployment ledger and the runner's predicate; every gate
+unchanged; `CLAUDE.md` rule 3 kept — only what provably never left (`dispatched_at` null; `DISPATCHING` is durable before the wire) is settled or sent again.
+
+- **Item 1 (`20b59e1a`):** ONE predicate, `Deployments.RefusedBeforeTheWire` (`refused` over no row or a row never `DISPATCHING`; `NeverReachedTheWire` its
+  row half), read by the runner's books, its exit-sent-again rule and the gateway's END. `CloseAsync`'s null now RESOLVES the flatten ("there was nothing to
+  close"). An ended run whose latest flatten was refused before the wire, or that has none, is OWED: each reconcile pass cancels what of it works and closes
+  under a new op, at most once a minute, writing nothing while `TryAuthorizeExecution` refuses its identity or on a moved platform, mode or account; it holds
+  its slot; its line and `status.deployments` say ENDED, NOT closed, the blocker or last refusal (code first), retried each minute, no replacement; the Safety
+  page lists by the same `DeploymentReading.Outstanding`.
+- **Declared deviations, each stricter and tested, ACCEPTED by the orchestrator (2026-10-06):** (a) the slot is counted on platform, account and instrument
+  (`Deployments.OnInstrument`), not the envelope alone — else a re-granted envelope starts a run over an owed close; (b) an owed close waits while another run
+  on that account and instrument is not over or has an unsettled op (`AnotherRunOnItsPosition`); (c) `NeverReachedTheWire` excludes `AWAITING_APPROVAL` (an
+  approval can still send it).
+- **Item 2 (`5581157f`):** an op `dispatched` over a row still `CREATED`, or over none, past `DispatchStrandedAfter` (gateway clock, from the row's or op's
+  `created_at`) is settled BY THE STORE in both passes: `CREATED → CANCELLED` by `Transition`'s CAS ("nothing was sent: …"; with no row, a `CREATED` row goes
+  under the id first) and only the CAS winner refuses the op, so a dispatcher still alive sends nothing; inside the bound nothing happens (a no-row op is no
+  longer refused on sight); a terminal row that never reached the wire reads `refused`, never `resolved`.
+- **Item 3 (`8c613484`):** `CONTRACTS.md` "The runner" states both former NOT-claimed lines as claims, each with what it still leaves; `USER-GUIDE.md`.
+- **For the owner, as the END already was:** an owed close takes the ACCOUNT's whole position in that instrument, so a position of his own there goes with it.
+  ENDs an earlier build wrote over a flat book now read owed: the first pass calls that close once — flat, it resolves (no shim, the owner's 2026-10-05 rule).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `ae76b660`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1393,
+Fault 425, 0 failed; `PaperDeploymentTests` 3× 11/11; Integration `ForwardRunnerTests`+`SweepRequestIdTests` 66/66 before its rebase. RED before (base
+`11a14999`): (a) "Expected: 0 Actual: 1" — "while owed: started 1", status "not listed", position 1, no second flatten; (c) "Expected: 2 Actual: 1". On the
+item-1 tip: (b) "Expected: 0 Actual: 1" — past the bound "dispatched", row `CREATED`, released "orders at the wire: 1"; before its row "Expected:
+"dispatched" Actual: "refused"". Mutants watched red: (i) the slot free once every op settles ⇒ (a) "Expected: 0 Actual: 1"; (ii) the settle refuses the op
+and leaves the row `CREATED` ⇒ (b) "orders at the wire: 1"; the deviations against (d): per-envelope count, no wait ⇒ each "Expected: 1 Actual: 2".
+Manager's gate at `fe6a95fd`, Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1394/1394 (7 m 53 s, the slow Mac), Fault 425/425 (1 m 46 s), Integration 718/719, 1 skipped (11 m 15 s) → 0 failed — on the tree with U-test-hygiene-1, which the branch run predates.
+Names vs `main` (git objects): 2170 → 2174, 0 removed, 4 added ([Fact]/[Theory] 2126 → 2130). Scan clean, nothing excluded; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37395589500 at `ae76b660` (on `69589886`): success on ubuntu-latest (12 min), macos-latest (24 min), windows-latest (41 min), package.
+U-tape-events' landing push `71c8a2b0`: run 37395067722 success on all three and package. **Tests box:** NOT RUN — `ready` at 06:26 CEST: "NO - the machine does not answer (…)".
+
+**NOT done, NOT verified:** two END callers at once can each send a close (base `TradingGateway.cs:963`, `:989`) — OWED, a probe then a unit, before any live
+use, after -b; a close that MAY have reached the wire is never sent again here (seat P's `U-flatten-confirm`); a dispatch slower than the bound is settled under
+it and sends nothing (a missed order, never a double); the Safety-page list and the new lines were built, not seen in the running app; no box run.
