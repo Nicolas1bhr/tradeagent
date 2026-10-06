@@ -1036,9 +1036,29 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   presses (Close all positions, the loss flatten and its close-again, the data-loss exit) do not read
   this rule, so a press while a close rests still sizes a second close beside it — the press's
   settle-before-send is to take such an order as it takes an `UNKNOWN` one, after
-  `U-fix-press-budget`; a `WORKING` row this platform's stream never moves — a fill or a cancel the
-  platform never reports — holds that position's closes until the row is settled; and a fill the
-  platform's position read has not caught up with is seen by neither rule.
+  `U-fix-press-budget`; and a fill the platform's position read has not caught up with is seen by
+  neither rule.
+- **And a row this platform's stream never moves is read back from the platform's own order list**
+  (`U-inflight-settle`) — a fill or a cancel the platform never reports: the ATAS bridge drops an
+  event it has no peer for and nothing replays it, the simulator's book fills and cancels without
+  raising one. On the health pass, once the row is stale on the reconciler's own clock (its dispatch,
+  plus `DispatchStrandedAfter` when this process did not watch it end, plus `AbsenceGrace`), every
+  `PLACE` market order — or one whose parameters cannot be read — on this platform and account that is
+  unflagged, not a press's own and `ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED` or `CANCEL_PENDING` is
+  asked about, and only where the connector claims `ReconciliationProvable`. It settles only from a
+  FINAL answer the platform asserts, through the stream's own writer: the order under its client id in
+  a terminal state, that state and that fill; fills under its id, `FILLED`; and no order and no fill
+  only where absence decides (`ReconciliationProvable` and `ClosesCarryClientOrderId` — paper and the
+  simulator, never ATAS) and past the clock, `CANCELLED`, with a last error that names the empty
+  history and never says it did not reach the platform. A fill enters the ledger only through the fill
+  pull a settle marks due. A live answer, a read that throws, an unprovable connector or an absence
+  that decides nothing changes nothing, and nothing is sent, re-sent, cancelled, flagged or paused by
+  it; the refusal above lifts once the row has its answer. **Still NOT claimed**: on ATAS, a filled
+  order the platform no longer lists under our id and whose fill it does not list under it either
+  holds that position's closes until the owner settles the row — absence decides nothing there — and
+  whether ATAS still lists a filled `PLACE` market order under its id after a bridge drop has not been
+  measured on the box; and a fill the platform's position read has not caught up with is still seen
+  by neither rule.
 - **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
   computes a side and a size from a reading and sends a market order for them, so a reading that is
   stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it

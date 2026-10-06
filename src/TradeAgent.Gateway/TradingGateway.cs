@@ -6756,7 +6756,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"the same way this one would. It moves nothing until it fills, so this one, sized from the " +
                 $"position as it reads now, would close {symbol} twice, and it is not sent. Nothing was sent and " +
                 $"the position is untouched. It goes out once {inFlight.RequestId} has an answer: ask again after " +
-                "it has filled, been cancelled or been rejected, and it is sized against whatever is left.");
+                "it has filled, been cancelled or been rejected, or once TradeAgent reads its outcome from the " +
+                "platform, and it is sized against whatever is left.");
     }
 
     /// <summary>
