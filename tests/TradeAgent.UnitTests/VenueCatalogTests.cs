@@ -297,7 +297,8 @@ public class VenueCatalogTests
         var store = new DatasetStore(db);
 
         store.Record(Collected() with { VenueId = VenueCatalog.BinanceSpot, InstrumentSymbol = "BTCUSDT" });
-        store.Record(Collected());   // the collector recorded neither
+        // the collector recorded neither — under a label of its own, which the ledger requires of a second row
+        store.Record(Collected() with { Version = "v2" });
 
         var report = gw.Reports.Compose(DateTimeOffset.Now);
 

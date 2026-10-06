@@ -95,8 +95,10 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         // FIRST-PARTY EVIDENCE UNDER A SOURCE NO READING NAMES (`TestEnv.FirstParty`): the live half of this
         // class allocates capital, and archive bars are refused for live a step before it (U-data-licence).
         // Paper on research-only evidence is `DataLicenceTests`' to prove.
+        // THE NEXT LABEL IN THIS LEDGER: a test judges two versions over one ledger, and the ledger refuses a
+        // second row under a (pair, interval, version) it holds.
         var id = datasets.Record(new DatasetRecord(
-            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []) { Licence = TestEnv.FirstParty });
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);

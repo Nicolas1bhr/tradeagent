@@ -274,4 +274,98 @@ public class DatasetLedgerTests
         Assert.Equal("other bytes at the vendor's name", File.ReadAllText(vendorName));
         Assert.Equal("other bytes at the hashed name", File.ReadAllText(hashed));
     }
+
+    /// <summary>
+    /// (iii) TWO LEDGERS, ONE HOME, ONE PAIR — the shape of the windows-latest red (run 37421444199; seat P's
+    /// P1) — AND NEITHER WRITES THE OTHER'S FILES. Ledger B's vendor serves other bytes for every period, so
+    /// its raw files take the hashed names; its dataset file skips the <c>v1.csv</c> ledger A recorded.
+    ///
+    /// <para>RED before: B's press deleted and replaced A's twelve raw files and wrote its own <c>v1.csv</c>
+    /// over A's — each ledger naming its own <c>v1</c> — and A's rebuild was rejected for good.</para>
+    /// </summary>
+    [Fact]
+    public async Task Two_ledgers_collecting_one_pair_in_one_home_never_write_each_others_files()
+    {
+        var pair = TestEnv.NewPair();
+        var months = BinanceArchive.RecentCompleteMonths(Now);
+
+        using var vendorA = new FakeArchive();
+        foreach (var m in months) vendorA.Publish(pair, m, Rows(m));
+        using var dbA = TestEnv.NewDb();
+        var a = new MarketDataService(dbA, new BinanceArchiveClient(vendorA.BaseUrl));
+        var setA = (await a.CollectAsync(pair, Now)).Dataset!;
+        var filesA = setA.Files.Select(f => f.Path).Append(setA.NormalisedPath)
+                         .ToDictionary(p => p, p => File.ReadAllBytes(p));
+
+        using var vendorB = new FakeArchive();
+        foreach (var m in months) vendorB.Publish(pair, m, Rows(m, closePrice: "100.75000000"));
+        using var dbB = TestEnv.NewDb();
+        var b = new MarketDataService(dbB, new BinanceArchiveClient(vendorB.BaseUrl));
+        var setB = (await b.CollectAsync(pair, Now)).Dataset!;
+
+        foreach (var (path, bytes) in filesA)
+            Assert.True(Still(path, bytes), $"ledger B's collection wrote ledger A's file {path}");
+        Assert.Empty(setB.Files.Select(f => f.Path).Append(setB.NormalisedPath).Intersect(filesA.Keys));
+
+        var rebuilt = a.Rebuild(pair).Dataset!;
+        Assert.True(rebuilt.State == DatasetState.ACCEPTED, rebuilt.RejectedReason);
+        Assert.Equal(setA.NormalisedSha256, rebuilt.NormalisedSha256);
+        Assert.Equal(DatasetState.ACCEPTED, b.Store.Checked(b.Store.ById(setB.Id)!).State);
+    }
+
+    /// <summary>
+    /// (iv) AN UNRECORDED <c>v2.csv</c> — what a write that died between its file and its row leaves behind — IS
+    /// SKIPPED, never replaced and never deleted, and the label after it is the next one any write takes.
+    ///
+    /// <para>RED before: the version was the ledger's row count plus one, read before normalising, so the rebuild
+    /// named itself <c>v2</c> and wrote over the file that was already there.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_unrecorded_dataset_file_is_skipped_and_never_written_over()
+    {
+        var (svc, first, _, archive, pair) = await Collected();
+        using var _a = archive;
+        var dir = Path.GetDirectoryName(first.Dataset!.NormalisedPath)!;
+        var orphan = Path.Combine(dir, "v2.csv");
+        const string Left = "what a write that died before its row left behind\n";
+        File.WriteAllText(orphan, Left);
+
+        var rebuilt = svc.Rebuild(pair).Dataset!;
+        Assert.Equal(Left, File.ReadAllText(orphan));
+        Assert.Equal("v3", rebuilt.Version);
+        Assert.Equal(Path.Combine(dir, "v3.csv"), rebuilt.NormalisedPath);
+        Assert.Equal(DatasetState.ACCEPTED, svc.Store.Checked(svc.Store.ById(rebuilt.Id)!).State);
+
+        var next = (await svc.CollectAsync(pair, Now)).Dataset!;
+        Assert.Equal("v4", next.Version);
+        Assert.Equal(Left, File.ReadAllText(orphan));
+    }
+
+    /// <summary>
+    /// THE LEDGER REFUSES A SECOND ROW UNDER A (pair, interval, version) IT HOLDS, IN WORDS, AND WRITES NOTHING:
+    /// a label names one dataset, and a run, a promotion or a campaign that names it must never be able to
+    /// mean two. The same label under another pair or interval is another dataset's.
+    /// </summary>
+    [Fact]
+    public void The_ledger_refuses_a_second_row_under_a_label_it_holds_and_writes_nothing()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new DatasetStore(db);
+        var row = new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            Path.Combine(TestEnv.Home, $"{Guid.NewGuid():n}.csv"), new string('a', 64), 10,
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(9), 0, [], false, 0, 0, 0,
+            DateTimeOffset.UnixEpoch, DatasetState.ACCEPTED, null, []);
+        var id = store.Record(row);
+
+        var refused = Assert.Throws<InvalidOperationException>(() =>
+            store.Record(row with { NormalisedPath = Path.Combine(TestEnv.Home, $"{Guid.NewGuid():n}.csv") }));
+        Assert.Contains("BTCUSDT 1m v1", refused.Message, StringComparison.Ordinal);
+        Assert.Contains($"dataset {id}", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(id, Assert.Single(store.All()).Id);
+
+        store.Record(row with { Interval = "5m" });
+        store.Record(row with { Pair = "ETHUSDT" });
+        Assert.Equal(3, store.All().Count);
+    }
 }

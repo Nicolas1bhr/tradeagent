@@ -276,9 +276,10 @@ public class DataOverPipeTests(ITestOutputHelper log)
         await using var _2 = server;
         await using var _3 = client;
 
+        // A LABEL OF ITS OWN: the ledger refuses a second row under a (pair, interval, version) it holds.
         var recorded = Given(db, "BTCUSDT", 12) with
         {
-            VenueId = VenueCatalog.Simulator, InstrumentSymbol = "ES"
+            Version = "v2", VenueId = VenueCatalog.Simulator, InstrumentSymbol = "ES"
         };
         var id = new DatasetStore(db).Record(recorded);
 
