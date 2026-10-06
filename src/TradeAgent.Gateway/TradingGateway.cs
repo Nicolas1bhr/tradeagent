@@ -6589,8 +6589,9 @@ public sealed class TradingGateway : IAsyncDisposable
             return new InFlightAnswer(false, null, $"your platform holds it as {to}, which TradeAgent's record of it as "
                                                    + $"{req.State} cannot move to");
 
-        var why = $"{verdict.Evidence}; settled by TradeAgent from your platform's own order list, because the "
-                  + "platform's update about it never arrived";
+        // WHAT THE ROW SAYS ABOUT ITSELF, and it names the read: the order list, or the fills under the order's id.
+        var why = $"{verdict.Evidence}; settled by TradeAgent from what your platform lists, because the platform's "
+                  + "own update about it had not arrived";
         if (ApplyAPlatformAnswer(req, to, verdict.ConnectorOrderId, verdict.Filled, why))
             return new InFlightAnswer(true, null, why);
 
