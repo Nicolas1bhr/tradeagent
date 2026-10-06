@@ -330,6 +330,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.MaterialNote, TimeSpan.Zero, "the workspace ledger, in process"),
         new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
         new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
+        new(Core.Ops.DataTape, TimeSpan.Zero, "the tape's own file, opened read-only, one snapshot, on disk"),
         new(Core.Ops.VenueList, TimeSpan.Zero, "the venue catalogue this installation has recorded, in process"),
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
         new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
@@ -1232,6 +1233,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
                 Core.Ops.DataList     => DataList(ctx),
                 Core.Ops.DataBars     => DataBars(ctx, req),
+                Core.Ops.DataTape     => DataTape(ctx, req),
                 Core.Ops.VenueList    => VenueList(),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
@@ -2836,6 +2838,237 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             [.. bars.Select(b => new DataForwardBar(
                 b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume, b.CloseTime, b.ReceivedAt))]);
     }
+
+    /// <summary>
+    /// THE MOST ONE <c>data-tape</c> ANSWER'S ROWS TAKE ON THE WIRE: 4 MiB, each row measured as it is written. A tape
+    /// payload reaches 64 KB, so for GDELT's items and OKX's announcements it is this and not the row limit that stops a
+    /// read; five thousand market rows of a few hundred bytes each fit under it.
+    /// </summary>
+    public const long MaxTapeReplyBytes = 4L * 1024 * 1024;
+
+    /// <summary>
+    /// THE TAPE, FOR EVERY ROLE, BOUNDED AND READ-ONLY (<c>U-tape-read</c>).
+    ///
+    /// <para><b>Every role, and a caller that proved none.</b> The tape is research context: nothing on it is held
+    /// back, no verdict is taken over it, and the audience is the caller's own pipe audience, passed to the reader so
+    /// that a later holdout over the tape applies there without this handler changing. A quarantined item is served to
+    /// every audience with its rule and without its payload — the reader withholds it in the one place
+    /// <c>TapeStore.AsOf</c> does.</para>
+    ///
+    /// <para><b>Bounded, and never silently.</b> At most <see cref="TapeReader.MaxRows"/> rows — a larger limit is
+    /// refused in words, never clamped — and at most <see cref="MaxTapeReplyBytes"/> of rows. An answer either bound
+    /// stopped says which, and hands back the row id that continues it exactly.</para>
+    ///
+    /// <para><b>Validated in words.</b> A source the tape does not know, a series the source does not record, a subject
+    /// the series holds no row of, an unreadable instant and a malformed limit are each refused naming what there is,
+    /// rather than answered with an empty list that would read as "nothing happened".</para>
+    /// </summary>
+    object DataTape(AgentContext ctx, IpcRequest req)
+    {
+        var tape = gateway.Tape
+            ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                "TradeAgent has no market-context tape open, so there is nothing to read. It is opened when "
+                + "TradeAgent starts, and the account owner's activity log says why it could not be; there is no "
+                + "command here that opens, starts or writes it.");
+
+        var sources = tape.Sources();
+        var source = (req.Str("source") ?? "").Trim();
+        if (source.Length == 0)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'source' is required: which of the tape's sources to read — {string.Join(", ", sources)}. "
+                + "'trade data list' names every series with its rows and arrivals.");
+        if (!sources.Contains(source, StringComparer.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{source}' is not a source the tape records. It records {string.Join(", ", sources)}; "
+                + "'trade data list' names every series with its rows and arrivals.");
+
+        var known = tape.SeriesOf(source);
+        string series;
+        if (req.Args is not null && req.Args.ContainsKey("series"))
+        {
+            series = (req.Str("series") ?? "").Trim();
+            if (!known.Contains(series, StringComparer.Ordinal))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'{series}' is not a series of '{source}'. "
+                    + (known.Count == 0 ? "It holds no series yet." : $"It records {string.Join(", ", known)}."));
+        }
+        else if (known.Count == 1) series = known[0];
+        else
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                known.Count == 0
+                    ? $"'{source}' holds no series yet: nothing of it has been recorded."
+                    : $"'{source}' records {known.Count} series — {string.Join(", ", known)} — so 'series' must name one.");
+
+        // THE SUBJECT IS OPTIONAL, and it is checked when it is given: an announcement or a news item is keyed by a
+        // digest or a record id nobody can guess, so leaving it out reads every subject; a subject the series holds no
+        // row of is refused naming what it does hold, never answered with an empty list.
+        string? subject = null;
+        if (req.Args is not null && req.Args.ContainsKey("subject"))
+        {
+            subject = (req.Str("subject") ?? "").Trim();
+            if (!TapeStore.IsSubject(subject))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'{subject}' is not a subject the tape can hold: letters, digits, '.', '_' and '-' only, at most 40. "
+                    + "Leave 'subject' out to read every subject, newest arrival first.");
+            if (!tape.Holds(source, series, subject))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"the tape holds no row of '{subject}' in {source} {series}. {SubjectsOf(tape, source, series)} "
+                    + "Leave 'subject' out to read every subject, newest arrival first.");
+        }
+
+        var from = BarInstant(req, "from");
+        var to = BarInstant(req, "to");
+        if (from is { } lo && to is { } hi && lo > hi)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'from' ({lo:O}) is after 'to' ({hi:O}), which is a window with nothing in it.");
+        var asOf = BarInstant(req, "as_of");
+        var limit = TapeLimit(req);
+        var before = TapeCursor(req);
+
+        var window = tape.Window(BarAudience.Pipe(ctx.Role), new TapeQuery
+        {
+            Source = source,
+            Series = series,
+            Subject = subject,
+            From = from,
+            To = to,
+            AsOf = asOf,
+            Before = before,
+            Limit = limit,
+            MaxBytes = MaxTapeReplyBytes
+        }, o => Encoding.UTF8.GetByteCount(Json.Write(TapeRow(o))));
+
+        var rows = window.Rows.Select(TapeRow).ToList();
+        return new DataTapeReply(
+            source, series, subject, from, to, asOf, limit, rows.Count, window.More, window.CappedBy,
+            window.More ? rows[^1].Id : null,
+            // THE CREDIT TRAVELS WITH THE ROWS. GDELT's terms ask every use of its data to cite the project and link to
+            // its site, so an answer holding GDELT's rows carries the row's own citation, in the row's own words.
+            CitationOf(tape, source),
+            TapeNote, rows);
+    }
+
+    /// <summary>
+    /// What the answer says about itself, once, in words: what a row is, what each class means and what none of them
+    /// is, what a quarantine withholds, the order, the bounds, and how to continue.
+    /// </summary>
+    static readonly string TapeNote =
+        "TAPE — recorded by TradeAgent as it arrived. Each row is one reading of what the source said about one "
+        + "subject at one source time: 'source_time' is the vendor's own time, 'received_at' the instant it arrived "
+        + "here, and 'revision' which reading of that datum it is — a re-reading that differed is a new revision beside "
+        + "the first, and nothing is ever overwritten. 'evidence_class' is computed by TradeAgent from what it recorded: "
+        + "O-LIVE rows only are first-hand, received on time from the source's own address; O-PIT is a vendor's "
+        + "checksummed archive file fetched late whose storage dates it no later than its first-seen time; O-ARCH is "
+        + "anything else fetched after the fact. None of it is evaluation evidence — no verdict is ever taken over the "
+        + "tape — and it is research context, not a record of a trade. A row with a 'quarantine' was flagged by "
+        + "TradeAgent's screen as text addressed to an automated reader: it is served to every caller WITHOUT its "
+        + "payload, and the rule says why. 'payload' is the vendor's item as recorded, canonical JSON text, and "
+        + "'payload_sha256' is TradeAgent's hash of that text. Rows come newest arrival first; 'from' and 'to' bound the "
+        + "source time and 'as_of' the arrival, all inclusive. At most "
+        + $"{TapeReader.MaxRows.ToString("N0", CultureInfo.InvariantCulture)} rows and "
+        + $"{MaxTapeReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of rows a call: when 'more' is true "
+        + "the answer stopped there — 'capped_by' says which bound — and asking again with 'before' set to "
+        + "'next_before' continues exactly where it stopped. Nothing on this channel writes the tape.";
+
+    static DataTapeRow TapeRow(TapeObservation o) => new(
+        o.Id, o.Subject, o.SourceTime, o.ReceivedAt, o.Revision, o.EvidenceClass, o.FetchId, o.PayloadSha256,
+        o.Payload, o.Quarantine);
+
+    /// <summary>
+    /// THE CREDIT A SOURCE'S TERMS ASK FOR WHEREVER ITS DATA IS SHOWN, or null for a source whose terms ask none — the
+    /// catalogue row's own <c>Citation</c>, so the words are the row's and not a second copy of them.
+    /// </summary>
+    static string? CitationOf(TapeReader tape, string source) =>
+        tape.Row(source)?.Citation is { Length: > 0 } citation ? citation : null;
+
+    /// <summary>
+    /// How a series' subjects are keyed, in words, for a refusal: a symbol series names what it holds; an announcement
+    /// or a news series says what its keys are made of, because nobody can guess one.
+    /// </summary>
+    static string SubjectsOf(TapeReader tape, string source, string series)
+    {
+        if (SubjectKey(tape, source, series) is { } keyed) return $"Its subjects are {keyed}.";
+        var held = tape.Subjects(source, series);
+        return held.Count == 0 ? "It holds no row of any subject yet." : $"It holds {string.Join(", ", held)}.";
+    }
+
+    /// <summary>
+    /// WHAT A SERIES' SUBJECTS ARE MADE OF when they are not symbols, or null for a series of symbols: the first 32 hex
+    /// of the SHA-256 of an announcement's <c>url</c>, GDELT's GKGRECORDID for a news item, <c>gdelt</c> for the record
+    /// of each file.
+    /// </summary>
+    static string? SubjectKey(TapeReader tape, string source, string series) =>
+        tape.Row(source)?.Parser switch
+        {
+            TapeSourceCatalog.AnnouncementParser =>
+                "the first 32 hex characters of the SHA-256 of each announcement's url, one per announcement",
+            TapeSourceCatalog.GkgParser when series == GdeltGkg.BatchSeries =>
+                $"'{GdeltGkg.BatchSubject}', one record per GDELT file read",
+            TapeSourceCatalog.GkgParser => "GDELT's GKGRECORDID, one per news item",
+            _ => null
+        };
+
+    /// <summary>
+    /// HOW MANY ROWS ONE ANSWER MAY HOLD: absent is <see cref="TapeReader.DefaultRows"/>; present, a whole number from
+    /// 1 to <see cref="TapeReader.MaxRows"/>, and anything else is REFUSED in words — never clamped, because an answer
+    /// to a different limit is a different answer from the one asked for.
+    /// </summary>
+    static int TapeLimit(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("limit")) return TapeReader.DefaultRows;
+
+        var raw = req.Dec("limit")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 1m || raw > TapeReader.MaxRows)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'limit' is how many rows one answer may hold — a whole number from 1 to "
+                + $"{TapeReader.MaxRows.ToString(CultureInfo.InvariantCulture)} — and '{raw.ToString(CultureInfo.InvariantCulture)}' "
+                + "is not one. Ask for fewer and continue with 'before', which every answer that stopped early hands back "
+                + "as 'next_before'.");
+
+        return (int)raw;
+    }
+
+    /// <summary>The row id a capped answer handed back, or null: a whole number above 0, or a refusal.</summary>
+    static long? TapeCursor(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("before")) return null;
+
+        var raw = req.Dec("before")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 1m || raw > long.MaxValue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'before' is a row id — a whole number above 0, the 'next_before' of an answer that stopped early — and "
+                + $"'{raw.ToString(CultureInfo.InvariantCulture)}' is not one.");
+
+        return (long)raw;
+    }
+
+    /// <inheritdoc cref="DataTape"/>
+    sealed record DataTapeReply(
+        string Source, string Series,
+        // NEVER DROPPED WHEN NULL: "every subject" and "this build has no such field" are different answers, and so
+        // are an unbounded window and a field nobody sent.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Subject,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? AsOf,
+        int Limit, int Count, bool More,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? NextBefore,
+        // NEVER DROPPED WHEN NULL: an answer holding GDELT's rows carries GDELT's credit, and "this source asks for
+        // none" must read differently from a build that forgot to say.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Citation,
+        string Note,
+        IReadOnlyList<DataTapeRow> Rows);
+
+    /// <summary>
+    /// ONE ROW OF THE TAPE ON THE WIRE. <c>payload</c> and <c>quarantine</c> are never dropped when null: a withheld
+    /// payload is a fact about this row, and an absent key would read as a build that has no such field.
+    /// </summary>
+    sealed record DataTapeRow(
+        long Id, string Subject, DateTimeOffset SourceTime, DateTimeOffset ReceivedAt, int Revision,
+        string EvidenceClass, long FetchId, string PayloadSha256,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Payload,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] TapeQuarantine? Quarantine);
 
     /// <summary>
     /// A date on a data request. Absent is null; PRESENT AND UNREADABLE IS A REFUSAL, the same rule

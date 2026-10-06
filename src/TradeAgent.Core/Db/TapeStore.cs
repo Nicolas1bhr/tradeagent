@@ -59,7 +59,8 @@ public sealed class TapeStore : IDisposable
     /// <summary>The most one observation's canonical payload may hold, in UTF-8 bytes.</summary>
     public const int MaxPayloadBytes = 64 * 1024;
 
-    const string ObsCols =
+    /// <summary>The columns <see cref="Obs"/> maps, in its order. Shared with <see cref="TapeReader"/>, which maps them the same way.</summary>
+    internal const string ObsCols =
         "id, source, series, subject, source_time, received_at, fetch_id, natural_key, revision, "
         + "payload_sha256, payload, evidence_class";
 
@@ -570,11 +571,25 @@ public sealed class TapeStore : IDisposable
                 """,
                 ("$src", source), ("$ser", series), ("$subj", subject), ("$t", Sql.T(t)));
             using var r = c.ExecuteReader();
-            if (!r.Read()) return null;
-
-            var o = Obs(r);
-            return o.Quarantine is null ? o : o with { Payload = null };
+            return r.Read() ? Served(audience, Obs(r)) : null;
         });
+    }
+
+    /// <summary>
+    /// THE ONE PLACE A PAYLOAD IS WITHHELD FROM AN AUDIENCE (<c>U-tape-events</c>; <c>U-tape-read</c>): a quarantined
+    /// observation keeps every field and its <see cref="TapeObservation.Quarantine"/>, and loses its payload. Every
+    /// read that takes an audience goes through this — <see cref="AsOf"/> here and <see cref="TapeReader.Window"/>, the
+    /// agent-facing range read — so a door onto the tape cannot serve a quarantined payload by forgetting a line, and
+    /// a later rule about who may see what is a change to this method and not a hunt for every caller.
+    ///
+    /// <para><paramref name="audience"/> decides nothing yet: no audience may read a quarantined payload, the
+    /// referee's included, and whether one ever reaches a model is <c>U-annotator</c>'s decision, to be made by a door
+    /// of its own. It is required so that the decision, when it comes, has one place to live.</para>
+    /// </summary>
+    internal static TapeObservation Served(BarAudience audience, TapeObservation o)
+    {
+        ArgumentNullException.ThrowIfNull(audience);
+        return o.Quarantine is null ? o : o with { Payload = null };
     }
 
     /// <summary>
@@ -651,9 +666,10 @@ public sealed class TapeStore : IDisposable
     /// <summary>
     /// ONE ROW, SCREENED AS IT IS READ. The verdict is computed here at every read and stored nowhere: no
     /// column holds it, so a later version of the screen reads every row ever recorded, and nothing written
-    /// into the file can mark a row clean.
+    /// into the file can mark a row clean. Shared with <see cref="TapeReader"/>, so a row read there is screened by
+    /// the same call.
     /// </summary>
-    static TapeObservation Obs(SqliteDataReader r)
+    internal static TapeObservation Obs(SqliteDataReader r)
     {
         var payload = r.GetString(10);
         return new(

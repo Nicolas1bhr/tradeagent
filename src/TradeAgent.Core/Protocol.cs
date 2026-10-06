@@ -47,6 +47,21 @@ public static class Ops
     public const string DataList = "data-list", DataBars = "data-bars";
 
     /// <summary>
+    /// THE MARKET-CONTEXT TAPE, AND IT IS A READ (<c>U-tape-read</c>). One series of one source, newest arrival first,
+    /// each row with its source time, its arrival instant, its revision, its evidence class and its payload as recorded
+    /// — at most <c>TapeReader.MaxRows</c> rows and a byte cap, and an answer either bound stopped says so. For every
+    /// role, and for a caller that proved none: the tape is research context and holds nothing held back.
+    ///
+    /// <para>There is no op that writes the tape, and deliberately none, for the reason <see cref="DataList"/> has
+    /// none: an agent that could edit what was known when could make any idea look as though it had been knowable. The
+    /// gateway reads it through a connection SQLite itself opens read-only; the app's collectors are its only writers,
+    /// on the account owner's two switches, in-process. A quarantined item is served without its payload, to everyone.</para>
+    ///
+    /// <para>It is NOT in <see cref="Mutating"/>: it sends nothing to a broker and writes nothing at all.</para>
+    /// </summary>
+    public const string DataTape = "data-tape";
+
+    /// <summary>
     /// THE VENUE CATALOGUE, AND IT IS A READ. What instruments this installation knows of, on which
     /// venue, with what price grid and what quantity step — and, on every row, who said so and whether
     /// anything has CONFIRMED it against the venue's own instrument definition.
