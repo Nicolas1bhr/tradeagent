@@ -1023,7 +1023,11 @@ say what happened to it: it will not send that order again, and it will not star
 until you or the platform settle it on the Dashboard. **Stop paper deployment** ends the run in one
 press plus a confirm — it cancels whatever that run has working, closes whatever it has open, and
 records why. It stops the *run* and not the grant: the envelope and the paper allocation stand, so
-TradeAgent may start a fresh run under them once the ended one is fully accounted for.
+TradeAgent may start a fresh run under them once the ended one is fully accounted for. If the close
+could not go out when the run ended — TradeAgent was installing an update, AI trading was stopped,
+the platform was not answering — the line says the run is ended and **NOT closed**, and why. Nothing
+was sent, so TradeAgent sends that close again by itself, at most once a minute, as soon as nothing
+refuses it, and starts no fresh run on that account and instrument until the position is closed.
 
 ## If TradeAgent says your settings could not be read
 
