@@ -1164,13 +1164,56 @@ public sealed class TradingGateway : IAsyncDisposable
     /// grant or the verdict goes, and the version's own role over the pipe — ending only ever REMOVES
     /// exposure, which is the same exception this product already makes for <c>close</c> and
     /// <c>cancel</c>. Nothing here can start one, widen one or move it somewhere else.</para>
+    ///
+    /// <para><b>And a run is ended once</b> (<c>U-close-once</c>). Those callers overlap — the owner's Stop
+    /// and the agent's <c>deployment-stop</c> arrive at the same moment, and the reconcile pass and the
+    /// runner's fault end are on the background loop beside them — so the END holds its run's own gate
+    /// (<see cref="EndGateOf"/>) from the re-read of its row to its last write. A second END while one is in
+    /// progress says so in the engineering log, waits for it, re-reads the row and answers the run as the
+    /// first left it: it writes no operation and cancels nothing. Without it the second END wrote a flatten
+    /// of its own — sent beside the first's, which rested, and a long 1 became a short 1; or refused, and its
+    /// refusal became the run's latest word, "NOT closed" over a book the first close had flattened, and the
+    /// next pass cancelled that close to close again. The wait is on this run only.</para>
     /// </summary>
     public async Task<StrategyDeploymentRow?> EndPaperDeploymentAsync(string id, string reason,
         CancellationToken ct = default)
     {
-        if (_deployments.ById(id) is not { } deployment) return null;
-        if (deployment.IsEnded) return deployment;
+        if (_deployments.ById(id) is not { } first) return null;
+        if (first.IsEnded) return first;
 
+        var gate = EndGateOf(first.Id);
+        if (!await gate.WaitAsync(0, ct))
+        {
+            _log.TryEngineering("Gateway", "deployment_end_waits",
+                metadataJson: Json.Write(new { deployment = first.Id, reason }));
+            await gate.WaitAsync(ct);
+        }
+
+        try
+        {
+            // THE ROW RE-READ INSIDE THE GATE: an END that finished while this one waited has answered it.
+            if (_deployments.ById(id) is not { } deployment) return null;
+            return deployment.IsEnded ? deployment : await EndInsideItsGateAsync(deployment, reason, ct);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>
+    /// ONE GATE PER RUN, over its END and its owed close (<c>U-close-once</c>): the END waits on it, and the
+    /// background loop's owed close only tries it, so neither ever waits on another run. Never disposed — no
+    /// wait handle is ever taken from one, so there is nothing to release — and one per run this process has
+    /// ended or finished, which is a handful.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _endGates =
+        new(StringComparer.Ordinal);
+
+    SemaphoreSlim EndGateOf(string deploymentId) =>
+        _endGates.GetOrAdd(deploymentId, _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>The END itself, inside its run's gate on a row read there (see <see cref="EndPaperDeploymentAsync"/>).</summary>
+    async Task<StrategyDeploymentRow?> EndInsideItsGateAsync(StrategyDeploymentRow deployment, string reason,
+        CancellationToken ct)
+    {
         if (DeploymentMovedFrom(deployment) is { Length: > 0 } moved)
         {
             _deployments.Suspend(deployment.Id, moved);
@@ -1258,8 +1301,28 @@ public sealed class TradingGateway : IAsyncDisposable
     /// close sent where the run was not started is an order on somebody else's book. <b>And not while another run
     /// trades the same position</b> (<see cref="AnotherRunOnItsPosition"/>): the close is of the account's whole
     /// position in the instrument, and sent later than the END it could close that run's position under it.</para>
+    ///
+    /// <para><b>And not while an END or another owed close of this run is in progress</b> (<c>U-close-once</c>):
+    /// it takes the run's gate (<see cref="EndGateOf"/>) only if it is free, so this pass writes nothing and
+    /// cancels nothing beside one — and the background loop never waits — and the next pass reads what that one
+    /// left, on the run's row and operations re-read inside the gate.</para>
     /// </summary>
     async Task<bool> FinishAnOwedEndAsync(StrategyDeploymentRow deployment, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var gate = EndGateOf(deployment.Id);
+        if (!await gate.WaitAsync(0, ct)) return false;
+
+        try
+        {
+            return _deployments.ById(deployment.Id) is { } current
+                   && await FinishAnOwedEndInsideItsGateAsync(current, now, ct);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>The owed close itself, inside its run's gate on a row read there (see <see cref="FinishAnOwedEndAsync"/>).</summary>
+    async Task<bool> FinishAnOwedEndInsideItsGateAsync(StrategyDeploymentRow deployment, DateTimeOffset now,
         CancellationToken ct)
     {
         var ops = _deployments.OpsOf(deployment.Id);
