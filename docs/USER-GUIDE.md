@@ -208,7 +208,13 @@ empty box keeps TradeAgent's number, and one press of *Clear my numbers* puts bo
 said as **FRICTIONLESS** on every fill rather than looking like an exchange that charges nothing. Every
 fill records whose numbers it paid, and the daily report repeats the line. **A fill here is a simulation
 and never proof that the price could have been traded** — it says the price existed, not that your order
-would have got it. TradeAgent paper
+would have got it. **TradeAgent paper is a spot account**, like the exchange whose prices it uses, so it
+never goes short: a sell of more than you hold, counting buys still waiting to fill, is refused when you
+place it, and a sell that finds less held when its price is reached — another sell got there first — is
+refused then, unfilled. The same holds for the AI's own paper orders and for the strategies it runs on
+paper. A real exchange would set aside what a waiting sell needs as it accepts it, so two sells waiting on
+one holding — a stop and a target — need a one-cancels-the-other order there; here both may wait, and the
+second one reached is refused. TradeAgent paper
 only trades a pair whose step size has been confirmed, and TradeAgent confirms it itself: it reads the
 pair you chose under **Market data** from Binance's own published definition — when it starts, every six
 hours, when you change the pair, and when you press **Check now** — and the line **Instrument check** on

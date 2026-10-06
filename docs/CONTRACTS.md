@@ -185,9 +185,24 @@ reference list back and holds it there. `SupportsClientOrderId` and `SupportsOrd
 because the id is the book's primary key and nothing prunes either table, not because paper fills are
 harmless. `SupportsStreaming` is **false**: a price exists here only when a bar closes, and a stream
 repeating the last close would be inventing ticks. A `ConnectorRejectedException` is a definite refusal
-only — an instrument the catalogue does not hold verified, a size below the increment, a cancellation
-of an order that has already filled — and an I/O error on the book or a bar source that throws
-propagates, so the gateway records UNKNOWN and reconciles rather than reading a broken read as a no.
+only — an instrument the catalogue does not hold verified, a size below the increment, a sell the book
+neither holds nor has buys working to cover, a cancellation of an order that has already filled — and an
+I/O error on the book or a bar source that throws propagates, so the gateway records UNKNOWN and
+reconciles rather than reading a broken read as a no.
+
+**IT IS A SPOT ACCOUNT, AND ITS BOOK NEVER GOES SHORT** (`U-runner-exit-hygiene-b`). The rows it trades are spot
+rows, and a spot account cannot sell what it does not hold; the book used to fill a sell into a flat position as
+minus one, and one past a long through zero. Now a sell is refused **at placement** when it is more than the book
+holds in that instrument plus what its buys still working have left to fill (`PaperBook.HoldingAndWorkingBuys`),
+and a sell accepted **never fills beyond what is held at its bar**: `PaperBook.TryFill` reads the holding inside
+the fill's own transaction, after every earlier fill of the bar, and a new sell fill larger than it is taken back
+to a savepoint while the order ends `REJECTED`, unfilled, "insufficient holdings", raised once as an order change
+— never a part fill. A replay of a bar an order already filled on is still the unique key's to answer, before the
+holding is read. `REJECTED` is a state the book already read, so its file's layout is unchanged. The agent's own
+paper sells are held to the same rule as a run's. **NOT claimed**: a real spot venue LOCKS a resting sell's
+holding when it accepts the order, so two sells resting on one holding — a run's stop and its target — need an OCO
+there; this book locks nothing and lets both rest, judging each on its own at placement, and the second one
+reached is the one rejected. Buys are not held to a cash balance.
 
 **ITS QUOTE IS THE LAST SETTLED BAR'S CLOSE, STAMPED AT THAT BAR'S CLOSE** (`U-runner-forward`): the
 bar's open plus the bar length its `IPaperBarSource` DECLARES (`BarLength` — one minute for the forward
@@ -3476,8 +3491,9 @@ minute, in this order: what has an answer is settled; when the run's books read 
 working is cancelled (`U-runner-refused-close`); when a stop, a target, an exit or a flatten landed on the minute,
 the other half of the stop/target pair is cancelled; when the entry filled on it, the stop and the target go to the
 venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed; on a minute
-that closes no declared bar, an exit refused before the wire is sent again (below); and a UTC day that closed is told
-to Research. Only the STEP waits for the declared clock: the evaluator is asked on the bar
+that closes no declared bar, an exit refused before the wire is sent again (below); the program is asked; last, after
+an exit refused before the wire, the stop and the target go back (below); and a UTC day that closed is told to Research.
+Only the STEP waits for the declared clock: the evaluator is asked on the bar
 `BarResampler` builds from the run's minutes, when that bar's last minute closes — or on the first minute past its end
 when the data does not have its last minutes, and then two bars can close on one minute and are asked in order. What a
 decision dispatches is written on the minute the runner learned of it, so the cursor, the frontier and every request id
@@ -3577,15 +3593,41 @@ one `DECISION_EXPIRED`. Never on one-minute bars, where the program decides agai
 declared bar closes on. **An exit takes the protection off first**: once sized, every exit — the program's, or one sent
 again — cancels the run's working stop and target before it goes, as the maximum hold does before its close. A
 protective order resting at the exit's fill fills too, or on the minute in progress before it, and the exit then opens
-a paper short the books cannot spell: the venue no longer matches the books, every later close is refused
-`POSITION_MOVED`, and the run is frozen. **And a stop or target left under no position is cancelled on the next live
+a short the books cannot spell wherever the venue lets a sell pass the position — the paper book did, until
+`U-runner-exit-hygiene-b` made it refuse that sell ("The paper connector") — so the venue no longer matches the books,
+every later close is refused `POSITION_MOVED`, and the run is frozen. **And a stop or target left under no position is
+cancelled on the next live
 minute**: on every live minute whose books read flat, each stop or target of the run still working is cancelled under
 that minute's id, read off the run's own operations — whatever minute the closing fill landed on (a fill the pass's own
 first connector read settled lands on a minute that pass then moved the cursor onto) and however often a cancel was
 refused before. **NOT claimed**: an exit sent again past its decision's bounds; a refused entry sent again (the program
-decides again on a later bar); protection put back after an exit a gate refused once its cancel had gone through — the
-position is then without its stop and target until the exit goes out or the maximum hold closes it (the update window,
-the kill switch and the mode refuse the cancel as well, and keep them). That one is named for `U-runner-exit-hygiene-b`.
+decides again on a later bar).
+
+**A REFUSED EXIT PUTS THE STOP AND THE TARGET BACK, ON ITS OWN MINUTE** (`U-runner-exit-hygiene-b`). Last on each live
+minute, on both clocks: while the books — re-read, not the minute's reading, which a refused re-send marks flat — read
+long, the run's latest entry, exit or flatten is an exit refused before the wire (`Deployments.RefusedBeforeTheWire`, the
+one predicate) and the maximum hold is not reached, each of the run's stop and target goes back when none of its kind may
+still be working (an order whose row is not terminal and that did not end before the wire, UNKNOWN included): the latest
+of its kind written since the position's entry, at the level its operation carries, sized from the books, as a NEW order
+under that minute's own `dp-` id and `TA-` client order id, through every gate a protective order meets — the stale-close
+read too, a stop and a target being `OrderIntent.Close` — and resolved on the venue's acknowledgement as the entry's are.
+So on the minute of the refusal itself, and never while an exit is in flight: an exit at the wire is about to end the
+position, and protection beside it would sell what it sells. Never past the maximum hold, whose own close is asked again
+each minute. It sends nothing again under an id that was refused: a re-place a gate refuses too is a new order, asked
+for on the next live minute under that minute's ids, until one works. **What it leaves, NOT claimed:** the position is
+unprotected from the exit's cancel to the re-place — on paper, the minute in progress, an order being judged from the
+next bar's open after it; while a gate refuses the re-place too (the rate limit; `POSITION_MOVED`), asked again each
+live minute until it works; and the kill switch, the mode or the update window engaged BETWEEN the cancel and the exit
+refuse the re-place as well, so the position is without its stop and target until they lift (engaged before the
+cancel, they refuse the cancel and keep them). **Why not exit-first** — keeping the protection until the exit has filled: an oversell is impossible only
+where the venue refuses it (the paper book — "The paper connector" — and a spot venue); the built-in Simulator and
+ATAS can both carry a paper envelope, a sell past the position there is a short (ATAS reads −1, "What ATAS's own objects
+mean"), and the SDK has no reduce-only, so an exit beside a resting stop would be the short the run cannot spell. **The
+close intent is the hook, as a guard**: every reducing order a run or its END sends — the stop, the target, the exit,
+the maximum hold's close, the END's close — carries `OrderIntent.Close` on the command the connector is handed
+(`ForwardRunnerTests` reads it there); a connector that shorts would honour it as reduce-only, and none does yet —
+owed before the runner reaches a venue that shorts, or live, whether ATAS can submit one being settled only on its box.
+Once a connector declares it, exit-first is open there.
 
 **AN END THAT COULD NOT CLOSE IS OWED, AND CLOSES ONCE THE GATE LIFTS** (`U-runner-exit-hygiene-a`). An ended run whose
 latest flatten was refused before the wire, or that has none, OWES its close: each reconcile pass finishes it as the END
