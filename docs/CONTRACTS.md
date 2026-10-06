@@ -493,6 +493,12 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   quietly cut short is a different window from the one that was asked for and nothing in the reply
   would say so. A pair with no dataset, and a REJECTED dataset, are both `MARKET_DATA_UNAVAILABLE`.
   Both handlers are in the deadline table at **0** — no connector call at all.
+- **`data-tape` is a READ of the market-context tape, and NO OP WRITES THE TAPE** (`U-tape-read`; the tape's own section
+  below has the whole read contract). Every role and a caller that proved none are served the same rows; nothing on this
+  channel records, edits or deletes a tape row, and the gateway holds only a `TapeReader`, whose every read opens
+  `state/tape.db` read-only. Bounds: at most **5,000 rows** (default 1,000; a larger `limit` is REFUSED in words, never
+  clamped) and **4 MiB of rows** measured as each is written; an answer either bound stopped says `more: true` and
+  `capped_by`, and its `next_before` passed as `before` continues it exactly. In the deadline table at **0**.
 - `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
@@ -676,7 +682,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 |---|---|---|
 | `status` `schema` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read — `schema` builds the same status `status` does |
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
-| `connectors` `material-list` `material-note` `data-list` `data-bars` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
+| `connectors` `material-list` `material-note` `data-list` `data-bars` `data-tape` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `pnl` | **3W** | the account, the positions, then the instruments. The fills cost nothing: they come out of the ledger. Both reads may FAIL without failing the handler — the report names what it could not include |
 | `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
 | `modify` | **6W** | one orders read that both resolves the target and takes it as it stands, then everything a cold placement does — account, positions, quote, instruments — and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
@@ -2206,7 +2212,7 @@ and spends the turn the owner is paying for on whichever one it picked.
 
 **Tools are grants, default deny** (`GrantedWorkerTools`). Six, and no seventh: `read_file` /
 `list_files` anywhere inside the role's own home (its `in/` included), `write_file` into `out/` and
-`trading/` ONLY — staged, the relay publishes — `trade`, `data` (`data-list`/`data-bars`) and `report`.
+`trading/` ONLY — staged, the relay publishes — `trade`, `data` (`data-list`/`data-bars`/`data-tape`) and `report`.
 No shell, no HTTP, no packages, no model-selected executable. `ToolPaths.Resolve` refuses an absolute
 path, a `..` SEGMENT (for what it says, not only for where it lands), anything resolving outside the
 root, and a symbolic link inside it — links are checked only BELOW the root, because on macOS the root
@@ -2786,7 +2792,8 @@ EU users, page 1 once a minute, each screened at every read for text addressed t
 (`U-tape-events`; § 4.2) — and GDELT's news items about crypto, from its fifteen-minute GKG files, with GDELT's
 own first-seen time, on a switch of their own (`U-tape-archive`). It places no order, holds no credential and
 reaches nothing that could: every request is an unauthenticated GET of a public endpoint.
-Reading the tape for agents and status is `U-tape-read`.
+It is read — by every role over `data-tape`, in `data-list`, in `status` and in the owner's daily report — through a
+reader that cannot write it (`U-tape-read`, **THE READ** below).
 
 **ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
 `Versions.DatabaseSchemaVersion` does not move for it: its own connection, WAL, `synchronous=FULL`,
@@ -2817,6 +2824,7 @@ before the transaction opens, so no attempt is ever recorded with half its items
 `AsOf(audience, source, series, subject, t)` answers the observation with the latest source time among those
 received at or before `t`, at its latest revision received by then. The audience is required and checked
 inside the reader, so a later tape holdout applies there; none exists yet, and every audience reads the same.
+`TapeReader.Window` (below) takes it the same way.
 
 **CLAIMED — THE CLASS RULES.** Computed by the store per observation, from fields it recorded and from this
 build's rows, never accepted from a caller: `O-LIVE` iff the fetch's source is a built-in row, its origin is
@@ -2874,7 +2882,8 @@ label) take at most 25 MB; a file that would pass it is not stored, no more of t
 app runs, and an activity line says so. **No raw bytes are kept**: no file is written; the record stands as proof of
 what was read. Measured on 2026-10-06 (`docs/RESEARCH-REQUIRED.md`, C5e): about 420 MB a day on the wire, 6.9 MB a day
 kept. GDELT's terms ask every use to cite the GDELT Project and link to its site: the row's `Citation`, which the Market
-data card and the user guide show and `U-tape-read` must show wherever these items are shown.
+data card and the user guide show, and which every `data-tape` answer and `data-list` entry holding GDELT's rows carries,
+the CLI prints on its own line, and the daily report's tape line names whenever any of its rows are GDELT's.
 
 **CLAIMED — THE SCREEN (`TapeScreen` v2).** Every observation read carries `Quarantine`: null, or the rule and
 the screen version, never the text — computed at that read from the payload's decoded property names and
@@ -2883,9 +2892,11 @@ inside XML that way), and stored nowhere, so a later screen reads every row ever
 file marks one clean. Quarantined: any zero-width, bidirectional-control or tag character; or, once folded
 (this build's own NFKC table — `string.Normalize` is the identity under invariant globalization — case-folded,
 format characters and combining marks dropped), an instruction override, an address to an automated reader or
-chat-role markup; a payload it cannot read is `unreadable`. A quarantined item is still recorded whole; `AsOf`
-serves it with a null payload to every audience — the pipe's, and the referee's, which never reads the tape;
-`Revisions` and `ObservationsOf` are in-process and return it whole with its verdict. The rules are code: no
+chat-role markup; a payload it cannot read is `unreadable`. A quarantined item is still recorded whole; `AsOf` and
+`TapeReader.Window` — `data-tape` — serve it with a null payload, its rule and the screen's version to every audience
+(the pipe's, and the referee's, which never reads the tape), both through the ONE withholding method
+`TapeStore.Served`; `Revisions` and `ObservationsOf` are in-process, unreachable from the gateway, and return it whole
+with its verdict. The rules are code: no
 file, setting or verb adds, removes or relaxes one. It reads every source, the market rows included.
 
 **THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b), the announcement row and the archive row above:
@@ -2910,6 +2921,48 @@ backfill: the first look asks what every look asks. Started and stopped by `AppH
 mission loop; the Market data card's **Record market context** toggle (default ON, one press) is the only
 control, and no verb or pipe op starts, stops or writes it.
 
+**CLAIMED — THE READ (`U-tape-read`, `TapeReader`).** The gateway holds a `TapeReader`, never the store: every read opens
+its own connection to `state/tape.db` in SQLite's read-only mode with `query_only` on, so a statement that would change the
+file is refused by the database, and WAL means a read never blocks a collector's write. It reads only a tape at this
+build's layout version and refuses another naming both versions; the app makes it after `TapeStore` has opened the file,
+with the catalogue the collectors record from, and sets it on every gateway it builds (a connector switch included). No
+type in the gateway's assembly is typed as `TapeStore` — `TapeOverPipeTests.No_pipe_op_writes_the_tape` holds that, and
+sends every `Ops` constant as the Operations Director's launch with every argument a writer might try, and the tape's
+every row and attempt hash the same before and after. **`data-tape`** takes `source` (required; an unknown one is refused
+naming the tape's), `series` (optional when the source records one; required, and named, when it records several),
+`subject` (optional — an announcement or a news item is keyed by a digest or a GKGRECORDID nobody can guess, so without it
+every subject of the series is served; one the series holds no row of is refused naming its symbols, or what its keys
+are), `from`/`to` (the SOURCE time, inclusive), `as_of` (only rows that ARRIVED by then, inclusive), `limit` (1–5,000,
+default 1,000; more is refused, never clamped) and `before` (a row id). Rows come **newest arrival first** — the order the
+tape wrote them, which within one series is the order they arrived, each source being written by one loop and GDELT's two
+tasks taking turns — each with its id, subject, source time, arrival, revision, evidence class (`O-LIVE`, `O-PIT`,
+`O-ARCH`), fetch id, payload SHA-256 and payload as recorded (canonical JSON text, so its hash is checkable), or a null
+payload with its `quarantine`. One snapshot, in two phases: the ids off `ix_tape_obs_asof`, then each row by id, so a read
+never carries a payload it does not serve. Bounded by the row limit and by **4 MiB of rows**, each measured as it is
+written (`GatewayPipeServer.MaxTapeReplyBytes`); a row is never split. An answer either bound stopped carries `more: true`,
+`capped_by` (`limit` or `bytes`) and `next_before`, and `before` set to it continues exactly — a GDELT file's rows share
+both their label and their arrival, so no time could. **`data-list`** adds `tape`: under "TAPE — recorded by TradeAgent as
+it arrived; O-LIVE rows only are first-hand; not evaluation evidence", every catalogue series, every series the tape holds
+rows of (GDELT's `gkg-batch` file records among them) and every series a source no row names any more was attempted under,
+each with the switch that records it, its rows, the arrival of its first and newest row in the order the tape wrote them,
+what its newest attempt got wrong (for GDELT's row series, the newest failure among the source's attempt series that are
+failing now), its symbols — or `subjects: null` and a `subject_key` sentence for digest-keyed series — and the source's
+`citation`; `tape: null` when no tape is open. **`status.tape`**, off the tape's own rows at the gateway's clock and absent
+when no tape is open or the read throws: `recording` (either switch's recorder recording), `rows_today` (rows that arrived
+since UTC midnight), `failures_last_hour` (attempts in the last hour that delivered nothing), `market_context` and
+`gdelt_news` — each the switch's name, whether it is `on`, whether it is `recording` (on AND a delivery within 300 s for
+market context, 1,800 s for GDELT), its newest delivery, its failures in the last hour and what is failing now — with
+`daily_cap_reached_today` on GDELT's, read off an attempt at a file labelled today whose note begins
+`GdeltGkg.CapNotePrefix`, so a restart does not forget it; and `sources`, each with its switch, newest delivery, failures
+in the last hour and current failure. **The daily report** gains one line in section 7, "market context tape": the rows
+that arrived in the owner's local day, the requests and the failed ones, the gaps (a source's successive deliveries further
+apart than twice its cadence plus 30 s, between its first and last of the day), the longest, the newest failure, either
+switch that is off, GDELT's credit when any rows are GDELT's — a count, never a price; a read that fails is a gap in the
+owner's words, never a zero. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
+stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than ten minutes after a row that arrived later
+than it — every writer takes its arrival instant just before the store's one lock, which a write holds for milliseconds.
+A machine clock stepped back by more than that is the case it does not cover.
+
 **NOT CLAIMED.** (1) *Completeness while the app is closed*: the tape is as deep as the app has been running,
 nothing fills a gap, and a later reading of an old point is `O-ARCH`. (2) *A vendor checksum*: none is
 published for a live answer; every hash here is this build's, of what it received. (3) *Evaluation evidence*:
@@ -2921,8 +2974,8 @@ whether file rows survive containment. (6) *Completeness of announcements*: page
 runs — an item published and pushed past page 1 while it was closed is never seen, and page 1 at the first look
 after a start is `O-ARCH`. (7) *That the screen catches every address to a reader, or that an unflagged item is
 safe*: look-alike letters from other scripts, a paraphrase, another language or an image pass it; whether a
-quarantined item ever reaches a model is `U-annotator`'s, and a later reader that serves agents (`U-tape-read`)
-must withhold as `AsOf` does — nothing here makes it. (8) *The sites' terms*: the row's basis is a reading on the
+quarantined item ever reaches a model is `U-annotator`'s; the one reader that serves agents (`data-tape`) withholds
+through `TapeStore.Served`, as `AsOf` does. (8) *The sites' terms*: the row's basis is a reading on the
 day, not legal advice; whether selling TradeAgent needs OKX's written authorisation under § 9.3(b) is open (C5d).
 (9) *GDELT's coverage* (`U-tape-archive`): the filter's recall — an item about a coin it does not name, or that GDELT did
 not tag, is not kept; files GDELT skipped, or that were not published, refused or capped, stay missing; history further
@@ -2932,7 +2985,12 @@ was to comply, and nothing here asks `data.binance.vision`. (10) *An article's o
 GDELT's label — when GDELT first saw the item — and `PAGE_PRECISEPUBTIMESTAMP` inside the payload is the publisher's claim,
 not checked. (11) *That an `O-PIT` item was knowable at its label*: it rests on GDELT's MD5 and its storage's Last-Modified,
 both GDELT's; reading `O-PIT` as known at its label is `U-features`'. GDELT's items are research context like everything
-else here — no verdict is taken over them — and the screen's limits in (7) hold for them.
+else here — no verdict is taken over them — and the screen's limits in (7) hold for them. (12) *A cheap read of a whole large series* (`U-tape-read`):
+the tape has no index on arrival, so a `data-tape` read without a subject or a window costs in proportion to its series'
+size (an index scan of ids, no payloads), and an `as_of` far in the past costs a short lookup per row that arrived after
+it — bounded and read-only, blocking no writer, but not constant; an index belongs to a later rung. (13) *That the tape is
+recording when status says so*: `recording` is "a delivery within the window", read off the rows — a vendor that answers
+with nothing new still delivers.
 
 ## Data licences — `src/TradeAgent.Core/Data/DataLicence.cs`, `Db/DataLicenceStore.cs`, `Db/DatasetStore.cs`, `Db/AllocationStore.cs`
 
