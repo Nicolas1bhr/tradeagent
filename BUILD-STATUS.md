@@ -8365,3 +8365,41 @@ U-runner-exit-hygiene-b's landing push `e01198d6`: run 37443797669 RED on window
 
 **NOT done, NOT verified:** the press path still sizes a close beside a resting one (seat P, owed); a runner pass begun before an END; a fill the position
 read lags (ATAS, the box); the stale-row reading above was read, not run; no box run, no app run.
+
+## 2026-10-06 — U-fix-press-budget landed: the owner's Cancel all and Close all presses spent their two seconds on their own store writes and could refuse themselves before the wire; both are now charged for platform time only
+
+One fresh Opus fixer under seat P built it from `docs/briefs/U-fix-press-budget.md`, briefed by seat P on the first sighting: windows-latest, run 37391256380, branch
+`r-containment` with no src/tests change, `PressIdShapeTests.The_operator_cancel_all_names_its_legs_without_the_brokers_order_id`, "Expected: 2 / Actual: 0", 46 s.
+Merge `d14b4aeb` (ff-only), 6 commits; rebased four times by the fixer, the last over seat A's `U-close-once`. CONTRACTS conflicted there: both units had appended a
+closing section, and the fixer kept both, with seat A's CLOSE_IN_FLIGHT passages untouched. No rung. MONEY PATH: the owner's emergency presses.
+
+- **Item 1 — the cause, measured on windows.** A branch-only probe stamped every platform call and SQL statement with the budget left. Runs 37413619642, 37413622132,
+  37413624368: 270 presses of each kind, all green, with at least 1781 ms left at the read. The natural red did NOT recur.
+  Before reading orders, the cancel-all makes no platform call, only three commits: the press row, the pause's `health_event` and DISPATCHING. The budget moved at those
+  commits and nowhere else (26+18+18 ms → 1937 ms left; wall time minus commit time −2..26 ms per press). Seen naturally on a smaller scale: one close-all's nine commits
+  took 2688 of its 2689 ms, and its next call was refused at −31 ms; one bare commit took 5207 ms.
+  CONTROL (the deadline gone at the first platform call, or a second writer holding the store across the press row) → `Expected: 2 / Actual: 0` byte for byte, 78 of 78
+  on windows. The diagnostic was removed in `c699572c`; src, tests and `.github` net to main's.
+- **Item 2 (`9f358922`):** both presses open `RiskReducingScope.BeginExcludingTheStore` (`TradingGateway.cs:8147`, `:8422`). Their two seconds now bound the platform,
+  and the press's own store writes cannot spend them. **Owner's view, applied by the seat:** the earlier doc's "the owner's press keeps `Begin`" is superseded, because a press
+  that refuses itself on a slow disk fails the emergency it exists for. The doc, `StoreTime`, CONTRACTS, USER-GUIDE and MONITORING-PHASE say so.
+  The AGENT's risk-reducing pipe scope (`GatewayPipeServer.cs:1211`) is LEFT on `Begin`, with the reason written there: the shutdown drain is derived from that budget
+  bounding the whole handler. Accepted.
+- **Declared deviation, ACCEPTED by the manager:** in `OperatorPressIsAnEmergencyTests.The_position_read_before_the_close_inherits_the_scope`, `Assert.Single(deadlines.Distinct())`
+  cannot hold once store time is refunded: each read's deadline moves by design (three distinct values measured with the fix, one value three times without). The test now
+  asserts the same three facts against a new `RiskReducingScope.OpenedDeadlineAt`: one opened deadline, every read bounded, never earlier. Name kept. The edits to
+  `AgentCloseAtDispatchTests` and `CompositeOwnerTests` are comment-only (checked by the manager).
+
+**Verified by running (the fixer, quoted; re-run by it on the rebased tree).** RED before, store held 3001 ms against 2000:
+- cancel-all `Expected: 2 / Actual: 0`, book `[FB-1 ES WORKING; FB-2 NQ WORKING]`;
+- close-all `Expected: FILLED / Actual: UNKNOWN`, `[ES 2]` left open.
+Mutant, the cancel-all back on `Begin` → its test `Expected: 2 / Actual: 0`, legs `0 []`; the close-all's test stays green; restored byte-identical.
+Fixer's gate at `089143cf`: Release 0 warnings; Unit 1411/1411; Fault 445/445; seven touched classes 3×, 20/20 each.
+**Manager's gate** at `d14b4aeb`, Release: build 0 warnings, 0 errors; Unit 1411/1411 (8 m 27 s); Fault 445/445 (1 m 54 s); Integration 721/722, 1 skipped (11 m 13 s)
+→ 0 failed. Names vs `main`: 2210 → 2212, 0 removed, 2 added (one slow-store test per press). Scan clean; no trailers.
+**CI:** branch run 37480128757 at `d090aabf` (code `089143cf` plus the report; `d14b4aeb` changes only the brief): ubuntu ✓ 13 m, macOS ✓ 15 m, windows ✓ 49 m, package ✓,
+Timing first try everywhere. Before the last rebase: 37444558954 and 37422916706, all four jobs success. Tests box: NOT RUN — "his own OFT.Platform is open" (the fixer and the manager, once each).
+**Also settled, separately:** the macOS sighting `SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` (NullReferenceException at `:333`, run 37420396771)
+concerns the AGENT's pipe sweep. A throwaway control (2100 ms latency) reproduced it: a book read clipped by the deadline answers `ok=False` with no Data, and the test casts
+`Data` without asserting `Ok` — a test fault, owed as a light fix. What spent ~100 ms on that runner: NOT VERIFIED.
+**NOT done, NOT verified:** a natural recurrence of the stall (the cause stands on per-step measurement and exact controls); any Windows box run; the app not run.
