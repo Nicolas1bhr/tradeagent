@@ -1034,6 +1034,16 @@ be on its way there, TradeAgent records that it never reached your platform and 
 open once more. On ATAS a close carries TradeAgent's reference only once it has been identified, so a
 lost close there that cannot be found proves nothing, and it is yours to confirm, as before.
 
+**And once you have answered it, your answer counts.** When you confirm a lost close on the Dashboard —
+"It was filled" or "No order exists" — TradeAgent takes your answer as what became of it, once the close
+can no longer be on its way to your platform. Then, exactly as when the platform answers: the account
+reads flat and nothing more is sent, or TradeAgent closes what is still open once more, with the same
+checks — cancelling any order still working on that instrument first, so a close you thought was gone
+cannot fill on top of the new one. Where your platform can show its order history and still has that
+close working, the platform outranks your answer: nothing is decided until the platform finishes it. And
+once you have answered every record TradeAgent left, it stops asking you to confirm them; the Safety
+page, the daily report and the AI's status say what it is still waiting on instead.
+
 **And one more, which is not an answer yet: "has NOT closed your open positions yet".** That is
 TradeAgent saying it could send nothing at all to your platform — your account or your positions
 could not be read in time — so nothing was sent and there is nothing for you to confirm. It tries
