@@ -128,6 +128,76 @@ public static partial class TapeScreen
         return folded.ToString().ToLowerInvariant();
     }
 
+    /// <summary>
+    /// TEXT WITH ITS CHARACTER REFERENCES RESOLVED, as a reader of markup resolves them: <c>&amp;#x200B;</c> and
+    /// <c>&amp;#8203;</c> are the character they number, and <c>&amp;lt;</c>, <c>&amp;gt;</c>, <c>&amp;amp;</c>,
+    /// <c>&amp;quot;</c> and <c>&amp;apos;</c> are XML's five. Resolved again while anything changes, at most
+    /// four times, so a reference written inside another (<c>&amp;amp;lt;</c>) is read as what it ends as. A
+    /// reference to no character — a surrogate, past U+10FFFF — is left as written. GDELT writes its page titles
+    /// this way (<c>U-tape-archive</c>).
+    /// </summary>
+    public static string Decode(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        for (var pass = 0; pass < 4 && text.Contains('&'); pass++)
+        {
+            var resolved = ResolveOnce(text);
+            if (string.Equals(resolved, text, StringComparison.Ordinal)) break;
+            text = resolved;
+        }
+        return text;
+    }
+
+    static string ResolveOnce(string s)
+    {
+        var into = new StringBuilder(s.Length);
+        var i = 0;
+        while (i < s.Length)
+        {
+            var amp = s.IndexOf('&', i);
+            if (amp < 0) { into.Append(s, i, s.Length - i); break; }
+            into.Append(s, i, amp - i);
+
+            var semi = s.IndexOf(';', amp + 1);
+            if (semi > amp + 1 && semi - amp <= 10 && Reference(s.AsSpan(amp + 1, semi - amp - 1)) is { } value)
+            {
+                into.Append(value);
+                i = semi + 1;
+            }
+            else
+            {
+                into.Append('&');
+                i = amp + 1;
+            }
+        }
+        return into.ToString();
+    }
+
+    /// <summary>The text one reference between <c>&amp;</c> and <c>;</c> stands for, or null for one that is not a reference.</summary>
+    static string? Reference(ReadOnlySpan<char> name)
+    {
+        if (name[0] == '#')
+        {
+            var hex = name.Length > 1 && name[1] is 'x' or 'X';
+            var digits = name[(hex ? 2 : 1)..];
+            if (digits.IsEmpty || digits.Length > 7) return null;
+            if (!int.TryParse(digits, hex ? NumberStyles.AllowHexSpecifier : NumberStyles.None, CultureInfo.InvariantCulture, out var cp)
+                || !Rune.IsValid(cp))
+                return null;
+            return new Rune(cp).ToString();
+        }
+
+        return name.Length switch
+        {
+            2 when name.Equals("lt", StringComparison.OrdinalIgnoreCase) => "<",
+            2 when name.Equals("gt", StringComparison.OrdinalIgnoreCase) => ">",
+            3 when name.Equals("amp", StringComparison.OrdinalIgnoreCase) => "&",
+            4 when name.Equals("quot", StringComparison.OrdinalIgnoreCase) => "\"",
+            4 when name.Equals("apos", StringComparison.OrdinalIgnoreCase) => "'",
+            _ => null
+        };
+    }
+
     static TapeQuarantine Quarantined(string rule) => new(rule, Version);
 
     /// <summary>Every property name and every string value in the document, decoded, in document order.</summary>
