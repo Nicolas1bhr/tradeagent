@@ -8444,3 +8444,44 @@ in `PaperFrictionTests…_is_refused` (two "BTCUSDT 1m v1" rows from `CostModelP
 Windows ran (g) green on both runs, which shows nothing either way about an intermittent red. Tests box: NOT RUN — "his own OFT.Platform is open" (the builder and the manager, once each).
 **NOT done, NOT verified:** `SettingsView`, the data-bars refusal and `MissionSituation.DataLine` still add re-collect advice to a REJECTED that holds for this read only
 (owed, light). A staging folder left by a crash is not swept. An interrupted download is no longer resumed by the next press. No app run, no box run.
+
+## 2026-10-06 — U-inflight-settle landed: a market order whose platform update was lost is read back from the platform's own order list and settles only from a final answer the platform gives, so it stops holding its position's automated closes
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-inflight-settle.md` (written by seat A's read-only survey leg at `bdf5affa`,
+which ran nothing; queued `2fcb64df`; dispatched `2a82133b`); the builder rebased onto `6afe98cb`, where `land.sh prep` found it ("Already on main"), so the
+item shas below are the ones on `main`. Merge `47bee8f7` (ff-only), 9 commits (red-first tests, 4 items, 3 follow-ups, the report), 6 files, +627/−27. **No schema
+change (30).** MONEY PATH: the gateway's close guard and the order-state writer. Rule 3 kept — only a FINAL answer the platform gives settles a row; a
+throw, a live answer or an absence that proves nothing settles nothing, and the settle sends, re-sends, cancels, flags and pauses nothing. Rule 2 kept —
+"not listed" decides only where `AbsenceDecidesALostClose` holds (paper, the Simulator; never ATAS), past the clock the loss confirm already uses. Accounting:
+the final state goes through the stream's own writer, and a fill enters only by `RecordFill` (the settle marks the fill pull due).
+
+- **Item 1 (`6d6b09fa`):** `OnOrderChanged`'s write becomes `ApplyAPlatformAnswer` (owner-state skip, `CanTransition`, `Transition`, `StateChanged`, terminal
+  `Wake`), the one writer the stream calls; behaviour unchanged. **Tests (`d362b5ad`):** red-first (a)–(d).
+- **Item 2 (`e20e2927`, wording `47c514dd`):** `Task<InFlightAnswer> SettleAnOrderInFlightAsync(ExecutionRequest row, CancellationToken ct)` and
+  `record InFlightAnswer(bool Settled, OrderInfo? Live, string Why)` beside `ClosesInFlightOn` (private, as it is): one unflagged, non-press PLACE row in a
+  stream state, only where `ReconciliationProvable`; `Why` names the owner of a row it does not take. `AskTheHistoryAsync` now returns
+  `(Verdict, Live, Undecided)`; a settle's last error names the read it came from.
+- **Item 3 (`b5c504e2`, `6660409c`):** `SettleStaleOrdersInFlightAsync` on the health pass right after `ConfirmLostClosesAsync`: stale = `Now −
+  AbsenceCountsFrom ≥ AbsenceGrace`, no new number; `inflight_settled`, and `inflight_undecided` once per change; it never throws but on cancel.
+- **Item 4 (`cd547ceb`, `43def342`):** `CONTRACTS.md`: the NOT-claimed `WORKING` row becomes a claim with its limits; the `CLOSE_IN_FLIGHT` refusal and
+  `GatewaySchema`'s `close` add "or once TradeAgent reads its outcome from the platform".
+- **Judged at landing.** (1) **ATAS residual, no in-app way out:** an order ATAS does not list after a lost update stays `WORKING` and unflagged, so it is
+  not on the owner's card (the card lists `Unreconciled()`, `DashboardView.cs:198-203, 306`), and its position's automated closes stay refused. The gap
+  existed before this unit; the unit narrows it to this case. OWED BEFORE ANY LIVE USE: an in-flight row the platform cannot account for, past the clock,
+  reaches the owner's card with its evidence, and his press settles it (seat A briefs it). (2) **Press rows:** nothing settles a stale `WORKING` press row,
+  but it is flagged from its write-ahead, pauses trading and waits for the owner's `ForceResolve` — for seat P's `U-press-close-once`, which calls item 2's
+  function (the orchestrator's ruling, 22:03). (3) Seat P's queued `U-valuation-close-confirm` takes `AskTheHistoryAsync`'s 3-tuple.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit `Failed: 0,
+Passed: 1419`; Fault `Failed: 0, Passed: 449`; `InFlightSettleTests` 3× (3) and `PaperDeploymentTests` 3× (14), 0 failed. RED on the base: (a) `Expected:
+FILLED Actual: WORKING`, the next close `CLOSE_IN_FLIGHT`; (b) `Expected: CANCELLED Actual: WORKING`, the owed close refused on two minutes; (d) past the
+clock `Expected: CANCELLED Actual: WORKING`; (c) green, a guard. Mutant: `AbsenceDecidesALostClose` dropped from `AskTheHistoryAsync` ⇒ (d) red,
+`Expected: WORKING Actual: CANCELLED`; reverted.
+Manager's gate at `47bee8f7`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1419/1419 (37 s), Fault 449/449 (2 m 3 s), Integration 721/722, 1 skipped (11 m 13 s) → 0 failed.
+Names vs `main`: 2220 → 2224, 0 removed, 4 added. Scan: `SCAN CLEAN`; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37527572700 at `47c514dd`: success on macos-latest (14 min), ubuntu-latest (12 min), windows-latest (51 min), package (5 min); only docs
+after it (`43def342`, `47bee8f7`). **Tests box:** NOT RUN — `ready : NO - the machine does not answer (…)` at 22:27, 22:41 and 23:35 CEST.
+
+**NOT done, NOT verified:** whether ATAS lists a filled market order under its client id after a bridge drop (code read, NOT VERIFIED: the box not granted
+and unreachable); the ATAS residual above; a run's own flatten settled `CANCELLED` owes no close (`OwesItsClose`) — out of scope; a lagging position read
+stays NOT claimed; no box run, no app run.
