@@ -6645,6 +6645,12 @@ public sealed class TradingGateway : IAsyncDisposable
             return;
         }
 
+        // A NOTE IS KEPT ONLY WHILE ITS ROW IS STILL ASKED ABOUT: one the stream has since settled — a paper market
+        // order resting to its bar is asked about once or twice first — would otherwise stay here for the process's life.
+        var asked = stale.Select(r => r.RequestId).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in _inflightNotes.Keys)
+            if (!asked.Contains(id)) _inflightNotes.TryRemove(id, out _);
+
         foreach (var row in stale)
         {
             InFlightAnswer answer;
