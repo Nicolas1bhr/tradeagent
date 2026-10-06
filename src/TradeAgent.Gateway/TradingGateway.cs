@@ -5821,8 +5821,9 @@ public sealed class TradingGateway : IAsyncDisposable
         // on the same instrument would move that position the same way, so sending on top of it closes
         // the position twice. `close` is refused a step earlier, in CloseAsync; this is the reduce the
         // agent did not call a close, and the placement whose blocker appeared while these reads were
-        // in flight.
-        RefuseAnUnresolvedReducerOrThrow(intent, positions);
+        // in flight. And an earlier market order moving it the same way that has no final answer yet
+        // (CLOSE_IN_FLIGHT): asked here, inside the gate, the earlier close's answer is already written.
+        RefuseAnUnresolvedReducerOrThrow(requestId, account.Id, intent, positions);
 
         await LossBudgetOrThrow(intent, account, positions, ct);
 
@@ -6422,6 +6423,55 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// EVERY MARKET ORDER ON THIS PLATFORM, ACCOUNT AND INSTRUMENT THAT IS ON ITS WAY OR AT THE PLATFORM WITH
+    /// NO FINAL ANSWER YET, AND THAT WOULD MOVE THE POSITION THE SAME WAY THE CALLER IS ABOUT TO
+    /// (<c>U-close-once</c>) — <c>DISPATCHING</c>, <c>ACKNOWLEDGED</c>, <c>WORKING</c>, <c>PARTIALLY_FILLED</c>,
+    /// <c>CANCEL_PENDING</c> or <c>RECONCILING</c>: <see cref="ExecutionRequestStore.Open"/> less <c>UNKNOWN</c>,
+    /// which keeps its own rule above.
+    ///
+    /// <para><b>The half <see cref="UnresolvedReducersOn"/> never covered.</b> That one is an order nobody has an
+    /// answer for; this one is an order with an answer that has not FINISHED. A market close the platform
+    /// acknowledged and is still holding — paper rests one until its next closed bar, ATAS until its fill report
+    /// — has moved no position, so the position read, <see cref="RefuseAStaleCloseOrThrow"/> and the press's drift
+    /// read all agree with a second close sized beside it, and both fill: two ENDs of one run at once put two
+    /// closes on the wire and a long 1 became a short 1 (seat A's probe at <c>2952c285</c>).</para>
+    ///
+    /// <para><b>MARKET only.</b> A market order is the one that will fill on its own. A resting stop or target is
+    /// protection that a market close is answered by cancelling first — the END's <see cref="CancelWhatStillWorksAsync"/>
+    /// and the runner's exit both do — and a run's stop and target are two resting close-intent sells placed one
+    /// after the other, so counting them would refuse the target over its own stop.</para>
+    ///
+    /// <para><b>This platform and this account.</b> Nothing elsewhere moves this position, and a row another
+    /// platform left <c>WORKING</c> is never moved by this one's stream (<see cref="OnOrderChanged"/> finds rows by
+    /// client order id), so counting it would hold this position's closes for good.</para>
+    ///
+    /// <para><b>Not the caller's own id</b>: a repeated request is answered by <see cref="PlaceAsync"/>'s replay,
+    /// not refused over the order it already is. SIDE, NOT INTENT, PLACE only and unreadable parameters counted,
+    /// for <see cref="UnresolvedReducersOn"/>'s reasons.</para>
+    /// </summary>
+    List<ExecutionRequest> ClosesInFlightOn(string requestId, string accountId, string instrument, OrderSide side) =>
+        _requests.Query("connector_id = $c AND account_id = $a AND instrument = $i AND intent = 'PLACE' "
+                        + "AND request_id <> $r AND execution_state IN ('DISPATCHING','ACKNOWLEDGED','WORKING',"
+                        + "'PARTIALLY_FILLED','CANCEL_PENDING','RECONCILING')",
+                ("$c", Connector.Id), ("$a", accountId), ("$i", instrument), ("$r", requestId))
+            .Where(r => IsAMarketOrderMovingThePositionLike(r, side))
+            .ToList();
+
+    /// <summary>
+    /// Is this record a MARKET order pushing the position the way an order on <paramref name="side"/> would?
+    /// Unreadable parameters answer YES, as <see cref="CouldMoveThePositionLike"/>'s do.
+    /// </summary>
+    static bool IsAMarketOrderMovingThePositionLike(ExecutionRequest r, OrderSide side)
+    {
+        try
+        {
+            return Json.Read<PlaceIntent>(r.ParametersJson) is not { } intent
+                   || (intent.Type == OrderType.Market && intent.Side == side);
+        }
+        catch (Exception) { return true; }
+    }
+
+    /// <summary>
     /// Refuses an order that is SIZED FROM A POSITION while this gateway is holding an order on the
     /// same instrument that it cannot account for.
     ///
@@ -6430,16 +6480,33 @@ public sealed class TradingGateway : IAsyncDisposable
     /// reading it back rather than by trusting it (see <see cref="SettleAnUnresolvedReducerOrRefuse"/>).
     /// A refusal an agent cannot act on would send it into a retry loop against a position it is
     /// already at risk of doubling.
+    ///
+    /// <para><b>AND WHILE AN EARLIER MARKET ORDER ON THIS ACCOUNT MOVING IT THE SAME WAY HAS NO FINAL ANSWER</b>
+    /// (<see cref="ClosesInFlightOn"/>, <c>U-close-once</c>): <see cref="ErrorCode.CLOSE_IN_FLIGHT"/>, naming it
+    /// and its state. Refused BEFORE this order's record exists, so a refusal is still proof that nothing left
+    /// (<see cref="Deployments.RefusedBeforeTheWire"/>), and nothing in flight is cancelled, re-sent or
+    /// recomputed to make room — that order's own answer is the way out. Every <see cref="PlaceAsync"/> close
+    /// meets this inside <c>_dispatchGate</c>, where the earlier one's dispatch has written its answer before the
+    /// gate was released, so the check and the send are one step.</para>
     /// </summary>
-    void RefuseAnUnresolvedReducerOrThrow(string symbol, OrderSide side)
+    void RefuseAnUnresolvedReducerOrThrow(string requestId, string accountId, string symbol, OrderSide side)
     {
-        if (UnresolvedReducersOn(symbol, side).FirstOrDefault() is not { } blocker) return;
-        throw new GatewayDeniedException(ErrorCode.CLOSE_UNRESOLVED,
-            $"{blocker.RequestId} is an earlier order on {symbol} that TradeAgent could not confirm, and it " +
-            $"would move the position the same way this one would, so this one is not sent: sized from the " +
-            $"position as it reads now it could close {symbol} twice. Nothing was sent and the position is " +
-            $"untouched. It goes out once {blocker.RequestId} has an outcome — the account owner confirms it " +
-            "on the Dashboard, or presses Close all positions, which reads that order back and stops it first.");
+        if (UnresolvedReducersOn(symbol, side).FirstOrDefault() is { } blocker)
+            throw new GatewayDeniedException(ErrorCode.CLOSE_UNRESOLVED,
+                $"{blocker.RequestId} is an earlier order on {symbol} that TradeAgent could not confirm, and it " +
+                $"would move the position the same way this one would, so this one is not sent: sized from the " +
+                $"position as it reads now it could close {symbol} twice. Nothing was sent and the position is " +
+                $"untouched. It goes out once {blocker.RequestId} has an outcome — the account owner confirms it " +
+                "on the Dashboard, or presses Close all positions, which reads that order back and stops it first.");
+
+        if (ClosesInFlightOn(requestId, accountId, symbol, side).FirstOrDefault() is { } inFlight)
+            throw new GatewayDeniedException(ErrorCode.CLOSE_IN_FLIGHT,
+                $"{inFlight.RequestId} is an earlier market order on {symbol} that is still {inFlight.State} — on " +
+                $"its way to the platform or held there, with no final answer yet — and it would move the position " +
+                $"the same way this one would. It moves nothing until it fills, so this one, sized from the " +
+                $"position as it reads now, would close {symbol} twice, and it is not sent. Nothing was sent and " +
+                $"the position is untouched. It goes out once {inFlight.RequestId} has an answer: ask again after " +
+                "it has filled, been cancelled or been rejected, and it is sized against whatever is left.");
     }
 
     /// <summary>
@@ -6453,13 +6520,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// same instant and inside the same gate as the open-position cap, rather than paying a second
     /// read that could disagree with the first.
     /// </summary>
-    void RefuseAnUnresolvedReducerOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions)
+    void RefuseAnUnresolvedReducerOrThrow(string requestId, string accountId, PlaceIntent intent,
+        IReadOnlyList<PositionInfo> positions)
     {
         var live = positions.FirstOrDefault(p => p.Symbol == intent.Symbol)?.Quantity ?? 0m;
         var reduces = intent.Intent is OrderIntent.Close
                       || (live > 0m && intent.Side == OrderSide.Sell)
                       || (live < 0m && intent.Side == OrderSide.Buy);
-        if (reduces) RefuseAnUnresolvedReducerOrThrow(intent.Symbol, intent.Side);
+        if (reduces) RefuseAnUnresolvedReducerOrThrow(requestId, accountId, intent.Symbol, intent.Side);
     }
 
     /// <summary>
@@ -7293,8 +7361,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // refuses this is in our own store. `RefuseAStaleCloseOrThrow` cannot catch it — it compares
         // this close's size to the LIVE position, and while the earlier close is still resting at the
         // broker those two agree exactly, which is what let a second sell 2 go out beside the first
-        // and turn a long 2 into a short 2. See RefuseAnUnresolvedReducerOrThrow.
-        RefuseAnUnresolvedReducerOrThrow(symbol, side);
+        // and turn a long 2 into a short 2. See RefuseAnUnresolvedReducerOrThrow — which also refuses
+        // while an earlier market close on this account is still in flight (CLOSE_IN_FLIGHT); asked
+        // again inside the dispatch gate, where it is decided.
+        RefuseAnUnresolvedReducerOrThrow(requestId, accountId, symbol, side);
 
         return await PlaceAsync(ctx, requestId, new PlaceIntent(symbol,
             side, OrderType.Market, Math.Abs(pos.Quantity),
