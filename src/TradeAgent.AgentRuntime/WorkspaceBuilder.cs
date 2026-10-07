@@ -300,6 +300,7 @@ public static class WorkspaceBuilder
     - **the market's context is on the tape** — Binance futures funding, open interest and long/short ratios for six pairs, OKX's announcements and GDELT's crypto news, recorded as they arrived; `trade data list` names every tape series;
       its rows are MEASUREMENTS, not bars: each carries the vendor's `source_time`, the `received_at` instant TradeAgent got it, its `revision` and an `evidence_class` — `O-LIVE` alone is first-hand — and none of it is evaluation evidence;
       read one with `trade data tape --source <id> [--subject BTCUSDT] [--from D] [--as-of D]`, newest arrival first and at most 5,000 rows; `--as-of` is what had arrived by then, a `quarantine` row comes without its text, and GDELT's rows carry a `citation` you keep with them;
+      **the tape is held back over the same months as the bars**: a read reaching a dataset's holdout window — its `holdout_from` to the close of its last bar, both in `trade data list` — is REFUSED whatever the source or symbol, because what the market did then is the evidence your strategy is judged on, and a missing `--from` or `--to` reaches every window on its side, so to read the recent tape pass a `--from` at or after the window's close;
     - **the strategy language is written down in `{ResearchLibrary.ReferencePath}`** — the grammar,
       what each indicator computes, the limits and every refusal. TradeAgent writes that file on every
       start and overwrites anything you change in it, so read it rather than working the syntax out

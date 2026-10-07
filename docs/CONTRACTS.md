@@ -2844,10 +2844,9 @@ its revision's own slot `(source, series, natural_key, revision)` and the confli
 mutant go red. There is no `UPDATE` in `TapeStore`. One transaction per fetch; what the store refuses (a
 payload over 64 KB, one that is not JSON or names a key twice, a subject that cannot be keyed) is refused
 before the transaction opens, so no attempt is ever recorded with half its items.
-`AsOf(audience, source, series, subject, t)` answers the observation with the latest source time among those
-received at or before `t`, at its latest revision received by then. The audience is required and checked
-inside the reader, so a later tape holdout applies there; none exists yet, and every audience reads the same.
-`TapeReader.Window` (below) takes it the same way.
+`AsOf(holdout, source, series, subject, t)` answers the observation with the latest source time among those
+received at or before `t`, at its latest revision received by then, as `TapeAsOf(Row, Refusal)`. The holdout is
+required and checked inside the reader (**THE HOLDOUT**, below); `TapeReader.Window` takes it the same way.
 
 **CLAIMED — THE CLASS RULES.** Computed by the store per observation, from fields it recorded and from this
 build's rows, never accepted from a caller: `O-LIVE` iff the fetch's source is a built-in row, its origin is
@@ -2986,10 +2985,36 @@ stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than 
 than it — every writer takes its arrival instant just before the store's one lock, which a write holds for milliseconds.
 A machine clock stepped back by more than that is the case it does not cover.
 
+**CLAIMED — THE HOLDOUT (`U-tape-holdout`, `Data/TapeHoldout.cs`; the orchestrator's ruling of 2026-10-07).** Every
+dataset holding a cutoff — the rows `Holdout.Refusal` protects, whatever its state, class or campaign, because the bars'
+rule reads the dataset — holds a window of the tape in SOURCE time, `[holdout_from, last_bar + one bar of its interval)`:
+the market time its held-back bars cover (`TapeHoldoutWindow`). A dataset that holds no bar holds none; one whose last
+bar or bar length cannot be read is held with no end — refused, never guessed. For an audience that may not read the
+holdout, a read whose asked source-time window reaches any window is REFUSED in words naming the dataset, its cutoff and
+the window — never clipped — whatever the source, series or subject: a premium-index row carries the mark price, and a
+feature over any series is evaluation evidence inside the window, GDELT's items included. An absent `from` or `to`
+reaches every window on its side, so while any dataset holds a cutoff a `data-tape` read with no window at all is
+refused, and the refusal says how to ask: `to` earlier than the cutoff, or `from` at or after the window's close. An
+as-of read is refused when the row it would serve has a source time inside a window — never answered with the reading
+before it; arrival is not the test, so a late revision of a reading stamped before the window is served. **One required
+argument, `TapeHoldout`, carries the audience with the ledger:** `TapeReader.Window`, `TapeStore.AsOf` and
+`FeatureSeries.Read` cannot be called without one and check it INSIDE — `Window` before the file is opened, `AsOf` on the
+row it found, outside the tape's lock — and a refusal comes back as `TapeWindow.Refusal` or `TapeAsOf.Refusal` with no
+row, so a caller that forgets to look is handed nothing. `TapeHoldout.Pipe(role, datasets)` is every caller on the agent
+channel — both directors and a connection that proved no role, refused identically — and reads `DatasetStore.All()` at
+every read, so a cutoff set a second ago counts; it is the only public door that makes one, the referee's pass-through
+`TapeHoldout.Referee` is `internal` to `TradeAgent.Core`, and the audience inside is `internal` too
+(`TapeHoldoutTests` holds that list by name, as `HoldoutLedgerTests` holds the bars'). `data-tape` hands the reader the
+caller's pipe holdout and answers a refusal as `HOLDOUT_WITHHELD`. The public reads that serve a row without a holdout
+are two, held by name: `TapeStore.Revisions` and `ObservationsOf`, the recorders' in-process bookkeeping on the store,
+which the gateway never holds. `data-list`, `status` and the daily report keep their counts, names and arrival instants
+over every window — no value. Nothing is written and no rung moves: the windows are computed from the ledger at each read.
+
 **NOT CLAIMED.** (1) *Completeness while the app is closed*: the tape is as deep as the app has been running,
 nothing fills a gap, and a later reading of an old point is `O-ARCH`. (2) *A vendor checksum*: none is
 published for a live answer; every hash here is this build's, of what it received. (3) *Evaluation evidence*:
-no verdict is taken over the tape, announcements included; it is research context. (4) *Protection from an agent editing the file
+no verdict is taken over the tape, announcements included; it is research context — and still its rows inside a
+holdout window are withheld from the pipe (**THE HOLDOUT**), because a feature over them is evidence about those months. (4) *Protection from an agent editing the file
 before containment*: "the store is the only writer" holds for the app's own paths, and an agent running
 unconfined could still edit `state/tape.db` itself (`docs/EDGE-FACTORY.md` § 6.11). (5) That an address a file
 row names is public or harmless: until containment the agent can reach it itself, and `R-containment` decides
@@ -3014,7 +3039,12 @@ the tape has no index on arrival, so a `data-tape` read without a subject or a w
 size (an index scan of ids, no payloads), and an `as_of` far in the past costs a short lookup per row that arrived after
 it — bounded and read-only, blocking no writer, but not constant; an index belongs to a later rung. (13) *That the tape is
 recording when status says so*: `recording` is "a delivery within the window", read off the rows — a vendor that answers
-with nothing new still delivers.
+with nothing new still delivers. (14) *What the tape's holdout does not cover* (`U-tape-holdout`): the window is the
+dataset's market time and nothing beyond it — a row stamped just outside says something about the window's edge, as a
+forward bar after a freeze does; counts, names and arrival instants over a window are still served, and so is a refusal's
+own statement that the window is reached; a cutoff set while a read is in flight applies from the next read; an in-process
+read that takes no holdout (`Revisions`, `ObservationsOf`) is out of the gateway's reach, not out of the app's; and an
+agent running unconfined could still read `state/tape.db` itself, as (4) says.
 
 ## Features — `src/TradeAgent.Core/Features/FeatureSpec.cs`, `FeatureCanonical.cs`, `FeatureVersions.cs`, `FeatureEvaluator.cs`, `FeatureSeries.cs`, `FeatureLicence.cs`
 
@@ -3068,9 +3098,10 @@ decimal.
 cleaner than its dirtiest reading (R07 § 5.3), and none when it read none; and the SHA-256 of those rows, one line
 `id:revision:payload_sha256` each in id order, so it names the readings it stands on.
 
-**THE SERIES — `FeatureSeries.Read(reader, audience, spec, from, to, step)`.** The audience is required and handed to
-`TapeReader.Window` — the agent-facing range read, and the only one — so every row passes through `TapeStore.Served`
-and a quarantined reading arrives without its payload. No "as of" is asked: the tape serves every reading of the range
+**THE SERIES — `FeatureSeries.Read(reader, holdout, spec, from, to, step)`.** The holdout is required and handed to
+`TapeReader.Window` — the agent-facing range read, and the only one — so a range reaching a holdout window is REFUSED in
+the holdout's own words with no point (**The tape**, **THE HOLDOUT**; `U-tape-holdout`), and every row passes through
+`TapeStore.Served`, so a quarantined reading arrives without its payload. No "as of" is asked: the tape serves every reading of the range
 whenever it arrived, and the evaluator's gate decides. Each input's range runs from the spec's reach before `from` (the
 max age; the lookback and max age; the latency and window) to `to`, paged newest first on the reader's `before` cursor.
 At most 10,000 instants and 50,000 readings of an input's range: beyond either the read is REFUSED in words with no
@@ -3083,7 +3114,11 @@ input has none. It is the input's, not the range's: when the input holds reading
 second is found by binary search (about 36 one-row reads) and its readings are read forward in slices until the first
 clean one is found and no later-stamped reading could have been first seen before it — this build's live rule bounds
 how early a live reading arrives (its cadence + 30 s), and an `O-PIT` first reading's first-seen is its stamp. That
-search reads at most 50,000 readings; past them the start is stated absent, never guessed.
+search reads at most 50,000 readings; past them the start is stated absent, never guessed. **Under a holdout it reads no
+row inside a window** (`U-tape-holdout`): it reaches back no further than the close of the latest window that starts
+before the range, so the start it finds is the start since then — the input's own is that instant or earlier, never
+later — and the answer SAYS so in `FeatureCleanStart.Bounded`, naming the dataset and the window's close, so it is never
+read as the input's own; a probe the holdout refuses states the start absent.
 
 **THE LICENCE.** Each input carries its terms as its catalogue row states them — Binance's words, which say they were
 not re-read, an empty terms URL and no credit. `FeatureLicence.LiveRefusal(spec, newest)` is null only when every
@@ -3215,7 +3250,9 @@ rather than a fixed frame or more months — and it is **never truncated**: an a
 a different window from the one that was asked for, with nothing in the reply to say so. A forgotten
 `Refusal` yields an EMPTY window, never a held-back bar. `data-list` **names** the cutoff and the class,
 because the boundary is not the secret — the bars are — and an agent that had to find it one refusal at
-a time would spend the owner's money doing so.
+a time would spend the owner's money doing so. **The tape holds the same market time** (`U-tape-holdout`): every
+dataset with a cutoff holds a window of the tape from its cutoff to its last bar's close, refused to every pipe caller in
+the same words and by the same rule — The tape, **THE HOLDOUT**.
 
 ## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
 
