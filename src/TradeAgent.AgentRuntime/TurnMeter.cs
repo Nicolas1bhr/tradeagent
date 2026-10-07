@@ -539,6 +539,15 @@ public sealed class TurnMeter
     /// </summary>
     readonly Dictionary<string, (string? Attempt, Action Write)> _staged = [];
 
+    /// <summary>
+    /// PROCESSES OF AN ENDED TURN THAT ITS TEARDOWN COULD NOT END (<c>U-agent-tree</c>). The row of that turn
+    /// is closed — its usage, or its reservation, is what the ledger measured — and anything of it still
+    /// running past that is spending the owner's AI account where no ceiling sees it. So every launch is
+    /// refused while one of these is the same process and still running, in a sentence naming them; each is
+    /// re-read at every launch by pid and start time, and the hold lifts by itself once they are gone.
+    /// </summary>
+    readonly List<ProcessEntry> _survivors = [];
+
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
@@ -603,6 +612,9 @@ public sealed class TurnMeter
     /// </param>
     public void Record(AgentTurnEnded ended, string? role = null)
     {
+        if (ended.Survivors is { Count: > 0 } left)
+            lock (_gate) _survivors.AddRange(left);
+
         var price = Charge(ended, role);
         var record = new TurnRecord
         {
@@ -776,6 +788,10 @@ public sealed class TurnMeter
     public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null,
         bool heldForTheLoop = true)
     {
+        // NOTHING IS LAUNCHED WHILE A PROCESS OF AN ENDED TURN STILL RUNS. Before the row, before the
+        // reservation, before the wakes: a refused launch writes nothing and consumes nothing.
+        if (StillRunning() is { } held) return held;
+
         var reservation = Reservation(role);
 
         // A CLOSE NOBODY COMMITTED BELONGS TO A TURN THAT IS OVER. It can only be here because the
@@ -827,6 +843,23 @@ public sealed class TurnMeter
 
         Changed?.Invoke();
         return admission;
+    }
+
+    /// <summary>
+    /// The refusal while any process an earlier teardown could not end is still that process and still
+    /// running, or null. The ones that have ended are forgotten here, which is how the hold lifts.
+    /// </summary>
+    AiAdmission? StillRunning()
+    {
+        List<ProcessEntry> left;
+        lock (_gate)
+        {
+            if (_survivors.Count == 0) return null;
+            _survivors.RemoveAll(p => !TreeTeardown.StillRunning(p));
+            if (_survivors.Count == 0) return null;
+            left = [.. _survivors];
+        }
+        return new AiAdmission { Refusal = Labels.LastTurnStillRunning(left.Select(p => p.Pid)) };
     }
 
     /// <summary>

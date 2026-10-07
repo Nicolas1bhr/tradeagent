@@ -277,6 +277,23 @@ public static class Labels
         + "Nothing was sent to the AI tool. The split is on the Safety page.";
 
     /// <summary>
+    /// THE NEXT TURN HELD BECAUSE THE LAST ONE COULD NOT BE ENDED (<c>U-agent-tree</c>). TradeAgent stopped a
+    /// turn and could not prove every process of it gone; a process the launch ledger has already closed over
+    /// is one that may still be using the owner's AI account where no ceiling sees it, so no turn starts while
+    /// any of them runs. It names them, because they are what the owner could look for, and it says the hold
+    /// lifts by itself: it is re-checked, by process id and start time, at every launch.
+    /// </summary>
+    public static string LastTurnStillRunning(IEnumerable<int> pids)
+    {
+        var list = pids.Distinct().ToList();
+        var named = list.Count == 1
+            ? $"process {list[0]}"
+            : $"processes {string.Join(", ", list.Take(list.Count - 1))} and {list[^1]}";
+        return $"TradeAgent could not end {named} of the AI's last turn, so this turn was not started. "
+               + "Nothing was sent to the AI tool. It starts again by itself once they have ended.";
+    }
+
+    /// <summary>
     /// What the Chat page says when the owner types while the AI is working. Beside the two refusals
     /// above because all three are the same promise: their words were kept, and here is what happens
     /// next.
