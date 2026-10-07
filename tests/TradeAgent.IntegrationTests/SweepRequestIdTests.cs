@@ -216,17 +216,21 @@ public class SweepRequestIdTests
     /// <summary>
     /// A gateway over a simulator whose emergency budget, latency and fill behaviour the test
     /// chooses. <c>internal</c>, and the fill is a parameter, because every sweep fixture in this
-    /// file needs it — see <see cref="SweepBudget"/>.
+    /// file needs it — see <see cref="SweepBudget"/>. <paramref name="over"/>, when given, is what the
+    /// gateway talks to instead of the simulator — a wrapper around it, for a fixture that has to stop a
+    /// call at the wire (see <see cref="A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer"/>);
+    /// the simulator itself is still what comes back, so its faults are set exactly as before.
     /// </summary>
     internal static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> ReadyWithBudget(
-        TimeSpan budget, int latencyMs = 0, FillBehaviour fill = FillBehaviour.LeaveWorking)
+        TimeSpan budget, int latencyMs = 0, FillBehaviour fill = FillBehaviour.LeaveWorking,
+        Func<FakeConnector, ITradingConnector>? over = null)
     {
         var db = TestEnv.NewDb();
         var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = fill })
         {
             EmergencyBudget = budget
         };
-        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        var gw = new TradingGateway(db, over?.Invoke(conn) ?? conn, new HealthRegistry());
         gw.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
@@ -244,27 +248,28 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
-    /// HOW MUCH ROOM <see cref="A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer"/> GIVES A
-    /// WAVE TO GET ITSELF ISSUED IN, and it is a fixture's patience rather than anything the product
-    /// promises: one simulated round trip, which is also the gap between the first leg of a wave
-    /// reaching the wire and the last leg reaching its re-authorization.
+    /// HOW LONG <see cref="A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer"/> HOLDS A WAVE'S
+    /// CANCELS AT THE WIRE FOR THE REST OF THE WAVE — the fixture's patience, and NOT a room the verdict
+    /// waits on: where the product is right, the wave is released by its last leg arriving, which is a
+    /// fact, and this is never reached. It exists so that a leg which never arrives fails the test in
+    /// words rather than holding the sweep until the client gives up on it; half of
+    /// <see cref="SweepBudget"/>, so legs released by it still have budget left to say what became of them.
     ///
-    /// It is not <see cref="TestTime"/>-scaled, because that scale is unset on every runner (the
-    /// workflow says why: file IO, the factor this depends on, measured 3.79x, 39.52x and 4.89x on
-    /// three windows-latest runs and there is no honest number to scale by). It is instead chosen
-    /// wide enough that the worst of those cannot reach it: the spread is under 2 ms here, 39.52x of
-    /// that is 79 ms, and this is nine times that again.
+    /// It replaced <c>WaveIssueRoom</c>, the 750 ms of simulator latency the wave used to be given to get
+    /// itself issued in, argued from a 2 ms spread times windows-latest's worst measured file-IO factor and
+    /// then nine times that — which run 37494849714 beat anyway (U-test-hygiene-2 item 3).
     /// </summary>
-    const int WaveIssueRoom = 750;
+    static readonly TimeSpan WaveFillPatience = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// THE OPERATION BUDGET FOR EVERY FIXTURE IN THIS FILE THAT IS NOT ABOUT THE BUDGET — which is
     /// most of them, and until U-sweep-win only one of them said so.
     ///
-    /// It began as one test's number: nine sweeps' worth of the 3 x <see cref="WaveIssueRoom"/> that
-    /// test actually spends, wide on purpose because the simulator clips its wait at the deadline
-    /// like the shipped connector does, so a budget a sweep could run into turns a <c>confirmed</c>
-    /// leg into something else for a reason that is about the runner and not about the product.
+    /// It began as one test's number: nine sweeps' worth of the three 750 ms simulator calls that test
+    /// spent until a latch released its wave instead, wide on purpose because the simulator clips its
+    /// wait at the deadline like the shipped connector does, so a budget a sweep could run into turns a
+    /// <c>confirmed</c> leg into something else for a reason that is about the runner and not about
+    /// the product.
     ///
     /// The rest of the file took the simulator's default two seconds by accident, and that is a wall
     /// clock kept by the RUNNER inside the verdict of tests about id minting, counting and replay.
@@ -414,36 +419,29 @@ public class SweepRequestIdTests
     /// lost answer and two ordinary cancellations, and the fifth leg supplies the fourth word: the
     /// lost answer settles UNKNOWN and <c>NeedsReconciliation</c> refuses everything issued after it.
     ///
-    /// THREE FIXTURE FACTS THAT ARE LOAD-BEARING, all learned the hard way.
+    /// TWO FIXTURE FACTS THAT ARE LOAD-BEARING, both learned the hard way.
     ///
-    /// THE LATENCY IS THE ROOM THE WAVE HAS TO GET ISSUED IN, AND IT WAS FIFTY MILLISECONDS SHORT OF
-    /// ENOUGH. It said "any non-zero latency forces the real shape, because a leg's authorization is
-    /// synchronous and happens before its first await: all four are authorised before any of them
-    /// can fail". The first half is right and the second is the reason this failed on
-    /// `windows-latest` twice (runs 33966990967 and 33970406089, both
-    /// <c>["sent-not-confirmed", "rejected", "not-sent", "not-sent", "not-sent"]</c>). The
-    /// authorization that decides a leg's fate is not the one at the top of
-    /// <c>TradingGateway.CancelAsync</c>; it is <c>ReauthorizeAtDispatchOrThrow</c>, and that one
-    /// runs AFTER the awaited target resolution, on purpose — "authority granted before it is not
-    /// authority now". So the wave is safe only while
-    /// <c>(the spread between the first and last leg being ISSUED) &lt; (one latency)</c>: past that,
-    /// the lost answer has already settled UNKNOWN and flagged the store, and a leg still upstream of
-    /// its re-check is refused TRADING_PAUSED_UNRECONCILED with its record at CREATED — which is
-    /// <c>not-sent</c>, honestly and by the table in `docs/CONTRACTS.md`. Nothing misreports; the
-    /// fixture simply left a 50 ms window on a runner that needed more.
-    ///
-    /// THE SPREAD IS FILE IO, WHICH IS THE ONE FACTOR THAT WILL NOT HOLD STILL. A leg's synchronous
-    /// prefix is two store reads (<c>Unreconciled()</c> and the request lookup in
-    /// <c>ResolveConnectorOrderId</c>). Measured here: the wave's whole spread is under 2 ms — at
-    /// <c>LatencyMs = 1</c> this sweep loses a <c>confirmed</c> in 61 runs of 150 and reproduces the
-    /// CI collection exactly; at 2 ms and above, 100 legs in a row are clean. `RunnerSpeedProbeTests`
-    /// has measured windows-latest file IO at 3.79x, 39.52x and 4.89x, and 2 ms x 39.52 is 79 ms —
-    /// which is why 50 ms was not enough and is the whole of the failure. The latency below is
-    /// <see cref="WaveIssueRoom"/>: ~375x the measured spread, ~9x the worst factor applied to it,
-    /// and the sweep still costs three of them (book read, resolution, cancel) inside a budget nine
-    /// times wider, so the simulator's deadline clip cannot turn a `confirmed` leg into
-    /// `sent-not-confirmed` from the other side. Both bounds are ASSERTED below rather than assumed,
-    /// so a runner that ever does push past one says which one it pushed past.
+    /// THE WAVE IS RELEASED BY A FACT, NOT BY A ROOM (U-test-hygiene-2 item 3). The authorization that
+    /// decides a first-wave leg's fate is not the one at the top of <c>TradingGateway.CancelAsync</c>;
+    /// it is <c>ReauthorizeAtDispatchOrThrow</c>, and that one runs AFTER the awaited target
+    /// resolution, on purpose — "authority granted before it is not authority now". A leg still upstream
+    /// of it when the lost answer settles UNKNOWN and flags the store is refused
+    /// TRADING_PAUSED_UNRECONCILED with its record at CREATED — <c>not-sent</c>, honestly and by the
+    /// table in `docs/CONTRACTS.md`. Nothing misreports; the mix simply depends on WHEN the four legs
+    /// get there. The fixture used to answer that with room: simulator latency on every call, first
+    /// 50 ms (windows-latest runs 33966990967 and 33970406089, both
+    /// <c>["sent-not-confirmed", "rejected", "not-sent", "not-sent", "not-sent"]</c>), then 750 ms,
+    /// argued from a 2 ms measured spread times the worst windows-latest file-IO factor of 39.52 and
+    /// nine times that again. Run 37494849714 (main <c>081ab30</c>) spread the four issues past 750 ms
+    /// as well — two legs refused, one allowed — and the same code was green three times at
+    /// <c>b94fc212</c>: a room argued from the worst factor measured is beaten by the next one. So there
+    /// is no room. Every cancel now stops at the wire (<see cref="RecordingConnector.Seam"/>) until all
+    /// <see cref="GatewayPipeServer.MaxLegsInFlight"/> of the first wave are standing there, and the last
+    /// to arrive releases them. A cancel is sent only after its leg's re-authorization, so by then every
+    /// leg of the wave has passed it, and the lost answer cannot flag the store before they have —
+    /// however a runner spreads them. The simulator needs no latency at all, and the fifth leg, issued
+    /// once the wave is collected, meets the flag by construction. The latch is ASSERTED to have been
+    /// released by that fact, before the words are, so a wave it had to let go on patience says so.
     ///
     /// ITS OWN GATEWAY, NOT A SECOND SWEEP ON A SHARED ONE. This started as a second phase of the
     /// test above and passed on macOS and FAILED ON WINDOWS, twice, with all five legs
@@ -455,7 +453,8 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer()
     {
-        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
+        RecordingConnector? wire = null;
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget, over: c => wire = new RecordingConnector(c));
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -470,7 +469,16 @@ public class SweepRequestIdTests
         // The precondition, stated: nothing is flagged, so nothing is refused before it is tried.
         Assert.Empty(gw.Requests.NeedingReconciliation());
 
-        conn.Faults.LatencyMs = WaveIssueRoom;
+        // THE LATCH (see the summary): each cancel waits at the wire for the rest of its wave, and the
+        // wave's last leg to arrive lets all of them go. Set only now, so nothing above went through it.
+        var standing = 0;
+        var wave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire!.Seam = async kind =>
+        {
+            if (kind != RecordingConnector.HeldCall.Cancel) return;
+            if (Interlocked.Increment(ref standing) >= GatewayPipeServer.MaxLegsInFlight) wave.TrySetResult();
+            await wave.Task.WaitAsync(WaveFillPatience);
+        };
         conn.Faults.RefuseCancel = 1;      // a DEFINITE broker refusal   -> rejected
         conn.Faults.LoseAfterSend = 1;     // sent, no answer came back   -> sent-not-confirmed
 
@@ -481,15 +489,18 @@ public class SweepRequestIdTests
         var words = legs.Select(o => o.GetProperty("outcome").GetString()!).ToList();
         var errors = legs.Select(o => o.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "").ToList();
 
-        // THE TWO FIXTURE BOUNDS, CHECKED BEFORE THE WORDS, so that a runner which pushes past one of
-        // them says WHICH — rather than failing on `Assert.Contains("confirmed")` and leaving the
-        // next reader to work out from a bare collection whether the product lied.
+        // THE FIXTURE'S FACTS, CHECKED BEFORE THE WORDS, so that a run which breaks one of them says
+        // WHICH — rather than failing on `Assert.Contains("confirmed")` and leaving the next reader to
+        // work out from a bare collection whether the product lied.
+        Assert.True(wave.Task.IsCompletedSuccessfully,
+            $"the first wave was never all at the wire: {Volatile.Read(ref standing)} of its " +
+            $"{GatewayPipeServer.MaxLegsInFlight} cancels reached it inside {WaveFillPatience.TotalSeconds:0} s, so the " +
+            $"latch let them go on its patience and not on the fact it waits for. Words: [{string.Join(", ", words)}]");
         Assert.True(errors.Count(e => e.Contains("unconfirmed")) == 1,
             $"exactly one leg — the fifth, issued after its wave was collected — may be refused because an " +
-            $"earlier request is unconfirmed, and {errors.Count(e => e.Contains("unconfirmed"))} were. More than " +
-            $"one means this runner spread the wave's four issues over more than the {WaveIssueRoom} ms of room " +
-            $"the fixture gives them, so a leg was still short of its re-authorization when the lost answer " +
-            $"flagged the store: raise the latency. Words: [{string.Join(", ", words)}]");
+            $"earlier request is unconfirmed, and {errors.Count(e => e.Contains("unconfirmed"))} were. No leg of " +
+            $"the first wave reached the wire before all of them had passed their re-authorization, so more than " +
+            $"one is a refusal this fixture cannot produce. Words: [{string.Join(", ", words)}]");
         Assert.True(errors.All(e => !e.Contains("deadline")),
             $"a leg ran into the {SweepBudget.TotalSeconds:0}s operation budget, which this fixture exists to stay " +
             $"well inside — the simulator clips its wait at the deadline and can then only report PossiblyWritten. " +
