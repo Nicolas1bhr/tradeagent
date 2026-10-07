@@ -203,16 +203,26 @@ public class SecondPressRefusedTests
         Assert.EndsWith("; resolve it first", refused.Message);
         Assert.Equal(1, c.Closes);                       // and nothing more went to the wire
 
-        // THE OTHER DIRECTION. Resolved through the card, the next press is a fresh decision that
-        // really does send — including over a close the platform DEFINITELY refused, which is the
-        // shape that used to hold the control forever.
+        // THE OTHER DIRECTION. Resolved through the card, the next press is a fresh decision and is
+        // not refused. What it may SEND changed with U-press-close-once: the first press's close still
+        // rests at the platform — the owner confirmed it "resting" — and it has moved no position, so a
+        // second market close sized beside it would fill with it and turn the long 2 into a short 2.
+        // This used to assert exactly that second close (two closes on the wire). The leg now waits on
+        // the first press's own order, never closes beside it and names it; price arriving fills that
+        // one close and the book is flat.
+        var resting = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
         foreach (var r in gw.Requests.Query("request_id LIKE 'op-close-%'"))
             gw.ForceResolve(r.RequestId, r.State, "checked in ATAS: the close is resting");
         c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
 
         var second = await gw.OperatorCloseAllAsync();
-        Assert.Equal(2, c.Closes);
-        Assert.NotEmpty(second.Targets);
+        Assert.Equal(1, c.Closes);
+        Assert.Empty(second.Targets);
+        Assert.Contains(resting.RequestId, second.Summary);
+
+        foreach (var o in c.Inner.Broker.Orders.Where(o => o.State == ExecutionState.WORKING).ToList())
+            c.Inner.Broker.FillWorking(o.ConnectorOrderId);
+        Assert.DoesNotContain(c.Inner.Broker.Positions, p => p.Quantity != 0);
     }
 
     /// <summary>
