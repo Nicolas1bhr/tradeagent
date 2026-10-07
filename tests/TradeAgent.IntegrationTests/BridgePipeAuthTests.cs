@@ -590,8 +590,12 @@ public class BridgePipeAuthTests(ITestOutputHelper output)
     /// stands unowned for the loop's one-second pause. The handle held here is the one
     /// <see cref="BridgePipeAuth.OpenToRead"/> opens, which is the one every reader holds.
     ///
-    /// <para><c>rename(2)</c> ignores open handles, so on macOS and Linux this is green whatever the reader
-    /// does; the claim is Windows'.</para>
+    /// <para>Green on Windows takes two halves, and windows-latest measured the first one alone curing
+    /// nothing: red with the reader sharing read only (run 37675671465) and still red with it sharing read,
+    /// write and delete (run 37675951756), both "UnauthorizedAccessException: Access to the path is denied" —
+    /// <c>MoveFileExW</c> refuses a replace under any open handle. The second half is the POSIX rename
+    /// (<c>BridgePipeAuth.Publish</c>). <c>rename(2)</c> ignores open handles, so on macOS and Linux this is
+    /// green whatever the reader does; the claim is Windows'.</para>
     /// </summary>
     [Fact]
     public void A_reader_holding_the_credential_does_not_refuse_its_rewrite()
