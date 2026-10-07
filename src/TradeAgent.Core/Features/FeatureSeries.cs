@@ -52,8 +52,9 @@ public sealed record FeatureSeriesRead(
 /// rule bounds how early a live reading can arrive: its cadence plus 30 s). That read is bounded by
 /// <see cref="MaxRowsPerInput"/> too; past it the start is stated absent, never guessed. <b>Under a holdout it reads no
 /// row inside a window</b>: the search reaches back no further than the close of the latest window that starts before
-/// the range, so a start found under a holdout can be later than the referee's, never earlier; a probe the holdout
-/// refuses states the start absent.</para>
+/// the range, so a start found under a holdout can be later than the referee's, never earlier — and it says so, in
+/// <see cref="FeatureCleanStart.Bounded"/>, so it is never read as the input's own; a probe the holdout refuses states the
+/// start absent.</para>
 /// </summary>
 public static class FeatureSeries
 {
@@ -118,8 +119,18 @@ public static class FeatureSeries
             read[input] = rows;
         }
 
+        // A HOLDOUT WINDOW BEFORE THE RANGE BOUNDS THE CLEAN-HISTORY SEARCH (U-tape-holdout) — and the answer says so, so
+        // that a start found since the window's close is never read as the input's own.
+        var bound = Bound(holdout, rangeStart);
         var clean = FeatureEvaluator.Combine(spec,
-            spec.Inputs.Select(i => FirstClean(reader, holdout, i, rangeStart, to, read[i], rowCap)));
+            spec.Inputs.Select(i => FirstClean(reader, holdout, i, rangeStart, to, read[i], rowCap, bound?.Until)));
+        if (bound is { Until: { } close } w)
+            clean = clean with
+            {
+                Bounded = $"the search read no reading stamped before {close:u}, the close of dataset {w.DatasetId} "
+                          + $"({w.Pair} {w.Interval} {w.Version})'s holdout window, which this read may not reach — so this is "
+                          + "the clean-history start since then, NOT necessarily the input's own: that is this instant or earlier"
+            };
 
         // EVERY POINT BY THE ONE EVALUATOR, over the rows its reach holds — the rows it would ignore left out, which is
         // why a point here equals the pure evaluator over every row (FeatureSeriesTests) — each payload parsed once.
@@ -183,14 +194,15 @@ public static class FeatureSeries
     /// input holds nothing stamped before the range, the range's own rows are all of them; otherwise its oldest readings
     /// are read forward until the answer is settled.
     /// </summary>
+    /// <param name="floor">
+    /// The close of the latest holdout window before the range (<see cref="Bound"/>), or null: no probe asks for a row
+    /// stamped before it, so none reaches a window this reader may not read — a window that overlaps the range has refused
+    /// the series already. The referee's holdout has no window, and no floor.
+    /// </param>
     static (FeatureInput Input, DateTimeOffset? First, string? Why) FirstClean(TapeReader reader, TapeHoldout holdout,
-        FeatureInput input, DateTimeOffset rangeStart, DateTimeOffset to, List<TapeObservation> inRange, int cap)
+        FeatureInput input, DateTimeOffset rangeStart, DateTimeOffset to, List<TapeObservation> inRange, int cap,
+        DateTimeOffset? floor)
     {
-        // A HOLDOUT WINDOW BEFORE THE RANGE BOUNDS THE SEARCH (U-tape-holdout): no probe below asks for a row stamped
-        // before the close of the latest one, so none reaches a window this reader may not read — and a window that
-        // overlaps the range has refused the series already. The referee's holdout has no window, and no floor.
-        var floor = Floor(holdout, rangeStart);
-
         if (rangeStart == DateTimeOffset.MinValue)
             return Found(input, FeatureEvaluator.FirstClean(input, inRange, to), to);
         switch (Holds(reader, holdout, input, floor, rangeStart.AddTicks(-1)))
@@ -248,16 +260,12 @@ public static class FeatureSeries
                       + "holdout window, which this read may not reach");
 
     /// <summary>
-    /// THE CLOSE OF THE LATEST HOLDOUT WINDOW THAT STARTS BEFORE <paramref name="rangeStart"/>, of those this reader may not
-    /// read — the lowest source time the clean-history search asks for — or null for none, the referee's always.
+    /// THE HOLDOUT WINDOW THAT CLOSES LATEST OF THOSE STARTING BEFORE <paramref name="rangeStart"/>, of the windows this
+    /// reader may not read — its close is the lowest source time the clean-history search asks for — or null for none, the
+    /// referee's always.
     /// </summary>
-    static DateTimeOffset? Floor(TapeHoldout holdout, DateTimeOffset rangeStart)
-    {
-        DateTimeOffset? floor = null;
-        foreach (var w in holdout.Windows().Where(w => w.From < rangeStart))
-            if (w.Until is { } end && (floor is not { } held || end > held)) floor = end;
-        return floor;
-    }
+    static TapeHoldoutWindow? Bound(TapeHoldout holdout, DateTimeOffset rangeStart) =>
+        holdout.Windows().Where(w => w.From < rangeStart && w.Until is not null).MaxBy(w => w.Until);
 
     /// <summary>
     /// THE START OF THE SECOND HOLDING THE INPUT'S OLDEST READING at or after <paramref name="floor"/>, by binary search

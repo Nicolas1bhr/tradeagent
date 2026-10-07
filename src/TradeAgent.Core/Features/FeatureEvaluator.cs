@@ -25,7 +25,16 @@ public sealed record FeatureValue(
 /// WHEN A FEATURE'S VALUES CAN FIRST BE CLEAN: an instant, or null with the reason (<c>docs/EDGE-FACTORY.md</c> § 4.3;
 /// R07 § 5.4).
 /// </summary>
-public sealed record FeatureCleanStart(DateTimeOffset? At, string? Absent);
+public sealed record FeatureCleanStart(DateTimeOffset? At, string? Absent)
+{
+    /// <summary>
+    /// WHY THIS IS NOT NECESSARILY THE INPUT'S OWN START, in words — or null, when it is (<c>U-tape-holdout</c>). Set when a
+    /// holdout window before the range bounded the search: no reading stamped before the window's close was read, so
+    /// <see cref="At"/> is the start since then — the input's own is that instant or earlier, never later — and an
+    /// <see cref="Absent"/> is an absence since then. A caller that reads <see cref="At"/> reads this with it.
+    /// </summary>
+    public string? Bounded { get; init; }
+}
 
 /// <summary>What one reading's field reads as: a decimal, or why it does not.</summary>
 internal readonly record struct FieldReading(decimal? Value, string? Why);
