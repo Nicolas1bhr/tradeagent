@@ -553,13 +553,15 @@ public sealed class AgentSession(
         var contained = ProcessContainment.Start(psi);
         var process = contained.Process;
         _current = contained;
+
+        // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
+        // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened as the turn
+        // starts and closed by the finally below AFTER the teardown — never by the leader's exit, which says
+        // nothing about the processes it started, and which is how presence used to read 0 while a turn's
+        // detached children still ran (U-agent-tree).
+        var alive = Presence.Enter();
         try
         {
-            // The conversation turn: the one process that runs what the agent decided to do. Held open
-            // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
-            // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
-            using var alive = CliAgentRuntime.Presence(process, presence);
-
             // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
             try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
 
@@ -596,6 +598,7 @@ public sealed class AgentSession(
                 register.Revoke(launch.Token);
             }
             _current = null;
+            alive.Dispose();
         }
     }
 
@@ -934,7 +937,8 @@ public sealed class AgentSession(
     ///
     /// "Everything it started" is what <see cref="ContainedProcess.Kill"/> buys and what the bare
     /// tree kill could not: a grandchild that detached is no longer anybody's child, so a walk down
-    /// parent links stops one level above it. The job — or the process group — still names it.
+    /// parent links stops one level above it. The job still names it on Windows; on macOS and Linux
+    /// the turn's session does, and its parent links are frozen before anything is killed.
     /// </summary>
     public async Task CancelAsync()
     {

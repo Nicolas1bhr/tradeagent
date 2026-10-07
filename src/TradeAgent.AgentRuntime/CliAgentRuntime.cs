@@ -576,9 +576,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             SetCommand(psi, exe, plan.StdinArgs);
             AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
+            // THE WINDOW BEFORE THE PROCESS, so they are disposed the other way round: the process — and
+            // with it the whole tree — first, then the window. Never closed by the leader's exit alone, which
+            // says nothing about what it started (U-agent-tree).
+            using var alive = (presence ?? AgentPresence.Shared).Enter();
             using var held = ProcessContainment.Start(psi);
             var p = held.Process;
-            using var alive = Presence(p, presence);
             await p.StandardInput.WriteLineAsync(key);
             p.StandardInput.Close();
 
@@ -819,9 +822,11 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         SetCommand(psi, exe, args);
         AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
+        // The window before the process, so the tree's teardown is disposed first and the window after it —
+        // the same order as the key sign-in above and every turn (U-agent-tree).
+        using var alive = agentWork ? (presence ?? AgentPresence.Shared).Enter() : null;
         using var held = ProcessContainment.Start(psi);
         var p = held.Process;
-        using var alive = agentWork ? Presence(p, presence) : null;
         try { p.StandardInput.Close(); } catch (Exception) { /* already gone */ }
         using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timer.CancelAfter(timeout);
