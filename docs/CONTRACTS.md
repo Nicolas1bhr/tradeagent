@@ -1044,12 +1044,33 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   rejected, and a refusal is still proof that nothing left. **Market only** — a resting stop or target
   is protection a market close cancels first, and a run's two would refuse each other — and **this
   platform and account only**: a row another platform left `WORKING` is never moved by this one's
-  stream, and counted it would hold the position's closes for good. **NOT claimed**: the emergency
-  presses (Close all positions, the loss flatten and its close-again, the data-loss exit) do not read
-  this rule, so a press while a close rests still sizes a second close beside it — the press's
-  settle-before-send is to take such an order as it takes an `UNKNOWN` one, after
-  `U-fix-press-budget`; and a fill the platform's position read has not caught up with is seen by
-  neither rule.
+  stream, and counted it would hold the position's closes for good.
+  **And the owner's Close all positions asks the platform before each leg sends** (`U-press-close-once`):
+  after the `UNKNOWN` settle, every row this rule counts on the leg's instrument and side but
+  `DISPATCHING` (which the leg's own insert waits on) goes through `SettleAnOrderInFlightAsync` — the
+  one reader and writer of an order in flight's platform answer — under the press's deadline, checked
+  before each row. Another press's own row is looked at first and every other row is asked about before
+  anything is cancelled, so a leg that will not send cancels nothing. What the answer decides: settled
+  with nothing filled — the drift re-read and the close, as before; listed live — cancelled at the
+  platform and asked again, and anything but a settle refuses the leg with a flagged row naming the
+  order, on every press: an order the platform lists live is never closed over; another press's own
+  row — the leg waits, naming it, and nothing asks about it, cancels it or closes beside it; undecided
+  (`Unlisted`, a connector that cannot prove its history, a read that threw, the deadline, a flagged
+  `RECONCILING` row, any answer neither final nor live) — refused with a flagged row naming the order,
+  its last state and the platform's words, saying what a second press does and its risk, and THEN a
+  write-once record (`press_told:{request}`) that this press told the owner; a LATER Close all finding
+  that same order still undecided closes the leg over it as any leg, naming it — the owner's explicit
+  second press — and a lost record costs one more press, never a send; settled with any quantity
+  filled — nothing sent, said as drift, because the position read may not show that fill yet. The
+  quantity in flight is never netted, the press is never refused whole for one leg, and a settle marks
+  the fill pull due. **NOT claimed**: the app's own presses (the loss flatten, its close-again, the
+  data-loss exit) do not ask — they cancel every working order on a position they close and read the
+  book back before any close goes out; a closed-over order that was still working and fills leaves
+  the position the other way by up to its size, which the first press said in words; another press's
+  in-flight row that the owner has confirmed on the card as still working, and whose platform update
+  was then lost, holds that leg until the platform reports it — the card offers no other answer for a
+  working row, and nothing else settles a press's row; and a fill the position read has not caught up
+  with is seen only while its order is still in flight in TradeAgent's record.
 - **And a row this platform's stream never moves is read back from the platform's own order list**
   (`U-inflight-settle`) — a fill or a cancel the platform never reports: the ATAS bridge drops an
   event it has no peer for and nothing replays it, the simulator's book fills and cancels without

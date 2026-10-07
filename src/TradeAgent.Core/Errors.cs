@@ -855,11 +855,15 @@ public static class Errors
         // it prescribes a different reading: the press did close every other instrument, so what the
         // owner is being told is that this one is the exception and may still be open.
         [ErrorCode.CLOSE_UNRESOLVED_ON_INSTRUMENT] = ("One instrument was left alone by the emergency press: TradeAgent has an earlier order on it that it could not confirm and could not stop, so it sent nothing rather than close on top of it. That position may still be open.", "Every other position was closed. Open ATAS and look at this instrument, confirm the unconfirmed order on the Dashboard, then press Close all positions again.", false),
-        // THE THIRD READING OF THE SAME DOUBLING, and the one where nothing is wrong. Not a position
-        // that already moved, not an order nobody can account for: an earlier order that will close
-        // this position has been sent and has not filled yet. The repair names no button, because the
-        // answer is that order's own — and a run's END sends its close again by itself once it has one.
-        [ErrorCode.CLOSE_IN_FLIGHT]                = ("TradeAgent already has an earlier order on its way to close this position, and it has not filled yet, so it refused to send a second one sized from the position as it looks now.", "Nothing was sent and your position is untouched. There is nothing to do: once that earlier order has filled, been cancelled or been refused, whatever is left of the position can be closed.", false),
+        // THE THIRD READING OF THE SAME DOUBLING, and usually the one where nothing is wrong. Not a
+        // position that already moved, not an order nobody can account for: an earlier order that will
+        // close this position has been sent and has not filled yet. Usually the answer is that order's
+        // own — and a run's END sends its close again by itself once it has one. It is NOT "nothing to
+        // do" in every case, and saying so was wrong: an order the platform stops accounting for can
+        // stay where it is (U-inflight-owner hands it to the card only where the platform can prove its
+        // history), and Close all positions asks the platform about it before it closes, cancelling it
+        // there if it is listed working (U-press-close-once). So the repair names the press.
+        [ErrorCode.CLOSE_IN_FLIGHT]                = ("TradeAgent already has an earlier order on its way to close this position, and it has not filled yet, so it refused to send a second one sized from the position as it looks now.", "Nothing was sent and your position is untouched. Usually nothing is needed: once that earlier order has filled, been cancelled or been refused, or TradeAgent has read its outcome from your platform, whatever is left of the position can be closed. If it stays stuck, press Close all positions: it asks your platform about that order before it closes anything, and cancels it there if your platform still lists it working.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         // NOT "you waited too long" and NOT "the budget is reached". The proposal was written against
         // a book TradeAgent has since closed for you, so approving it would put on a position sized
