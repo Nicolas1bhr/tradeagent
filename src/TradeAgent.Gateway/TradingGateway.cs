@@ -8810,14 +8810,28 @@ public sealed class TradingGateway : IAsyncDisposable
               $"{(unsettled.Count == 1 ? "That position" : "Those positions")} may still be open — " +
               "check the platform, confirm that order on the Dashboard, then press again.";
 
+        // WHAT ASKING ABOUT AN ORDER IN FLIGHT DECIDED (U-press-close-once), each its own news.
+        var asked = string.Concat(
+            run.CancelledFirst.Count == 0 ? ""
+                : $" Before closing, TradeAgent cancelled at your platform: {string.Join("; ", run.CancelledFirst)}.",
+            run.HeldByAPress.Count == 0 ? ""
+                : $" Nothing was sent beside another press's order: {string.Join("; ", run.HeldByAPress)}.",
+            run.StillLive.Count == 0 ? ""
+                : $" Nothing was sent beside an order your platform still lists live: {string.Join("; ", run.StillLive)}.",
+            run.Told.Count == 0 ? ""
+                : $" Nothing was sent beside an order whose outcome nobody can tell yet: {string.Join("; ", run.Told)}.",
+            run.ClosedOver.Count == 0 ? ""
+                : $" Closed over an order an earlier press told you about: {string.Join("; ", run.ClosedOver)}.");
+
         var outcome = await PressOutcomeAsync(ClosePress, nonce, ct);
         // A press that wrote no rows at all has only the drift and the waits to report; "Nothing was
         // sent." twice over is not a sentence anybody should have to read.
         outcome = outcome with
         {
-            Summary = ((outcome.Targets.Count == 0 && (drift.Length > 0 || waiting.Length > 0 || stuckOn.Length > 0)
+            Summary = ((outcome.Targets.Count == 0
+                        && (drift.Length > 0 || waiting.Length > 0 || stuckOn.Length > 0 || asked.Length > 0)
                             ? "" : outcome.Summary)
-                      + drift + waiting + stuckOn).Trim()
+                      + drift + waiting + stuckOn + asked).Trim()
         };
         CompleteComposite(PressPrefix(ClosePress, nonce), Json.Write(outcome));
         _log.Activity($"You asked to close {captured.Count} position(s). {outcome.Summary}" +
@@ -11013,6 +11027,17 @@ public sealed class TradingGateway : IAsyncDisposable
         // because the position it re-read there does not make it a reduction. Nothing was sent.
         var refused = new List<string>();
 
+        // AND WHAT ONLY THE OWNER'S LEG CAN REACH (U-press-close-once): what it learned by asking the
+        // platform about a same-side market order in flight on its instrument before it sent — see
+        // AskAboutTheClosesInFlightAsync. Another press's own close it waited on; an order listed live
+        // that would not cancel; an order nobody can decide that this press told the owner about; one an
+        // EARLIER press told him about, closed over; and an order cancelled at the platform first.
+        var heldByAPress = new List<string>();
+        var stillLive = new List<string>();
+        var told = new List<string>();
+        var closedOver = new List<string>();
+        var cancelledFirst = new List<string>();
+
         // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
         // position — so the claim rides on the first row this press actually writes, and only that
         // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
@@ -11057,6 +11082,61 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (row is not null) claimed = true;
                 unsettled.Add(stuck);
                 continue;
+            }
+
+            // THE OWNER'S LEG ASKS BEFORE IT SENDS, AND ONLY THE OWNER'S (U-press-close-once). The UNKNOWN
+            // settle above is the half of the doubling nobody has an answer for; this is the half with an
+            // answer that has not FINISHED — a same-side market order the platform acknowledged and still
+            // holds, which has moved no position, so the drift re-read below agrees with a second close
+            // sized beside it and both fill. Every such row goes through SettleAnOrderInFlightAsync, and
+            // what it answers decides the leg: see AskAboutTheClosesInFlightAsync. The app's own legs
+            // cancel every working order on a position at the platform before they close it
+            // (CancelWorkingOrdersAsync), so the step is not theirs.
+            List<string> overThese = [];
+            if (kind == ClosePress)
+            {
+                var asked = await AskAboutTheClosesInFlightAsync(rid, nonce, symbol, closingSide, accountId, ct);
+                cancelledFirst.AddRange(asked.Cancelled);
+
+                if (asked.Leg is InFlightLeg.Drifted)
+                {
+                    // SAID AS DRIFT, and sent as drift is: nothing, no row, and the owner presses again
+                    // against what is there — the position read may not show that fill yet.
+                    drifted.Add(asked.Words);
+                    continue;
+                }
+
+                if (asked.Leg is InFlightLeg.Waits)
+                {
+                    // ANOTHER PRESS'S OWN ORDER, and only its press and its owner answer it: nothing is
+                    // asked, cancelled, written or sent for this leg.
+                    heldByAPress.Add(asked.Words);
+                    continue;
+                }
+
+                if (asked.Leg is InFlightLeg.StillLive or InFlightLeg.Tells)
+                {
+                    // REFUSED IN THE UNSETTLED SHAPE: a flagged row, sending nothing, naming the order, its
+                    // last state and what the platform answered — the card's target for this instrument.
+                    var refusal = $"nothing was sent for {symbol}: {asked.Words}. Your {symbol} position may still be open.";
+                    var row = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol,
+                        Json.Write(new PlaceIntent(symbol, closingSide, OrderType.Market, Math.Abs(quantity),
+                            null, null, TimeInForce.Day, note) { Intent = OrderIntent.Close }),
+                        refusal, claims: claimed ? null : kind, waitsForWorkOn: null, out _, sending: false);
+                    if (row is not null) claimed = true;
+
+                    if (asked.Leg is InFlightLeg.StillLive) stillLive.Add(asked.Words);
+                    else
+                    {
+                        // THEN, AND ONLY ONCE THE ROW THAT TELLS HIM IS WRITTEN, THE RECORD THAT THIS PRESS
+                        // TOLD HIM: what lets a LATER press close over the same order, still undecided.
+                        foreach (var (undecided, why) in asked.Undecided) RecordThatThisPressTold(undecided, nonce, why);
+                        told.Add(asked.Words);
+                    }
+                    continue;
+                }
+
+                overThese = asked.ClosedOver;
             }
 
             // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
@@ -11156,6 +11236,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 }
             }
 
+            // CLOSED OVER, AND NAMED — only here, where the close is on its way: a leg that drifted or
+            // waited above sent nothing over anything, and says so in its own words.
+            closedOver.AddRange(overThese);
+
             OrderInfo? order;
             try
             {
@@ -11193,7 +11277,11 @@ public sealed class TradingGateway : IAsyncDisposable
                 // one situation where finishing matters most (the previous unit's residual).
                 SafelySettle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
         }
-        return new CloseRun(drifted, waited, unsettled, refused);
+        return new CloseRun(drifted, waited, unsettled, refused)
+        {
+            HeldByAPress = heldByAPress, StillLive = stillLive, Told = told, ClosedOver = closedOver,
+            CancelledFirst = cancelledFirst
+        };
     }
 
     /// <summary>What one run of <see cref="CloseCapturedAsync"/> could not do, and why.</summary>
@@ -11202,7 +11290,299 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <param name="Unsettled">Instruments holding an order that could not be accounted for. Nothing sent.</param>
     /// <param name="Refused">Reduction-only legs refused at the wire. Nothing sent; the row says why.</param>
     sealed record CloseRun(List<string> Drifted, List<string> Waited, List<string> Unsettled,
-        List<string> Refused);
+        List<string> Refused)
+    {
+        // ---- the owner's legs alone (U-press-close-once): what asking about an order in flight decided
+
+        /// <summary>Instruments waiting on another press's own close in flight. Nothing sent, no row.</summary>
+        public List<string> HeldByAPress { get; init; } = [];
+
+        /// <summary>Instruments holding an order the platform lists live that would not cancel. Nothing sent; the row says why.</summary>
+        public List<string> StillLive { get; init; } = [];
+
+        /// <summary>Instruments holding an order nobody can decide, which this press told the owner about. Nothing sent; the row says why.</summary>
+        public List<string> Told { get; init; } = [];
+
+        /// <summary>Orders an EARLIER press told the owner about, still undecided, that this press closed over.</summary>
+        public List<string> ClosedOver { get; init; } = [];
+
+        /// <summary>Orders cancelled at the platform, and read back settled, before the close went out.</summary>
+        public List<string> CancelledFirst { get; init; } = [];
+    }
+
+    /// <summary>What the owner's leg does after asking about the orders in flight on its instrument.</summary>
+    enum InFlightLeg
+    {
+        /// <summary>(a) Nothing in flight, or every row settled with nothing filled, or closed over: the drift re-read and the close.</summary>
+        Sends,
+
+        /// <summary>(e) A row settled with a fill: nothing sent, said as drift.</summary>
+        Drifted,
+
+        /// <summary>(c) Another press's own row: the leg waits, no row, nothing sent.</summary>
+        Waits,
+
+        /// <summary>(b) Listed live, cancelled, and still not settled when asked again: refused, on every press.</summary>
+        StillLive,
+
+        /// <summary>(d) Undecided and told by no earlier press: refused, and this press tells the owner.</summary>
+        Tells
+    }
+
+    /// <summary>
+    /// What <see cref="AskAboutTheClosesInFlightAsync"/> decided for one leg. <paramref name="Words"/> is the account of a
+    /// leg that does not send, naming every order it is about; <paramref name="Undecided"/> the rows this press tells
+    /// the owner about, each with what the platform answered; <paramref name="ClosedOver"/> the rows an earlier press told
+    /// him about that this leg closes over, in words; <paramref name="Cancelled"/> the orders it cancelled at the
+    /// platform first, in words, whatever the leg then does.
+    /// </summary>
+    sealed record InFlightAsked(InFlightLeg Leg, string Words, List<(ExecutionRequest Row, string Why)> Undecided,
+        List<string> ClosedOver, List<string> Cancelled);
+
+    /// <summary>
+    /// THE OWNER'S CLOSE ALL ASKS THE PLATFORM ABOUT EVERY SAME-SIDE MARKET ORDER IN FLIGHT ON ONE LEG'S INSTRUMENT
+    /// BEFORE THAT LEG SENDS (<c>U-press-close-once</c>) — every row <see cref="ClosesInFlightOn"/> counts but
+    /// <c>DISPATCHING</c>, which the leg's own insert already waits on (<see cref="OpenPressRow"/>'s wire clause), and
+    /// only through <see cref="SettleAnOrderInFlightAsync"/>: nothing here reads the platform about such a row, or
+    /// writes an answer onto it, any other way.
+    ///
+    /// <para><b>Why the press asks.</b> Such an order has moved no position yet, so the press's capture and its drift
+    /// re-read both agree with a second close sized beside it, and both fill: the agent's market close resting at the
+    /// platform, then Close all, put two sells on the wire and a long 2 became a short 2 (seat P's probe at
+    /// <c>bdf5affa</c>). The UNKNOWN half was <see cref="SettleAnUnresolvedReducerOrRefuse"/>'s; this is the half with an
+    /// answer that has not finished. The quantity in flight is never netted against the position: a close is sized
+    /// from a position, and only an order with a final answer has a known effect on it.</para>
+    ///
+    /// <para><b>What the answer decides</b>, row by row:
+    /// (a) settled — or found final, the platform's own update having landed meanwhile — with nothing filled: the next
+    /// row, and then the drift re-read and the close, as before;
+    /// (b) LIVE: cancelled at the platform and asked again — settled with nothing filled, the next row; settled with a
+    /// fill, (e); anything else refuses the leg, on every press, because the platform lists it live;
+    /// (c) another press's own row: the leg waits, naming it — only that press's owner answers it, and nothing here
+    /// asks about it, cancels it or closes beside it;
+    /// (d) undecided — <see cref="InFlightAnswer.Unlisted"/>, a connector that cannot prove its history, a read that
+    /// threw, this press's deadline, a flagged <c>RECONCILING</c> row the reconciler holds, or any other answer that
+    /// is neither final nor live: refused, and this press tells the owner (<see cref="RecordThatThisPressTold"/>) — or,
+    /// where an EARLIER press already told him about the same order, closed over, named: his explicit second press;
+    /// (e) settled with any quantity filled: nothing sent, said as drift — the position changed after the press and its
+    /// read may not show that fill yet.</para>
+    ///
+    /// <para><b>The order of the questions is part of the rule.</b> Another press's row is looked at first, so a leg that
+    /// will wait cancels nothing; every other row is asked about before anything is cancelled, so a leg that will be
+    /// refused leaves a live close resting rather than cancelling it and sending nothing; and only then is a live order
+    /// cancelled and read back, one at a time. The press's deadline is checked before each row, as the UNKNOWN settle
+    /// checks it: a row reached after it is undecided, and a live one is refused.</para>
+    ///
+    /// <para><b>Rule 3, stated for this method.</b> Only a FINAL answer the platform asserts settles a row, and it is
+    /// written by <see cref="SettleAnOrderInFlightAsync"/> through the stream's own writer; a settle marks the fill pull
+    /// due, as the health pass's does, so a fill the stream never reported reaches the ledger through
+    /// <see cref="RecordFill"/>. A cancel that throws, refused or ambiguous, decides nothing: the row is asked about
+    /// again, and only what the platform then lists decides it.</para>
+    /// </summary>
+    async Task<InFlightAsked> AskAboutTheClosesInFlightAsync(string rid, string nonce, string symbol, OrderSide side,
+        string accountId, CancellationToken ct)
+    {
+        var cancelled = new List<string>();
+        var closedOver = new List<string>();
+        InFlightAsked Leg(InFlightLeg leg, string words, List<(ExecutionRequest, string)>? undecided = null) =>
+            new(leg, words, undecided ?? [], closedOver, cancelled);
+
+        var rows = ClosesInFlightOn(rid, accountId, symbol, side)
+            .Where(r => r.State != ExecutionState.DISPATCHING)
+            .ToList();
+        if (rows.Count == 0) return Leg(InFlightLeg.Sends, "");
+
+        // (c) ANOTHER PRESS'S OWN ROW, BEFORE ANYTHING IS ASKED OF THE PLATFORM OR CANCELLED THERE.
+        foreach (var row in rows.Where(r => IsPressRecord(r.RequestId)))
+        {
+            // Asked as every row is, and declined as a press's own row always is: nothing is read about it.
+            var (_, now) = await AskAboutOneInFlightAsync(row, ct);
+            if (OrderStateMachine.IsTerminal(now.State))
+            {
+                if (FilledAny(now)) return Leg(InFlightLeg.Drifted, FilledWords(symbol, now));
+                continue;
+            }
+
+            var press = PressName(PressKindOf(now.RequestId));
+            return Leg(InFlightLeg.Waits, now.NeedsReconciliation || _unconfirmed.ContainsKey(now.RequestId)
+                ? $"{symbol} waits on {Described(now)}, still {now.State}: it belongs to another press — {press} — and "
+                  + "is waiting for your answer on the Dashboard"
+                : $"{symbol} waits on {Described(now)}, which TradeAgent still records as {now.State}: it belongs to "
+                  + $"another press — {press} — which you have answered on the Dashboard, and only your platform's own "
+                  + "report of what became of it settles it now");
+        }
+
+        // EVERY OTHER ROW IS ASKED ABOUT FIRST, AND NOTHING IS CANCELLED YET.
+        var live = new List<(ExecutionRequest Row, OrderInfo Order)>();
+        var undecided = new List<(ExecutionRequest Row, string Why)>();
+        foreach (var row in rows.Where(r => !IsPressRecord(r.RequestId)))
+        {
+            var (answer, now) = await AskAboutOneInFlightAsync(row, ct);
+            if (OrderStateMachine.IsTerminal(now.State))
+            {
+                if (FilledAny(now)) return Leg(InFlightLeg.Drifted, FilledWords(symbol, now));
+                continue;
+            }
+
+            if (answer.Live is { } order)
+            {
+                live.Add((now, order));
+                continue;
+            }
+
+            // (d) UNDECIDED. An earlier press told the owner about this very order: closed over, named.
+            if (ToldByAnEarlierPress(now.RequestId, nonce) is { } earlier)
+            {
+                closedOver.Add($"{Described(now)}, still {now.State} by TradeAgent's record — {answer.Why} — which "
+                               + $"the press at {earlier.At.ToLocalTime():HH:mm} told you about");
+                continue;
+            }
+            undecided.Add((now, answer.Why));
+        }
+
+        if (undecided.Count > 0)
+            return Leg(InFlightLeg.Tells, string.Join("; ", undecided.Select(u =>
+                $"{Described(u.Row)} is still {u.Row.State} by TradeAgent's record, and {u.Why}")), undecided);
+
+        // (b) ONLY NOW IS A LIVE ORDER CANCELLED, AND READ BACK, ONE AT A TIME.
+        foreach (var (row, order) in live)
+        {
+            if (RiskReducingScope.DeadlineAt is { } deadline && Environment.TickCount64 >= deadline)
+                return Leg(InFlightLeg.StillLive, $"{Described(row)} is still {order.State} at your platform, and this "
+                                                  + "press ran out of time before it could cancel it");
+
+            string? cancelRefused = null;
+            try
+            {
+                using var dispatch = TransportLedger.MarkDispatch();
+                await Connector.CancelOrderAsync(order.ConnectorOrderId, ct);
+            }
+            catch (Exception ex)
+            {
+                // A definite refusal is the platform saying the order is still live — or that it has just filled — and an
+                // ambiguous one says nothing: either way only what the platform lists next decides it.
+                cancelRefused = ex.Message;
+            }
+
+            var (again, now) = await AskAboutOneInFlightAsync(row, ct);
+            if (OrderStateMachine.IsTerminal(now.State))
+            {
+                if (FilledAny(now)) return Leg(InFlightLeg.Drifted, FilledWords(symbol, now));
+                cancelled.Add($"{Described(now)}, which your platform still held {order.State}: TradeAgent cancelled it there "
+                              + "and read it back cancelled");
+                _log.TryEngineering("Gateway", "press_inflight_cancelled", "warn", requestId: now.RequestId,
+                    metadataJson: Json.Write(new { press = nonce, symbol, was = order.State.ToString(), state = now.State.ToString() }));
+                continue;
+            }
+
+            // LISTED LIVE THIS PRESS, SO NEVER CLOSED OVER, WHATEVER THE SECOND ANSWER WAS.
+            return Leg(InFlightLeg.StillLive, (again.Live is { } still
+                    ? $"{Described(now)} is still {still.State} at your platform after TradeAgent asked to cancel it"
+                    : $"{Described(now)} was {order.State} at your platform when TradeAgent asked to cancel it, and "
+                      + $"then {again.Why}")
+                + (cancelRefused is null ? "" : $" (the cancel was refused: {cancelRefused})"));
+        }
+
+        return Leg(InFlightLeg.Sends, "");
+    }
+
+    /// <summary>
+    /// ONE ROW ASKED ABOUT, UNDER THE PRESS'S DEADLINE: <see cref="SettleAnOrderInFlightAsync"/>'s answer, and the row as
+    /// the store holds it after the question. A deadline already gone asks nothing, and a question that throws is an
+    /// answer that decides nothing; neither ever escapes into the press's loop.
+    /// </summary>
+    async Task<(InFlightAnswer Answer, ExecutionRequest Now)> AskAboutOneInFlightAsync(ExecutionRequest row,
+        CancellationToken ct)
+    {
+        InFlightAnswer answer;
+        if (RiskReducingScope.DeadlineAt is { } deadline && Environment.TickCount64 >= deadline)
+            answer = new InFlightAnswer(false, null, "this press ran out of time before it could ask your platform about it");
+        else
+        {
+            try { answer = await SettleAnOrderInFlightAsync(row, ct); }
+            catch (Exception ex)
+            {
+                answer = new InFlightAnswer(false, null, $"your platform could not be asked about it ({ex.Message})");
+            }
+        }
+
+        // A SETTLE MARKS THE FILL PULL DUE, as the health pass's own does: a fill the stream never reported reaches the
+        // ledger through RecordFill on the next pass, and nowhere here.
+        if (answer.Settled) _fillPullDue = true;
+
+        ExecutionRequest now;
+        try { now = _requests.Get(row.RequestId) ?? row; }
+        catch (Exception) { now = row; }
+        return (answer, now);
+    }
+
+    /// <summary>A row in a final state that moved the position: filled, in whole or in part.</summary>
+    static bool FilledAny(ExecutionRequest r) =>
+        r.State == ExecutionState.FILLED || r.FilledQuantity is > 0m;
+
+    static string FilledWords(string symbol, ExecutionRequest r) =>
+        $"{symbol}: {Described(r)} has filled {(r.FilledQuantity is { } q && q > 0m ? $"{q}" : "in full")} at your "
+        + $"platform, which had not reported it, so {symbol} is not what this press captured, and your platform's "
+        + "position may not show that fill yet";
+
+    /// <summary>One order in flight, as the owner reads it: its reference, and what it was asked to do.</summary>
+    static string Described(ExecutionRequest r)
+    {
+        PlaceIntent? intent = null;
+        try { intent = Json.Read<PlaceIntent>(r.ParametersJson); }
+        catch (Exception) { /* unreadable parameters: the reference alone */ }
+        return intent is null
+            ? $"order {r.RequestId} on {r.Instrument}"
+            : $"order {r.RequestId} (a market {intent.Side.ToString().ToLowerInvariant()} of {intent.Quantity} {r.Instrument})";
+    }
+
+    /// <summary>
+    /// THE RECORD THAT ONE CLOSE ALL TOLD THE OWNER ABOUT AN ORDER IN FLIGHT NOBODY COULD DECIDE (<c>U-press-close-once</c>):
+    /// <c>press_told:{requestId}</c>, written ONCE per order (<see cref="Database.AddKvOnce"/>), after the flagged row that
+    /// tells him. A LATER Close all finding that same order still undecided closes over it, naming it — the owner's
+    /// explicit second press. Keyed by the order, so only that order: another one on the instrument is told about
+    /// afresh. A write that is lost costs one more press, never a send: the next press finds no record and tells again.
+    /// </summary>
+    public const string PressToldPrefix = "press_told:";
+
+    sealed record PressTold(string Press, DateTimeOffset At, string Symbol, string State, string Why);
+
+    /// <summary>Writes that this press told the owner about <paramref name="row"/>; never throws.</summary>
+    void RecordThatThisPressTold(ExecutionRequest row, string nonce, string why)
+    {
+        try
+        {
+            if (_db.AddKvOnce(PressToldPrefix + row.RequestId,
+                    Json.Write(new PressTold(nonce, Now, row.Instrument, row.State.ToString(), why))))
+                _log.TryEngineering("Gateway", "press_inflight_told", "warn", requestId: row.RequestId,
+                    metadataJson: Json.Write(new { press = nonce, state = row.State.ToString(), why }));
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "press_inflight_told_not_recorded", "warn", requestId: row.RequestId, ex: ex,
+                metadataJson: Json.Write(new { press = nonce }));
+        }
+    }
+
+    /// <summary>
+    /// The record that an EARLIER Close all told the owner about this order, or null — none, this very press's own, or
+    /// one that cannot be read, which is the direction that tells him again rather than sends.
+    /// </summary>
+    PressTold? ToldByAnEarlierPress(string requestId, string nonce)
+    {
+        try
+        {
+            return _db.GetKv(PressToldPrefix + requestId) is { } json && Json.Read<PressTold>(json) is { } told
+                   && !string.Equals(told.Press, nonce, StringComparison.Ordinal)
+                ? told
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "press_inflight_told_unreadable", "warn", requestId: requestId, ex: ex);
+            return null;
+        }
+    }
 
     // ---------------------------------------------------------------- reconciliation
 
