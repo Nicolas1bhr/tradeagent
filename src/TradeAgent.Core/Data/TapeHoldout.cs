@@ -97,6 +97,19 @@ public sealed class TapeHoldout
     /// </summary>
     internal static TapeHoldout Referee { get; } = new(BarAudience.Referee, null);
 
+    /// <summary>
+    /// THE TAPE'S HOLDOUT FOR A RUN WHOSE BARS ARE READ UNDER <paramref name="audience"/> (<c>U-language-v2a</c>): that same
+    /// audience, with the dataset ledger its windows are read from at each read — so one audience decides a run's bars and
+    /// its features, and a holdout decided for one is decided for the other. Internal: <see cref="Pipe"/> stays the only
+    /// public door, and the referee's audience reaches here only from a charged verdict, through <c>Backtest.Over</c>.
+    /// </summary>
+    internal static TapeHoldout Of(BarAudience audience, DatasetStore datasets)
+    {
+        ArgumentNullException.ThrowIfNull(audience);
+        ArgumentNullException.ThrowIfNull(datasets);
+        return new TapeHoldout(audience, audience.MayReadHoldout ? null : datasets);
+    }
+
     /// <summary>The windows this reader may not read, as the ledger holds them NOW — none for the referee's.</summary>
     public IReadOnlyList<TapeHoldoutWindow> Windows() =>
         Audience.MayReadHoldout || _ledger is null ? [] : WindowsOf(_ledger.All());

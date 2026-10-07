@@ -450,3 +450,62 @@ public sealed class BarHistory
         return true;
     }
 }
+
+/// <summary>
+/// EVERY DECLARED FEATURE'S VALUE AT THE CLOSE OF THE LAST FEW BARS, so `funding[3]` has something to read
+/// (<c>U-language-v2a</c>).
+///
+/// <para><b>The values are the caller's, never computed here.</b> Whoever steps the evaluator hands it each feature's
+/// value as it had arrived by the evaluated bar's close (<c>FeatureFeed</c>, from the tape), and this ring holds what it
+/// was handed: a number, or null for a value that was absent — which a rule reads as undefined, so the event decides
+/// nothing. Nothing is filled in and nothing is carried forward over an absence.</para>
+///
+/// <para>The same ring as <see cref="IndicatorSet.Ring"/>, and for the same reason: the history limit, the nesting a
+/// crossing may add, and the bar that has just closed. It advances once per BAR, so <c>funding[1]</c> is the value at the
+/// close of the previous bar this run evaluated, which may be an hour earlier if the venue was down.</para>
+/// </summary>
+public sealed class FeatureHistory
+{
+    readonly decimal?[][] history;
+    readonly Dictionary<string, int> byName;
+    int written;
+
+    FeatureHistory(IReadOnlyList<FeatureDecl> features)
+    {
+        history = new decimal?[features.Count][];
+        byName = new Dictionary<string, int>(features.Count, StringComparer.Ordinal);
+
+        for (var i = 0; i < features.Count; i++)
+        {
+            history[i] = new decimal?[IndicatorSet.Ring];
+            byName[features[i].Name] = i;
+        }
+    }
+
+    /// <summary>The declared features of one program, none of them read yet.</summary>
+    public static FeatureHistory For(StrategyProgram program) => new(program.Features);
+
+    /// <summary>How many decimals the kept values hold together, for the state-size limit.</summary>
+    public int StateSlots => history.Length * IndicatorSet.Ring;
+
+    /// <summary>One bar's values, in the program's declared order: a number, or null for an absent value.</summary>
+    internal void Push(IReadOnlyList<decimal?> values)
+    {
+        var slot = written % IndicatorSet.Ring;
+        for (var i = 0; i < history.Length; i++) history[i][slot] = values[i];
+        written++;
+    }
+
+    /// <summary>
+    /// A declared feature's value at the close of the bar <paramref name="back"/> bars ago, or null when it was absent
+    /// there, when the run has not evaluated that many bars, or when the reach is past the ring.
+    /// </summary>
+    public decimal? Value(string name, int back)
+    {
+        if (back < 0 || back >= IndicatorSet.Ring) return null;
+        if (!byName.TryGetValue(name, out var index)) return null;
+        if (back >= written) return null;
+
+        return history[index][(written - 1 - back) % IndicatorSet.Ring];
+    }
+}

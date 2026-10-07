@@ -63,7 +63,7 @@ public sealed record VerdictCharge(bool Ok, string Why, int Spent, int Budget, l
 /// a held-back bar.</para>
 /// </summary>
 public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
-    CouncilBoundaries? boundaries = null, Func<decimal>? judgeCapital = null)
+    CouncilBoundaries? boundaries = null, Func<decimal>? judgeCapital = null, Func<TapeReader?>? tape = null)
 {
     readonly CampaignStore _campaigns = new(db);
     readonly CouncilBoundaries _boundaries = boundaries ?? new CouncilBoundaries(db);
@@ -80,6 +80,14 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// asks. The shipped ten thousand when the caller (a test) passes none.
     /// </summary>
     readonly Func<decimal> _judgeCapital = judgeCapital ?? (() => VenueCostModel.DefaultCapital);
+
+    /// <summary>
+    /// THE MARKET-CONTEXT TAPE AS THE HOST HOLDS IT NOW, or null because none is open (<c>U-language-v2a</c>): read when
+    /// a version that reads features is judged — its values are read from it under the referee's own audience, as its
+    /// bars are — and asked BEFORE the verdict budget is charged, so a version that cannot be run here costs nothing.
+    /// A function, because the host sets its tape after the referee is built.
+    /// </summary>
+    readonly Func<TapeReader?> _tape = tape ?? (() => null);
 
     /// <summary>The promotion ledger this referee writes. Read-only for a caller: it has one writer.</summary>
     public Promotions Promotions => _promotions;
@@ -147,7 +155,15 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// venue — or refused BEFORE anything is charged when that venue's step is unconfirmed. A pin this
     /// build cannot read back is refused the same way, and never replaced by another model.</para>
     /// </summary>
-    public VerdictCharge RequestVerdict(string versionId, long campaignId)
+    public VerdictCharge RequestVerdict(string versionId, long campaignId) =>
+        RequestVerdict(versionId, campaignId, _tape());
+
+    /// <summary>
+    /// <see cref="RequestVerdict(string, long)"/> against the tape <see cref="Verdict"/> will run on, read ONCE by it: a
+    /// host that closed its tape between the charge and the run would otherwise spend a verdict on a run refused for want
+    /// of its values.
+    /// </summary>
+    VerdictCharge RequestVerdict(string versionId, long campaignId, TapeReader? tape)
     {
         if (string.IsNullOrWhiteSpace(versionId))
             return VerdictCharge.No(campaignId, versionId ?? "",
@@ -173,6 +189,14 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
             && InstrumentMatch.Refusal(program, holdout) is { } mismatch)
             return VerdictCharge.No(campaignId, versionId,
                 $"version {Short(versionId)}: {mismatch} No verdict was charged.",
+                _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
+
+        // A VERSION THAT READS FEATURES IS JUDGED ON THEM OR NOT AT ALL, and where no tape is open that is settled
+        // before the budget is touched: the holdout run would be refused for want of its values, after the scarcest
+        // budget in the product had paid for it.
+        if (StrategyParser.Parse(version.Source).Program is { Features.Count: > 0 } reads && tape is null)
+            return VerdictCharge.No(campaignId, versionId,
+                $"version {Short(versionId)}: {Backtest.NoTape(reads)} No verdict was charged.",
                 _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
 
         // THE CHARGE AND THE JUDGE IT BUYS. Written here, in one transaction, before the audience below
@@ -281,8 +305,10 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         if (BoundsRefusal(versionId) is { } unbounded) return RefereeVerdict.No(unbounded);
 
         // THE CHARGE COMES FIRST AND IT IS WHAT PRODUCES THE AUDIENCE. Nothing below can read a
-        // held-back bar without it, because the audience is on the charge and is internal to Core.
-        var charge = RequestVerdict(versionId, campaignId);
+        // held-back bar without it, because the audience is on the charge and is internal to Core. The tape is read
+        // once, here, so the charge's check and the run are about one tape.
+        var tape = _tape();
+        var charge = RequestVerdict(versionId, campaignId, tape);
         if (charge.Audience is not { } audience || charge.Judge is not { } pinned)
             return RefereeVerdict.No($"no verdict was authorised, so nothing was computed: {charge.Why}");
 
@@ -323,7 +349,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         // because a verdict wants the whole of the data the research process never saw. The dataset is
         // the campaign's `holdout_dataset_id` and not a number anybody passed in.
         var open = Backtest.Over(_datasets, campaign.HoldoutDatasetId, program, judged, audience,
-            campaign.HoldoutFrom, null, stop: stop);
+            campaign.HoldoutFrom, null, stop: stop, tape: tape);
 
         if (open.Result is not { } run)
             return RefereeVerdict.No(

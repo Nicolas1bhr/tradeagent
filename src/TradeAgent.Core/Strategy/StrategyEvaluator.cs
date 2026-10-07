@@ -1,4 +1,5 @@
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Features;
 
 namespace TradeAgent.Core.Strategy;
 
@@ -27,6 +28,7 @@ public sealed class EvaluationState
         Grid = grid;
         Limits = limits;
         Indicators = IndicatorSet.For(program);
+        Features = FeatureHistory.For(program);
         History = new BarHistory();
 
         if (program.Stop.Kind == StopKind.EntryAtr)
@@ -59,6 +61,8 @@ public sealed class EvaluationState
     public BarGrid Grid { get; }
 
     internal IndicatorSet Indicators { get; }
+
+    internal FeatureHistory Features { get; }
 
     internal BarHistory History { get; }
 
@@ -125,6 +129,13 @@ public sealed class EvaluationState
     /// to say what the program was looking at when it signalled. Nothing can set one.</para>
     /// </summary>
     public decimal? IndicatorValue(string name, int back = 0) => Indicators.Value(name, back);
+
+    /// <summary>
+    /// A DECLARED FEATURE'S VALUE AT THE CLOSE OF THE BAR <paramref name="back"/> BARS AGO, as the caller handed it —
+    /// null where it was absent, before this run evaluated that many bars, and for a name the program did not declare.
+    /// Read-only, like <see cref="IndicatorValue"/>: nothing outside the evaluator's own step can set one.
+    /// </summary>
+    public decimal? FeatureValue(string name, int back = 0) => Features.Value(name, back);
 
     /// <summary>
     /// THE STOP'S OWN ATR. A program may write `stop atr 2 20` without declaring an `atr(20)`
@@ -254,7 +265,7 @@ public sealed class EvaluationState
     }
 
     /// <summary>How many bytes of decimals this run is holding, for the state-size limit.</summary>
-    internal int StateBytes => (Indicators.StateSlots + History.StateSlots) * sizeof(decimal);
+    internal int StateBytes => (Indicators.StateSlots + Features.StateSlots + History.StateSlots) * sizeof(decimal);
 }
 
 /// <summary>
@@ -287,7 +298,21 @@ public static class StrategyEvaluator
     /// answered from a half-filled window: an indicator one bar early is a different indicator with
     /// the same name, and a run over it contains trades the program would never have taken.</para>
     /// </summary>
-    public static EvaluationOutcome Step(EvaluationState state, KlineBar bar, AccountReading account)
+    public static EvaluationOutcome Step(EvaluationState state, KlineBar bar, AccountReading account) =>
+        Step(state, bar, account, null);
+
+    /// <summary>
+    /// ONE CLOSED BAR, WITH EACH DECLARED FEATURE'S VALUE AT ITS CLOSE (<c>U-language-v2a</c>) — in the program's declared
+    /// order, as the caller read it from the tape as it had arrived by that close (<c>FeatureFeed</c>).
+    ///
+    /// <para><b>A program that reads a feature is stepped with its values or not at all.</b> Handed none, handed the
+    /// wrong number, or handed one whose instant is not this bar's close — a value from after the close would be
+    /// look-ahead, one from before it a stale input wearing the bar's name — it is a defined fault, never a bar run
+    /// as though every feature were absent. An ABSENT value is a different thing and is no fault: it is undefined, so
+    /// the event decides nothing, scheduled exits first.</para>
+    /// </summary>
+    public static EvaluationOutcome Step(
+        EvaluationState state, KlineBar bar, AccountReading account, IReadOnlyList<FeatureValue>? features)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(account);
@@ -317,6 +342,35 @@ public static class StrategyEvaluator
                 $"the bar at {bar.OpenTime:O} says it was built from {bar.Minutes} minute(s), and one bar of " +
                 $"{grid.Spelled} spans {span}: this run's bars are not one series");
 
+        // THE FEATURES, AS THEY HAD ARRIVED BY THIS BAR'S CLOSE, or a defined fault — before anything is pushed.
+        var declared = state.Program.Features;
+        var featureCount = features?.Count ?? 0;
+        if (declared.Count == 0 && featureCount > 0)
+            return EvaluationOutcome.Faulted(state,
+                $"this program reads no feature, and was handed {featureCount} value(s) for the bar at {bar.OpenTime:O}");
+        if (declared.Count > 0 && featureCount != declared.Count)
+            return EvaluationOutcome.Faulted(state,
+                $"this program reads {declared.Count} feature(s) and was handed {featureCount} value(s) for the bar at " +
+                $"{bar.OpenTime:O}: a program that reads a feature is run with its values or not at all, never as though " +
+                $"every one were absent");
+
+        decimal?[]? values = null;
+        if (declared.Count > 0)
+        {
+            var close = grid.EndOf(bar.OpenTime);
+            values = new decimal?[declared.Count];
+            for (var i = 0; i < declared.Count; i++)
+            {
+                var value = features![i];
+                if (value.At != close)
+                    return EvaluationOutcome.Faulted(state,
+                        $"the value handed for feature `{declared[i].Name}` is as of {value.At:O}, and the bar at " +
+                        $"{bar.OpenTime:O} closes at {close:O}: a feature is read as it had arrived by the close of the " +
+                        $"bar it is asked on, never at another instant");
+                values[i] = value.Value;
+            }
+        }
+
         // MISSING, IN MINUTES: every minute of the windows in front of this bar that produced no bar at all,
         // and every minute this bar is short of its own window. On one-minute bars the second is always
         // nothing and the first is the gap the evaluator has always counted.
@@ -343,6 +397,7 @@ public static class StrategyEvaluator
             return EvaluationOutcome.Faulted(state, Overflowed(bar, "an indicator"));
         }
 
+        if (values is not null) state.Features.Push(values);
         state.History.Push(bar);
         state.Advance(bar, session, missing, gapFrom, gapTo);
         state.Charged(operations, state.StateBytes);

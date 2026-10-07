@@ -66,12 +66,15 @@ public class EvaluatorLimitTests
             $"a program at the parser's limits costs {worstEvent} operations an event and the budget is " +
             $"{StrategyLimits.MaxOperationsPerEvent}");
 
+        // EVERY WINDOW AT ITS LARGEST PERIOD WITH ITS KEPT VALUES, EVERY FEATURE'S KEPT VALUES (U-language-v2a: a ring
+        // each, of the values the caller handed in), AND THE BAR RING.
         var worstState = (StrategyLimits.MaxIndicators
                           * (StrategyLimits.MaxLookbackBars + 1 + IndicatorSet.Ring)
+                          + StrategyLimits.MaxFeatures * IndicatorSet.Ring
                           + IndicatorSet.Ring * 6) * sizeof(decimal);
 
         Assert.Equal(29, IndicatorSet.Ring);
-        Assert.Equal(138_464, worstState);
+        Assert.Equal(142_176, worstState);
         Assert.True(worstState <= StrategyLimits.MaxStateBytes,
             $"a program at the parser's limits holds {worstState} bytes and the limit is " +
             $"{StrategyLimits.MaxStateBytes}");

@@ -264,17 +264,32 @@ public sealed record BacktestRequest(
         $"..{(To is { } t ? t.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture) : "all")}";
 
     /// <summary>
+    /// THE SHA-256 OF EVERY FEATURE VALUE THE RUN READ (<see cref="FeatureFeed.ValuesSha256"/>), or null for a program that
+    /// declares none — which is every program written before <c>U-language-v2a</c>. Set by <see cref="Backtest.Run"/> on
+    /// the request it answers with, once the run has read them.
+    /// </summary>
+    public string? FeaturesSha256 { get; init; }
+
+    /// <summary>
     /// THE RUN'S IDENTITY: <c>sha256(version id + dataset id + the dataset's normalised sha256 +
-    /// window + execution model)</c>, in that order, newline separated.
+    /// window + execution model)</c>, in that order, newline separated — and, only for a program that reads
+    /// features, the SHA-256 of every feature value it read as a sixth line.
     ///
     /// <para>The dataset's SHA-256 is in there as well as its id, and that is not redundancy. A
     /// dataset row can be REJECTED later because a raw archive changed under it; with only the id in
     /// the hash, a run over the old bytes and a run over the new ones would collide on one id and one
     /// of the two results would silently stand for both.</para>
+    ///
+    /// <para><b>The feature values are in there for the same reason</b> (<c>U-language-v2a</c>): the tape is not the
+    /// dataset, it grows and it is revised, and a run over one tape and a run over another are two runs. Each value is
+    /// named by the feature's id, its instant and the digest of the rows it stands on, so the run id names the exact
+    /// readings it was computed from — and a promotion, which hashes the run id, binds them too. A program that reads
+    /// no feature hashes the five lines it always did: every v1 run id is unchanged.</para>
     /// </summary>
     public string RunIdFor(string versionId) =>
         Sha256Hex.Of(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}"));
+            $"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}")
+            + (FeaturesSha256 is { } features ? "\n" + features : ""));
 }
 
 /// <summary>
@@ -379,11 +394,22 @@ public static class Backtest
         BacktestRequest request,
         IEnumerable<KlineBar> bars,
         EvaluationLimits? limits = null,
-        CancellationToken stop = default)
+        CancellationToken stop = default,
+        FeatureFeed? features = null)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(bars);
+
+        // A PROGRAM THAT READS A FEATURE IS RUN WITH ITS VALUES OR NOT AT ALL — never as though every one were absent,
+        // which would be a run of a program that decides nothing, recorded under the id of one that decides on them.
+        if (program.Features.Count > 0 && features is null)
+            throw new ArgumentException(
+                $"this program reads {program.Features.Count} feature(s), and this run was handed no feed of their values: "
+                + "a program that reads a feature is run with its values or not at all", nameof(features));
+        if (program.Features.Count == 0 && features is not null)
+            throw new ArgumentException("this program reads no feature, and this run was handed a feed of feature values",
+                nameof(features));
 
         // A PROGRAM REQUIRING A DECLARATION THIS RUNNER DOES NOT IMPLEMENT IS NOT RUN WITHOUT IT. `Over` refuses it in
         // words before anything is read; a caller reaching this directly is a defect, and is told so.
@@ -488,12 +514,25 @@ public static class Backtest
             trace.Add(BacktestEvent.NoTrade(ordinal, waiting.Bar, pendingQuantity, waiting.ReferencePrice,
                 $"the run's window ended before the next bar, so this signal had no open to fill at"));
 
+        // WHAT EACH FEATURE CAME TO, ONE LINE EACH, LAST — under the trace's hash like every other line: its id, its
+        // clean-history start as of the last close read, the bars evaluated before it, the bars it had no value at and
+        // the worst class of the values read. A program that reads no feature writes none, so its trace is the one it
+        // always had, byte for byte.
+        var summaries = features?.Summaries() ?? [];
+        foreach (var summary in summaries)
+            trace.Add(BacktestEvent.Feature(ordinal, summary));
+
+        var answered = features is null ? request : request with { FeaturesSha256 = features.ValuesSha256 };
         var events = new BacktestTrace(trace);
 
         return new BacktestResult(
-            request.RunIdFor(program.StrategyId), program.StrategyId, request, events, trades,
+            answered.RunIdFor(program.StrategyId), program.StrategyId, answered, events, trades,
             BacktestMetrics.Of(events), state.Counters,
-            fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault);
+            fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault)
+        {
+            Features = summaries,
+            FeaturesReadAs = features?.ReadAs
+        };
 
         // THE MINUTE CLOCK: the signal waiting from the last decision fills, then protection fires, on this
         // minute's own prices. False when the run halted on it.
@@ -599,8 +638,22 @@ public static class Backtest
                     OrderPending: false,
                     position > 0m ? (int)Math.Min(barOrdinal - entryOrdinal, int.MaxValue) : 0);
 
+                // THE FEATURES AT THIS BAR'S CLOSE — the instant its decision is taken — as they had arrived by then.
+                // A day of them more than one read serves halts the run here, in words, before anything is decided.
+                IReadOnlyList<Features.FeatureValue>? values = null;
+                if (features is not null)
+                {
+                    var read = features.At(state.Grid.EndOf(bar.OpenTime));
+                    if (read.Halt is { } over)
+                    {
+                        Halt(barOrdinal, bar.OpenTime, $"{over}");
+                        return false;
+                    }
+                    values = read.Values;
+                }
+
                 var missingBefore = state.MissingMinutes;
-                var outcome = StrategyEvaluator.Step(state, bar, account);
+                var outcome = StrategyEvaluator.Step(state, bar, account, values);
                 evaluated++;
 
                 if (state.MissingMinutes > missingBefore)
@@ -709,6 +762,19 @@ public static class Backtest
     /// minutes and <see cref="Run"/> reads <see cref="StrategyProgram.Bars"/> off the program it was
     /// given, so a `trade backtest` and the referee's holdout run — both of which come through here —
     /// judge an hourly program on hours, and no caller can hand it any other bar.</para>
+    ///
+    /// <para><b>A program that reads a feature is read its features from <paramref name="tape"/>, under the same
+    /// <paramref name="audience"/> as its bars</b> (<c>U-language-v2a</c>; <see cref="FeatureFeed"/>), at each
+    /// evaluated bar's close and no later than the run's own last one. With no tape it is REFUSED here, before a bar
+    /// is read — never run as though every value were absent. A program that reads none never touches the tape.</para>
+    ///
+    /// <para><b>The tape is held back over every dataset's holdout window</b> (<c>U-tape-holdout</c>): the audience
+    /// goes to the feed as a <see cref="Data.TapeHoldout"/> with this same <paramref name="datasets"/> ledger, and a run
+    /// whose features would read the tape inside any window — from the longest reach before its first bar's close to
+    /// its last bar's close — is REFUSED here in the holdout's words, flagged <see cref="BacktestOpened.IsHoldout"/>,
+    /// before a bar is read; a cutoff set while it runs halts it at the next slice, and it is refused the same. Never a
+    /// run on the values outside the window. The referee's audience reads every window, so a verdict is never refused
+    /// here.</para>
     /// </summary>
     public static BacktestOpened Over(
         Db.DatasetStore datasets,
@@ -719,7 +785,8 @@ public static class Backtest
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
         EvaluationLimits? limits = null,
-        CancellationToken stop = default)
+        CancellationToken stop = default,
+        Db.TapeReader? tape = null)
     {
         ArgumentNullException.ThrowIfNull(datasets);
         ArgumentNullException.ThrowIfNull(program);
@@ -732,15 +799,38 @@ public static class Backtest
         if (StrategyDeclarations.Refusal(program, Implements, Reader) is { } unimplemented)
             return BacktestOpened.No(unimplemented);
 
+        if (program.Features.Count > 0 && tape is null)
+            return BacktestOpened.No(NoTape(program));
+
         var open = Data.BarFeed.Open(datasets, datasetId, audience, from, to);
         if (open.Feed is not { } feed) return BacktestOpened.No(open.Why, open.IsHoldout);
 
         var request = new BacktestRequest(
             feed.Dataset.Id, feed.Dataset.NormalisedSha256, model, from, to);
 
+        // THE RUN'S FIRST AND LAST POSSIBLE CLOSES: the closes of the declared bars holding the first and the last minute
+        // the window can hold of the dataset. No feature read reaches past the last — a read of instants the run cannot
+        // ask about is a read of months it was never meant to see — and the tape's holdout is asked over both.
+        var grid = BarGrid.For(program);
+        var firstMinute = from is { } f && (feed.Dataset.FirstBar is not { } fb || f >= fb) ? f : feed.Dataset.FirstBar ?? from;
+        var lastMinute = to is { } t && (feed.Dataset.LastBar is not { } lb || t <= lb) ? t : feed.Dataset.LastBar ?? to;
+        DateTimeOffset? until = lastMinute is { } m ? grid.EndOf(grid.StartOf(m)) : null;
+
+        // ONE AUDIENCE FOR THE BARS AND THE FEATURES, AND THE TAPE'S HOLDOUT FOR IT (U-tape-holdout): a run whose features
+        // would read the tape inside a dataset's holdout window is REFUSED in the holdout's words before a bar is read.
+        using var features = program.Features.Count > 0
+            ? new FeatureFeed(tape!, Data.TapeHoldout.Of(audience, datasets), program, until)
+            : null;
+        if (features?.Refusal(firstMinute is { } first ? grid.EndOf(grid.StartOf(first)) : DateTimeOffset.MinValue) is { } withheld)
+            return BacktestOpened.No(withheld, isHoldout: true);
+
         try
         {
-            return BacktestOpened.Yes(Run(program, request, feed.Bars(from, to), limits, stop));
+            var result = Run(program, request, feed.Bars(from, to), limits, stop, features);
+
+            // A CUTOFF SET WHILE THE RUN READ halted it before the slice reaching the new window: refused in those
+            // words, never answered as a run of the program on the values before it.
+            return features?.Withheld is { } late ? BacktestOpened.No(late, isHoldout: true) : BacktestOpened.Yes(result);
         }
         catch (IOException ex)
         {
@@ -749,6 +839,21 @@ public static class Backtest
             return BacktestOpened.No(
                 $"the normalised file of dataset {datasetId} could not be read: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// WHY A PROGRAM THAT READS FEATURES CANNOT BE RUN WHERE NO TAPE IS OPEN, in words: the one refusal every caller
+    /// makes before it charges anything — the trial budget at <c>backtest</c>, the verdict budget at the referee.
+    /// </summary>
+    public static string NoTape(StrategyProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        return $"this program reads {program.Features.Count} feature(s) — "
+               + string.Join(", ", program.Features.Select(f => $"`{f.Name}`"))
+               + " — and this installation has no market-context tape open to read them from, so it cannot be run: a "
+               + "program that reads a feature is run with its values as they had arrived, or not at all, never as though "
+               + "every value were absent. TradeAgent opens the tape itself when it starts; the account owner's activity "
+               + "log says why it is not open.";
     }
 
     static ExitReason Reason(IntentCause cause) => cause switch
@@ -781,6 +886,18 @@ public sealed record BacktestResult(
     string? FaultReason)
 {
     public bool Faulted => Outcome == BacktestOutcome.FAULTED;
+
+    /// <summary>
+    /// WHAT EACH DECLARED FEATURE CAME TO OVER THE RUN, in the program's order — the same facts as the trace's
+    /// <c>Feature</c> lines — or empty for a program that reads none.
+    /// </summary>
+    public IReadOnlyList<FeatureRunSummary> Features { get; init; } = [];
+
+    /// <summary>
+    /// WHO READ THE FEATURES, in the words a refusal uses — the run's own bar audience — or null for a program that
+    /// reads none. A string, never the audience itself: no public member hands one out.
+    /// </summary>
+    public string? FeaturesReadAs { get; init; }
 }
 
 /// <summary>

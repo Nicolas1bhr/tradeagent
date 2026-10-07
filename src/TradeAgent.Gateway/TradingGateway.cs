@@ -1948,8 +1948,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // a record of when the app judged, and nothing inside the judging reads a clock. AFTER the
         // settings, because the judge capital is read off them — at the moment a campaign opened before
         // schema 27 is pinned at its first verdict; a campaign pinned at the press carries its own.
+        // AND THE TAPE AS THIS GATEWAY HOLDS IT WHEN A VERDICT IS ASKED — set by the composition root after this
+        // constructor — so a version that reads features is judged on them, or refused before anything is charged.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow(),
-            judgeCapital: () => Settings.JudgeCapital);
+            judgeCapital: () => Settings.JudgeCapital, tape: () => Tape);
         // After the settings, because the report reads them; on this gateway's own clock, so a test
         // that moves time gets the day it asked for rather than the machine's.
         _reports = new DailyReports(this, db, () => _opt.Clock.GetLocalNow());

@@ -2347,7 +2347,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // over traded bars would be handing back a figure the caller cannot read correctly —
             // `docs/COUNCIL.md`:164-172, never trade evidence. The same sentence `data-list`,
             // `data-bars` and the owner's report carry, from the one place it is written.
-            + (ran.Dataset.MidpointNote is { } midpoint ? " " + midpoint : ""),
+            + (ran.Dataset.MidpointNote is { } midpoint ? " " + midpoint : "")
+            // AND WHAT A FEATURE IS, where the program reads one (U-language-v2a): read off the tape as it had arrived
+            // by each bar's close, absent rather than guessed, and research-only today.
+            + (result.Features.Count == 0
+                ? ""
+                : " Every feature in 'features' was read from the market-context tape as it had arrived by the close of "
+                  + "each bar the program was asked on; a bar where one had no value decided nothing, and 'bars_with_no_value' "
+                  + "counts them. Bars before a feature's clean-history start were evaluated, and their values may stand "
+                  + "on archive readings rather than first-hand ones; where 'clean_history_bounded' is set, a holdout "
+                  + "window before the run kept the search for that start from reading further back, so it is the start "
+                  + "since that window's close, not necessarily the input's own. Every tape source is research-only "
+                  + "today, so no capital may stand on a version that reads one."),
             new BacktestReplyMetrics(
                 m.Bars, m.ExposureBars, m.Signals, m.Fills, m.NoTrades, m.Trades, m.Wins, m.WinRate,
                 m.GrossPnl, m.Fees, m.NetPnl, m.MaxDrawdown, m.FinalEquity, m.MissingMinutes, m.Gaps,
@@ -2357,7 +2368,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             [.. result.Trades.Take(Backtests.TradesShown).Select(t => new BacktestReplyTrade(
                 t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice, t.Quantity,
                 t.Reason.ToString(), t.Fees, t.Pnl))],
-            result.Trace.Sha256);
+            result.Trace.Sha256,
+            [.. result.Features.Select(f => new BacktestReplyFeature(
+                f.Name, f.Id, f.AsOf, f.CleanHistoryStart, f.NoCleanHistory, f.CleanHistoryBounded, f.BarsBefore,
+                f.BarsAbsent, f.WorstClass))]);
     }
 
     /// <summary>
@@ -2396,7 +2410,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         string Outcome,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FaultReason,
         string Note, BacktestReplyMetrics Metrics, IReadOnlyList<BacktestReplyGap> Missing,
-        int TradeCount, IReadOnlyList<BacktestReplyTrade> Trades, string TraceSha256);
+        int TradeCount, IReadOnlyList<BacktestReplyTrade> Trades, string TraceSha256,
+        // WHAT EACH FEATURE THE PROGRAM READS CAME TO — the trace's `Feature` lines, under its hash — or empty for a
+        // program that reads none (U-language-v2a).
+        IReadOnlyList<BacktestReplyFeature> Features);
+
+    /// <inheritdoc cref="BacktestReplyMetrics"/>
+    sealed record BacktestReplyFeature(
+        string Name, string Id, DateTimeOffset AsOf,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? CleanHistoryStart,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NoCleanHistory,
+        // WHY THE START IS NOT NECESSARILY THE INPUT'S OWN, where a holdout window before the run bounded the search for
+        // it (U-tape-holdout's FeatureCleanStart.Bounded), or null when it is.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CleanHistoryBounded,
+        long BarsBeforeCleanHistory, long BarsWithNoValue,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? WorstClass);
 
     /// <summary>
     /// DECLARED TYPES AND NEVER AN ANONYMOUS OBJECT, for the reason <see cref="PnlReply"/> is one:

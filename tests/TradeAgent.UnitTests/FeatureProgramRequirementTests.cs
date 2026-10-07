@@ -1,3 +1,6 @@
+using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using Xunit;
@@ -71,6 +74,26 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
         var every = Parsed(EveryKind);
         Assert.Equal(StrategyDeclarations.All, every.Requires);
         Assert.Null(StrategyDeclarations.Refusal(every, Backtest.Implements, "the backtest"));
+
+        // AND IT REALLY RUNS ONE: a day of New York hours over a tape holding funding, every declaration in force.
+        var file = Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db");
+        var from = new DateTimeOffset(2026, 8, 3, 4, 0, 0, TimeSpan.Zero);
+        using (var store = new TapeStore(file))
+            for (var h = 0; h < 24; h++)
+                FeatureProgramBacktestTests.Reading(store, from.AddHours(h).AddMinutes(10), h % 3 == 0 ? "-0.00050000" : "0.00010000");
+        var bars = FeatureProgramBacktestTests.Minutes(from, 24 * 60);
+        var grid = BarGrid.For(every);
+        using var ledger = TestEnv.NewDb();
+        using (var feed = new FeatureFeed(new TapeReader(file), TapeHoldout.Pipe(CouncilRoles.Research, new DatasetStore(ledger)),
+                   every, grid.EndOf(grid.StartOf(bars[^1].OpenTime))))
+        {
+            var run = Backtest.Run(every, new BacktestRequest(1, "fixture",
+                ExecutionModel.Declare(0m, 0m, 0.001m, 10_000m).Model!, from, null), bars, features: feed);
+            log.WriteLine($"{run.Outcome}: {run.Metrics.Bars} bars, {run.Counters.EvaluatedEvents} evaluated, {run.Counters.UndefinedEvents} undefined");
+            Assert.Equal(BacktestOutcome.COMPLETED, run.Outcome);
+            Assert.Equal(24, run.Metrics.Bars);
+            Assert.Equal(BacktestEventKind.Feature, run.Trace.Events[^1].Kind);
+        }
 
         Assert.Equal(StrategyDeclarations.All.Where(k => k != StrategyDeclarations.Feature), ForwardRuns.Implements);
         Assert.StartsWith("this program requires `feature`, which this build's paper runner does not implement.",
