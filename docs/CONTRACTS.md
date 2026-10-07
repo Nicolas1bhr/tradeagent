@@ -2984,13 +2984,102 @@ proprietary trading without a written licence) were read on 2026-10-03, the deci
 was to comply, and nothing here asks `data.binance.vision`. (10) *An article's own publication time*: the source time is
 GDELT's label — when GDELT first saw the item — and `PAGE_PRECISEPUBTIMESTAMP` inside the payload is the publisher's claim,
 not checked. (11) *That an `O-PIT` item was knowable at its label*: it rests on GDELT's MD5 and its storage's Last-Modified,
-both GDELT's; reading `O-PIT` as known at its label is `U-features`'. GDELT's items are research context like everything
+both GDELT's. A feature reads an `O-PIT` first reading as known at its label and a later revision from its own arrival
+(**Features**, below; answered by `U-features`). GDELT's items are research context like everything
 else here — no verdict is taken over them — and the screen's limits in (7) hold for them. (12) *A cheap read of a whole large series* (`U-tape-read`):
 the tape has no index on arrival, so a `data-tape` read without a subject or a window costs in proportion to its series'
 size (an index scan of ids, no payloads), and an `as_of` far in the past costs a short lookup per row that arrived after
 it — bounded and read-only, blocking no writer, but not constant; an index belongs to a later rung. (13) *That the tape is
 recording when status says so*: `recording` is "a delivery within the window", read off the rows — a vendor that answers
 with nothing new still delivers.
+
+## Features — `src/TradeAgent.Core/Features/FeatureSpec.cs`, `FeatureCanonical.cs`, `FeatureVersions.cs`, `FeatureEvaluator.cs`, `FeatureSeries.cs`, `FeatureLicence.cs`
+
+**What it is.** A feature is a deterministic spec, as data, over one series of the tape — known by its hash and computed
+by the app in decimal from only what had arrived by its instant (`U-features`; `docs/EDGE-FACTORY.md` § 4.3). A spec
+proposes and the app computes, from raw market rows and nothing a model said (§ 6.1); nothing is stored — no table, no
+rung, no reading. **No op, verb or screen reads a feature yet**: `U-features-b` adds `data-feature`, and v2a binds a
+feature by its id.
+
+**THE SPEC.** One JSON object of at most 4,096 bytes: `kind` — `latest`, `change`, `mean`, `min`, `max` or `pct-rank`;
+`input` — `source`, `series`, `subject`, `field`; `latency_s`, whole seconds 0–86,400; `max_age_s`, 1 s to 366 days; a
+change adds `mode` (`diff` or `ratio`) and `lookback_s` (1 s to 366 days), a window kind `window_s` (1 s to 366 days)
+and `min_rows` (1–50,000). Every key a kind has is required and no other is accepted. The parse is TOTAL — `FeatureSpec.Parse` never
+throws — and refuses in words: an unknown key or kind; a key named twice; a source that is not one of THIS BUILD's rows
+read by `binance-um-json` (the five Binance USDⓈ-M rows: OKX's announcements and GDELT's items are text, and a row
+`tape-sources.json` adds is unknown, so whether a spec parses is never a fact about a file an agent can write); an
+unknown series; a subject outside the tape's six symbols; a field that is not a field name, or is the series' time or
+symbol; a duration missing, negative, out of range, or not written as whole digits (`5.0`, `5e0` and `"5"` are refused).
+**Look-ahead cannot be written**: no key reads ahead of the instant, and a negative latency is refused as look-ahead.
+
+**ONE MEANING, ONE ID.** `FeatureCanonical` writes `feature/1` and then one fact a line, in a fixed order — `kind`,
+`mode`, `input source=… series=… subject=… field=…`, `latency Ns`, `maxage Ns`, `lookback Ns`, `window Ns`, `minrows N`,
+each only where the kind has it — by `StrategyCanonical`'s rules: invariant numbers, durations in whole seconds, names
+written out and never an enum's `ToString()`. `Id = Sha256Hex.Of(canonical + "\n" + "features=1")`: key order, spacing
+and escapes are not part of a feature, and every fact it states moves the id. `FeatureVersions.Manifest` (`features=1`)
+is the features' own, and `StrategyVersions.Manifest` does not move. `FeatureGoldenVectorTests` pins every kind's id and
+its output over fixed rows under that number: a changed text, gate, absence or arithmetic with it unmoved is red there.
+
+**THE GATE — FIRST-SEEN.** `FeatureEvaluator.At(spec, rows, t)` is pure — no clock, no tape, no store, no model — and
+the only gate: a row counts at `t` only if its FIRST-SEEN time is at or before `t − latency` and its source time at or
+before `t`. First-seen is the row's arrival, `received_at` — except an `O-PIT` first reading, which counts from its label,
+GDELT's own first-seen time vouched for by GDELT's MD5 and its storage's Last-Modified (`TapeStore.ArchiveClassOf`); a
+later revision of it counts from its own arrival. The source time alone never admits a row. Of the rows counted, each
+datum is read at its highest counted revision; a row of any other source, series or subject never counts, and handing
+in rows that had not arrived changes no value. `latest`: the newest counted reading stamped no earlier than
+`t − max_age`. `change`: `latest(t)` against `latest(t − lookback)`, each the latest as it was known then — `diff` the
+first minus the second, `ratio` the first divided by it. A window: the counted readings stamped after
+`t − latency − window`, of which `mean`, `min`, `max`, and `pct-rank` — the share of the window's values at or below its
+newest. The gate's mutant, the source time standing in for first-seen, turns `FeatureEvaluatorTests` (a)–(c) red.
+
+**DECIMAL, OR ABSENT — NEVER ZERO, NEVER SKIPPED OVER.** A field is read from the payload as recorded: a JSON string or
+number whose text is a plain decimal — an optional `-`, digits, at most one point, at most 28 digits after it and 28
+significant — exactly, as `System.Decimal`. Sums, differences, minima and maxima are exact; a quotient (mean, ratio,
+rank) is `System.Decimal`'s, the same on every machine. A value is ABSENT, with the reason in words, when no counted
+reading is stamped within `max_age_s` of the instant (stale, or none); when a window holds fewer than `min_rows`, or its
+newest reading is older than `max_age_s`; when a field is missing or not a plain decimal; when a payload is withheld — a
+quarantined reading is never dropped so the rest can be averaged; when a ratio's base is 0; when a result is beyond a
+decimal.
+
+**CLASSES.** Every value — an absence too — carries `TapeClass.Lower` folded over the rows it read, so it is never
+cleaner than its dirtiest reading (R07 § 5.3), and none when it read none; and the SHA-256 of those rows, one line
+`id:revision:payload_sha256` each in id order, so it names the readings it stands on.
+
+**THE SERIES — `FeatureSeries.Read(reader, audience, spec, from, to, step)`.** The audience is required and handed to
+`TapeReader.Window` — the agent-facing range read, and the only one — so every row passes through `TapeStore.Served`
+and a quarantined reading arrives without its payload. No "as of" is asked: the tape serves every reading of the range
+whenever it arrived, and the evaluator's gate decides. Each input's range runs from the spec's reach before `from` (the
+max age; the lookback and max age; the latency and window) to `to`, paged newest first on the reader's `before` cursor.
+At most 10,000 instants and 50,000 readings of an input's range: beyond either the read is REFUSED in words with no
+point at all, never cut short. Every point is the evaluator's one body over the rows its reach holds, so a series equals
+the pure evaluator over every row the tape holds (`FeatureSeriesTests`).
+
+**THE CLEAN-HISTORY START.** The latest, across inputs, of each input's first first-seen of an `O-LIVE`/`O-PIT` reading
+stamped by `to`, plus the latency and the window or the lookback (R07 § 5.4) — or absent, with the reason, while an
+input has none. It is the input's, not the range's: when the input holds readings older than the range, its oldest
+second is found by binary search (about 36 one-row reads) and its readings are read forward in slices until the first
+clean one is found and no later-stamped reading could have been first seen before it — this build's live rule bounds
+how early a live reading arrives (its cadence + 30 s), and an `O-PIT` first reading's first-seen is its stamp. That
+search reads at most 50,000 readings; past them the start is stated absent, never guessed.
+
+**THE LICENCE.** Each input carries its terms as its catalogue row states them — Binance's words, which say they were
+not re-read, an empty terms URL and no credit. `FeatureLicence.LiveRefusal(spec, newest)` is null only when every
+input's source has a newest licence reading, of that source, whose class confers (`DataLicence.Confers`); otherwise one
+sentence — no capital may stand on it; backtests and paper go on. It is read at a gate and never hashed into an id. No
+tape source has a reading — none is seeded, and this unit adds no rung and no table — so every feature reads
+research-only today. A reading decides only live eligibility and an absent one confers nothing: the readings fall to
+the unit that opens a conferring path for tape evidence, the conferring-dataset unit, each venue's terms read the day
+it is seeded (**Data licences**, below).
+
+**NOT CLAIMED.** (1) *An op, a verb or a screen*: nothing outside the process reads a feature yet (`U-features-b`).
+(2) *That a feature is evidence*: research-only, as above, and no verdict is taken over one. (3) *Cross-sectional,
+multi-input or model-derived features*: one input a spec today; the series read, the clean-history start and the
+licence are stated per input so a later kind adds no second rule. (4) *That an `O-PIT` reading was knowable at its
+label* beyond what GDELT's MD5 and Last-Modified show (the tape's (11)) — and no feature reads GDELT. (5) *The
+clean-history start under an earlier build's live rule*: the search bounds a live reading's earliness by THIS build's
+cadence + 30 s. (6) *A constant cost*: a read is bounded and read-only but costs in proportion to its rows, and the
+clean-history search adds about 36 one-row reads when the input holds readings older than the range. (7) *Exponent
+spellings*: a field written with an exponent is unreadable, and the value absent.
 
 ## Data licences — `src/TradeAgent.Core/Data/DataLicence.cs`, `Db/DataLicenceStore.cs`, `Db/DatasetStore.cs`, `Db/AllocationStore.cs`
 
@@ -3049,10 +3138,12 @@ terms reach own-account use — OKX Europe first (its API Agreement § 9.3: trad
 is not commercial resale; R19 § 0 item 3) — each dataset classed by that venue's own reading, read the day it is
 seeded.
 
-**Not seeded here: the tape.** Each tape source's reading is seeded per venue, on that venue's terms read the same
-day, by the unit that first lets tape evidence count (`U-features`); "first-party" in the orchestrator's earlier
-wording meant origin, not licence. No tape evidence reaches a verdict today, and the tape's rows say Binance's
-USDⓈ-M terms were not re-read.
+**Not seeded here: the tape.** A reading decides only live eligibility, and an absent one confers nothing, so a unit
+that only computes over the tape owes none: `U-features` computes features and seeds no reading (**Features**, above —
+every feature reads research-only). Each tape source's reading is seeded per venue, on that venue's terms read the same
+day, by the unit that opens a conferring path for tape evidence — the conferring-dataset unit (seat A's call,
+2026-10-07); "first-party" in the orchestrator's earlier wording meant origin, not licence. No tape evidence reaches a
+verdict today, and the tape's rows say Binance's USDⓈ-M terms were not re-read.
 
 **NOT CLAIMED.** (1) *Legal advice*: a class records what the terms say as R19 read them, not a legal opinion.
 (2) *That TradeAgent is not "commercial"*: every class here assumes the owner's own use is not commercial use —
