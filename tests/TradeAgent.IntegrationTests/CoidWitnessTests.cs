@@ -2296,6 +2296,19 @@ public class CoidWitnessTests : IDisposable
     /// inside a rewrite: B's write lands between A's write and A's rename, so A renames B's content
     /// onto the file. Distinct names per writer are what stop that, and this is the cheapest
     /// statement of it — two writers, two temps.
+    ///
+    /// <para><b>A's temp is held inside the quarantine grace, and that is not a loosening.</b> With
+    /// nothing committed, A's stranded temp anchors to nothing, so B — the next OWNER — rejects it and
+    /// moves it aside once it is two seconds old: the designed move
+    /// (<see cref="A_rejected_leftover_is_reported_once_and_moved_aside"/>). This test used to race
+    /// that grace — 200 ms of this witness's waits read 2335 ms on windows-latest (run 37443797669) —
+    /// and the race's loser reads "Expected: 2, Actual: 1", which is what windows-latest printed after
+    /// 5 s (run 37611591775) and what a refused lease prints too. So A's temp is dated an hour ahead
+    /// before B writes, as
+    /// <see cref="A_candidate_written_moments_ago_is_left_where_it_is"/> dates its own — the grace then
+    /// holds it for the test's length however slow the runner is — and the two things that read alike
+    /// as one temp are told apart: B's lease is asserted TAKEN (a refused lease writes no temp either),
+    /// and A's bytes are asserted untouched (a shared name is truncated by B's create).</para>
     /// </summary>
     [Fact]
     public void Two_writers_do_not_share_a_temp_name()
@@ -2309,14 +2322,23 @@ public class CoidWitnessTests : IDisposable
         // the name the next run writes, or the next run's replace consumes it.
         var blocked = Session(NeverLands);
         Assert.False(blocked.Submitting("TA-BLOCKED", "SIM", "ES", "Buy", 1m, null));
-        Assert.Single(Temps());
+        var aTemp = Assert.Single(Temps());
+        var aBytes = File.ReadAllBytes(aTemp);
+
+        // INSIDE THE GRACE FOR THE TEST'S LENGTH, whatever the runner has spent getting here.
+        File.SetLastWriteTimeUtc(aTemp, DateTime.UtcNow.AddHours(1));
 
         a.Dispose();
         var b = Session(NeverLands);
-        Submit(b, "TA-B");
+        Assert.False(Submit(b, "TA-B"));
+
+        // B TOOK THE LEASE: what refused its claim is the rename that never lands, not another writer.
+        Assert.NotNull(b.LastWriteFailure);
+        Assert.DoesNotContain("another writer owns this witness", b.LastWriteFailure, StringComparison.Ordinal);
 
         Assert.Equal(2, Temps().Length);
         Assert.Equal(2, Temps().Select(Path.GetFileName).Distinct().Count());
+        Assert.Equal(aBytes, File.ReadAllBytes(aTemp));
     }
 
     /// <summary>
