@@ -405,6 +405,14 @@ public class FeatureSeriesTests(ITestOutputHelper log) : IDisposable
             Assert.Contains($"no reading stamped before {lastBar.AddMinutes(1):u}, the close of dataset {id} (BTCUSDT 1m v1)'s holdout window",
                 after.CleanHistoryStart.Bounded, StringComparison.Ordinal);
             Assert.Contains("NOT necessarily the input's own", after.CleanHistoryStart.Bounded, StringComparison.Ordinal);
+
+            // AN ABSENCE THE HOLDOUT BOUNDED SAYS SO TOO: ETHUSDT, never recorded live, has no clean start since the window
+            // closed — an absence since then, never read as the input's own.
+            var eth = FeatureSeries.Read(reader, holdout, Spec("latest", subject: "ETHUSDT"), Noon.AddMinutes(100), Noon.AddMinutes(110), TimeSpan.FromMinutes(1));
+            Assert.Null(eth.Refusal);
+            Assert.Null(eth.CleanHistoryStart.At);
+            Assert.NotNull(eth.CleanHistoryStart.Absent);
+            Assert.Contains("NOT necessarily the input's own", eth.CleanHistoryStart.Bounded, StringComparison.Ordinal);
         }
     }
 

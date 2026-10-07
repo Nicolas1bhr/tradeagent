@@ -129,7 +129,8 @@ public static class FeatureSeries
             {
                 Bounded = $"the search read no reading stamped before {close:u}, the close of dataset {w.DatasetId} "
                           + $"({w.Pair} {w.Interval} {w.Version})'s holdout window, which this read may not reach — so this is "
-                          + "the clean-history start since then, NOT necessarily the input's own: that is this instant or earlier"
+                          + "the clean-history start since then, or its absence since then — NOT necessarily the input's own, "
+                          + "which can be earlier"
             };
 
         // EVERY POINT BY THE ONE EVALUATOR, over the rows its reach holds — the rows it would ignore left out, which is

@@ -3116,7 +3116,7 @@ clean one is found and no later-stamped reading could have been first seen befor
 how early a live reading arrives (its cadence + 30 s), and an `O-PIT` first reading's first-seen is its stamp. That
 search reads at most 50,000 readings; past them the start is stated absent, never guessed. **Under a holdout it reads no
 row inside a window** (`U-tape-holdout`): it reaches back no further than the close of the latest window that starts
-before the range, so the start it finds is the start since then — the input's own is that instant or earlier, never
+before the range, so the start it finds, or its absence, is the start since then — the input's own can be earlier, never
 later — and the answer SAYS so in `FeatureCleanStart.Bounded`, naming the dataset and the window's close, so it is never
 read as the input's own; a probe the holdout refuses states the start absent.
 
