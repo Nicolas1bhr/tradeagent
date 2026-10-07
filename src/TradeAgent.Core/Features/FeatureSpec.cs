@@ -108,10 +108,10 @@ public sealed class FeatureSpec
     public const long MaxSpanSeconds = 366L * 86_400;
 
     /// <summary>
-    /// The most readings a window may require: 50,000, the most one read of a series holds — a window that needed more
-    /// could never be served.
+    /// The most readings a window may require: <see cref="FeatureSeries.MaxRowsPerInput"/>, the most one read of an
+    /// input's range holds — a window that needed more could never be served.
     /// </summary>
-    public const int MaxMinRows = 50_000;
+    public const int MaxMinRows = FeatureSeries.MaxRowsPerInput;
 
     internal FeatureSpec(string kind, string? mode, FeatureInput input, TimeSpan latency, TimeSpan maxAge,
         TimeSpan? lookback, TimeSpan? window, int? minRows)
