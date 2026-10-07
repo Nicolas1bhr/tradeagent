@@ -312,6 +312,18 @@ public static class WorkspaceBuilder
       TradeAgent's verdict judge the program on those bars, and fills, stops and targets still happen
       on the minute. On paper too: the runner asks the rules once per closed bar, and places, cancels and
       enforces the protection within the minute that needs it;
+    - **a program can read the tape: a line `feature funding = <spec>`**, the spec one JSON object naming its
+      kind, the tape series and field it reads, its `latency_s` and its `max_age_s`, declares a value TradeAgent
+      computes from the tape's readings — you write the spec, the app states its id — and a rule reads it like an
+      indicator, `entry when funding < -0.0003`. It is read at each bar's CLOSE from
+      only what had ARRIVED by then less its latency, so a reading that came in late moves no decision before it
+      did; a value it cannot state (nothing fresh, too few readings, a withheld one) is no decision at all, never
+      a zero. `trade backtest` and the verdict read it; a backtest refuses where no tape is open, and refuses one
+      whose features would read the tape inside a holdout window — held back as the bars are, and read at the LAST
+      bar's close too, so give `--to` an instant more than one of the program's bars before `holdout_from`; and two
+      things are not yet possible, said now so you do not plan on them: the paper runner ends a run of a program that
+      reads a feature before its first bar, in words, until a later update, and every tape source is
+      research-only, so no capital can stand on one. The spec's keys and kinds are in the language reference;
     - **three worked programs are in `{ResearchLibrary.ExamplesDir}/`** — a moving-average crossover,
       an opening-range breakout and an RSI mean reversion, all of which parse today. Same ownership:
       rewritten every start, so copy one into `strategies/` before you change it;

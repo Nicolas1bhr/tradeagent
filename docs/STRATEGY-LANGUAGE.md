@@ -17,6 +17,7 @@ declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, requ
              | "bars" BARS                               # the bar the rules are asked on; default 1m
              | "timeframe" DURATION | "data_freshness" DURATION | "max_decision_age" DURATION
              | "const" NAME "=" (NUMBER | "true" | "false") | "indicator" NAME "=" indicator
+             | "feature" NAME "=" SPEC                  # SPEC: one JSON object, the rest of the line; up to 8
              | "size" ("fixed" | "capital_fraction" | "risk_fraction") value      # required
              | "stop" ("fixed" value | "percent" value | "atr" value value)
              | "target" ("fixed" value | "percent" value) | "max_hold_bars" value
@@ -85,6 +86,59 @@ and `max_hold_bars` — counted in declared bars — closes the position at the 
 reaches it. A run's first bar is the partial bar it saw from its start, its missing minutes counted as
 missing.
 
+## Features — a program reads the tape
+
+`feature funding = {"kind":"latest","input":{"source":"binance-um-premium","series":"premium-index","subject":"BTCUSDT","field":"lastFundingRate"},"latency_s":5,"max_age_s":180}`
+declares a FEATURE: a value TradeAgent computes from its market-context tape, which a rule then reads like an
+indicator — `entry when funding < -0.0003`, `exit when funding[1] > 0`. `feature` is a declaration only as the
+first word of a line, never a reserved name, so a stored `const feature = 2` still means what it meant.
+
+**The author writes the spec; the app computes the value and states the id.** Everything after the first `=` is one
+JSON object, read by the same parser `docs/CONTRACTS.md` "Features" describes: a `kind` (`latest`, `change`, `mean`,
+`min`, `max`, `pct-rank`), the `input` (`source`, `series`, `subject`, `field` — one of this build's Binance USDⓈ-M
+rows, one of its six symbols), `latency_s`, `max_age_s`, and the keys its kind needs. Every key is required, no
+other is accepted, and a spec the parser refuses is refused on its line with the parser's own words. A `#` starts
+a comment here as on every line, so a spec holding one is cut there and refused as the JSON it then is not. A
+feature line may be up to 512 characters; every other line is still held to 240. A program declares at most 8.
+
+**As it had arrived, at the close.** A feature is read at the CLOSE of each bar the rules are asked on — the
+instant the decision is taken — from only the readings TradeAgent had FIRST SEEN by that close minus `latency_s`.
+A reading stamped before the close that arrived after it moves no decision at that close; it can move the next
+one. `funding[1]` is the value at the previous evaluated bar's close. On `bars 1d` in a zone the close is that
+zone's midnight, 23 or 25 hours after the last on a daylight-change day.
+
+**Absent is no decision.** A value can be absent — nothing fresh within `max_age_s`, too few readings in a window,
+a field that is not a plain decimal, a reading the tape's screen withheld. An absent value is UNDEFINED, exactly
+as an indicator still warming up is: the event decides nothing and is counted, and the scheduled exits —
+`session_exit`, `max_hold_bars` — and the stop and the target still act. Nothing is filled in and nothing is
+carried forward. Bars before a feature's clean-history start (when its readings first became first-hand) are
+evaluated, not skipped; a backtest says how many there were.
+
+**Identity.** The canonical form names each feature by its spec's own hash — `feature funding=<64 hex>` — and a
+rule's reference as `$funding`, so the program's id names every input it reads and the semantics they are
+computed under (`features=1`). Two spellings of one spec are one id; any fact of the spec changed is another
+feature and another program. A program that declares no feature has no such line: every program written before
+features existed keeps its text and its id.
+
+**Where a feature program runs.** `trade backtest` and TradeAgent's verdict read the features from the tape under
+the same rules as the bars, and refuse to run at all where no tape is open — never as though every value were
+absent. The tape is held back over every dataset's holdout window as the bars are, so a backtest whose features
+would read it there is REFUSED in words before a bar is read — and a feature is read at the LAST bar's close too, so
+a backtest's `to` must be more than one of the program's bars before a `holdout_from`. Where a holdout window lies
+before the run, the search for a feature's clean-history start reaches back no further than that window's close,
+and the backtest says so. **The paper runner does not run one yet**: a program uses only declarations every reader of it
+implements, so a deployment of a program that reads a feature is ended before its first bar, in words, until a
+later update values features on paper. And every tape source is research-only today, so no capital may stand on a
+version that reads a feature.
+
+## Required declarations
+
+Every declaration a program uses constrains its orders, its risk or how it is evaluated, so every one is
+REQUIRED: a reader that does not implement one refuses the program in words rather than running the rest of it.
+The backtest and the verdict implement every declaration this page lists; the paper runner every one but
+`feature`. Comments are the one optional part — kept byte for byte in the source, outside the id, and required by
+nobody. A declaration that states the default (`timezone UTC`, `bars 1m`, all seven weekdays) requires nothing.
+
 ## Conditions
 
 ```
@@ -95,12 +149,13 @@ sum     := product (("+" | "-") product)*  product := unary (("*" | "/") unary)*
 unary   := "-" unary | primary             CMPOP   := "<" | "<=" | ">" | ">=" | "==" | "!="
 primary := NUMBER | "true" | "false" | "(" expr ")" | cross | ref
 cross   := ("crosses_above" | "crosses_below") "(" expr "," expr ")"
-ref     := (SERIES | NAME) ("[" INT "]")?  # close, close[1], fastma[2]
+ref     := (SERIES | NAME) ("[" INT "]")?  # close, close[1], fastma[2], funding[1]
 ```
 
 Two types, `number` and `boolean`: arithmetic and comparison take numbers, `and`/`or`/`not` take
 booleans, a rule condition must be a boolean. `crosses_above(a, b)` is true where `a` is above `b` and
-was at or below it on the bar before; `x[k]` is `k` closed bars ago; a constant has no history.
+was at or below it on the bar before; `x[k]` is `k` closed bars ago; a constant has no history. A feature
+is a number, read at a bar's close; `funding[k]` is its value at the close `k` evaluated bars ago.
 
 ## Indicators — semantics and initialisation
 
@@ -148,8 +203,8 @@ before it is refused rather than answered from a half-filled window.
 
 ## Limits — `StrategyLimits`, one place
 
-8192 source bytes · 200 lines · 240 characters a line · 32 characters a name · 32 constants ·
-16 indicators · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
+8192 source bytes · 200 lines · 240 characters a line (512 for a `feature` line) · 32 characters a name ·
+32 constants · 16 indicators · 8 features · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
 period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
 1 (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
 second and at most one week. Every count of bars is in the program's declared bars: 500 bars of lookback
@@ -176,7 +231,8 @@ the evaluator never invents one. It emits **intents** and places nothing.
 - **Executable only afterwards.** An intent carries the bar it came from and `NotBefore`, that bar's
   close: the earliest instant it may be acted on.
 - **Undefined is not false.** If a value a rule reads is undefined once the program is warm — an
-  opening range before its session's interval — the event is NOT evaluated and is counted. `and` and
+  opening range before its session's interval, a feature with no value at the close — the event is NOT
+  evaluated and is counted. `and` and
   `or` are three-valued: a definitely-false side makes `and` false whatever the other side is.
 - **Time filters are read from the bar's OPEN time** in the program's zone, which is the only timestamp
   the dataset carries. `weekdays` and `entry_window` gate ENTRIES only — a program that could not exit
@@ -213,7 +269,8 @@ Identity is `Sha256Hex.Of(canonical + "\n" + parameters + "\n" + manifest)`: the
 constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONTRACTS.md` has the form.
 The canonical form states every bound, present or not, with ONE exception: the `bars` line is written only
 when a program declares a bar that is not one minute — so every program written before `bars` existed keeps
-its canonical text and its id, and an hourly program can never share an id with its minute twin.
+its canonical text and its id, and an hourly program can never share an id with its minute twin. A `feature`
+line is written only for a declared feature, by its spec's hash, for the same reason.
 
 ## The three day-one programs
 
@@ -305,7 +362,10 @@ A size that rounds down to nothing is no trade, with the reason. On a program th
 decision and `max_hold_bars` are the declared bar's and everything else here is the minute's: the fill at
 the next MINUTE's open, the stop and the target on each minute's range — the "Bars" section above. The
 dataset still serves minutes; the run builds the declared bars from them, and a run that ends inside one
-closes it as a partial bar.
+closes it as a partial bar. A program that reads a feature is handed each feature's value at each evaluated
+bar's close, as it had arrived; the values read are part of the run's identity, and the run ends with one
+`Feature` line per feature — its id, its clean-history start, the bars evaluated before it, the bars it had no
+value at, and the worst evidence class of what it read — which the answer's `features` repeats.
 
 **What a run cannot prove.** It is computed over bars, and bars establish no actual fill, no queue
 position and no intrabar ordering. A run is a reason to test something and never a record of a trade.
