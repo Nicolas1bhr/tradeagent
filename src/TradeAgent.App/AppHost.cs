@@ -1914,8 +1914,40 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// HOW LONG A QUIT WAITS FOR THE AI TO STOP. Each conversation's teardown is bounded on its own
+    /// (<see cref="TreeTeardown.Bound"/>); this is the bound on all of them together, so a quit is never
+    /// held by a stop that will not finish.
+    /// </summary>
+    internal static readonly TimeSpan QuitBound = TimeSpan.FromSeconds(15);
+
+    int _disposed;
+
+    /// <summary>
+    /// THE AI STOPPED, FIRST, ON EVERY WAY OUT OF THE APP (<c>U-agent-tree</c> item 4): the loop paused —
+    /// <see cref="MissionLoop.PauseAsync"/>, never <see cref="PauseTheAiAsync"/>, because the owner's choice
+    /// that the AI works on its own, and that a restart resumes it, is theirs and a quit is not a decision
+    /// to change it — and then the AI stopped, every role's conversation with it. Each returns once the
+    /// turn's whole tree is gone, so the launch row closes and the presence ends over a turn that is over,
+    /// while the database is still open to record it. Measured before this existed: the app's dispose
+    /// with a turn in flight left all six of the probe's processes running, after the host had exited.
+    /// </summary>
+    async Task StopTheAiForQuitAsync()
+    {
+        using var bound = new CancellationTokenSource(QuitBound);
+        try { if (Mission is not null) await Mission.PauseAsync().WaitAsync(bound.Token); }
+        catch (Exception) { /* bounded: the quit goes on, and the launcher's own sweep is behind it */ }
+        try { if (Agent is not null) await Agent.StopAsync(bound.Token).WaitAsync(bound.Token); }
+        catch (Exception) { /* the same */ }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        // ONCE. The quit runs it from the lifetime's ShutdownRequested and again from its Exit, whichever
+        // the way out raised (TradeAgentApp), and a second pass over disposed objects would throw.
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+        await StopTheAiForQuitAsync();
         if (_loop is not null) { await _loop.CancelAsync(); _loop.Dispose(); }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();

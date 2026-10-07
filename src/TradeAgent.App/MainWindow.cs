@@ -639,9 +639,11 @@ public sealed class MainWindow : Window
             return;
         }
 
-        // Shutdown, not Close: it runs the lifetime's ShutdownRequested handler, which disposes the
-        // gateway, the pipe server and the database. Setup is about to replace the files this
-        // process is running from, and a half-closed database is not a thing to hand an installer.
+        // Shutdown, not Close: it raises the lifetime's Exit — NOT ShutdownRequested, which a forced
+        // Shutdown skips (Avalonia 12.1.1) — and Exit's handler stops the AI and its whole tree, then
+        // disposes the gateway, the pipe server and the database (TradeAgentApp). Setup is about to
+        // replace the files this process is running from, and a half-closed database is not a thing to
+        // hand an installer.
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             desktop.Shutdown();
     }
