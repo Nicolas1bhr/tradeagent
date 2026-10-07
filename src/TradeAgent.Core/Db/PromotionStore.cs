@@ -451,11 +451,62 @@ public sealed class Promotions(Database db)
     /// <summary>
     /// The one decision (<see cref="Data.DataLicence.LiveRefusal"/>) over the verdict's holdout row and its
     /// source's newest reading. A row that cannot be read answers the default refusal, never an allowance.
+    ///
+    /// <para><b>And where the dataset confers, the features</b> (<c>U-language-v2a</c>): a version that reads features
+    /// stands on their inputs as much as on the bars, so its refusal is the first of
+    /// <see cref="Features.FeatureLicence.LiveRefusal"/>'s over each feature it reads, against each input's newest
+    /// licence reading. No tape source has a reading today, so every feature is research-only and no version that
+    /// reads one may hold capital. A version whose text no longer reads as itself answers the default refusal — its
+    /// standing is invalidated before anyone asks this. Paper never reads it.</para>
     /// </summary>
-    string? LiveRefusalOf(PromotionRow promotion) =>
-        _datasets.ById(promotion.HoldoutDatasetId) is { } set
-            ? Data.DataLicence.LiveRefusal(set, _licences.Newest(set.Source))
-            : Data.DataLicence.NotRead;
+    string? LiveRefusalOf(PromotionRow promotion)
+    {
+        if (_datasets.ById(promotion.HoldoutDatasetId) is not { } set) return Data.DataLicence.NotRead;
+        if (Data.DataLicence.LiveRefusal(set, _licences.Newest(set.Source)) is { } bars) return bars;
+
+        if (_strategies.VersionById(promotion.VersionId) is not { } version) return Data.DataLicence.NotRead;
+        if (!ReadsFeatures(version)) return null;
+        if (Strategy.StrategyParser.Parse(version.Source).Program is not { } program
+            || !string.Equals(program.StrategyId, version.Id, StringComparison.Ordinal))
+            return Data.DataLicence.NotRead;
+
+        foreach (var feature in program.Features)
+            if (Features.FeatureLicence.LiveRefusal(feature.Spec, _licences.Newest) is { } refused)
+                return refused;
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a recorded version reads features: its stored canonical form — what its id was hashed over — holds a
+    /// <c>feature</c> line. No v1 canonical form has one, so a v1 version is never re-parsed here.
+    /// </summary>
+    static bool ReadsFeatures(StrategyVersionRow version) =>
+        version.Canonical.Contains("\nfeature ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// WHY A VERSION THAT READS FEATURES NO LONGER READS AS ITSELF, in words, or null because it does
+    /// (<c>U-language-v2a</c>). Its stored text is re-parsed: a text this build refuses, or one that hashes to another
+    /// id — a feature's spec read differently, or a moved <c>features=</c> semantics re-identifying every feature —
+    /// is a program other than the one the evidence was taken on, exactly as the runner and the referee already refuse
+    /// it. A version that reads no feature is not re-parsed: its id depends on nothing this check could see move that
+    /// the manifest compare does not already catch.
+    /// </summary>
+    static string? ReadAsAnother(StrategyVersionRow version)
+    {
+        if (!ReadsFeatures(version)) return null;
+
+        var parse = Strategy.StrategyParser.Parse(version.Source);
+        if (parse.Program is not { } program)
+            return $"the frozen text of version {Short(version.Id)}, which reads features, no longer parses in this build "
+                + $"— {parse.Why} — so the program its evidence was taken on cannot be read at all.";
+
+        return string.Equals(program.StrategyId, version.Id, StringComparison.Ordinal)
+            ? null
+            : $"the frozen text of version {Short(version.Id)}, which reads features, now reads as {Short(program.StrategyId)}: "
+              + "a feature it reads — its spec, or what this build computes from one "
+              + $"({Features.FeatureVersions.Manifest} now) — is not what that id was hashed under, so the evidence is about "
+              + "a program that is no longer this text.";
+    }
 
     /// <summary>
     /// WHAT HAS CHANGED SINCE THIS VERDICT WAS TAKEN, in words, or null because nothing has.
@@ -518,6 +569,12 @@ public sealed class Promotions(Database db)
                 + $"{Strategy.EvaluationSemantics.Current}: "
                 + string.Join(" and ", WhatMoved(evaluatorMoved, manifestMoved))
                 + ", so the evidence does not carry across.";
+
+        // A VERSION THAT READS FEATURES IS READ AGAIN (U-language-v2a): its id names every feature by the hash of its
+        // spec under `features=`, which the strategy manifest above does not carry, so a feature read differently is
+        // only visible by re-parsing the text the id was hashed from.
+        if (ReadAsAnother(version) is { } another)
+            return another;
 
         // THE POLICY COMPARED IS THE ONE THAT PRODUCED THE ANSWER. A paper-eligible row was scored by
         // `CampaignPolicy.PaperV1` and carries ITS sha, so comparing every row with V1's would
