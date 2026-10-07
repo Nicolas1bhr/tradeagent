@@ -23,18 +23,18 @@ model's own recorded decision text (quoted, labelled as the agent's claim); each
 remaining gaps; what did NOT happen. Claims allowed: "forward paper observation under declared bar-fill assumptions", "a real model authored and submitted";
 never executability, live readiness, realised profit, guaranteed protection, or "the system pays for itself". No favourable verdict or trade is forced.
 If a step refuses in words, the refusal IS evidence: quote it, record the gap as the next unit, do not seed around it. Retire this brief with the record.
-**For attempt 3 — the procedure as it now stands (seat M, 2026-10-04: the records since 2026-10-02, `main`, the orchestrator's decisions).** Build from a
-DETACHED worktree at the GO sha (after `U-venue-verify`, `U-timeframe-b`, `U-invariant-traces`, `U-runner-refused-close`, `U-data-licence`, their landing CI
-read), never the main checkout: `TRADEAGENT_HOME=~/Projects/ai-trading-software-for-mihael-worktrees/observed-run-home <worktree>/tools/mac-bundle.sh` (Debug —
-say so in the record), `caffeinate` tied to the app's pid. The home (read only, 2026-10-04): schema 26 (the first start migrates it to 30); PAPER-1; dataset 1
-(binance-spot BTCUSDT 1m to 2026-08-31, holdout from 2026-06-01; research-only from rung 30: live refused, paper unchanged); campaign 1, no verdict charged; the
-envelope (BTCUSDT, 0.05, 5000, one deployment, until 2026-10-08T15:47Z); BTCUSDT allowed; gpt-5.6-luna on both seats; the AI PAUSED, so a relaunch starts
-nothing. First paint: the Market data card shows the start's check of BTCUSDT against Binance ("Check now", one press, only if it did not verify); campaign 1's
-first `trade verdict` then pins the binance-spot cost model (0.1 % fee, 0.02 % assumed slippage, the checked step) inside the charge (`U-cost-model`) — no
-campaign, download, allowlist or envelope press is owed; paper fills pay that model; `bars 1h` runs on paper; the tape records from the launch (default ON;
-decided: no stop press, record its first instant). Presses, each recorded: "Start the AI"; gpt-6-luna on each seat (0.16 USD reserved a turn; if the vendor
-refuses it, one press a seat back to gpt-5.6-luna, 0.324 — a refused turn keeps its reservation; record each turn's model; a pill past the window's edge: click
-the first, Tab ×N, Space); "Let the AI work on its own" (two), then a detached dead-man that quits the app at the window's end unless it is paused. Verify first:
-`U-resume-agent` by ONE restart between turns while working (the next turn comes with no press); `U-vendor-limit` only if met, never forced. Pause, between turns
-only, at a churn, the vendor's limit (the run ends there) or the window's end; no new envelope. Bounds: ≤ 6 h in one local day, the 5 USD cap, the owner's plan
-(`~/.codex/sessions` read only for `usage_limit_exceeded`), the envelope. The CLI runs unsandboxed: no verdict here is protected evidence.
+**For attempt 3 — the procedure as it now stands (seat M, 2026-10-07).** GO `1828a188` (pinned on Law 10 before `U-tape-read`; landing CI ✓ ×3 + package,
+37536627562). Debug bundle (say so) from the DETACHED worktree `m0-run` by `tools/mac-bundle.sh`'s steps, its binaries' sha256/16 recorded, `caffeinate` on the
+app's pid, the lid open (closed, the Mac sleeps); launched on `TRADEAGENT_HOME=~/Projects/ai-trading-software-for-mihael-worktrees/observed-run-home`. The home
+(read only, 2026-10-07): schema 26, which `1828a188` MIGRATES to 30 at the first start (`Database.Migrate` keeps rungs 27–30; it refuses only a newer home), so it
+is used; `state/gateway.lock` is stale (pid 5957 gone; nothing holds a home file); PAPER-1; dataset 1 (binance-spot BTCUSDT 1m, holdout from 2026-06-01;
+research-only from rung 30, paper unchanged); campaign 1, 0 verdicts; the envelope (BTCUSDT, 0.05, 5000, one deployment, to 2026-10-08T15:47Z); BTCUSDT allowed;
+loss limits 0 (off); gpt-5.6-luna; the AI PAUSED. No campaign, download, allowlist or envelope press is owed. The start checks BTCUSDT against Binance ("Check now",
+one press, only if it failed); campaign 1's first verdict pins binance-spot costs (0.1 % fee, 0.02 % assumed slippage, the checked step) in its charge; paper fills
+pay them; `bars 1h` runs on paper; the paper book is spot, never short. The tape records from the launch, no stop press: Binance context, OKX EEA announcements,
+GDELT news (first start ≤ 96 files, ≈ 420 MB on the wire; ≤ 25 MB a day kept); no role reads it. Presses, each recorded: "Start the AI"; gpt-6-luna on each seat
+(0.16 USD reserved; refused → one press a seat to gpt-5.6-luna, 0.324); "Let the AI work on its own" (two); NEVER "Close all positions" (two closes measured ES −2;
+until `U-press-close-once`); then a detached dead-man quits the app at the window's end unless paused. Verify first: `U-resume-agent` by ONE restart between turns
+while working; `U-vendor-limit` only if met (since 2026-10-05 codex's logs write its limit sentence with ’, the manifest `'`; codex is now 0.160.1). Pause between
+turns at a churn, the vendor's limit (the end) or the window's end. Bounds: ≤ 6 h in one local day (~16:15 → ~22:15), the 5 USD cap, the owner's plan (his Codex
+Desktop shares it), the envelope; evidence into `fleet/records/`. Unsandboxed CLI: no verdict here is protected evidence.
