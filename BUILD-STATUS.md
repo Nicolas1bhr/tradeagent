@@ -8522,3 +8522,38 @@ not_once_per_rpc` (NullReferenceException at :333), green on the category's seco
 **NOT done, NOT verified:** no Settings-card line (status and report only, per the brief); the status and report counts stand on `TapeReader.ArrivalSlack` (a
 clock stepped back > 10 min is not covered); `data-tape`'s cost on a large tape not measured — no arrival index until a tape rung adds one; the read-only
 WAL open on Windows verified by CI only; no box run, no app run.
+
+## 2026-10-07 — U-loss-hold-release landed: a lost loss-budget close the owner has answered on the Dashboard is a decided leg of the confirm, so a closure no longer stays held for ever over a leg he has settled; the platform's history still outranks his word when it holds the close live
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-loss-hold-release.md`, written by seat P from its read-only survey at `bdf5affa` (every fact reproduced
+by a probe: on ATAS-like history the closure stayed held after the owner answered; the Dashboard asked him to confirm records when none was left). A fresh merge leg
+rebased it onto seat A's `U-inflight-settle` (`1828a188`): one conflict at the confirm's call site, A's 3-tuple read as A reads it. Seat P's landing prep rebased it
+onto `e2f4daf8` (seat A's U-tape-read) and `a50ef414` (docs only), src+tests patch-id identical both times (`79c48a3e1111`).
+Merge `2939b9c4` (ff-only), 5 commits (items `809a074f`, `1a26adcc`, the arm `13256eb1`, two report commits); no rung (kv JSON only). MONEY PATH: the loss boundary's confirm and closing again. Extends `U-flatten-confirm` (its deviation (c)).
+
+- **Item 1 (`809a074f`):** `LostCloses` keeps a lost close the owner settled (`SettledByTheOwner`: terminal, his prefix, not flagged or latched); `TheOwnersAnswerAsync`
+  makes it a verdict (his state and fill, "you confirmed it on the Dashboard: <note>"); where `ReconciliationProvable` the platform's order list is still read, and a close
+  it holds non-final decides nothing, named ("… that outranks your answer"), as does a read that throws. `ReconciliationProvable` now gates only the history question, so an
+  ATAS closure is confirmed once every lost close is answered; then the landed confirm (flat → nothing sent) and again-flatten (cancel-first at the platform), unchanged.
+- **Item 2 (`1a26adcc`):** `ConfirmSentence`, the again's sentence and `HeldBy` name the verdict's source (the history, YOUR ANSWER ON THE DASHBOARD, or both); a not-flat
+  outcome asks him to confirm records only while one is flagged or latched. CONTRACTS, USER-GUIDE, AGENTS.md (`WorkspaceBuilder`) and the status schema say so.
+- **Decision (seat P, extending the orchestrator's `U-flatten-confirm` ruling; told to it, not overruled):** an owner-settled lost leg is a decided leg; an open book is
+  then closed again through the again-flatten. **Declared deviations, ACCEPTED:** (a) his answer counts only past `AbsenceCountsFrom` + `AbsenceGrace` (a close in transit is
+  not there for him to see; tested one second short: nothing written or sent); (b) a terminal history state other than his is named beside his words — the close-again is
+  decided by the fresh read of the book, not by the verdict; (c) `ApplyTheConfirm` unflags nothing while an answered row is flagged again (test (f); that line dropped →
+  (f) red); (d) (c) gained a "history read throws" arm. The merge leg's declared choice, ACCEPTED: the veto keeps its own order-list read rather than A's `Live`, so a fills
+  read that throws cannot block his answer. Nothing of A's changed (sha256 per function, the merge leg).
+
+**Verified by running (the builder, then the merge leg, quoted).** RED before on the base product: (a) `Expected: 1 Actual: 0` confirms, the Dashboard "AI trading is
+paused until you confirm those records" with every record answered; (b) both arms `Expected: 1 Actual: 0`, "closes on the wire : 1, position ES 1"; (e) `Expected: 1
+Actual: 0`, "closes 1, cancels 0, ES 1"; (c) its naming red. Mutant — the live-order veto dropped — → (c) "Expected: 0 Actual: 1" confirms, "closes on the wire : 2",
+watched by the builder at `79e432c8` and RE-WATCHED by the merge leg on the rebased tree (`97248404`); restored, sha256 OK.
+Builder's gate at `79e432c8`: Release 0 warnings; Unit 1419/1419; Fault 453/453; classes 3×. Merge leg's gate at `e095960d`: Release 0/0; Unit 1419; Fault 457;
+`LossHoldReleaseTests` 8/8, `LossFlattenConfirmTests` 12/12, `InFlightSettleTests` 3/3, each 3×.
+**Manager's gate** at `469bc7f6`, carried to `2939b9c4` (only docs moved), Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1424/1424
+(9 m 9 s); Fault 457/457 (1 m 56 s); Integration 729/730, 1 skipped (11 m 16 s) → 0 failed. Names vs `main`: 2237 → 2243, 0 removed, 6 added ([Fact]/[Theory] 2191 → 2197). Scan clean; no trailers.
+**CI:** branch run 37537618216 at `e095960d` (the rebased code; the tip adds the report only): ubuntu ✓ 12 m, macOS ✓ 17 m, windows ✓ 52 m, package ✓. Before the rebase:
+37529792550 at `79e432c8`, all four success. Tests box: NOT RUN — "the machine does not answer" (22:43, 23:47, 23:59 CEST). At landing (02:58 CEST) the box was
+reachable: "NO - his own OFT.Platform is open; nothing of ours runs beside it" → NOT RUN, respected. Landing CI on `main`: a waiter is armed.
+**NOT done, NOT verified:** OWED — the closing again's own lost close, once he answers it, still holds the closure (one confirm per breach; RUN by probe) → folded into
+`U-valuation-close-confirm` as one class fix (every lost app close confirmed per close generation). ATAS not run (no box); the app not run.
