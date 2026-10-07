@@ -2,8 +2,7 @@
 **Protects:** CI on `main` as a clean signal (three of the last twelve `main` runs went red on windows-latest only, in tests no diff reached; each costs a reading at
 every landing and a 50-minute re-run on a builder's branch), and the pipe's shared secret (`IpcToken.Ensure` is an unlocked read-then-write). Light; fresh builder,
 seat P; no rung. `docs/HOW-WE-BUILD.md` step 6: `Timing` is the one place a second attempt exists; membership is argued AT THE TEST with measured numbers, never
-granted to whatever went red, and an assertion is never loosened to get in. Prefer a deterministic seam (a latch, an injected clock, a recorded sleep) wherever the
-product's verdict does not need the runner's wall clock; `Timing` only where it does.
+granted to whatever went red, and an assertion is never loosened to get in. Prefer a seam (a latch, an injected clock) wherever the verdict does not need the runner's clock; `Timing` only where it does.
 **Facts (SOURCE at `3564dee7`, read by seat P, NOT runtime-verified; the readings are in `fleet/ci-ledger.md`).**
 - (a) `src/TradeAgent.Security/SecretStore.cs:62-69`: `Ensure` reads, and when absent or short writes a fresh token with `File.WriteAllBytes` (`:29`), then restricts the
   mode (`:30`; `:51-56`, non-Windows only, AFTER the bytes are on disk); a DPAPI read that throws is taken as absent and regenerated (`:44-47`). Windows run 37443989301:
@@ -14,11 +13,12 @@ product's verdict does not need the runner's wall clock; `Timing` only where it 
   red on windows run 37443797669 ("the retry took 2335 ms"), green at `8029b53c` and `003c0a76`. The witness is the MONEY PATH.
 - (c) `SweepRequestIdTests.cs:456` (`A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`, not `Timing`; `WaveIssueRoom = 750` at `:258`, argued `:246-257`): windows
   run 37494849714 spread the wave past 750 ms (2 legs refused, 1 allowed); the same code green ×3 at `b94fc212` (run 37495039407). The argued numbers did not hold.
-- (d) Same file `:306`, `A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` (`Timing`): NullReferenceException at `:333` on macOS run 37420396771 — a book read
-  clipped by the deadline answers `ok=False` with no Data, and the test casts `Data` without asserting `Ok` (a 2100 ms control reproduced it; `U-fix-press-budget`'s record).
+- (d) Same file `:306`, `A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` (`Timing`): NullReferenceException at `:333` on macOS runs 37420396771 and 37529866030
+  (SECOND sighting) — a clipped book read answers `ok=False` with no Data, and the test casts `Data` without asserting `Ok` (`U-fix-press-budget`'s record).
 - (e) `tests/TradeAgent.FaultTests/RiskGateTests.cs:252` (`A_day_past_its_loss_budget_refuses_…`) reads the loss day by the UTC date, while `FakeBroker` stamps fills
   with its own `DateTimeOffset.UtcNow` (`src/TradeAgent.Connectors.Fake/FakeBroker.cs:146`, also `:100`, `:114`, `:126`, `:178`) with no seam: a run across 00:00Z can
-  book the fill on one day and judge it on the next (`U-test-hygiene-1`'s record, NOT done; not yet seen red).
+  book the fill on one day and judge it on the next (`U-test-hygiene-1`'s record; not yet seen red). The same split went red: `tests/TradeAgent.FaultTests/QuoteClockTests.cs`
+  `:286-310` (simulator arm) on windows run 37521857152, "simulator at 40 s : READY —": a `TestClock` fixed at `UtcNow` vs the fake's wall-clock quote stamps.
 Read first: `CLAUDE.md`; `docs/HOW-WE-BUILD.md` step 6; `.github/workflows/build.yml` (`:31`, `:76-94`: how `Timing` runs and retries); each test above and the code it drives.
 Must NOT: raise a bound, a room, a budget, a timeout or a latency to get green; add a retry; weaken or delete an assert; skip on a platform; put a test in `Timing`
 without the numbers measured and written at the test; change the witness's attempt count, backoff or budget, or the simulator's fills; read the wall clock in product
@@ -32,8 +32,8 @@ Items, one commit each, one-sentence messages:
 3. **(c) The wave released by a fact, not a room:** the five legs reach the wire on the fixture's own latch or seam, so the mix of outcomes cannot depend on how a runner
    spreads four issues; or, if the verdict truly needs wall time, `Timing` with numbers measured on windows-latest and why the 750 ms argument failed.
 4. **(d) Ok before Data** at `:333`: a clipped read fails in words, never with a NullReferenceException.
-5. **(e) The simulator's clock is a seam** (default `DateTimeOffset.UtcNow`, behaviour unchanged) and `RiskGateTests` pins it: RED first with the fill booked at
-   23:59:59Z and the verdict read at 00:00:01Z, quoted.
+5. **(e) The simulator's clock is a seam** (default `DateTimeOffset.UtcNow`, behaviour unchanged); `RiskGateTests` and `QuoteClockTests`' simulator arm pin it to the
+   test's clock: RED first with the fill at 23:59:59Z read at 00:00:01Z, and the 40 s quote read after a 15 s stall, quoted.
 Proof: item 1's and item 5's RED-before and item 1's and item 2's mutants, quoted; touched classes 20× locally through `suite.sh`; on CI `fleet/bin/ci-dispatch.sh <WT> 3`
 (three runs at once on one sha count as three) — every job green on all three platforms, quoted; each changed assert's before/after quoted in the report.
 Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; Unit, Fault 0 failed;
