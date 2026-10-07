@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 
@@ -8,10 +9,8 @@ namespace TradeAgent.Core;
 /// it at the point where it would belong.
 ///
 /// On Windows a Job Object holds every process a turn starts, whatever it does to its parent links,
-/// and closing the job's handle kills the lot. The POSIX equivalent is a process GROUP: a grandchild
-/// that detaches — its parent exits, the kernel reparents it to init — keeps the group it was born
-/// in, so a group kill still reaches it while <c>Kill(entireProcessTree: true)</c>, which walks
-/// parent links, cannot see it at all.
+/// and closing the job's handle kills the lot — including when TradeAgent itself dies, because the
+/// kernel closes a dead process's handles. Nothing on macOS or Linux does either of those for free.
 ///
 /// Measured on this Mac before any of this was written: <c>Process.Start</c> leaves the child in
 /// TradeAgent's OWN process group (self pgid=39402, child pgid=39402), and the group is therefore
@@ -19,33 +18,41 @@ namespace TradeAgent.Core;
 /// POSIX says it must. There is no <c>ProcessStartInfo</c> flag for a new session.
 ///
 /// So the child is started through a launcher that IS ours: TradeAgent's own <c>trade</c>, invoked
-/// with <see cref="Flag"/>, which calls <c>setsid()</c> and then <c>execv()</c>s the real command.
-/// After exec the process keeps its pid, so the pid the app already holds IS the session and group
-/// leader, and <c>kill(-pid)</c> is the whole teardown. Measured the same day: child pgid = sid =
-/// its own pid, a detached grandchild at ppid 1 still carried that group, and the group kill took it.
+/// with <see cref="Flag"/>. It calls <c>setsid()</c>, so the pid the app holds is the turn's session
+/// leader and the session's id, and then STAYS — the turn's supervisor (<c>U-agent-tree</c> item 5).
+/// It starts the real command as its child with stdio inherited, so nothing about the app's pipes
+/// changes; forwards the command's exit code; and when the command exits, or when the app that started
+/// it is gone — <c>getppid()</c> no longer the app: a crash, a force quit, the dead-man — it ends the
+/// session's whole tree as the app's own teardown does (<see cref="TreeTeardown"/>), and only then
+/// exits. It used to <c>execv</c> the command and leave: measured, a turn running when the app was
+/// killed with SIGKILL lived on, every process of it, in a session nothing was left to end.
 ///
 /// It is not a sandbox and this file does not pretend otherwise: a process that wants out can call
 /// <c>setsid</c> itself, in one line of any scripting language on the machine. That is why the
 /// Doctor says "OS sandbox: NONE" in the owner's own words and why the live configuration refuses to
 /// start an uncontained runtime at all. What this buys is that a turn TradeAgent cancelled is over —
-/// including the parts of it that stopped answering to their parent.
+/// including the parts of it that stopped answering to their parent, while their parent link or the
+/// turn's session still says whose they are.
 /// </summary>
 public static class ContainedLaunch
 {
     /// <summary>
     /// The launcher's flag. Deliberately a flag on <c>trade</c> rather than a verb: verbs map to
-    /// gateway operations, and this one never opens the pipe, reads the token or touches the
-    /// gateway. It grants nothing either — it execs a program its caller could already exec, as the
-    /// same user, in the same session it would have inherited anyway.
+    /// gateway operations, and this one never opens the pipe, reads the grant or touches the
+    /// gateway. It grants nothing either — it runs a program its caller could already run, as the
+    /// same user, and ends what that program leaves behind.
     /// </summary>
     public const string Flag = "--spawn-contained";
+
+    /// <summary>How often the supervisor asks whether the app that started it is still there.</summary>
+    static readonly TimeSpan Watch = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// The launcher itself, run inside whatever process was started with <see cref="Flag"/>.
     ///
     /// Returns false when this is an ordinary invocation, so the caller goes on to be the CLI. When
-    /// it returns true the process is either already gone (exec succeeded, and this code no longer
-    /// exists) or is about to exit with <paramref name="exitCode"/>.
+    /// it returns true the command has run and its session has been ended, and the process is about
+    /// to exit with <paramref name="exitCode"/> — the command's own.
     /// </summary>
     public static bool TryRun(IReadOnlyList<string> argv, TextWriter error, out int exitCode)
     {
@@ -77,13 +84,47 @@ public static class ContainedLaunch
             return true;
         }
 
-        // From here this process is its own session and group leader, and so is everything it goes
-        // on to start. execv keeps the pid, so the handle the app already holds names the group.
-        var command = argv.Skip(1).ToArray();
-        Posix.Exec(command[0], command);
+        // From here this process is its own session and group leader, and everything it starts is in
+        // its session. The app is whoever started it — read once, now, because after the app's death
+        // the kernel gives this process to someone else, and that change is the signal.
+        var app = Posix.Parent();
+        var self = Environment.ProcessId;
+        var started = ProcessTable.Read(self)?.Start ?? 0;
 
-        error.WriteLine($"trade: could not run {command[0]} (errno {Marshal.GetLastPInvokeError()})");
-        exitCode = 127;
+        Process command;
+        try
+        {
+            // STDIO INHERITED, NOT REDIRECTED: the command writes into the pipes the app is reading, and
+            // reads the stdin the app closed. Process.Start, never a managed fork.
+            var psi = new ProcessStartInfo(argv[1]) { UseShellExecute = false };
+            foreach (var a in argv.Skip(2)) psi.ArgumentList.Add(a);
+            command = Process.Start(psi) ?? throw new InvalidOperationException("the program did not start");
+        }
+        catch (Exception ex)
+        {
+            error.WriteLine($"trade: could not run {argv[1]} ({ex.Message})");
+            exitCode = 127;
+            return true;
+        }
+
+        using (command)
+        {
+            var orphaned = false;
+            while (!command.WaitForExit(Watch))
+            {
+                if (Posix.Parent() == app) continue;
+                orphaned = true;   // the app is gone, and nothing of it will end this turn but this
+                break;
+            }
+
+            // THE SESSION ENDED BEFORE THIS PROCESS IS: whatever the command left behind, and the command
+            // itself when it is the app that is gone. This process is the session's leader and spares
+            // only itself.
+            var end = TreeTeardown.End(self, started, self, insideTheSession: true);
+            if (!end.Ended) error.WriteLine($"trade: {end.Sentence}");
+
+            exitCode = orphaned || !command.HasExited ? 128 + 9 : command.ExitCode;
+        }
         return true;
     }
 }
@@ -105,9 +146,6 @@ public static class Posix
 
     [DllImport("libc", SetLastError = true)]
     internal static extern int kill(int pid, int signal);
-
-    [DllImport("libc", SetLastError = true, EntryPoint = "execv")]
-    static extern int execv(IntPtr path, IntPtr argv);
 
     const int SIGKILL = 9;
 
@@ -187,23 +225,6 @@ public static class Posix
         if (OperatingSystem.IsWindows() || pid <= 1 || pid == Environment.ProcessId) return false;
         try { return kill(pid, signal) == 0; }
         catch (Exception) { return false; }
-    }
-
-    /// <summary>
-    /// Becomes <paramref name="path"/>. Returns only on failure — on success this process no longer
-    /// exists to return into. The argument array is NUL-terminated by hand because that is the shape
-    /// <c>execv</c> reads, and UTF-8 because that is what a POSIX path is.
-    /// </summary>
-    internal static void Exec(string path, IReadOnlyList<string> argv)
-    {
-        var strings = new IntPtr[argv.Count + 1];
-        for (var i = 0; i < argv.Count; i++) strings[i] = Marshal.StringToCoTaskMemUTF8(argv[i]);
-        strings[^1] = IntPtr.Zero;
-
-        var block = Marshal.AllocHGlobal(IntPtr.Size * strings.Length);
-        Marshal.Copy(strings, 0, block, strings.Length);
-        var file = Marshal.StringToCoTaskMemUTF8(path);
-        execv(file, block);
     }
 }
 
