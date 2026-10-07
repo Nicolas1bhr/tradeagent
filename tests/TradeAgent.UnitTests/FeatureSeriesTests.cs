@@ -15,11 +15,19 @@ namespace TradeAgent.Tests.Unit;
 /// every point the pure evaluator's. No network: every fetch is a record built here, and the built-in address is never
 /// asked anything.
 /// </summary>
-public class FeatureSeriesTests(ITestOutputHelper log)
+public class FeatureSeriesTests(ITestOutputHelper log) : IDisposable
 {
     static readonly DateTimeOffset Noon = new(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
 
-    static readonly BarAudience Research = BarAudience.Pipe(CouncilRoles.Research);
+    /// <summary>
+    /// THE RESEARCH DIRECTOR'S HOLDOUT OVER A LEDGER HOLDING NO CUTOFF (<c>U-tape-holdout</c>): no window, so every read
+    /// below is served exactly as it was before the tape had a holdout. Its own database per test, disposed with it.
+    /// </summary>
+    readonly Database _ledger = TestEnv.NewDb();
+
+    TapeHoldout Research => TapeHoldout.Pipe(CouncilRoles.Research, new DatasetStore(_ledger));
+
+    public void Dispose() => _ledger.Dispose();
 
     /// <summary>The premium index's own address on this build's row: what makes an on-time reading O-LIVE.</summary>
     static string BuiltInUrl => TapeSourceCatalog.BinanceUmBaseUrl + "/fapi/v1/premiumIndex";
@@ -92,7 +100,7 @@ public class FeatureSeriesTests(ITestOutputHelper log)
     }
 
     /// <summary>Every row of one subject the reader serves, through the same read the series uses — withheld payloads withheld.</summary>
-    static List<TapeObservation> AllRows(TapeReader reader, string subject)
+    List<TapeObservation> AllRows(TapeReader reader, string subject)
     {
         var rows = new List<TapeObservation>();
         long? before = null;
@@ -338,5 +346,69 @@ public class FeatureSeriesTests(ITestOutputHelper log)
             [true, true, false, false, false, false, false, false, false, false, false, false, true, true],
             mean.Points.Select(p => p.Present));
         Assert.All(mean.Points.Where(p => !p.Present), p => Assert.Contains("withheld", p.Absent, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A FEATURE READ UNDER THE PIPE'S HOLDOUT THAT REACHES A HOLDOUT WINDOW IS REFUSED (<c>U-tape-holdout</c>): the owner
+    /// holds back a BTCUSDT dataset from 13:00 to its last bar at 13:30, which the tape recorded. A range whose reach
+    /// touches the window — its own instants or the readings its first instant looks back over — is refused in the
+    /// holdout's words with no point, for every role and a caller with none; one that ends before the cutoff is served
+    /// exactly as with no holdout at all; and one after the window is served, its clean-history search reaching back no
+    /// further than the window's close — later than without the holdout, never earlier.
+    /// </summary>
+    [Fact]
+    public void A_feature_read_reaching_a_holdout_window_is_refused()
+    {
+        var file = NewFile();
+        using var store = Recorded(file);
+        var reader = new TapeReader(file);
+        using var db = TestEnv.NewDb();
+        var datasets = new DatasetStore(db);
+        var cutoff = Noon.AddHours(1);
+        var lastBar = Noon.AddMinutes(90);
+        var record = new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 1, 1, [],
+            Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 210, Noon.AddHours(-2), lastBar,
+            0, [], false, 0, 0, 0, lastBar.AddDays(1), DatasetState.ACCEPTED, null, []);
+        var id = datasets.Record(record);
+        Assert.True(datasets.SetHoldout(id, cutoff, EvaluationClass.Research).Ok);
+
+        foreach (var role in new[] { CouncilRoles.Operations, CouncilRoles.Research, null })
+        {
+            var holdout = TapeHoldout.Pipe(role, datasets);
+
+            foreach (var (from, to) in new[] { (Noon.AddMinutes(55), Noon.AddMinutes(65)), (Noon.AddMinutes(95), Noon.AddMinutes(100)) })
+            {
+                var refused = FeatureSeries.Read(reader, holdout, Spec("mean"), from, to, TimeSpan.FromMinutes(1));
+                log.WriteLine($"{role ?? "no role"} {from:HH:mm}-{to:HH:mm}: {refused.Refusal}");
+                Assert.True(refused.Refused);
+                Assert.Empty(refused.Points);
+                Assert.Contains($"dataset {id} (BTCUSDT 1m v1) holds out every bar from {cutoff:u}", refused.Refusal, StringComparison.Ordinal);
+                Assert.Contains("REFUSED rather than quietly cut short", refused.Refusal, StringComparison.Ordinal);
+            }
+
+            var before = FeatureSeries.Read(reader, holdout, Spec("mean"), Noon.AddMinutes(30), Noon.AddMinutes(49), TimeSpan.FromMinutes(1));
+            Assert.Equal(FeatureSeries.Read(reader, Research, Spec("mean"), Noon.AddMinutes(30), Noon.AddMinutes(49), TimeSpan.FromMinutes(1)), before,
+                FeatureSeriesReadComparer.Instance);
+
+            var after = FeatureSeries.Read(reader, holdout, Spec("latest"), Noon.AddMinutes(100), Noon.AddMinutes(110), TimeSpan.FromMinutes(1));
+            var open = FeatureSeries.Read(reader, Research, Spec("latest"), Noon.AddMinutes(100), Noon.AddMinutes(110), TimeSpan.FromMinutes(1));
+            Assert.Null(after.Refusal);
+            Assert.Equal(open.Points, after.Points);
+            Assert.Equal(new FeatureCleanStart(Noon.AddSeconds(2 + 5), null), open.CleanHistoryStart);
+            Assert.Equal(new FeatureCleanStart(lastBar.AddMinutes(1).AddSeconds(2 + 5), null), after.CleanHistoryStart);
+        }
+    }
+
+    /// <summary>Two reads equal in everything they serve: the points, the clean-history start, the terms and both refusals.</summary>
+    sealed class FeatureSeriesReadComparer : IEqualityComparer<FeatureSeriesRead>
+    {
+        public static readonly FeatureSeriesReadComparer Instance = new();
+
+        public bool Equals(FeatureSeriesRead? a, FeatureSeriesRead? b) =>
+            a is not null && b is not null && a.Points.SequenceEqual(b.Points) && a.CleanHistoryStart == b.CleanHistoryStart
+            && a.Terms.SequenceEqual(b.Terms) && a.LiveRefusal == b.LiveRefusal && a.Refusal == b.Refusal;
+
+        public int GetHashCode(FeatureSeriesRead r) => r.Points.Count;
     }
 }
