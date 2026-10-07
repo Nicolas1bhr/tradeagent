@@ -190,6 +190,53 @@ public class AgentTreeTests : IDisposable
         finally { await Close(turn.Host); }
     }
 
+    /// <summary>
+    /// (c) DISPOSE ENDS A SESSION WHOSE LEADER HAS ALREADY EXITED — the teardown's own claim, without the
+    /// launcher's sweep behind it. The launcher here is not resident: it makes the session and becomes the
+    /// command, so once the command exits the session's leader is gone and the leftover in it is reachable by
+    /// the remembered session alone. The guard this pins: a Dispose that tears down only while the leader
+    /// still runs leaves it running.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_ends_the_session_a_leader_that_has_already_exited_left_behind()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = NewDir("leaderless");
+        var launcher = Path.Combine(dir, "exec-launcher.sh");
+        File.WriteAllText(launcher, "#!/bin/sh\nshift\nexec /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \"$@\"\n");
+        File.SetUnixFileMode(launcher, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var psi = new ProcessStartInfo("/bin/sh")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(
+            $"echo $$ > \"{dir}/leader.pid\"; /bin/sleep 908 > /dev/null 2>&1 & echo $! > \"{dir}/leftover.pid\"; " +
+            $"while [ ! -f \"{dir}/go\" ]; do /bin/sleep 0.1; done; exit 0");
+        var contained = ProcessContainment.Start(psi, [launcher]);
+        try
+        {
+            var members = await Record(dir, ["leader.pid", "leftover.pid"]);
+            Assert.True(contained.Held, "the probe's launcher did not give the leader a session of its own");
+
+            File.WriteAllText(Path.Combine(dir, "go"), "");
+            await contained.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            var leftover = members.Single(m => m.Name == "leftover");
+            Assert.True(Alive(leftover), "the leftover did not outlive its leader, so this tests nothing");
+
+            contained.Dispose();
+            await AssertAllDead([leftover], "ContainedProcess.Dispose after the session's leader had exited");
+        }
+        finally
+        {
+            try { contained.Dispose(); }
+            catch (Exception) { /* a second dispose; the assertion above is the verdict */ }
+        }
+    }
+
     // ---- (d) children that left the group or the session ----------------------------------------------
 
     /// <summary>
