@@ -586,4 +586,62 @@ public class OperatorPressIsAnEmergencyTests
         Assert.Equal(ExecutionState.FILLED, healthy.Targets[0].State);
         Assert.Empty(c2.Inner.Broker.Positions);
     }
+
+    /// <summary>How long the store call that moves the press's deadline out takes. See the test below.</summary>
+    const int StoreRefundMs = 500;
+
+    /// <summary>
+    /// AND THE SIMULATOR'S LAST PREDICTION IS STOPPED BY THE DEADLINE TOO (<c>U-test-hygiene-2</c> item 6).
+    ///
+    /// <para>The test above clipped the wait the simulator predicted would FIT. Its other branch — a call
+    /// whose turn comes with less time left than its latency — still predicted: it slept out what was
+    /// left on the CALLER's token alone, so a machine that delivers that sleep late held the call past the
+    /// deadline by the whole of the lateness. A press reaches that branch whenever the time it spends in
+    /// its own store is given back to its deadline (<see cref="RiskReducingScope.BeginExcludingTheStore"/>):
+    /// after an orders read the deadline cut, the positions read STARTS inside a deadline the store's time
+    /// has moved out, with less left than its latency. That is the neighbour's red on windows-latest —
+    /// run 37524459410, "positions 2198 ms", and again on main at <c>b6699c8a</c>, run 37552478234 — and
+    /// it was the simulator, not the press: the 2.2 s is the late wait's lateness to the millisecond.</para>
+    ///
+    /// <para>Here the store's time is spent on purpose: one call of <see cref="StoreRefundMs"/> on the
+    /// press's own flow, inside the orders read, which the scope counts and gives back. The positions read
+    /// is ASSERTED to have started inside its deadline before anything else is, so this measures the
+    /// branch it names and not the one that refuses a call whose deadline has already gone.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_wait_the_simulator_predicted_would_not_fit_is_stopped_by_the_deadline_too()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-7", TestEnv.Buy());
+
+        // Every wait the simulator makes is delivered 2.2 s late, as in the test above. The FIRST is the
+        // orders read's, on the press's own flow: it spends StoreRefundMs in the store first, which the
+        // press is not charged for, so its deadline moves out by that much while the read is under way.
+        c.Inner.Faults.LatencyMs = StalledMs;
+        var refunded = 0;
+        c.Inner.Faults.Wait = (d, ct) =>
+        {
+            if (Interlocked.Exchange(ref refunded, 1) == 0) db.Read(_ => { Thread.Sleep(StoreRefundMs); return 0; });
+            return Task.Delay(d + TimeSpan.FromMilliseconds(2200), ct);
+        };
+
+        long? deadlineAt = null;
+        long? startedAt = null;
+        c.BeforePositionsRead = () =>
+        {
+            deadlineAt ??= RiskReducingScope.DeadlineAt;
+            startedAt ??= Environment.TickCount64;
+        };
+
+        var firstPressCall = c.WireCalls.Count;
+        var press = await gw.OperatorCancelAllAsync();
+
+        Assert.True(startedAt is { } s && deadlineAt is { } d0 && s < d0,
+            $"the positions read started {startedAt - deadlineAt} ms past its deadline, so it was refused before " +
+            $"the wire and this did not reach the branch it is about; the store's {StoreRefundMs} ms moved the " +
+            "deadline out by less than the press spent between the two reads");
+        TheStalledPressGaveUpOnItsOwnDeadline(c, firstPressCall, deadlineAt, "a press whose simulator ran late");
+        Assert.Contains(press.Targets, t => t.Outcome == "not confirmed — check ATAS");
+    }
 }

@@ -173,7 +173,17 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         var wait = TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
         if (wait > left)
         {
-            await Sleep(left, ct);
+            // AND THIS WAIT IS STOPPED BY THE DEADLINE TOO, NOT MERELY PREDICTED TO END AT IT
+            // (U-test-hygiene-2 item 6). It slept out `left` on the caller's token alone, so a machine
+            // that delivered that sleep late held the call past the deadline by the whole of the lateness —
+            // "positions 2198 ms" on windows-latest (run 37524459410) was a 2.2 s late wait to the
+            // millisecond. It ends now at the deadline whichever comes first, exactly as
+            // TheCancellableWait does, on the same branch: same sentence, same PossiblyWritten. Nothing
+            // changes when the clock behaves — the sleep and the deadline are then the same instant.
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            stop.CancelAfter(left);
+            try { await Sleep(left, stop.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
             // The call was under way when the deadline passed, so it may have acted. Fail-closed.
             if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
             throw new ConnectorTransportException(DeadlineSentence(op, mutating,
