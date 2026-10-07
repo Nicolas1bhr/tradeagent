@@ -39,8 +39,22 @@ GoldenVectorTests` (a fixture tape). Mutant, quoted red: item 3's as-of moved to
 Gate and report per `docs/HOW-WE-BUILD.md` pass 1 and `docs/FLEET.md` "The builder pass": rebase on `main`; Release `--no-incremental` 0 warnings; Unit, Fault 0 failed,
 touched classes 3×; CI via `fleet/bin/ci-dispatch.sh` (run id, each job); names 0 removed (both sizes); the tests box run or its NOT RUN line; `## Report` ≤ 20 lines; no push to `main`.
 
-## Paused
-16:57 CEST on seat A's throttle; code tip `7121c4db`, this note's commit on top. Committed: items 1 `2993ff87`, 2 `adf4b21f`, 3 `4b9a8068`, 5 `7121c4db`; item 4 and item 3's follow-ups (the feed's first slice from cadence, the referee reading its tape once, (p)) are WIP `d332c422`, building at 0 warnings.
-Run green before the WIP changes and not re-run since: (a)–(l), (o), `EvaluatorLimitTests`; mutant (as-of moved to the next close) ⇒ (f) red `Expected: COMPLETED Actual: FAULTED`, restored byte-identical. NOT RUN: (m), (n), (p) — the suite was held by gates.
-Next: under the suite lock run `FeatureProgram*` (Unit) and `FeatureProgramRunnerTests` (Fault); pin (p) from what it prints (`TapeFixtureSha256` is "PIN"); split `d332c422` (reset --soft `4b9a8068`, amend item 3 by path, commit item 4, docs last); time the year benchmark (scratch `bench/`, under the lock); then the gate.
-Open: if U-tape-holdout lands first, `FeatureFeed` is the one place calling `FeatureSeries.Read` (BarAudience → TapeHoldout). Tests box 16:45: `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it`.
+## Report
+Code tip `065b7cbe` (this report on top), a fresh builder continuing the paused leg. U-features as landed: `FeatureSpec.Parse(string?)` → `FeatureParse`, `.Id`, `FeatureVersions.Manifest` `features=1`, `FeatureSeries.Read(reader,
+TapeHoldout holdout, spec, from, to, step, newest?, rowCap)` → `FeatureSeriesRead` (≤ 10,000 instants, ≤ 50,000 rows an input), `FeatureValue(At, Value, Absent, Class, RowsSha256, Rows)` with `Present`, `FeatureLicence.LiveRefusal(spec,
+newest)`. Year benchmark (scratch, under the lock): 8,760 hourly bars over 525,600 minute bars and 525,600 tape rows `COMPLETED` in 11.8 s, again 10.4 s (1,142 trades; the tape written in 50.8 s, 379 MB).
+Gate at `065b7cbe`: `--no-incremental` Release `0 Warning(s)` `0 Error(s)`; Unit `Passed! - Failed: 0, Passed: 1485 … 9 m 8 s`; Fault `Passed! - Failed: 0, Passed: 465 … 2 m`; touched classes (`FeatureProgram*` and `EvaluatorLimitTests`
+30, `FeatureProgramRunnerTests` 1) 3×, 30/30 and 1/1 each. CI `37689095058` on `065b7cb`: success — windows-latest 49 min, ubuntu-latest 12 min, macos-latest 15 min, package 3 min; the scan's one hit — `StrategyParser.cs`'s
+`new Expressions(line, …)` call, handing on the lexer's output — judged a false positive and excluded by name.
+Names: `sets: base 2298 tip 2318`, `removed: 0`, `added: 20` ([Fact]/[Theory] 2250 → 2270). Tests box: NOT RUN — `ready : NO - the machine does not answer (…)` (exit 1, 23:46).
+Items: 1 done `465ce7ef`; 2 done `d61cc2db`; 3 done `00b7c0c8` with the WIP's follow-ups and (p) pinned (tape fixture `542b3a26…`); 4 done `71e0dac9`; 5 done `5c2b5275`. The WIP `d332c422` was split BEFORE the rebase (reset --soft to item
+3, amended by path, item 4, docs, the pause note), the tree proven identical; then cherry-picked onto `main` and rebased to `6bd92855`. Conflicts: only `TapeStore.cs` — main's quarantine paragraph kept, the referee's tape read folded in;
+CONTRACTS, WorkspaceBuilder and GatewayPipeServer merged clean. DEVIATION for the holdout's API: `Backtest.Over` keeps its `BarAudience` and builds the feed's `TapeHoldout` from it with the same ledger (new internal `TapeHoldout.Of`), so
+one audience still decides bars and features — a `backtest` reads under `Pipe(role, gateway.Datasets)`, a verdict under the referee's pass-through; `FeatureFeed` takes the `TapeHoldout`, and its window runs from the later of `from` and
+the first bar to the earlier of `to` and the last. A run whose features would reach a holdout window — its first close less the longest reach, to its last close — is refused by `Over` in the holdout's words before a bar is read
+(`HOLDOUT_WITHHELD`, nothing charged or recorded); a cutoff set mid-run halts at the next slice and is refused the same; a bounded clean-history start rides on the `Feature` line and `clean_history_bounded`. Added
+`A_backtest_whose_features_reach_a_holdout_window_is_refused`, `A_clean_history_start_bounded_by_a_holdout_says_so_in_the_trace`; (i)'s pipe backtest now ends an hour before the cutoff, its last bar having closed at it. RED before: both
+new tests on a naive port (the holdout handed through, no pre-check, no bound) — `Assert.Throws() Failure: No exception was thrown`, `Assert.StartsWith() Failure … String: null`; (m), (n) with `PromotionStore.cs` at item 3 — `Expected:
+"invalidated"`, `Expected: "feature d9f3e14e5dd8 reads binance-um-pre"··· Actual: null`. Mutant, `Backtest.Run` asking `features.At` the NEXT declared close ⇒ (f) `Assert.Equal() Failure: Values differ Expected: COMPLETED Actual:
+FAULTED`, restored by `git checkout`. NOT done or verified: the tests box; Integration locally (CI ran it); a `Feature` line's clean-history facts are not in the run id — two pipe runs of one id under different holdout windows can state
+different starts and the ledger keeps the first (written into CONTRACTS); no app run; no rung.
