@@ -2,10 +2,10 @@
 **Protects:** CI on `main` as a clean signal (windows-only reds in tests no diff reached cost a reading at every landing and a 50-minute re-run on a branch), the simulator's
 deadline (MONEY PATH: a connector) and the pipe's shared secret (`IpcToken.Ensure` is an unlocked read-then-write). Light; fresh builder, seat P; no rung. `docs/HOW-WE-BUILD.md`
 step 6: `Timing` membership is argued AT THE TEST with measured numbers, never granted to what went red, and no assert is loosened to get in. Prefer a seam (a latch, an injected clock).
-**Facts (SOURCE at `3564dee7`, (f) at `1828a188`; read by seat P or its survey; readings in `fleet/ci-ledger.md`).**
+**Facts (SOURCE at `3564dee7`, (f) at `1828a188`, every pointer re-checked by seat P at `824e6717`; readings in `fleet/ci-ledger.md`).**
 - (a) `src/TradeAgent.Security/SecretStore.cs:62-69`: `Ensure` reads, and when absent or short writes a fresh token (`File.WriteAllBytes` `:29`), restricting the mode only AFTER
   (`:30`, `:51-56`); a DPAPI read that throws is regenerated (`:44-47`). Windows run 37443989301: `VenueOpsTests.The_catalogue_read_is_in_the_deadline_table_at_zero` threw IOException
-  "being used by another process" — `VenueOpsTests:83`, `DataOpsTests:127`, `CoreTests:265` first-`Ensure` one fresh home in parallel. Product reach (`AppHost.cs:666`, `:900`, `GatewayHost/Program.cs:51`): NOT VERIFIED.
+  "being used by another process" — `VenueOpsTests:83`, `DataOpsTests:131`, `CoreTests:265` first-`Ensure` one fresh home in parallel. Product reach (`AppHost.cs:666`, `:900`, `GatewayHost/Program.cs:51`): NOT VERIFIED.
 - (b) `tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:715-737`: `Assert.Equal(5, attempts)` HELD; `clock.ElapsedMilliseconds < 2000` (`:735`) on a Stopwatch went
   red on windows run 37443797669 ("the retry took 2335 ms"), green at `8029b53c` and `003c0a76`. The witness is the MONEY PATH.
 - (c) `SweepRequestIdTests.cs:456` (`A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`, not `Timing`; `WaveIssueRoom = 750` at `:258`, argued `:246-257`): windows
