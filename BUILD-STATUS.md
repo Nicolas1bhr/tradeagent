@@ -8557,3 +8557,35 @@ Builder's gate at `79e432c8`: Release 0 warnings; Unit 1419/1419; Fault 453/453;
 reachable: "NO - his own OFT.Platform is open; nothing of ours runs beside it" → NOT RUN, respected. Landing CI on `main`: a waiter is armed.
 **NOT done, NOT verified:** OWED — the closing again's own lost close, once he answers it, still holds the closure (one confirm per breach; RUN by probe) → folded into
 `U-valuation-close-confirm` as one class fix (every lost app close confirmed per close generation). ATAS not run (no box); the app not run.
+
+## 2026-10-07 — U-bridge-liveness-clock landed: the ATAS connector measures the bridge's liveness and its auth grace on the monotonic counter its own deadlines read, so a wall clock stepped backwards no longer keeps a silent bridge READY
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-bridge-liveness-clock.md` (queued `a562283a` from `U-fix-bridge-heartbeat`'s finding; pointers re-checked by
+seat P at `9cd0f5e5`, `7aba58b0`). Owed BEFORE ANY LIVE USE. Merge `c25236c5` (ff-only), 10 commits (item 1 `defd8c57`, item 2 `7ab252d5`, eight report commits); rebased by seat P's prep
+onto `e4f38682` with an identical src+tests patch-id. No rung. MONEY PATH: the ATAS connector's liveness truth (a dead bridge must not read alive; `CLAUDE.md` rule 3).
+
+- **Item 1:** `AtasConnector.LivenessClock`, a `TimeProvider` whose monotonic half is `Environment.TickCount64` — the counter the write, answer and emergency deadlines already
+  read. The hello, heartbeat and arrival stamps (now `long`, under `Volatile`), the quiet-peer drop (`PeerHasGoneQuiet`), the health verdict (`GetHealthAsync`) and both auth-grace
+  readings read only that half, through one `Since()`. Timeout, poll and comparisons unchanged. Left on the wall clock as INSTANTS, not durations: `BridgeAuthFailure.When`
+  (`BridgeServer.cs:225`, shown to the owner) and a history read's `since` (the broker's timeline). `_lastHeartbeat` was never shown, so no displayed time was dropped.
+- **Item 2:** `BridgeLivenessClockTests` (Integration: a real pipe, a stub bridge, a test clock whose wall half steps; no sleeps): (a) a bridge silent while the wall steps
+  BACK 1 h → READY at exactly the timeout, DEGRADED 1 ms past it, then dropped; (b) a live bridge pulsing while the wall steps FORWARD 1 h → stays READY, a read answered;
+  (c) the auth grace under the backward step → "connecting" at exactly the grace, "silent" 1 ms past it.
+- **Declared deviation, ACCEPTED:** RED-before is measured through item 1's seam (the base's seven wall reads put on the seam's wall half), because the base has no clock a test
+  can step; the seam carries a wall half the product never reads, for the tests. **Not done, judged:** `AtasHealth.cs:299`'s detection-cache TTL stays on the wall clock
+  (outside both files, not liveness) — owed light.
+
+**Verified by running (the builder, quoted).** RED before: (a) "Expected: Tuple (READY, DEGRADED, True) Actual: Tuple (READY, READY, False)"; (b) "Expected: READY Actual:
+DEGRADED"; (c) "Expected: Tuple ("connecting", "silent") Actual: Tuple ("connecting", "connecting")". Mutant `GetHealthAsync` back on `DateTimeOffset.UtcNow` → (a) red
+"Actual: Tuple (READY, READY, True)"; restored. Builder's gate at `c51502ba`: Release 0 warnings; Unit 1419; Fault 445; Integration 724 + 1 skipped; 0 failed;
+`BridgeLivenessClockTests` 3/3 ×3, `BridgeRoundTripTests` 41/41 ×3 (its `Timing` member included). `ConnectorSendDeadlineTests` 20× locally: 1,020 executions, 0 failed.
+**Manager's gate** at `c25236c5`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1424/1424 (9 m 14 s); Fault 457/457 (1 m 55 s);
+Integration 732/733, 1 skipped (11 m 15 s) → 0 failed. Names vs `main`: 2243 → 2247, 0 removed, 4 added (three tests and the `StepWall` helper; [Fact]/[Theory] 2197 → 2200). Scan clean; no trailers.
+**CI:** branch run 37532362047 at `c51502ba` (the code tip; later commits docs only): ubuntu ✓ 15 m, macOS ✓ 16 m, windows ✓ 61 m, package ✓. The first run, 37524459410 on
+the same tip, went red on windows in `Timing` only, both judged by seat P: (1) `OperatorPressIsAnEmergencyTests.A_wait_the_simulator_predicted…` "2198 ms" — the same red on
+`main` WITHOUT this diff (37521226865, 37521235649, 37521297827); seat P's survey: the simulator's predicting wait, a test-rig cause → `U-test-hygiene-2` item 6; (2) on the retry,
+`ConnectorSendDeadlineTests.A_cancellation_fails_fast_on_a_stalled_bridge_whoever_issued_it("button")` "11.80s behind a stalled write" — NOT reachable from this diff on the
+builder's evidence (no write, answer or cancel deadline reads a different clock; the stalled peer never beats); a FIRST SIGHTING on the emergency path → a read-only survey owed.
+Tests box: NOT RUN — "the machine does not answer" (22:12, 23:14), "his own OFT.Platform is open" (02:35), and at landing (11:20 CEST) "the machine does not answer". Landing CI on `main`: a waiter is armed. Seat P held `land` across
+the weekly stop (03:46 → 11:20); the gate had finished at 04:09 and nothing moved on `main` meanwhile.
+**NOT done, NOT verified:** why either windows `Timing` red happens on windows-latest (no Windows hardware); no ATAS run, no app run; no doc changed.
