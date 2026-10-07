@@ -58,6 +58,7 @@ public class ResumeOnStartTests : IDisposable
             Assert.True(host.Wakes!.RaiseDue(wake, MissionEventKind.Review, due.AddMinutes(-30), due));
 
             await host.ResumeOnStartAsync();
+            var resumed = DateTimeOffset.UtcNow;
 
             Assert.True(host.Agent.Running, "the restart resumed the loop and left the AI it needs stopped");
             Assert.Equal(Probe, host.Agent.Current?.Id);
@@ -67,7 +68,8 @@ public class ResumeOnStartTests : IDisposable
             // TAKEN BY A TURN: consumed by a launch the ledger recorded, and settled once that turn's
             // committed transition landed — waited for, because the loop takes it on its own thread.
             var taken = await Until(() => host.Wakes.Get(wake) is { Disposition: not null } e ? e : null,
-                "the wake that was due when the app closed was never taken by a turn");
+                "the wake that was due when the app closed was never taken and settled by a turn",
+                () => LoopAt(host, wake, presence, resumed));
             Assert.True(taken.Consumed);
             Assert.False(string.IsNullOrEmpty(taken.ConsumedBy));
             Assert.NotEqual(MissionLoop.Unrecorded, taken.ConsumedBy);
@@ -345,7 +347,12 @@ public class ResumeOnStartTests : IDisposable
         };
     }
 
-    static async Task<T> Until<T>(Func<T?> probe, string because) where T : class
+    /// <summary>
+    /// Polls <paramref name="probe"/> until it answers, for sixty seconds. A wait that runs out says
+    /// what it waited for AND what <paramref name="state"/> reads at that deadline, because "it never
+    /// happened" and "it was still happening" are one sentence otherwise.
+    /// </summary>
+    static async Task<T> Until<T>(Func<T?> probe, string because, Func<string> state) where T : class
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
         while (DateTimeOffset.UtcNow < deadline)
@@ -354,8 +361,47 @@ public class ResumeOnStartTests : IDisposable
             await Task.Delay(25);
         }
         var last = probe();
-        Assert.True(last is not null, because);
+        if (last is null) Assert.Fail($"{because}. At the 60 s deadline: {state()}");
         return last!;
+    }
+
+    /// <summary>
+    /// WHAT THE LOOP WAS DOING WHEN THE WAIT RAN OUT, so that the next red decides which of two
+    /// failures it is (<c>U-test-hygiene-3</c> item 4). windows-latest run 37612881764 ran out of the
+    /// wait above after 1 m 48 s saying only that the wake was never taken by a turn — and a turn still
+    /// in flight at the deadline (the probe is <c>powershell.exe</c>, whose first launch beside the
+    /// suite has measured over 20 s) reads exactly like a turn that never launched. The first is a wait
+    /// shorter than a runner's turn, an argument for <c>Timing</c> made with measured numbers; the
+    /// second is the product. So: whether a turn took the wake and when it launched, whether an agent
+    /// process is alive and when one last was, and the loop's own reading — its state, turns, error
+    /// count and next turn — each guarded, so a reading that throws says so and the rest are still given.
+    /// </summary>
+    static string LoopAt(AppHost host, string wake, AgentPresence presence, DateTimeOffset resumed)
+    {
+        string When(DateTimeOffset at) => $"{at:O} ({(at - resumed).TotalSeconds:0.0} s after the resume)";
+        static string Read(Func<string> reading)
+        {
+            try { return reading(); }
+            catch (Exception e) { return $"<unreadable: {e.GetType().Name}: {e.Message}>"; }
+        }
+
+        var turn = Read(() => host.Wakes!.Get(wake) is not { } e
+            ? "the wake is not in the queue"
+            : e.ConsumedAt is { } at
+                ? $"a turn took the wake — launch {e.ConsumedBy ?? "<none>"} at {When(at)}, disposition {e.Disposition ?? "none yet"}"
+                : $"no turn took the wake (due {e.DueAt:O})");
+        var alive = Read(() => $"agent processes alive {presence.Live}, presence.LastAliveAt " +
+                               (presence.LastAliveAt is { } last ? When(last) : "never"));
+        var loop = Read(() =>
+        {
+            var s = host.Mission.Status;
+            return $"the loop {s.State} (running {host.Mission.Running}), {s.Turns} turn(s), " +
+                   $"{s.ConsecutiveErrors} consecutive error(s), next turn {(s.NextTurnAt is { } next ? When(next) : "none")}" +
+                   (s.WaitingFor is { Length: > 0 } waiting ? $", waiting for {waiting}" : "") +
+                   (s.LastTurnFirstLine is { Length: > 0 } line ? $", last turn's first line \"{line}\"" : "");
+        });
+        var ai = Read(() => $"the AI running {host.Agent.Running}");
+        return $"read at {When(DateTimeOffset.UtcNow)} — {turn}; {alive}; {loop}; {ai}";
     }
 
     /// <summary>A source file with its whole-line comments blanked, so prose about a call is not one.</summary>
