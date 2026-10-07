@@ -2391,6 +2391,29 @@ vectors' own check), `bars 1m` is the program that declares nothing, and an hour
 with its minute twin. `bars` and `timeframe` are independent: `timeframe` stays an execution bound that resamples
 nothing, and nothing refuses a program whose two differ.
 
+**`feature` — a program reads the tape** (`U-language-v2a`; `docs/EDGE-FACTORY.md` § 4.4). `feature <name> = <spec>`
+is a declaration only as a line's first word and is NOT a reserved name, so a stored `const feature = 2` keeps parsing.
+The rest of the line after the first `=` is one JSON object handed whole to `FeatureSpec.Parse` ("Features", below),
+whose refusal is quoted on the line; a `#` starts a comment there as everywhere, so a spec holding one is refused as
+the JSON it then is not. The name is a name by the rules of every other name, unique across constants, indicators and
+features; at most `StrategyLimits.MaxFeatures` (8) a program; a `feature` line may be up to
+`StrategyLimits.MaxFeatureLineLength` (512) characters, every other line still 240 — real ones are 176 to 232. A rule
+reads one as an indicator, `funding` or `funding[k]` with k ≤ 20, through a `FeatureRef`: a number, warm-up `1 + k`,
+one operation. **Identity.** The canonical form writes `feature <name>=<FeatureSpec.Id>` lines, sorted by name, after
+the `ind` lines, and `$name`/`$name[k]` in conditions — only for a declared feature, so the identity names every input
+hash and the `features=1` semantics inside it. `StrategyVersions.Manifest`, `LanguageVersion` and `program/1` do not
+move: no v1 text means anything new, no v1 canonical form has such a line, and every v1 id is unchanged
+(`FeatureProgramGrammarTests` (a) runs the golden vectors' own check). The two visitors that used to fail OPEN — the
+canonical form writing `?` for a node it did not know, the warm-up answering 1 — throw instead, and `Parse` refuses.
+
+**Every declaration a program uses is REQUIRED** (`U-language-v2a`; R05 row 10). `StrategyProgram.Requires` lists the
+declaration kinds the TYPED program uses, in `StrategyDeclarations.All`'s order — the instrument, the size and an entry
+always, the rest where the program states something other than the default, so two spellings of one program require
+the same. Each constrains orders, risk or evaluation, so a reader names the kinds it implements and refuses the rest in
+words (`StrategyDeclarations.Refusal`), never running the rest of the program: `Backtest.Implements` is every kind,
+`ForwardRuns.Implements` every kind but `feature`. Comments are the one optional part: kept byte for byte in `Source`,
+outside the id, required by nobody.
+
 **Warm-up is explicit** (`StrategyWarmUp`, one place): the deepest lookback over every DECLARED
 indicator, every history reference, every crossing (one bar more than its deeper side) and the stop's
 own ATR period, at least 1, refused when it exceeds `StrategyLimits.MaxLookbackBars`. An indicator
@@ -2522,6 +2545,40 @@ so `Backtest.Over`, `trade backtest` and the referee judge what was declared. A 
 closes it as a partial bar — history: its last minutes happened and the data does not have them — and a signal from it
 is the usual no-trade. A program that declares nothing is the case where the two clocks are one, and its trace is the
 one it always had, byte for byte.
+
+**A program that reads features is handed them as they had arrived** (`U-language-v2a`). At each evaluated bar's
+close — `BarGrid.EndOf`, the instant its decision is taken; a zoned `1d` bar's local midnight, 23 to 25 hours after
+the last — `Backtest.Run` hands the evaluator each declared feature's value from `FeatureFeed`, which reads
+`FeatureSeries.Read` under the run's OWN bar audience, handed to it as the tape's holdout for that audience with the same
+dataset ledger (`TapeHoldout.Of`, internal: a pipe caller's at `backtest`, the referee's pass-through at a verdict), so
+every value is `FeatureEvaluator`'s over the rows first seen by the close minus the spec's latency, and the evaluator
+itself faults on a value stamped with any other instant. **The tape's holdout** (`U-tape-holdout`, **THE HOLDOUT** in
+the tape's section): a run whose features would read the tape inside any dataset's holdout window — from the longest
+reach before its first bar's close to its last bar's close, so a backtest ending a minute before a cutoff whose last bar
+closes at it is one — is REFUSED by `Backtest.Over` in the holdout's words before a bar is read, flagged as the holdout's
+(`HOLDOUT_WITHHELD` at `backtest`, nothing recorded, nothing charged); a cutoff set while it runs halts it before the
+next slice, in the same words, and it is refused the same — never a run on the values outside the window, and no slice
+is made smaller to fit around one. A clean-history start the holdout bounded says so (`FeatureCleanStart.Bounded`). The feed reads lazily, in deterministic slices: on the bar's grid,
+or HOURLY for a zoned daily bar (every allowed zone keeps whole-hour offsets, so each close is a point); a whole number
+of days and at most 10,000 instants a slice, halved while a read is refused for holding more than 50,000 readings of an
+input, the next slice starting at the size that last succeeded, and none past the run's own last close. A single day
+still over the caps HALTS the run in words — a defined fault, as `MaxTracedBars` is — never a read cut short. An
+ABSENT value is undefined: the event decides nothing and is counted, scheduled exits and protection first. Bars before
+a feature's clean-history start are evaluated, never trimmed. **Only when features are declared**: `RunIdFor` adds a
+sixth line, the SHA-256 over every value handed out (feature id, instant, `RowsSha256`), so the same request over
+another tape is another run and a promotion — which hashes the run id — binds the readings too; and the trace ends
+with one `Feature` line per feature, under `trace_sha256` (id; clean-history start as of the last close read, or why
+none, and — where a holdout window before the run bounded the search — the series' words saying it is the start since
+that window's close, not necessarily the input's own; bars evaluated before it; bars with no value; worst evidence
+class), repeated in the answer's `features` (`clean_history_bounded` for that bound). The run id binds the values, not
+that line: a pipe run's clean-history facts are read under the ledger's windows of the moment, so two runs of one id can
+state them differently, and the ledger keeps the first (`ON CONFLICT DO NOTHING`); a verdict reads every window, so its
+line depends on the tape alone.
+`BacktestMetrics` reads no figure from it and `RefereeFeedback` is unchanged. **No tape, no run**: `Backtests.Run`
+refuses a feature program where no tape is open before the trial budget (`MARKET_DATA_UNAVAILABLE`, nothing recorded,
+nothing charged), `Backtest.Over` before a bar is read, `Backtest.Run` without a feed, and the evaluator stepped
+without its values faults — never a run as though every value were absent. A program that declares no feature is run,
+traced and identified exactly as before, byte for byte.
 
 **Metrics come from the trace and from nothing else.** `BacktestMetrics.Of(trace)` takes one argument on
 purpose: a figure read off the program's text would be a claim about the program rather than a
@@ -3051,8 +3108,9 @@ agent running unconfined could still read `state/tape.db` itself, as (4) says.
 **What it is.** A feature is a deterministic spec, as data, over one series of the tape — known by its hash and computed
 by the app in decimal from only what had arrived by its instant (`U-features`; `docs/EDGE-FACTORY.md` § 4.3). A spec
 proposes and the app computes, from raw market rows and nothing a model said (§ 6.1); nothing is stored — no table, no
-rung, no reading. **No op, verb or screen reads a feature yet**: `U-features-b` adds `data-feature`, and v2a binds a
-feature by its id.
+rung, no reading. **No op, verb or screen reads a feature by itself yet** (`U-features-b` adds `data-feature`); a
+program binds one by its id (`U-language-v2a`, "The strategy program" above) and `backtest` and the referee value it at
+each evaluated bar's close ("The backtest").
 
 **THE SPEC.** One JSON object of at most 4,096 bytes: `kind` — `latest`, `change`, `mean`, `min`, `max` or `pct-rank`;
 `input` — `source`, `series`, `subject`, `field`; `latency_s`, whole seconds 0–86,400; `max_age_s`, 1 s to 366 days; a
@@ -3130,7 +3188,8 @@ the unit that opens a conferring path for tape evidence, the conferring-dataset 
 it is seeded (**Data licences**, below).
 
 **NOT CLAIMED.** (1) *An op, a verb or a screen*: nothing outside the process reads a feature yet (`U-features-b`).
-(2) *That a feature is evidence*: research-only, as above, and no verdict is taken over one. (3) *Cross-sectional,
+(2) *That a feature is evidence for capital*: research-only, as above — a verdict may be taken over a program that
+reads one, and no capital may stand on it. (3) *Cross-sectional,
 multi-input or model-derived features*: one input a spec today; the series read, the clean-history start and the
 licence are stated per input so a later kind adds no second rule. (4) *That an `O-PIT` reading was knowable at its
 label* beyond what GDELT's MD5 and Last-Modified show (the tape's (11)) — and no feature reads GDELT. (5) *The
@@ -3454,8 +3513,10 @@ model is the judge's**: with no caller model — which is how `trade verdict` ca
 internal like the audience); the in-process parameter stays the owner's. Either way its four numbers are
 hashed into the promotion, so a verdict under one model cannot read as a verdict under another. Before
 anything is charged, `RequestVerdict` refuses a version whose program names a different instrument than
-the holdout dataset records. A *refusal* is a verdict and is recorded; a referee that could not judge at
-all writes nothing.
+the holdout dataset records — and a version that reads features where the host has no tape open
+(`U-language-v2a`; the referee is handed the host's tape as a function, `TradingGateway.Tape`); one that is
+judged has its features read from the tape under the referee's own audience, over the held-back window, exactly
+as its bars are. A *refusal* is a verdict and is recorded; a referee that could not judge at all writes nothing.
 
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
 **after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
@@ -3502,13 +3563,22 @@ re-checked against is the sha of the policy that PRODUCED it — comparing every
 withdraw every paper verdict the instant it was written. It compares the hashes ON THE ROW
 with the facts as they are now: the holdout dataset gone, REJECTED, re-collected under a different sha or
 reclassified as a fixture; the evaluation semantics — the row's `evaluator_version`, or the version row's
-`manifest` — or the scoring-policy sha no longer this build's. The row's `interpreter_build` is NOT compared:
+`manifest` — or the scoring-policy sha no longer this build's; and, for a version whose stored canonical form holds a
+`feature` line, its frozen text re-parsed (`U-language-v2a`): a text this build refuses, or one that now hashes to
+another id — a spec read differently, or a moved `features=` — is INVALIDATED in words, as the runner and the referee
+already refuse it. A version that reads no feature is never re-parsed here. The row's `interpreter_build` is NOT compared:
 it names the release, and what the V1 and PaperV1 texts mean by "the interpreter build" is the evaluation
 semantics (the campaign section above defines it and names what is kept). A
 column would make a version's truth depend on a sweep having run. The dataset's **state** is read off the
 ledger rather than re-hashed here — every reader that opens the bars re-hashes them, and this answer is
 read on the money path — which is a choice, stated. The newest judgement is the one that answers, and a
 refusal is invalidated too: "refused on evidence that no longer exists" is a different statement.
+
+**No capital stands on a research-only feature.** `PromotionStanding.LiveRefusal` is the dataset's refusal
+(`DataLicence.LiveRefusal`), else — for a version that reads features — the first of `FeatureLicence.LiveRefusal` over
+each feature it reads against each input's newest licence reading. Every tape source is research-only today, so a
+promoted version that reads a feature is refused live capital in that sentence, the verdict untouched; paper never
+reads it (`FeatureProgramStandingTests`).
 
 **The verdict is delivered as one wake and one sanitised note.** `PublicationKind.Verdict`, published by
 `referee` to Research through `PublicationStore.Commit` — one transaction for the artifact, its delivery
@@ -3774,7 +3844,9 @@ needed are gone.
 
 **THE SWEEP NEVER CHURNS A VERSION THE RUNNER CANNOT RUN** (`U-timeframe-b`, on the orchestrator's amendment).
 `ForwardRuns.CannotRun` answers, in the runner's own words, when this installation has no row for a version, its text
-no longer parses, or it parses to another id — every run of it is ended before its first bar — and
+no longer parses, it parses to another id, or it requires a declaration this runner does not implement — `feature`
+today (`ForwardRuns.Implements`; `U-language-v2a`): the runner values no feature until `U-runner-features` — and every
+run of it is ended before its first bar, nothing sent — and
 `TradingGateway.StartPaperDeploymentsDue` asks it: once one run of an allocation exists, no replacement is started for
 such a version, because each would be another row, another flatten and another paid wake for Research. The first run
 is still started, so the owner reads the reason on the deployment's own line. A program that declares no execution

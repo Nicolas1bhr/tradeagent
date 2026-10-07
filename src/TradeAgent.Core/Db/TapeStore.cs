@@ -559,9 +559,11 @@ public sealed class TapeStore : IDisposable
     ///
     /// <para><b>A quarantined observation's payload is WITHHELD here</b> (<c>U-tape-events</c>): the answer
     /// carries every field and the <see cref="TapeObservation.Quarantine"/> that says why, and a null
-    /// <see cref="TapeObservation.Payload"/> — to every audience, the referee's included, and whether a
-    /// quarantined item ever reaches a model is <c>U-annotator</c>'s decision, to be made by a door of its own
-    /// rather than inherited from this one.</para>
+    /// <see cref="TapeObservation.Payload"/> — to every audience, the referee's included: it reads the tape only to
+    /// value the features of a version it judges (<c>U-language-v2a</c>; <c>FeatureFeed</c>, through
+    /// <see cref="TapeReader.Window"/>), and such a reading's value is absent. Whether a quarantined item ever
+    /// reaches a model is <c>U-annotator</c>'s decision, to be made by a door of its own rather than inherited
+    /// from this one.</para>
     /// </summary>
     public TapeAsOf AsOf(TapeHoldout holdout, string source, string series, string subject, DateTimeOffset t)
     {
