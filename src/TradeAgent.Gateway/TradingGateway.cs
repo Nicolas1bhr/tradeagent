@@ -8810,18 +8810,31 @@ public sealed class TradingGateway : IAsyncDisposable
               $"{(unsettled.Count == 1 ? "That position" : "Those positions")} may still be open — " +
               "check the platform, confirm that order on the Dashboard, then press again.";
 
-        // WHAT ASKING ABOUT AN ORDER IN FLIGHT DECIDED (U-press-close-once), each its own news.
+        // WHAT ASKING ABOUT AN ORDER IN FLIGHT DECIDED (U-press-close-once), each its own news, naming every
+        // order and the one thing that ends what it holds. Another press's order names its own way out per
+        // order, because that depends on whether the owner has answered it yet.
+        static string Legs(int n) => n == 1 ? "1 position" : $"{n} positions";
         var asked = string.Concat(
             run.CancelledFirst.Count == 0 ? ""
-                : $" Before closing, TradeAgent cancelled at your platform: {string.Join("; ", run.CancelledFirst)}.",
+                : " Before closing, TradeAgent cancelled at your platform an earlier order of the same side that it "
+                  + $"still held working, so that this press's close is the only one: {string.Join("; ", run.CancelledFirst)}.",
             run.HeldByAPress.Count == 0 ? ""
-                : $" Nothing was sent beside another press's order: {string.Join("; ", run.HeldByAPress)}.",
+                : " Nothing was sent beside another press's own order, which no press ever closes beside: "
+                  + $"{string.Join("; ", run.HeldByAPress)}.",
             run.StillLive.Count == 0 ? ""
-                : $" Nothing was sent beside an order your platform still lists live: {string.Join("; ", run.StillLive)}.",
+                : $" {Legs(run.StillLive.Count)} could not be closed, because an earlier order on the instrument is still "
+                  + $"live at your platform and would not cancel, and no press closes beside one: {string.Join("; ", run.StillLive)}. "
+                  + "Once that order has filled or been cancelled at your platform, answer this press on the Dashboard "
+                  + "and press again.",
             run.Told.Count == 0 ? ""
-                : $" Nothing was sent beside an order whose outcome nobody can tell yet: {string.Join("; ", run.Told)}.",
+                : $" {Legs(run.Told.Count)} could not be closed, because TradeAgent has an earlier order on the instrument "
+                  + $"whose fate your platform does not show: {string.Join("; ", run.Told)}. Answer this press on the "
+                  + "Dashboard and press Close all again, and it closes the position over that order — should the order "
+                  + "still be working and fill, the position ends the other way by up to its size.",
             run.ClosedOver.Count == 0 ? ""
-                : $" Closed over an order an earlier press told you about: {string.Join("; ", run.ClosedOver)}.");
+                : " Closed over an earlier order whose fate your platform still did not show, as the earlier press told "
+                  + $"you it would: {string.Join("; ", run.ClosedOver)}. Should it still be working and fill, the position "
+                  + "ends the other way by up to its size — check it at your platform.");
 
         var outcome = await PressOutcomeAsync(ClosePress, nonce, ct);
         // A press that wrote no rows at all has only the drift and the waits to report; "Nothing was
@@ -11117,8 +11130,17 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (asked.Leg is InFlightLeg.StillLive or InFlightLeg.Tells)
                 {
                     // REFUSED IN THE UNSETTLED SHAPE: a flagged row, sending nothing, naming the order, its
-                    // last state and what the platform answered — the card's target for this instrument.
-                    var refusal = $"nothing was sent for {symbol}: {asked.Words}. Your {symbol} position may still be open.";
+                    // last state and what the platform answered — the card's target for this instrument — and
+                    // what ends it: for an order listed live, its own end at the platform, on every press; for
+                    // one nobody can decide, the owner's next press, which closes over it, and its risk in words.
+                    var them = asked.Undecided.Count == 1 ? "that order" : "those orders";
+                    var then = asked.Leg is InFlightLeg.StillLive
+                        ? $" A close sent beside it could close {symbol} twice, and no press sends one: once that order has "
+                          + "filled or been cancelled at your platform, answer this press on the Dashboard and press again."
+                        : $" Answer this press on the Dashboard and press Close all again, and it closes {symbol} over {them}: "
+                          + $"should {(asked.Undecided.Count == 1 ? "it" : "they")} still be working and fill, {symbol} ends the "
+                          + $"other way by up to {SizeOf(asked.Undecided.Select(u => u.Row))}.";
+                    var refusal = $"nothing was sent for {symbol}: {asked.Words}.{then} Your {symbol} position may still be open.";
                     var row = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol,
                         Json.Write(new PlaceIntent(symbol, closingSide, OrderType.Market, Math.Abs(quantity),
                             null, null, TimeInForce.Day, note) { Intent = OrderIntent.Close }),
@@ -11403,13 +11425,18 @@ public sealed class TradingGateway : IAsyncDisposable
                 continue;
             }
 
+            // NAMED, WITH WHAT ENDS THE WAIT. Still the owner's to answer: his answer on the Dashboard once it has
+            // filled or he has cancelled it at the platform. Already answered by him as still working: its fill, or
+            // his cancel at the platform once the platform reports it — the card has no other answer for such a row.
             var press = PressName(PressKindOf(now.RequestId));
             return Leg(InFlightLeg.Waits, now.NeedsReconciliation || _unconfirmed.ContainsKey(now.RequestId)
                 ? $"{symbol} waits on {Described(now)}, still {now.State}: it belongs to another press — {press} — and "
-                  + "is waiting for your answer on the Dashboard"
+                  + "is waiting for your answer on the Dashboard; once it has filled at your platform, or you have "
+                  + "cancelled it there, answer it on the Dashboard and press again"
                 : $"{symbol} waits on {Described(now)}, which TradeAgent still records as {now.State}: it belongs to "
-                  + $"another press — {press} — which you have answered on the Dashboard, and only your platform's own "
-                  + "report of what became of it settles it now");
+                  + $"another press — {press} — and you have answered it on the Dashboard as still working, so it "
+                  + $"closes {symbol} when it fills; to close {symbol} another way, cancel that order at your platform "
+                  + "and press again — once your platform has reported the cancel, the press closes what is left");
         }
 
         // EVERY OTHER ROW IS ASKED ABOUT FIRST, AND NOTHING IS CANCELLED YET.
@@ -11534,6 +11561,24 @@ public sealed class TradingGateway : IAsyncDisposable
         return intent is null
             ? $"order {r.RequestId} on {r.Instrument}"
             : $"order {r.RequestId} (a market {intent.Side.ToString().ToLowerInvariant()} of {intent.Quantity} {r.Instrument})";
+    }
+
+    /// <summary>
+    /// How far a position closed over these orders can end the other way should they still fill: their size, in
+    /// words — the sum where every one can be read, and "their size" where one cannot.
+    /// </summary>
+    static string SizeOf(IEnumerable<ExecutionRequest> rows)
+    {
+        decimal sum = 0m;
+        foreach (var r in rows)
+        {
+            PlaceIntent? intent = null;
+            try { intent = Json.Read<PlaceIntent>(r.ParametersJson); }
+            catch (Exception) { /* unreadable: no figure */ }
+            if (intent is null) return "their size";
+            sum += intent.Quantity;
+        }
+        return $"{sum}";
     }
 
     /// <summary>

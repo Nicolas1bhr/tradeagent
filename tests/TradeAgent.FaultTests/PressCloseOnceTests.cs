@@ -149,6 +149,8 @@ public class PressCloseOnceTests(ITestOutputHelper log)
         Assert.False(es1.Resolved);
         Assert.Contains(first.RequestId, p1.Summary, StringComparison.Ordinal);
         Assert.Contains(first.RequestId, es1.Outcome, StringComparison.Ordinal);
+        Assert.Contains("answer this press on the Dashboard and press again", p1.Summary, StringComparison.Ordinal);
+        Assert.Contains("answer this press on the Dashboard and press again", es1.Outcome, StringComparison.Ordinal);
 
         await AnswerOnTheCard(h, TradingGateway.ClosePress, p1.Nonce);
         var p2 = await h.Gw.OperatorCloseAllAsync();
@@ -209,6 +211,7 @@ public class PressCloseOnceTests(ITestOutputHelper log)
         Assert.Equal(closes, closesAfter1);
         Assert.Empty(p1.Targets);
         Assert.Contains(flatten.RequestId, p1.Summary, StringComparison.Ordinal);
+        Assert.Contains("waiting for your answer on the Dashboard", p1.Summary, StringComparison.Ordinal);
 
         // HE ANSWERS THE FLATTEN ON THE DASHBOARD, and presses again.
         foreach (var kind in new[] { TradingGateway.BudgetClosePress, TradingGateway.BudgetCancelPress })
@@ -225,6 +228,8 @@ public class PressCloseOnceTests(ITestOutputHelper log)
         Assert.Equal(closes, closesAfter2);
         Assert.Empty(p2.Targets);
         Assert.Contains(flatten.RequestId, p2.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("waiting for your answer on the Dashboard", p2.Summary, StringComparison.Ordinal);
+        Assert.Contains("cancel that order at your platform and press again", p2.Summary, StringComparison.Ordinal);
         Assert.Equal(1, SellsFilled(h.C));
         Assert.Equal(0m, Held(h.C));
         await h.Gw.DisposeAsync();
@@ -323,6 +328,9 @@ public class PressCloseOnceTests(ITestOutputHelper log)
             Assert.False(es1.Resolved);
             Assert.Contains(first.RequestId, es1.Outcome, StringComparison.Ordinal);
             Assert.Contains(first.RequestId, p1.Summary, StringComparison.Ordinal);
+            Assert.Contains("press Close all again, and it closes ES over that order", es1.Outcome, StringComparison.Ordinal);
+            Assert.Contains("ES ends the other way by up to 2", es1.Outcome, StringComparison.Ordinal);
+            Assert.Contains("the position ends the other way by up to its size", p1.Summary, StringComparison.Ordinal);
 
             await AnswerOnTheCard(h, TradingGateway.ClosePress, p1.Nonce);
             var p2 = await h.Gw.OperatorCloseAllAsync();
@@ -332,6 +340,7 @@ public class PressCloseOnceTests(ITestOutputHelper log)
             Assert.Equal(2, h.C.Closes);
             Assert.Equal(ExecutionState.FILLED, Assert.Single(p2.Targets, t => t.Target == "ES").State);
             Assert.Contains(first.RequestId, p2.Summary, StringComparison.Ordinal);
+            Assert.Contains("Closed over", p2.Summary, StringComparison.Ordinal);
             Assert.Equal(0m, Held(h.C));
             Assert.Equal(0m, Held(h.C, "NQ"));
             await h.Gw.DisposeAsync();

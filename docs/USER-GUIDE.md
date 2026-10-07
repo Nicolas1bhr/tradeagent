@@ -894,6 +894,31 @@ cannot get an answer about that order it closes every other position and leaves 
 the line it writes says so by name: *"nothing was sent for ES … your ES position may still be open."*
 Open ATAS, look at that instrument, clear the line with what you saw, and press again.
 
+**And if an earlier order to close that position is still on its way, it asks ATAS about that one
+first too.** A market order TradeAgent sent that ATAS has taken but not yet filled has not moved your
+position, so a second close sized beside it would fill with it and leave you the other way round. So
+before each instrument's close, Close all asks ATAS what became of every such order, and what ATAS
+says decides that instrument:
+
+- **It has finished and nothing filled** — the close goes out, as always.
+- **ATAS still has it working** — Close all cancels it there, asks again, and closes once ATAS says it
+  is gone. If it will not cancel, nothing is sent for that instrument, on this press or any other,
+  until that order has filled or been cancelled in ATAS; then clear the line and press again.
+- **It filled** — nothing is sent for that instrument this time: your position has changed, and ATAS's
+  own position may not show the fill yet. Press again; the next press closes what is left.
+- **It belongs to another press** — the loss budget's close, say, or your own earlier Close all — nothing
+  is sent beside it. Answer it on the Dashboard once it has filled or you have cancelled it in ATAS, then
+  press again. Close all never closes beside another press's order.
+- **ATAS cannot say what became of it** — that instrument is left alone and its line says so by name,
+  with what a second press would do: *"Answer this press on the Dashboard and press Close all again, and
+  it closes ES over that order: should it still be working and fill, ES ends the other way by up to 2."*
+  That is the one case where a press sends a close beside an order nobody can account for, and it only
+  ever happens on your second press, after the first has told you so in words. So before you press
+  again, look for that order in ATAS: if it is still working there, cancel it there first, and the second
+  press then closes your position alone.
+
+Every other instrument is closed as usual; one instrument waiting never holds up the rest.
+
 **None of this survives in the app's memory.** Close TradeAgent in the middle of an emergency and
 reopen it: the lines are still there, and trading is still paused. That is the point of writing them
 down first.
