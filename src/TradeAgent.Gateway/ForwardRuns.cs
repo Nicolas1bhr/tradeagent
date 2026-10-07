@@ -138,6 +138,11 @@ public sealed class ForwardRuns
         if (Frozen(_strategies, deployment.VersionId) is not { } program)
             return await EndAsync(deployment, NotFrozen, ct);
 
+        // A PROGRAM REQUIRING A DECLARATION THIS RUNNER DOES NOT IMPLEMENT IS ENDED BEFORE ITS FIRST BAR, IN WORDS —
+        // before anything is settled, replayed or sent. See `Refuses`.
+        if (Refuses(program) is { } refused)
+            return await EndAsync(deployment, refused, ct);
+
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
         // this pass dispatch at all — the frontier below is the cursor's other half.
@@ -813,8 +818,9 @@ public sealed class ForwardRuns
     /// WHY THIS BUILD'S RUNNER CANNOT RUN ANY DEPLOYMENT OF A VERSION, IN WORDS — or null when it can.
     ///
     /// <para>Every reason is the version's own and none of them is about its bars: this installation has no
-    /// row for it, its recorded text no longer parses in this build, or it parses to a different program with
-    /// a different id (<see cref="Frozen"/>). A run of such a version is ended before its first bar with this
+    /// row for it, its recorded text no longer parses in this build, it parses to a different program with
+    /// a different id (<see cref="Frozen"/>), or it requires a declaration this runner does not implement
+    /// (<see cref="Refuses"/>). A run of such a version is ended before its first bar with this
     /// sentence, and a replacement would be ended the same way at its first pass — another row, another
     /// flatten, another paid wake for Research — so <c>TradingGateway.StartPaperDeploymentsDue</c> asks this
     /// before it starts one, and once one run of an allocation exists starts none (<c>U-timeframe-b</c>).</para>
@@ -822,7 +828,34 @@ public sealed class ForwardRuns
     public static string? CannotRun(StrategyStore strategies, string versionId)
     {
         ArgumentNullException.ThrowIfNull(strategies);
-        return Frozen(strategies, versionId) is null ? NotFrozen : null;
+        return Frozen(strategies, versionId) is not { } program ? NotFrozen : Refuses(program);
+    }
+
+    /// <summary>
+    /// THE DECLARATION KINDS THIS RUNNER IMPLEMENTS (<c>U-language-v2a</c> item 2; R05 row 10): every kind this build
+    /// parses but <c>feature</c>. It computes no feature value — <c>U-runner-features</c> values features at its decision
+    /// instant, absent meaning no decision, and lifts this — so a program that reads one is refused here rather than
+    /// stepped without its inputs.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Implements =
+        [.. StrategyDeclarations.All.Where(k => k != StrategyDeclarations.Feature)];
+
+    /// <summary>
+    /// WHY THIS RUNNER WILL NOT STEP <paramref name="program"/>, IN WORDS — or null when it will: the program requires a
+    /// declaration it does not implement (<see cref="Implements"/>). Such a run is ENDED before a bar is stepped, with
+    /// this sentence on the deployment's own line for the owner and in the one note Research is sent, and nothing is
+    /// ever sent for it; <see cref="CannotRun"/> says the same, so the deployment sweep starts no replacement.
+    /// </summary>
+    public static string? Refuses(StrategyProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        if (StrategyDeclarations.Refusal(program, Implements, "this build's paper runner") is not { } words) return null;
+
+        var reads = program.Features.Count == 0
+            ? ""
+            : $" It reads {string.Join(", ", program.Features.Select(f => $"`{f.Name}`"))}, and this runner computes no feature "
+              + "value yet: programs that read features run on paper after a later update.";
+        return words + "." + reads + " It was ended before a bar was stepped, and nothing was sent";
     }
 
     /// <summary>What the runner says when it cannot run a version, on the deployment's line and to Research.</summary>

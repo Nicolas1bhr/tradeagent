@@ -52,7 +52,19 @@ public sealed class StrategyProgram
         Parameters = StrategyCanonical.Parameters(this);
         Manifest = StrategyVersions.Manifest;
         StrategyId = Sha256Hex.Of($"{Canonical}\n{Parameters}\n{Manifest}");
+        Requires = StrategyDeclarations.Of(this);
     }
+
+    /// <summary>
+    /// THE DECLARATION KINDS THIS PROGRAM USES, EACH ONE REQUIRED (<c>U-language-v2a</c> item 2; R05 row 10) — in
+    /// <see cref="StrategyDeclarations.All"/>'s order, read off the typed program and therefore a function of its id.
+    ///
+    /// <para>Every one of them constrains its orders, its risk or how it is evaluated, so a reader names the kinds it
+    /// implements and REFUSES, in words, a program requiring one it does not (<see cref="StrategyDeclarations.Refusal"/>):
+    /// <c>Backtest</c> implements every kind, and this build's paper runner every kind but <c>feature</c>. Comments are
+    /// the one optional part — kept byte for byte in <see cref="Source"/>, outside the id, and required by nobody.</para>
+    /// </summary>
+    public IReadOnlyList<string> Requires { get; }
 
     /// <summary>
     /// THE SOURCE TEXT, VERBATIM, KEPT BESIDE THE CANONICAL FORM.

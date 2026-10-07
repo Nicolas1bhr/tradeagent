@@ -699,7 +699,8 @@ public sealed class TradingGateway : IAsyncDisposable
             if (runs.Any(HoldsItsSlot)) continue;
 
             // AND NO REPLACEMENT FOR A VERSION THIS BUILD'S RUNNER CANNOT RUN AT ALL — no row, a text that no
-            // longer parses, or one that parses to another id (`ForwardRuns.CannotRun`). The first run is
+            // longer parses, one that parses to another id, or one that requires a declaration the runner does not
+            // implement, a `feature` today (`ForwardRuns.CannotRun`). The first run is
             // started and the runner ends it before its first bar, in words: on the deployment's own line for
             // the owner and in one note to Research. A replacement would meet the same sentence at its first
             // pass — another row, another flatten, another wake and a paid turn to be told it again, on every

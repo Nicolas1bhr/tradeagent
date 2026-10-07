@@ -341,6 +341,16 @@ public static class Backtest
     public const int MaxTracedBars = 200_000;
 
     /// <summary>
+    /// THE DECLARATION KINDS THE BACKTEST IMPLEMENTS: every one this build parses (<see cref="StrategyDeclarations.All"/>).
+    /// A program requiring a kind not on this list would be refused in words (<see cref="StrategyDeclarations.Refusal"/>),
+    /// never run without it — <c>FeatureProgramBacktestTests</c> holds that every kind the parser reads is on it.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Implements = StrategyDeclarations.All;
+
+    /// <summary>How a refusal names this reader.</summary>
+    const string Reader = "the backtest";
+
+    /// <summary>
     /// One run over CLOSED ONE-MINUTE BARS in ascending order, evaluated on the bars the program declares
     /// (<see cref="StrategyProgram.Bars"/>). Everything it answers is computed here from those bars;
     /// nothing is read from a clock, a file, the network or a random number, so the same inputs give the
@@ -374,6 +384,11 @@ public static class Backtest
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(bars);
+
+        // A PROGRAM REQUIRING A DECLARATION THIS RUNNER DOES NOT IMPLEMENT IS NOT RUN WITHOUT IT. `Over` refuses it in
+        // words before anything is read; a caller reaching this directly is a defect, and is told so.
+        if (StrategyDeclarations.Refusal(program, Implements, Reader) is { } unimplemented)
+            throw new ArgumentException(unimplemented, nameof(program));
 
         var model = request.Model;
         var state = EvaluationState.Start(program, limits);
@@ -713,6 +728,9 @@ public static class Backtest
         if (from is { } lo && to is { } hi && lo > hi)
             return BacktestOpened.No(
                 $"the window starts at {lo:O} and ends at {hi:O}, which is a window with nothing in it");
+
+        if (StrategyDeclarations.Refusal(program, Implements, Reader) is { } unimplemented)
+            return BacktestOpened.No(unimplemented);
 
         var open = Data.BarFeed.Open(datasets, datasetId, audience, from, to);
         if (open.Feed is not { } feed) return BacktestOpened.No(open.Why, open.IsHoldout);
