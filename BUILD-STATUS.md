@@ -8779,3 +8779,42 @@ read as RIG by seat A's survey at 16:38 (owed: `U-test-hygiene-3` item (b)); thi
 
 **NOT done, NOT verified:** no named-pipe test (a) goes through `CallAsync`, the same handler; no every-op sweep for tape rows; `Errors.cs`'s `HOLDOUT_WITHHELD`
 owner text still says "bars" (wording, light); no referee tape door yet (v2a's).
+
+## 2026-10-07 — the observed run, attempt 3: a real model authors, backtests and retires three versions in six unattended hours; no verdict, so no paper trade; U-resume-agent verified
+
+`docs/briefs/U-observed-loop.md`, run by seat M through the app's own UI on this Mac (background screen control on `dev.tradeagent.mac`). The milestone is NOT claimed: no
+verdict was requested, so nothing was allocated, deployed or filled. Every line is a press, a read-only database read, a `trade` read or a quote; the brief is retired with it.
+
+- **Build:** GO `1828a188` (pinned under Law 10) plus `U-vendor-limit-quote`'s item 1 (landed `3119a12d`, record `d33d3419`, landing CI 37638355373 ✓ ×3 + package)
+  cherry-picked as `4a06a8d0` (local, detached, never pushed; patch-id `d198686b6d67`) — a protection, not an input. Debug bundle, sha256/16 TradeAgent.dll
+  `08f9ff8e207ddb84`, Core `11d75b8344a4a5f1`, Gateway `c579a920241e3dd6`, AgentRuntime `8b95bdcee8c7420b`; codex-cli 0.160.1, `codex login status` exit 0.
+- **Home and first start (14:38:47Z):** `observed-run-home`, schema 26 → 30 at the first start (`Database.Migrate` keeps rungs 27–30), PAPER-1, dataset 1 (binance-spot
+  BTCUSDT 1m, holdout from 2026-06-01), campaign 1 with 0 verdicts, envelope to 2026-10-08T15:47Z. 14:38:50Z: "Instrument check: BTCUSDT verified against Binance spot's
+  published instrument definition: tick 0.01, step 0.00001, minimum quantity 0.00001, minimum notional 5", so no "Check now". The tape recorded from 14:38:49Z.
+- **Bounds stated before the work press:** T0 + 6 h inside the local day; the 5 USD daily cap; the owner's plan (its limit ends the run); the paper envelope; paper only.
+- **Presses, all of them:** the gpt-6-luna model pill (14:42:11Z "The AI now runs on gpt-6-luna"; clipped at the window's edge, pressed inside its visible part); "Start the
+  AI"; "Let the AI work on its own", armed "Confirm: let the AI keep working without being asked, up to 5 USD a day" and confirmed — T0 = 14:42:50.516Z "The AI was set
+  to work on its own". Process actions: the launch; one quit from the app's menu and relaunch; the dead-man's quit. Nothing seeded, no file handed over.
+- **U-resume-agent VERIFIED in the running app:** quit between turns at 15:32:42Z (0 LAUNCHED), relaunch at 15:32:54Z, and with no press the research wake due 15:34:55.2006Z
+  launched a gpt-6-luna turn at 15:34:55.2647Z.
+- **The model's work, before the holdout (dataset 1, 2025-10-01 → 2026-05-31, under the venue model's 0.1 % fee and 0.02 % assumed slippage):**
+  - Operations froze `ef4969c5` (`bars 1h`, RSI(14) < 30 in, > 55 out, stop 2 %, target 1 %): 103 trades, net −1,007.03.
+  - Research reviewed it on Operations' brief, "Recommendation: RETIRE", and proposed "change only the profit target from 1% to 2%". Operations froze `9677ccc7`: net −708.07,
+    retired as well.
+  - Research froze `f984bacc` (an hourly channel breakout): 65 trades, net −2,115.76.
+  - Operations' last plan (20:14:12Z, the agent's claim): "MA/SMA crossover, hourly RSI, and hourly Donchian candidates remain retired after negative pre-holdout results.
+    No verdict has been spent."
+- **Turns and cost:** 36 turns, all ENDED and exit 0 — operations 19 for 2.0041 USD, research 17 for 1.8403. Total 3.8444 USD of the 5 USD cap, priced at the requested
+  gpt-6-luna (the CLI never named its model). Tokens: in 224,121,055 (216,578,560 cached), out 1,848,823. No vendor limit was met: `~/.codex/sessions` holds no
+  `usage_limit_exceeded` after T0.
+- **End:** the dead-man: "20:43:16Z deadline: quitting the app (pid 24913; LAUNCHED attempts at quit: 0)", "20:44:17Z app exited" — between turns, NOT paused
+  (`ai_works_on_its_own`, `resume_ai_on_start` still 1: this home's next launch resumes the AI by itself). No orphan (`ps`, `lsof` at 20:49Z; the owner's Codex Desktop
+  left alone). The clean close removed `-wal`/`-shm`, so `sqlite3 -readonly` answers "(14)"; the end-state reads use `?mode=ro&immutable=1`.
+- **Tape at the end:** 6,891 observations from 4,592 fetches up to 20:43:03Z (Binance USDⓈ-M context, OKX EEA announcements: 20, GDELT crypto rows: 1,112). The run's
+  one warn line: "GDELT news: the backfill asked for 525715438 bytes today, and it asks for at most 524288000 a UTC day".
+- **Gaps found:** (a) no read-only verb serves a completed run's per-trade trace — Research: "No retained per-trade rows or read-only command to retrieve a
+  completed run's trace were available"; (b) waiting costs money: after the last brief/report (15:54:58Z) 16 review turns (16:10–20:15Z) spent 2.0337 USD, 53 % of
+  the run, while Operations' plan read "No agenda or wake is pending"; (c) Research's claim: "55 signals unfunded", `risk_fraction` "has no cash-notional cap"; (d) no
+  role asked `trade verdict`, so the verdict and paper path went unexercised.
+- **What did NOT happen:** a verdict, promotion, allocation, deployment, op, order or fill; a decision on fills; a vendor limit, so U-vendor-limit-quote is not seen
+  working in the app; "Close all positions"; any live mode; Windows; the box. The CLI runs unsandboxed: no verdict of this home would be protected evidence.
