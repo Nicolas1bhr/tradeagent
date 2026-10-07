@@ -8589,3 +8589,41 @@ builder's evidence (no write, answer or cancel deadline reads a different clock;
 Tests box: NOT RUN — "the machine does not answer" (22:12, 23:14), "his own OFT.Platform is open" (02:35), and at landing (11:20 CEST) "the machine does not answer". Landing CI on `main`: a waiter is armed. Seat P held `land` across
 the weekly stop (03:46 → 11:20); the gate had finished at 04:09 and nothing moved on `main` meanwhile.
 **NOT done, NOT verified:** why either windows `Timing` red happens on windows-latest (no Windows hardware); no ATAS run, no app run; no doc changed.
+
+## 2026-10-07 — U-inflight-owner landed: an order the platform answered and no longer lists reaches the owner's card past the clock, pausing trading like any unconfirmed order, and the reconciler never writes off an order carrying the platform's reference as never sent where absence proves nothing
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-inflight-owner.md` (written by seat A's read-only survey leg at `1828a188`,
+which ran nothing; queued `b6699c8a`; dispatched `91f74ba2`); the builder rebased over seat P's `U-loss-hold-release` onto `e4f38682`; rebased by the manager
+onto `3db0c533` (over `U-bridge-liveness-clock`) then `ba4da5b2` (docs only; the gate carries), src+tests patch-id identical (`9e06c24241fc`). Merge `1fa820a6` (ff-only), 6 commits (5 items, the report),
+9 files, +716/−40. **No schema change (30).** MONEY PATH: the in-flight sweep, the reconciler's absence rule, the owner's card. Rule 3 kept — such an order
+may have filled, so it is recorded UNKNOWN and reconciled by the reconciler's own writes (CAS'd on the state read), never settled from that absence nor
+written off "never reached the broker"; a throw, a live answer or an unprovable connector hands nothing over. No terminal: the way out is the existing
+unconfirmed card. Operator authority: the one press is `ForceResolve`, reached only from the card, two-press with a required note; no pipe op, no verb.
+
+- **Item 1 (`5c40b5ed`):** `AskTheHistoryAsync` hands back `Unlisted` as a named field — true only where both reads answered, neither lists the order and
+  absence decides nothing; `InFlightAnswer.Unlisted` carries it (seat P's `U-press-close-once` uses the same field). No behaviour change.
+- **Item 2 (`fe07fdce`), a defect on `main` closed:** `AnsweredWhereAbsenceProvesNothing` — the reconciler's absence arm left alone a row carrying the
+  platform's reference where absence proves nothing; before it, an ATAS order with a reference (and `RecordIndefinite`'s) was written off `CANCELLED`
+  "never reached the broker", unflagged, and trading resumed. `Adopt` and fills under its id still settle it.
+- **Item 3 (`fc17104a`):** `HandOverToTheReconciler`, from the sweep only: CAS `→ UNKNOWN`, flagged, the evidence as its last error, then `→ RECONCILING`; a lost
+  first CAS hands nothing over; `inflight_handed_over`, an activity line. `SettleAnOrderInFlightAsync` still flags nothing.
+- **Item 4 (`d7b721fd`):** the card offers "It did not fill" / "Confirm: I checked in ATAS and this order did not fill" for a row with a reference
+  (`DashboardPage.CancelledAnswer`), relabelled in place each tick (`Ui.Relabel`; the tree is not rebuilt); no new control or `Theme` value.
+- **Item 5 (`5bc37b84`):** `CONTRACTS.md` claims, with what stays NOT claimed; the `CLOSE_IN_FLIGHT` refusal and `GatewaySchema`'s `close` name the card; USER-GUIDE.
+- **Judged at landing, accepted:** the landed `InFlightSettleTests` (d) `A_close_the_platform_does_not_list_settles_only_where_absence_decides_and_past_the_grace`
+  — its noId arm's assertions moved to the hand-over (RECONCILING, flagged, `TRADING_PAUSED_UNRECONCILED`) BY DESIGN, the case this unit exists for; name
+  kept, other arms unchanged; not a weakening. The guide's paragraph under "Two behaviours that will look like faults" (a placement deviation). Answer first:
+  an ATAS stream-state row always carries a reference (`OrderKey`, at worst `ext:none/<id>`) — read from the code, NOT VERIFIED on the box.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `0c8e7c65`: Release `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit
+`Passed: 1426`, Fault `Passed: 463`, 0 failed; `InFlightSettleTests` 3× 9/9, `UnconfirmedCardTests` 3× 2/2. RED before: (a) `Expected: RECONCILING Actual: WORKING`
+("on the card False"); (b) the same, "the close first CLOSE_IN_FLIGHT"; (f) item 2's defect: "ten passes later CANCELLED, flagged False — never reached the
+broker; a new order sent", `Expected: RECONCILING Actual: CANCELLED`. Mutant: item 2's guard dropped ⇒ (a) `Expected: RECONCILING Actual: CANCELLED`; restored.
+Manager's gate at `626fe9fa` (carried to `1fa820a6`), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1426/1426 (35 s), Fault 463/463 (1 m 55 s), Integration 732/733, 1 skipped (11 m 16 s) → 0 failed.
+Names vs `main`: 2247 → 2255, 0 removed, 8 added. Scan: `SCAN CLEAN`; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37555637680 at `0c8e7c65` (on `e4f38682`): success on ubuntu-latest (12 min), macos-latest (16 min), windows-latest (48 min), package (4 min).
+**Tests box:** NOT RUN — 03:22 `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it`; 11:19 `ready : NO - the machine does not answer (…)`.
+
+**NOT done, NOT verified:** the ATAS box (not granted): whether ATAS lists a filled order after a bridge drop or restart (`ICache`, `MyTrades`); the card not seen
+on screen; `Errors.cs`'s CLOSE_IN_FLIGHT owner text ("There is nothing to do") unchanged though a handed-over row now waits on the owner — wording owed, light;
+on the plain Simulator, where absence decides, an order it does not list is still written off "never reached the broker", as before (by design).
