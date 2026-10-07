@@ -8818,3 +8818,38 @@ verdict was requested, so nothing was allocated, deployed or filled. Every line 
   role asked `trade verdict`, so the verdict and paper path went unexercised.
 - **What did NOT happen:** a verdict, promotion, allocation, deployment, op, order or fill; a decision on fills; a vendor limit, so U-vendor-limit-quote is not seen
   working in the app; "Close all positions"; any live mode; Windows; the box. The CLI runs unsandboxed: no verdict of this home would be protected evidence.
+
+## 2026-10-07 — U-test-hygiene-3 landed: four windows-only test-rig reds of 2026-10-07 made deterministic or decidable — a temp held inside its grace, one writer on the stub bridge's pipe, a quote on the gateway's clock, and a resume-on-start wait that names the loop's state
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-test-hygiene-3.md` (written by seat A's read-only survey of 2026-10-07 16:38, which
+read each red as RIG — the product right — or UNKNOWN; queued `a8bee682`, dispatched `901586a7`), landed by seat A on the orchestrator's lane reassignment while
+seat P is closed. Re-prepped over seat M's M0 record (docs only; the gate carried), src+tests patch-id identical (`c746333e8b11`). Merge `16a0feb2` (ff-only), 5 commits (4 items, the report). **Tests and harness only: `src/` unchanged** (every
+mutant restored, `git diff main -- src` empty). **No schema change.** No assertion loosened, no test moved into `Timing`, no deadline raised.
+The reds it answers: `CoidWitnessTests.Two_writers_do_not_share_a_temp_name` (37611591775, `main` `34a34ba0`), `BridgeLivenessClockTests.A_bridge_pulsing_while_the_wall
+_clock_steps_forward_an_hour_stays_ready` (37612881764, 37635095478), `QuoteClockTests.Both_quote_gates…` (37612881764), `ResumeOnStartTests.A_restart_with_the_ai_working…`.
+
+- **Item 1 (a) (`f2eecac5`):** the first writer's stranded temp is held inside the quarantine grace for the test's length (dated an hour ahead before B writes), and
+  B's answer is now asserted (`Assert.False(Submit(b, "TA-B"))`, its failure not "another writer owns"), so a refused lease and the grace race print differently.
+  Before: the old body red on this Mac "Expected: 2 / Actual: 1" — windows' own line. The survey's reading stands: no clock is in a temp's name (a GUID session).
+- **Item 2 (b) (`7fa3d47a`):** `StubBridge.Send` holds one `SemaphoreSlim(1, 1)` across each whole write, as the real `BridgeServer` does; `DisposeAsync` takes it
+  before disposing the writer. New `StubBridgeTests.A_send_waits_for_an_answer_in_flight`. Before: red 3/3 "the pulse was written while the loop's answer was still
+  being written"; a scratch 100 ms after the latch reproduced windows' exception "The stream is currently in use by a previous operation on the stream".
+- **Item 3 (c) (`47827cce`):** the quote is stamped on the gateway's clock (`QuoteClock = clock`, `QuoteAge` 5 s); expectations unchanged. Before: red at :236 "ok —
+  FILLED" — windows' own line; after: green, and green with a real 16 s delay.
+- **Item 4 (d) (`6e954d40`), the orchestrator's ask:** `Until` takes the loop's state and fails with it at the same 60 s deadline — whether a turn took the wake and
+  when it launched, `presence.LastAliveAt`, the loop's error count and next turn; shown once by a probe made to hang its turn (scratch, not committed). The windows
+  red stays UNKNOWN until its next sighting, which now names its shape.
+- **Found in item 4's scratch runs, NOT this unit (passed to the orchestrator, surveyed at once):** a hung turn's agent process (`/bin/sh probe.sh` + `sleep 300`)
+  OUTLIVED `Mission.PauseAsync` and `Agent.StopAsync`, orphaned (ppid 1), three times out of three — a survey leg reads whether the product does that.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `b999a588`: Release `--no-incremental` "0 Warning(s) 0 Error(s)"; Unit 1466,
+Fault 464, Integration 733 + 1 skipped, 0 failed; each touched class 10×, every run "Failed: 0".
+Manager's gate at `9de2622d` (carried to `16a0feb2`), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1466/1466 (9 m 7 s), Fault 464/464 (2 m), Integration 733/734, 1 skipped (11 m 15 s) → 0 failed.
+Names vs `main`: 2296 → 2298, 0 removed, 2 added (the second "added" name is `LatchedStream.Release()`, a method, not a test — disclosed; [Fact]/[Theory] +1). Scan: `SCAN CLEAN`; no trailers;
+`rev-list --count` 0 both ways.
+**CI:** two runs at `b999a588`: 37675881283 (windows 49 m, ubuntu 13 m, macos 14 m, package) and 37675884979 (ubuntu 13 m, windows 58 m, macos 15 m, package) —
+success on every job in both; no `Timing` retry file in either (green on the first attempt).
+**Tests box:** NOT RUN — 22:06 `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it` (exit 5).
+
+**NOT done, NOT verified:** item 4's class on the tests box beside the full suite; whether (a)'s windows red was the grace race or a refused lease (both printed
+"Actual 1"; the new body tells them apart); `QuoteClockTests.A_bar_fed_feed…` was hygiene-2's item 5, not this unit's.
