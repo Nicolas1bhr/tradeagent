@@ -1842,9 +1842,10 @@ public sealed class Database : IDisposable
             // THE TWO SEEDS, each `WHERE NOT EXISTS` for the same reason: the archive `research-only` (R19
             // S1), and the forward ledger `unverified` (R19 S2) — on the orchestrator's order of 2026-10-04,
             // because whether the archive terms' "associated endpoints" reach the forward host is R19 § 6 Q2
-            // and it is open. `unverified` confers nothing. The tape is NOT seeded here: each tape source's
-            // reading is seeded per venue, on that venue's terms read the same day, by the unit that first
-            // lets tape evidence count (`U-features`).
+            // and it is open. `unverified` confers nothing. The tape is NOT seeded here: a reading decides only
+            // live eligibility and an absent one confers nothing, so each tape source's reading is seeded per
+            // venue, on that venue's terms read the same day, by the unit that opens a conferring path for tape
+            // evidence — the conferring-dataset unit — never by one that only computes (`U-features` seeds none).
             //
             // THE ONE BACKFILL: every archive dataset takes the archive reading. It is the 17 and 21 reading,
             // not the 22 one: there is a knowable fact here — every such row's bars are Binance archive bars,
