@@ -8703,3 +8703,41 @@ Tests box: NOT RUN — `ready` exit 1 at 11:57, 12:00, 12:28 and 13:13 ("NO - th
 **M0:** M0's build is `1828a188` with this unit's item 1 cherry-picked as `4a06a8d0` (local, detached, never pushed; patch-id `d198686b6d67` = `4761a61f`'s): a
 protection, not an input (Law 10's pin stands). **NOT done, NOT verified:** that `codex exec --json` stdout carries U+2019 under 0.160.1 (the session log's
 `payload.error.message` does); "try again later." still has no observed sentence; the app run (M0 is where it meets a limit, if it does); no box.
+
+## 2026-10-07 — U-test-hygiene-2 landed: the windows-only reds main kept showing in tests no diff reaches are fixed as a class on seams, not the runner's clock, and the pipe's token is written once, owner-only from its first byte
+
+Built by one fresh Opus builder under build-fleet seat P from `docs/briefs/U-test-hygiene-2.md` (seat P's brief `192a60ab`, re-checked `cab53474`, item 6 folded
+in `e4f38682`; dispatched `3db0c533`, returned and re-dispatched `06851afd` on the orchestrator's rulings); **landed by seat A on the orchestrator's reassignment
+(2026-10-07 16:15) while seat P is closed.** Rebased onto `d33d3419` by the manager, src+tests patch-id identical (`98b6139da241`). Merge `db2d683b` (ff-only), 7 commits (6 items,
+the report). **No schema change (30).** Protections touched: a CREDENTIAL (the pipe's `ipc.token`), the COID witness's retry bound (money path), the press
+deadline's simulator rig. The reds it answers on `main`: `CoidWitnessTests` (37443797669), `VenueOpsTests` `ipc.token` IOException (37443989301),
+`SweepRequestIdTests` five-order sweep (37494849714) and its NRE at :333, `OperatorPressIsAnEmergencyTests` (37604316193), `QuoteClockTests` (37600211089).
+
+- **Item 1 (`82613016`):** `IpcToken.Ensure` — a usable token returns at once; else an in-process lock, a re-read, and `SecretStore.Write`: a temp created new (on Unix
+  0600 from its first byte), flushed, renamed over; `Read` shares write+delete. RED before 4/4: "16 first callers hold 16 different token(s) … readers saw a
+  part-written file 2 time(s)". Mutant (lock and re-read removed): "16 first callers hold 16 different token(s)". DEVIATION, accepted: no lock-free create-once —
+  `File.Move(…, overwrite: false)` measured NOT atomic on macOS (2284 of 3000 rounds had more than one winner); across processes the product's two writers take
+  `SingleInstanceLock` before `Ensure` (`AppHost.cs:563`, GatewayHost `Program.cs:18`) — by reading, NOT run.
+- **Item 2 (`ba617cb7`):** the witness's waits come through a `backoff` seam (default `Thread.Sleep`); attempts, backoff and budget unchanged; the bound is asserted on
+  the waits the product ASKS for (`waits.Sum() < 2000`), slept for real; `Assert.Equal(5, attempts)` and the stopwatch `>= 150` unchanged. Mutant
+  (`ReplaceBackoffMs << (4 * attempt)`): "the retry asked to wait 1398080 ms … — the budget is not bounded". JUDGED: the brief's design (seams, not the runner's
+  clock), not a loosening — the mutant proves the bound still bites; the witness's lock and sidecar sleeps stay unseamed (named).
+- **Item 3 (`0c6840ca`):** the five-order sweep's first wave released by a latch at the wire instead of 750 ms of simulator latency; the assertion unchanged.
+- **Item 4 (`8a965de2`), extended:** `Answered(reply)` asserts `Ok` before reading `Data` at :339 and the class's four other deadline-bound sweeps (NRE → words).
+- **Item 5 (`5f5d832b`):** `FakeBroker.Clock` (default `TimeProvider.System`) stamps orders and fills; `RiskGateTests` and `QuoteClockTests` on one clock.
+- **Item 6 (`49373d5d`):** the simulator's last predicted wait stops at the operation deadline as its other wait does; new test, RED before 3/3 ("… still on the
+  platform 2203 ms after the deadline the press itself opened …"); mutant (`await Sleep(left, ct)`) red, restored. `Timing` trait unchanged.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `081c0e98`: Release `--no-incremental` "0 Warning(s) 0 Error(s)"; Unit
+`Passed: 1427`, Fault `Passed: 464`, 0 failed; touched classes 20× each, every run green (`IpcTokenTests`, `RiskGateTests`+`QuoteClockTests`,
+`OperatorPressIsAnEmergencyTests`, `CoidWitnessTests` 149, `SweepRequestIdTests`+`ReplayedSweepSendsNothingTests` 48).
+Manager's gate at `db2d683b`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1457/1457 (9 m 7 s), Fault 464/464 (2 m 2 s), Integration 732/733, 1 skipped (11 m 14 s) → 0 failed.
+Names vs `main`: 2285 → 2287, 0 removed, 2 added. Scan: 35 hits, every one the pipe token's or a cancellation token's NAME or prose about them (no secret literal in the diff: the token is minted by `RandomNumberGenerator` at run time) — excluded by name in the check and the record; no trailers; `rev-list --count` 0 both ways.
+**CI:** three runs at `081c0e98` (on `6ca2a54a`): 37605552055, 37605555760, 37605559448 — success on ubuntu-latest, macos-latest, windows-latest and package in
+all three; in the third, windows' `Timing` step red on its FIRST attempt in `GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing
+_unsettled` :1443, green on the category's second attempt (the doctrine's one second attempt) — a class this unit did not touch; the same first-attempt red at
+CI 34715391501; judged not moved by item 6 (reached only with < 500 ms left of its 12 s budget). **Tests box:** NOT RUN — `ready : NO - the machine does not answer (…)` 12:10.
+
+**NOT done, NOT verified:** item 1 on Windows by CI only, its cross-process half by reading only; the new press test's margin on a hosted runner not measured;
+the witness's lock and sidecar sleeps; `ConnectorSendDeadlineTests`; `BridgePipeAuth.WriteFile` (`AtasConnector.cs:2091`) writes `bridge.auth`'s temp before
+restricting its mode — the window item 1 closed for `ipc.token`, now surveyed by seat A for a fix brief.
