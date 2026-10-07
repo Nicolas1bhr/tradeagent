@@ -8627,3 +8627,40 @@ Names vs `main`: 2247 → 2255, 0 removed, 8 added. Scan: `SCAN CLEAN`; no trail
 **NOT done, NOT verified:** the ATAS box (not granted): whether ATAS lists a filled order after a bridge drop or restart (`ICache`, `MyTrades`); the card not seen
 on screen; `Errors.cs`'s CLOSE_IN_FLIGHT owner text ("There is nothing to do") unchanged though a handed-over row now waits on the owner — wording owed, light;
 on the plain Simulator, where absence decides, an order it does not list is still written off "never reached the broker", as before (by design).
+
+## 2026-10-07 — U-features landed: a feature is a spec as data known by its hash, computed by the app in decimal from only what had arrived by its instant, research-only until a licence reading confers
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-features.md` (written by seat A's read-only survey leg against `1828a188` and the
+then-unlanded `u-tape-read`; re-checked against `e2f4daf8` and queued `6a058570`; dispatched `a50ef414`); resumed after the weekly stop; rebased by the builder
+onto `3db0c533` and by the manager onto `6ca2a54a`, src+tests patch-id identical (`bf7edfe74311`). Merge `90aece2a` (ff-only), 5 commits (4 items, the report),
+13 files, +2735/−8, all new code in `src/TradeAgent.Core/Features/`. **No schema change** (main 30, tape.db 1): no table, no reading, no op, no verb.
+EVIDENCE PATH (EDGE-FACTORY § 4.3, § 6.1–6.3): every value is app code over market rows, never a model; the id is the hash of the canonical spec
+(`features=1`), so a changed input is a different feature; nothing is stored, a spec proposes and the app computes; look-ahead impossible by construction (a
+row counts at t only once FIRST SEEN by t − latency, source time alone never admits it); each value carries the worst class of its rows and their digest;
+every tape source is research-only today, so no feature can confer live eligibility.
+
+- **Item 1 (`3f979c8a`):** `FeatureSpec`, `FeatureCanonical`, `FeatureVersions` — a total parse; kinds `latest`, `change` (`mode` diff|ratio), `mean`, `min`, `max`,
+  `pct-rank`; malformed specs refused in words; this build's tape sources only.
+- **Item 2 (`69b5246a`):** `FeatureEvaluator.At`, pure and the only gate; ABSENT — never zero, never skipped over — for stale, too few, unreadable, withheld or a
+  zero base; golden vectors in exact decimal.
+- **Item 3 (`3c64328e`):** `FeatureSeries.Read` (audience required, through `TapeReader.Window`; ≤ 10,000 points, ≤ 50,000 rows an input, refused beyond) and
+  `FeatureLicence.LiveRefusal`; the clean-history start per input.
+- **Item 4 (`d22d39f1`):** `CONTRACTS.md` "Features" after "The tape"; the tape's (11) answered; "Not seeded here: the tape" and the `Database.cs` comment re-pointed
+  to the conferring-dataset unit (seat A's call, 02:07: a licence reading decides only live eligibility, an absent one confers nothing, and it is read the day it is seeded).
+- **Declared deviations, accepted (each keeps the purpose, several narrow it):** (1) a change's measure is the key `mode`; more refusals (a subject outside the
+  six symbols, a field that is the series' time or symbol, a spec over 4,096 bytes, bounds 1 s–366 days, `min_rows` ≤ 50,000); (2) "stale" = no counted reading
+  within `max_age_s`; an exponent spelling is unreadable; (3) the clean-history start is the INPUT's, found from its oldest readings within 50,000 rows (past
+  that absent, never guessed); `Read` takes an optional `newest`; one test uses a lower row cap.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `06499434`: Release `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit
+`Passed: 1447`, Fault `Passed: 457`, 0 failed; 3× `FeatureSpecTests` 6/6, `FeatureEvaluatorTests` 10/10, `FeatureGoldenVectorTests` 2/2, `FeatureSeriesTests` 5/5.
+Mutant: the first-seen test made `row.SourceTime <= t − latency` ⇒ (a) `Expected: 1 Actual: 2`, (b) `Value = 102` expected `888` actual, (c) `Expected: False
+Actual: True` — 3 of 3 red; restored byte-identical. A mutant left in place by the weekly stop was restored before items 2–4 were committed (its text in no file).
+Manager's gate at `90aece2a`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1449/1449 (37 s), Fault 463/463 (1 m 56 s), Integration 732/733, 1 skipped (11 m 19 s) → 0 failed.
+Names vs `main`: 2255 → 2278, 0 removed, 23 added. Scan: `SCAN CLEAN`; no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37599960798 at `06499434` (on `3db0c533`): success on ubuntu-latest (13 min), macos-latest (16 min), windows-latest (48 min), package (4 min).
+**Tests box:** NOT RUN — `ready : NO - the machine does not answer (…)` at 11:27 and 12:17 CEST.
+
+**NOT done, NOT verified:** the fields read off a recorded tape (no home's tape opened; one dated GET of Binance's public premium-index endpoint, 2026-10-07
+00:47Z, matched the fixture's shape); no op, verb or screen (`U-features-b`); multi-input kinds; cost on a months-long tape (bounded, not measured); the tape
+holdout is `U-tape-holdout`'s (in flight) — whichever lands second threads it through `FeatureSeries.Read`.
