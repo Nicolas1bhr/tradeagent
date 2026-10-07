@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.Themes.Fluent;
 
 namespace TradeAgent.App;
@@ -29,10 +30,20 @@ public sealed class TradeAgentApp : Application
             _host = new AppHost();
             var window = new MainWindow(_host);
             desktop.MainWindow = window;
-            desktop.ShutdownRequested += async (_, _) =>
+
+            // THE QUIT IS HELD UNTIL THE AI HAS STOPPED (U-agent-tree item 4). Avalonia 12.1.1 raises
+            // ShutdownRequested for the OS's quit and for the last window closing, and the request can be
+            // cancelled: it is, the AI is stopped and the host disposed, and then the app shuts down for
+            // real. The handler used to be an async void that returned at its first await, so the app went
+            // on exiting while the dispose ran. Exit is the other half: a forced Shutdown() — the update's —
+            // raises no ShutdownRequested at all (read from the 12.1.1 IL: Shutdown passes force), only Exit.
+            var host = _host;
+            var quit = new Quit(() => host.DisposeAsync().AsTask(), AppHost.QuitBound);
+            desktop.ShutdownRequested += (_, e) =>
             {
-                if (_host is not null) await _host.DisposeAsync();
+                if (quit.Hold(() => Dispatcher.UIThread.Post(() => desktop.Shutdown()))) e.Cancel = true;
             };
+            desktop.Exit += (_, _) => quit.Finish();
             // Last line of defence. Anything that escapes a handler would otherwise end the process
             // with no window and no message, which for this audience is indistinguishable from the
             // computer having eaten their trading software.
@@ -45,5 +56,51 @@ public sealed class TradeAgentApp : Application
             _ = window.InitialiseAsync();
         }
         base.OnFrameworkInitializationCompleted();
+    }
+}
+
+/// <summary>
+/// THE QUIT, HELD UNTIL ITS STOP HAS RUN, AND BOUNDED (<c>U-agent-tree</c> item 4). Kept apart from the
+/// lifetime so the rule can be driven without a window: a request to quit is held — cancelled — while the
+/// stop runs, and <c>then</c> is called once it has finished or the bound has passed, whichever is first;
+/// a second request while the first is being honoured is held too, and starts nothing. <see cref="Finish"/>
+/// is the way out that cannot be held — the lifetime's Exit — and it runs the same stop, once, bounded,
+/// on a thread of its own, so the thread raising Exit is never what the stop is waiting for.
+/// </summary>
+internal sealed class Quit(Func<Task> stop, TimeSpan bound)
+{
+    readonly Lock _gate = new();
+    Task? _stopping;
+    bool _released;
+
+    Task Stopping()
+    {
+        lock (_gate) return _stopping ??= Task.Run(stop);
+    }
+
+    /// <summary>Whether to cancel this request to quit: true until the stop has run and the quit was let go.</summary>
+    public bool Hold(Action then)
+    {
+        Task stopping;
+        lock (_gate)
+        {
+            if (_released) return false;
+            if (_stopping is not null) return true;
+            stopping = _stopping = Task.Run(stop);
+        }
+
+        _ = Task.WhenAny(stopping, Task.Delay(bound)).ContinueWith(_ =>
+        {
+            lock (_gate) _released = true;
+            then();
+        }, TaskScheduler.Default);
+        return true;
+    }
+
+    /// <summary>The way out that cannot be held: runs the stop if nothing has, and waits for it, bounded.</summary>
+    public void Finish()
+    {
+        try { Stopping().Wait(bound); }
+        catch (Exception) { /* the stop says why where it can; the quit goes on */ }
     }
 }

@@ -238,8 +238,70 @@ public class AgentTreeTests : IDisposable
         {
             await turn.Host.DisposeAsync();
             await AssertAllDead(turn, "AppHost.DisposeAsync mid-turn");
+
+            // AND THE OWNER'S CHOICE STANDS: the quit paused the loop, it did not decide the AI should stop
+            // working on its own, so the next start resumes it as the owner left it.
+            using var reopened = new Database(turn.DatabasePath);
+            await using var next = new TradingGateway(reopened, new FakeConnector(new FakeBroker()), new HealthRegistry());
+            Assert.True(next.Settings.AiWorksOnItsOwn, "the quit switched the AI's working on its own off — the owner's resume choice");
         }
         finally { await Close(turn.Host); }
+    }
+
+    /// <summary>
+    /// (e) THE QUIT IS HELD UNTIL THE STOP HAS RUN: a request to quit is cancelled while the AI stops, the
+    /// app is let go once it has, a second request meanwhile is held too and starts nothing, and a request
+    /// after the release goes through.
+    /// </summary>
+    [Fact]
+    public async Task A_request_to_quit_is_held_until_the_ai_has_stopped()
+    {
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stops = 0;
+        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var quit = new Quit(() => { Interlocked.Increment(ref stops); return stopped.Task; }, TimeSpan.FromSeconds(30));
+
+        Assert.True(quit.Hold(() => released.TrySetResult()));
+        Assert.True(quit.Hold(() => released.TrySetResult()));
+        await Task.Delay(200);
+        Assert.False(released.Task.IsCompleted, "the quit was let go while the AI was still stopping");
+
+        stopped.SetResult();
+        await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, stops);
+        Assert.False(quit.Hold(() => { }), "a request to quit after the stop had run was held again");
+
+        quit.Finish();
+        Assert.Equal(1, stops);
+    }
+
+    /// <summary>(e) BOUNDED: a stop that does not finish holds the quit for the bound and no longer.</summary>
+    [Fact]
+    public async Task A_stop_that_does_not_finish_holds_the_quit_only_for_its_bound()
+    {
+        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var quit = new Quit(() => new TaskCompletionSource().Task, TimeSpan.FromMilliseconds(300));
+
+        var watch = Stopwatch.StartNew();
+        Assert.True(quit.Hold(() => released.TrySetResult()));
+        await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(250), $"released after {watch.Elapsed}, before the bound");
+    }
+
+    /// <summary>
+    /// (e) THE WAY OUT THAT CANNOT BE HELD — Exit, which a forced Shutdown raises without any
+    /// ShutdownRequested, the update's way out — still runs the stop, once, and waits for it.
+    /// </summary>
+    [Fact]
+    public void An_exit_nobody_requested_still_stops_the_ai_first()
+    {
+        var stops = 0;
+        var quit = new Quit(async () => { await Task.Delay(100); Interlocked.Increment(ref stops); }, TimeSpan.FromSeconds(10));
+
+        quit.Finish();
+        Assert.Equal(1, stops);
+        quit.Finish();
+        Assert.Equal(1, stops);
     }
 
     // ---- (f) the app's death --------------------------------------------------------------------------
@@ -564,7 +626,8 @@ public class AgentTreeTests : IDisposable
 
     sealed record Member(string Name, int Pid, DateTime Start);
 
-    sealed record Turn(AppHost Host, AgentPresence Presence, string Dir, string Wake, IReadOnlyList<Member> Members);
+    sealed record Turn(AppHost Host, AgentPresence Presence, string Dir, string Wake, IReadOnlyList<Member> Members,
+        string DatabasePath = "");
 
     /// <summary>
     /// The turn's leader (<c>/bin/sh probe.sh</c>) starts: a plain background child (sleep 901); a
@@ -618,7 +681,8 @@ public class AgentTreeTests : IDisposable
             VersionArgs = ["version"], ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"]
         }]);
 
-        var db = new Database(Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db"));
+        var path = Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db");
+        var db = new Database(path);
         var connector = new FakeConnector(new FakeBroker());
         await using (var last = new TradingGateway(db, connector, new HealthRegistry()))
             last.Update(s =>
@@ -644,7 +708,7 @@ public class AgentTreeTests : IDisposable
         Assert.True(host.Agent.Running, "the probe runtime did not start");
 
         var members = await Record(dir, waitFor, mayHaveExited);
-        return new Turn(host, presence, dir, wake, members);
+        return new Turn(host, presence, dir, wake, members, path);
     }
 
     /// <summary>
