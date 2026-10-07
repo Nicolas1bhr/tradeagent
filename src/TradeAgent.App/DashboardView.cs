@@ -611,6 +611,13 @@ sealed class DashboardPage
         public required Control Answer { get; init; }
         public required TextBlock OnTheWire { get; init; }
         public required IReadOnlyList<Button> Buttons { get; init; }
+
+        /// <summary>
+        /// The button that records CANCELLED, on a row that offers it. Its words follow the row's reference every
+        /// tick (<see cref="CancelledAnswer"/>): a reference can arrive after the row was built, and "No order exists"
+        /// is false of an order the platform has answered.
+        /// </summary>
+        public Button? Cancelled { get; init; }
     }
 
     /// <summary>
@@ -687,6 +694,13 @@ sealed class DashboardPage
             row.BrokerId.Text = r.ConnectorOrderId ?? "none — the broker never sent one back";
             row.LastCheck.Text = LastCheckSentence(r);
 
+            // The CANCELLED answer's words follow the reference, in place; Relabel disarms only when they change.
+            if (row.Cancelled is { } cancel)
+            {
+                var (label, armed) = CancelledAnswer(r.ConnectorOrderId);
+                Ui.Relabel(cancel, label, armed);
+            }
+
             // THE CARD ASKS THE LEASE, and it is the only surface that has to. `Unreconciled()`
             // deliberately still lists a row a dispatcher is inside the connector call for — it is
             // unconfirmed work and it keeps trading paused — but the two buttons on it assert what
@@ -737,6 +751,7 @@ sealed class DashboardPage
         };
 
         var buttons = new List<Button>();
+        Button? cancelled = null;
         if (SpokenByThePlatform(r.State))
         {
             // A record the event stream already settled, flagged afterwards because the dispatch
@@ -759,11 +774,13 @@ sealed class DashboardPage
             // "Still working" is the obvious third answer and is unreachable from WORKING,
             // PARTIALLY_FILLED and CANCEL_PENDING — a button that throws on the states where it is
             // most likely to be the true answer is worse than no button, so the card asks the user
-            // to cancel it in ATAS first instead.
+            // to cancel it in ATAS first instead. The CANCELLED button's words are the row's own
+            // (CancelledAnswer): an order the platform answered existed, and did not fill.
             buttons.Add(Ui.Confirm("It was filled", "Confirm: I checked in ATAS and this order was filled",
                 () => ResolveAsync(id, ExecutionState.FILLED, note)));
-            buttons.Add(Ui.Confirm("No order exists", "Confirm: I checked in ATAS and no such order exists",
-                () => ResolveAsync(id, ExecutionState.CANCELLED, note)));
+            var (label, armed) = CancelledAnswer(r.ConnectorOrderId);
+            cancelled = Ui.Confirm(label, armed, () => ResolveAsync(id, ExecutionState.CANCELLED, note));
+            buttons.Add(cancelled);
         }
 
         // Stacked, not in a row. An armed two-step button carries its whole sentence — "Confirm: I
@@ -791,7 +808,7 @@ sealed class DashboardPage
         {
             RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value,
             Press = isPress ? press.Value : null,
-            Answer = answer, OnTheWire = onTheWire, Buttons = buttons
+            Answer = answer, OnTheWire = onTheWire, Buttons = buttons, Cancelled = cancelled
         });
 
         var row = Ui.Col(Theme.S2,
@@ -831,6 +848,18 @@ sealed class DashboardPage
         _host.Gateway.ForceResolve(requestId, outcome, text);
         await _host.Gateway.RefreshHealthAsync();
     }
+
+    /// <summary>
+    /// THE CARD'S CANCELLED ANSWER, IN WORDS THAT ARE TRUE OF THE ROW (<c>U-inflight-owner</c>): the button's label and
+    /// its armed sentence. A row carrying the platform's own reference is an order the platform answered — it existed —
+    /// so "No order exists" would be false of it, and what the owner can truly assert is that it did not fill. A row
+    /// without one may never have reached the platform, and the old words stand. Both record the same state,
+    /// <see cref="ExecutionState.CANCELLED"/>; only what the owner is asked to assert differs.
+    /// </summary>
+    public static (string Label, string Armed) CancelledAnswer(string? connectorOrderId) =>
+        string.IsNullOrEmpty(connectorOrderId)
+            ? ("No order exists", "Confirm: I checked in ATAS and no such order exists")
+            : ("It did not fill", "Confirm: I checked in ATAS and this order did not fill");
 
     static string StateSentence(ExecutionState s) => s switch
     {
