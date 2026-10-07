@@ -20,6 +20,19 @@ public sealed class FakeBroker
     long _seq;
 
     public string AccountId { get; init; } = "SIM-001";
+
+    /// <summary>
+    /// THE CLOCK THIS SIMULATED PLATFORM KEEPS: what its orders and fills are stamped with, and — unless
+    /// a harness gives <see cref="FakeConnector.QuoteClock"/> one of its own — its quotes too. The
+    /// machine's, unless a harness hands it the one its test reads (<c>U-test-hygiene-2</c> item 5).
+    ///
+    /// <para>A seam because a test that reads "today" on one clock while the platform stamps the day's
+    /// fills on another has a verdict that turns at midnight UTC: a loss filled at 23:59:59Z is
+    /// yesterday's to a gateway reading at 00:00:01Z, and the daily budget it should refuse on has not
+    /// been touched. Nothing in a run moves the machine's clock, so the default is the product
+    /// unchanged.</para>
+    /// </summary>
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
     public bool IsSimulated { get; init; } = true;
     public decimal Balance { get; private set; } = 100_000m;
 
@@ -97,7 +110,7 @@ public sealed class FakeBroker
         lock (_gate)
         {
             var id = $"FB-{++_seq}";
-            var price = cmd.Type == OrderType.Market ? Quote(cmd.Symbol, DateTimeOffset.UtcNow).Ask!.Value : cmd.LimitPrice ?? cmd.StopPrice ?? 0m;
+            var price = cmd.Type == OrderType.Market ? Quote(cmd.Symbol, Clock.GetUtcNow()).Ask!.Value : cmd.LimitPrice ?? cmd.StopPrice ?? 0m;
             var filled = fill switch
             {
                 FillBehaviour.FillImmediately => cmd.Quantity,
@@ -111,7 +124,7 @@ public sealed class FakeBroker
                 _ => ExecutionState.WORKING
             };
             var order = new OrderInfo(id, cmd.ClientOrderId, cmd.AccountId, cmd.Symbol, cmd.Side, cmd.Type,
-                cmd.Quantity, filled, cmd.LimitPrice, cmd.StopPrice, state, null, DateTimeOffset.UtcNow);
+                cmd.Quantity, filled, cmd.LimitPrice, cmd.StopPrice, state, null, Clock.GetUtcNow());
             _orders.Add(order);
             if (filled > 0) ApplyFill(order, filled, price);
             return order;
@@ -123,7 +136,7 @@ public sealed class FakeBroker
         lock (_gate)
         {
             var order = new OrderInfo($"FB-{++_seq}", cmd.ClientOrderId, cmd.AccountId, cmd.Symbol, cmd.Side,
-                cmd.Type, cmd.Quantity, 0m, cmd.LimitPrice, cmd.StopPrice, ExecutionState.REJECTED, reason, DateTimeOffset.UtcNow);
+                cmd.Type, cmd.Quantity, 0m, cmd.LimitPrice, cmd.StopPrice, ExecutionState.REJECTED, reason, Clock.GetUtcNow());
             _orders.Add(order);
             return order;
         }
@@ -143,7 +156,7 @@ public sealed class FakeBroker
     {
         var signed = order.Side == OrderSide.Buy ? qty : -qty;
         _executions.Add(new ExecutionInfo($"X-{++_seq}", order.ConnectorOrderId, order.ClientOrderId,
-            order.AccountId, order.Symbol, order.Side, qty, price, DateTimeOffset.UtcNow)
+            order.AccountId, order.Symbol, order.Side, qty, price, Clock.GetUtcNow())
         { Fee = FeePerContract is { } f ? f * qty : null });
         var key = order.Symbol;
         if (_positions.TryGetValue(key, out var p))
@@ -175,7 +188,7 @@ public sealed class FakeBroker
             var o = _orders[i];
             if (OrderStateMachine.IsTerminal(o.State)) return o;
             var remaining = o.Quantity - o.FilledQuantity;
-            var price = o.LimitPrice ?? Quote(o.Symbol, DateTimeOffset.UtcNow).Ask!.Value;
+            var price = o.LimitPrice ?? Quote(o.Symbol, Clock.GetUtcNow()).Ask!.Value;
             var updated = o with { FilledQuantity = o.Quantity, State = ExecutionState.FILLED };
             _orders[i] = updated;
             if (remaining > 0) ApplyFill(updated, remaining, price);

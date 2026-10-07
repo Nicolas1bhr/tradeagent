@@ -25,12 +25,25 @@ namespace TradeAgent.Tests.Fault;
 /// </summary>
 public class RiskGateTests(ITestOutputHelper log)
 {
+    /// <summary>
+    /// A gateway over the simulator, both on ONE clock (<c>U-test-hygiene-2</c> item 5).
+    ///
+    /// <para>The loss budgets read "today" as the UTC day on the gateway's clock, and the simulator used
+    /// to stamp the fills that make the day on the machine's. Two readings of a wall clock straddle
+    /// midnight once a day, so a test that lost the day at 23:59:59Z and asked at 00:00:01Z found the day
+    /// untouched and the order allowed — a red on a product that was right (reproduced with the platform's
+    /// clock at 23:59:59Z and the gateway's at 00:00:01Z: "Assert.Throws() Failure: No exception was
+    /// thrown"). The platform and the gateway read one <see cref="TestClock"/> now, held where it was made,
+    /// and a gateway these tests restart over the same platform is handed it too
+    /// (<c>conn.Broker.Clock</c>), so nothing here can read two days.</para>
+    /// </summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
         Action<TradeAgentSettings>? settings = null, FaultProfile? faults = null)
     {
         var db = TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker(), faults));
-        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        var clock = new TestClock();
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker { Clock = clock }, faults));
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
@@ -236,7 +249,7 @@ public class RiskGateTests(ITestOutputHelper log)
         await gw.PlaceAsync(new AgentContext("a"), "day-nq", TestEnv.Buy("NQ", 1m));
         conn.Broker.PriceOffset = -20m;
         await gw.CloseAsync(new AgentContext("a"), "day-es-out", "ES");
-        return gw.LedgerPnl(TradingGateway.StartOfDay(DateTimeOffset.UtcNow), "today").Realized;
+        return gw.LedgerPnl(TradingGateway.StartOfDay(gw.UtcNow), "today").Realized;
     }
 
     /// <summary>
@@ -431,7 +444,7 @@ public class RiskGateTests(ITestOutputHelper log)
         await gw.DisposeAsync();
 
         using var db2 = TestEnv.NewDb();
-        var restarted = new TradingGateway(db2, conn, new HealthRegistry());
+        var restarted = new TradingGateway(db2, conn, new HealthRegistry(), new GatewayOptions { Clock = conn.Broker.Clock });
         restarted.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
