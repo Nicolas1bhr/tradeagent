@@ -93,6 +93,17 @@ public sealed record IndicatorRef(string Name, int Back) : Expr
     public override int NodeCount => 1;
 }
 
+/// <summary>
+/// A DECLARED FEATURE'S VALUE AT THE CLOSE OF THE BAR `Back` BARS AGO (<c>U-language-v2a</c>): a number, read as an
+/// indicator is read — <c>funding</c>, <c>funding[2]</c> — and costing one operation. The value is never this node's:
+/// the caller computes it from the tape as it had arrived by that close (<c>Backtest.Run</c>) and hands it to the
+/// evaluator, and an absent value is undefined, so the event decides nothing.
+/// </summary>
+public sealed record FeatureRef(string Name, int Back) : Expr
+{
+    public override int NodeCount => 1;
+}
+
 public sealed record UnaryExpr(UnaryOp Op, Expr Operand) : Expr
 {
     public override int NodeCount => 1 + Operand.NodeCount;
@@ -127,6 +138,13 @@ public sealed record StrategyConstant(string Name, ValueKind Type, decimal Numbe
 /// `opening_range` interval rather than a bar count.</para>
 /// </summary>
 public sealed record IndicatorDecl(string Name, IndicatorKind Kind, BarSeries Source, int Period);
+
+/// <summary>
+/// A DECLARED FEATURE (<c>feature funding = {...}</c>): the name a rule reads it by and the spec the app computes it
+/// from — a <see cref="Features.FeatureSpec"/>, known by its own hash (<see cref="Features.FeatureSpec.Id"/>), which is
+/// what the program's canonical form names. The author writes the spec; the app states its id.
+/// </summary>
+public sealed record FeatureDecl(string Name, Features.FeatureSpec Spec);
 
 /// <summary>One rule: what it does, and the condition under which it does it.</summary>
 public sealed record StrategyRule(RuleKind Kind, Expr Condition);

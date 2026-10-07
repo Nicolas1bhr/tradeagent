@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using TradeAgent.Core.Features;
 
 namespace TradeAgent.Core.Strategy;
 
@@ -12,8 +13,8 @@ namespace TradeAgent.Core.Strategy;
 /// agent writes into a way to crash the app that supervises it, so this one is total: every input
 /// produces a <see cref="StrategyParse"/>, and the refusal names the line.</para>
 ///
-/// <para><b>Three passes over the lines, not one.</b> Constants first, then indicators, then
-/// everything else. That makes declaration ORDER irrelevant — a program whose `const` lines are at
+/// <para><b>Three passes over the lines, not one.</b> Constants first, then indicators and features,
+/// then everything else. That makes declaration ORDER irrelevant — a program whose `const` lines are at
 /// the bottom means what a program whose `const` lines are at the top means — which matters twice:
 /// the writer is a model that does not reliably order its output, and two orderings of one program
 /// must reach the same <see cref="StrategyProgram.StrategyId"/>. Rules are the one exception: their
@@ -50,7 +51,7 @@ public static class StrategyParser
     // ---- the vocabulary, in one place each -------------------------------------------------------
 
     const string Keywords =
-        "instrument, timezone, bars, timeframe, data_freshness, max_decision_age, const, indicator, size, " +
+        "instrument, timezone, bars, timeframe, data_freshness, max_decision_age, const, indicator, feature, size, " +
         "stop, target, max_hold_bars, weekdays, entry_window, opening_range, session_exit, exit, entry";
 
     /// <summary>
@@ -64,6 +65,19 @@ public static class StrategyParser
     /// is (`const bars = 20` starts with `const`).</para>
     /// </summary>
     const string BarsDeclaration = "bars";
+
+    /// <summary>
+    /// `feature funding = {...}` — A DECLARATION, AND NOT A KEYWORD, for the reason <see cref="BarsDeclaration"/> is
+    /// not one (<c>U-language-v2a</c>): the language had no `feature` before, a stored program may well say
+    /// `const feature = 2`, and reserving the word now would turn a recorded version into a refusal. It is
+    /// recognised as a line's first word and nowhere else.
+    ///
+    /// <para><b>The author writes the spec; the app states its id.</b> Everything after the first `=` is one JSON
+    /// object handed whole to <see cref="FeatureSpec.Parse"/>, whose refusal is quoted on the line. A `#` starts a
+    /// comment here as on every line, so a spec holding one is cut there and refused as the JSON it then is not —
+    /// never read as another spec.</para>
+    /// </summary>
+    const string FeatureDeclaration = "feature";
 
     const string IndicatorList =
         "sma, ema, rsi, atr, highest, lowest, opening_range_high, opening_range_low";
@@ -156,8 +170,9 @@ public static class StrategyParser
 
         var constants = ReadConstants(decls);
         var indicators = ReadIndicators(decls, constants);
+        var features = ReadFeatures(decls, constants, indicators);
         var settings = ReadSettings(decls, constants);
-        var rules = ReadRules(decls, constants, indicators);
+        var rules = ReadRules(decls, constants, indicators, features);
 
         // ---- what a program must have in order to be one ----------------------------------------
 
@@ -235,6 +250,7 @@ public static class StrategyParser
             instrument,
             [.. constants.Values.OrderBy(c => c.Name, StringComparer.Ordinal)],
             [.. indicators.Values.OrderBy(i => i.Name, StringComparer.Ordinal)],
+            [.. features.Values.OrderBy(f => f.Name, StringComparer.Ordinal)],
             rules,
             sizing,
             settings.Stop,
@@ -269,9 +285,18 @@ public static class StrategyParser
             var raw = lines[i];
             if (i == 0) raw = raw.TrimStart('﻿');
 
+            // A `feature` LINE MAY BE LONGER, AND ONLY IT: its spec is one JSON object (`MaxFeatureLineLength`). The
+            // first word decides which limit, read here the way the keyword is read below, so a `# feature` comment
+            // is held to the ordinary one.
             if (raw.Length > StrategyLimits.MaxLineLength)
-                throw new Refused(no,
-                    $"a line may be at most {StrategyLimits.MaxLineLength} characters and this one is {raw.Length}");
+            {
+                if (!IsFeatureLine(raw))
+                    throw new Refused(no,
+                        $"a line may be at most {StrategyLimits.MaxLineLength} characters and this one is {raw.Length}");
+                if (raw.Length > StrategyLimits.MaxFeatureLineLength)
+                    throw new Refused(no,
+                        $"a `feature` line may be at most {StrategyLimits.MaxFeatureLineLength} characters and this one is {raw.Length}");
+            }
 
             foreach (var c in raw)
                 if (char.IsControl(c) && c != '\t')
@@ -286,7 +311,7 @@ public static class StrategyParser
             var keyword = (space < 0 ? body : body[..space]).ToLowerInvariant();
             var rest = space < 0 ? "" : body[(space + 1)..].Trim();
 
-            if (!IsKeyword(keyword) && keyword != BarsDeclaration)
+            if (!IsKeyword(keyword) && keyword != BarsDeclaration && keyword != FeatureDeclaration)
                 throw new Refused(no,
                     $"`{Clip(keyword)}` is not a declaration this language has. The declarations are: {Keywords}");
 
@@ -294,6 +319,16 @@ public static class StrategyParser
         }
 
         return decls;
+    }
+
+    /// <summary>Whether a raw line's first word is `feature`, read as <see cref="ReadLines"/> reads a keyword.</summary>
+    static bool IsFeatureLine(string raw)
+    {
+        var hash = raw.IndexOf('#');
+        var body = (hash >= 0 ? raw[..hash] : raw).Trim();
+        var space = body.IndexOfAny([' ', '\t']);
+        var word = space < 0 ? body : body[..space];
+        return string.Equals(word, FeatureDeclaration, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- pass one: constants --------------------------------------------------------------------
@@ -407,6 +442,48 @@ public static class StrategyParser
                         "an indicator of an indicator is not part of this language");
                 return new IndicatorDecl(name, kind, series, Period(line, head, args[1], constants));
         }
+    }
+
+    // ---- pass two and a half: features ------------------------------------------------------------
+
+    /// <summary>
+    /// EVERY `feature <name> = <spec>` LINE (<c>U-language-v2a</c>): a name by <see cref="Name"/>, unique across
+    /// constants, indicators and features, and a spec <see cref="FeatureSpec.Parse"/> accepts — its refusal quoted on
+    /// the line. At most <see cref="StrategyLimits.MaxFeatures"/>, the ninth refused where it is written.
+    /// </summary>
+    static Dictionary<string, FeatureDecl> ReadFeatures(
+        List<Decl> decls, Dictionary<string, StrategyConstant> constants, Dictionary<string, IndicatorDecl> indicators)
+    {
+        var features = new Dictionary<string, FeatureDecl>(StringComparer.Ordinal);
+
+        foreach (var d in decls)
+        {
+            if (d.Keyword != FeatureDeclaration) continue;
+
+            var eq = d.Rest.IndexOf('=');
+            if (eq < 0)
+                throw new Refused(d.No,
+                    "a feature reads `feature <name> = <spec>`, the spec one JSON object, and this line has no `=`");
+
+            var name = Name(d.No, d.Rest[..eq].Trim(), "feature");
+            if (constants.ContainsKey(name))
+                throw new Refused(d.No, $"`{name}` is already a constant, so this feature would shadow it");
+            if (indicators.ContainsKey(name))
+                throw new Refused(d.No, $"`{name}` is already an indicator, so this feature would shadow it");
+            if (features.ContainsKey(name))
+                throw new Refused(d.No, $"`{name}` is declared twice, and the second declaration would silently win");
+            if (features.Count == StrategyLimits.MaxFeatures)
+                throw new Refused(d.No,
+                    $"a program may declare at most {StrategyLimits.MaxFeatures} features, and `{name}` is one more");
+
+            var parse = FeatureSpec.Parse(d.Rest[(eq + 1)..].Trim());
+            if (parse.Spec is not { } spec)
+                throw new Refused(d.No, $"feature `{name}` is not a spec TradeAgent computes: {parse.Why}");
+
+            features[name] = new FeatureDecl(name, spec);
+        }
+
+        return features;
     }
 
     // ---- pass three: everything that is not a constant, an indicator or a rule -------------------
@@ -765,7 +842,8 @@ public static class StrategyParser
     static List<StrategyRule> ReadRules(
         List<Decl> decls,
         Dictionary<string, StrategyConstant> constants,
-        Dictionary<string, IndicatorDecl> indicators)
+        Dictionary<string, IndicatorDecl> indicators,
+        Dictionary<string, FeatureDecl> features)
     {
         var rules = new List<StrategyRule>();
         var sawEntry = false;
@@ -784,7 +862,7 @@ public static class StrategyParser
                         ? "This one says nothing after it"
                         : $"`{Clip(words[0])}` is not `when` — and a rule takes no side, because a program is long or flat"));
 
-            var condition = ParseExpression(d.No, d.Rest[words[0].Length..].Trim(), constants, indicators);
+            var condition = ParseExpression(d.No, d.Rest[words[0].Length..].Trim(), constants, indicators, features);
 
             // A CONDITION IS A QUESTION, and the type system is what says so while there is still a
             // line to name. `entry when close` asks whether a price is true.
@@ -828,12 +906,13 @@ public static class StrategyParser
     static Expr ParseExpression(
         int line, string text,
         Dictionary<string, StrategyConstant> constants,
-        Dictionary<string, IndicatorDecl> indicators)
+        Dictionary<string, IndicatorDecl> indicators,
+        Dictionary<string, FeatureDecl> features)
     {
         if (text.Length == 0) throw new Refused(line, "this rule has no condition after `when`");
 
         var tokens = Tokenise(line, text);
-        var parser = new Expressions(line, tokens, constants, indicators);
+        var parser = new Expressions(line, tokens, constants, indicators, features);
         var expr = parser.Parse();
         return expr;
     }
@@ -918,7 +997,8 @@ public static class StrategyParser
         int line,
         List<Token> tokens,
         Dictionary<string, StrategyConstant> constants,
-        Dictionary<string, IndicatorDecl> indicators)
+        Dictionary<string, IndicatorDecl> indicators,
+        Dictionary<string, FeatureDecl> features)
     {
         int _pos;
 
@@ -1049,7 +1129,7 @@ public static class StrategyParser
                 default:
                     throw new Refused(line,
                         $"`{Clip(t.Text)}` is not where a condition can start. A value is a number, a bar series, " +
-                        "a constant, an indicator or a bracketed condition");
+                        "a constant, an indicator, a feature or a bracketed condition");
             }
         }
 
@@ -1083,9 +1163,10 @@ public static class StrategyParser
 
             if (TrySeries(name, out var series)) return new SeriesRef(series, back);
             if (indicators.ContainsKey(name)) return new IndicatorRef(name, back);
+            if (features.ContainsKey(name)) return new FeatureRef(name, back);
 
             throw new Refused(line,
-                $"`{Clip(name)}` is not a bar series, a declared constant or a declared indicator. " +
+                $"`{Clip(name)}` is not a bar series, a declared constant or a declared indicator, nor a declared feature. " +
                 $"The bar series are: {SeriesList}");
         }
 

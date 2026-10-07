@@ -20,6 +20,7 @@ public sealed class StrategyProgram
         string instrument,
         IReadOnlyList<StrategyConstant> constants,
         IReadOnlyList<IndicatorDecl> indicators,
+        IReadOnlyList<FeatureDecl> features,
         IReadOnlyList<StrategyRule> rules,
         Sizing sizing,
         StopRule stop,
@@ -35,6 +36,7 @@ public sealed class StrategyProgram
         Instrument = instrument;
         Constants = constants;
         Indicators = indicators;
+        Features = features;
         Rules = rules;
         Sizing = sizing;
         Stop = stop;
@@ -69,6 +71,17 @@ public sealed class StrategyProgram
 
     /// <summary>The declared indicators, ordered by name.</summary>
     public IReadOnlyList<IndicatorDecl> Indicators { get; }
+
+    /// <summary>
+    /// THE DECLARED FEATURES, ORDERED BY NAME — empty for every program that declares none, which is every
+    /// program written before <c>U-language-v2a</c>.
+    ///
+    /// <para>Each is a spec the author wrote and the app computes (<see cref="TradeAgent.Core.Features.FeatureSpec"/>), named in the
+    /// canonical form by its own hash, so the identity of a program that reads one names every input it reads. The
+    /// values are never the program's: whoever runs it hands the evaluator each one as it had arrived by the
+    /// evaluated bar's close, or runs it not at all.</para>
+    /// </summary>
+    public IReadOnlyList<FeatureDecl> Features { get; }
 
     /// <summary>The rules in declared order, every exit before every entry.</summary>
     public IReadOnlyList<StrategyRule> Rules { get; }

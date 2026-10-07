@@ -17,7 +17,9 @@ namespace TradeAgent.Core.Strategy;
 /// used — a program that became warm sooner because a rule stopped mentioning an indicator would
 /// change its warm-up on an edit that changed nothing else), every history reference in every rule
 /// condition, the extra bar a crossing reads, and the stop's own ATR period. At least 1: nothing can
-/// be asked before one bar has closed.</para>
+/// be asked before one bar has closed. A DECLARED feature adds nothing of its own — its values come
+/// from the tape and are absent until they can be stated — and a reference to one costs the bars it
+/// reaches back, as a series reference does.</para>
 /// </summary>
 public static class StrategyWarmUp
 {
@@ -54,17 +56,27 @@ public static class StrategyWarmUp
     /// <summary>
     /// The bars one condition needs, nesting included. A literal needs none; a series reference needs
     /// the bar it names; an indicator reference needs its indicator warm PLUS the bars it reaches
-    /// back; a crossing needs one bar more than the deeper of its two sides, because it reads both on
-    /// this bar and on the one before.
+    /// back; a feature reference needs the bar whose close it is read at — <c>1 + k</c>, like a series,
+    /// because a feature's own history is the tape's, read as it had arrived, and a value it cannot yet
+    /// state is absent rather than early; a crossing needs one bar more than the deeper of its two sides,
+    /// because it reads both on this bar and on the one before.
+    ///
+    /// <para><b>A node it does not know is a defect, and it fails CLOSED</b> (<c>U-language-v2a</c>). It
+    /// used to answer one bar — a warm-up stated, hashed and enforced for a node nobody had measured — so
+    /// a kind added to <c>StrategyAst.cs</c> without a line here would have been frozen into an id with a
+    /// guessed warm-up. It throws instead, and <see cref="StrategyParser.Parse"/> turns that into a
+    /// refusal that names the parser's defect.</para>
     /// </summary>
     static int Bars(Expr e, Dictionary<string, IndicatorDecl> indicators) => e switch
     {
         NumberLiteral or BoolLiteral => 0,
         SeriesRef s => 1 + s.Back,
         IndicatorRef i => (indicators.TryGetValue(i.Name, out var d) ? Bars(d) : 1) + i.Back,
+        FeatureRef f => 1 + f.Back,
         UnaryExpr u => Bars(u.Operand, indicators),
         BinaryExpr b => Math.Max(Bars(b.Left, indicators), Bars(b.Right, indicators)),
         CrossExpr c => Math.Max(Bars(c.Left, indicators), Bars(c.Right, indicators)) + 1,
-        _ => 1
+        _ => throw new InvalidOperationException(
+            $"this build does not know how many bars a {e.GetType().Name} needs, so it states no warm-up for it")
     };
 }

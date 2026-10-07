@@ -81,6 +81,14 @@ public static class StrategyCanonical
         foreach (var indicator in p.Indicators.OrderBy(i => i.Name, StringComparer.Ordinal))
             text.Append("ind ").Append(indicator.Name).Append('=').Append(Call(indicator)).Append('\n');
 
+        // EVERY FEATURE BY THE HASH OF ITS SPEC (`U-language-v2a`) — sorted by name, after the indicators, and
+        // written only when one is declared: no v1 text has a `feature` line, so every v1 canonical form, id and
+        // result is the one it always was, exactly as `bars` above. The id is `FeatureSpec.Id`, which hashes the
+        // spec's own canonical text and `features=1`, so the program's identity names every input it reads and
+        // the semantics they are computed under: a changed spec, or a moved feature manifest, is another program.
+        foreach (var feature in p.Features.OrderBy(f => f.Name, StringComparer.Ordinal))
+            text.Append("feature ").Append(feature.Name).Append('=').Append(feature.Spec.Id).Append('\n');
+
         text.Append("size ").Append(Size(p.Sizing)).Append('\n');
         text.Append("stop ").Append(Stop(p.Stop)).Append('\n');
         text.Append("target ").Append(Target(p.Target)).Append('\n');
@@ -91,8 +99,9 @@ public static class StrategyCanonical
         // hashing it means two builds that disagree about how warm is warm enough cannot share an id.
         text.Append("warmup ").Append(p.WarmUpBars.ToString(CultureInfo.InvariantCulture)).Append('\n');
 
+        var declared = p.Features.Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
         foreach (var rule in p.Rules)
-            text.Append(rule.Kind == RuleKind.Exit ? "exit " : "entry ").Append(Condition(rule.Condition)).Append('\n');
+            text.Append(rule.Kind == RuleKind.Exit ? "exit " : "entry ").Append(Condition(rule.Condition, declared)).Append('\n');
 
         return text.ToString();
     }
@@ -180,18 +189,33 @@ public static class StrategyCanonical
     /// A condition in prefix form: `(and (&gt; close @fastma) (&lt; volume 100))`. Prefix because
     /// precedence is then not part of reading it — two texts that mean the same comparison are the
     /// same text here, and no reader has to know whether `and` binds tighter than `&gt;`.
+    ///
+    /// <para><b>A feature is <c>$name</c></b>, and only a DECLARED one: <paramref name="features"/> are the
+    /// names this program's <c>feature</c> lines state, each with its spec's hash above, so a reference
+    /// written here always names an input hash in the same text. One that names no such line is a defect
+    /// and throws.</para>
+    ///
+    /// <para><b>A node it does not know fails CLOSED</b> (<c>U-language-v2a</c>). It used to be written as
+    /// <c>?</c>, which hashed into an id every program whose rules held some other unknown node would have
+    /// shared. It throws instead, and <see cref="StrategyParser.Parse"/> turns that into a refusal that
+    /// names the parser's defect.</para>
     /// </summary>
-    static string Condition(Expr e) => e switch
+    static string Condition(Expr e, IReadOnlySet<string> features) => e switch
     {
         NumberLiteral n => StrategyParser.Number(n.Value),
         BoolLiteral b => b.Value ? "true" : "false",
         SeriesRef s => s.Back == 0 ? Series(s.Series) : $"{Series(s.Series)}[{s.Back.ToString(CultureInfo.InvariantCulture)}]",
         IndicatorRef i => i.Back == 0 ? $"@{i.Name}" : $"@{i.Name}[{i.Back.ToString(CultureInfo.InvariantCulture)}]",
-        UnaryExpr u => $"({(u.Op == UnaryOp.Not ? "not" : "neg")} {Condition(u.Operand)})",
+        FeatureRef f when features.Contains(f.Name) =>
+            f.Back == 0 ? $"${f.Name}" : $"${f.Name}[{f.Back.ToString(CultureInfo.InvariantCulture)}]",
+        FeatureRef f => throw new InvalidOperationException(
+            $"a rule reads a feature `{f.Name}` that this program declares no `feature` line for, so its input has no hash to name"),
+        UnaryExpr u => $"({(u.Op == UnaryOp.Not ? "not" : "neg")} {Condition(u.Operand, features)})",
         CrossExpr c => $"({(c.Direction == CrossDirection.Above ? "crosses_above" : "crosses_below")} " +
-                       $"{Condition(c.Left)} {Condition(c.Right)})",
-        BinaryExpr b => $"({Operator(b.Op)} {Condition(b.Left)} {Condition(b.Right)})",
-        _ => "?"
+                       $"{Condition(c.Left, features)} {Condition(c.Right, features)})",
+        BinaryExpr b => $"({Operator(b.Op)} {Condition(b.Left, features)} {Condition(b.Right, features)})",
+        _ => throw new InvalidOperationException(
+            $"this build does not know how to write a {e.GetType().Name} into a canonical form, so it gives it no id")
     };
 
     static string Operator(BinaryOp op) => op switch

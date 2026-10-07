@@ -32,7 +32,7 @@ public static class StrategyTypes
     {
         switch (expr)
         {
-            case NumberLiteral or SeriesRef or IndicatorRef:
+            case NumberLiteral or SeriesRef or IndicatorRef or FeatureRef:
                 return ValueKind.Number;
 
             case BoolLiteral:
