@@ -38,3 +38,9 @@ _backtest_implements`; (m) `A_feature_version_read_as_another_program_is_withdra
 GoldenVectorTests` (a fixture tape). Mutant, quoted red: item 3's as-of moved to the NEXT declared close ⇒ (f). First, in the report: each `u-features` name as landed; a year of hourly bars over a year of 1-minute rows, timed.
 Gate and report per `docs/HOW-WE-BUILD.md` pass 1 and `docs/FLEET.md` "The builder pass": rebase on `main`; Release `--no-incremental` 0 warnings; Unit, Fault 0 failed,
 touched classes 3×; CI via `fleet/bin/ci-dispatch.sh` (run id, each job); names 0 removed (both sizes); the tests box run or its NOT RUN line; `## Report` ≤ 20 lines; no push to `main`.
+
+## Paused
+16:57 CEST on seat A's throttle; code tip `7121c4db`, this note's commit on top. Committed: items 1 `2993ff87`, 2 `adf4b21f`, 3 `4b9a8068`, 5 `7121c4db`; item 4 and item 3's follow-ups (the feed's first slice from cadence, the referee reading its tape once, (p)) are WIP `d332c422`, building at 0 warnings.
+Run green before the WIP changes and not re-run since: (a)–(l), (o), `EvaluatorLimitTests`; mutant (as-of moved to the next close) ⇒ (f) red `Expected: COMPLETED Actual: FAULTED`, restored byte-identical. NOT RUN: (m), (n), (p) — the suite was held by gates.
+Next: under the suite lock run `FeatureProgram*` (Unit) and `FeatureProgramRunnerTests` (Fault); pin (p) from what it prints (`TapeFixtureSha256` is "PIN"); split `d332c422` (reset --soft `4b9a8068`, amend item 3 by path, commit item 4, docs last); time the year benchmark (scratch `bench/`, under the lock); then the gate.
+Open: if U-tape-holdout lands first, `FeatureFeed` is the one place calling `FeatureSeries.Read` (BarAudience → TapeHoldout). Tests box 16:45: `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it`.
