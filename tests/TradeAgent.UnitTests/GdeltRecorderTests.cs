@@ -424,6 +424,8 @@ public class GdeltRecorderTests(ITestOutputHelper log)
         using var store = new TapeStore(NewFile());
         await using var recorder = Recorder(store, host, () => Label.AddSeconds(2));
         Assert.Equal(4, (await recorder.LookOnceAsync()).Stored);
+        using var db = TestEnv.NewDb();
+        var research = TapeHoldout.Pipe(CouncilRoles.Research, new DatasetStore(db));   // a ledger holding no cutoff
 
         var expected = new (string Subject, string? Rule)[]
         {
@@ -434,7 +436,7 @@ public class GdeltRecorderTests(ITestOutputHelper log)
         foreach (var (subject, rule) in expected)
         {
             var row = store.Revisions(GdeltGkg.Source, GdeltGkg.ItemsSeries, TapeStore.NaturalKey(subject, Label)).Single();
-            var served = store.AsOf(BarAudience.Pipe(CouncilRoles.Research), GdeltGkg.Source, GdeltGkg.ItemsSeries, subject, Label.AddMinutes(1));
+            var served = store.AsOf(research, GdeltGkg.Source, GdeltGkg.ItemsSeries, subject, Label.AddMinutes(1)).Row;
             log.WriteLine($"{subject}: {row.Quarantine?.Rule ?? "clean"}");
 
             Assert.NotNull(row.Payload);

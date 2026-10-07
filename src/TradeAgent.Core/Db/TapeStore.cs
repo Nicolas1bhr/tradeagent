@@ -8,6 +8,13 @@ using TradeAgent.Core.Data;
 namespace TradeAgent.Core.Db;
 
 /// <summary>
+/// What an as-of read served: the observation, or null because nothing had arrived — or, with no observation, why the
+/// one it would have served is withheld (<see cref="TapeHoldout"/>). The refusal comes with NO row deliberately: a caller
+/// that forgets to look at it is handed nothing, never a reading stamped inside a holdout window.
+/// </summary>
+public sealed record TapeAsOf(TapeObservation? Row, string? Refusal);
+
+/// <summary>
 /// THE MARKET-CONTEXT TAPE: THE ONLY WRITER OF <c>state/tape.db</c>, now and for every later rung of
 /// it (<c>U-tape-store</c>; <c>docs/EDGE-FACTORY.md</c> § 4.1).
 ///
@@ -541,27 +548,26 @@ public sealed class TapeStore : IDisposable
     /// <summary>
     /// WHAT HAD ARRIVED BY <paramref name="t"/> ABOUT ONE SUBJECT'S SERIES: the observation with the
     /// latest source time among those received at or before <paramref name="t"/>, at the latest of its
-    /// revisions received by then — or null, because nothing had.
+    /// revisions received by then — or no row, because nothing had.
     ///
-    /// <para><b><paramref name="audience"/> is required</b>, and is checked INSIDE the reader, as
-    /// <c>DatasetReader.Read</c> checks its own: a later holdout over the tape applies here without a
-    /// caller having to remember a line. No tape holdout exists yet, so today every audience is served
-    /// the same answer; the argument is what makes adding one a change to this method and not a hunt
-    /// for every caller.</para>
+    /// <para><b><paramref name="holdout"/> is required, and is checked INSIDE the reader</b>, as
+    /// <c>DatasetReader.Read</c> checks its own (<c>U-tape-holdout</c>): when the row this would serve has a
+    /// SOURCE time inside any dataset's holdout window, the answer is <see cref="TapeAsOf.Refusal"/> and no row —
+    /// not the newest reading before the window, which would be a different answer from the one asked for. When
+    /// it arrived does not matter: a late revision of a reading stamped before the window is served. The ledger
+    /// is read after the tape's lock is released, so the two locks are never held together.</para>
     ///
     /// <para><b>A quarantined observation's payload is WITHHELD here</b> (<c>U-tape-events</c>): the answer
     /// carries every field and the <see cref="TapeObservation.Quarantine"/> that says why, and a null
-    /// <see cref="TapeObservation.Payload"/>. That is <see cref="BarAudience.Pipe"/> — every caller on the
-    /// agent-facing channel — and, today, every audience there is: the referee's, the only other, never
-    /// reads the tape, and whether a quarantined item ever reaches a model is <c>U-annotator</c>'s decision,
-    /// to be made by a door of its own rather than inherited from this one.</para>
+    /// <see cref="TapeObservation.Payload"/> — to every audience, the referee's included, and whether a
+    /// quarantined item ever reaches a model is <c>U-annotator</c>'s decision, to be made by a door of its own
+    /// rather than inherited from this one.</para>
     /// </summary>
-    public TapeObservation? AsOf(BarAudience audience, string source, string series, string subject,
-        DateTimeOffset t)
+    public TapeAsOf AsOf(TapeHoldout holdout, string source, string series, string subject, DateTimeOffset t)
     {
-        ArgumentNullException.ThrowIfNull(audience);
+        ArgumentNullException.ThrowIfNull(holdout);
 
-        return Read(() =>
+        var row = Read(() =>
         {
             using var c = Cmd($"""
                 SELECT {ObsCols} FROM tape_obs
@@ -571,20 +577,26 @@ public sealed class TapeStore : IDisposable
                 """,
                 ("$src", source), ("$ser", series), ("$subj", subject), ("$t", Sql.T(t)));
             using var r = c.ExecuteReader();
-            return r.Read() ? Served(audience, Obs(r)) : null;
+            return r.Read() ? Obs(r) : null;
         });
+
+        if (row is null) return new TapeAsOf(null, null);
+        return holdout.Refusal(row, t) is { } withheld
+            ? new TapeAsOf(null, withheld)
+            : new TapeAsOf(Served(holdout.Audience, row), null);
     }
 
     /// <summary>
     /// THE ONE PLACE A PAYLOAD IS WITHHELD FROM AN AUDIENCE (<c>U-tape-events</c>; <c>U-tape-read</c>): a quarantined
     /// observation keeps every field and its <see cref="TapeObservation.Quarantine"/>, and loses its payload. Every
-    /// read that takes an audience goes through this — <see cref="AsOf"/> here and <see cref="TapeReader.Window"/>, the
+    /// read that takes a holdout goes through this — <see cref="AsOf"/> here and <see cref="TapeReader.Window"/>, the
     /// agent-facing range read — so a door onto the tape cannot serve a quarantined payload by forgetting a line, and
     /// a later rule about who may see what is a change to this method and not a hunt for every caller.
     ///
     /// <para><paramref name="audience"/> decides nothing yet: no audience may read a quarantined payload, the
     /// referee's included, and whether one ever reaches a model is <c>U-annotator</c>'s decision, to be made by a door
-    /// of its own. It is required so that the decision, when it comes, has one place to live.</para>
+    /// of its own. It is required so that the decision, when it comes, has one place to live. The holdout windows are
+    /// not decided here: they are <see cref="TapeHoldout"/>'s, checked by each reader before a row is served.</para>
     /// </summary>
     internal static TapeObservation Served(BarAudience audience, TapeObservation o)
     {
@@ -596,6 +608,11 @@ public sealed class TapeStore : IDisposable
     /// Every revision held under one natural key, first reading first. An in-process read, payloads whole
     /// and each with its quarantine: a reader that serves an agent withholds a quarantined payload, as
     /// <see cref="AsOf"/> does.
+    ///
+    /// <para><b>It takes no <see cref="TapeHoldout"/>, and that is why it is never a pipe read</b>: it is the
+    /// recorders' own bookkeeping (<c>GdeltRecorder</c> reads its file records through it), and the gateway holds a
+    /// <see cref="TapeReader"/>, never this store. <c>TapeHoldoutTests</c> holds the list of public reads that serve a
+    /// row without a holdout to this and <see cref="ObservationsOf"/>, by name.</para>
     /// </summary>
     public IReadOnlyList<TapeObservation> Revisions(string source, string series, string naturalKey) => Read(() =>
     {

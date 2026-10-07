@@ -114,7 +114,8 @@ public class TapeReadTests(ITestOutputHelper log)
 
         var before = Counts(file);
         var reader = new TapeReader(file);
-        var window = reader.Window(BarAudience.Pipe(CouncilRoles.Research),
+        using var db = TestEnv.NewDb();
+        var window = reader.Window(TapeHoldout.Pipe(CouncilRoles.Research, new DatasetStore(db)),
             new TapeQuery { Source = TapeSourceCatalog.OpenInterest, Series = "open-interest" });
         Assert.Single(window.Rows);
         Assert.Equal([TapeSourceCatalog.OpenInterest], reader.Sources().Where(s => s == TapeSourceCatalog.OpenInterest));

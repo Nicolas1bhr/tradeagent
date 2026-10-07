@@ -131,14 +131,17 @@ public class TapeStoreTests(ITestOutputHelper log)
     /// "AS OF" MEANS WHAT HAD ARRIVED BY THEN. A point arrives, is revised five minutes later, and a newer
     /// point arrives five minutes after that; each instant between is answered with what TradeAgent had
     /// in hand at it — never the revision before it arrived, never the newer point before it existed
-    /// here. The audience is required and checked inside the reader.
+    /// here. The holdout is required and checked inside the reader (<c>TapeHoldoutTests</c> holds what it
+    /// refuses; the ledger here holds no cutoff).
     /// </summary>
     [Fact]
     public void As_of_returns_what_had_arrived_by_then_for_the_named_audience()
     {
         using var store = new TapeStore(NewFile());
-        var research = BarAudience.Pipe(CouncilRoles.Research);
-        var nobody = BarAudience.Pipe(null);
+        using var db = TestEnv.NewDb();
+        var ledger = new DatasetStore(db);
+        var research = TapeHoldout.Pipe(CouncilRoles.Research, ledger);
+        var nobody = TapeHoldout.Pipe(null, ledger);
 
         var p1 = Noon.AddMinutes(5);
         var p2 = Noon.AddMinutes(10);
@@ -147,8 +150,8 @@ public class TapeStoreTests(ITestOutputHelper log)
         store.Append(Fetch(p2.AddMinutes(5).AddSeconds(2)), [Point(p2, "102.000")]);
         store.Append(Fetch(p2.AddMinutes(5).AddSeconds(2)), [Point(p2, "999.000", "ETHUSDT")]);
 
-        string? At(DateTimeOffset t, BarAudience? who = null) =>
-            store.AsOf(who ?? research, Source, Series, Symbol, t) is { } o
+        string? At(DateTimeOffset t, TapeHoldout? who = null) =>
+            store.AsOf(who ?? research, Source, Series, Symbol, t).Row is { } o
                 ? $"{o.SourceTime:HH:mm} r{o.Revision} {o.Payload!.Split('"')[3]}"
                 : null;
 
@@ -169,10 +172,10 @@ public class TapeStoreTests(ITestOutputHelper log)
 
         // ONE SUBJECT'S SERIES, never another's.
         Assert.Equal("12:10 r1 999.000",
-            store.AsOf(research, Source, Series, "ETHUSDT", p2.AddMinutes(6)) is { } eth
+            store.AsOf(research, Source, Series, "ETHUSDT", p2.AddMinutes(6)).Row is { } eth
                 ? $"{eth.SourceTime:HH:mm} r{eth.Revision} {eth.Payload!.Split('"')[3]}" : null);
 
-        // THE AUDIENCE IS REQUIRED. No tape holdout exists yet, so every audience reads the same.
+        // THE HOLDOUT IS REQUIRED. With no dataset holding a cutoff, every audience reads the same.
         Assert.Throws<ArgumentNullException>(() => store.AsOf(null!, Source, Series, Symbol, p2));
         Assert.Equal(At(p2.AddSeconds(2), research), At(p2.AddSeconds(2), nobody));
     }

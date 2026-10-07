@@ -2890,11 +2890,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>
     /// THE TAPE, FOR EVERY ROLE, BOUNDED AND READ-ONLY (<c>U-tape-read</c>).
     ///
-    /// <para><b>Every role, and a caller that proved none.</b> The tape is research context: nothing on it is held
-    /// back, no verdict is taken over it, and the audience is the caller's own pipe audience, passed to the reader so
-    /// that a later holdout over the tape applies there without this handler changing. A quarantined item is served to
-    /// every audience with its rule and without its payload — the reader withholds it in the one place
-    /// <c>TapeStore.AsOf</c> does.</para>
+    /// <para><b>Every role, and a caller that proved none — and none of them inside a holdout window</b>
+    /// (<c>U-tape-holdout</c>). The tape is research context and no verdict is taken over it, but every dataset holding
+    /// a cutoff holds the same market time on the tape: the reader is handed the caller's own pipe audience with the
+    /// dataset ledger (<see cref="TapeHoldout.Pipe"/>) and refuses, inside, a window of source time reaching any
+    /// dataset's held-back months — <c>HOLDOUT_WITHHELD</c>, in words naming the dataset, its cutoff and the window, never
+    /// cut short. A quarantined item is served to every audience with its rule and without its payload — the reader
+    /// withholds it in the one place <c>TapeStore.AsOf</c> does.</para>
     ///
     /// <para><b>Bounded, and never silently.</b> At most <see cref="TapeReader.MaxRows"/> rows — a larger limit is
     /// refused in words, never clamped — and at most <see cref="MaxTapeReplyBytes"/> of rows. An answer either bound
@@ -2966,7 +2968,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var limit = TapeLimit(req);
         var before = TapeCursor(req);
 
-        var window = tape.Window(BarAudience.Pipe(ctx.Role), new TapeQuery
+        // THE HOLDOUT IS THE CALLER'S OWN PIPE AUDIENCE WITH THE DATASET LEDGER, read inside the reader at this read: a
+        // window reaching any dataset's held-back months is refused there, whoever asks, before the tape is opened.
+        var window = tape.Window(TapeHoldout.Pipe(ctx.Role, gateway.Datasets), new TapeQuery
         {
             Source = source,
             Series = series,
@@ -2978,6 +2982,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             Limit = limit,
             MaxBytes = MaxTapeReplyBytes
         }, o => Encoding.UTF8.GetByteCount(Json.Write(TapeRow(o))));
+
+        if (window.Refusal is { } withheld)
+            throw new GatewayDeniedException(ErrorCode.HOLDOUT_WITHHELD, withheld);
 
         var rows = window.Rows.Select(TapeRow).ToList();
         return new DataTapeReply(
