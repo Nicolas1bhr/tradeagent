@@ -8741,3 +8741,41 @@ CI 34715391501; judged not moved by item 6 (reached only with < 500 ms left of i
 **NOT done, NOT verified:** item 1 on Windows by CI only, its cross-process half by reading only; the new press test's margin on a hosted runner not measured;
 the witness's lock and sidecar sleeps; `ConnectorSendDeadlineTests`; `BridgePipeAuth.WriteFile` (`AtasConnector.cs:2091`) writes `bridge.auth`'s temp before
 restricting its mode — the window item 1 closed for `ipc.token`, now surveyed by seat A for a fix brief.
+
+## 2026-10-07 — U-tape-holdout landed: no caller on the agent-facing pipe reads a tape row from inside any dataset's holdout window — refused in words, never clipped — and the referee still does
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-tape-holdout.md` (written by seat A's manager on the orchestrator's ruling of
+2026-10-07 12:02 — U-tape-read had made the tape readable by every role and no tape holdout existed; queued `ce613da8`, dispatched `6ca2a54a`); rebased by
+the builder onto `18a7ab10` (over U-features, so it threads the holdout through `FeatureSeries.Read`) and by the manager onto `ad3dc494` (over U-test-hygiene-2, rebased and gated while a GitHub push outage held `ad3dc494` local; prep then found it on main and the gate carried),
+src+tests patch-id identical (`22023327a0c3`). Merge `0ea25bf4` (ff-only), 7 commits (3 items, the threading, two follow-ups, the report), 16 files, +1025/−89.
+**No schema change.** EVIDENCE: the holdout (`Holdout.cs`; `docs/COUNCIL.md` "holdout data the research process cannot reach") now covers the tape.
+
+- **Item 1 (`c5e96c28`):** `TapeHoldout` beside `Holdout` — every dataset holding a cutoff holds a tape window `[holdout_from, LastBar + one Interval)`, open campaign
+  or not; built for the pipe from the dataset ledger at every read; the referee's pass-through `internal`.
+- **Item 2 (`7cf47946`, `a5e15a57`):** `TapeReader.Window` and `TapeStore.AsOf` take it as a REQUIRED argument and refuse INSIDE: a read whose source-time window
+  reaches any window is refused in words naming the dataset, cutoff and window — never clipped — whatever the source, series or subject; an as-of read is refused
+  when its row lies inside one; `data-tape` hands the pipe's; `FeatureSeries.Read` requires it too (U-features landed first).
+- **Bounded start (`3976402a`, `62081749`), seat A's ask:** where the clean-history search stops at a window's close, the answer says the start was bounded by a
+  holdout (`FeatureCleanStart.Bounded`), found or absent — never read as the input's first reading.
+- **Item 3 (`5ee2f0aa`):** `CONTRACTS.md` THE HOLDOUT in the tape's section; `WorkspaceBuilder` and `GatewaySchema` tell agents how to ask.
+- **Declared deviations, accepted:** (1) `TapeHoldout` carries the audience with the ledger and replaces `BarAudience` on the tape readers; (2) a dataset with no
+  bar, or whose cutoff is at or past its last bar's close, holds no window; one with no recorded last bar or an unreadable interval is held with NO end (the
+  conservative side); (3) while any cutoff is set, a `data-tape` read with no window is refused (the brief's unbounded rule); agents are told how to ask.
+- **Answer first:** no in-process tape read besides the referee's needs the holdout — `GdeltRecorder`'s reads are bookkeeping; `data-list`, `status` and the report
+  give counts, names and arrivals, never a value; `FeatureSeries.Read` now requires it; the referee reads no tape today.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `3c160413`: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed 1458,
+Failed 0`; Fault `Passed 463, Failed 0`; 3× `TapeHoldoutTests`, `TapeStoreTests`, `TapeReadTests`, `TapeAnnouncementTests`, `GdeltRecorderTests`, `FeatureSeriesTests`
+36/36 each run. RED before at `6ca2a54a`: (a) "a tape read reaching dataset 1's holdout window was served to operations" (8 rows); (d) "an as-of read served
+operations a row stamped 2026-08-15 12:01:00Z, inside the holdout window". Mutant (Window's refusal line removed) ⇒ (a) red, "served 10 rows"; restored.
+Manager's gate at `0ea25bf4`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1466/1466 (9 m 12 s), Fault 464/464 (2 m), Integration 732/733, 1 skipped (11 m 13 s) → 0 failed.
+Names vs `main`: 2287 → 2296, 0 removed, 9 added. Scan: `SCAN CLEAN`; no trailers; `rev-list --count` 0 both ways.
+**CI:** run 37613808298 at `88c51702`: success on all four jobs. Run 37635095478 at `3c160413` (88c51702→3c160413: one sentence in `FeatureSeries.cs`, one ETHUSDT
+assertion, one CONTRACTS clause): ubuntu and macos success; windows red ONLY in `BridgeLivenessClockTests.A_bridge_pulsing_while_the_wall_clock_steps_forward_an_hour
+_stays_ready` ("The stream is currently in use by a previous operation on the stream." at `StubBridge.Heartbeat`, `Harness.cs:193`), package skipped. **JUDGED
+(seat A): a test-rig race, not this unit** — the stub bridge writes heartbeat and answers on one writer with no turn-taking (the real `BridgeServer` serialises);
+read as RIG by seat A's survey at 16:38 (owed: `U-test-hygiene-3` item (b)); this diff touches no bridge, connector or harness file; no re-dispatch under the throttle.
+**Tests box:** NOT RUN — 17:14 `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it` (exit 5).
+
+**NOT done, NOT verified:** no named-pipe test (a) goes through `CallAsync`, the same handler; no every-op sweep for tape rows; `Errors.cs`'s `HOLDOUT_WITHHELD`
+owner text still says "bars" (wording, light); no referee tape door yet (v2a's).
