@@ -8485,3 +8485,40 @@ after it (`43def342`, `47bee8f7`). **Tests box:** NOT RUN — `ready : NO - the 
 **NOT done, NOT verified:** whether ATAS lists a filled market order under its client id after a bridge drop (code read, NOT VERIFIED: the box not granted
 and unreachable); the ATAS residual above; a run's own flatten settled `CANCELLED` owes no close (`OwesItsClose`) — out of scope; a lagging position read
 stays NOT claimed; no box run, no app run.
+
+## 2026-10-07 — U-tape-read landed: every role can read the tape, bounded and read-only through one withholding place, and the owner can see it is recording
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-tape-read.md` (READY since 2026-10-02; re-checked against `9cd0f5e5`, pointer
+drift amended `7f872732`; dispatched `bdf5affa`). Rebased by the manager onto `1828a188` (over U-inflight-settle), src+tests patch-id identical
+(`d6e31e9329a8`). Merge `9ef81d30` (ff-only), 7 commits (4 items, 2 follow-ups, the report), 22 files, +2417/−31. **No schema change** (main 30, tape.db 1).
+**M0's pin:** the orchestrator pinned M0's GO sha at `1828a188` before this merge (02:26) (Law 10: the loop observed before its inputs widen).
+Nothing can write the tape through it: `TapeReader` opens `tape.db` read-only with `query_only` and the gateway holds no `TapeStore`; the ONE place that
+withholds a quarantined payload is `TapeStore.Served`, used by `AsOf` and the range read alike.
+
+- **Item 1 (`2c64c819`):** op `data-tape` for every role and a caller with none; drain-table row at 0; limit 1–5,000 (default 1,000; more refused in words),
+  4 MiB of rows, newest arrival first; source/series/subject validated in words, `--subject` optional; the caller's audience handed to the reader.
+- **Item 2 (`933ce8d8`):** `trade data tape …` with a `source credit:` line; `GatewaySchema` entry; three `WorkspaceBuilder` lines; the harness `data` tool.
+- **Item 3 (`b1d59af1`, `7024d248`):** `data-list.tape` (switch, rows, first/last arrival, last error, symbols or subject key, GDELT's citation);
+  `status.tape` {recording, rows_today, failures_last_hour, market_context, gdelt_news with daily_cap_reached_today, sources}; the daily report's
+  "market context tape" line (rows, gaps, errors, GDELT credit).
+- **Item 4 (`c321e608`, `f219341b`):** `CONTRACTS.md` (the op, its bounds, the reader that cannot write, NOT CLAIMED 12–13), `USER-GUIDE.md` ("Seeing that it is
+  recording"); the quarantine test's announcements on a reserved `.invalid` host.
+- **Declared deviations, accepted:** (1) argument `before`, a row-id cursor — a GDELT file's rows share label AND arrival, so no time continues a capped answer
+  exactly; (2) the byte cap counts the reply's rows as written; (3) `GdeltGkg.CapNotePrefix` replaces the recorder's literal, so status reads the cap off the
+  tape; (4) `DataOpsTests.There_is_no_operation_on_this_channel_that_writes_a_dataset` now names the three `data-` ops (stronger; not renamed).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `70ca3f8c`: Release `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit
+`Failed: 0, Passed: 1424`; Fault `Failed: 0, Passed: 445`; `TapeReadTests`+`DataOpsTests` 3× 12/12, `TapeOverPipeTests` 3× 8/8. RED before: (a) with the
+dispatch arm removed → `unknown operation 'data-tape'`. Mutants: (i) the reader's limit check removed ⇒ (a) `Expected: 5000 Actual: 5001`; (ii)
+`TapeStore.Served` returning the payload ⇒ (g) `Expected: Null Actual: String`.
+Manager's gate at `9ef81d30`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1424/1424 (9 m 7 s), Fault 449/449 (1 m 56 s), Integration 729/730, 1 skipped (11 m 16 s) → 0 failed.
+Names vs `main`: 2224 → 2237, 0 removed, 13 added. Scan: two judged false positives in `TapeOverPipeTests.cs`, excluded by name — "machine token on every frame" (a doc comment's prose about the pipe's
+machine token) and `"attempt-tape-" + role).Token` (the token of a grant the test rig issues itself); no trailers; `rev-list --count` 0 both ways.
+**CI:** branch run 37529866030 at `70ca3f8c` (on `bdf5affa`): success on ubuntu-latest, macos-latest, windows-latest (66 min), package — each Unit 1423/1423,
+Fault 440/440, Integration 638 passed; macOS's Timing category red once on its first attempt in `SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_
+not_once_per_rpc` (NullReferenceException at :333), green on the category's second attempt — a path this diff does not reach; a sighting for seat P.
+**Tests box:** NOT RUN — `ready : NO - the machine does not answer (…)` at 22:35 CEST and at this landing.
+
+**NOT done, NOT verified:** no Settings-card line (status and report only, per the brief); the status and report counts stand on `TapeReader.ArrivalSlack` (a
+clock stepped back > 10 min is not covered); `data-tape`'s cost on a large tape not measured — no arrival index until a tape rung adds one; the read-only
+WAL open on Windows verified by CI only; no box run, no app run.
