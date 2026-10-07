@@ -206,11 +206,22 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
         return await Inner.GetQuoteAsync(s, ct);
     }
 
+    /// <summary>
+    /// A POSITION READ THAT TRAILS THE ORDER LIST (<c>U-press-close-once</c>): what a platform answers whose position
+    /// object has not yet taken a fill its own order list already shows. Set, every position read answers THIS list
+    /// rather than the book's — after the wire call, so its deadline and its faults still apply — and a close is
+    /// sized from it too, as ATAS's <c>ClosePosition</c> sizes its close from that same position object at that
+    /// instant (<c>AtasStrategyAdapter.ClosePosition</c>). The book itself moves as it always does. Inert until set;
+    /// clearing it is the read catching up.
+    /// </summary>
+    public IReadOnlyList<PositionInfo>? PositionsTrail;
+
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Positions);
         await Gate(HeldCall.Positions);
-        return await Inner.GetPositionsAsync(a, ct);
+        var book = await Inner.GetPositionsAsync(a, ct);
+        return PositionsTrail ?? book;
     }
 
     /// <summary>
@@ -273,7 +284,13 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     {
         Interlocked.Increment(ref Closes);
         await Gate(HeldCall.Close);
-        return await Inner.ClosePositionAsync(a, s, coid, ct);
+        if (PositionsTrail is not { } trail) return await Inner.ClosePositionAsync(a, s, coid, ct);
+
+        // SIZED FROM THE POSITION AS THIS PLATFORM READS IT, which trails its book: see PositionsTrail.
+        var held = trail.FirstOrDefault(p => p.Symbol == s)?.Quantity ?? 0m;
+        if (held == 0m) return null;
+        return await Inner.PlaceOrderAsync(new PlaceOrderCommand(coid, a, s, held > 0m ? OrderSide.Sell : OrderSide.Buy,
+            OrderType.Market, Math.Abs(held), null, null, TimeInForce.Day, "close position") { Intent = OrderIntent.Close }, ct);
     }
 
     public event Action<HealthState>? ConnectionChanged { add => Inner.ConnectionChanged += value; remove => Inner.ConnectionChanged -= value; }
