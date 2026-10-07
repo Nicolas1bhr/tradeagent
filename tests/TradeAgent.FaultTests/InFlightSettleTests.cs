@@ -29,14 +29,14 @@ public class InFlightSettleTests(ITestOutputHelper log)
 {
     static readonly AgentContext Ai = new("ai");
 
-    sealed record Harness(TradingGateway Gw, RecordingConnector C, Database Db, MovableClock Clock, GatewayOptions Options)
+    internal sealed record Harness(TradingGateway Gw, RecordingConnector C, Database Db, MovableClock Clock, GatewayOptions Options)
     {
         /// <summary>How long after its dispatch a row in flight is asked about: the reconciler's own clock.</summary>
         public TimeSpan Stale => Gw.DispatchStrandedAfter + Options.AbsenceGrace;
     }
 
     /// <summary>A gateway over the simulator, healthy and allowed to trade, on a clock this class moves.</summary>
-    static async Task<Harness> Ready(Database? db = null, RecordingConnector? c = null, MovableClock? clock = null)
+    internal static async Task<Harness> Ready(Database? db = null, RecordingConnector? c = null, MovableClock? clock = null)
     {
         db ??= TestEnv.NewDb();
         c ??= new RecordingConnector(new FakeConnector(new FakeBroker()));
@@ -60,7 +60,7 @@ public class InFlightSettleTests(ITestOutputHelper log)
     }
 
     /// <summary>A long of <paramref name="qty"/> ES, and the agent's market close of it RESTING at the platform: <c>WORKING</c>.</summary>
-    static async Task<ExecutionRequest> AWorkingClose(Harness h, string prefix, decimal qty = 2m)
+    internal static async Task<ExecutionRequest> AWorkingClose(Harness h, string prefix, decimal qty = 2m)
     {
         await h.Gw.PlaceAsync(Ai, $"{prefix}-open", TestEnv.Buy("ES", qty));
         h.C.Faults.Fill = FillBehaviour.LeaveWorking;
@@ -71,7 +71,7 @@ public class InFlightSettleTests(ITestOutputHelper log)
         return first;
     }
 
-    static decimal Held(RecordingConnector c) =>
+    internal static decimal Held(RecordingConnector c) =>
         c.Broker.Positions.FirstOrDefault(p => p.Symbol == "ES")?.Quantity ?? 0m;
 
     /// <summary>A close's outcome: the row it became, or the refusal that stopped it before its row existed.</summary>
@@ -280,7 +280,7 @@ public class InFlightSettleTests(ITestOutputHelper log)
     /// ONE PASS OF THE APP'S BACKGROUND LOOP (<c>AppHost.BackgroundAsync</c>): the health pass, then the reconciler while
     /// anything is unconfirmed — the same tick, so a row handed over is met by the reconciler at once.
     /// </summary>
-    static async Task Pass(TradingGateway gw)
+    internal static async Task Pass(TradingGateway gw)
     {
         await gw.RefreshHealthAsync();
         if (gw.HasUnconfirmedWork()) await gw.ReconcileAsync();
