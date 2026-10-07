@@ -1,9 +1,9 @@
 # U-language-v2a — a program reads a feature it declares, bound into its id by the feature's hash, valued at each bar's close from only what had arrived, refused by any reader that cannot run it
-**Arrow closed:** features → language v2a (`docs/EDGE-FACTORY.md` § 4.4, § 9 phase 2). **Depends on `U-features`, NOT landed when briefed** (`u-features` at `06499434`; re-check each name at dispatch):
+**Arrow closed:** features → language v2a (`docs/EDGE-FACTORY.md` § 4.4, § 9 phase 2). **Depends on `U-features`, LANDED** (merge `90aece2a`, record `34a34ba0`; names re-checked at dispatch, `Parse` returns `FeatureParse`):
 `FeatureSpec.Parse`/`.Id`, `FeatureVersions.Manifest` (`features=1`), `FeatureSeries.Read(reader, audience, spec, from, to, step)` → `FeatureSeriesRead` (≤ 10,000 instants, ≤ 50,000 rows an input, a constant
 step), `FeatureValue` (`Present`, `Class`, `RowsSha256`), `FeatureLicence.LiveRefusal`. **Then:** `U-runner-features` (the paper runner values features at its decision instant, absent = no decision, lifting
 item 2's refusal), `U-universe`. **Protects:** no model output on the signal path (§ 6.1: values are `FeatureEvaluator`'s over market rows); evidence binding (§ 6.2); no look-ahead, by construction; the
-holdout (features read under the run's bar audience; a TAPE holdout is `U-tape-holdout`'s, landing first — read through it); live eligibility; required fields (R05 row 10).
+holdout (features read under the run's bar audience; a TAPE holdout is `U-tape-holdout`'s, building beside you: it adds a required holdout argument to the tape reads and `FeatureSeries.Read` — whichever lands second adapts); live eligibility; required fields (R05 row 10).
 **Today** (main `30dd8b81`): an unknown first word is refused (`StrategyParser.cs:289-291`); `bars` is a declaration, not a keyword, so a stored `const bars = 20` parses (`:58-66`), and is written only when not
 1m, so v1 texts and ids held (`StrategyCanonical.cs:49-60`); the id hashes the manifest (`StrategyProgram.cs:48-52`), and moving it withdraws every verdict and ends every paper run (`PromotionStore.cs:488-519`). Undefined is
 already no decision, scheduled exits first (`StrategyInterpreter.cs:3-10`, `StrategyEvaluator.cs:485-499`). Lines ≤ 240, checked before the keyword (`StrategyLimits.cs:33`, `StrategyParser.cs:272`). A run id
