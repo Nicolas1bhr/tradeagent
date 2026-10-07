@@ -143,8 +143,22 @@ public sealed class ContainedProcess : IDisposable
 {
     readonly IntPtr _job;
     readonly bool _ownSession;
+    readonly Lock _teardown = new();
     bool _closed;
     bool _held;
+    bool _disposed;
+
+    /// <summary>The turn's leader and the start the kernel gave it, read the moment it was started.</summary>
+    readonly int _leader;
+    readonly ulong _leaderStart;
+
+    /// <summary>
+    /// THE TURN'S SESSION, REMEMBERED, never re-read from a pid that may be gone. The launcher makes the
+    /// leader a session leader with <c>setsid</c> and keeps its pid, so the session's id IS the leader's pid
+    /// — known here at the start, before the launcher has run, and still known after the leader has exited,
+    /// which is exactly when a finished turn's leftovers need it. Zero for a process nothing held.
+    /// </summary>
+    readonly int _session;
 
     internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism)
     {
@@ -153,6 +167,10 @@ public sealed class ContainedProcess : IDisposable
         _ownSession = ownSession;
         _held = held;
         Mechanism = mechanism;
+        if (OperatingSystem.IsWindows()) return;
+        _leader = process.Id;
+        _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
+        _session = ownSession ? _leader : 0;
     }
 
     public Process Process { get; }
@@ -174,9 +192,8 @@ public sealed class ContainedProcess : IDisposable
         get
         {
             if (_held) return true;
-            if (!_ownSession) return false;
-            var group = CurrentGroup();
-            if (group > 0) _held = true;
+            if (!_ownSession || _leaderStart == 0) return false;
+            if (Posix.SessionOf(_leader) == _session && ProcessTable.Read(_leader)?.Start == _leaderStart) _held = true;
             return _held;
         }
     }
@@ -184,50 +201,80 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>What is holding it, or why nothing is. One line, for a health row.</summary>
     public string Mechanism { get; }
 
-    /// <summary>
-    /// Ends the process and everything it started.
-    ///
-    /// The job (or the group) FIRST, then the ordinary tree kill: the strong mechanism is the one
-    /// that reaches a grandchild whose parent has already exited, and the tree walk is what still
-    /// works when this build could not get a job at all.
-    /// </summary>
-    public void Kill()
-    {
-        CloseJob();
-        if (CurrentGroup() is > 0 and var group) Posix.KillGroup(group);
-        try { if (!Process.HasExited) Process.Kill(entireProcessTree: true); }
-        catch (Exception) { /* already gone */ }
-    }
+    /// <summary>What the last teardown found, or null before one has run.</summary>
+    public TreeEnd? Ended { get; private set; }
 
     /// <summary>
-    /// The process group to take down with this turn, or 0 when there is none to take.
-    ///
-    /// Zero whenever the child's group is TradeAgent's own, which is the state a build with no
-    /// launcher is in: killing that group would kill the app. Read at the moment of the kill rather
-    /// than remembered from the start, because the start is exactly when it is not yet knowable.
+    /// Ends the process and everything it started, and returns once it has. See <see cref="End"/>.
     /// </summary>
-    int CurrentGroup()
+    public void Kill() => End();
+
+    /// <summary>
+    /// THE TEARDOWN, AND IT RETURNS ONLY ONCE IT HAS ENDED THE TREE OR SAID WHICH PROCESSES IT COULD NOT.
+    ///
+    /// <para>Windows: the job — terminated, waited on until nothing in it runs, then closed — and the
+    /// ordinary tree kill where this build could not get a job at all. macOS and Linux:
+    /// <see cref="TreeTeardown"/> over the leader, its parent links and the turn's session, freezing
+    /// everything it proves the turn's before it kills any of it — leader exited or not, because a turn
+    /// whose leader has exited is exactly the one whose leftovers nothing else will ever end.</para>
+    ///
+    /// <para>One at a time: Stop, Pause and the turn's own end can arrive together, and the second waits
+    /// for the first and then looks again.</para>
+    /// </summary>
+    public TreeEnd End()
     {
-        if (OperatingSystem.IsWindows() || !_ownSession) return 0;
-        var group = Posix.GroupOf(Process.Id);
-        return group > 1 && group != Posix.GroupOf(Environment.ProcessId) ? group : 0;
+        lock (_teardown)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                EndJob();
+                if (_job == IntPtr.Zero && !_disposed)
+                {
+                    try { if (!Process.HasExited) Process.Kill(entireProcessTree: true); }
+                    catch (Exception) { /* already gone */ }
+                }
+                return Ended = TreeEnd.Nothing;
+            }
+
+            return Ended = TreeTeardown.End(_leader, _leaderStart, _session);
+        }
     }
 
     public void Dispose()
     {
-        // KILL_ON_JOB_CLOSE means this line is the teardown, not a tidy-up: every process still in
-        // the job dies as the last handle to it closes. A turn that has ended normally has nothing
-        // left in it, and a turn that left something behind is exactly the case this closes.
-        CloseJob();
-        if (!Process.HasExited && CurrentGroup() is > 0 and var group) Posix.KillGroup(group);
+        // THE TEARDOWN, NOT A TIDY-UP, and whether or not the leader is still running: a turn that ended
+        // normally has nothing left to find, and a turn that left something behind is exactly the case
+        // this closes. On Windows the job's KILL_ON_JOB_CLOSE is the same statement.
+        End();
+        lock (_teardown)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
         Process.Dispose();
     }
 
-    void CloseJob()
+    /// <summary>
+    /// Terminates everything in the job, waits — bounded — until the job says nothing in it is running, and
+    /// closes it. KILL_ON_JOB_CLOSE alone starts the same termination as the handle closes and returns before
+    /// it is over; the wait is what lets a caller say the tree is dead when it says so.
+    /// </summary>
+    void EndJob()
     {
         if (_closed || _job == IntPtr.Zero) return;
         _closed = true;
-        if (OperatingSystem.IsWindows()) Win32.CloseHandle(_job);
+        if (!OperatingSystem.IsWindows()) return;
+
+        try
+        {
+            if (Win32.TerminateJobObject(_job, 1))
+            {
+                var until = DateTime.UtcNow + TreeTeardown.Bound;
+                while (Win32.ActiveProcesses(_job) > 0 && DateTime.UtcNow < until) Thread.Sleep(10);
+            }
+        }
+        catch (Exception) { /* the close below still kills what is in it */ }
+        Win32.CloseHandle(_job);
     }
 
     [SupportedOSPlatform("windows")]
@@ -236,6 +283,37 @@ public sealed class ContainedProcess : IDisposable
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool CloseHandle(IntPtr handle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info,
+            uint length, IntPtr returned);
+
+        const int JobObjectBasicAccountingInformation = 1;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+        {
+            public long TotalUserTime;
+            public long TotalKernelTime;
+            public long ThisPeriodTotalUserTime;
+            public long ThisPeriodTotalKernelTime;
+            public uint TotalPageFaultCount;
+            public uint TotalProcesses;
+            public uint ActiveProcesses;
+            public uint TotalTerminatedProcesses;
+        }
+
+        /// <summary>How many processes the job still holds, or 0 when it cannot say — the close still ends them.</summary>
+        internal static uint ActiveProcesses(IntPtr job) =>
+            QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out var info,
+                (uint)Marshal.SizeOf<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), IntPtr.Zero)
+                ? info.ActiveProcesses
+                : 0;
     }
 }
 

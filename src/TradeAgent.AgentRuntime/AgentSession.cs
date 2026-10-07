@@ -219,6 +219,24 @@ public sealed class AgentSession(
 
     ContainedProcess? _current;
     CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// THE TURN'S TEARDOWN: disposing what holds it, which ends its whole tree and says what it could not.
+    /// A seam for the one test that needs a teardown that failed — a process the kill cannot reach is not
+    /// something a test can make — and nothing else sets it.
+    /// </summary>
+    internal Func<ContainedProcess, TreeEnd?> EndTree { get; set; } = contained =>
+    {
+        contained.Dispose();
+        return contained.Ended;
+    };
+
+    /// <summary>
+    /// What the last turn's teardown left running, or null when it ended everything. Set by the turn's own
+    /// <c>finally</c> and carried out on <see cref="TurnEnded"/>, so the meter that closes the turn's row can
+    /// refuse the next turn while any of it runs.
+    /// </summary>
+    IReadOnlyList<ProcessEntry>? _survivors;
     bool _busy;
     bool _sessionExists;
     string? _threadId;
@@ -425,6 +443,7 @@ public sealed class AgentSession(
         }
 
         SetBusy(true);
+        _survivors = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -460,7 +479,11 @@ public sealed class AgentSession(
                 Usage = usage,
                 // And the vendor's refusal, for the same reason: one reading of the stream, carried
                 // to the loop that has to wait for it and the meter that has to price it.
-                Limit = limit
+                Limit = limit,
+                // AND WHAT THE TEARDOWN COULD NOT END. The meter closes this turn's row on this event; a
+                // process of the turn still running past that is spend no ceiling sees, so the meter holds
+                // the next launch while any of these is the same process and still running.
+                Survivors = _survivors
             });
         }
     }
@@ -512,7 +535,8 @@ public sealed class AgentSession(
         // made once at prepare, and a token minted there would be one token for every turn of the
         // app's life. Disposed when the turn returns, which pulls its expiry in to the grace — see
         // AgentGrants.
-        using var launch = (grants ?? AgentGrants.Shared).Issue(role, attempt?.Invoke() ?? "");
+        var register = grants ?? AgentGrants.Shared;
+        using var launch = register.Issue(role, attempt?.Invoke() ?? "");
 
         // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
         // as a copy of this process's, so everything TradeAgent was started with used to reach the
@@ -526,36 +550,53 @@ public sealed class AgentSession(
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
         // exited has none left to walk — measured before this line existed, a detached grandchild
         // outlived CancelAsync on both platforms. See ProcessContainment.
-        using var contained = ProcessContainment.Start(psi);
+        var contained = ProcessContainment.Start(psi);
         var process = contained.Process;
         _current = contained;
-        // The conversation turn: the one process that runs what the agent decided to do. Held open
-        // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
-        // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
-        // Every path out of here has the child already dead — the method awaits its exit, and
-        // CancelAsync kills the tree before it cancels the token — so the window never closes on a
-        // process that is still writing.
-        using var alive = CliAgentRuntime.Presence(process, presence);
-
-        // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
-        try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
-
-        var stderr = process.StandardError.ReadToEndAsync(ct);
-        var raw = new StringBuilder();
-        var state = new TurnState();
-
-        string? line;
-        while ((line = await process.StandardOutput.ReadLineAsync(ct)) is not null)
+        try
         {
-            raw.AppendLine(line);
-            if (streaming) HandleStreamLine(line, state);
+            // The conversation turn: the one process that runs what the agent decided to do. Held open
+            // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
+            // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
+            using var alive = CliAgentRuntime.Presence(process, presence);
+
+            // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
+            try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
+
+            var stderr = process.StandardError.ReadToEndAsync(ct);
+            // A read the turn abandons — cancelled, or a pipe the teardown closed — is observed here, so
+            // an ending nobody waits for never reaches the app's last-resort error line.
+            _ = stderr.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            var raw = new StringBuilder();
+            var state = new TurnState();
+
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync(ct)) is not null)
+            {
+                raw.AppendLine(line);
+                if (streaming) HandleStreamLine(line, state);
+            }
+
+            await process.WaitForExitAsync(ct);
+            var errorText = (await stderr).Trim();
+
+            FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
+            return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
         }
-
-        await process.WaitForExitAsync(ct);
-        var errorText = (await stderr).Trim();
-
-        FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
-        return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
+        finally
+        {
+            // THE TURN'S WHOLE TREE ENDED, ON EVERY PATH OUT — finished, failed, cancelled — leader exited
+            // or not (ContainedProcess.End). What it could not end is carried to the meter, and the grant
+            // this launch carries is revoked outright rather than given its grace: the grace exists for a
+            // `trade` the turn started a moment before it ended, and a turn whose processes are still
+            // running past their teardown is not one whose work deserves another minute on the pipe.
+            if (EndTree(contained) is { Ended: false } end)
+            {
+                _survivors = end.Survivors;
+                register.Revoke(launch.Token);
+            }
+            _current = null;
+        }
     }
 
     /// <summary>
@@ -895,14 +936,18 @@ public sealed class AgentSession(
     /// tree kill could not: a grandchild that detached is no longer anybody's child, so a walk down
     /// parent links stops one level above it. The job — or the process group — still names it.
     /// </summary>
-    public Task CancelAsync()
+    public async Task CancelAsync()
     {
         var contained = _current;
-        try { contained?.Kill(); }
-        catch (Exception) { /* already gone */ }
+        // THE TEARDOWN, AND IT IS AWAITED: Pause and Stop return once the tree is gone, not once a signal
+        // has been sent. Off the caller's thread, because the caller is a button.
+        if (contained is not null)
+        {
+            try { await Task.Run(contained.Kill); }
+            catch (Exception) { /* already gone */ }
+        }
         try { _cts?.Cancel(); }
         catch (Exception) { }
-        return Task.CompletedTask;
     }
 
     /// <summary>Cancels anything running and forgets the session, so the next message starts fresh.</summary>

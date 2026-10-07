@@ -607,7 +607,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                try { p.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+                // THE WHOLE TREE, through the one teardown every agent process ends by — a parent-link walk
+                // stops one level above anything that detached (U-agent-tree).
+                held.Kill();
                 throw new TradeAgentException(ErrorCode.AI_AUTH_TIMEOUT,
                     $"{Path.GetFileName(exe)} did not accept the key within {KeySignInTimeout.TotalSeconds:0} seconds");
             }
@@ -833,7 +835,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         }
         catch (OperationCanceledException)
         {
-            try { p.Kill(entireProcessTree: true); } catch (Exception) { }
+            // The whole tree, as the key sign-in above and every turn end theirs (U-agent-tree).
+            held.Kill();
             throw new TradeAgentException(ErrorCode.AI_AUTH_TIMEOUT, $"{Path.GetFileName(exe)} did not finish within {timeout.TotalSeconds:0}s");
         }
     }

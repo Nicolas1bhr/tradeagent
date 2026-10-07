@@ -225,6 +225,14 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// been billed, so each keeps its reservation: unknown is never zero.</para>
     /// </summary>
     public string? KeyNotHeld { get; init; }
+
+    /// <summary>
+    /// THE PROCESSES OF THIS TURN ITS TEARDOWN COULD NOT END, or null when it ended every one it proved the
+    /// turn's (<c>U-agent-tree</c>). Each carries the start the kernel gave it, so whoever holds the next turn
+    /// on them can ask later whether it is still the same process — a pid alone is a number the system
+    /// hands on. <see cref="TurnMeter"/> refuses every launch while any of them runs.
+    /// </summary>
+    public IReadOnlyList<ProcessEntry>? Survivors { get; init; }
 }
 
 /// <summary>

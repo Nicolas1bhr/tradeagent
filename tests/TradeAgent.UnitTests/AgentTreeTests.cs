@@ -6,6 +6,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -369,6 +370,102 @@ public class AgentTreeTests : IDisposable
             await AssertAllDead(turn, "Mission.PauseAsync beside a tree running the same command");
         }
         finally { await Close(turn.Host); }
+    }
+
+    // ---- a teardown that cannot end the tree ----------------------------------------------------------
+
+    /// <summary>
+    /// A TEARDOWN THAT CANNOT END A PROCESS SAYS WHICH ONE, IN WORDS, WITHIN ITS BOUND — and leaves it frozen
+    /// rather than running. The kill is withheld for the one process here, because a process this user's
+    /// SIGKILL does not reach is not something a test can make.
+    /// </summary>
+    [Fact]
+    public void A_teardown_that_cannot_end_a_process_names_it_within_its_bound()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var stuck = Ours("/bin/sleep", "61");
+        var entry = ProcessTable.Read(stuck.Id);
+        Assert.NotNull(entry);
+
+        var watch = Stopwatch.StartNew();
+        var end = TreeTeardown.End(stuck.Id, entry!.Value.Start, session: 0, bound: TimeSpan.FromSeconds(1), kill: _ => false);
+        watch.Stop();
+
+        Assert.False(end.Ended);
+        Assert.Equal([stuck.Id], end.Survivors.Select(p => p.Pid));
+        Assert.Contains($"process {stuck.Id}", end.Sentence, StringComparison.Ordinal);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), $"the teardown took {watch.Elapsed} against a 1 s bound");
+        Assert.True(ProcessTable.Read(stuck.Id) is { Stopped: true }, "the process the teardown could not end was left running, not frozen");
+    }
+
+    /// <summary>
+    /// (2) AND (3) OF THE BRIEF, AT THE TURN: a turn whose teardown could not end its tree has its launch grant
+    /// revoked at once — no sixty-second grace — and the meter that closed its row refuses every launch, in a
+    /// sentence naming the process, until that process has ended; then the next launch is admitted. The
+    /// control turn beside it, whose teardown ended everything, keeps its grant for the grace.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_whose_teardown_failed_loses_its_grant_at_once_and_holds_the_next_launch_until_its_process_ends()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = NewDir("failed");
+        var sh = WriteScript(dir, $"echo \"${AgentGrants.Variable}\" > \"{dir}/grant\"\necho 'done'\n");
+        var manifest = new RuntimeManifest
+        {
+            Id = Probe, DisplayName = "Tree probe", Executable = sh,
+            ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"], TaskArgs = ["{prompt}"]
+        };
+        var grants = new AgentGrants();
+        using var db = new Database(Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db"));
+        var meter = new TurnMeter(db, cap: () => 5m, recordPath: Path.Combine(dir, "turns.jsonl"), live: new LiveAttempts());
+
+        var session = new AgentSession(manifest, () => sh, () => dir, () => new Dictionary<string, string>(),
+            new AgentPresence(), grants: grants);
+        using var metered = meter.Attach(session, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        // THE CONTROL: a teardown that ended everything leaves the grant its grace.
+        await session.SendAsync("first");
+        var first = File.ReadAllText(Path.Combine(dir, "grant")).Trim();
+        Assert.Equal(GrantState.Valid, grants.Verify(first).State);
+        Assert.Null(ended?.Survivors);
+
+        // THE FAILED TEARDOWN: the tree is ended as always, and one process is reported still running.
+        var stuck = Ours("/bin/sleep", "62");
+        var survivor = ProcessTable.Read(stuck.Id)!.Value;
+        session.EndTree = contained =>
+        {
+            contained.Dispose();
+            return new TreeEnd(false, [survivor], 0);
+        };
+        await session.SendAsync("second");
+        var second = File.ReadAllText(Path.Combine(dir, "grant")).Trim();
+        Assert.NotEqual(first, second);
+
+        Assert.NotEqual(GrantState.Valid, grants.Verify(second).State);
+        Assert.Equal([stuck.Id], ended!.Survivors!.Select(p => p.Pid));
+
+        var held = meter.Begin("third", role: CouncilRoles.Operations, heldForTheLoop: false);
+        Assert.False(held.Admitted, "a launch was admitted while a process of the last turn still ran");
+        Assert.Contains($"process {stuck.Id}", held.Refusal, StringComparison.Ordinal);
+
+        stuck.Kill();
+        await stuck.WaitForExitAsync();
+        var admitted = meter.Begin("fourth", role: CouncilRoles.Operations, heldForTheLoop: false);
+        Assert.True(admitted.Admitted, $"the hold did not lift once the process had ended: {admitted.Refusal}");
+    }
+
+    /// <summary>A process of the test's own, killed by the test's Dispose: never one the test did not start.</summary>
+    Process Ours(string program, params string[] args)
+    {
+        var psi = new ProcessStartInfo(program) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        var p = Process.Start(psi)!;
+        _ours.Add(p);
+        return p;
     }
 
     // ---- the hung turn --------------------------------------------------------------------------------
