@@ -1,3 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup><ProjectReference Include="../TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" /></ItemGroup>
+  <!-- BridgePipeAuth.OpenToRead: BridgePipeAuthTests holds the handle a reader of bridge.auth holds. -->
+  <ItemGroup><InternalsVisibleTo Include="TradeAgent.IntegrationTests" /></ItemGroup>
 </Project>

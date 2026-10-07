@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.AtasBridge;
@@ -7,6 +10,7 @@ using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace TradeAgent.Tests.Integration;
 
@@ -43,7 +47,7 @@ namespace TradeAgent.Tests.Integration;
 /// that feed it are now exercised on Windows by
 /// <see cref="A_peer_that_is_not_the_recorded_program_is_refused_before_the_secret_is_asked_for"/>.
 /// </summary>
-public class BridgePipeAuthTests
+public class BridgePipeAuthTests(ITestOutputHelper output)
 {
     static string NewPipe() => "ta-auth-" + Guid.NewGuid().ToString("n")[..12];
 
@@ -460,6 +464,179 @@ public class BridgePipeAuthTests
         Assert.Equal(Environment.ProcessPath, second.ServerImage);
         Assert.Equal(first.Secret, BridgePipeAuth.ReadForClient()!.Secret);
         Assert.StartsWith(Paths.State, BridgePipeAuth.CredentialFile);
+    }
+
+    // ---------------------------------------------------------------- the secret on disk (U-bridge-auth-owner-only)
+
+    /// <summary>
+    /// (a) WHO CAN READ THE SECRET AT THE ONE INSTANT THE WRITE USED TO GET WRONG: the secret is in the temp
+    /// and nothing has published it yet. <see cref="BridgePipeAuth.Write"/>'s seam hands the test that instant.
+    ///
+    /// <para><b>macOS and Linux:</b> the temp is 0600 at the seam, and so is the published file. The write used
+    /// to create the temp with <c>File.WriteAllText</c> — 0666 less the umask, 0644 under the usual 022 — and
+    /// chmod it only afterwards: any account that could traverse the state directory could open it in
+    /// between, a descriptor opened then reads on after the chmod, and a crash in between left a 0644 temp
+    /// holding the live secret under a per-process name nothing ever swept.</para>
+    ///
+    /// <para><b>Windows</b> has no mode. The temp inherits its directory's DACL and the rename keeps it, so the
+    /// test reads that the temp's DACL at the seam is the published file's and that every entry on it is
+    /// inherited — the write adds no reader of its own. Whether the inherited DACL is owner-only is a claim
+    /// about the directory the product publishes in, <c>%LOCALAPPDATA%\TradeAgent\state</c>, so that claim is
+    /// read where it is made: the entries of <c>%LOCALAPPDATA%</c> that reach a file two directories below it
+    /// let nobody read but this user, SYSTEM and Administrators (CREATOR OWNER is the file's creator, one of
+    /// those). Read there, never written; not read off the test home, because the test home is not under the
+    /// profile everywhere — the tests box points TEMP at <c>C:\ta\runs\&lt;id&gt;\tmp</c>
+    /// (<c>tools/win-test-run.ps1</c>), which inherits <c>C:\</c>'s entries for Users and Authenticated Users,
+    /// and a reading of the rig is not a reading of the product.</para>
+    /// </summary>
+    [Fact]
+    public void The_secret_is_owner_only_before_the_rename()
+    {
+        using var home = TestEnv.NewScratch("bridge-auth-mode");
+        var path = Path.Combine(home.Dir, "bridge.auth");
+
+        if (OperatingSystem.IsWindows()) TheSecretIsOwnerOnlyOnWindows(path);
+        else TheSecretIsOwnerOnlyOnUnix(path);
+    }
+
+    [UnsupportedOSPlatform("windows")]
+    void TheSecretIsOwnerOnlyOnUnix(string path)
+    {
+        UnixFileMode? atSeam = null;
+        BridgePipeAuth.Write(path, Cred(), beforeRename: temp => atSeam = File.GetUnixFileMode(temp));
+        var published = File.GetUnixFileMode(path);
+
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        var said = $"the secret was on disk at {Octal(atSeam)} before the rename and is published at {Octal(published)}; " +
+                   $"owner-only is {Octal(ownerOnly)} — {Umask(Path.GetDirectoryName(path)!)}";
+        output.WriteLine(said);
+
+        Assert.True(atSeam == ownerOnly, said);
+        Assert.True(published == ownerOnly, said);
+    }
+
+    /// <summary>What this process's umask makes of a file created without a mode — which is what the old temp was.</summary>
+    [UnsupportedOSPlatform("windows")]
+    static string Umask(string dir)
+    {
+        var probe = Path.Combine(dir, $"umask-{Guid.NewGuid():n}.probe");
+        File.WriteAllText(probe, "");
+        try
+        {
+            var made = File.GetUnixFileMode(probe);
+            return $"umask {Octal((UnixFileMode)0b110_110_110 & ~made)}: a file created without a mode comes out {Octal(made)}";
+        }
+        finally { File.Delete(probe); }
+    }
+
+    static string Octal(UnixFileMode? mode) => mode is { } m ? Convert.ToString((int)m, 8).PadLeft(4, '0') : "<never seen>";
+
+    [SupportedOSPlatform("windows")]
+    void TheSecretIsOwnerOnlyOnWindows(string path)
+    {
+        FileSecurity? atSeam = null;
+        BridgePipeAuth.Write(path, Cred(), beforeRename: temp => atSeam = new FileInfo(temp).GetAccessControl(AccessControlSections.Access));
+        Assert.NotNull(atSeam);
+        var published = new FileInfo(path).GetAccessControl(AccessControlSections.Access);
+
+        var user = WindowsIdentity.GetCurrent().User!.Value;
+        string Dacl(FileSecurity s) => s.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+        string Name(string sid) => sid == user ? "this user" : sid switch
+        {
+            "S-1-5-18" => "SYSTEM", "S-1-5-32-544" => "Administrators", "S-1-3-0" => "CREATOR OWNER", _ => sid
+        };
+
+        var own = atSeam.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)).Count;
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var readers = ReadersOfAFileBelow(profile);
+        string[] ownerOnly = [user, "S-1-5-18", "S-1-5-32-544", "S-1-3-0"];
+
+        var said = $"the temp at the seam: {Dacl(atSeam).Replace(user, "<this user>")} — {own} entr(y/ies) of its own, " +
+                   $"protected {atSeam.AreAccessRulesProtected}; published: {Dacl(published).Replace(user, "<this user>")}; " +
+                   $"%LOCALAPPDATA% lets read a file two directories below it: {string.Join(", ", readers.Select(Name))}";
+        output.WriteLine(said);
+
+        Assert.True(Dacl(atSeam) == Dacl(published), said);
+        Assert.True(own == 0 && !atSeam.AreAccessRulesProtected, said);
+        Assert.True(readers.Count > 0 && readers.All(ownerOnly.Contains), said);
+    }
+
+    /// <summary>
+    /// The accounts an Allow entry of <paramref name="dir"/>'s DACL lets read a file two directories below it:
+    /// object-inherit, not stopped from propagating, and granting read data (or the generic read or all that
+    /// maps to it).
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    static List<string> ReadersOfAFileBelow(string dir)
+    {
+        const int genericRead = unchecked((int)0x80000000), genericAll = 0x10000000;
+        return new DirectoryInfo(dir).GetAccessControl(AccessControlSections.Access)
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .Where(r => r.AccessControlType == AccessControlType.Allow
+                        && r.InheritanceFlags.HasFlag(InheritanceFlags.ObjectInherit)
+                        && !r.PropagationFlags.HasFlag(PropagationFlags.NoPropagateInherit)
+                        && ((int)r.FileSystemRights & ((int)FileSystemRights.ReadData | genericRead | genericAll)) != 0)
+            .Select(r => r.IdentityReference.Value)
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// (b) A READER HOLDING THE CREDENTIAL DOES NOT REFUSE ITS REWRITE. Both ends read through
+    /// <see cref="BridgePipeAuth.Read"/> — the bridge inside ATAS before every challenge, the connector before
+    /// every republish — and the connector republishes on every turn of its accept loop. A replace on Windows
+    /// meets every handle open on the file it replaces: refused, the accept loop catches it, and the pipe name
+    /// stands unowned for the loop's one-second pause. The handle held here is the one
+    /// <see cref="BridgePipeAuth.OpenToRead"/> opens, which is the one every reader holds.
+    ///
+    /// <para><c>rename(2)</c> ignores open handles, so on macOS and Linux this is green whatever the reader
+    /// does; the claim is Windows'.</para>
+    /// </summary>
+    [Fact]
+    public void A_reader_holding_the_credential_does_not_refuse_its_rewrite()
+    {
+        using var home = TestEnv.NewScratch("bridge-auth-held");
+        var path = Path.Combine(home.Dir, "bridge.auth");
+        BridgePipeAuth.Write(path, Cred());
+
+        Exception? refused;
+        string held;
+        using (var reader = BridgePipeAuth.OpenToRead(path))
+        {
+            refused = Record.Exception(() => BridgePipeAuth.Write(path, OtherCred()));
+            using var text = new StreamReader(reader);
+            held = text.ReadToEnd();
+        }
+
+        Assert.True(refused is null,
+            $"the rewrite was refused while a reader held bridge.auth — {refused?.GetType().Name}: {refused?.Message}");
+        // The reader read the credential it had opened, whole; the next reader reads the new one; nothing is left beside it.
+        Assert.Equal(Secret('a'), Json.Read<BridgeCredential>(held)!.Secret);
+        Assert.Equal(Secret('b'), BridgePipeAuth.Read(path)!.Secret);
+        Assert.Equal([path], Directory.GetFiles(home.Dir));
+    }
+
+    /// <summary>
+    /// (c) A REWRITE REFUSED AT THE RENAME LEAVES NO TEMP AND THE OLD SECRET. A replace that does not happen —
+    /// refused by the platform, a full disk, the process dying — used to leave <c>bridge.auth.&lt;pid&gt;.tmp</c>
+    /// behind holding the new secret, under a per-process name nothing sweeps. The seam throws where the
+    /// rename would run.
+    /// </summary>
+    [Fact]
+    public void A_rewrite_refused_at_the_rename_leaves_no_temp_and_the_old_secret()
+    {
+        using var home = TestEnv.NewScratch("bridge-auth-refused");
+        var path = Path.Combine(home.Dir, "bridge.auth");
+        BridgePipeAuth.Write(path, Cred());
+
+        var refused = Assert.Throws<IOException>(() => BridgePipeAuth.Write(path, OtherCred(),
+            beforeRename: _ => throw new IOException("the rename was refused")));
+
+        var left = Directory.GetFiles(home.Dir).Where(f => f != path).Select(Path.GetFileName).ToList();
+        Assert.True(left.Count == 0, $"the refused rewrite left {string.Join(", ", left)} beside bridge.auth");
+        Assert.Equal(Secret('a'), BridgePipeAuth.Read(path)!.Secret);
+        Assert.Equal("the rename was refused", refused.Message);
     }
 
     // ---------------------------------------------------------------- helpers
