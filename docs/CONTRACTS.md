@@ -920,6 +920,12 @@ derived from that one rule:
   record the reconciler could see, the bound being longer than the grace. Where this process watched
   the dispatch END, the wire went quiet then and the dispatch instant is the honest reference; where
   it did not — a crash, a restart, a second process over the same store — the bound is all there is.
+  **And never about an order the platform answered, where absence proves nothing** (`U-inflight-owner`):
+  a `PLACE` carrying the platform's own reference, on a connector where `AbsenceDecidesALostClose` does
+  not hold (ATAS), is left inconclusive, untouched and paused however long it is absent — a dispatch
+  whose indefinite answer carried a reference among them, which this rule used to write off "never
+  reached the broker". A final state the platform lists under its id, fills under its id, or the owner's
+  card settle it; a row with no reference is read on the clock above, as it always was.
 - **A target that is `UNKNOWN`, `DISPATCHING`, `RECONCILING` or `CANCEL_PENDING` decides nothing.**
 - **"The cancel did not take effect" needs a TERMINAL target, a definite refusal, or the owner's
   card.** A target that is merely working is not proof, and it does not become proof by holding
@@ -1057,15 +1063,32 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   only where absence decides (`ReconciliationProvable` and `ClosesCarryClientOrderId` — paper and the
   simulator, never ATAS) and past the clock, `CANCELLED`, with a last error that names the empty
   history and never says it did not reach the platform. A fill enters the ledger only through the fill
-  pull a settle marks due. A live answer, a read that throws, an unprovable connector or an absence
-  that decides nothing changes nothing, and nothing is sent, re-sent, cancelled, flagged or paused by
-  it; the refusal above lifts once the row has its answer. **Still NOT claimed**: on ATAS, a filled
-  order the platform no longer lists under our id and whose fill it does not list under it either
-  keeps holding that position's closes — absence decides nothing there, this read flags nothing, so
-  the row is not on the owner's unconfirmed card (which lists flagged rows), and only the platform's
-  own update, should it arrive, moves it; whether ATAS still lists a filled `PLACE` market order under
-  its id after a bridge drop has not been measured on the box; and a fill the platform's position read
-  has not caught up with is still seen by neither rule.
+  pull a settle marks due. A live answer, a read that throws or an unprovable connector changes
+  nothing, and nothing is sent, re-sent, cancelled, flagged or paused by it; the refusal above lifts
+  once the row has its answer, and names the owner's card as the way out for the case below.
+  **And where absence decides nothing, an order the platform answered and no longer lists is handed to
+  the owner** (`U-inflight-owner`): on the first pass past the clock on which both reads answer and neither
+  lists it (`Unlisted`, a named field, never a string), the sweep — and only the sweep — moves the row by
+  the reconciler's own two writes, each a compare-and-swap on the state it read: to `UNKNOWN`, flagged, with
+  the evidence as its last error (what was asked and when, that both reads answered and listed nothing, that
+  there this does not prove it did not fill, what it holds, and that either answer frees it), then to
+  `RECONCILING`, so it never rests in `UNKNOWN`, where Close all and the loss flatten refuse its leg. It is
+  then in `Unreconciled()` like any unconfirmed order — the gate refuses `TRADING_PAUSED_UNRECONCILED`, the
+  health row is paused, the card lists it — and the sweep never asks about it again. The reconciler's
+  absence never writes it off (above); a final state the platform lists under its id, or fills under its id,
+  settle it on a later pass; the stream does not move it, though a fill it reports still reaches the ledger;
+  and the owner answers it on the card, where a row carrying the platform's reference offers "It was
+  filled" and "It did not fill" — it existed, so not "No order exists". A lost compare-and-swap hands
+  nothing over; no latch is taken; a live answer, a read that throws, an absence inside the clock or an
+  unprovable connector hands nothing over. **Still NOT claimed**: an unprovable connector — the sweep
+  returns before asking, which is ATAS until its client id is proven again; a history read past what ATAS
+  retains, which throws on every pass, so such a row is never handed over; "It was filled" records a state,
+  not a fill, so the ledger and the loss budget still lack that fill; a run's END settled `CANCELLED` by
+  "It did not fill" owes no close (`OwesItsClose`), so the position it was closing stays open and is the
+  owner's; after an ATAS restart "not listed" is weaker — the new strategy's `Orders` start empty, and
+  whether `ICache` or `MyTrades` recover the old ones is NOT VERIFIED — and it is treated alike; whether
+  ATAS still lists a filled `PLACE` market order under its id after a bridge drop has not been measured on
+  the box; and a fill the platform's position read has not caught up with is still seen by neither rule.
 - **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
   computes a side and a size from a reading and sends a market order for them, so a reading that is
   stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it

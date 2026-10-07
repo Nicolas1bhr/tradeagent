@@ -1226,6 +1226,17 @@ for order 24681, 1 filled."* Trading pauses again until you have read it. This i
 exactly one thing: the two accounts of that order disagree, and the position is worth checking in
 ATAS before anything else trades.
 
+**And an order your platform stopped reporting.** Sometimes a line appears for an order TradeAgent did
+hear back about — the platform took it, and the line shows the platform's own order number — and then
+nothing more: ATAS never said it filled or was cancelled, and neither its order list nor its fills show
+it any longer. About a minute and a half after the order was sent, TradeAgent stops waiting and asks
+you, because on ATAS "no longer listed" does not prove it did not fill. Trading pauses until you
+answer, as for any unconfirmed order. Look at that instrument in ATAS — its trades and your position —
+type what you saw, and press **It was filled** or **It did not fill** (not *No order exists*: this
+order did exist). If ATAS lists the order again first, TradeAgent takes ATAS's answer and the line goes
+away on its own. One limit, said plainly: **It was filled** records what happened to the order, not the
+fill itself, so its price and fees are not in the Performance numbers.
+
 **It also does this after a crash or a power cut.** When TradeAgent starts, any order that was still
 being sent when it last stopped is marked as unknown, trading is paused, and the Activity page says
 so: *"1 order(s) were still being sent when TradeAgent last stopped. Trading is paused until you or
