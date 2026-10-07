@@ -288,8 +288,15 @@ public class QuoteClockTests(ITestOutputHelper log)
 
         // THE BOUND IS KEYED ON STREAMING, NOT ON IsPaper. The practice simulator says IsPaper and
         // streams; a quote of its forty seconds old is degraded exactly as it always was.
+        //
+        // AND ITS FORTY SECONDS ARE COUNTED ON THE CLOCK THE GATEWAY READS. The simulator used to stamp
+        // its quote on the machine's clock while the gateway read this one, fixed when it was made, so a
+        // runner that spent more than ten seconds between the two read a forty-second-old quote as under
+        // thirty: windows-latest run 37521857152, "simulator at 40 s : READY —" (U-test-hygiene-2 item 5).
+        // The platform keeps the test's clock now, so the quote's age is the forty seconds asked for,
+        // however long the runner takes to ask.
         var simClock = new TestClock(DateTimeOffset.UtcNow);
-        var sim = new RecordingConnector(new FakeConnector(new FakeBroker()));
+        var sim = new RecordingConnector(new FakeConnector(new FakeBroker { Clock = simClock }));
         sim.Faults.QuoteAge = TimeSpan.FromSeconds(40);
         Assert.True(sim.Capabilities.IsPaper);
         Assert.True(sim.Capabilities.SupportsStreaming);

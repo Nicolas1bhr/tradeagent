@@ -284,17 +284,25 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     }
 
     /// <summary>
-    /// THE CLOCK THIS SIMULATOR STAMPS ITS QUOTES WITH: the machine's, unless a harness hands it the
-    /// one its gateway reads (<c>U-runner-forward</c>).
+    /// THE CLOCK THIS SIMULATOR STAMPS ITS QUOTES WITH: the platform's own,
+    /// <see cref="FakeBroker.Clock"/> — the machine's unless a harness sets it — unless a harness hands
+    /// this one the clock its gateway reads (<c>U-runner-forward</c>).
     ///
     /// <para>The gateway measures a quote's age on its OWN clock, at both quote gates and in the loss
     /// valuation. A harness that substitutes that clock and leaves this one on the machine's has its
     /// prices stamped months away from the instant the gateway thinks it is — and
     /// <see cref="FaultProfile.QuoteAge"/> then backdates them from the wrong now, so a "silent feed"
-    /// reads as a fresh one. Orders and fills keep the machine's clock: only a price's age is judged
-    /// against the gateway's.</para>
+    /// reads as a fresh one. Set here, it moves the quotes alone, and orders and fills keep the
+    /// broker's clock; a harness that wants ONE simulator clock sets <see cref="FakeBroker.Clock"/> and
+    /// leaves this unset (<c>U-test-hygiene-2</c> item 5).</para>
     /// </summary>
-    public TimeProvider QuoteClock { get; set; } = TimeProvider.System;
+    public TimeProvider QuoteClock
+    {
+        get => _quoteClock ?? Broker.Clock;
+        set => _quoteClock = value;
+    }
+
+    TimeProvider? _quoteClock;
 
     public async Task<QuoteInfo?> GetQuoteAsync(string symbol, CancellationToken ct = default)
     {
