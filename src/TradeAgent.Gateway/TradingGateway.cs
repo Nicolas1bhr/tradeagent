@@ -6688,6 +6688,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// the ledger through <see cref="RecordFill"/> on this same pass, and says so in the engineering log. What is
     /// undecided is said once per change, as <see cref="Note"/> says the confirm's.</para>
     ///
+    /// <para><b>And an answer that is <see cref="InFlightAnswer.Unlisted"/></b> — both reads answered, neither lists the
+    /// order, and on this platform that proves nothing — is handed to the owner on this first pass past the clock
+    /// (<see cref="HandOverToTheReconciler"/>, <c>U-inflight-owner</c>): flagged, <c>RECONCILING</c>, on the card and
+    /// pausing trading like any unconfirmed order. This sweep never asks about it again; the reconciler does.</para>
+    ///
     /// <para>It never throws, except to stop when asked to: a row that cannot be asked about is a row left exactly as
     /// it was, and the next pass asks again.</para>
     /// </summary>
@@ -6731,6 +6736,14 @@ public sealed class TradingGateway : IAsyncDisposable
 
             if (!answer.Settled)
             {
+                // ANSWERED, LISTED NOWHERE, AND PAST THE CLOCK — every row here is stale on the reconciler's own clock
+                // (the query above) — so it goes to the owner, by the reconciler's own two writes (U-inflight-owner).
+                if (answer.Unlisted && HandOverToTheReconciler(row))
+                {
+                    _inflightNotes.TryRemove(row.RequestId, out _);
+                    continue;
+                }
+
                 var said = answer.Why;
                 if (!_inflightNotes.TryGetValue(row.RequestId, out var before)
                     || !string.Equals(before, said, StringComparison.Ordinal))
@@ -6750,6 +6763,71 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _inflightNotes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// AN ORDER IN FLIGHT THE PLATFORM ANSWERED AND NO LONGER LISTS, HANDED TO THE RECONCILER AND SO TO THE OWNER
+    /// (<c>U-inflight-owner</c>) — from the sweep alone, by the reconciler's own two writes. True when it was handed over.
+    ///
+    /// <para><b>Why.</b> Where absence proves nothing (ATAS) such a row is <see cref="InFlightAnswer.Unlisted"/> on every
+    /// pass and nothing else would ever move it: the stream lost its update, the history no longer lists it, and an
+    /// unflagged row is on no card. It held <see cref="ClosesInFlightOn"/> for good, and the ledger can lack its fill,
+    /// which the loss budget reads. It may have filled (rule 3), so it is UNKNOWN: never settled from that absence,
+    /// never written off, and waiting where every unconfirmed order waits.</para>
+    ///
+    /// <para><b>The two writes</b> are <see cref="ReconcileAsync"/>'s for a flagged row in a state the stream moves:
+    /// <c>→ UNKNOWN</c>, flagged, with the evidence as its last error; then <c>UNKNOWN → RECONCILING</c>, so it never
+    /// rests in UNKNOWN, where Close all and the loss flatten would refuse its leg. Each is a compare-and-swap on the
+    /// state read: a row the stream, the owner or anything else moved meanwhile loses the first, and nothing is handed
+    /// over — the next pass reads it again. A second write that does not land leaves the row flagged in UNKNOWN, which
+    /// the reconciler moves on its own pass as it moves any. No latch: the flag is the pause, through
+    /// <see cref="Unreconciled"/>, which the gate, the health row, the card and the reconciler all read. Nothing is
+    /// sent, cancelled or settled here, and the reconciler's absence never decides the row
+    /// (<see cref="AnsweredWhereAbsenceProvesNothing"/>); a final state the platform lists, fills under its id, or the
+    /// owner's answer on the card do.</para>
+    ///
+    /// <para>It never throws: a store that refuses the first write hands nothing over, and the next pass asks again.</para>
+    /// </summary>
+    bool HandOverToTheReconciler(ExecutionRequest read)
+    {
+        var platform = Connector.DisplayName;
+        var evidence = $"{platform}'s last word about this order was {read.State}, and then nothing: at "
+                       + $"{Now.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC TradeAgent asked {platform}'s order history and its fills "
+                       + "about it, both answered, and neither lists it under TradeAgent's reference any more. On "
+                       + $"{platform} that does not prove it did not fill. Until it has an answer it keeps trading paused "
+                       + $"and holds every close of {read.Instrument} that would move the position the same way; your "
+                       + $"answer on the Dashboard settles it, and so does {platform}'s own, should it list the order again.";
+        try
+        {
+            _requests.Transition(read.RequestId, read.State, ExecutionState.UNKNOWN, needsReconciliation: true,
+                error: evidence);
+        }
+        catch (Exception ex)
+        {
+            // A LOST COMPARE-AND-SWAP OR A STORE THAT REFUSED: nothing was handed over.
+            _log.TryEngineering("Gateway", "inflight_hand_over_failed", "warn", requestId: read.RequestId, ex: ex,
+                metadataJson: Json.Write(new { from = read.State.ToString() }));
+            return false;
+        }
+
+        try { _requests.Transition(read.RequestId, ExecutionState.UNKNOWN, ExecutionState.RECONCILING); }
+        catch (Exception ex)
+        {
+            // FLAGGED IN UNKNOWN, AND HANDED OVER ALL THE SAME: see above.
+            _log.TryEngineering("Gateway", "inflight_hand_over_unfinished", "warn", requestId: read.RequestId, ex: ex);
+        }
+
+        StateChanged?.Invoke();
+        _log.TryEngineering("Gateway", "inflight_handed_over", "warn", requestId: read.RequestId,
+            metadataJson: Json.Write(new { from = read.State.ToString(), why = evidence }));
+        try
+        {
+            _log.Activity($"{platform} no longer lists order {read.RequestId} ({read.Instrument}), which it last reported "
+                          + $"{read.State}, and has not said what became of it — it may have filled. AI trading is paused "
+                          + "until you confirm it on the Dashboard.", "warn");
+        }
+        catch (Exception) { /* the flagged row is the pause and the card shows it; this line is only its account */ }
+        return true;
+    }
 
     /// <summary>A MARKET order, or one whose parameters this build cannot read — which the guard counts too.</summary>
     static bool IsAMarketOrderOrUnreadable(ExecutionRequest r)
