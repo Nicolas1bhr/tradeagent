@@ -6599,8 +6599,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// What the platform's own order list said about ONE order in flight (<see cref="SettleAnOrderInFlightAsync"/>):
     /// whether it settled the row, the order as the platform still holds it LIVE when that is the answer, and why —
     /// in words, and naming who settles the row when it is not this.
+    ///
+    /// <para><b><paramref name="Unlisted"/></b> is <see cref="AskTheHistoryAsync"/>'s own field, carried as it is
+    /// (<c>U-inflight-owner</c>): both reads answered and neither lists the order, on a platform where that proves
+    /// nothing — not working at the platform now, as far as its own lists say, and it may have filled. Never set
+    /// beside a settle, and never read out of <paramref name="Why"/>.</para>
     /// </summary>
-    sealed record InFlightAnswer(bool Settled, OrderInfo? Live, string Why);
+    sealed record InFlightAnswer(bool Settled, OrderInfo? Live, string Why, bool Unlisted = false);
 
     /// <summary>
     /// AN ORDER IN FLIGHT WHOSE PLATFORM UPDATE MAY HAVE BEEN LOST, ASKED OF THE PLATFORM'S OWN ORDER LIST AND SETTLED
@@ -6639,8 +6644,8 @@ public sealed class TradingGateway : IAsyncDisposable
             return new InFlightAnswer(false, null, $"{Connector.DisplayName} cannot prove its own order history, so "
                                                    + "nothing it lists or leaves out is an answer about this order");
 
-        var (verdict, live, undecided) = await AskTheHistoryAsync(req, ct, InFlightAbsence);
-        if (verdict is null) return new InFlightAnswer(false, live, undecided);
+        var (verdict, live, undecided, unlisted) = await AskTheHistoryAsync(req, ct, InFlightAbsence);
+        if (verdict is null) return new InFlightAnswer(false, live, undecided, unlisted);
 
         // THE CONFIRM'S OWN GUARD BEFORE IT APPLIES A VERDICT: a final state, and one this row may move to.
         if (!Enum.TryParse<ExecutionState>(verdict.State, ignoreCase: false, out var to) || !Enum.IsDefined(to)
@@ -9681,7 +9686,7 @@ public sealed class TradingGateway : IAsyncDisposable
             LossFlattenVerdict? verdict;
             string undecided;
             if (SettledByTheOwner(leg)) (verdict, undecided) = await TheOwnersAnswerAsync(leg, ct);
-            else (verdict, _, undecided) = await AskTheHistoryAsync(leg, ct);
+            else (verdict, _, undecided, _) = await AskTheHistoryAsync(leg, ct);
             if (verdict is null)
             {
                 // UNDECIDED, AND NOTHING IS DONE ABOUT IT: not the other legs, not the book. Said to the
@@ -9879,14 +9884,22 @@ public sealed class TradingGateway : IAsyncDisposable
     /// LIVE handed back beside "not a final answer", and <paramref name="absence"/> the evidence an absence
     /// verdict carries — a lost close's is that it never reached the platform, and an order the platform
     /// answered once cannot say that.</para>
+    ///
+    /// <para><b>And whether the platform answered and listed nothing</b> (<c>Unlisted</c>, <c>U-inflight-owner</c>):
+    /// true in ONE arm only — both reads answered, neither lists the order under its id, and on this platform that
+    /// proves nothing (<see cref="AbsenceDecidesALostClose"/> false). As far as the platform's own lists say, the
+    /// order is not working there now; it may have filled. A named fact, handed back beside the sentence and never
+    /// read out of it: a platform that cannot prove its history, a read that threw, a live answer, a verdict, or an
+    /// absence still on the reconciler's clock is never <c>Unlisted</c>.</para>
     /// </summary>
-    async Task<(LossFlattenVerdict? Verdict, OrderInfo? Live, string Undecided)> AskTheHistoryAsync(ExecutionRequest leg,
-        CancellationToken ct, string absence = LostCloseAbsence)
+    async Task<(LossFlattenVerdict? Verdict, OrderInfo? Live, string Undecided, bool Unlisted)> AskTheHistoryAsync(
+        ExecutionRequest leg, CancellationToken ct, string absence = LostCloseAbsence)
     {
         // ReconcileAsync's own gate, and since U-loss-hold-release the confirm's only one: a platform that
         // cannot prove its history is not asked about it, and the close stays for the owner to answer.
         if (!Connector.Capabilities.ReconciliationProvable)
-            return (null, null, "your platform cannot show its order history, so only your answer on the Dashboard can settle it");
+            return (null, null, "your platform cannot show its order history, so only your answer on the Dashboard can settle it",
+                false);
 
         var since = leg.CreatedAt - TimeSpan.FromMinutes(5);
 
@@ -9898,42 +9911,46 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (null, null, $"your platform's order history could not be read ({ex.Message})");
+            return (null, null, $"your platform's order history could not be read ({ex.Message})", false);
         }
 
         if (match is not null)
             return DecidesALostClose(match.State)
                 ? (new LossFlattenVerdict(leg.RequestId, leg.Instrument, match.State.ToString(), match.FilledQuantity,
-                    match.ConnectorOrderId, $"your platform's order history holds it as {match.State}"), null, "")
-                : (null, match, $"your platform's order history holds it as {match.State}, which is not a final answer");
+                    match.ConnectorOrderId, $"your platform's order history holds it as {match.State}"), null, "", false)
+                : (null, match, $"your platform's order history holds it as {match.State}, which is not a final answer",
+                    false);
 
         IReadOnlyList<ExecutionInfo> fills;
         try { fills = await Connector.GetExecutionsAsync(leg.AccountId, since, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (null, null, $"your platform's fills could not be read ({ex.Message})");
+            return (null, null, $"your platform's fills could not be read ({ex.Message})", false);
         }
 
         var mine = fills.Where(f => f.ClientOrderId == leg.ClientOrderId).ToList();
         if (mine.Count > 0)
             return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, nameof(ExecutionState.FILLED),
-                mine.Sum(f => f.Quantity), mine[0].ConnectorOrderId, "your platform's fills account for it"), null, "");
+                mine.Sum(f => f.Quantity), mine[0].ConnectorOrderId, "your platform's fills account for it"), null, "",
+                false);
 
         // NOT THERE — BOTH READS ANSWERED, AND NEITHER LISTS IT. On its own that proves nothing: on ATAS a
         // close carries our id only as a label written after the fact. It is an answer only where the
-        // connector claims its closes carry the id they are handed (U-flatten-absence).
+        // connector claims its closes carry the id they are handed (U-flatten-absence). Here, and only here,
+        // the answer is Unlisted (U-inflight-owner).
         if (!AbsenceDecidesALostClose(Connector.Capabilities))
-            return (null, null, "your platform lists no order and no fill under its id, and on its own that proves nothing");
+            return (null, null, "your platform lists no order and no fill under its id, and on its own that proves nothing",
+                true);
 
         // AND ONLY ONCE THE CLOSE CAN NO LONGER BE ON ITS WAY THERE: ReconcileAsync's own clock for
         // absence, the later of the dispatch and the bound, then the grace after it.
         if (Now - AbsenceCountsFrom(leg) < _opt.AbsenceGrace)
             return (null, null, "your platform lists no order and no fill under its id yet, and the close could still be "
-                                + "on its way there");
+                                + "on its way there", false);
 
         // NOT WORKING, NEVER FILLED, NOTHING TO UNDO — ReconcileAsync's mapping, in the caller's words.
         return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, nameof(ExecutionState.CANCELLED), null, null,
-            absence), null, "");
+            absence), null, "", false);
     }
 
     /// <summary>A lost close's absence: it never reached the platform (<c>U-flatten-absence</c>).</summary>
