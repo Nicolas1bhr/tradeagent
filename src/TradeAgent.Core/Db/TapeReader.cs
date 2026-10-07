@@ -42,8 +42,12 @@ public sealed record TapeQuery
 /// What a range read served: the rows, newest first; whether the tape holds more that the read matched; and which
 /// bound stopped it — <see cref="TapeReader.CappedByLimit"/>, <see cref="TapeReader.CappedByBytes"/>, or null
 /// because nothing did.
+///
+/// <para><see cref="Refusal"/> is the holdout's (<see cref="TapeHoldout"/>), in words, or null. It comes with NO rows
+/// deliberately, as <c>BarWindow.Refusal</c> does: a caller that forgets to look at it is handed nothing, never a row
+/// stamped inside a holdout window.</para>
 /// </summary>
-public sealed record TapeWindow(IReadOnlyList<TapeObservation> Rows, bool More, string? CappedBy);
+public sealed record TapeWindow(IReadOnlyList<TapeObservation> Rows, bool More, string? CappedBy, string? Refusal = null);
 
 /// <summary>
 /// ONE SERIES OF THE TAPE, as <c>data-list</c> names it: which of the owner's switches records it, its rows, the arrival
@@ -97,6 +101,11 @@ public sealed record TapeDay(
 /// <para><b>A payload is withheld in one place.</b> Every row read here passes through <see cref="TapeStore.Obs"/>,
 /// which screens it, and then <see cref="TapeStore.Served"/>, which withholds a quarantined payload from the audience —
 /// the same two calls <see cref="TapeStore.AsOf"/> makes. There is no read here that returns a payload without both.</para>
+///
+/// <para><b>And a holdout window is refused in one place</b> (<c>U-tape-holdout</c>): <see cref="Window"/>, the one read
+/// here that serves rows, cannot be called without a <see cref="TapeHoldout"/> and refuses a window reaching any
+/// dataset's held-back months before the file is opened. The other reads serve counts, names and arrival instants —
+/// never a value — and take none.</para>
 ///
 /// <para><b>Refuse, never guess.</b> A tape whose layout version is not the one this build writes is refused when the
 /// reader is made, naming both versions; the app makes one only after <see cref="TapeStore"/> has opened the file, so
@@ -166,22 +175,29 @@ public sealed class TapeReader
     /// payload is at most 64 KB. When either bound stops the read and the tape holds another matching row, the answer
     /// says so (<see cref="TapeWindow.More"/>, <see cref="TapeWindow.CappedBy"/>).</para>
     ///
-    /// <para><b>The audience is required</b> and every row passes through <see cref="TapeStore.Served"/>: a quarantined
-    /// item is served with its quarantine and without its payload, to every audience.</para>
+    /// <para><b>The holdout is required, and it is checked HERE, before the tape is opened</b> (<c>U-tape-holdout</c>): a
+    /// read whose source-time window reaches any dataset's holdout window is answered with
+    /// <see cref="TapeWindow.Refusal"/> and no row — never clipped, whatever the source, series or subject — unless
+    /// <paramref name="holdout"/> is the referee's. Every row then passes through <see cref="TapeStore.Served"/>: a
+    /// quarantined item is served with its quarantine and without its payload, to every audience.</para>
     ///
     /// <para>Two phases in one snapshot: the ids, off the tape's own index on (source, series, subject, source time),
     /// and then each row by id — so a read never carries a payload it does not serve, and an "as of" in the past costs
     /// one short lookup for every row that arrived after it.</para>
     /// </summary>
-    public TapeWindow Window(BarAudience audience, TapeQuery query, Func<TapeObservation, long>? cost = null)
+    public TapeWindow Window(TapeHoldout holdout, TapeQuery query, Func<TapeObservation, long>? cost = null)
     {
-        ArgumentNullException.ThrowIfNull(audience);
+        ArgumentNullException.ThrowIfNull(holdout);
         ArgumentNullException.ThrowIfNull(query);
         if (query.Limit is < 1 or > MaxRows)
             throw new ArgumentOutOfRangeException(nameof(query), query.Limit,
                 $"a read of the tape serves 1 to {MaxRows} rows, and {query.Limit} were asked for");
         if (query.MaxBytes < 1)
             throw new ArgumentOutOfRangeException(nameof(query), query.MaxBytes, "a read of the tape needs a byte budget above 0");
+
+        // THE HOLDOUT, BEFORE THE FILE IS OPENED: the asked window of SOURCE time against every dataset's window, read
+        // from the ledger now. Refused whole, never cut short at the window.
+        if (holdout.Refusal(query.From, query.To) is { } withheld) return new TapeWindow([], false, null, withheld);
 
         using var c = Open();
         // DEFERRED: a plain BEGIN, which takes no write lock — the default is BEGIN IMMEDIATE, and a read-only
@@ -227,7 +243,7 @@ public sealed class TapeReader
             using (var one = row.ExecuteReader())
             {
                 if (!one.Read()) continue;   // unreachable: the tape deletes nothing, and this is one snapshot
-                o = TapeStore.Served(audience, TapeStore.Obs(one));
+                o = TapeStore.Served(holdout.Audience, TapeStore.Obs(one));
             }
 
             var size = cost?.Invoke(o) ?? PayloadBytes(o);

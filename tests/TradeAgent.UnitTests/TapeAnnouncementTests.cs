@@ -306,8 +306,10 @@ public class TapeAnnouncementTests(ITestOutputHelper log)
         var rows = store.ObservationsOf(fetch.Id);
         Assert.Equal(cases.Length, rows.Count);
 
-        var research = BarAudience.Pipe(CouncilRoles.Research);
-        var nobody = BarAudience.Pipe(null);
+        using var db = TestEnv.NewDb();
+        var ledger = new DatasetStore(db);   // holding no cutoff, so no row is inside a holdout window
+        var research = TapeHoldout.Pipe(CouncilRoles.Research, ledger);
+        var nobody = TapeHoldout.Pipe(null, ledger);
 
         foreach (var ((slug, title, rule), json) in cases.Zip(items))
         {
@@ -325,7 +327,7 @@ public class TapeAnnouncementTests(ITestOutputHelper log)
             // WITHHELD FROM THE PIPE: the flagged item's payload is not served; a clean one is served whole.
             foreach (var who in new[] { research, nobody })
             {
-                var asOf = store.AsOf(who, okx.Id, series, subject, Now);
+                var asOf = store.AsOf(who, okx.Id, series, subject, Now).Row;
                 Assert.NotNull(asOf);
                 Assert.Equal((row.Id, row.Revision, row.PayloadSha256, row.EvidenceClass, row.Quarantine),
                     (asOf.Id, asOf.Revision, asOf.PayloadSha256, asOf.EvidenceClass, asOf.Quarantine));
