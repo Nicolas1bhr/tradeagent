@@ -8664,3 +8664,42 @@ Names vs `main`: 2255 → 2278, 0 removed, 23 added. Scan: `SCAN CLEAN`; no trai
 **NOT done, NOT verified:** the fields read off a recorded tape (no home's tape opened; one dated GET of Binance's public premium-index endpoint, 2026-10-07
 00:47Z, matched the fixture's shape); no op, verb or screen (`U-features-b`); multi-input kinds; cost on a months-long tape (bounded, not measured); the tape
 holdout is `U-tape-holdout`'s (in flight) — whichever lands second threads it through `FeatureSeries.Read`.
+
+## 2026-10-07 — U-vendor-limit-quote landed: the app holds at the owner's plan limit again, codex's limit sentence read with either apostrophe
+
+Found in M0's readiness (seat M, 2026-10-07: `~/.codex/sessions` read for `usage_limit_exceeded` only, the sentences the only text taken): the vendor's sentence carried
+an ASCII apostrophe in 3 events on 2026-10-01 and U+2019 ("You’ve") in 8 events on 2026-10-05/06 (Codex Desktop sessions, codex-cli 0.159.2 and 0.160.1), while
+`RuntimeManifest.cs`'s pattern held the ASCII one. So on `main` a refused turn at the owner's plan limit was charged its whole reservation and nothing held the next
+launch. Briefed on the orchestrator's ruling (option (a), a protection, kept off Law 10) as `docs/queue/U-vendor-limit-quote.md` (`10def272`), dispatched `30dd8b81`;
+one fresh Opus builder under seat M. Rebased by `land.sh prep` from `e631e0f3` onto `18a7ab10`, src+tests patch-id identical (`defe0549a74f`). Merge `8510dfb2` (ff-only),
+3 commits (items 1, 2 and the report), 3 files, +341/−1. No schema rung. Not a money-path file: the AI's spend cap and the paid-turn trigger (`U-vendor-limit`).
+
+- **Item 1 (`4761a61f`, landed `3119a12d`):** `RuntimeManifest.cs:613` `Pattern = "You['\u2019]ve hit your usage limit"` — a C# escape, so the data is `You['’]ve…`; no IgnoreCase,
+  nothing else widened; the capture comment (`:597-611`) gains the 2026-10-05/06 reading, both observed sentences and the NOT VERIFIED stdout line.
+- **Item 2 (`b5d85ea4`, landed `afbd5904`):** `VendorLimitQuoteTests`, 7 tests: (i) both observed sentences through the shipped manifest — "8:49 PM" held to the end of 20:49 local on
+  the read's date, "Oct 7th, 2026 1:10 AM" to the end of 2026-10-07 01:10 (the dated form, now seen in a vendor sentence); (ii) the 2026-10-01 stream with only its
+  apostrophe changed (DERIVED, checked as exactly two characters, ' to ’) through `VendorLimitTests.Refusing`, as three tests: the U+2019 sentence is the last line,
+  the turn is charged 0 with `context.refused`, no launch before the named minute; (iii) two guards: the ASCII recording still recognised, and a non-sentence that
+  carries "usage limit" refused (written for the guard, labelled so). **Item 3:** one watched mutant, no commit.
+
+**Verified by running (the builder, quoted; then the manager's gate).** RED on the base (`30dd8b81` + item 2): `Failed: 5, Passed: 2, Total: 7` — `:94`, `:108`
+"Assert.NotNull() Failure: Value is null"; `:157` Expected "You’ve hit your usage limit. Upgrade to P"··· Actual "OpenAI Codex CLI did not finish: Reading "···; `:179`
+"Expected: 0 Actual: 1.28"; `:240` "The collection contained 2 items"; the guards green. Mutant (the ASCII-only pattern restored): `VendorLimit*` `Failed: 5, Passed: 16,
+Total: 21`, the same five; restored, `git diff` empty. Builder's gate via `suite.sh`: Release `--no-incremental` 0 Warning(s), 0 Error(s), 19 projects; Unit 1433/0;
+Fault 463/0; `VendorLimit*` 3× 21/0. Manager's gate at `8510dfb2` (the rebased tip), Release: build `--no-incremental` 0 warnings, 0 errors; Unit 1456/1456 (9 m 8 s), Fault
+463/463 (1 m 57 s), Integration 732/733, 1 skipped (11 m 19 s) → 0 failed. Names vs `main`: sets 2278 → 2285, 0 removed, 7 added. Scan clean; no trailers; rev-list 0.
+
+**CI, judged (the landing manager, on the orchestrator's leave to land with the reds recorded).** Branch run 37604406951 at `b5d85ea4`: ubuntu ✓ 13 m, macos ✓ 16 m,
+windows ✗ 62 m on `QuoteClockTests.A_bar_fed_feed_is_not_degraded_one_bar_after_its_close` (`:309`, "simulator at 40 s : READY —"). Re-run 37612881764 at `e631e0f3`
+(docs over the same code): ubuntu ✓ 12 m, macos ✓ 16 m, windows ✗ 112 m — Unit 1431/1432 took 1 h, Fault 456/458, Integration 640/642 + 1 skipped. The windows reds:
+`ResumeOnStartTests.A_restart_with_the_ai_working_starts_its_runtime_and_the_next_due_wake_is_taken_without_a_press` (1 m 48 s, `Until` at `:357`);
+`QuoteClockTests.A_bar_fed_feed_…` again (41 s) and `Both_quote_gates_and_the_decision_gate_read_the_same_clock` (21 s); `BridgeLivenessClockTests.A_bridge_pulsing_while
+_the_wall_clock_steps_forward_an_hour_stays_ready` (224 ms). JUDGEMENT: none is reachable through this unit's code, a regex in codex's manifest that matches one vendor
+sentence. The QuoteClock pair is the known simulator-clock rig fault, its third and fourth sightings, owed to `U-test-hygiene-2` (built, not landed). BridgeLivenessClock
+is a first sighting, routed to a survey by the orchestrator. ResumeOnStart was green at 37604406951 on the same code; this diff's only reach to it is load (three more
+child-process tests in the same assembly), on a runner whose Unit suite took 1 h. Each is recorded as a sighting with its run, not as a pass. Package skipped in both runs.
+Tests box: NOT RUN — `ready` exit 1 at 11:57, 12:00, 12:28 and 13:13 ("NO - the machine does not answer").
+
+**M0:** M0's build is `1828a188` with this unit's item 1 cherry-picked as `4a06a8d0` (local, detached, never pushed; patch-id `d198686b6d67` = `4761a61f`'s): a
+protection, not an input (Law 10's pin stands). **NOT done, NOT verified:** that `codex exec --json` stdout carries U+2019 under 0.160.1 (the session log's
+`payload.error.message` does); "try again later." still has no observed sentence; the app run (M0 is where it meets a limit, if it does); no box.
