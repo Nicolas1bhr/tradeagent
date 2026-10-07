@@ -2058,27 +2058,33 @@ public static class BridgePipeAuth
     {
         lock (Gate)
         {
-            var existing = ReadFile()?.Secret;
+            var existing = Read(CredentialFile)?.Secret;
             var secret = IsSecret(existing) ? existing! : Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             var cred = new BridgeCredential(secret, Environment.ProcessPath);
-            WriteFile(cred);
+            Write(CredentialFile, cred);
             return cred;
         }
     }
 
     /// <summary>The credential as the bridge sees it, or null when TradeAgent has published none.</summary>
-    public static BridgeCredential? ReadForClient() => ReadFile();
+    public static BridgeCredential? ReadForClient() => Read(CredentialFile);
 
-    static BridgeCredential? ReadFile()
+    /// <summary>
+    /// The credential at <paramref name="path"/>, or null when there is none or it is not one. Both ends
+    /// read through this — the connector before it republishes, the bridge inside ATAS before it
+    /// challenges — and every open goes through <see cref="OpenToRead"/>.
+    /// </summary>
+    public static BridgeCredential? Read(string path)
     {
-        // WriteFile replaces atomically, but a replace can still make one open fail outright; a
+        // Write replaces atomically, but a replace can still make one open fail outright; a
         // single retry covers it without turning a missing file into a spin.
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
             {
-                if (!File.Exists(CredentialFile)) return null;
-                var c = Json.Read<BridgeCredential>(File.ReadAllText(CredentialFile));
+                if (!File.Exists(path)) return null;
+                using var text = new StreamReader(OpenToRead(path), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                var c = Json.Read<BridgeCredential>(text.ReadToEnd());
                 return c is not null && IsSecret(c.Secret) ? c : null;
             }
             catch (JsonException) { return null; }
@@ -2088,13 +2094,26 @@ public static class BridgePipeAuth
         return null;
     }
 
-    static void WriteFile(BridgeCredential c)
+    /// <summary>
+    /// How a reader holds the credential while it reads it: the one open <see cref="Read"/> makes, so a
+    /// test that holds a handle across <see cref="Write"/> holds exactly the handle a reader does.
+    /// </summary>
+    internal static FileStream OpenToRead(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+    /// <summary>
+    /// Publishes <paramref name="c"/> at <paramref name="path"/>. <paramref name="beforeRename"/> is a test
+    /// seam and production passes nothing: it is handed the temp's path once the secret is in it, before
+    /// anything else touches it — the instant at which "who can read this" is the question.
+    /// </summary>
+    public static void Write(string path, BridgeCredential c, Action<string>? beforeRename = null)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(CredentialFile)!);
-        var tmp = $"{CredentialFile}.{Environment.ProcessId}.tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = $"{path}.{Environment.ProcessId}.tmp";
         File.WriteAllText(tmp, Json.Write(c));
+        beforeRename?.Invoke(tmp);
         Restrict(tmp);
-        File.Move(tmp, CredentialFile, overwrite: true);
+        File.Move(tmp, path, overwrite: true);
     }
 
     /// <summary>
