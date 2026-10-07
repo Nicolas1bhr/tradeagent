@@ -127,6 +127,12 @@ sealed class StrategyInterpreter(EvaluationState state, int budget)
                     ? Val.Of(value)
                     : Val.Undefined;
 
+            // A FEATURE'S VALUE AT THE CLOSE OF THE BAR IT NAMES, as the caller handed it: absent is undefined.
+            case FeatureRef f:
+                return state.FeatureValue(f.Name, f.Back + back) is { } read
+                    ? Val.Of(read)
+                    : Val.Undefined;
+
             case UnaryExpr u:
             {
                 var operand = Eval(u.Operand, back);

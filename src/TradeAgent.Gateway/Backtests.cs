@@ -162,6 +162,14 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that execution model cannot be run: {declared.Why}.");
 
+        // A PROGRAM THAT READS FEATURES NEEDS THE TAPE, AND WHERE NONE IS OPEN THAT IS SETTLED BEFORE THE TRIAL BUDGET:
+        // the run would be refused for want of its values, and a trial charged for a run that never happened is a
+        // charge for nothing. Read once, because the composition root sets the tape on this gateway.
+        var tape = gateway.Tape;
+        if (program.Features.Count > 0 && tape is null)
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                Backtest.NoTape(program) + " Nothing was run and no trial was charged.");
+
         // THE TRIAL BUDGET IS ASKED BEFORE THE RUN, NOT AFTER IT. A caller told "your budget is spent"
         // after twenty minutes of evaluation has spent the budget to learn that it was spent — and the
         // run it just made is a peek at the data that the count was supposed to bound. There is a
@@ -184,7 +192,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // never read a holdout bar, and the role on it is only for the wording of the refusal.
             var run = Backtest.Over(
                 gateway.Datasets, ask.Dataset, program, model, BarAudience.Pipe(role),
-                ask.From, ask.To, stop: stop);
+                ask.From, ask.To, stop: stop, tape: tape);
 
             if (run.Result is not { } result)
                 throw new GatewayDeniedException(

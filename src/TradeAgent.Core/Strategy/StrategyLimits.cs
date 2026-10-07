@@ -151,9 +151,10 @@ public static class StrategyLimits
     /// <para>`docs/COUNCIL.md` bounds "lookback, state, per-event computation and output". The state
     /// is the indicator windows, the values kept for history references, and the recent bars:
     /// <see cref="MaxIndicators"/> windows of <see cref="MaxLookbackBars"/> plus their kept values,
-    /// plus the bar ring, is about 138 KB at the parser's own limits — so this is set at 256 KB and
-    /// the same test pins the arithmetic. A program's state does not grow while it runs; the limit
-    /// exists so that a WIDER limit elsewhere cannot quietly make a run unbounded.</para>
+    /// plus <see cref="MaxFeatures"/> rings of kept feature values, plus the bar ring, is about 142 KB
+    /// at the parser's own limits — so this is set at 256 KB and the same test pins the arithmetic. A
+    /// program's state does not grow while it runs; the limit exists so that a WIDER limit elsewhere
+    /// cannot quietly make a run unbounded.</para>
     /// </summary>
     public const int MaxStateBytes = 256 * 1024;
 

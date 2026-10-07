@@ -35,8 +35,20 @@ public enum BacktestEventKind
     /// </summary>
     NoTrade,
 
-    /// <summary>The run halted: a defined fault, with its reason. Nothing after this line exists.</summary>
-    Fault
+    /// <summary>
+    /// The run halted: a defined fault, with its reason. Nothing after this line exists but what the run's features came
+    /// to — the <see cref="Feature"/> lines, which close every trace of a program that reads one.
+    /// </summary>
+    Fault,
+
+    /// <summary>
+    /// WHAT ONE DECLARED FEATURE CAME TO OVER THE RUN (<c>U-language-v2a</c>), last, one line each in the program's order:
+    /// its id in <see cref="BacktestEvent.Status"/>, the last close it was read at in <see cref="BacktestEvent.Bar"/>, and
+    /// in words its clean-history start — with why it is not the input's own, where a holdout window bounded the search —
+    /// the bars evaluated before it, the bars it had no value at, and the worst class of the values read. A program that
+    /// reads no feature has none.
+    /// </summary>
+    Feature
 }
 
 /// <summary>
@@ -156,6 +168,26 @@ public sealed record BacktestEvent
     /// <summary>The run halted. The words are <see cref="TraceText"/> and nothing else — see that type.</summary>
     internal static BacktestEvent Fault(long ordinal, DateTimeOffset bar, TraceText why) =>
         new() { Ordinal = ordinal, Bar = bar, Kind = BacktestEventKind.Fault, Reason = why.ToStringAndClear() };
+
+    /// <summary>What one feature came to. Its words are <see cref="TraceText"/>, so every number in them is the line's.</summary>
+    internal static BacktestEvent Feature(long ordinal, FeatureRunSummary f)
+    {
+        var start = f.CleanHistoryStart is { } at
+            ? TraceText.Spell($"clean history from {at.UtcDateTime:O}")
+            : TraceText.Spell($"no clean history: {f.NoCleanHistory}");
+
+        // A START BOUNDED BY A HOLDOUT WINDOW SAYS SO (U-tape-holdout): the search read nothing before that window's
+        // close, so the start, or its absence, is the one since then — never the input's own.
+        if (f.CleanHistoryBounded is { } bounded) start += TraceText.Spell($" ({bounded})");
+        TraceText words =
+            $"{f.Name}: {start}; {f.BarsBefore} bar(s) evaluated before it; {f.BarsAbsent} bar(s) "
+            + $"with no value; worst class {f.WorstClass ?? "none"}";
+        return new()
+        {
+            Ordinal = ordinal, Bar = f.AsOf, Kind = BacktestEventKind.Feature, Status = f.Id,
+            Reason = words.ToStringAndClear()
+        };
+    }
 
     /// <summary>
     /// THE LINE THIS EVENT IS HASHED AND COMPARED AS. Pipe separated, fixed field order, an empty

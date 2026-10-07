@@ -163,6 +163,11 @@ public sealed record BacktestMetrics
                     if (e.Reason is { Length: > 0 } why && !reasons.Contains(why)) reasons.Add(why);
                     break;
 
+                // WHAT A FEATURE CAME TO is a statement about the run's inputs, not an event of its account: no figure
+                // here is computed from it, and it is no fault.
+                case BacktestEventKind.Feature:
+                    break;
+
                 default:
                     faults++;
                     halted = e.Reason;
