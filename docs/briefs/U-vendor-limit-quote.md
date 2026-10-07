@@ -33,3 +33,24 @@ Proof: item 2's RED on the base and the mutant, quoted; the `VendorLimit*` class
 Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; Unit, Fault 0 failed;
 touched classes 3×; `fleet/bin/ci-dispatch.sh <WT>` then `ci-wait.sh --run <id> 9` in foreground slices — every job green on all three platforms, quoted; tests box
 (`TA_WIN_BOX=tests tools/win-test.sh ready`) or its NOT RUN line; names vs `main` 0 removed (both sizes); `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
+
+## Report
+**Code tip `b5d85ea4`** on base `30dd8b81` (main is now `18a7ab10`, touching neither file; `git merge-tree` clean). CI run 37604406951 at `b5d85ea4`: ubuntu-latest success
+13 min, macos-latest success 16 min, **windows-latest failure 62 min** on ONE test this diff cannot reach (below); package skipped.
+- **Item 1 `4761a61f`**: `RuntimeManifest.cs:613` `Pattern = "You['\u2019]ve hit your usage limit"` (a C# escape: the data is `You['’]ve…`; no IgnoreCase, nothing else
+  widened); the capture comment `:597-611` gains the 2026-10-05/06 U+2019 reading, both observed sentences and the NOT VERIFIED exec-stdout line.
+- **Item 2 `b5d85ea4`**: `VendorLimitQuoteTests.cs`, 7 tests: (i) both observed sentences via the shipped manifest (end of 20:49 CEST on the read's date; end of 2026-10-07 01:10
+  CEST); (ii) the 2026-10-01 stream with only its apostrophe changed (DERIVED; checked: exactly 2 chars, ' to ’) through `VendorLimitTests.Refusing`: the U+2019 sentence last,
+  charged 0 with `context.refused`, no launch before the named minute; (iii) two guards.
+- **RED on the base** (`30dd8b81` + item 2): `Failed: 5, Passed: 2, Total: 7` — `:94`, `:108` "Assert.NotNull() Failure: Value is null"; `:157` Expected "You’ve hit your
+  usage limit. Upgrade to P"··· Actual "OpenAI Codex CLI did not finish: Reading "···; `:179` "Expected: 0 Actual: 1.28"; `:240` "The collection contained 2 items". Guards green.
+- **Item 3, mutant (no commit)**: `:613` back to `"You've hit your usage limit"` → `VendorLimit*` `Failed: 5, Passed: 16, Total: 21`, the same five reds; restored, `git diff` empty.
+- **Gate** (via `suite.sh`): `--no-incremental` Release `0 Warning(s)` `0 Error(s)`, 19 projects; Unit `Failed: 0, Passed: 1433`; Fault `Failed: 0, Passed: 463`; `VendorLimit*`
+  3× `Failed: 0, Passed: 21` each. **Names**: base 2255, tip 2262, 0 removed. **tests box: NOT RUN** — `ready` exit 1 (11:57, 12:00, 12:28, 13:13): "NO - the machine does not answer".
+- **The Windows red**: `QuoteClockTests.A_bar_fed_feed_is_not_degraded_one_bar_after_its_close`, `QuoteClockTests.cs:309`, its simulator arm "simulator at 40 s : READY —"
+  (Expected DEGRADED); the same job passed Unit 1432/1432 and Integration 641 (1 skipped). Not reachable from this diff (codex's pattern, a new UnitTests class). THIRD sighting:
+  the same line failed on `main` in runs 37521857152 (`192a60a`) and 37600211089 (`1a987e1`); the ledger's reading (seat P): a test-rig clock split, folded into `U-test-hygiene-2`.
+- **Deviations**: (ii) is three tests so each red shows alone; (iii) also refuses a non-sentence carrying "usage limit" (written for the guard, labelled so), so a bare "usage
+  limit" widening goes red; the read instants in (i), 20:00 and 23:00 CEST on 2026-10-06, are the tests' choice (the brief carries no event instant).
+- **NOT done**: `~/.codex` not read, `codex` not run; `codex exec --json` stdout carrying U+2019 under 0.160.1 stays NOT VERIFIED; hold, charge rule, retry parse and recording
+  untouched; no rung; no UI; no rebase onto `18a7ab10`. This commit is docs-only; run 37604406951 covers the code tip.
