@@ -2097,9 +2097,14 @@ public static class BridgePipeAuth
     /// <summary>
     /// How a reader holds the credential while it reads it: the one open <see cref="Read"/> makes, so a
     /// test that holds a handle across <see cref="Write"/> holds exactly the handle a reader does.
+    ///
+    /// <para>Sharing write and delete (<c>SecretStore.Read</c>'s open), because on Windows a replace meets
+    /// every handle open on the file it replaces: <c>File.ReadAllText</c> shared read only, so a bridge
+    /// reading at the instant of the connector's rewrite turned that rewrite into a sharing violation,
+    /// caught by the accept loop with the pipe name unowned for its one-second pause.</para>
     /// </summary>
     internal static FileStream OpenToRead(string path) =>
-        new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     /// <summary>
     /// PUBLISHES <paramref name="c"/> AT <paramref name="path"/> IN ONE RENAME, OWNER-ONLY FROM ITS FIRST BYTE
