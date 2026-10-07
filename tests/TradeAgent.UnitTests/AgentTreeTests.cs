@@ -372,6 +372,98 @@ public class AgentTreeTests : IDisposable
         finally { await Close(turn.Host); }
     }
 
+    // ---- Pause reaches every role's turn itself ---------------------------------------------------------
+
+    /// <summary>
+    /// (a) PAUSE ENDS EVERY ROLE'S TURN ITSELF, not through the loop's token. The Research turn here hears
+    /// nothing but its own conversation's cancel — the shape of a turn whose read the token cannot interrupt,
+    /// which the survey could not rule out for a pipe read on Windows. Pause used to cancel the token and the
+    /// chair's conversation, and then wait for the loop — which was waiting for that turn — for ever.
+    /// </summary>
+    [Fact]
+    public async Task Pause_ends_a_research_turn_that_only_its_own_cancel_reaches()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        var due = DateTimeOffset.UtcNow.AddMinutes(-1);
+        Assert.True(events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(due), CouncilRoles.Research),
+            MissionEventKind.Review, due.AddMinutes(-30), due, role: CouncilRoles.Research));
+        var host = new TwoRoles(events, NewDir("deaf"));
+        var loop = new MissionLoop(host);
+
+        loop.Start();
+        await host.Research.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var pause = loop.PauseAsync();
+        var returned = await Task.WhenAny(pause, Task.Delay(TimeSpan.FromSeconds(10))) == pause;
+        await host.Research.CancelAsync();   // released either way, so a red run does not hang the suite
+        await pause.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(returned, "Pause did not return: it reached the Research turn only through the loop's token " +
+                              "and the chair's conversation, and that turn was still running");
+        Assert.Equal(1, host.Research.Cancels);
+    }
+
+    /// <summary>A conversation whose turn ends only when it is cancelled — deaf to the token it is handed.</summary>
+    sealed class Deaf : IAgentConversation
+    {
+        readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Cancels { get; private set; }
+        public bool Busy { get; private set; }
+        public IReadOnlyList<ChatTurn> History => [];
+
+        public event Action<ChatTurn>? TurnAdded;
+        public event Action<string>? Delta;
+        public event Action? StateChanged;
+        public event Action<AgentTurnEnded>? TurnEnded;
+
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendAsync(string message, CancellationToken ct = default) => SendMissionAsync(message, ct);
+
+        public async Task SendMissionAsync(string message, CancellationToken ct = default)
+        {
+            Busy = true;
+            StateChanged?.Invoke();
+            Started.TrySetResult();
+            await _cancelled.Task;
+            Busy = false;
+            TurnAdded?.Invoke(new ChatTurn(ChatRole.System, "Stopped.", DateTimeOffset.UtcNow));
+            Delta?.Invoke("");
+            TurnEnded?.Invoke(new AgentTurnEnded(-1, TimeSpan.Zero, "Stopped.", DateTimeOffset.UtcNow));
+        }
+
+        public Task CancelAsync()
+        {
+            if (Busy) Cancels++;
+            _cancelled.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync() => CancelAsync();
+        public IReadOnlyList<string> TakeTyped() => [];
+        public void Queue(string message) { }
+    }
+
+    /// <summary>The smallest host with two roles: a wake queue, a conversation per role, a folder per role.</summary>
+    sealed class TwoRoles(MissionEventStore events, string root) : IMissionHost
+    {
+        public Deaf Chair { get; } = new();
+        public Deaf Research { get; } = new();
+
+        public IAgentConversation? Conversation => Chair;
+        public IAgentConversation? ConversationFor(string role) => role == CouncilRoles.Research ? Research : Chair;
+        public MissionEventStore? Events => events;
+        public string AgentHome => HomeFor(CouncilRoles.Operations);
+        public string HomeFor(string role) => Directory.CreateDirectory(Path.Combine(root, role)).FullName;
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+    }
+
     // ---- a teardown that cannot end the tree ----------------------------------------------------------
 
     /// <summary>

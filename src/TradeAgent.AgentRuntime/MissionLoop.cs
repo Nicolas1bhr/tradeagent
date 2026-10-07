@@ -1128,6 +1128,16 @@ public sealed class MissionLoop
     readonly Dictionary<string, int> _sessionTurns = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _consecutiveErrors = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// EVERY ROLE'S CONVERSATION THIS LOOP HAS TAKEN A TURN ON, as <see cref="IMissionHost.ConversationFor"/>
+    /// answered it, so Pause can end each one's turn itself (<c>U-agent-tree</c>). Pause used to cancel the
+    /// chair's conversation alone and reach every other role's turn only through the loop's token — which
+    /// ends a turn only when its read notices, and leaves the tree to whatever that unwinding does. Kept
+    /// here rather than asked of the host again at Pause, because the host builds a role's conversation
+    /// on first ask, on the loop's own thread.
+    /// </summary>
+    readonly Dictionary<string, IAgentConversation> _conversations = new(StringComparer.Ordinal);
+
     /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
     string? _role;
 
@@ -1419,10 +1429,27 @@ public sealed class MissionLoop
     {
         CancellationTokenSource? cts;
         Task? run;
-        lock (_gate) { cts = _cts; run = _running; _cts = null; _running = null; }
+        List<IAgentConversation> turning;
+        lock (_gate) { cts = _cts; run = _running; _cts = null; _running = null; turning = [.. _conversations.Values]; }
 
+        // EVERY ROLE'S TURN ENDED FIRST, AND ITS WHOLE TREE WITH IT, BEFORE THE TOKEN (U-agent-tree). Pause
+        // means the AI is stopped: each conversation's CancelAsync runs the turn's teardown and returns once
+        // it has, while the turn is still the conversation's own — cancelling the token first unwound the
+        // turn out from under the kill, and reached a role other than the chair only through a read that
+        // had to notice. The chair's is the Chat page's, so an owner's typed turn is ended too, as it was.
+        var conversations = new List<IAgentConversation>();
+        if (_host.Conversation is { } chair) conversations.Add(chair);
+        foreach (var c in turning)
+            if (!conversations.Any(known => ReferenceEquals(known, c))) conversations.Add(c);
+        foreach (var c in conversations)
+        {
+            try { await c.CancelAsync(); }
+            catch (Exception) { /* a conversation that cannot cancel has nothing running to end */ }
+        }
+
+        // Then the loop, and the wait for it: a turn that was launching as the kills went out unwinds
+        // through its own teardown, and this returns only once that has run as well.
         if (cts is not null) { await cts.CancelAsync(); cts.Dispose(); }
-        if (_host.Conversation is { } c) await c.CancelAsync();
         if (run is not null) { try { await run; } catch (Exception) { /* it was cancelled */ } }
 
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
@@ -1612,6 +1639,7 @@ public sealed class MissionLoop
 
         var conversation = _host.ConversationFor(role);
         if (conversation is null) return _options.BusyRetry;
+        lock (_gate) _conversations[role] = conversation;
 
         // The owner is mid-conversation on the Chat page. Their turn is the one in flight; the
         // mission's waits rather than racing it, and what they typed is carried into the next one.
