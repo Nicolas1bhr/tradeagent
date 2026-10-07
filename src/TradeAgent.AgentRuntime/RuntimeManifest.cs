@@ -593,9 +593,24 @@ public static class RuntimeCatalog
             // " or try again at " and " or try again later."; the time is "%-I:%M %p" on the same
             // local date and "%b %-d" + st/nd/rd/th + ", %Y %-I:%M %p" on another one. The dated form
             // is therefore in the formats below and has NOT been seen in a stream.
+            //
+            // AND SINCE 2026-10-05 WITH A TYPOGRAPHIC APOSTROPHE. Read on 2026-10-07 in this Mac's codex
+            // session logs, for `usage_limit_exceeded` events only, the sentence the only text taken: the
+            // three refusals of 2026-10-01 carry "You've" (U+0027); the eight of 2026-10-05/06, from Codex
+            // Desktop sessions under codex-cli 0.159.2 and 0.160.1, carry "You’ve" (U+2019):
+            //
+            //   "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit
+            //    https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:49 PM."
+            //
+            // and the same sentence ending "try again at Oct 7th, 2026 1:10 AM." — the dated form, in a
+            // vendor sentence for the first time. So the pattern takes either apostrophe at that one place
+            // (U+2019 written as \u2019 below) and is widened nowhere else: no IgnoreCase and no bare "usage
+            // limit", because another error read as the limit would be held and charged nothing. NOT
+            // VERIFIED: that `codex exec --json`'s stdout carries the U+2019 sentence under 0.160.1 — the
+            // session log's error message does; on 2026-10-01 both carried U+0027.
             UsageLimit = new UsageLimitPlan
             {
-                Pattern = "You've hit your usage limit",
+                Pattern = "You['\u2019]ve hit your usage limit",
                 RetryAtPattern = @"try again at (?<at>.+?)\.?\s*$",
                 RetryAtFormats =
                 [
