@@ -258,7 +258,13 @@ public static class GatewaySchema
             + "'as_of' serves only what had ARRIVED by then. Rows come newest arrival first, at most "
             + $"{Core.Db.TapeReader.MaxRows} a call and a byte cap; an answer either bound stopped says so in 'more' and "
             + "'capped_by', and 'before' set to its 'next_before' continues exactly. A limit over the cap is REFUSED, "
-            + "never clamped. An item TradeAgent's screen flagged as addressed to an automated reader comes with its "
+            + "never clamped. THE TAPE IS HELD BACK OVER THE SAME MONTHS AS THE BARS: a read whose source-time window "
+            + "reaches a dataset's holdout window — from its 'holdout_from' to the close of its last bar, both in 'trade "
+            + "data list' — is refused with HOLDOUT_WITHHELD naming the dataset, its cutoff and the window, whatever the "
+            + "source, series or subject, and never cut short; an absent 'from' or 'to' reaches every window on its side, "
+            + "so while a holdout is set a read with no window is refused — ask for a 'to' earlier than the cutoff or a "
+            + "'from' at or after the window's close. Every part of the AI is refused equally, and so is a caller that "
+            + "presented no launch grant. An item TradeAgent's screen flagged as addressed to an automated reader comes with its "
             + "'quarantine' rule and WITHOUT its payload, for every role. GDELT's rows carry 'citation' — the credit "
             + "GDELT's terms require wherever its data is used or shown; keep it with anything you derive from them. "
             + "Every role may read it; nothing on this channel records, edits or deletes a row — the account owner's two "
@@ -267,8 +273,8 @@ public static class GatewaySchema
                 new("source", "string", true, "Which source, e.g. binance-um-oi, okx-eea-announcements, gdelt-gkg. 'trade data list' names them; an unknown one is refused naming them."),
                 new("series", "string", false, "Which of the source's series. Optional when it records one; required, and named in the refusal, when it records several."),
                 new("subject", "string", false, "One subject — a symbol such as BTCUSDT. Omit it to read every subject of the series, newest arrival first: announcements and news items are keyed by a digest or a record id nobody can guess."),
-                new("from", "string", false, "ISO-8601 date or instant: the earliest SOURCE time served, inclusive. Present and unreadable is refused."),
-                new("to", "string", false, "ISO-8601 date or instant: the latest SOURCE time served, inclusive. Present and unreadable is refused."),
+                new("from", "string", false, "ISO-8601 date or instant: the earliest SOURCE time served, inclusive. Present and unreadable is refused; absent, the read reaches back past every holdout window."),
+                new("to", "string", false, "ISO-8601 date or instant: the latest SOURCE time served, inclusive. Present and unreadable is refused; absent, the read reaches every holdout window after 'from'."),
                 new("as_of", "string", false, "ISO-8601 instant: serve only rows that had ARRIVED by then, inclusive — what TradeAgent knew at that moment. Omit it for everything that has arrived."),
                 new("limit", "number", false, $"How many rows, a whole number from 1 to {Core.Db.TapeReader.MaxRows}; {Core.Db.TapeReader.DefaultRows} when omitted. More is refused, never clamped."),
                 new("before", "number", false, "A row id: serve only rows the tape recorded before it. Pass an answer's 'next_before' to continue it exactly.")
