@@ -183,8 +183,16 @@ public class QuoteClockTests(ITestOutputHelper log)
         var behind = TimeSpan.FromDays(30);
         var clock = new TestClock(DateTimeOffset.UtcNow - behind);
         using var db = TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
-        conn.Faults.QuoteAge = behind + TimeSpan.FromSeconds(5);
+
+        // THE QUOTE IS STAMPED ON THE GATEWAY'S CLOCK, as LossWatchTests' fixture stamps its own: five
+        // seconds old on that clock and thirty days and five on the machine's, however long the runner
+        // takes. It used to be stamped on the MACHINE's clock and backdated thirty days and five
+        // seconds — the same instant only at the moment the clock above was fixed, so every second the
+        // runner spent after that made the quote a second younger to the gateway, and once fifteen had
+        // gone step FOUR's forty-five read under thirty: windows-latest run 37612881764, "40 s inside
+        // the position read: ok — FILLED" after 21 s.
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()) { QuoteClock = clock });
+        conn.Faults.QuoteAge = TimeSpan.FromSeconds(5);
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
