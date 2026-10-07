@@ -78,6 +78,20 @@ public sealed class StubBridge : IAsyncDisposable
     readonly BridgeHello _hello;
     readonly BridgeCredential? _fixedCredential;
     readonly CancellationTokenSource _cts = new();
+
+    /// <summary>
+    /// ONE FRAME AT A TIME ON THE WIRE, the shape the real bridge sends every frame in
+    /// (<c>BridgeServer._send</c>). The loop's answers and a test's pulses, hellos and events share
+    /// one writer, and with no gate between them a test's next frame met the loop's answer still
+    /// inside its write: on windows-latest the connector had read that answer and the test had moved
+    /// on before the stub's write task completed, and <c>StreamWriter</c> refused the pulse —
+    /// <c>InvalidOperationException: The stream is currently in use by a previous operation on the
+    /// stream</c> (run 37612881764, <c>BridgeLivenessClockTests</c>' third pulse). Held across each
+    /// whole write, and taken by <see cref="DisposeAsync"/> before it disposes the writer. See
+    /// <c>StubBridgeTests</c>.
+    /// </summary>
+    readonly SemaphoreSlim _send = new(1, 1);
+
     NamedPipeClientStream? _client;
     StreamReader? _r;
     StreamWriter? _w;
@@ -93,6 +107,14 @@ public sealed class StubBridge : IAsyncDisposable
     /// event gate has to refuse.
     /// </summary>
     public bool SendHello { get; set; } = true;
+
+    /// <summary>
+    /// WHAT THE STUB'S WRITER WRITES INTO: the pipe itself, unless a test puts a stream between them.
+    /// A stub-only seam, and its one user is <c>StubBridgeTests</c>, which holds one frame inside its
+    /// write with it — the window a frame on its way out sits in on a slow runner, where the far end
+    /// can already have read it while the writer has not been told the write is done.
+    /// </summary>
+    public Func<Stream, Stream>? WriterStream { get; init; }
 
     public StubBridge(string pipe, BridgeHello? hello = null, BridgeCredential? credential = null)
     {
@@ -119,7 +141,10 @@ public sealed class StubBridge : IAsyncDisposable
     {
         _client = new NamedPipeClientStream(".", _pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
         await _client.ConnectAsync(10_000, ct);
-        _w = new StreamWriter(_client, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+        _w = new StreamWriter(WriterStream?.Invoke(_client) ?? _client, new UTF8Encoding(false), 8192, leaveOpen: true)
+        {
+            AutoFlush = true
+        };
 
         // ONE READER for the whole connection, held in a field and shared with Loop(). The peer
         // answers the challenge and then sits waiting, so a second reader created for the command
@@ -202,7 +227,12 @@ public sealed class StubBridge : IAsyncDisposable
     public Task BarePulse() =>
         Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat });
 
-    Task Send(object o) => _w!.WriteLineAsync(Json.Write(o));
+    async Task Send(object o)
+    {
+        await _send.WaitAsync();
+        try { await _w!.WriteLineAsync(Json.Write(o)); }
+        finally { _send.Release(); }
+    }
 
     async Task Loop(CancellationToken ct)
     {
@@ -262,7 +292,15 @@ public sealed class StubBridge : IAsyncDisposable
         // can hang is a worse harness than one that throws. If the bound runs out the writer is
         // disposed anyway and `Quietly` covers what that raises.
         if (_loop is not null) await Quietly(() => _loop.WaitAsync(TimeSpan.FromSeconds(5)));
-        await Quietly(async () => { if (_w is not null) await _w.DisposeAsync(); });
+
+        // AND THE GATE, BEFORE THE WRITER GOES. The loop is not the only writer: a frame a test sent
+        // and has not awaited is a write in flight too. Every frame holds `_send` across its whole
+        // write, so holding it here is the writer let go of by everybody. Bounded for the reason
+        // above, and released once the writer is gone, so a frame sent after teardown fails on the
+        // disposed writer rather than waiting for ever.
+        var gated = await _send.WaitAsync(TimeSpan.FromSeconds(5));
+        try { await Quietly(async () => { if (_w is not null) await _w.DisposeAsync(); }); }
+        finally { if (gated) _send.Release(); }
         try { _r?.Dispose(); } catch (IOException) { } catch (ObjectDisposedException) { }
         await Quietly(async () => { if (_client is not null) await _client.DisposeAsync(); });
         _cts.Dispose();
