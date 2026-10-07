@@ -2102,29 +2102,44 @@ public static class BridgePipeAuth
         new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
     /// <summary>
-    /// Publishes <paramref name="c"/> at <paramref name="path"/>. <paramref name="beforeRename"/> is a test
-    /// seam and production passes nothing: it is handed the temp's path once the secret is in it, before
-    /// anything else touches it — the instant at which "who can read this" is the question.
+    /// PUBLISHES <paramref name="c"/> AT <paramref name="path"/> IN ONE RENAME, OWNER-ONLY FROM ITS FIRST BYTE
+    /// (<c>U-bridge-auth-owner-only</c>; the shape of <c>SecretStore.Write</c>, copied rather than referenced,
+    /// because this assembly is in the bridge DLL's closure and that one is not).
+    ///
+    /// <para>It used to write the temp with <c>File.WriteAllText</c> — 0666 less the umask, 0644 under the
+    /// usual 022 — and chmod it 0600 only afterwards, so between the two any account that could traverse
+    /// the state directory could open the live secret, and a descriptor opened then reads on after the
+    /// chmod; a failure in between left that temp behind under a per-process name nothing swept. Now the
+    /// temp is this call's own, created new — on macOS and Linux created 0600 by the open itself — written,
+    /// flushed to the device, and renamed over <paramref name="path"/>; a temp the rename did not consume
+    /// is deleted. On Windows it inherits the state directory's DACL as it always did, and the rename keeps
+    /// that: the window adds no reader the published file lacks.</para>
+    ///
+    /// <para><paramref name="beforeRename"/> is a test seam and production passes nothing: it is handed the
+    /// temp's path once the secret is in it, before anything else touches it — the instant at which "who
+    /// can read this" is the question.</para>
     /// </summary>
     public static void Write(string path, BridgeCredential c, Action<string>? beforeRename = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = $"{path}.{Environment.ProcessId}.tmp";
-        File.WriteAllText(tmp, Json.Write(c));
-        beforeRename?.Invoke(tmp);
-        Restrict(tmp);
-        File.Move(tmp, path, overwrite: true);
-    }
-
-    /// <summary>
-    /// Owner-only where the filesystem has the concept. On Windows the ACL inherited from
-    /// %LOCALAPPDATA% already denies other accounts, and this is a no-op.
-    /// </summary>
-    static void Restrict(string path)
-    {
-        if (OperatingSystem.IsWindows()) return;
-        try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
-        catch (Exception) { /* a filesystem without modes is a diagnostics problem, not a crash */ }
+        var temp = $"{path}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            var create = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+            if (!OperatingSystem.IsWindows()) create.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            using (var fs = new FileStream(temp, create))
+            {
+                fs.Write(Encoding.UTF8.GetBytes(Json.Write(c)));
+                fs.Flush(flushToDisk: true);
+            }
+            beforeRename?.Invoke(temp);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            // Only after a failure is there anything here; the rename consumed it otherwise.
+            try { File.Delete(temp); } catch (Exception) { /* a temp the OS will not let go of is litter, not a fault */ }
+        }
     }
 
     // ------------------------------------------------------------------ the proofs
