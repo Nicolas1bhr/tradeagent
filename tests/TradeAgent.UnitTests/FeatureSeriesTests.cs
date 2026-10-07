@@ -354,7 +354,8 @@ public class FeatureSeriesTests(ITestOutputHelper log) : IDisposable
     /// touches the window — its own instants or the readings its first instant looks back over — is refused in the
     /// holdout's words with no point, for every role and a caller with none; one that ends before the cutoff is served
     /// exactly as with no holdout at all; and one after the window is served, its clean-history search reaching back no
-    /// further than the window's close — later than without the holdout, never earlier.
+    /// further than the window's close — later than without the holdout, never earlier — and saying so in
+    /// <see cref="FeatureCleanStart.Bounded"/>, so it is never read as the input's own start.
     /// </summary>
     [Fact]
     public void A_feature_read_reaching_a_holdout_window_is_refused()
@@ -396,7 +397,14 @@ public class FeatureSeriesTests(ITestOutputHelper log) : IDisposable
             Assert.Null(after.Refusal);
             Assert.Equal(open.Points, after.Points);
             Assert.Equal(new FeatureCleanStart(Noon.AddSeconds(2 + 5), null), open.CleanHistoryStart);
-            Assert.Equal(new FeatureCleanStart(lastBar.AddMinutes(1).AddSeconds(2 + 5), null), after.CleanHistoryStart);
+            Assert.Null(open.CleanHistoryStart.Bounded);
+
+            // THE BOUNDED START SAYS SO: found from the first reading after the window closed, it is not the input's own.
+            log.WriteLine($"{role ?? "no role"}: {after.CleanHistoryStart.At:HH:mm:ss} — {after.CleanHistoryStart.Bounded}");
+            Assert.Equal((lastBar.AddMinutes(1).AddSeconds(2 + 5), (string?)null), (after.CleanHistoryStart.At, after.CleanHistoryStart.Absent));
+            Assert.Contains($"no reading stamped before {lastBar.AddMinutes(1):u}, the close of dataset {id} (BTCUSDT 1m v1)'s holdout window",
+                after.CleanHistoryStart.Bounded, StringComparison.Ordinal);
+            Assert.Contains("NOT necessarily the input's own", after.CleanHistoryStart.Bounded, StringComparison.Ordinal);
         }
     }
 
