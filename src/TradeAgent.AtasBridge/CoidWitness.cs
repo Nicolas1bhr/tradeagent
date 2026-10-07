@@ -378,6 +378,20 @@ public sealed class CoidWitness : IDisposable
     readonly Func<string, string, string[]> _listSidecars;
 
     /// <summary>
+    /// THE WAIT BETWEEN TWO REFUSED REPLACES, in milliseconds — <see cref="ReplaceBackoffMs"/> times
+    /// the attempt, <see cref="ReplaceAttempts"/> − 1 of them (<c>U-test-hygiene-2</c> item 2).
+    ///
+    /// A seam because the claim that rests on it — the whole retry is bounded, so a wholly contended
+    /// order is refused well inside the gateway's RPC deadline — was asserted with a stopwatch around
+    /// the retry, and a stopwatch also measures the runner: windows-latest run 37443797669 read 2335 ms
+    /// off 200 ms of waits, the attempt count holding at five. What the witness ASKS to wait is the
+    /// number the claim is about, and it is exactly what this sees. Production passes nothing and gets
+    /// <see cref="Thread.Sleep(int)"/>; a test that passes its own still has to take the waits for real,
+    /// or the witness's lower bound — the waits ARE taken — is a claim about the test.
+    /// </summary>
+    readonly Action<int> _backoff;
+
+    /// <summary>
     /// THE ONE SNAPSHOT EVERY READING COMES OUT OF, or null when one has not been taken since the
     /// last write. See <see cref="ReadSidecarSet"/> and <see cref="Derive"/>.
     /// </summary>
@@ -676,9 +690,11 @@ public sealed class CoidWitness : IDisposable
                        Func<string, string[]>? readSidecar = null,
                        Func<string, string, string[]>? listSidecars = null,
                        Action<string, string, bool>? moveSidecar = null,
-                       Func<string, FileStream>? openTemp = null)
+                       Func<string, FileStream>? openTemp = null,
+                       Action<int>? backoff = null)
     {
         _path = path;
+        _backoff = backoff ?? Thread.Sleep;
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
         _session8 = SessionId.Length >= 8 ? SessionId[..8] : SessionId;
@@ -2496,7 +2512,7 @@ public sealed class CoidWitness : IDisposable
             }
             catch (Exception e) when (Transient(e) && attempt < ReplaceAttempts)
             {
-                Thread.Sleep(ReplaceBackoffMs * attempt);
+                _backoff(ReplaceBackoffMs * attempt);
             }
             catch (Exception e) { _stranded.Add(tmp); ReportWriteFailure(e, tmp, claim, tempHoldsTheClaim: true); return false; }
         }

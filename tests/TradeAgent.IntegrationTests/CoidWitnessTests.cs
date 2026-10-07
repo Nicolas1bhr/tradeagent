@@ -714,26 +714,42 @@ public class CoidWitnessTests : IDisposable
     [InlineData(true)]
     public void A_refused_rename_is_attempted_exactly_five_times_and_then_gives_up(bool accessDenied)
     {
+        const int boundMs = 2000;
         var attempts = 0;
-        var w = Session((_, _) =>
-        {
-            attempts++;
-            throw accessDenied
-                ? new UnauthorizedAccessException("Access to the path is denied.")
-                : SharingViolation();
-        });
+
+        // THE WAITS THE WITNESS ASKS FOR, each one taken for real — so the lower bound below still times
+        // real sleeps — until together they reach the bound, and not past it: a backoff that has lost its
+        // bound is then reported below in the milliseconds it asked for, rather than slept through.
+        var waits = new List<int>();
+        var w = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+            replace: (_, _) =>
+            {
+                attempts++;
+                throw accessDenied
+                    ? new UnauthorizedAccessException("Access to the path is denied.")
+                    : SharingViolation();
+            },
+            backoff: ms =>
+            {
+                waits.Add(ms);
+                if (waits.Sum() < boundMs) Thread.Sleep(ms);
+            });
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         Assert.False(w.Submitting("TA-NEVER", "SIM", "ES", "Buy", 1m, null));
         clock.Stop();
 
         Assert.Equal(5, attempts);
-        // 20 + 40 + 60 + 80 = 200 ms of sleeps. The lower bound proves they are taken; the upper one
-        // proves the budget is bounded, which is what the RPC deadline depends on.
+        // 20 + 40 + 60 + 80 = 200 ms of sleeps. The lower bound proves they are taken, on a stopwatch, which
+        // a slow runner can only lengthen.
         Assert.True(clock.ElapsedMilliseconds >= 150,
                     $"the whole retry ran in {clock.ElapsedMilliseconds} ms — the backoff is not taken");
-        Assert.True(clock.ElapsedMilliseconds < 2000,
-                    $"the retry took {clock.ElapsedMilliseconds} ms — the budget is not bounded");
+        // The upper one proves the budget is bounded, which is what the RPC deadline depends on — read off
+        // the waits the witness ASKED for and no longer off a stopwatch around them, because a stopwatch
+        // measures the runner too: windows-latest run 37443797669 read 2335 ms here off these same 200 ms of
+        // waits, with the count above holding at five (U-test-hygiene-2 item 2).
+        Assert.True(waits.Sum() < boundMs,
+                    $"the retry asked to wait {waits.Sum()} ms ({string.Join(" + ", waits)}) — the budget is not bounded");
     }
 
     /// <summary>
