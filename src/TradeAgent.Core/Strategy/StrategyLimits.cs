@@ -29,8 +29,18 @@ public static class StrategyLimits
     /// <summary>The most lines one program may have, comments and blank lines included.</summary>
     public const int MaxLines = 200;
 
-    /// <summary>The most characters one line may be.</summary>
+    /// <summary>The most characters one line may be — every line but a <c>feature</c> line, which may be <see cref="MaxFeatureLineLength"/>.</summary>
     public const int MaxLineLength = 240;
+
+    /// <summary>
+    /// The most characters one <c>feature</c> line may be: its spec is one JSON object, a real line is 176 to 232
+    /// characters, and a line held to <see cref="MaxLineLength"/> could not carry a longer name or a window kind with
+    /// room to spare. The program's own <see cref="MaxSourceBytes"/> still bounds the whole text.
+    /// </summary>
+    public const int MaxFeatureLineLength = 512;
+
+    /// <summary>The most features one program may declare.</summary>
+    public const int MaxFeatures = 8;
 
     /// <summary>The most characters a constant or indicator name may be.</summary>
     public const int MaxIdentifierLength = 32;
