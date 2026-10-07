@@ -9971,6 +9971,27 @@ public sealed class TradingGateway : IAsyncDisposable
         capabilities.ReconciliationProvable && capabilities.ClosesCarryClientOrderId;
 
     /// <summary>
+    /// THE RECONCILER'S ABSENCE NEVER DECIDES AN ORDER THE PLATFORM ANSWERED, WHERE ABSENCE PROVES NOTHING
+    /// (<c>U-inflight-owner</c>): a row carrying the platform's own reference (<see cref="ExecutionRequest.ConnectorOrderId"/>
+    /// non-empty) on a platform where <see cref="AbsenceDecidesALostClose"/> does not hold — ATAS.
+    ///
+    /// <para>The platform answered such an order at least once, so "it never reached the broker" is false of it
+    /// whatever the history says now; and where no order and no fill under our id does not prove that nothing filled,
+    /// writing it off <c>CANCELLED</c> resumes trading over an order that may have filled, with its fill missing from
+    /// the ledger the loss budget reads (rule 3). So <see cref="ReconcileAsync"/> leaves it inconclusive, untouched and
+    /// paused. What still settles it: a final state the platform lists under its id (<see cref="Adopt"/>) or fills under
+    /// its id, on any pass; and the owner's card. The stream never moves a <c>RECONCILING</c> row
+    /// (<see cref="ApplyAPlatformAnswer"/>), though a fill it reports still reaches <see cref="RecordFill"/>.</para>
+    ///
+    /// <para><b>One root, two ways in:</b> the in-flight sweep's hand-over (<see cref="HandOverToTheReconciler"/>), and
+    /// a dispatch whose indefinite answer carried a reference (<see cref="RecordIndefinite"/>), which on ATAS this pass
+    /// used to write off past the grace. A row with no reference — a dispatch stranded before any answer — is not
+    /// this guard's: there absence is still read on the reconciler's clock, as it always was.</para>
+    /// </summary>
+    bool AnsweredWhereAbsenceProvesNothing(ExecutionRequest req) =>
+        !AbsenceDecidesALostClose(Connector.Capabilities) && !string.IsNullOrEmpty(req.ConnectorOrderId);
+
+    /// <summary>
     /// THE ONE GUARD ON WHAT DECIDES A LOST CLOSE: a state the platform holds it in that cannot change
     /// any more. A close still working can still fill, and counting it decided would settle a live order
     /// and send a second close on top of it. Asked where the history is read and again before a verdict
@@ -11158,7 +11179,9 @@ public sealed class TradingGateway : IAsyncDisposable
     ///   - nothing is ever resubmitted here;
     ///   - "absent from the broker" only means "never landed" when the backend can prove its own
     ///     history AND enough time has passed; otherwise the request stays unconfirmed and trading
-    ///     stays paused, which is the safe direction to fail.
+    ///     stays paused, which is the safe direction to fail;
+    ///   - and never of an order the platform answered, where absence proves nothing
+    ///     (<see cref="AnsweredWhereAbsenceProvesNothing"/>, <c>U-inflight-owner</c>).
     /// </summary>
     public async Task<ReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
@@ -11347,7 +11370,17 @@ public sealed class TradingGateway : IAsyncDisposable
                 // written by ExecutionRequestStore, which this gateway hands its own clock to. The
                 // near end is the LATER of the dispatch and the bound — see AbsenceCountsFrom.
                 var age = Now - AbsenceCountsFrom(req);
-                if (age >= _opt.AbsenceGrace)
+                if (age >= _opt.AbsenceGrace && AnsweredWhereAbsenceProvesNothing(req))
+                {
+                    // AN ORDER THE PLATFORM ANSWERED IS NEVER WRITTEN OFF HERE WHERE ABSENCE PROVES NOTHING
+                    // (U-inflight-owner): untouched, inconclusive, and trading stays paused over it. A final
+                    // state listed under its id or a fill under its id above, or the owner's card, settle it.
+                    inconclusive++;
+                    details.Add($"{req.RequestId}: {Connector.DisplayName} answered this order ({req.ConnectorOrderId}) and "
+                                + "now lists no order and no fill under its id, which there does not prove it did not fill; "
+                                + "it waits for your answer on the Dashboard");
+                }
+                else if (age >= _opt.AbsenceGrace)
                 {
                     // Absent from a backend that can prove its own history, long enough after dispatch.
                     // CANCELLED is the truthful mapping: not working, never filled, nothing to undo.

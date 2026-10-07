@@ -257,4 +257,88 @@ public class InFlightSettleTests(ITestOutputHelper log)
         await again.Gw.DisposeAsync();
         return (row, close, held);
     }
+
+    // ------------------------------------------------- U-inflight-owner: an order the platform answered and no longer lists
+
+    /// <summary>
+    /// ONE PASS OF THE APP'S BACKGROUND LOOP (<c>AppHost.BackgroundAsync</c>): the health pass, then the reconciler while
+    /// anything is unconfirmed — the same tick, so a row handed over is met by the reconciler at once.
+    /// </summary>
+    static async Task Pass(TradingGateway gw)
+    {
+        await gw.RefreshHealthAsync();
+        if (gw.HasUnconfirmedWork()) await gw.ReconcileAsync();
+    }
+
+    /// <summary>The refusal a call met, or null because it went through.</summary>
+    static async Task<GatewayDeniedException?> Refusal(Func<Task> call)
+    {
+        try { await call(); return null; }
+        catch (GatewayDeniedException ex) { return ex; }
+    }
+
+    /// <summary>
+    /// (f) THE RECONCILER NEVER WRITES OFF AN ANSWERED ORDER AS NEVER REACHED (<c>U-inflight-owner</c>).
+    ///
+    /// <para>The platform takes a market buy and answers it <c>UNKNOWN</c>, naming it: the dispatch's indefinite
+    /// answer that carries a reference, recorded <c>UNKNOWN</c>, flagged, with that reference. A restart, and a book
+    /// that no longer lists it. On a platform of ATAS's kind, ten passes past the reconciler's clock leave it
+    /// <c>RECONCILING</c>, flagged and pausing trading, and nothing says it never reached the broker — it carries the
+    /// broker's own reference. On the plain simulator, whose closes carry the id and where absence decides, the
+    /// reconciler writes it off as it always has: <c>CANCELLED</c>, "never reached the broker".</para>
+    ///
+    /// <para><b>RED on the base</b>: on ATAS's kind it is written off <c>CANCELLED</c>, "never reached the broker", and
+    /// trading resumes over an order the platform answered.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_reconciler_never_writes_off_an_answered_order_as_never_reached()
+    {
+        var atas = await AnAnsweredOrderNoLongerListed("iof-atas", closesCarryTheId: false);
+        var sim = await AnAnsweredOrderNoLongerListed("iof-sim", closesCarryTheId: null);
+
+        foreach (var (name, a) in new[] { ("closes carry no id", atas), ("the plain simulator", sim) })
+            log.WriteLine($"{name,-20} : placed {a.Placed.State}, reference {a.Placed.ConnectorOrderId}, flagged "
+                          + $"{a.Placed.NeedsReconciliation}; ten passes later {a.Row.State}, flagged {a.Row.NeedsReconciliation} "
+                          + $"— {a.Row.LastError ?? "-"}; a new order {a.Refused?.Code.ToString() ?? "sent"}");
+
+        foreach (var a in new[] { atas, sim })
+        {
+            Assert.Equal(ExecutionState.UNKNOWN, a.Placed.State);
+            Assert.True(a.Placed.NeedsReconciliation);
+            Assert.False(string.IsNullOrEmpty(a.Placed.ConnectorOrderId));
+        }
+
+        Assert.Equal(ExecutionState.RECONCILING, atas.Row.State);
+        Assert.True(atas.Row.NeedsReconciliation);
+        Assert.DoesNotContain("never reached", atas.Row.LastError ?? "", StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, atas.Refused?.Code);
+
+        Assert.Equal(ExecutionState.CANCELLED, sim.Row.State);
+        Assert.False(sim.Row.NeedsReconciliation);
+        Assert.Contains("never reached the broker", sim.Row.LastError ?? "", StringComparison.Ordinal);
+        Assert.Null(sim.Refused);
+    }
+
+    async Task<(ExecutionRequest Placed, ExecutionRequest Row, GatewayDeniedException? Refused)>
+        AnAnsweredOrderNoLongerListed(string name, bool? closesCarryTheId)
+    {
+        var h = await Ready();
+        using var dbh = h.Db;
+        h.C.PlaceAnswer = o => o with { State = ExecutionState.UNKNOWN };
+        var placed = await h.Gw.PlaceAsync(Ai, $"{name}-buy", TestEnv.Buy("ES", 1m));
+        await h.Gw.DisposeAsync();
+
+        var c = new RecordingConnector(new FakeConnector(new FakeBroker())) { ClosesCarryTheId = closesCarryTheId };
+        var again = await Ready(h.Db, c, h.Clock);
+        again.Clock.Advance(again.Stale + TimeSpan.FromSeconds(1));
+        for (var i = 0; i < 10; i++)
+        {
+            await Pass(again.Gw);
+            again.Clock.Advance(TimeSpan.FromSeconds(5));
+        }
+        var row = again.Gw.GetRequest(placed.RequestId)!;
+        var refused = await Refusal(() => again.Gw.PlaceAsync(Ai, $"{name}-next", TestEnv.Buy("ES", 1m)));
+        await again.Gw.DisposeAsync();
+        return (placed, row, refused);
+    }
 }

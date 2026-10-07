@@ -230,12 +230,21 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
         Read(Inner.GetExecutionsAsync(a, since, ct));
 
+    /// <summary>
+    /// WHAT THE PLATFORM ANSWERS A PLACEMENT IT HAS TAKEN, when a test needs an answer the simulator never gives
+    /// (<c>U-inflight-owner</c>). The order is in the book under the id it was handed, and the answer that comes
+    /// back is this rewrite of the book's own — an indefinite state that still carries the platform's reference,
+    /// which the gateway records <c>UNKNOWN</c> with that reference. Inert until set.
+    /// </summary>
+    public Func<OrderInfo, OrderInfo>? PlaceAnswer;
+
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Places);
         lock (Placed) Placed.Add(cmd);
         await Gate(HeldCall.Place);
-        return await Inner.PlaceOrderAsync(cmd, ct);
+        var answer = await Inner.PlaceOrderAsync(cmd, ct);
+        return PlaceAnswer is { } rewrite ? rewrite(answer) : answer;
     }
 
     public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default)
