@@ -334,8 +334,9 @@ public class SweepRequestIdTests
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
             $"the sweep returned in {timer.Elapsed.TotalSeconds:0.00}s — the latency never applied, so this measures nothing");
 
-        // And whatever it did, it says so per leg rather than leaving the owner to guess.
-        var data = (JsonElement)reply.Data!;
+        // And whatever it did, it says so per leg rather than leaving the owner to guess — once it has
+        // answered at all: a book read the deadline clipped answers ok=false and no data (see Answered).
+        var data = Answered(reply);
         Assert.Equal(1, data.GetProperty("outcomes").GetArrayLength());
     }
 
@@ -374,7 +375,7 @@ public class SweepRequestIdTests
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5),
             $"five legs took {timer.Elapsed.TotalSeconds:0.00}s — the budget is still being paid per leg");
 
-        var data = (JsonElement)reply.Data!;
+        var data = Answered(reply);
         var outcomes = data.GetProperty("outcomes").EnumerateArray().ToList();
         Assert.Equal(5, outcomes.Count);
         foreach (var o in outcomes)
@@ -484,7 +485,7 @@ public class SweepRequestIdTests
 
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f5-mixed" })
             .WaitAsync(TimeSpan.FromSeconds(30));
-        var data = (JsonElement)reply.Data!;
+        var data = Answered(reply);
         var legs = data.GetProperty("outcomes").EnumerateArray().ToList();
         var words = legs.Select(o => o.GetProperty("outcome").GetString()!).ToList();
         var errors = legs.Select(o => o.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "").ToList();
@@ -757,7 +758,7 @@ public class SweepRequestIdTests
 
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f4-sweep-b" })
             .WaitAsync(TimeSpan.FromSeconds(30));
-        var legs = ((JsonElement)reply.Data!).GetProperty("outcomes").EnumerateArray().ToList();
+        var legs = Answered(reply).GetProperty("outcomes").EnumerateArray().ToList();
 
         var unconfirmed = legs.Where(l => l.GetProperty("outcome").GetString() == "sent-not-confirmed").ToList();
         Assert.NotEmpty(unconfirmed);
@@ -1021,6 +1022,24 @@ public class SweepRequestIdTests
         Assert.Single(sweptData.GetProperty("outcomes").EnumerateArray());
     }
 
+    /// <summary>
+    /// A SWEEP'S DATA, ONLY ONCE IT HAS ANSWERED (<c>U-test-hygiene-2</c> item 4).
+    ///
+    /// <para>A sweep whose book read was clipped by its deadline has nothing to sweep: it answers
+    /// <c>ok=false</c>, with the reason and no data. Cast first, that reply is a NullReferenceException
+    /// at the cast — <see cref="A_sweep_pays_the_emergency_budget_once_not_once_per_rpc"/> on macOS runs
+    /// 37420396771 and 37529866030 — which says nothing about the sweep. Asserted first, it fails in
+    /// words, naming the error the sweep gave. Every sweep here whose budget a runner's disk can spend
+    /// before the book is read reads its reply through this.</para>
+    /// </summary>
+    static JsonElement Answered(IpcResponse reply)
+    {
+        Assert.True(reply.Ok,
+            $"the sweep did not answer: ok=false, {reply.Error?.Code}: {reply.Error?.Message} — so there is " +
+            "no per-leg answer to read");
+        return (JsonElement)reply.Data!;
+    }
+
     /// <summary>Reads the per-leg outcomes out of a sweep reply as (outcome, state) pairs.</summary>
     static List<(string Outcome, string? State, string Id)> Outcomes(JsonElement sweep) =>
         sweep.GetProperty("outcomes").EnumerateArray()
@@ -1144,8 +1163,8 @@ public class SweepRequestIdTests
         // commit between the two keeps the 3000 ms the summary above sizes it for.
         conn.Faults.LatencyMs = L;
 
-        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "presend-sweep" })
-            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var sweep = Answered(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "presend-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30)));
 
         // The sweep is over. Everything below reads the BOOK and the ledger to check what it left
         // behind, and has no business paying the wire latency the sweep was arranged with.
