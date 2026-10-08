@@ -4,4 +4,6 @@
     <!-- DPAPI. Cross-platform package; the Windows-only calls are guarded at the call site. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
+  <!-- SecretStore.OpenToRead: IpcTokenTests holds the handle a reader of the pipe's key holds. -->
+  <ItemGroup><InternalsVisibleTo Include="TradeAgent.UnitTests" /></ItemGroup>
 </Project>
