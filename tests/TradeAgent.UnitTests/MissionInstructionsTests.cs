@@ -36,6 +36,26 @@ public class MissionInstructionsTests
         Assert.Contains("your next `## Situation` says which file and why", text);
     }
 
+    /// <summary>
+    /// RED FIRST: WHERE A REFUSED FILE GOES, SAID BEFORE IT HAPPENS (<c>U-memory-kept</c>). The
+    /// archive line said only that old journal entries go there, so an agent learned that the app
+    /// keeps a refused plan or journal in it from the notice after the fact — and an agent that does
+    /// not know its writing is kept reads a put-back plan as lost work. The line names the copies
+    /// and how to recover from one.
+    /// </summary>
+    [Fact]
+    public void The_mission_says_a_plan_or_journal_refused_for_size_is_kept_in_the_archive()
+    {
+        var text = Instructions();
+
+        Assert.Contains($"`{WorkspaceRevisions.ArchiveDir}/` is where journal entries go once they no longer fit.", text);
+        Assert.Contains("TradeAgent saves a plan or journal it refuses for size", text);
+        Assert.Contains("`PLAN-refused-….md`", text);
+        Assert.Contains("`JOURNAL-refused-….md`", text);
+        Assert.Contains("nothing you wrote is lost: your next `## Situation` names the copy.", text);
+        Assert.Contains("Take what still matters", text);
+    }
+
     static string Instructions(bool executionAvailable = true, bool builtInSimulator = false,
         string role = CouncilRoles.Operations) =>
         WorkspaceBuilder.Instructions(new WorkspaceContext(
