@@ -159,9 +159,10 @@ public class BarHoldoutTests(ITestOutputHelper log)
     /// <summary>
     /// Every method a type's compiled bodies call or take the address of — <c>call</c>, <c>callvirt</c>, <c>ldftn</c>,
     /// <c>ldvirtftn</c> — its nested compiler-made types (lambdas, async state machines) included. An operand that does not
-    /// resolve to a method is skipped; one that resolves is a real reference.
+    /// resolve to a method is skipped; one that resolves is a real reference. <c>RunTradesTests</c> reads the pipe server's
+    /// calls into the strategy ledger with it too (<c>U-run-trace</c>).
     /// </summary>
-    static IEnumerable<MethodBase> Calls(Type type)
+    internal static IEnumerable<MethodBase> Calls(Type type)
     {
         const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
         foreach (var t in SelfAndNested(type))

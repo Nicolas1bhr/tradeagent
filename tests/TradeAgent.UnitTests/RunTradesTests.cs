@@ -2,20 +2,22 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
-/// A RECORDED RUN'S TRADES, BELOW THE WIRE (<c>U-run-trace</c>): the reader that takes the holdout, its byte bound, and the
-/// tape's holdout over a run's feature reads. The wire's own claims are <c>RunTradesOverPipeTests</c> and
-/// <c>HoldoutOverPipeTests</c>.
+/// A RECORDED RUN'S TRADES, BELOW THE WIRE (<c>U-run-trace</c>): the reader that takes the holdout, its byte bound, the tape's
+/// holdout over a run's feature reads, the op as a read in every table that says so, and the measurement the two caps are
+/// figures from. The wire's own claims are <c>RunTradesOverPipeTests</c> and <c>HoldoutOverPipeTests</c>.
 /// </summary>
 public class RunTradesTests(ITestOutputHelper log)
 {
@@ -258,5 +260,121 @@ public class RunTradesTests(ITestOutputHelper log)
         Assert.Contains("would read it from 2026-07-31T23:00:00.000Z — which the tape's holdout withholds: " + window.Words,
             over.Why, StringComparison.Ordinal);
         await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// THE OP IS A READ, AND EVERY TABLE THAT SAYS SO SAYS IT: not in <c>Ops.Mutating</c>, in the drain table at zero, in
+    /// the schema with its three arguments and its bounds, and on the worker surface for every role. And no op writes,
+    /// edits or deletes a run: the only one whose name begins with run reads.
+    /// </summary>
+    [Fact]
+    public async Task The_op_is_a_read_in_the_drain_table_the_schema_and_the_worker_surface()
+    {
+        Assert.Equal("run-trades", Ops.RunTrades);
+        Assert.False(Ops.IsMutating(Ops.RunTrades));
+        Assert.DoesNotContain(Ops.RunTrades, Ops.Mutating);
+
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-rt-" + Guid.NewGuid().ToString("n")[..12]);
+        var row = server.HandlerPaths.SingleOrDefault(h => h.Handler == Ops.RunTrades);
+        Assert.Equal(Ops.RunTrades, row.Handler);
+        Assert.Equal(TimeSpan.Zero, row.Path);
+        log.WriteLine($"{row.Handler}: {row.Path} — {row.Why}");
+
+        var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.RunTrades);
+        Assert.False(spec.Mutating);
+        Assert.Equal("trade run trades --run <id> [--after <ordinal>] [--limit <n>]", spec.Cli);
+        Assert.Equal(["after", "limit", "run"], spec.Args.Select(a => a.Name).Order(StringComparer.Ordinal));
+        Assert.True(spec.Args.Single(a => a.Name == "run").Required);
+        Assert.All(spec.Args.Where(a => a.Name != "run"), a => Assert.False(a.Required));
+        foreach (var words in new[]
+                 {
+                     "1000 trades and 262144 bytes", "REFUSED, never clamped", "HOLDOUT_WITHHELD", "the referee's holdout run",
+                     "A cutoff the account owner sets after a run holds its trades back", "no row is a record of a fill",
+                     "The bar-by-bar trace is not kept; its hash is", "nothing is charged"
+                 })
+            Assert.Contains(words, spec.Description, StringComparison.Ordinal);
+
+        Assert.Contains(Ops.RunTrades, GrantedWorkerTools.TradeOps);
+        Assert.DoesNotContain(GatewaySchema.Ops(), o => o.Op.StartsWith("run", StringComparison.Ordinal) && o.Op != Ops.RunTrades);
+    }
+
+    /// <summary>
+    /// THE PIPE SERVER READS TRADES ONLY THROUGH THE READER THAT TAKES THE HOLDOUT: its compiled body calls
+    /// <see cref="StrategyStore.ReadTrades"/> and never <see cref="StrategyStore.TradesOf"/>, the in-process reader — read off
+    /// every method and every compiler-made type inside it, as <c>BarHoldoutTests</c> reads its bar reads.
+    /// </summary>
+    [Fact]
+    public void The_pipe_server_reads_trades_only_through_the_reader_that_takes_the_holdout()
+    {
+        var called = BarHoldoutTests.Calls(typeof(GatewayPipeServer)).Where(c => c.DeclaringType == typeof(StrategyStore))
+            .Select(c => c.Name).Distinct().Order(StringComparer.Ordinal).ToList();
+        log.WriteLine("strategy ledger reads the pipe server calls: " + string.Join(", ", called));
+        Assert.Contains(nameof(StrategyStore.ReadTrades), called);
+        Assert.DoesNotContain(nameof(StrategyStore.TradesOf), called);
+    }
+
+    /// <summary>
+    /// THE MEASUREMENT THE TWO CAPS ARE FIGURES FROM. A page of 1,000 trades of the observed run's shape — attempt 3's
+    /// program (<c>ef4969c5…</c>, the shipped RSI mean reversion: RSI 14 under 30 in, over 55 out, stop 2 %, target 1 %, 60
+    /// bars at most, a quarter of the capital), BTCUSDT's grid of a cent and 0.00001, the venue model's 0.1 % fee and 0.02 %
+    /// slippage, over a seeded random walk around 100,000 — written exactly as <c>run-trades</c> writes it
+    /// (<see cref="GatewayPipeServer.RunTradeBytes"/>). Attempt 3 decided on hourly bars and closed 103 trades in 5,832 of
+    /// them; this decides on 180,000 one-minute bars, under <see cref="Backtest.MaxTracedBars"/>, so that more than 1,000
+    /// close in one run, because a row's bytes do not depend on the bar it was decided on: both minutes are fill minutes,
+    /// and every price, size, fee and pnl comes off the same grid through the same friction. It is under the byte cap, so
+    /// the row limit is what stops an ordinary page; the figure is logged.
+    /// </summary>
+    [Fact]
+    public void A_page_of_a_thousand_trades_of_the_observed_runs_shape_is_measured_against_the_caps()
+    {
+        var program = StrategyParser.Parse("""
+            instrument BTCUSDT
+            timezone UTC
+            timeframe 1m
+            data_freshness 5m
+            max_decision_age 5m
+            const period = 14
+            const oversold = 30
+            const recovered = 55
+            indicator momentum = rsi(close, period)
+            size capital_fraction 0.25
+            stop percent 2
+            target percent 1
+            max_hold_bars 60
+            exit when momentum > recovered
+            entry when momentum < oversold
+            """).Program!;
+        var model = ExecutionModel.Declare(0.001m, 0.0002m, 0.00001m, 10_000m).Model!;
+
+        var random = new Random(20261008);
+        var bars = new List<KlineBar>();
+        var price = 100_000.00m;
+        for (var i = 0; i < 180_000; i++)
+        {
+            var open = price;
+            var z = Math.Sqrt(-2 * Math.Log(1 - random.NextDouble())) * Math.Cos(2 * Math.PI * random.NextDouble());
+            var close = decimal.Round(open * (decimal)Math.Exp(0.002 * z), 2);
+            var high = decimal.Round(Math.Max(open, close) * (1m + (decimal)(random.NextDouble() * 0.001)), 2);
+            var low = decimal.Round(Math.Min(open, close) * (1m - (decimal)(random.NextDouble() * 0.001)), 2);
+            bars.Add(new KlineBar(Bar0.AddMinutes(i), open, high, low, close, 12.34567m));
+            price = close;
+        }
+
+        var run = Backtest.Run(program, new BacktestRequest(1, "fixture", model, bars[0].OpenTime, null), bars);
+        log.WriteLine($"{run.Outcome}: {bars.Count} one-minute bars, {run.Trades.Count} closed trades {run.FaultReason}");
+        Assert.Equal(BacktestOutcome.COMPLETED, run.Outcome);
+        Assert.True(run.Trades.Count >= StrategyStore.MaxTradeRows, $"the walk closed only {run.Trades.Count} trades");
+
+        var page = run.Trades.Take(StrategyStore.MaxTradeRows).Select(t => new StrategyTradeRow(
+            "run", t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice, t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl)).ToList();
+        var sizes = page.Select(GatewayPipeServer.RunTradeBytes).ToList();
+        var bytes = sizes.Sum() + page.Count - 1;   // and the commas between them
+        log.WriteLine($"a page of {page.Count} trades is {bytes} bytes on the wire: {sizes.Min()} to {sizes.Max()} a trade, "
+                      + $"{sizes.Average():F1} on average; the byte cap is {GatewayPipeServer.MaxRunTradesReplyBytes}");
+        log.WriteLine("the longest, as recorded: " + Json.Write(page[sizes.IndexOf(sizes.Max())]));
+        Assert.True(bytes <= GatewayPipeServer.MaxRunTradesReplyBytes,
+            $"a page of {page.Count} trades of the observed shape is {bytes} bytes, over the {GatewayPipeServer.MaxRunTradesReplyBytes} cap");
     }
 }

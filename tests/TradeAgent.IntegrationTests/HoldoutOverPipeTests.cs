@@ -132,9 +132,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         if (holdout && campaignFor is { } gw)
         {
             // THE GATEWAY'S OWN PRESS, which writes the cutoff and OPENS THE CAMPAIGN in one
-            // transaction. Only the verdict test below needs a campaign; the sweeps above are about
-            // the cutoff itself and are left on the store's writer so that nothing they prove depends
-            // on a campaign existing.
+            // transaction. The verdict test and the two every-op read sweeps need a campaign — a sweep
+            // hands every op the referee's holdout run a verdict recorded (U-run-trace); the rest are
+            // about the cutoff itself and are left on the store's writer so that nothing they prove
+            // depends on a campaign existing.
             var (done, campaign) = gw.SetHoldout(id, Start.AddMinutes(HoldoutAtBar), evaluationClass);
             Assert.True(done.Ok, done.Why);
             Assert.NotNull(campaign);
@@ -166,6 +167,45 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
     const string JudgeableText =
         "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
         + "exit when close > 103\nentry when close < 97\n";
+
+    /// <summary>
+    /// A REFEREE'S HOLDOUT RUN RECORDED IN THIS FIXTURE (<c>U-run-trace</c>): the judgeable version frozen before the window,
+    /// the Research Director's run of it over the months it may see, and a verdict — through <paramref name="server"/>'s
+    /// in-process door, so a sweep's own caller can be one that proved no role. The verdict records the run the referee
+    /// made over the held-back months, with its trades in them; its id is the 'run' every op is then handed.
+    /// </summary>
+    static async Task<string> HoldoutRun(TradingGateway gw, Database db, GatewayPipeServer server, DatasetRecord set)
+    {
+        var cutoff = set.HoldoutFrom!.Value;
+        var dataset = set.Id.ToString(CultureInfo.InvariantCulture);
+        var program = GivenProgram(name: "judgeable.strategy", text: JudgeableText);
+        var parsed = StrategyParser.Parse(JudgeableText).Program!;
+        new StrategyStore(db).RecordVersion(new StrategyVersionRow(
+            parsed.StrategyId, parsed.Source, parsed.Canonical, parsed.Manifest,
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, parsed.WarmUpBars,
+            Start, CouncilRoles.Research, "attempt-h1"));
+
+        var researched = await server.CallAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = "holdout-sweep-run",
+            Args = Args(("strategy", program), ("dataset", dataset), ("from", Iso(Start)),
+                ("to", Iso(cutoff.AddMinutes(-1))), ("increment", "1"))
+        }, CouncilRoles.Research, "attempt-h1");
+        Assert.True(researched.Ok, Json.Write(researched.Error));
+
+        var verdict = await server.CallAsync(new IpcRequest
+        {
+            Op = Ops.Verdict, Session = "research", RequestId = "holdout-sweep-verdict",
+            Args = Args(("version", parsed.StrategyId), ("dataset", dataset))
+        }, CouncilRoles.Research, "attempt-h1");
+        Assert.True(verdict.Ok, Json.Write(verdict.Error));
+
+        var run = Assert.Single(gw.Strategies.Runs(), r => r.Role == Referee.RunRole);
+        var trades = gw.Strategies.TradesOf(run.Id);
+        Assert.NotEmpty(trades);
+        Assert.All(trades, t => Assert.True(t.EntryBar >= cutoff && t.ExitBar >= cutoff, $"{t.EntryBar:u} is not held back"));
+        return run.Id;
+    }
 
     /// <summary>Every op name this build has, off <see cref="Ops"/> itself rather than a list kept here.</summary>
     static IReadOnlyList<string> EveryOp() =>
@@ -323,6 +363,11 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
     /// would fail. It does not prove a future op could not invent a different name for a bar; the other
     /// leg of that is structural and is in <c>HoldoutLedgerTests</c> — the audience that may read past a
     /// cutoff cannot be minted outside <c>TradeAgent.Core</c> at all.</para>
+    ///
+    /// <para><b>And a held-back TRADE is a bar by another name</b> (<c>U-run-trace</c>): every op is handed, as 'run', the
+    /// id of the referee's holdout run a verdict recorded in this fixture, whose trades enter and exit inside the held-back
+    /// months — and <see cref="Held"/> reads <c>entry_bar</c> and <c>exit_bar</c> as it reads <c>open_time</c>. RED with
+    /// <c>run-trades</c>' reader serving that run.</para>
     /// </summary>
     [Theory]
     [InlineData(CouncilRoles.Research)]
@@ -334,9 +379,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         await using var _2 = server;
         await using var _3 = client;
 
-        var set = Given(db);
+        var set = Given(db, campaignFor: gw);
         var cutoff = set.HoldoutFrom!.Value;
         var program = GivenProgram(role ?? CouncilRoles.Research);
+        var run = await HoldoutRun(gw, db, (GatewayPipeServer)server, set);
 
         foreach (var op in EveryOp())
         {
@@ -345,7 +391,7 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
                 Op = op, Session = "agent", RequestId = $"holdout-read-{op}",
                 Args = Args(("pair", set.Pair), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
                     ("strategy", program), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(1000))),
-                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"), ("all", "true"))
+                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"), ("all", "true"), ("run", run))
             });
 
             var served = Held(Data(reply), cutoff);
@@ -354,7 +400,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         }
     }
 
-    /// <summary>The first bar at or after <paramref name="cutoff"/> anywhere in this reply, or null.</summary>
+    /// <summary>
+    /// The first bar at or after <paramref name="cutoff"/> anywhere in this reply, or null — a bar's <c>open_time</c>, or a
+    /// trade's <c>entry_bar</c> or <c>exit_bar</c> (<c>U-run-trace</c>), which say what the bars there did.
+    /// </summary>
     static DateTimeOffset? Held(JsonElement e, DateTimeOffset cutoff)
     {
         switch (e.ValueKind)
@@ -362,7 +411,8 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
             case JsonValueKind.Object:
                 foreach (var p in e.EnumerateObject())
                 {
-                    if (p.NameEquals("open_time") && p.Value.TryGetDateTimeOffset(out var at) && at >= cutoff)
+                    if ((p.NameEquals("open_time") || p.NameEquals("entry_bar") || p.NameEquals("exit_bar"))
+                        && p.Value.TryGetDateTimeOffset(out var at) && at >= cutoff)
                         return at;
                     if (Held(p.Value, cutoff) is { } deeper) return deeper;
                 }
@@ -466,7 +516,8 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
     ///
     /// <para>The refusal needed no new code for it, and that is the point being asserted: the check is
     /// inside the READER, not beside the transport, so a second door onto the same handler inherits it.
-    /// Every op is asked over that door too, with a window covering the whole dataset.</para>
+    /// Every op is asked over that door too, with a window covering the whole dataset — and, as 'run', the
+    /// referee's holdout run a verdict recorded in this fixture (<c>U-run-trace</c>).</para>
     /// </summary>
     [Theory]
     [InlineData(CouncilRoles.Research)]
@@ -477,9 +528,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         using var _1 = db;
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), NewPipe());
 
-        var set = Given(db);
+        var set = Given(db, campaignFor: gw);
         var cutoff = set.HoldoutFrom!.Value;
         var program = GivenProgram(role ?? CouncilRoles.Research);
+        var run = await HoldoutRun(gw, db, server, set);
 
         foreach (var op in EveryOp())
         {
@@ -488,7 +540,7 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
                 Op = op, Session = "worker", RequestId = $"holdout-worker-{op}",
                 Args = Args(("pair", set.Pair), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
                     ("strategy", program), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(1000))),
-                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"))
+                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"), ("run", run))
             }, role, "attempt-worker");
 
             var served = Held(Data(reply), cutoff);

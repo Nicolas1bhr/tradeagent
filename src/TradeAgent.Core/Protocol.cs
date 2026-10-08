@@ -109,6 +109,22 @@ public static class Ops
     public const string Backtest = "backtest";
 
     /// <summary>
+    /// EVERY CLOSED TRADE OF A RUN THE APP RECORDED, IN BOUNDED PAGES, AND IT IS A READ (<c>U-run-trace</c>). The run's row
+    /// as recorded and its trades in ordinal order, at most <c>StrategyStore.MaxTradeRows</c> and a byte cap a call, an
+    /// answer either bound stopped saying so — for every role and for a caller that proved none, of any research run, the
+    /// other director's included: reviewing another's run is what it is for, and reading one grants nothing.
+    ///
+    /// <para><b>Nothing is run again</b>, so nothing is charged: no trial and no verdict. <b>And nothing held back
+    /// crosses</b>: the referee's holdout run is refused with nothing of it, and so is a run whose bars or feature reads a
+    /// holdout window reaches now — a cutoff set after the run included — inside the reader
+    /// (<c>StrategyStore.ReadTrades</c>), never cut short.</para>
+    ///
+    /// <para>It is NOT in <see cref="Mutating"/>: it sends nothing to a broker and writes nothing at all. There is no op that
+    /// writes, edits or deletes a run or a trade, for the reason <see cref="Backtest"/> gives.</para>
+    /// </summary>
+    public const string RunTrades = "run-trades";
+
+    /// <summary>
     /// THE VERDICT REQUEST — the agent ASKS, and the APP judges. It asks TradeAgent's own referee for
     /// one of the small number of final judgements a campaign budgets, over the months the account
     /// owner held back, and what comes back is the verdict and its reason class IN WORDS.

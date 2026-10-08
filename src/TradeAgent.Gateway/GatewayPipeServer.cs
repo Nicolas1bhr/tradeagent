@@ -334,6 +334,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.VenueList, TimeSpan.Zero, "the venue catalogue this installation has recorded, in process"),
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
         new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
+        new(Core.Ops.RunTrades, TimeSpan.Zero, "the strategy ledger's run row and its trades, in process"),
         new(Core.Ops.Verdict, TimeSpan.Zero, "the campaign and this role's own runs of the version, then the referee's holdout run over the same bars, in process"),
         new(Core.Ops.DeploymentList, TimeSpan.Zero, "the deployment ledger and its operations, in process"),
 
@@ -1237,6 +1238,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.VenueList    => VenueList(),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
+                Core.Ops.RunTrades    => RunTrades(ctx, req),
                 Core.Ops.Verdict      => VerdictFor(ctx, req, ct),
                 Core.Ops.DeploymentList => DeploymentList(),
 
@@ -2448,6 +2450,168 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     sealed record BacktestReplyTrade(
         int Ordinal, DateTimeOffset EntryBar, decimal EntryPrice, DateTimeOffset ExitBar,
         decimal ExitPrice, decimal Quantity, string Reason, decimal Fees, decimal Pnl);
+
+    /// <summary>
+    /// THE MOST ONE <c>run-trades</c> ANSWER'S TRADES TAKE ON THE WIRE: 256 KiB, each trade measured as it is written
+    /// (<see cref="RunTradeBytes"/>). A page of <see cref="StrategyStore.MaxTradeRows"/> trades of the observed run's shape
+    /// — hourly BTCUSDT, an RSI mean reversion, the venue model's fee and slippage — measures under it
+    /// (<c>RunTradesTests</c>), so the row limit is what stops an ordinary page, and this stops one whose figures carry
+    /// longer decimals than any of those: never a page silently.
+    /// </summary>
+    public const long MaxRunTradesReplyBytes = 256L * 1024;
+
+    /// <summary>
+    /// EVERY CLOSED TRADE OF A RECORDED RUN, IN BOUNDED PAGES, FOR EVERY ROLE (<c>U-run-trace</c>) — the arrow from a run's
+    /// figures back to the trades they were computed from, which the observed run's Research Director asked for and could
+    /// not have: a <c>backtest</c> answer lists its first <see cref="Backtests.TradesShown"/>, and after it nothing did.
+    ///
+    /// <para><b>Any caller, any research run.</b> A role reads the other director's runs as readily as its own — reviewing
+    /// them is the case that asked — and a connection that proved no role reads them too: reading a run grants nothing,
+    /// and nothing here is run again, so nothing is charged.</para>
+    ///
+    /// <para><b>Nothing held back crosses, and the reader decides it.</b> The caller's own pipe audience goes into
+    /// <see cref="StrategyStore.ReadTrades"/> with the dataset ledger (<see cref="TapeHoldout.Pipe"/>), and the reader
+    /// refuses inside — <c>HOLDOUT_WITHHELD</c>, with no row and no trade — the referee's holdout run, and a run whose bars
+    /// or feature reads a holdout window reaches now. A name that matches no one run is <c>INVALID_REQUEST</c>, naming what
+    /// was asked.</para>
+    ///
+    /// <para><b>Bounded, and never silently.</b> At most <see cref="StrategyStore.MaxTradeRows"/> trades — a larger limit is
+    /// refused in words, never clamped — and <see cref="MaxRunTradesReplyBytes"/> of them; an answer either bound stopped
+    /// says which, and hands back the ordinal that continues it exactly.</para>
+    /// </summary>
+    object RunTrades(AgentContext ctx, IpcRequest req)
+    {
+        var run = (req.Str("run") ?? "").Trim();
+        if (run.Length == 0)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'run' is required: the run's id as 'backtest' answered it, or its first "
+                + $"{StrategyStore.ShortestRunId} characters or more, as 'trade report' prints it.");
+
+        var after = RunTradesAfter(req);
+        var limit = RunTradesLimit(req);
+
+        // THE HOLDOUT IS THE CALLER'S OWN PIPE AUDIENCE WITH THE DATASET LEDGER, decided inside the reader at this read: the
+        // referee's holdout run, and a run whose bars or feature reads a holdout window reaches now, come back refused with
+        // no row and no trade, whoever asks.
+        var page = gateway.Strategies.ReadTrades(run, TapeHoldout.Pipe(ctx.Role, gateway.Datasets), after ?? -1, limit,
+            MaxRunTradesReplyBytes, RunTradeBytes);
+
+        if (page.Refusal is { } why)
+            throw new GatewayDeniedException(page.Withheld ? ErrorCode.HOLDOUT_WITHHELD : ErrorCode.INVALID_REQUEST, why);
+
+        var r = page.Run!;
+        var trades = page.Trades.Select(TradeRow).ToList();
+        return new RunTradesReply(
+            r.Id, r.VersionId, r.Role, r.Attempt, r.CreatedAt, r.DatasetId, r.DatasetSha256, r.WindowFrom, r.WindowTo,
+            r.ExecutionModel, r.IncrementSource, r.FrictionSource, r.Outcome, r.FaultReason,
+            new RunTradesFigures(r.Bars, r.Intents, r.Fills, r.Trades, r.Wins, r.ExposureBars, r.MissingMinutes, r.Faults,
+                r.GrossPnl, r.Fees, r.NetPnl, r.MaxDrawdown),
+            r.TraceSha256, page.TradeCount, after, limit, trades.Count, page.More, page.CappedBy,
+            page.More ? trades[^1].Ordinal : null, RunTradesNote, trades);
+    }
+
+    /// <summary>
+    /// WHAT ONE TRADE TAKES ON THE WIRE, written exactly as <c>run-trades</c> writes it: the cost
+    /// <see cref="StrategyStore.ReadTrades"/> bounds a page by.
+    /// </summary>
+    public static long RunTradeBytes(StrategyTradeRow trade) => Encoding.UTF8.GetByteCount(Json.Write(TradeRow(trade)));
+
+    /// <summary>A recorded trade in the shape a <c>backtest</c> answer lists one, so the two answers read alike.</summary>
+    static BacktestReplyTrade TradeRow(StrategyTradeRow t) =>
+        new(t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice, t.Quantity, t.ExitReason, t.Fees, t.Pnl);
+
+    /// <summary>
+    /// What the answer says about itself, once, in words: what a row is and what none is, what the figures and the hash
+    /// are, the bounds, and how to continue.
+    /// </summary>
+    static readonly string RunTradesNote =
+        "TRADES — every closed trade TradeAgent recorded from its own run, in ordinal order from 0, beside the run's row "
+        + "as recorded. A row is a trade the run CLOSED: a position still open at the run's last bar is not one — it is in "
+        + "the equity the drawdown was measured on — and no row is a record of a fill: bars establish no fill, no queue "
+        + "position and no intrabar ordering, so a run is a reason to test something and never a record of a trade. "
+        + "'entry_bar' and 'exit_bar' are the minutes the entry and the exit filled on; 'pnl' is GROSS — (exit_price − "
+        + "entry_price) × quantity — and 'fees' is what both of its fills cost, so its net is pnl − fees; 'reason' is why it "
+        + "closed: Rule (a declared exit), Stop, Target, SessionExit or MaxHoldBars. 'figures' are the run's own, as it "
+        + "recorded them and named as a 'backtest' answer names them; 'trade_count' counts every closed trade it recorded; "
+        + "'trace_sha256' is the hash of its bar-by-bar trace, which is not kept. At most "
+        + $"{StrategyStore.MaxTradeRows.ToString("N0", CultureInfo.InvariantCulture)} trades and "
+        + $"{MaxRunTradesReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of them a call: when 'more' is true "
+        + "the answer stopped there — 'capped_by' says which bound — and asking again with 'after' set to 'next_after' "
+        + "continues exactly where it stopped. Nothing was run again and nothing was charged, and nothing on this channel "
+        + "edits or deletes a run or a trade.";
+
+    /// <summary>
+    /// HOW MANY TRADES ONE ANSWER MAY HOLD: absent is <see cref="StrategyStore.MaxTradeRows"/>; present, a whole number from
+    /// 1 to it, and anything else is REFUSED in words — never clamped, because an answer to a different limit is a
+    /// different answer from the one asked for.
+    /// </summary>
+    static int RunTradesLimit(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("limit")) return StrategyStore.MaxTradeRows;
+
+        var raw = req.Dec("limit")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 1m || raw > StrategyStore.MaxTradeRows)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'limit' is how many trades one answer may hold — a whole number from 1 to "
+                + $"{StrategyStore.MaxTradeRows.ToString(CultureInfo.InvariantCulture)} — and "
+                + $"'{raw.ToString(CultureInfo.InvariantCulture)}' is not one. Ask for fewer and continue with 'after', which "
+                + "every answer that stopped early hands back as 'next_after'.");
+
+        return (int)raw;
+    }
+
+    /// <summary>
+    /// THE ORDINAL A PAGE STARTS AFTER, or null for the first trade: a whole number from 0 — the 'next_after' of an answer
+    /// that stopped early — or a refusal.
+    /// </summary>
+    static long? RunTradesAfter(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("after")) return null;
+
+        var raw = req.Dec("after")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 0m || raw > int.MaxValue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'after' is a trade's ordinal — a whole number from 0, the 'next_after' of an answer that stopped early — "
+                + $"and '{raw.ToString(CultureInfo.InvariantCulture)}' is not one. Leave it out to start at the first trade.");
+
+        return (long)raw;
+    }
+
+    /// <inheritdoc cref="RunTrades"/>
+    sealed record RunTradesReply(
+        string RunId, string VersionId,
+        // NEVER DROPPED WHEN NULL: a run no role asked for, a window with an open side and a run that faulted on nothing
+        // are answers, and an absent key would read as a build that has no such field.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Role,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        DateTimeOffset CreatedAt,
+        long DatasetId, string DatasetSha256,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
+        string ExecutionModel,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? IncrementSource,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FrictionSource,
+        string Outcome,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FaultReason,
+        RunTradesFigures Figures,
+        string TraceSha256, int TradeCount,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? After,
+        int Limit, int Count, bool More,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? NextAfter,
+        string Note,
+        IReadOnlyList<BacktestReplyTrade> Trades);
+
+    /// <summary>
+    /// THE RUN'S FIGURES AS IT RECORDED THEM, under the names a <c>backtest</c> answer's <c>metrics</c> gives them. A money
+    /// figure is null for an UNKNOWN and never a zero, and it is never dropped.
+    /// </summary>
+    sealed record RunTradesFigures(
+        long Bars, long Signals, int Fills, int Trades, int Wins, long ExposureBars, long MissingMinutes, long Faults,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? GrossPnl,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? NetPnl,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? MaxDrawdown);
 
     /// <summary>Roles with a verdict in flight right now. See <see cref="VerdictFor"/>.</summary>
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _judging = new(StringComparer.Ordinal);

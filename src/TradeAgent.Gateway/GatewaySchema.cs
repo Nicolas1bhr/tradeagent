@@ -377,6 +377,35 @@ public static class GatewaySchema
                 new("capital", "number", false, "What the run starts with. An entry it cannot pay for is no trade, with the reason. More capital does not fund a 'size risk_fraction' entry: its size is a fraction of equity over the stop distance, so it grows with the capital, and a tight stop asks for more than all of it whatever the capital. Cap it on the size line with max_capital_fraction — 'size risk_fraction 0.01 max_capital_fraction 0.95' sizes the smaller of the risk size and 0.95 of the capital at the signal's close. 10000 when omitted.")
             ]),
 
+        new(Core.Ops.RunTrades, "trade run trades --run <id> [--after <ordinal>] [--limit <n>]", false,
+            "EVERY CLOSED TRADE OF A RUN TRADEAGENT RECORDED, in pages — a READ, for every role and for a caller that "
+            + "presented no launch grant, of any research run, yours or the other director's: reviewing another's run is "
+            + "what it is for, and reading one grants nothing. 'run' is the run's id as 'backtest' answered it, or its first "
+            + $"{Core.Db.StrategyStore.ShortestRunId} characters or more, as 'trade report' prints it; an id that names no "
+            + "run, a start two runs share, and fewer characters are each refused naming what you asked. WHAT COMES BACK: the "
+            + "run's row as TradeAgent recorded it — its version, role and attempt, the dataset and the sha of the bars it ran "
+            + "over, its window, its execution model and where its increment and friction came from, its outcome and fault, "
+            + "its 'figures', 'trace_sha256' and 'trade_count' — and its closed trades in ordinal order from 0, each with its "
+            + "entry and exit minute and price, quantity, 'reason' (Rule, Stop, Target, SessionExit or MaxHoldBars), 'fees' "
+            + "for both of its fills and 'pnl' GROSS of them. A row is a closed trade the app recorded from its own run: a "
+            + "position still open at the last bar is not a row, and no row is a record of a fill — bars establish no fill, "
+            + "no queue position and no intrabar ordering. The bar-by-bar trace is not kept; its hash is. At most "
+            + $"{Core.Db.StrategyStore.MaxTradeRows} trades and {GatewayPipeServer.MaxRunTradesReplyBytes} bytes of them a "
+            + "call; an answer either bound stopped says so in 'more' and 'capped_by', and 'after' set to its 'next_after' "
+            + "continues exactly. A limit outside 1 to "
+            + $"{Core.Db.StrategyStore.MaxTradeRows} is REFUSED, never clamped. Nothing is run again, so nothing is charged: "
+            + "no trial and no verdict. HELD BACK, with HOLDOUT_WITHHELD and nothing of it: the referee's holdout run — "
+            + "'trade verdict' answers its verdict and reason class — and a run whose window a holdout reaches NOW: its own "
+            + "dataset's 'holdout_from', any dataset's holdout window over its bars' market time, or, for a version that reads "
+            + "features, over the tape it read. A cutoff the account owner sets after a run holds its trades back from then "
+            + "on, though they were served before, and they are never cut short to the part outside the window. There is "
+            + "no operation that edits or deletes a run or a trade.",
+            [
+                new("run", "string", true, $"The run's id, as 'backtest' answered it, or its first {Core.Db.StrategyStore.ShortestRunId} characters or more ('trade report' prints {Core.Db.StrategyStore.ShortestRunId}). Fewer, or a start two runs share, is refused."),
+                new("after", "number", false, "A trade's ordinal: serve the trades after it. Pass an answer's 'next_after' to continue it exactly; omit it to start at the first trade, ordinal 0."),
+                new("limit", "number", false, $"How many trades, a whole number from 1 to {Core.Db.StrategyStore.MaxTradeRows}; {Core.Db.StrategyStore.MaxTradeRows} when omitted. More is refused, never clamped.")
+            ]),
+
         new(Core.Ops.Verdict, "trade verdict --version <hash> [--dataset 3]", false,
             "ASK TRADEAGENT TO JUDGE A VERSION YOU HAVE ALREADY MEASURED, over the months that dataset "
             + "holds back from you. You ask; the APP decides admission and issues the verdict. WHAT IT "

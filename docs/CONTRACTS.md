@@ -2526,6 +2526,22 @@ in, it is READ-ONLY for the gateway, and it is not in `Ops.Mutating` — that wo
 that writes, edits or deletes one of those rows**, because a record of how a strategy performed is the
 evidence its author is judged on.
 
+**`run-trades` reads every closed trade back, in pages** (`U-run-trace`). A `backtest` answer lists the first
+`Backtests.TradesShown` (20) beside `trade_count`; `trade run trades --run <id> [--after <ordinal>] [--limit <n>]`
+answers a run's row as recorded and all of its closed trades in ordinal order, at most `StrategyStore.MaxTradeRows`
+(1,000) and `GatewayPipeServer.MaxRunTradesReplyBytes` (256 KiB) of them a call — a limit outside 1..1,000 refused in
+words, never clamped; an answer either bound stopped says `more`, `capped_by` and `next_after` — to every role and to a
+caller that proved none, of any run: reading one grants nothing, and nothing is run again or charged. The id is the
+whole one or a start of it of 12 characters or more that no other run shares. **The reader takes the caller's holdout
+with its ledger** (`StrategyStore.ReadTrades`, `TapeHoldout.Pipe`) and refuses inside, with `HOLDOUT_WITHHELD` and no
+row: the referee's holdout run — a row marked `referee`, or one any promotion names as its `holdout_run_id` — with no
+figure, count, trace hash or instant of it; a run whose recorded dataset and window a holdout reaches NOW — its own
+dataset's cutoff, then every other dataset's window over its bars' market span — so a cutoff set after a run holds its
+trades back from then on; and a run of a version that reads features whose reads the tape's holdout now reaches, by
+`Backtest.Over`'s own arithmetic (`Backtest.ClosesOf`, `FeatureFeed.Reaching`). A dataset the ledger no longer holds,
+or a version this build cannot read back, is refused rather than guessed at. `StrategyStore.TradesOf` stays the
+in-process reader, and the pipe server never calls it.
+
 **The execution model is DECLARED per run and is part of the run's identity.** Fees and slippage are
 FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to, and
 the capital is what the run starts with; declared no capital, it starts with 10,000.

@@ -263,6 +263,21 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             Opt("from"); Opt("to"); Opt("fees"); Opt("slippage"); Opt("increment"); Opt("capital");
             return (Ops.Backtest, a);
 
+        // `trade run trades --run <id> [--after <ordinal>] [--limit <n>]`: every closed trade of a recorded run, in pages
+        // (U-run-trace). A READ, and the only subcommand there is: there is deliberately no `trade run delete` or `edit`,
+        // because a run's record is the evidence its author is judged on. The id may be the whole one or its first twelve
+        // characters, and the gateway refuses the rest in words; nothing is defaulted here.
+        case "run":
+        case "runs":
+        {
+            var sub = (pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant();
+            if (sub is not "trades") return (null, a);
+
+            a["run"] = flags.GetValueOrDefault("run") ?? pos.ElementAtOrDefault(1) ?? "";
+            Opt("after"); Opt("limit");
+            return (Ops.RunTrades, a);
+        }
+
         // `trade verdict --version <hash> [--dataset 3]`. The agent ASKS; the app judges. It reads no
         // bar and hands none back: what comes back is the verdict and its reason class in words. There
         // is deliberately no `--fees`, no `--slippage` and no window — the execution model is the
@@ -343,6 +358,11 @@ static void Usage()
                      run one of your own programs over that history and record it. The four
                      model numbers are yours to declare and are part of the run's identity;
                      omitted, the run declares no friction at all and says so
+      trade run trades --run <id> [--after <ordinal>] [--limit 1000]
+                     every closed trade of a recorded run — yours or the other director's —
+                     beside its row, in ordinal order, at most 1000 a call; an answer that
+                     stopped early says so and gives the --after that continues it. The
+                     referee's holdout run, and a run a holdout window reaches, are refused
       trade verdict --version <hash> [--dataset 3]   ask TradeAgent to judge a version you have
                      already backtested, over the months it holds back from you. It COSTS one of
                      the campaign's final judgements — three by default, counted across renewals
