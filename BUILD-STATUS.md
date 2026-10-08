@@ -9045,3 +9045,42 @@ every later run) — a FIRST SIGHTING. Tests box: NOT RUN — "his own OFT.Platf
 **NOT verified / owed:** (f) on Windows and Windows' start gap → `U-contain-seats`; a process that leaves the session AND loses its parent before a teardown cannot be proved
 the turn's and is left (the honest limit); on Unix without the launcher a leftover holding the turn's pipes holds the turn open; no app launched and no real codex turn — the
 quit hold, the update path's stop and the supervisor are proven in tests only.
+
+## 2026-10-08 — U-size-cap landed: a risk-sized entry may declare the most of its capital it spends, so a tight stop sizes to the cap instead of to no trade; the shipped opening-range breakout gains a 0.95 cap
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-size-cap.md` (briefed by seat A's M0-gaps survey of 2026-10-07 23:51 — attempt 3's Research
+reported "55 signals unfunded" and that `risk_fraction` "has no cash-notional cap", true of the product; re-checked at `78be3e9d` after U-language-v2a and dispatched
+`7a053887`, the shipped-breakout fold seat A's call). The builder rebased onto `7e29fc65`; the manager's prep onto `c05b5d14` (over U-bar-holdout and U-agent-tree), then, docs only, onto `055bd53d`; src+tests patch-id identical
+(`b454be962c6d`). Merge `ccfcca96` (ff-only), 5 commits (4 items, the report), 20 files, +972/−60.
+**No schema change.** Protects: total parse and freezing by hash (every v1 and v2a text keeps its canonical form, id and trace — the one DECLARED exception item 4's
+shipped file); leverage unspellable; every gate untouched — a cap only ever makes a size smaller; `StrategyVersions.Manifest`, `LanguageVersion`, `EvaluatorVersion` unmoved.
+
+- **Item 1 (`959b02ed`):** `size risk_fraction <f> max_capital_fraction <c>` (a NUMBER or a declared constant) sets `Sizing.MaxCapitalFraction`; refused on the size line
+  in words — a cap on `fixed` or `capital_fraction`, ≤ 0, > 1 (the leverage words), no value, any other tail; never reserved; the canonical size form gains
+  ` max_capital_fraction:<c>` ONLY when declared; `StrategyDeclarations.MaxCapitalFraction` in `All` and in `Of` when declared; both readers say they apply it.
+- **Item 2 (`9dd2586d`):** `Quantity` = min(`equity * f / (reference − stop)`, `capital_fraction`'s own `OfCapital`) — the backtest's cash, a paper run's allocation
+  ceiling; capped 4.75 = 1,000 · 0.95 / 200 sent and filled at minute 3's open 202; uncapped 6.25 refused ALLOCATION_EXCEEDED, nothing at the wire.
+- **Item 3 (`7536b859`):** STRATEGY-LANGUAGE (grammar, Sizing, the cap's arithmetic — applied at the close, fees, slippage and the next open on top — every limit
+  refusing whole), CONTRACTS, `GatewaySchema`'s `capital`. Backtested: cap 1 at an open equal to the close "cannot pay", fills at 99.88; 0.95 fills at 100 and 105.
+- **Item 4 (`920a6e38`), seat A's call:** the shipped `opening-range-breakout.strategy` (risk 0.01, `stop atr 2 14`, 1m — its risk size `0.01 · close / (2 · ATR14)` of
+  equity exceeds all of it whenever a minute's ATR is under 0.5 % of the price) and its doc copy say `size risk_fraction riskfraction max_capital_fraction 0.95`
+  (0.95, not 1, by item 3's arithmetic). **DECLARED RE-PIN, JUDGED (seat A):** its id `70ec1a6e45dc4509…` → `5ac50a1e374b6345…`; the old text is kept as
+  `DayOnePrograms.BreakoutV1` (SHA-256 `ca509cf4…` = the old file's, id still `70ec1a6e…`), which `DeclaredBarsGuardTests`/`FeatureProgramGrammarTests` now read.
+- **Declared deviations, accepted:** (1) `FeatureProgramRequirementTests` (l) compares the parser's unknown-word list with `All` minus the clause (it is no line's first
+  word), asserts the clause refused as a line and read on the size line, and `EveryKind` sizes with the cap so `Requires == All` holds; (2) `Sizing`'s cap defaults to
+  null, so every existing construction stands; (3) `StrategyCanonical.Size` fails CLOSED on a cap on a non-risk kind (unreachable from the parser).
+- **Test edits, JUDGED:** `DeclaredBarsGuardTests`/`FeatureProgramGrammarTests` read the v1 fixture (`ShippedIds` → `V1Ids`); `DayOneStrategyTests` pins the new id,
+  canonical form and `Sizing` and adds the v1-fixture test; `ForwardRunnerTests.ReadyAsync` takes optional envelope ceilings (defaults unchanged). None removed,
+  renamed or weakened; `EvaluationGoldenVectorTests` and `FeatureProgramGoldenVectorTests` unedited and green.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `920a6e38`: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed: 1513, Failed: 0`;
+Fault `Passed: 471, Failed: 0`; 3× SizeCapTests 27, FeatureProgramRequirementTests 2, DeclaredBarsGuardTests 2, FeatureProgramGrammarTests 5, DayOneStrategyTests 11,
+Integration ForwardRunnerTests 26, green each run. RED before item 2: (a) `Expected: 76.00 Actual: 500`; (b) `Expected: 49.9251… Actual: 496.4061…`; (e) "would be
+holding 1250 USDT of BTCUSDT and the capital allocated to it is 1000 USDT". Mutant 1 (the `min` dropped) ⇒ (a), (b), (e), (f) `Expected: 94.7158… Actual: 241.3793…`
+and the four 0.12 % cases red; mutant 2 (the canonical form writing the cap undeclared) ⇒ (c) red, `Expected: "70ec1a6e45dc…" Actual: "c25660db4080…"`. Restored.
+Manager's gate at `982e4525` (carried to `ccfcca96`: build tree identical), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1532/1532 (9 m 28 s), Fault 471/471
+(2 m 1 s), Integration 742/743, 1 skipped (11 m 18 s) → 0 failed. Names vs `main`: 2351 → 2363, 0 removed, 12 added. Scan: `SCAN CLEAN`; no trailers; `rev-list` 0 both ways.
+**CI:** run 37714812389 at `920a6e38`: success on all four jobs (windows 67 m, macos 16, ubuntu 12, package 4).
+**Tests box:** NOT RUN — 02:13Z `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it` (exit 5), not retried.
+**NOT done, NOT verified:** that the shipped breakout never traded is arithmetic plus the (f) fixture (a 0.2 %-ATR New York morning: the old text "cannot pay" on every
+signal, the new fills 94.715 = RoundDown(10,000 · 0.95 / 100.3)) — not run over a real dataset's minutes; no app run.
