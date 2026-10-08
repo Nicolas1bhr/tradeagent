@@ -2804,12 +2804,16 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// THE WHOLE OF WHAT CROSSES, BUILT IN ONE PLACE. <paramref name="promotion"/> null with
     /// <paramref name="why"/> set is a referee that could not judge at all — an answer, not an error,
     /// because the budget and the words are what the caller needs and a refusal is not a fault.
+    ///
+    /// <para><c>verdicts_spent</c> is every judgement over the campaign's held months — its renewal lineage's and every
+    /// other campaign's over the same months (<c>CampaignStore.JudgementsSpent</c>, <c>U-holdout-campaign</c>) — the count
+    /// the budget is charged against, so the number a caller reads is the number that will refuse it.</para>
     /// </summary>
     VerdictReply Answered(CampaignRow campaign, string version, PromotionRow? promotion, string? why) =>
         new(version, campaign.Id,
             promotion?.Verdict, promotion?.Reason,
             promotion is null ? null : Core.Strategy.RefereeFeedback.Text(promotion), why,
-            gateway.Campaigns.VerdictsInLineage(campaign.Id), campaign.VerdictBudget);
+            gateway.Campaigns.JudgementsSpent(campaign.Id), campaign.VerdictBudget);
 
     /// <summary>
     /// <inheritdoc cref="VerdictFor"/>

@@ -340,4 +340,88 @@ public class HoldoutCampaignOverPipeTests(ITestOutputHelper log)
         Assert.Equal(0, rig.Gw.Campaigns.TrialsCharged(fixture.Id));
         Assert.Empty(rig.Gw.Campaigns.Trials(rejected!.Id));
     }
+
+    static Task<IpcResponse> Verdict(Raw client, string version, DatasetRecord set) => client.SendAsync(new IpcRequest
+    {
+        Op = Ops.Verdict, Session = "holdout-campaign", RequestId = "hc-v-" + Guid.NewGuid().ToString("n")[..12],
+        Args = Args(("version", version), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+    });
+
+    /// <summary>
+    /// (d) A SECOND CAMPAIGN OVER HELD MONTHS COUNTS THE JUDGEMENTS ALREADY TAKEN — the probe's S.1-S.9 over the pipe,
+    /// asserting the protection. P1 is researched over A and judged (campaign 1, 1 of 2). B, a second download of A's
+    /// minutes, is held back by the owner's second press at the same date: campaign 2 opens with 1 of its 2 judgements
+    /// already spent, and the press's note — <c>CampaignStore.PressNote</c>, the sentence the card prints — names campaign
+    /// 1 and the judgement it took. P1 researched over B and judged there answers <c>verdicts_spent</c> 2 of 2, and both
+    /// campaigns now count both judgements; P2's verdict over B is refused before anything is computed, naming campaign 1
+    /// and OTHER months. TOLD and COUNTED: the press itself is never refused. RED on the base, where campaign 2's count
+    /// read its own lineage alone — 0 at the press, "1 of 2" after its verdict, and P2 judged as well.
+    /// </summary>
+    [Fact]
+    public async Task A_second_campaign_over_held_months_counts_the_judgements_already_taken()
+    {
+        await using var rig = await Ready(trials: 20, verdicts: 2);
+        var c1 = rig.Campaign;
+        await using var research = await rig.Dial(CouncilRoles.Research);
+
+        // S.1-S.2 — RESEARCH OVER A, AND ITS JUDGEMENT.
+        var p1 = Written(rig.Db, "2m");
+        var s1 = await Backtest(research, p1.File, rig.A, Start, LastDev);
+        log.WriteLine($"S.1 backtest P1 over A's development minutes: {Said(s1)}");
+        Assert.True(s1.Ok, Json.Write(s1.Error));
+        var s2 = await Verdict(research, p1.Version, rig.A);
+        log.WriteLine($"S.2 verdict P1 --dataset A: {(s2.Ok ? Data(s2).ToString() : Said(s2))}");
+        Assert.True(s2.Ok, Json.Write(s2.Error));
+        Assert.Equal(1, Data(s2).GetProperty("verdicts_spent").GetInt32());
+
+        // S.3-S.5 — A SECOND DOWNLOAD OF THE SAME MINUTES, HELD BACK BY THE OWNER'S SECOND PRESS AT THE SAME DATE.
+        var b = Recorded(rig.Db, "BTCUSDT", "v2", Start, 120);
+        var (pressed, c2) = rig.Gw.SetHoldout(b.Id, Cutoff, EvaluationClass.Research);
+        Assert.True(pressed.Ok, $"a second press over held months was refused, and it is told and counted, never refused: {pressed.Why}");
+        Assert.NotNull(c2);
+        Assert.NotEqual(c1.Id, c2!.Id);
+        var spentAtPress = rig.Gw.Campaigns.JudgementsSpent(c2.Id);
+        var note = CampaignStore.PressNote(c2, spentAtPress, rig.Gw.Campaigns.OverTheSameMonths(c2.Id));
+        log.WriteLine($"S.5 the owner's second press, on B at {Cutoff:u}: campaign {c2.Id}, judgements spent {spentAtPress} of "
+            + $"{c2.VerdictBudget}; the press's note: \"{note}\"");
+        Assert.True(spentAtPress == 1, $"campaign {c2.Id}, opened over months campaign {c1.Id} already judged once, starts "
+            + $"with {spentAtPress} of its {c2.VerdictBudget} judgements spent");
+        Assert.Contains($"The same months are already held back by campaign {c1.Id} (BTCUSDT 1m v1), which has taken "
+            + $"1 judgement over them, so 1 of campaign {c2.Id}'s 2 final judgements is already spent", note, StringComparison.Ordinal);
+        Assert.Contains("hold back OTHER months", note, StringComparison.Ordinal);
+
+        // S.6-S.7 — RESEARCH OVER B, CHARGED TO BOTH CAMPAIGNS, AND THE JUDGEMENT OVER B.
+        var s6 = await Backtest(research, p1.File, b, Start, LastDev);
+        log.WriteLine($"S.6 backtest P1 over B's development minutes: {Said(s6)}; trials campaign {c1.Id}="
+            + $"{rig.Gw.Campaigns.TrialsCharged(c1.Id)} campaign {c2.Id}={rig.Gw.Campaigns.TrialsCharged(c2.Id)}");
+        Assert.True(s6.Ok, Json.Write(s6.Error));
+        var s7 = await Verdict(research, p1.Version, b);
+        log.WriteLine($"S.7 verdict P1 --dataset B: {(s7.Ok ? Data(s7).ToString() : Said(s7))}");
+        Assert.True(s7.Ok, Json.Write(s7.Error));
+        Assert.Equal(c2.Id, Data(s7).GetProperty("campaign").GetInt64());
+        Assert.Equal(2, Data(s7).GetProperty("verdicts_spent").GetInt32());
+        Assert.Equal(2, Data(s7).GetProperty("verdicts_budget").GetInt32());
+
+        // S.8-S.9 — ONE COUNT FOR ONE HELD HOUR, WHICHEVER CAMPAIGN IS ASKED.
+        log.WriteLine($"S.9 judgements spent: campaign {c1.Id} = {rig.Gw.Campaigns.JudgementsSpent(c1.Id)}; campaign {c2.Id} = "
+            + $"{rig.Gw.Campaigns.JudgementsSpent(c2.Id)}");
+        Assert.Equal(2, rig.Gw.Campaigns.JudgementsSpent(c1.Id));
+        Assert.Equal(2, rig.Gw.Campaigns.JudgementsSpent(c2.Id));
+
+        // AND THE NEXT JUDGEMENT OVER THOSE MONTHS IS REFUSED BEFORE ANYTHING IS COMPUTED, naming campaign 1 and OTHER months.
+        var p2 = Written(rig.Db, "3m");
+        var researched = await Backtest(research, p2.File, b, Start, LastDev);
+        Assert.True(researched.Ok, Json.Write(researched.Error));
+        var refused = await Verdict(research, p2.Version, b);
+        log.WriteLine($"verdict P2 --dataset B: {(refused.Ok ? Data(refused).ToString() : Said(refused))}");
+        Assert.True(refused.Ok, Json.Write(refused.Error));
+        Assert.Equal(JsonValueKind.Null, Data(refused).GetProperty("verdict").ValueKind);
+        var why = Data(refused).GetProperty("why").GetString()!;
+        Assert.Contains($"campaign {c2.Id} has spent all 2 of its final judgements", why, StringComparison.Ordinal);
+        Assert.Contains("BEFORE anything is computed", why, StringComparison.Ordinal);
+        Assert.Contains($"campaign {c1.Id} over dataset {rig.A.Id} (BTCUSDT 1m v1) has taken 1", why, StringComparison.Ordinal);
+        Assert.Contains("a holdout over OTHER months", why, StringComparison.Ordinal);
+        Assert.Single(rig.Gw.Campaigns.Verdicts(c2.Id));
+        Assert.Equal(2, rig.Gw.Campaigns.JudgementsSpent(c2.Id));
+    }
 }

@@ -882,14 +882,18 @@ sealed class SettingsPage
             // A REFUSAL IS PRINTED AS THE LEDGER SAID IT and the line above is re-read below, so after a
             // refused press the card still names the date that is really held back. "No longer be moved"
             // is said only with the campaign that holds it there (`DatasetStore.SetHoldout`).
+            //
+            // AND THE CAMPAIGN IT OPENED IS NAMED WITH EVERY OTHER CAMPAIGN OVER THE SAME MONTHS (U-holdout-campaign): a
+            // fresh download held back at the same date shares the judgements already taken over them, and the note says
+            // so — which campaigns, what each took, and how many of this one's are spent already — in
+            // `CampaignStore.PressNote`'s words, the sentence a test reads.
             _holdoutNote.Text = done.Ok
                 ? $"Bars from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on are held back. The AI cannot read them "
                   + "or backtest over them, and this date can no longer be moved"
                   + (campaign is null ? " earlier." : ".")
                   + (campaign is { } c
-                      ? $" Campaign {c.Id} is measured against them: {c.TrialBudget:N0} research runs and "
-                        + $"{c.VerdictBudget:N0} final judgements, and the standard it will be judged by is "
-                        + "fixed as of now."
+                      ? " " + CampaignStore.PressNote(c, _host.Gateway.Campaigns.JudgementsSpent(c.Id),
+                          _host.Gateway.Campaigns.OverTheSameMonths(c.Id))
                       : "")
                 : done.Why;
         }
