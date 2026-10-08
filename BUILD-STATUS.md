@@ -9233,3 +9233,44 @@ Builder: Release 0 warnings; Unit 1536, Fault 479, 0 failed; IpcTokenTests + Pas
 (07:27Z, the builder; 10:51Z, seat P). Landing CI on `main`: a waiter is armed.
 **NOT verified:** the fallback volume and the 32-bit `FILE_RENAME_INFO` layout (CI is x64 NTFS); DPAPI only as windows-latest ran it; no app run (the start screen's words
 unseen); OpenCode's own open of its auth file; no ATAS box.
+
+## 2026-10-08 — U-press-row-answer landed: a press's own close whose platform update was lost no longer holds the owner's Close all for good — the card answers it under the platform's veto, Close all puts it back on the card, and no answer a provable listing contradicts is ever written
+
+One fresh Opus builder under seat P built items 0–2 from `docs/briefs/U-press-row-answer.md` (U-press-close-once's (c) residual, owed BEFORE ANY LIVE USE; queued `579630f5`,
+dispatched `055bd53d`); one fresh Opus fixer built item 3 from seat P's fixer brief (`fleet/tmp/p-fixer-press-row-answer/FIXER.md`) after seat P refused the builder's deviation (2).
+Merge `a80f9941` (ff-only), 6 commits (item 0 `c776b558`, item 1 `4f2b9351`, item 2 `5e7ce6ff`, the builder's report `76e4b8f8`, item 3 `38a425de`, the fixer's report `a80f9941`), rebased by the fixer onto `b35653c2` then `d30e92a1` and by seat P's prep from `f30bb5e2` onto `32e2824c`, the last with an identical src+tests patch-id (`94e1b5617b54`).
+No rung, no kv, no table. OWNER AUTHORITY and the MONEY PATH (gateway, Dashboard card): his Close all must be able to end and must never close beside an order the platform still
+lists live (a long becomes a short); and the ACCOUNTING/EVIDENCE protection (`CLAUDE.md`): a record stays true about what ran. In-process only.
+
+- **Item 0:** `DashboardPage.Answers(state, isPress, reference)` builds and relabels every card button each tick; `TradingGateway.AnswerFromTheCardAsync` (`ForceResolve`, then
+  `RefreshHealthAsync`) is the card's ONE route; `PressRowAnswerTests` (a)(b)(c) new, `UnconfirmedCardTests` (d) plus a guard that every other row keeps its answers.
+- **Item 1:** a press's own row in ACKNOWLEDGED, WORKING, PARTIALLY_FILLED or CANCEL_PENDING (`AnsweredAndUnfinished`, one public rule the card and the route both read) is offered
+  "It is no longer working at your platform" (CANCELLED) and "It was filled" (FILLED); the route runs `ThePlatformsLiveOrderVetoAsync`, the ONE helper `TheOwnersAnswerAsync` now
+  calls too, its words byte-identical (`LossHoldReleaseTests` 8/8): a provable non-final listing or a read that throws → refused, named, "Nothing was recorded"; where no
+  history can be asked his word stands and the history is never read.
+- **Item 2:** after every leg, `PutBackOnTheCard` re-reads each row Close all's unflagged arm waited on and flags it again (`MarkNeedsReconciliation`, state untouched, a sentence
+  naming the press's time and both answers) only while it is still answered-and-unfinished and unflagged; a moved row or a refused write is said in the leg's words, never thrown.
+- **Item 3 (the fixer, seat P's ruling):** `TheAnswerAFinalListingGives` refuses an answer a provable FINAL listing contradicts on whether the close filled ("no longer working"
+  over FILLED; "It was filled" over CANCELLED or REJECTED): `GatewayDeniedException` naming the order, the listed state and the card answer that matches, "Nothing was recorded.",
+  engineering event `card_answer_contradicted`; nothing written, the row stays on the card. An agreeing final state of another name (his CANCELLED over a listed REJECTED) is
+  written with the platform's state beside his words. `docs/CONTRACTS.md` and `docs/USER-GUIDE.md` state the answers, the veto, the refusal and the limits.
+- **Seat P's judgements.** Builder's deviation (2) — a contradicting final listing WRITTEN beside his words, "as the confirm does" — REFUSED: Close all and the confirm size
+  from the book, so no extra order follows, but the row would be false about what ran, written with the proof in hand; refusing strands no one (the card offers the matching
+  answer) → item 3. ACCEPTED: (1) (b) a Theory whose second arm makes the history read throw (`RecordingConnector.HistoryThrows`), (c) "unread" via `HistoryReads`;
+  (3) `PressCloseOnceTests`: 8 helpers `internal`; its (c) test keeps its name and every assertion but the words at `:232` ("cancel that order at your platform and press
+  again" → "back on the Dashboard for your answer") — the judged change the brief named; (4) the card's `Cancelled` field became `BuiltAs`/`IsPress`. The fixer's: a non-final
+  answer (never offered) is refused against any final listing too; no EXPIRED state exists (finals: FILLED, CANCELLED, REJECTED); the event name is its own.
+
+**Verified by running (quoted).** Builder, RED at item 0: (a) "after Close all 1 the flatten's close … is not on the card"; (b) both arms "sells : 2 at the wire; closes 1 before press
+2, 2 after", "position : ES -2", `Expected: 0 Actual: -2`; (d) all four states `Expected [WORKING, CANCELLED, FILLED] Actual [WORKING]`; (c) a guard, green before and after.
+MUTANT: the route's veto dropped ⇒ (b) both arms red ("his answer : WRITTEN", "position : ES -2"); restored, sha256 identical. Fixer, RED on the pre-fix gateway's frozen Release
+build: 2 failed — "his answer CANCELLED over a close the platform's history lists FILLED was WRITTEN …", "his answer FILLED over … CANCELLED was WRITTEN …"; MUTANT: the new
+refusal dropped ⇒ the same 2 failed; restored, sha256 identical. Grep: `AnswerFromTheCardAsync`'s one caller `DashboardView.cs:828`, `ForceResolve`'s and
+`TheAnswerAFinalListingGives`'s the route; 0 hits in `GatewayPipeServer.cs`, `TradeAgent.TradeCli`, `TradeAgent.GatewayHost`. Builder: Release 0 warnings; Unit 1537, Fault 483,
+0 failed; touched classes 20/20 ×3, UnconfirmedCardTests 7/7 ×3. Fixer: 0 warnings; 22/22 ×3, 7/7 ×3.
+**Manager's gate** at `a80f9941`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1549/1549 (9 m 27 s); Fault 485/485 (2 m 1 s); Integration 752/753, 1 skipped (11 m 17 s) → 0 failed. **Names** vs `main`: 2391 → 2397, 0 removed, 6 added ([Fact]/[Theory] 2342 → 2348). **Scan:** clean; no trailers.
+**CI:** branch run 37771303154 at `fab9da9a` (the code tip; the fixer's report docs only): ubuntu ✓ 13 m, macOS ✓ 15 m, windows ✓ 72 m, package ✓ 4 m; 37741057294 at the builder's
+code tip: all four ✓. Tests box: NOT RUN — "the machine does not answer" (07:03Z the builder, 10:39Z the fixer, 10:51Z seat P). Landing CI on `main`: a waiter is armed.
+**Limits (in CONTRACTS):** where no history can be asked (ATAS) his word stands alone — a close he answers gone that still works can fill beside the next press's close; a row put back from an EARLIER Close all refuses his next one until answered, like any open press; a row no press waits on is not put back.
+**OWED (seat P, separate; money path / accounting):** `TheOwnersAnswerAsync`, the loss flatten's confirm, still counts his answer as the verdict where a provable final listing contradicts it, the platform's state beside it (`docs/CONTRACTS.md:4485`); his answer is already written when it runs, so it needs its own design (handoff/P.md, queue 2).
+**NOT verified:** ATAS (no box); the card on screen (no app run); a refused put-back write (no test).
