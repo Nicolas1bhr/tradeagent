@@ -194,8 +194,11 @@ public class CampaignLedgerTests
     ///
     /// <para>This is the path the card on the Data page takes — <c>TradingGateway.SetHoldout</c> — so the
     /// invariant "a holdout always has a campaign" is proved where it is enforced rather than where it is
-    /// described. A second press moves the cutoff and leaves the campaign alone: its trial history is the
-    /// whole point, and a fresh campaign would reset a count that must survive a team's replacement.</para>
+    /// described. A second press never opens a second campaign and moves nothing: its trial history is the
+    /// whole point, and a fresh campaign would reset a count that must survive a team's replacement. The
+    /// same date again answers Ok with the campaign already open; a later one is refused, because that
+    /// campaign judges from the cutoff it was opened at (<c>U-holdout-later</c> — this leg used to move the
+    /// cutoff later and assert it moved).</para>
     /// </summary>
     [Fact]
     public async Task The_owners_press_sets_the_cutoff_and_opens_one_campaign_with_the_settings_budgets()
@@ -222,12 +225,20 @@ public class CampaignLedgerTests
         Assert.Equal(Cutoff, campaign.HoldoutFrom);
         Assert.Equal("BTCUSDT 1m v1", campaign.Name);
 
-        // The second press moves the cutoff later and does NOT open a second campaign.
-        var (moved, same) = gw.SetHoldout(id, Cutoff.AddDays(1), EvaluationClass.Research);
-        Assert.True(moved.Ok, moved.Why);
+        // The second press at the same date answers Ok with the SAME campaign and opens no second one.
+        var (again, same) = gw.SetHoldout(id, Cutoff, EvaluationClass.Research);
+        Assert.True(again.Ok, again.Why);
         Assert.Equal(campaign.Id, same!.Id);
         Assert.Single(gw.Campaigns.All());
-        Assert.Equal(Cutoff.AddDays(1), gw.Datasets.ById(id)!.HoldoutFrom);
+
+        // A second press at a LATER date moves nothing and opens nothing: the campaign judges from this cutoff.
+        var (moved, kept) = gw.SetHoldout(id, Cutoff.AddDays(1), EvaluationClass.Research);
+        Assert.False(moved.Ok, $"a later cutoff was written while campaign {campaign.Id} judges from {Cutoff:u}");
+        Assert.Contains($"Campaign {campaign.Id} still judges strategies on every bar from", moved.Why, StringComparison.Ordinal);
+        Assert.Null(kept);
+        Assert.Single(gw.Campaigns.All());
+        Assert.Equal(Cutoff, gw.Datasets.ById(id)!.HoldoutFrom);
+        Assert.Equal(campaign.Id, gw.Campaigns.OpenForDataset(id)!.Id);
 
         // And a refused press opens nothing at all.
         var (back, none) = gw.SetHoldout(id, Cutoff.AddDays(-10), EvaluationClass.Research);

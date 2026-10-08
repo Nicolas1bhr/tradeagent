@@ -137,7 +137,9 @@ public sealed record DatasetRecord(
     ///
     /// <para>It is set by <see cref="DatasetStore.SetHoldout"/>, which the owner's own window calls and
     /// nothing on the pipe does. Moving it EARLIER is refused there: a bar that has already been served
-    /// to the research process cannot be made unseen by writing a column.</para>
+    /// to the research process cannot be made unseen by writing a column. Moving it LATER is refused
+    /// there too while a campaign judges from it: the referee judges from the cutoff its campaign opened
+    /// at, and a later one would serve research the bars those judgements read.</para>
     /// </summary>
     public DateTimeOffset? HoldoutFrom { get; init; }
 
@@ -290,7 +292,8 @@ public sealed class DatasetStore(Database db)
     /// <see cref="Record"/> is the collector's write, and a collection must not be able to declare a
     /// holdout as a side effect of downloading months: <see cref="SetHoldout"/> is the one writer of
     /// those two columns, it is reached from the owner's own window, and it refuses to move a cutoff
-    /// earlier. One writer is what makes that refusal the whole truth rather than one of two paths.</para>
+    /// earlier, or later while a campaign judges from it. One writer is what makes those refusals the
+    /// whole truth rather than one of two paths.</para>
     /// </summary>
     const string Cols = "id, " + Written + ", holdout_from, evaluation_class";
 
@@ -573,9 +576,22 @@ public sealed class DatasetStore(Database db)
     /// things that cannot be recovered later: "a leaked holdout cannot become unseen". So the
     /// direction is refused rather than warned about.</para>
     ///
-    /// <para><b>Moving it LATER is allowed</b>, and that is not an inconsistency: it un-holds bars the
-    /// research process has never been served, which leaks nothing, and it is the owner's own press.
-    /// Setting the same instant again is a no-op that answers Ok.</para>
+    /// <para><b>Moving it LATER is refused too, while the dataset has an open campaign</b> — in this build
+    /// from the owner's first press on, because <c>TradingGateway.SetHoldout</c> opens the campaign with
+    /// the cutoff and a campaign is renewed, never closed. A later cutoff SHRINKS the held window: the
+    /// bars' and the tape's rules read this column and would serve <c>[old, new)</c> to research, while
+    /// the referee goes on judging from the campaign's own <c>holdout_from</c>, the cutoff it was opened
+    /// at, which a renewal carries (<c>CampaignStore.Renew</c>). Every judgement after the move would read
+    /// minutes research may have read, and its <c>strategy_verdict.holdout_from</c> would record them as
+    /// private — the leak COUNCIL:212 says cannot become unseen, in the other direction. The refusal
+    /// writes nothing and says, in the owner's words, which campaign judges from which cutoff and what
+    /// he can do instead: download a fresh copy of the history and hold months back on that.</para>
+    ///
+    /// <para><b>The check is here, where the column is written, and reads the campaign ledger inside
+    /// this transaction</b> — not an argument a caller passes, so no caller can leave it out or pass the
+    /// wrong campaign. A dataset with no open campaign has nothing judging from its cutoff, and a later
+    /// one there releases bars that were never served. Setting the same instant again is a no-op that
+    /// answers Ok.</para>
     ///
     /// <para><b>There is no pipe op and no verb here.</b> Not a `trade` verb, not an op on the agent
     /// pipe, not a field on any request: the cutoff is the boundary of the evidence the caller is being
@@ -602,8 +618,16 @@ public sealed class DatasetStore(Database db)
                 $"dataset {id} already holds out every bar from {already:u}, and {at:u} is EARLIER than "
                 + "that. TradeAgent will not move a cutoff back: every bar between the two has already "
                 + "been served to the research process, and a cutoff rewritten afterwards would record "
-                + "them as evidence nobody had seen. Moving it later is allowed, because that only "
-                + "withholds bars nothing has read yet.");
+                + "them as evidence nobody had seen.");
+
+        // A CAMPAIGN JUDGING FROM THE CUTOFF HOLDS IT WHERE IT IS. Read off the campaign ledger here,
+        // inside this write, so the refusal is the store's own and not a caller's courtesy.
+        if (row.HoldoutFrom is { } held && at > held && new CampaignStore(db).OpenForDataset(id) is { } judging)
+            return HoldoutSet.No(
+                $"Nothing was changed. Campaign {judging.Id} still judges strategies on every bar from "
+                + $"{OwnersTime(judging.HoldoutFrom)} on, and moving the date to {OwnersTime(at)} would show "
+                + "the AI bars those judgements use. To hold back a different period, download a fresh "
+                + "copy of the history and hold months back on that.");
 
         using var c = db.Cmd(
             "UPDATE dataset SET holdout_from=$at, evaluation_class=$class WHERE id=$id",
@@ -611,6 +635,17 @@ public sealed class DatasetStore(Database db)
         c.ExecuteNonQuery();
         return HoldoutSet.Yes(at);
     });
+
+    /// <summary>
+    /// An instant as the owner's card writes it — the minute, in UTC, whatever this machine's culture — and
+    /// to the second when it is not on a minute, so a sentence never names a cutoff it is not.
+    /// </summary>
+    static string OwnersTime(DateTimeOffset at)
+    {
+        var utc = at.UtcDateTime;
+        var format = utc.Ticks % TimeSpan.TicksPerMinute == 0 ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd HH:mm:ss.FFFFFFF";
+        return utc.ToString(format, CultureInfo.InvariantCulture) + " UTC";
+    }
 
     /// <summary>Marks a dataset rejected. There is no route back: see <see cref="Checked"/>.</summary>
     public void Reject(long id, string reason) => db.Write(_ =>

@@ -7,7 +7,7 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
-/// ITEM 1 — THE HOLDOUT CUTOFF, AND THE ONE DIRECTION IT MAY NOT BE MOVED.
+/// ITEM 1 — THE HOLDOUT CUTOFF, AND THE DIRECTIONS IT MAY NOT BE MOVED.
 ///
 /// <para><b>What was wrong before this.</b> <c>dataset</c> had two states, ACCEPTED and REJECTED, and
 /// no class and no cutoff — so nothing in this product held anything back. `docs/COUNCIL.md`:131 asks
@@ -22,7 +22,7 @@ namespace TradeAgent.Tests.Unit;
 /// <para><b>The mutant this class exists to catch</b> is the cutoff taken from a request field — a
 /// caller marking its own holdout, which is a defendant writing the indictment. The wire half of that
 /// is `HoldoutOverPipeTests`; this half is that the store has exactly one writer and that it refuses
-/// to move a cutoff back.</para>
+/// to move a cutoff back — or forward while a campaign judges from it (`U-holdout-later`).</para>
 /// </summary>
 public class HoldoutLedgerTests
 {
@@ -106,11 +106,17 @@ public class HoldoutLedgerTests
     }
 
     /// <summary>
-    /// The other direction, which is the whole reason this is not "the cutoff is immutable". Moving it
-    /// later withholds bars nothing has read yet, so it leaks nothing and the owner may do it.
+    /// THE OTHER DIRECTION, REFUSED BY THE STORE ITSELF WHILE A CAMPAIGN JUDGES FROM THE CUTOFF
+    /// (<c>U-holdout-later</c>). This test was <c>A_cutoff_may_be_moved_later_because_that_withholds_bars_nothing_has_read</c>,
+    /// and its name stated the premise that was false: a later cutoff RELEASES bars, and the referee goes
+    /// on judging from the cutoff its campaign was opened at, so every judgement after the move read
+    /// minutes research may have read. Here, on the store and with no gateway in front of it, so no
+    /// caller can pass the check: with nothing judging from the cutoff it may still move later — the
+    /// bars it releases were never served — and once a campaign is open over the dataset it may not,
+    /// the refusal names that campaign and writes nothing. The same instant again answers Ok either way.
     /// </summary>
     [Fact]
-    public void A_cutoff_may_be_moved_later_because_that_withholds_bars_nothing_has_read()
+    public void A_cutoff_moves_later_only_while_no_campaign_judges_from_it()
     {
         using var db = TestEnv.NewDb();
         var store = new DatasetStore(db);
@@ -120,10 +126,22 @@ public class HoldoutLedgerTests
         Assert.True(store.SetHoldout(set.Id, cutoff, EvaluationClass.Research).Ok);
         Assert.True(store.SetHoldout(set.Id, cutoff, EvaluationClass.Research).Ok, "the same instant again");
 
-        var later = store.SetHoldout(set.Id, cutoff.AddDays(30), EvaluationClass.Research);
-
-        Assert.True(later.Ok, later.Why);
+        // NOTHING JUDGES FROM IT YET: later is allowed.
+        var free = store.SetHoldout(set.Id, cutoff.AddDays(30), EvaluationClass.Research);
+        Assert.True(free.Ok, free.Why);
         Assert.Equal(cutoff.AddDays(30), store.ById(set.Id)!.HoldoutFrom);
+
+        // A CAMPAIGN NOW JUDGES FROM IT: later is refused, by the store, and nothing is written.
+        var opened = new CampaignStore(db).Open("BTCUSDT 1m v1", store.ById(set.Id)!, 3, 2, At);
+        Assert.True(opened.Ok, opened.Why);
+        var held = store.SetHoldout(set.Id, cutoff.AddDays(60), EvaluationClass.Fixture);
+
+        Assert.False(held.Ok, "a later cutoff was written while a campaign judges from the first");
+        Assert.Contains($"Campaign {opened.Campaign!.Id} still judges strategies on every bar from 2026-07-01 00:00 UTC on",
+            held.Why, StringComparison.Ordinal);
+        Assert.Equal(cutoff.AddDays(30), store.ById(set.Id)!.HoldoutFrom);
+        Assert.Equal(EvaluationClass.Research, store.ById(set.Id)!.EvaluationClass);
+        Assert.True(store.SetHoldout(set.Id, cutoff.AddDays(30), EvaluationClass.Research).Ok, "the same instant again, judged");
     }
 
     /// <summary>

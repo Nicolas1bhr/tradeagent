@@ -1621,9 +1621,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// transaction already open, so the two rows land together or neither does.</para>
     ///
     /// <para>The budgets come off the owner's settings AT THIS MOMENT and are copied onto the campaign.
-    /// A second press on a dataset that already has an open campaign moves the cutoff (later only) and
-    /// leaves that campaign alone — its trial history is the whole point of it, and a fresh campaign
-    /// would reset a count that must survive a team's replacement.</para>
+    /// A second press on a dataset that already has an open campaign moves NOTHING and opens nothing: the
+    /// same instant again is a no-op answering Ok with that campaign, and any other is refused by
+    /// <c>DatasetStore.SetHoldout</c> itself — earlier because those bars were served, later because the
+    /// campaign judges from the cutoff it was opened at and a later one would serve research the bars its
+    /// judgements read (<c>U-holdout-later</c>). That campaign is left alone — its trial history is the
+    /// whole point of it, and a fresh campaign would reset a count that must survive a team's
+    /// replacement.</para>
     ///
     /// <para><b>The judge's cost model is settled FIRST, before anything is written.</b> The campaign
     /// pins a <c>VenueCostModel</c> from the DATASET's recorded venue with the owner's
@@ -1631,7 +1635,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// pinned, because the instrument's step is unconfirmed, the press is refused in those words and
     /// writes NOTHING: a cutoff without the campaign it is the subject of is months held back with
     /// nothing counting the attempts, and <c>Database.Write</c> rolls back only on an exception, so the
-    /// order is the guarantee. A press that only moves the cutoff of an open campaign pins nothing new.</para>
+    /// order is the guarantee. A press on a dataset whose campaign is open pins nothing new.</para>
     /// </summary>
     public (DatasetStore.HoldoutSet Holdout, CampaignRow? Campaign) SetHoldout(
         long datasetId, DateTimeOffset cutoff, string evaluationClass) => _db.Write(_ =>
