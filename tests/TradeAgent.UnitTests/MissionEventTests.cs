@@ -174,6 +174,64 @@ public class MissionEventTests
         Assert.Equal(MissionEventDisposition.Answered, events.Get("owner:1")!.Disposition);
     }
 
+    /// <summary>
+    /// ONLY A ROLE'S OWN PENDING SCHEDULED LOOK IS EVER BROUGHT FORWARD (<c>U-quiet-review</c>), and the
+    /// guard is the statement's: whatever a caller asks, the owner's words, the owner's own press (a
+    /// review WITH a payload), a role's own request, the renewal and the other role's look keep their
+    /// timing. The look that is replaced is closed in the same write — consumed by no launch and
+    /// superseded by the sooner one — and a look already that soon is left alone with nothing written.
+    /// </summary>
+    [Fact]
+    public void Only_a_roles_own_pending_scheduled_look_is_ever_brought_forward()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        static string Look(DateTimeOffset due, string role) =>
+            MissionEventIds.ForRole(MissionEventIds.Review(due), role);
+
+        var far = At.AddHours(4);
+        var soon = At.AddMinutes(30);
+        var chair = CouncilRoles.Operations;
+        string[] untouched =
+        [
+            Look(far, CouncilRoles.Research), "review:press", "self:turn-1", "renewal:day", "owner:1"
+        ];
+        events.RaiseDue(Look(far, chair), MissionEventKind.Review, At, far, role: chair);
+        events.RaiseDue(untouched[0], MissionEventKind.Review, At, far, role: CouncilRoles.Research);
+        events.RaiseDue(untouched[1], MissionEventKind.Review, At, far, """{"because":"the owner"}""", chair);
+        events.RaiseDue(untouched[2], MissionEventKind.Self, At, far, role: chair);
+        events.RaiseDue(untouched[3], MissionEventKind.Renewal, At, far, role: chair);
+        events.RaiseDue(untouched[4], MissionEventKind.Owner, At, far, """{"text":"hello"}""", chair);
+
+        Assert.True(events.BringLookForward(chair, Look(soon, chair), At, soon));
+
+        var replaced = events.Get(Look(far, chair))!;
+        Assert.True(replaced.Consumed);
+        Assert.Null(replaced.ConsumedBy);
+        Assert.Equal(MissionEventDisposition.Superseded, replaced.Disposition);
+        Assert.Equal(Look(soon, chair), replaced.DispositionDetail);
+
+        var sooner = events.Get(Look(soon, chair))!;
+        Assert.False(sooner.Consumed);
+        Assert.Null(sooner.Payload);
+        Assert.Equal((chair, At, soon), (sooner.For, sooner.CreatedAt, sooner.DueAt));
+
+        foreach (var id in untouched)
+        {
+            var e = events.Get(id)!;
+            Assert.False(e.Consumed, $"{id} was consumed");
+            Assert.Null(e.Disposition);
+            Assert.Equal(far, e.DueAt);
+        }
+
+        // A LOOK ALREADY AS SOON AS ASKED FOR is left where it is, and the call writes nothing at all.
+        var rows = events.OfKind(MissionEventKind.Review).Count;
+        Assert.False(events.BringLookForward(chair, Look(soon, chair), At, soon));
+        Assert.False(events.BringLookForward(chair, Look(soon.AddMinutes(10), chair), At, soon.AddMinutes(10)));
+        Assert.Equal(rows, events.OfKind(MissionEventKind.Review).Count);
+        Assert.False(events.Get(Look(soon, chair))!.Consumed);
+    }
+
     /// <summary>The sequence comes from the ids already written, so a restart cannot reuse one.</summary>
     [Fact]
     public void The_owner_sequence_continues_across_a_fresh_store_over_the_same_database()

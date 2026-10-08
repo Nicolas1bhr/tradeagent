@@ -49,7 +49,10 @@ public static class MissionEventKind
     /// <summary>The AI asked to be woken later, in <c>next.json</c>.</summary>
     public const string Self = "self";
 
-    /// <summary>Nothing happened and the owner still wants it to look. The heartbeat, and a setting.</summary>
+    /// <summary>
+    /// Nothing happened and the owner still wants it to look. The heartbeat, and a setting — the
+    /// fastest it comes round: it slows while only looks wake a role (<c>MissionLoop.NextLook</c>).
+    /// </summary>
     public const string Review = "review";
 
     /// <summary>
@@ -129,6 +132,10 @@ public static class MissionEventDisposition
     /// Only ever written on an EXACT text match, because "the same subject" is a judgment and this
     /// software is not entitled to make it — a message quietly superseded by one that merely looked
     /// similar is a question the owner asked and nobody answered.
+    ///
+    /// <para>Also what a scheduled look reads when the app replaced it with a sooner one
+    /// (<see cref="MissionEventStore.BringLookForward"/>): two looks carry no words at all, so the
+    /// match is exact by construction, and the sooner look's id is the detail.</para>
     /// </summary>
     public const string Superseded = "superseded";
 }
@@ -535,6 +542,59 @@ public sealed class MissionEventStore(Database db)
             + "ORDER BY due_at, rowid LIMIT 1", ("$chair", CouncilRoles.Default));
         return c.ExecuteScalar() as string;
     });
+
+    /// <summary>
+    /// BRINGS ONE ROLE'S PENDING SCHEDULED LOOK FORWARD TO <paramref name="dueAt"/>, or does nothing
+    /// and answers false (<c>U-quiet-review</c>).
+    ///
+    /// <para>The loop raises a role's next look further out while only looks wake it, and a real
+    /// event brings it back. A look's id is its due minute (<see cref="MissionEventIds.Review"/>), so
+    /// it is not re-dated in place: the sooner look is raised under its own <paramref name="id"/>, and
+    /// the later one is closed in the SAME transaction — consumed by no launch, and
+    /// <see cref="MissionEventDisposition.Superseded"/> by the sooner one — so its row still says what
+    /// became of it and nothing can serve it again. Both land or neither does.</para>
+    ///
+    /// <para><b>The guard is the statement's, not only the caller's.</b> Only an unconsumed
+    /// <see cref="MissionEventKind.Review"/> with NO payload, for <paramref name="role"/>, due later
+    /// than <paramref name="dueAt"/>, is ever closed. The owner's words, a delivery, a fill, an order,
+    /// the renewal, a role's own request, a boundary, the owner's own press — a review WITH a payload
+    /// — and the other role's look all keep their timing, whatever a caller asks.</para>
+    /// </summary>
+    /// <returns>True when a later look was replaced; false when there was none, or when the sooner
+    /// look's id is already taken — and then nothing was written.</returns>
+    public bool BringLookForward(string role, string id, DateTimeOffset at, DateTimeOffset dueAt) =>
+        db.Write(_ =>
+        {
+            var later = new List<string>();
+            using (var c = db.Cmd("""
+                SELECT id FROM mission_event
+                 WHERE kind=$review AND payload IS NULL AND consumed_at IS NULL
+                   AND COALESCE(role,$chair) = $role AND due_at > $due
+                """,
+                ("$review", MissionEventKind.Review), ("$chair", CouncilRoles.Default), ("$role", role),
+                ("$due", Sql.T(dueAt))))
+            using (var r = c.ExecuteReader())
+                while (r.Read()) later.Add(r.GetString(0));
+
+            if (later.Count == 0) return false;
+            if (!Raise(new MissionEvent
+                {
+                    Id = id, Kind = MissionEventKind.Review, CreatedAt = at, DueAt = dueAt, Role = role
+                }))
+                return false;
+
+            foreach (var old in later)
+            {
+                using var u = db.Cmd("""
+                    UPDATE mission_event SET consumed_at=$at, disposition=$superseded, disposition_detail=$by
+                     WHERE id=$id AND kind=$review AND payload IS NULL AND consumed_at IS NULL
+                    """,
+                    ("$at", Sql.T(at)), ("$superseded", MissionEventDisposition.Superseded), ("$by", id),
+                    ("$id", old), ("$review", MissionEventKind.Review));
+                u.ExecuteNonQuery();
+            }
+            return true;
+        });
 
     /// <summary>
     /// Marks events consumed on their own, for a caller with no attempt to open — a turn the

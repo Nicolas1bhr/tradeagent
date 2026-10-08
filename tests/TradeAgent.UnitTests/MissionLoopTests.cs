@@ -651,6 +651,204 @@ public class MissionLoopTests
         if (why is not null && hasTime) Assert.EndsWith($" for {why}", line);
     }
 
+    // ---- 1c. the look slows while only looks wake a role (U-quiet-review) ---------------------
+
+    /// <summary>The shipped heartbeat, written out so every number below can be read against it.</summary>
+    static readonly MissionOptions Heartbeat = new() { ReviewEvery = TimeSpan.FromMinutes(30) };
+
+    /// <summary>The loop's clock, moved by the test the way the loop's own sleep would move it.</summary>
+    sealed class Clock(DateTimeOffset at)
+    {
+        public DateTimeOffset Now { get; set; } = at;
+    }
+
+    /// <summary>
+    /// EVERY TURN DUE AT THIS INSTANT, taken one after another as the loop's own thread takes them —
+    /// and it says so if the queue never empties, because a loop that keeps finding work at one
+    /// instant is the failure and not the wait.
+    /// </summary>
+    static async Task TakeEveryDueTurn(MissionLoop loop, MissionEventStore events, Clock clock)
+    {
+        for (var i = 0; i < 10 && events.RolesDue(clock.Now).Count > 0; i++) await loop.TurnAsync();
+        Assert.Empty(events.RolesDue(clock.Now));
+    }
+
+    /// <summary>The loop's sleep: the clock moves to the earliest wake, and every turn due there is taken.</summary>
+    static async Task SleepToTheNextWake(MissionLoop loop, MissionEventStore events, Clock clock)
+    {
+        clock.Now = events.NextDueAt() ?? throw new InvalidOperationException("nothing is scheduled at all");
+        await TakeEveryDueTurn(loop, events, clock);
+    }
+
+    /// <summary>One role's scheduled looks — reviews with no payload — oldest first.</summary>
+    static List<MissionEvent> LooksOf(MissionEventStore events, string role) =>
+        [.. events.OfKind(MissionEventKind.Review).Where(e => e.For == role && e.Payload is null)];
+
+    /// <summary>The same looks as the minutes between when each was raised and when it is due.</summary>
+    static string Looks(MissionEventStore events, string role) =>
+        string.Join(" ", LooksOf(events, role).Select(e => (e.DueAt - e.CreatedAt).TotalMinutes));
+
+    /// <summary>
+    /// THE LOOK SLOWS WHILE ONLY LOOKS WAKE A ROLE, AND THE FIRST REAL EVENT BRINGS IT BACK — RED FIRST.
+    ///
+    /// <para>M0 attempt 3 (<c>BUILD-STATUS.md</c>, gap (b)): after the last brief and report, sixteen
+    /// scheduled looks in four quiet hours spent 2.0337 USD, 53 % of the run, while nothing else woke
+    /// either role. <c>Schedule</c> raised every look at <c>ReviewEvery</c> whatever had woken the turn
+    /// before it, so a role with nothing to do paid for a look every half hour until midnight.</para>
+    ///
+    /// <para>A turn that only a look woke now raises the next one at twice the interval of the look it
+    /// took, up to eight intervals — 30, 60, 120, 240, 240 minutes — and a turn anything else woke
+    /// raises it at the interval again. The report below lands half an hour into a four-hour wait: the
+    /// look that was pending is superseded by one half an hour out, rather than left to fire first and
+    /// double again, and the decay starts over from the interval. Nothing happened to the Research
+    /// Director, so its pending look is where it was.</para>
+    /// </summary>
+    [Fact]
+    public async Task Quiet_looks_back_off_and_a_real_event_resets_them()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var clock = new Clock(Midday);
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+            Heartbeat, now: () => clock.Now);
+
+        await loop.TurnAsync();                                         // nothing due: the first looks are raised
+        for (var i = 0; i < 4; i++) await SleepToTheNextWake(loop, events, clock);
+
+        Assert.Equal("30 60 120 240 240", Looks(events, CouncilRoles.Operations));
+        Assert.Equal("30 60 120 240 240", Looks(events, CouncilRoles.Research));
+
+        // A REPORT FOR THE CHAIR, half an hour into its four-hour wait.
+        clock.Now = clock.Now.AddMinutes(30);
+        events.Raise(MissionEventIds.Task("report-1"), MissionEventKind.Report, clock.Now, role: CouncilRoles.Operations);
+        await TakeEveryDueTurn(loop, events, clock);
+        await SleepToTheNextWake(loop, events, clock);                  // the look it brought back, taken alone
+
+        Assert.Equal("30 60 120 240 240 30 60", Looks(events, CouncilRoles.Operations));
+        Assert.Equal("30 60 120 240 240", Looks(events, CouncilRoles.Research));
+
+        // THE LOOK THAT WAS REPLACED says so, was given to no launch, and can never be served.
+        var chair = LooksOf(events, CouncilRoles.Operations);
+        Assert.True(chair[4].Consumed);
+        Assert.Null(chair[4].ConsumedBy);
+        Assert.Equal(MissionEventDisposition.Superseded, chair[4].Disposition);
+        Assert.Equal(chair[5].Id, chair[4].DispositionDetail);
+
+        // AND THE OTHER ROLE'S PENDING LOOK WAS NOT TOUCHED.
+        var theirs = LooksOf(events, CouncilRoles.Research)[^1];
+        Assert.False(theirs.Consumed);
+        Assert.Null(theirs.Disposition);
+    }
+
+    /// <summary>
+    /// A ROLE'S OWN WAKE IS WORK IN PROGRESS, AND THE LOOK COMES BACK WITH IT — RED FIRST.
+    ///
+    /// <para>The chair asks in <c>next.json</c> to be woken in ten minutes during a turn that only a
+    /// look woke: that turn still doubles the look (what woke it was the clock), and the wake it asked
+    /// for is a real event — the role said it has work — so the following look is at the interval
+    /// again, and only then decays.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_roles_own_wake_resets_the_look()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var clock = new Clock(Midday);
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events };
+        var loop = new MissionLoop(host, Heartbeat, now: () => clock.Now);
+
+        await loop.TurnAsync();
+        await SleepToTheNextWake(loop, events, clock);
+
+        // The chair's look comes due first (its row is older), so the chair's turn reads the file.
+        File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"), """{"after_seconds": 600}""");
+        await SleepToTheNextWake(loop, events, clock);
+
+        Assert.Equal("30 60 120", Looks(events, CouncilRoles.Operations));
+        var self = Assert.Single(events.OfKind(MissionEventKind.Self));
+        Assert.Equal(CouncilRoles.Operations, self.For);
+
+        await SleepToTheNextWake(loop, events, clock);                  // the chair's own wake, ten minutes on
+        Assert.Equal(self.DueAt, clock.Now);
+        Assert.True(events.Get(self.Id)!.Consumed);
+        Assert.Equal("30 60 120 30", Looks(events, CouncilRoles.Operations));
+
+        await SleepToTheNextWake(loop, events, clock);                  // a look alone again: it decays again
+        Assert.Equal("30 60 120 30 60", Looks(events, CouncilRoles.Operations));
+        Assert.Equal("30 60 120", Looks(events, CouncilRoles.Research));
+    }
+
+    /// <summary>
+    /// THE OWNER PRESSING "WORK ON ITS OWN" IS NOT A QUIET LOOK — RED FIRST. The press raises a review
+    /// for the chair, due at once and WITH a payload (<c>AppHost.LetTheAiWorkOnItsOwn</c>), and that
+    /// payload is the whole difference: the owner just asked for work, so the chair's next look is at
+    /// the interval, not four hours out. The press itself is answered by a launch like any wake.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_work_on_its_own_press_is_not_a_quiet_look()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var clock = new Clock(Midday);
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+            Heartbeat, now: () => clock.Now);
+
+        await loop.TurnAsync();
+        await SleepToTheNextWake(loop, events, clock);
+        await SleepToTheNextWake(loop, events, clock);
+        Assert.Equal("30 60 120", Looks(events, CouncilRoles.Operations));
+
+        // THE PRESS, in the shape AppHost raises it: the chair's, due now, with the owner's reason in it.
+        clock.Now = clock.Now.AddMinutes(30);
+        var press = MissionEventIds.Review(clock.Now);
+        Assert.True(events.Raise(press, MissionEventKind.Review, clock.Now,
+            Json.Write(new { because = "the owner set the AI to work on its own" })));
+        await TakeEveryDueTurn(loop, events, clock);
+
+        Assert.Equal("30 60 120 30", Looks(events, CouncilRoles.Operations));
+        var taken = events.Get(press)!;
+        Assert.Equal(MissionEventDisposition.Answered, taken.Disposition);
+        Assert.NotNull(new AiAttemptStore(db).Get(taken.ConsumedBy!));
+        Assert.Equal("30 60 120", Looks(events, CouncilRoles.Research));
+    }
+
+    /// <summary>
+    /// THE BACK-OFF SURVIVES A RESTART — RED FIRST. Nothing of it is kept in memory: the interval is
+    /// the pending row's own <c>due_at − created_at</c>, so a fresh loop over the same database takes
+    /// the two-hour look and raises a four-hour one, exactly as the loop that raised it would have.
+    /// </summary>
+    [Fact]
+    public async Task The_back_off_survives_a_restart()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var clock = new Clock(Midday);
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+            Heartbeat, now: () => clock.Now);
+
+        await loop.TurnAsync();
+        await SleepToTheNextWake(loop, events, clock);
+        await SleepToTheNextWake(loop, events, clock);
+        Assert.Equal("30 60 120", Looks(events, CouncilRoles.Operations));
+
+        // A RESTART: a new loop and a new host over the same database, and nothing else carried across.
+        var restarted = new MissionLoop(
+            new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = new MissionEventStore(db) },
+            Heartbeat, now: () => clock.Now);
+        await SleepToTheNextWake(restarted, events, clock);
+
+        Assert.Equal("30 60 120 240", Looks(events, CouncilRoles.Operations));
+        Assert.Equal("30 60 120 240", Looks(events, CouncilRoles.Research));
+    }
+
     // ---- 2. what the next turn waits for -----------------------------------------------------
 
     /// <summary>Nothing asked for, nothing gone wrong: the next turn starts at once.</summary>
