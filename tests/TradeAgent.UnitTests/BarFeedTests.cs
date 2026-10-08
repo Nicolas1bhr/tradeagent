@@ -25,11 +25,11 @@ namespace TradeAgent.Tests.Unit;
 public class BarFeedTests
 {
     /// <summary>
-    /// The audience every read in this class is for: a caller on the agent pipe. No dataset here has a
-    /// holdout cutoff, so nothing is refused by it; the parameter exists so that a reader cannot be
-    /// called without saying who is asking.
+    /// The holdout every read in this class is under: a caller on the agent pipe, with the ledger. No dataset here has a
+    /// holdout cutoff, so nothing is refused by it; the parameter exists so that a reader cannot be called without saying
+    /// who is asking.
     /// </summary>
-    static readonly BarAudience Research = BarAudience.Pipe(CouncilRoles.Research);
+    static TapeHoldout Research(DatasetStore store) => TapeHoldout.Pipe(CouncilRoles.Research, store);
 
     static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -105,11 +105,11 @@ public class BarFeedTests
         var (row, csv, _) = Given(db, year);
 
         // The reader the pipe op uses refuses, and does not truncate.
-        var window = DatasetReader.Read(row, Research, null, null);
+        var window = DatasetReader.Read(row, Research(store), null, null);
         Assert.True(window.OverCap);
         Assert.Empty(window.Bars);
 
-        var open = BarFeed.Open(store, row.Id, Research, null, null);
+        var open = BarFeed.Open(store, row.Id, Research(store), null, null);
         Assert.True(open.Ok, open.Why);
 
         var count = 0;
@@ -132,7 +132,7 @@ public class BarFeedTests
         var store = new DatasetStore(db);
         var (row, _, _) = Given(db, 1000);
 
-        var open = BarFeed.Open(store, row.Id, Research, null, null);
+        var open = BarFeed.Open(store, row.Id, Research(store), null, null);
         Assert.True(open.Ok, open.Why);
 
         var chunks = open.Feed!.Chunks(Start.AddMinutes(100), Start.AddMinutes(349), chunkBars: 64).ToList();
@@ -153,7 +153,7 @@ public class BarFeedTests
 
         File.WriteAllText(raw, "somebody changed the archive this dataset was built from");
 
-        var open = BarFeed.Open(store, row.Id, Research, null, null);
+        var open = BarFeed.Open(store, row.Id, Research(store), null, null);
 
         Assert.False(open.Ok);
         Assert.Contains("REJECTED", open.Why, StringComparison.Ordinal);
@@ -166,7 +166,7 @@ public class BarFeedTests
     public void There_is_no_feed_for_a_dataset_this_installation_does_not_have()
     {
         using var db = TestEnv.NewDb();
-        var open = BarFeed.Open(new DatasetStore(db), 4242, Research, null, null);
+        var open = BarFeed.Open(new DatasetStore(db), 4242, Research(new DatasetStore(db)), null, null);
 
         Assert.False(open.Ok);
         Assert.Contains("4242", open.Why, StringComparison.Ordinal);
@@ -185,13 +185,13 @@ public class BarFeedTests
         var store = new DatasetStore(db);
         var (row, _, raw) = Given(db, 500);
 
-        var open = BarFeed.Open(store, row.Id, Research, null, null);
+        var open = BarFeed.Open(store, row.Id, Research(store), null, null);
         Assert.True(open.Ok, open.Why);
         Assert.Equal(DatasetState.ACCEPTED, open.Feed!.Dataset.State);
 
         File.Delete(raw);
 
         Assert.Equal(500, open.Feed.Bars().Count());
-        Assert.False(BarFeed.Open(store, row.Id, Research, null, null).Ok);
+        Assert.False(BarFeed.Open(store, row.Id, Research(store), null, null).Ok);
     }
 }

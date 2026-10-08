@@ -78,10 +78,24 @@ public sealed class BarFeed
     /// </summary>
     public const int ChunkBars = 4096;
 
-    BarFeed(DatasetRecord dataset) => Dataset = dataset;
+    BarFeed(DatasetRecord dataset, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        Dataset = dataset;
+        From = from;
+        To = to;
+    }
 
     /// <summary>The dataset this feed serves, as the ledger's one verdict left it.</summary>
     public DatasetRecord Dataset { get; }
+
+    /// <summary>
+    /// The window this feed was OPENED over — open times, inclusive, null for no bound. The holdout was decided for it and
+    /// for nothing wider: <see cref="Chunks"/> streams inside it or not at all (<c>U-bar-holdout</c>).
+    /// </summary>
+    public DateTimeOffset? From { get; }
+
+    /// <inheritdoc cref="From"/>
+    public DateTimeOffset? To { get; }
 
     /// <summary>
     /// WHAT THESE BARS' VOLUMES ARE, in words, or null when every one of them was traded.
@@ -109,15 +123,18 @@ public sealed class BarFeed
     /// streams a narrower window is asking for more than it reads, and over a dataset with a cutoff that
     /// is exactly the request that must not succeed.</para>
     ///
-    /// <para><paramref name="audience"/> is required for the reason it is required on
+    /// <para><paramref name="holdout"/> is required for the reason it is required on
     /// <see cref="DatasetReader.Read"/>: the refusal is the default path, and a new caller has to say
-    /// who is asking before it gets a bar. The only audience that reads past a cutoff is the referee's,
-    /// which no assembly outside this one can mint (<see cref="BarAudience"/>).</para>
+    /// who is asking, with the dataset ledger, before it gets a bar. The dataset's own cutoff is asked
+    /// first and unchanged (<see cref="Holdout.Refusal"/>); then every OTHER dataset's window, of any
+    /// pair, over the window's market span (<c>U-bar-holdout</c>). The only holdout that reads past
+    /// either is the referee's, which no assembly outside this one can mint (<see cref="TapeHoldout"/>).</para>
     /// </summary>
-    public static BarFeedOpen Open(DatasetStore store, long datasetId, BarAudience audience,
+    public static BarFeedOpen Open(DatasetStore store, long datasetId, TapeHoldout holdout,
         DateTimeOffset? from, DateTimeOffset? to)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(holdout);
 
         var row = store.ById(datasetId);
         if (row is null)
@@ -129,16 +146,24 @@ public sealed class BarFeed
                 $"dataset {datasetId} ({verdict.Pair} {verdict.Interval} {verdict.Version}) is REJECTED " +
                 $"and its bars are not served: {verdict.RejectedReason}");
 
-        if (Holdout.Refusal(verdict, audience, from, to) is { } withheld)
+        if (Holdout.Refusal(verdict, holdout.Audience, from, to) is { } withheld)
             return BarFeedOpen.Withheld(withheld);
 
-        return BarFeedOpen.Yes(new BarFeed(verdict));
+        if (holdout.Refusal(verdict, from, to) is { } elsewhere)
+            return BarFeedOpen.Withheld(elsewhere);
+
+        return BarFeedOpen.Yes(new BarFeed(verdict, from, to));
     }
 
     /// <summary>
     /// The dataset's closed bars whose open time is in [<paramref name="from"/>,
     /// <paramref name="to"/>] — both inclusive, both optional — ascending, in chunks of at most
     /// <paramref name="chunkBars"/>.
+    ///
+    /// <para><b>Inside the window the feed was opened over, or not at all</b> (<c>U-bar-holdout</c>): an
+    /// absent bound is the opened one, and a bound reaching past it is REFUSED with an exception before
+    /// a line is read — the holdout was decided for the opened window, so a stream wider than it would
+    /// be a read nobody decided.</para>
     ///
     /// <para>A minute with no bar is not in here and nothing stands in for it: the dataset counts its
     /// gaps and fills none (`KlineNormaliser`), and a run counts them again as it crosses them.</para>
@@ -147,8 +172,19 @@ public sealed class BarFeed
         DateTimeOffset? from = null, DateTimeOffset? to = null, int chunkBars = ChunkBars)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(chunkBars, 1);
-        return Streamed(from, to, chunkBars);
+
+        var lo = from ?? From;
+        var hi = to ?? To;
+        if (lo < From || hi > To)
+            throw new ArgumentOutOfRangeException(lo < From ? nameof(from) : nameof(to),
+                $"this feed of dataset {Dataset.Id} was opened over {Bound(From)} to {Bound(To)}, and a stream of it "
+                + $"from {Bound(lo)} to {Bound(hi)} reaches past that: the holdout was decided for the window the feed "
+                + "was opened over, so it streams inside that window or not at all.");
+
+        return Streamed(lo, hi, chunkBars);
     }
+
+    static string Bound(DateTimeOffset? at) => at is { } t ? t.ToString("u", System.Globalization.CultureInfo.InvariantCulture) : "no bound";
 
     /// <summary>The same window, one bar at a time.</summary>
     public IEnumerable<KlineBar> Bars(

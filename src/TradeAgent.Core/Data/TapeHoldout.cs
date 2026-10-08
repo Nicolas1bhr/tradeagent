@@ -25,17 +25,43 @@ public sealed record TapeHoldoutWindow(
     public bool ReachedBy(DateTimeOffset? from, DateTimeOffset? to) =>
         (to is not { } hi || hi >= From) && (from is not { } lo || Until is not { } end || lo < end);
 
+    /// <summary>
+    /// Whether market time from <paramref name="from"/> (inclusive) to <paramref name="until"/> (exclusive), either null
+    /// for no bound, overlaps this window — the test a run of BARS takes (<c>U-bar-holdout</c>): a bar is the span from
+    /// its open to its close, so one that opens before the window and closes inside it reaches it.
+    /// </summary>
+    public bool Overlaps(DateTimeOffset? from, DateTimeOffset? until) =>
+        (until is not { } hi || hi > From) && (from is not { } lo || Until is not { } end || lo < end);
+
     /// <summary>The window in the words a refusal uses: the dataset, its cutoff and the tape's window.</summary>
-    public string Words =>
-        $"dataset {DatasetId} ({Pair} {Interval} {Version}) holds out every bar from {From:u} onwards, so the tape is held "
+    public string Words => WordsOf("the tape is");
+
+    /// <summary>
+    /// The same window in the words a refusal of BARS uses (<c>U-bar-holdout</c>): the dataset, its cutoff, and every
+    /// pair's bars held back over the same market time.
+    /// </summary>
+    public string BarWords => WordsOf("every pair's bars, from every dataset and the forward bars, are");
+
+    string WordsOf(string held) =>
+        $"dataset {DatasetId} ({Pair} {Interval} {Version}) holds out every bar from {From:u} onwards, so {held} held "
         + (Until is { } end
             ? $"back over the same market time, from {From:u} up to the close of its last bar at {end:u}"
             : $"back from {From:u} with no end, because the dataset does not record where its bars end");
 }
 
 /// <summary>
-/// WHO IS READING THE TAPE, AND THE HOLDOUT WINDOWS THEY MAY NOT READ — one argument, required by every reader of tape
-/// rows that serves a payload (<c>U-tape-holdout</c>; the orchestrator's ruling of 2026-10-07).
+/// WHO IS READING THE TAPE OR THE BARS, AND THE HOLDOUT WINDOWS THEY MAY NOT READ — one argument, required by every reader
+/// of tape rows that serves a payload (<c>U-tape-holdout</c>; the orchestrator's ruling of 2026-10-07) and by every reader
+/// of bars that may serve one on the agent-facing pipe (<c>U-bar-holdout</c>; seat A's decision of 2026-10-08).
+///
+/// <para><b>The bars hold the same windows, over every subject.</b> A cutoff on one dataset withholds its own months, and
+/// <see cref="Holdout"/> still decides those, unchanged; but the same months reach a caller through another version of the
+/// same pair (every Download press records one), through a correlated pair that carries the held period's regime, and
+/// through the forward bars when a Download is taken after the collector ran. So a read of ANY dataset, or of the forward
+/// bars, whose market span — the open of the first bar it could serve to the close of the last — reaches ANOTHER dataset's
+/// window is REFUSED in <see cref="TapeHoldoutWindow.BarWords"/>, never clipped: <see cref="Refusal(DatasetRecord,
+/// DateTimeOffset?, DateTimeOffset?)"/> and <see cref="ForwardRefusal"/>. One rule for the tape and the bars, one sentence
+/// to the owner.</para>
 ///
 /// <para><b>Why the tape has a holdout at all.</b> The bars' holdout (<see cref="Holdout"/>) withholds a dataset's
 /// months from the research process; the tape records the same market's context over the same time — a premium-index
@@ -98,10 +124,11 @@ public sealed class TapeHoldout
     internal static TapeHoldout Referee { get; } = new(BarAudience.Referee, null);
 
     /// <summary>
-    /// THE TAPE'S HOLDOUT FOR A RUN WHOSE BARS ARE READ UNDER <paramref name="audience"/> (<c>U-language-v2a</c>): that same
-    /// audience, with the dataset ledger its windows are read from at each read — so one audience decides a run's bars and
-    /// its features, and a holdout decided for one is decided for the other. Internal: <see cref="Pipe"/> stays the only
-    /// public door, and the referee's audience reaches here only from a charged verdict, through <c>Backtest.Over</c>.
+    /// THE HOLDOUT FOR A RUN WHOSE BARS ARE READ UNDER <paramref name="audience"/> (<c>U-language-v2a</c>, <c>U-bar-holdout</c>):
+    /// that same audience, with the dataset ledger its windows are read from at each read. <c>Backtest.Over</c> builds ONE and
+    /// hands it to the bars (<see cref="BarFeed.Open"/>) and to the features, so a holdout decided for one is decided for the
+    /// other. Internal: <see cref="Pipe"/> stays the only public door, and the referee's audience reaches here only from a
+    /// charged verdict — through <c>Backtest.Over</c> and <c>Referee.HoldoutFeed</c>.
     /// </summary>
     internal static TapeHoldout Of(BarAudience audience, DatasetStore datasets)
     {
@@ -184,6 +211,83 @@ public sealed class TapeHoldout
         return string.Join("; ", inside.Select(w => w.Words))
             + $" — and the newest reading of {row.Source} {row.Series} {row.Subject} that had arrived by {asOf:u} is stamped "
             + "inside it. " + Why() + "Ask as of an earlier instant, or read a window of source time outside it.";
+    }
+
+    /// <summary>
+    /// WHY BARS OF <paramref name="set"/> OPENING FROM <paramref name="from"/> TO <paramref name="to"/> (both inclusive,
+    /// either null for no bound) ARE NOT SERVED BECAUSE ANOTHER DATASET HOLDS THEIR MARKET TIME (<c>U-bar-holdout</c>), in
+    /// the words the caller reads, or null when they are.
+    ///
+    /// <para>The set's OWN cutoff is not asked here: <see cref="Holdout.Refusal"/> decides it, first and unchanged. Every
+    /// OTHER dataset's window, of any pair, is asked over the read's market span — from <paramref name="from"/> to the close
+    /// of the bar opening at <paramref name="to"/>, one bar of the set's interval later. An absent bound reaches every
+    /// window on its side, and a set whose bar length this build cannot read spans with no end. Null only for the
+    /// referee's reader, a ledger holding no other window, or a span that reaches none.</para>
+    /// </summary>
+    public string? Refusal(DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        return BarRefusal($"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version})", set.Id, BarLength(set.Interval), from, to);
+    }
+
+    /// <summary>
+    /// THE SAME RULE FOR THE FORWARD BARS OF <paramref name="symbol"/> — the minutes TradeAgent collected itself, which
+    /// belong to no dataset, so EVERY window is asked. A Download taken after the collector ran holds months the collector
+    /// already has: a forward bar does not post-date every freeze.
+    /// </summary>
+    public string? ForwardRefusal(string symbol, DateTimeOffset? from, DateTimeOffset? to) =>
+        BarRefusal($"the forward bars of {symbol}", null, ForwardBars.BarLength, from, to);
+
+    string? BarRefusal(string read, long? own, TimeSpan? length, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        if (Audience.MayReadHoldout) return null;
+
+        // THE READ'S MARKET SPAN: from the open of the first bar it could serve to the close of the last, one bar after
+        // 'to'. A bar length this build cannot read, or a close past the last instant there is, is a span with no end.
+        DateTimeOffset? until = to is { } hi && length is { } bar && hi <= DateTimeOffset.MaxValue - bar ? hi + bar : null;
+
+        var reached = Windows().Where(w => w.DatasetId != own && w.Overlaps(from, until)).ToList();
+        if (reached.Count == 0) return null;
+
+        var asked = (from, to) switch
+        {
+            ({ } lo, { } last) => $"the bars asked for, {read} opening from {lo:u} to {last:u}, span the market "
+                + (until is { } end ? $"to the close of the last at {end:u}" : "with no end this build can measure"),
+            ({ } lo, null) => $"the bars asked for, {read} opening from {lo:u}, name no end",
+            (null, { } last) => $"the bars asked for, {read} opening up to {last:u}, name no start",
+            _ => $"the bars asked for, {read}, name neither a start nor an end, so they are every bar there is"
+        };
+
+        return string.Join("; ", reached.Select(w => w.BarWords)) + $" — and {asked}, which reaches "
+            + (reached.Count == 1 ? "it. " : "them. ") + BarsWhy() + BarRepair(reached, length);
+    }
+
+    string BarsWhy() =>
+        "Bars over a holdout's months are the private evaluation evidence the research process never sees, whichever "
+        + "dataset, pair or source serves them: another version of the same months, a correlated pair and the minutes "
+        + "TradeAgent collected itself all say what those months did. TradeAgent serves them to no caller on this channel — "
+        + $"not to {Who}, not to either director, not to a connection that proved no role at all. This is REFUSED rather "
+        + "than quietly cut short at the window, because an answer silently clipped is a different window from the one you "
+        + "asked for, and a bar once served can never become holdout again. ";
+
+    static string BarRepair(IReadOnlyList<TapeHoldoutWindow> reached, TimeSpan? length)
+    {
+        if (reached is not [var one])
+            return "Ask for bars wholly outside each of them — the last closing by its start, or the first opening at or "
+                   + "after its end, as named above; 'trade data list' names every dataset's 'holdout_from' and last bar.";
+
+        var before = length is { } bar && one.From >= DateTimeOffset.MinValue + bar
+            ? $"a 'to' at or before {one.From - bar:u}, so the last bar closes by the cutoff"
+            : null;
+        var after = one.Until is { } end ? $"a 'from' at or after {end:u}" : null;
+
+        return (before, after) switch
+        {
+            ({ } b, { } a) => $"Ask for bars wholly outside it: {b}, or {a}.",
+            ({ } b, null) => $"Ask for bars that END before it: {b}.",
+            (null, { } a) => $"Ask for bars that START after it: {a}.",
+            _ => "Ask for bars of a pair and a window 'trade data list' shows outside every dataset's 'holdout_from' and last bar."
+        };
     }
 
     string Why() =>

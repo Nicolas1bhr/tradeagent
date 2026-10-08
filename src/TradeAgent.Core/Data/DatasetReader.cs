@@ -68,21 +68,27 @@ public static class DatasetReader
     /// both inclusive and both optional — or nothing at all, because they are held back from this
     /// audience.
     ///
-    /// <para><b><paramref name="audience"/> is required, and the holdout is checked HERE rather than
-    /// beside the call.</b> A caller that wants bars has to say who is asking, and the file is not even
-    /// opened when the answer is no: that is what stops a new op from serving the months the owner held
-    /// back by forgetting a line. The refusal comes back on <see cref="BarWindow.Refusal"/> with an
-    /// empty bar list, so ignoring it serves nothing rather than everything.</para>
+    /// <para><b><paramref name="holdout"/> is required, and the holdout is checked HERE rather than
+    /// beside the call.</b> A caller that wants bars has to say who is asking, with the dataset ledger
+    /// its windows are read from (<see cref="TapeHoldout.Pipe"/>), and the file is not even opened when
+    /// the answer is no: that is what stops a new op from serving the months the owner held back by
+    /// forgetting a line. The set's own cutoff is asked first, by <see cref="Holdout.Refusal"/> and
+    /// unchanged; then every OTHER dataset's window, of any pair, over the read's market span
+    /// (<c>U-bar-holdout</c>) — a second version of the same months, or a correlated pair, is the same
+    /// leak. The refusal comes back on <see cref="BarWindow.Refusal"/> with an empty bar list, so
+    /// ignoring it serves nothing rather than everything.</para>
     ///
     /// <para>Reading stops one bar past the cap: that is enough to know the window is too big, and it is
     /// the last row this ever asks the disk for.</para>
     /// </summary>
-    public static BarWindow Read(DatasetRecord set, BarAudience audience, DateTimeOffset? from,
+    public static BarWindow Read(DatasetRecord set, TapeHoldout holdout, DateTimeOffset? from,
         DateTimeOffset? to, int cap = MaxBars)
     {
         ArgumentNullException.ThrowIfNull(set);
+        ArgumentNullException.ThrowIfNull(holdout);
 
-        if (Holdout.Refusal(set, audience, from, to) is { } withheld) return new BarWindow([], false, withheld);
+        if (Holdout.Refusal(set, holdout.Audience, from, to) is { } withheld) return new BarWindow([], false, withheld);
+        if (holdout.Refusal(set, from, to) is { } elsewhere) return new BarWindow([], false, elsewhere);
 
         var bars = new List<KlineBar>();
 
@@ -107,7 +113,7 @@ public static class DatasetReader
     /// <para>Public and in one place because there are now two readers of this format —
     /// <see cref="Read"/>, which the pipe op uses and which REFUSES a window over
     /// <see cref="MaxBars"/>, and <see cref="BarFeed"/>, which streams a whole run with no cap. Both
-    /// take a <see cref="BarAudience"/> and both refuse a holdout window; this row parse is below that
+    /// take a <see cref="TapeHoldout"/> and both refuse a holdout window; this row parse is below that
     /// and knows nothing about it, which is why the check is on the two entry points and not here. Two
     /// copies of the row parse would be two definitions of what a bar is, and the one that drifted
     /// would be the one nobody read.</para>

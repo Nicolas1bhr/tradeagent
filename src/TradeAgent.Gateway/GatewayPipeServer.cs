@@ -2809,8 +2809,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // THE AUDIENCE IS THE CALLER'S OWN AND IT IS A PIPE CALLER, whatever role it proved: the
             // reader takes the holdout decision itself, so this op cannot serve a held-back bar by
             // forgetting a check, and a null role is not treated as "not research" — it is treated as a
-            // caller that proved nothing, which is refused exactly as both directors are.
-            window = DatasetReader.Read(set, BarAudience.Pipe(ctx.Role), from, to);
+            // caller that proved nothing, which is refused exactly as both directors are. It travels
+            // with the dataset ledger (U-bar-holdout): the newest dataset of a pair holding no cutoff
+            // still serves no bar inside ANOTHER dataset's holdout window, of this pair or any other.
+            window = DatasetReader.Read(set, TapeHoldout.Pipe(ctx.Role, gateway.Datasets), from, to);
         }
         catch (IOException ex)
         {

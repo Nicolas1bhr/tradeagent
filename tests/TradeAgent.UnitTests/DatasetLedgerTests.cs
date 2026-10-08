@@ -386,7 +386,7 @@ public class DatasetLedgerTests
 
         using (new FileStream(set.NormalisedPath, FileMode.Open, FileAccess.Read, FileShare.None))
         {
-            var open = BarFeed.Open(svc.Store, set.Id, BarAudience.Pipe(CouncilRoles.Research), null, null);
+            var open = BarFeed.Open(svc.Store, set.Id, TapeHoldout.Pipe(CouncilRoles.Research, svc.Store), null, null);
             Assert.False(open.Ok, "a dataset whose file could not be read was served");
             var row = svc.Store.ById(set.Id)!;
             Assert.True(row.State == DatasetState.ACCEPTED, row.RejectedReason);

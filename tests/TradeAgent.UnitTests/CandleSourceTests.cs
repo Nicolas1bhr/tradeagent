@@ -200,7 +200,7 @@ public class CandleSourceTests
         Assert.Equal(4, got.Dataset.MidpointBars);
 
         // A MIDPOINT BAR'S VOLUME IS ZERO AND THE FLAG IS WHAT SAYS THE ZERO IS NOT A MEASUREMENT.
-        var bars = DatasetReader.Read(got.Dataset, BarAudience.Pipe(CouncilRoles.Research), null, null).Bars;
+        var bars = DatasetReader.Read(got.Dataset, TapeHoldout.Pipe(CouncilRoles.Research, new DatasetStore(db)), null, null).Bars;
         Assert.Equal(4, bars.Count(b => b.Quality == BarQuality.MidpointDerived));
         Assert.All(bars.Where(b => b.Quality == BarQuality.MidpointDerived), b => Assert.Equal(0m, b.Volume));
         Assert.All(bars.Where(b => b.Quality == BarQuality.Traded), b => Assert.Equal(2m, b.Volume));

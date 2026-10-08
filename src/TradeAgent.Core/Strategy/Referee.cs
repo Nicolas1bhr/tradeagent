@@ -605,7 +605,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         if (_campaigns.ById(charge.CampaignId) is not { } campaign)
             return BarFeedOpen.No($"there is no campaign {charge.CampaignId} in this installation's ledger");
 
-        return BarFeed.Open(_datasets, campaign.HoldoutDatasetId, audience, from, to);
+        return BarFeed.Open(_datasets, campaign.HoldoutDatasetId, TapeHoldout.Of(audience, _datasets), from, to);
     }
 }
 

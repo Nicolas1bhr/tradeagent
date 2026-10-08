@@ -746,9 +746,10 @@ public static class Backtest
     /// under it serves nothing and the refusal names it. A run whose dataset changed state half way
     /// through would have no one dataset its result was about.</para>
     ///
-    /// <para><b>It is also where the HOLDOUT stops.</b> The window and the caller's audience are handed
-    /// to <see cref="Data.BarFeed.Open"/> together, so a run whose window reaches the dataset's
-    /// <c>holdout_from</c> is refused before a single bar is evaluated — and refused rather than run over
+    /// <para><b>It is also where the HOLDOUT stops.</b> The window and the caller's audience, as ONE
+    /// <see cref="Data.TapeHoldout"/> with this ledger, are handed to <see cref="Data.BarFeed.Open"/> together, so a
+    /// run whose window reaches the dataset's <c>holdout_from</c> — or whose market span reaches ANOTHER dataset's
+    /// holdout window, of any pair (<c>U-bar-holdout</c>) — is refused before a single bar is evaluated — and refused rather than run over
     /// the part it is allowed to see, because a metric over a window the caller did not ask for is a
     /// figure about nothing. A backtest is the reading that matters: `data-bars` hands over prices, and a
     /// run hands over what the prices did, which is the same leak laundered through a metric.</para>
@@ -802,7 +803,12 @@ public static class Backtest
         if (program.Features.Count > 0 && tape is null)
             return BacktestOpened.No(NoTape(program));
 
-        var open = Data.BarFeed.Open(datasets, datasetId, audience, from, to);
+        // ONE HOLDOUT FOR THE BARS AND THE FEATURES (U-bar-holdout): the caller's audience with this ledger, so a run over
+        // one dataset whose window reaches ANOTHER dataset's holdout window — of any pair — is refused at the open in the
+        // holdout's words, exactly as its features would be over the tape.
+        var holdout = Data.TapeHoldout.Of(audience, datasets);
+
+        var open = Data.BarFeed.Open(datasets, datasetId, holdout, from, to);
         if (open.Feed is not { } feed) return BacktestOpened.No(open.Why, open.IsHoldout);
 
         var request = new BacktestRequest(
@@ -819,7 +825,7 @@ public static class Backtest
         // ONE AUDIENCE FOR THE BARS AND THE FEATURES, AND THE TAPE'S HOLDOUT FOR IT (U-tape-holdout): a run whose features
         // would read the tape inside a dataset's holdout window is REFUSED in the holdout's words before a bar is read.
         using var features = program.Features.Count > 0
-            ? new FeatureFeed(tape!, Data.TapeHoldout.Of(audience, datasets), program, until)
+            ? new FeatureFeed(tape!, holdout, program, until)
             : null;
         if (features?.Refusal(firstMinute is { } first ? grid.EndOf(grid.StartOf(first)) : DateTimeOffset.MinValue) is { } withheld)
             return BacktestOpened.No(withheld, isHoldout: true);

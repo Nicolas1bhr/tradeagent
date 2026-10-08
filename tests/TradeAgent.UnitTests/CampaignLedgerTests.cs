@@ -513,7 +513,7 @@ public class CampaignLedgerTests
         Assert.All(held, bar => Assert.True(bar.OpenTime >= set.HoldoutFrom!.Value));
 
         // The same dataset, asked for by a caller on the pipe: refused, and the refusal names the cutoff.
-        var asPipe = BarFeed.Open(gw.Datasets, set.Id, BarAudience.Pipe(CouncilRoles.Research), null, null);
+        var asPipe = BarFeed.Open(gw.Datasets, set.Id, TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets), null, null);
         Assert.False(asPipe.Ok);
         Assert.True(asPipe.IsHoldout);
         Assert.Contains("holds out every bar from", asPipe.Why, StringComparison.Ordinal);

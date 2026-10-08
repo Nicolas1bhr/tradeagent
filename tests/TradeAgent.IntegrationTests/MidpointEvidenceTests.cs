@@ -248,7 +248,7 @@ public class MidpointEvidenceTests(ITestOutputHelper log)
         await using var _3 = client;
         var set = GivenMidpointData(db);
 
-        var open = BarFeed.Open(gw.Datasets, set.Id, BarAudience.Pipe(CouncilRoles.Research), null, null);
+        var open = BarFeed.Open(gw.Datasets, set.Id, TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets), null, null);
         Assert.True(open.Ok, open.Why);
 
         Assert.Contains("MIDPOINT-DERIVED", open.Feed!.MidpointNote);
