@@ -1086,8 +1086,14 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   live-order veto, the one helper the loss flatten's confirm also reads (`ThePlatformsLiveOrderVetoAsync`):
   where `ReconciliationProvable`, an order history that holds the order in a state that is not final,
   or a read that throws, refuses his answer, naming the order and why, and writes nothing — a row the
-  platform still lists live is never answered away, so no press closes beside it — and a final state
-  the history lists other than his is written beside his words. **Its limits:** where no history can
+  platform still lists live is never answered away, so no press closes beside it. A final state the
+  history lists must agree with his answer on whether the close filled (`TheAnswerAFinalListingGives`):
+  "It is no longer working at your platform" over a listed `FILLED`, or "It was filled" over a listed
+  `CANCELLED` or `REJECTED`, is refused the same way — `INVALID_REQUEST`, naming the order, the state
+  listed and the card's answer that matches it, ending "Nothing was recorded", `card_answer_contradicted`
+  in the engineering log — and the row keeps its state, flag and words, still on the card; a final
+  state that agrees under another name (his `CANCELLED` over a listed `REJECTED`) is written beside his
+  words. **Its limits:** where no history can
   be asked (ATAS) his word stands alone, as it does for an `UNKNOWN` order, so a close he answers gone
   that is in fact still working can fill beside the next press's close — the risk his own look at the
   platform carries; the flagged row pauses trading and refuses its own kind's next press until he has
