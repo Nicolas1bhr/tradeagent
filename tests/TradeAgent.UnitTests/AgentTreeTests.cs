@@ -27,7 +27,7 @@ namespace TradeAgent.Tests.Unit;
 /// recorded no longer matches. The launcher is deployed as <c>ContainmentTests.DeployLauncher</c>
 /// deploys it: a shim that runs the built <c>trade.dll</c> with the flag. On Windows the job's arm runs
 /// wherever a test is not about groups, sessions or the launcher: the turn is a PowerShell probe writing its
-/// pids, and "dead" is the pid gone or carrying another start.</para>
+/// pids and a plain child, and "dead" is the pid gone or carrying another start.</para>
 ///
 /// <para><b>Cleanup kills only what this test recorded</b>, by pid, and only while that pid still has the
 /// start time it was recorded with — never by name, which is the same proof the product's teardown keeps.</para>
@@ -88,7 +88,7 @@ public class AgentTreeTests : IDisposable
     /// (a) PAUSE, WITH THE LAUNCHER — the product's state. Every process of the turn is gone within five
     /// seconds of Pause, including (d) the child that made itself its own process group and the one that
     /// made itself its own session, which the group kill orphaned and left running. On Windows the same
-    /// test is the job's arm: a PowerShell turn, its child and a grandchild whose parent has exited.
+    /// test is the job's arm: a PowerShell turn and its child.
     /// </summary>
     [Fact]
     public async Task A_paused_turn_held_in_its_own_session_ends_its_whole_tree()
@@ -171,6 +171,7 @@ public class AgentTreeTests : IDisposable
               $D = '{{dir}}'
               Set-Content -Path (Join-Path $D 'leader.pid') -Value $PID
               $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
+              # The leftover keeps the turn's stderr, as a tool's background process would: the turn must still end.
               $left = Start-Process -FilePath $ping -ArgumentList '-n','905','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'leftover.out')
               Set-Content -Path (Join-Path $D 'leftover.pid') -Value $left.Id
               'Nothing needs doing this turn.'
@@ -700,36 +701,26 @@ public class AgentTreeTests : IDisposable
         "wait $!\n";
 
     static string[] HungFiles(bool orphan) =>
-        OperatingSystem.IsWindows() ? ["leader.pid", "child.pid", "orphan.pid"]
+        OperatingSystem.IsWindows() ? ["leader.pid", "child.pid"]
         : orphan ? ["leader.pid", "child.pid", "orphan.pid", "ownpgrp.pid", "ownsess.pid", "fg.pid"]
         : ["leader.pid", "child.pid", "ownpgrp.pid", "ownsess.pid", "fg.pid"];
 
     /// <summary>
     /// THE JOB'S ARM: the same turn on Windows, as PowerShell — a <c>.cmd</c> would be run by <c>cmd.exe</c>,
     /// which parses the Situation the turn is handed as a command line of its own (ResumeOnStartTests). The
-    /// leader starts a plain child (ping 901) and a middle PowerShell that starts a grandchild (ping 902) and
-    /// exits, so the grandchild's parent is gone; then it sleeps. Every leaf's output goes to a file, so only
-    /// the leader holds the turn's stdout. Groups and sessions are Unix's; the job holds all three.
+    /// leader starts a plain child (ping 901, its output to files) and sleeps. One PowerShell per turn, because
+    /// each costs seconds on a hosted runner: the first run of this arm also started a middle PowerShell for a
+    /// grandchild whose parent had exited, and windows-latest took over sixty seconds to get that turn's pids
+    /// written (run 37707921636). The job holding such a grandchild is ContainmentTests' own Windows proof.
     /// </summary>
     static string HungPowerShell(string dir) => $$"""
         $D = if ($env:TREE_DIR) { $env:TREE_DIR } else { '{{dir}}' }
         Set-Content -Path (Join-Path $D 'leader.pid') -Value $PID
         $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
-        $child = Start-Process -FilePath $ping -ArgumentList '-n','901','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'child.out')
+        $child = Start-Process -FilePath $ping -ArgumentList '-n','901','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'child.out') -RedirectStandardError (Join-Path $D 'child.err')
         Set-Content -Path (Join-Path $D 'child.pid') -Value $child.Id
-        $middle = Join-Path $PSScriptRoot 'middle.ps1'
-        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"' + $middle + '"'),('"' + $D + '"') -NoNewWindow -RedirectStandardOutput (Join-Path $D 'middle.out')
         'working on it'
         Start-Sleep -Seconds 900
-
-        """;
-
-    /// <summary>The middle process of the Windows probe: starts the grandchild, writes its pid, and exits.</summary>
-    const string Middle = """
-        param($D)
-        $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
-        $o = Start-Process -FilePath $ping -ArgumentList '-n','902','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'orphan.out')
-        Set-Content -Path (Join-Path $D 'orphan.pid') -Value $o.Id
 
         """;
 
@@ -790,6 +781,10 @@ public class AgentTreeTests : IDisposable
 
         var presence = new AgentPresence();
         var host = AppHost.Composed(db, connector, presence);
+        // A version answer slower than a second is given up and the AI started anyway, as the product does at
+        // its own deadline: the turn is what is under test, and a PowerShell's first answer on a hosted runner
+        // has been measured past twenty seconds (ResumeOnStartTests).
+        host.Agent.VersionDeadline = TimeSpan.FromSeconds(1);
 
         before?.Invoke(sh);
 
@@ -800,7 +795,14 @@ public class AgentTreeTests : IDisposable
         await host.ResumeOnStartAsync();
         Assert.True(host.Agent.Running, "the probe runtime did not start");
 
-        var members = await Record(dir, waitFor, mayHaveExited);
+        IReadOnlyList<Member> members;
+        try { members = await Record(dir, waitFor, mayHaveExited); }
+        catch (Exception)
+        {
+            // A setup that failed leaves no loop behind it taking turns into the next test.
+            await Close(host);
+            throw;
+        }
         return new Turn(host, presence, dir, wake, members, path);
     }
 
@@ -950,7 +952,6 @@ public class AgentTreeTests : IDisposable
         {
             var ps1 = Path.Combine(dir, "probe.ps1");
             File.WriteAllText(ps1, "if ($args.Count -gt 0 -and $args[0] -eq 'version') { 'tree-probe 1.0.0'; exit 0 }\r\n" + body);
-            File.WriteAllText(Path.Combine(dir, "middle.ps1"), Middle);
             return ps1;
         }
 
