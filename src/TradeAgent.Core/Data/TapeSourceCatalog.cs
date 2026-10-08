@@ -517,7 +517,8 @@ public static class TapeSourceCatalog
 
     const string HyperliquidTerms =
         "Hyperliquid publishes no terms for its API: its documentation lists none. Its Terms of Use (" + HyperliquidTermsUrl
-        + ", last updated on June 15, 2026), read in full on 2026-10-08 and re-read the same day (U-tape-chain), govern its "
+        + ", last updated on June 15, 2026), read in full on 2026-10-08 and re-read twice that day, last at 22:12Z "
+        + "(U-tape-chain), govern its "
         + "Interface: § 1.6 closes it to persons in the United States, Ontario and sanctioned territories, which Belgium is "
         + "not; § 3.1.8 bars bots and scripts only where they exceed reasonable usage, bypass rate limits, cause "
         + "denial-of-service conditions or disrupt Hyperliquid; §§ 4.1-4.2 make its information informational only and "
@@ -563,10 +564,10 @@ public static class TapeSourceCatalog
             TermsUrl = HyperliquidTermsUrl,
             DocUrl = "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals",
             Measured = "measured 2026-10-08 from the dev Mac with no key (U-tape-chain; docs/RESEARCH-REQUIRED.md, C5f): "
-                       + "POST /info {\"type\":\"metaAndAssetCtxs\"} HTTP 200 in 0.40, 0.65 and 0.60 s, 72,225, 72,294 and "
-                       + "71,993 bytes (00:19:47Z, 00:28:24Z, 10:38:38Z); 234 universe entries beside 234 contexts, zipped by "
-                       + "index — BTC 0, ETH 1, SOL 5, BNB 7, XRP 25, DOGE 12 — no key in both, each of the six merged in "
-                       + "299-331 bytes; no time in the body, the Date header the answer's only time"
+                       + "POST /info {\"type\":\"metaAndAssetCtxs\"} HTTP 200 in 0.40, 0.65, 0.60 and 0.51 s, 72,225, "
+                       + "72,294, 71,993 and 72,429 bytes (00:19:47Z, 00:28:24Z, 10:38:38Z, 22:13:12Z); 234 universe entries "
+                       + "beside 234 contexts, zipped by index — BTC 0, ETH 1, SOL 5, BNB 7, XRP 25, DOGE 12 — no key in both, "
+                       + "each of the six merged in 299-333 bytes; no time in the body, the Date header the answer's only time"
         }
     ];
 

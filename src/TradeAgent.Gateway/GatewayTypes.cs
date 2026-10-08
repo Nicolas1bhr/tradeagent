@@ -661,7 +661,10 @@ public sealed record GatewayStatus(
 /// </summary>
 public sealed record TapeStatus(bool Recording, long RowsToday, int FailuresLastHour)
 {
-    /// <summary>The "Record market context" switch: Binance's market rows, OKX's announcements and any row tape-sources.json adds.</summary>
+    /// <summary>
+    /// The "Record market context" switch: Binance's market rows, Hyperliquid's contexts, OKX's announcements and any row
+    /// tape-sources.json adds.
+    /// </summary>
     public required TapeRecorderStatus MarketContext { get; init; }
 
     /// <summary>The "Record GDELT news" switch.</summary>

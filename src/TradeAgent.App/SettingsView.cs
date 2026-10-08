@@ -245,7 +245,8 @@ sealed class SettingsPage
         _liveBars.HorizontalAlignment = HorizontalAlignment.Left;
 
         // MARKET CONTEXT. ONE press, and the same judgement again: public futures market data, no key,
-        // nothing granted, no limit changed, no order touched. ON by default, because a reading nobody
+        // nothing granted, no limit changed, no order touched — Hyperliquid's perpetual contexts (U-tape-chain) as
+        // much as Binance's rows, about 21 MB a day on the wire. ON by default, because a reading nobody
         // recorded as it arrived can never be shown to have been known then.
         _marketContext = Ui.Secondary("Stop recording market context", ToggleMarketContext);
         _marketContext.HorizontalAlignment = HorizontalAlignment.Left;
@@ -294,12 +295,15 @@ sealed class SettingsPage
                      + "with the moment it arrived. Nothing is ever overwritten: a reading Binance later changes is "
                      + "kept as a new revision beside the first. The same switch records OKX's announcements for EU "
                      + "users, the newest twenty once a minute: each is kept whole, one that looks addressed to an AI "
-                     + "is flagged and its text withheld when the tape is read for the AI, and no link in them is opened."),
+                     + "is flagged and its text withheld when the tape is read for the AI, and no link in them is opened. "
+                     + "And it looks at Hyperliquid's perpetual futures every five minutes, keeping the same six coins' open "
+                     + "interest, funding, premium, prices and day's volume, each stamped with the time Hyperliquid's answer "
+                     + "gives — totals for the whole market, never anything about an account."),
             Ui.Micro("It reads public endpoints with no key and places nothing. A reading that arrived on time from its "
                      + "source's own address — Binance's futures host for the market data, OKX's EU domain for its "
-                     + "announcements — is marked live; a late one, or one from any other address, is marked "
-                     + "archive. It is context for research, not evaluation evidence, it is recorded only while "
-                     + "TradeAgent is running, and the AI cannot start, stop or change it."),
+                     + "announcements, Hyperliquid's API address for its figures — is marked live; a late one, or one from "
+                     + "any other address, is marked archive. It is context for research, not evaluation evidence, it is "
+                     + "recorded only while TradeAgent is running, and the AI cannot start, stop or change it."),
             Ui.Divider(),
             _gdeltNews,
             Ui.Muted("While TradeAgent is running it also records news items about crypto from the GDELT Project "

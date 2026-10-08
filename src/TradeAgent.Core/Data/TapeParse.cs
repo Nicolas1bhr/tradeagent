@@ -227,9 +227,10 @@ public static class TapeParse
     }
 
     /// <summary>
-    /// THE MOST ONE COIN'S CONTEXT MAY HOLD, in UTF-8 bytes once merged and made canonical — 2 KB, against 299-335 bytes
-    /// measured for every coin on 2026-10-08 (<c>docs/RESEARCH-REQUIRED.md</c>, C5f). So a day of the six at a look every
-    /// five minutes keeps at most 6 × 2 KB × 288, about 3.5 MB, whatever the vendor sends.
+    /// THE MOST ONE COIN'S CONTEXT MAY HOLD, in UTF-8 bytes once merged and made canonical — 2 KB, against 258-337 bytes
+    /// for every one of the 234 coins in the answer of 2026-10-08 22:13Z, and 299-333 for the six across that day's four
+    /// answers (<c>docs/RESEARCH-REQUIRED.md</c>, C5f). So a day of the six at a look every five minutes keeps at most
+    /// 6 × 2 KB × 288, about 3.5 MB, whatever the vendor sends.
     /// </summary>
     public const int MaxAssetContextBytes = 2 * 1024;
 

@@ -75,7 +75,7 @@ public sealed class TapeCollector : IAsyncDisposable
 
     /// <summary>
     /// HYPERLIQUID'S ANSWER, BOUNDED ON ITS OWN (<c>U-tape-chain</c>): every coin's context in one answer, measured at 71,993
-    /// to 72,294 bytes on 2026-10-08, so 512 KB is seven times that and a look every five minutes moves at most about
+    /// to 72,429 bytes on 2026-10-08, so 512 KB is seven times that and a look every five minutes moves at most about
     /// 151 MB a day. An answer declared past it is refused unread, and one that runs past it is not buffered.
     /// </summary>
     public const int MaxAssetContextAnswerBytes = 512 * 1024;

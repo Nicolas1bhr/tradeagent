@@ -256,9 +256,12 @@ public static class GatewaySchema
             false,
             "The market's context as TradeAgent RECORDED IT ARRIVING — the tape: Binance USDⓈ-M premium index with the "
             + "live funding rate, open interest, the 5-minute long/short and taker ratios and settled funding for six "
-            + "pairs; OKX's announcements for EU users; GDELT's news items about crypto. 'trade data list' names every "
+            + "pairs; Hyperliquid's perpetual contexts for the same six coins every five minutes — open interest, funding, "
+            + "premium, mark, oracle and mid prices and the day's volume, subjects BTC, ETH, SOL, BNB, XRP and DOGE; OKX's "
+            + "announcements for EU users; GDELT's news items about crypto. 'trade data list' names every "
             + "series with its rows, first and last arrival and last error. Each row is a MEASUREMENT of what arrived "
-            + "when: 'source_time' is the vendor's own time, 'received_at' the instant TradeAgent received it, 'revision' "
+            + "when: 'source_time' is the vendor's own time (Hyperliquid's contexts carry none, so theirs is the Date its "
+            + "answer was sent with), 'received_at' the instant TradeAgent received it, 'revision' "
             + "which reading of that datum it is (a re-reading that differed is kept beside the first; nothing is "
             + "overwritten), and 'evidence_class' is TradeAgent's: O-LIVE rows only are first-hand — received on time "
             + "from the source's own address — O-PIT is a vendor-checksummed archive file fetched late whose storage "
@@ -279,9 +282,9 @@ public static class GatewaySchema
             + "Every role may read it; nothing on this channel records, edits or deletes a row — the account owner's two "
             + "switches in TradeAgent are the only control of what is recorded.",
             [
-                new("source", "string", true, "Which source, e.g. binance-um-oi, okx-eea-announcements, gdelt-gkg. 'trade data list' names them; an unknown one is refused naming them."),
+                new("source", "string", true, "Which source, e.g. binance-um-oi, hyperliquid-asset-ctxs, okx-eea-announcements, gdelt-gkg. 'trade data list' names them; an unknown one is refused naming them."),
                 new("series", "string", false, "Which of the source's series. Optional when it records one; required, and named in the refusal, when it records several."),
-                new("subject", "string", false, "One subject — a symbol such as BTCUSDT. Omit it to read every subject of the series, newest arrival first: announcements and news items are keyed by a digest or a record id nobody can guess."),
+                new("subject", "string", false, "One subject — a symbol such as BTCUSDT, or a coin such as BTC on Hyperliquid's row. Omit it to read every subject of the series, newest arrival first: announcements and news items are keyed by a digest or a record id nobody can guess."),
                 new("from", "string", false, "ISO-8601 date or instant: the earliest SOURCE time served, inclusive. Present and unreadable is refused; absent, the read reaches back past every holdout window."),
                 new("to", "string", false, "ISO-8601 date or instant: the latest SOURCE time served, inclusive. Present and unreadable is refused; absent, the read reaches every holdout window after 'from'."),
                 new("as_of", "string", false, "ISO-8601 instant: serve only rows that had ARRIVED by then, inclusive — what TradeAgent knew at that moment. Omit it for everything that has arrived."),

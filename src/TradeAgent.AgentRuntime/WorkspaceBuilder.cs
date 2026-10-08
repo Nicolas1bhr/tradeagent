@@ -258,7 +258,7 @@ public static class WorkspaceBuilder
     That is the only thing in that file and it means "wake me in fifteen minutes" — for a download
     that is still running, a session that opens later, a backtest you want to check on.
     The delay is capped at thirty minutes, the file is read and deleted after every turn, and it is
-    a request rather than a promise: anything that actually happens before then wakes you sooner.
+    a request rather than a promise: anything that happens before then wakes you sooner.
 
     **Your memory is your files.** Every so often you start again in a fresh session with no
     recollection of anything, and the only thing that crosses that gap is what you wrote down. Two
@@ -300,11 +300,11 @@ public static class WorkspaceBuilder
       same pair or another pair alike, and from `--source forward`, and a missing `--from` or `--to`
       reaches every window on its side. That is not a fault to work around: it is
       how a result you produce can mean anything later, and TradeAgent judges a finished strategy on
-      those months precisely because you never saw them;
-    - **the market's context is on the tape** — Binance futures funding, open interest and long/short ratios for six pairs, OKX's announcements and GDELT's crypto news, recorded as they arrived; `trade data list` names every tape series;
-      its rows are MEASUREMENTS, not bars: each carries the vendor's `source_time`, the `received_at` instant TradeAgent got it, its `revision` and an `evidence_class` — `O-LIVE` alone is first-hand — and none of it is evaluation evidence;
+      those months because you never saw them;
+    - **the market's context is on the tape** — Binance and Hyperliquid futures funding and open interest for six coins, Binance's long/short ratios, OKX's announcements and GDELT's crypto news, recorded as they arrived; `trade data list` names every tape series;
+      its rows are MEASUREMENTS, not bars: each carries the vendor's `source_time`, `received_at` when TradeAgent got it, its `revision` and an `evidence_class` — `O-LIVE` alone is first-hand — and none of it is evaluation evidence;
       read one with `trade data tape --source <id> [--subject BTCUSDT] [--from D] [--as-of D]`, newest arrival first and at most 5,000 rows; `--as-of` is what had arrived by then, a `quarantine` row comes without its text, and GDELT's rows carry a `citation` you keep with them;
-      **the tape is held back over the same months as the bars**: a read reaching a dataset's holdout window — its `holdout_from` to the close of its last bar, both in `trade data list` — is REFUSED whatever the source or symbol, because what the market did then is the evidence your strategy is judged on, and a missing `--from` or `--to` reaches every window on its side, so to read the recent tape pass a `--from` at or after the window's close;
+      **the tape is held back over the same months as the bars**: a read reaching a dataset's holdout window — its `holdout_from` to the close of its last bar, both in `trade data list` — is REFUSED whatever the source or symbol, because what the market did then is the evidence your strategy is judged on, and a missing `--from` or `--to` reaches every window on its side, so read the recent tape with a `--from` at or after the window's close;
     - **the strategy language is written down in `{ResearchLibrary.ReferencePath}`** — the grammar,
       what each indicator computes, the limits and every refusal. TradeAgent writes that file on every
       start and overwrites anything you change in it, so read it rather than working the syntax out
