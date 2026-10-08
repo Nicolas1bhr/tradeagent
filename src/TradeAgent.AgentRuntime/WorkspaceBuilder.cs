@@ -294,7 +294,11 @@ public static class WorkspaceBuilder
       that history may be held back from you.** `trade data list` shows a `holdout_from` on a dataset
       whose last months the account owner has made private evaluation evidence; any window that reaches
       that instant is REFUSED rather than shortened, for every part of the AI and for a caller with no
-      launch grant alike, so give `--to` an earlier instant. That is not a fault to work around: it is
+      launch grant alike, so give `--to` an earlier instant. **A cutoff holds those months back on
+      every pair's bars**, as on the tape: a window whose bars reach a dataset's holdout window — its
+      `holdout_from` to the close of its last bar — is REFUSED from every dataset, a newer version of the
+      same pair or another pair alike, and from `--source forward`, and a missing `--from` or `--to`
+      reaches every window on its side. That is not a fault to work around: it is
       how a result you produce can mean anything later, and TradeAgent judges a finished strategy on
       those months precisely because you never saw them;
     - **the market's context is on the tape** — Binance futures funding, open interest and long/short ratios for six pairs, OKX's announcements and GDELT's crypto news, recorded as they arrived; `trade data list` names every tape series;

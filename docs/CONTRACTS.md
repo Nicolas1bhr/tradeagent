@@ -2854,14 +2854,16 @@ past the 30 s an order may be priced from — so the runner's market order on th
 `TradeAgent.Provisioning`, for every collector there that looks on a tick; the closed-bar rule, the first
 reading standing and the gap rows are unchanged.
 
-**NO HOLDOUT APPLIES TO FORWARD BARS, AND THAT IS A FACT ABOUT WHAT THEY ARE RATHER THAN A RELAXATION.**
-A holdout is a time cutoff the owner drew across a frozen dataset. Every forward bar post-dates every
-freeze on this installation, because it did not exist when the freeze was taken — so there is nothing
-here to hold back, and `data-bars --source forward` serves any role and a caller that proved none. The
-archive reader's cutoff is untouched by this: the same caller, the same window and the same database is
-still refused the held-back months through `--source archive`, which `ForwardBarsOverPipeTests` asserts
-side by side in one test. The protection that matters for forward bars is on the EVIDENCE side, and it
-is that no verdict is taken over them at all.
+**FORWARD BARS ARE HELD BACK OVER EVERY HOLDOUT WINDOW, AS THE ARCHIVE'S BARS ARE** (`U-bar-holdout`). This
+paragraph used to say no holdout applies because every forward bar post-dates every freeze on this installation.
+That was a premise, and a Download taken after the collector ran breaks it: the archive's newest months are minutes
+the collector already holds, and a minute TradeAgent collected says what that minute did as surely as the archive's
+bar for it. So `data-bars --source forward` reads `ForwardBarStore.Window`, which requires the caller's
+`TapeHoldout` and REFUSES a window whose market span reaches any dataset's holdout window — `HOLDOUT_WITHHELD`, in
+the holdout's words, never clipped (The holdout). Outside every window it serves any role and a caller that proved
+none alike, and `ForwardBarsOverPipeTests` asserts both doors refusing the same window side by side.
+`ForwardBarStore.Since` and `Bar` take no holdout and are never a pipe read. The protection on the EVIDENCE side
+is unchanged: no verdict is taken over forward bars at all.
 
 **STALENESS IS ANSWERED HERE AND ENFORCED WHERE IT ALWAYS WAS.** `ForwardBarStore.Freshness` is the age
 of the newest closed bar, computed off the ROWS and never off "when the collector last ran" — a collector
@@ -3316,13 +3318,14 @@ refused in words because the bars in between have already been served, and COUNC
 it — "a leaked holdout cannot become unseen". Moving it LATER is allowed: it withholds bars nothing has
 read. There is no clear, and nothing lowers the class back either.
 
-**The refusal is the DEFAULT path, in the readers themselves.** `DatasetReader.Read` and `BarFeed.Open`
-both **require** a `BarAudience` and both take the holdout decision inside, before the file is opened:
-`BarAudience.Pipe(role)` is every caller on the agent channel — both directors and a connection that
-proved no role, refused identically — and the only audience that may read past a cutoff is
-`BarAudience.Referee`, which is `internal` to `TradeAgent.Core`. So the gateway, the pipe server and the
-CLI **cannot mint one at all**, and `HoldoutLedgerTests` holds the list of public doors that produce a
-`BarAudience` to exactly one entry by name. A window is served only when its END is **proved** to be
+**The refusal is the DEFAULT path, in the readers themselves.** `DatasetReader.Read`, `BarFeed.Open` and
+`ForwardBarStore.Window` all **require** a `TapeHoldout` — the caller's audience with the dataset ledger — and
+take the holdout decision inside, before the file or the table is read: `TapeHoldout.Pipe(role, datasets)` is
+every caller on the agent channel — both directors and a connection that proved no role, refused identically —
+and the only one that may read past a cutoff is the referee's, whose `BarAudience.Referee` is `internal` to
+`TradeAgent.Core`. So the gateway, the pipe server and the CLI **cannot mint one at all**, and
+`HoldoutLedgerTests` holds the list of public doors that produce a `BarAudience` to exactly one entry by name
+(`TapeHoldoutTests` the same for a `TapeHoldout`). A window is served only when its END is **proved** to be
 before the cutoff: an unbounded `to` asks for every bar there is and is refused, because reading "no
 end" as "up to the cutoff" is clipping with extra steps. A refused window is `HOLDOUT_WITHHELD` — its
 own code, because the frame was well formed and the data is there, so the repair is an earlier window
@@ -3333,6 +3336,25 @@ because the boundary is not the secret — the bars are — and an agent that ha
 a time would spend the owner's money doing so. **The tape holds the same market time** (`U-tape-holdout`): every
 dataset with a cutoff holds a window of the tape from its cutoff to its last bar's close, refused to every pipe caller in
 the same words and by the same rule — The tape, **THE HOLDOUT**.
+
+**A cutoff holds every pair's bars over its window — from every dataset and the forward bars, as the tape's rows**
+(`U-bar-holdout`; seat A's decision of 2026-10-08). The same months reach a caller by other doors than their own
+dataset: every Download press records a new version of the pair with no cutoff (`DatasetStore.RecordNew` →
+`Record`, which never writes `holdout_from`), a correlated pair carries the held period's regime, and the forward
+collector holds minutes a later Download freezes. So every dataset holding a cutoff holds its window — the tape's
+`TapeHoldoutWindow`, unchanged: from `holdout_from` to the close of its last bar — over EVERY subject. For a pipe
+caller, a read of ANY dataset (any pair) or of the forward bars whose **market span** — the open of the first bar it
+could serve to the close of the last, one bar of its interval after `to` — reaches ANOTHER dataset's window is
+REFUSED, `HOLDOUT_WITHHELD`, never clipped, in words naming that dataset, its cutoff and the window, the read, and the
+repair (`TapeHoldout.Refusal(DatasetRecord, …)` and `ForwardRefusal`). An absent bound reaches every window on its
+side. A bar is a span: a 5m bar opening at 01:00 is inside a window a 1m cutoff opens at 01:02. A dataset's own cutoff
+keeps the rule above, asked first and unchanged. `Backtest.Over` builds ONE holdout (`TapeHoldout.Of`) and hands it to
+its bars and its features, and a feed streams only the window it was opened over — a wider stream is refused. The
+referee's holdout reads every window, in process. `ForwardBarStore.Since` and `Bar` take no holdout: they are the
+paper runner's, the paper source's and the collector's reads of the present, and `BarHoldoutTests` reads the pipe
+server's compiled body to hold that it never calls them. NOT covered here: a backtest over a version with no cutoff is
+charged to no campaign, the Settings line reads the newest dataset only, and a paper run's figures are not held back
+(The runner) — each its own unit.
 
 ## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
 
@@ -4048,8 +4070,11 @@ Fills reach the fill ledger scoped to the paper connector and account and attrib
 allocation and the deployment through `execution_request`, so `pnl` and the owner's report show them like any
 other. A deployment's END and each UTC day that closed over it raise ONE persisted wake to Research, keyed by
 the deployment and the occasion. **These figures MAY cross the disclosure boundary the held-back months have**:
-a paper run is the role's own experiment, the bars post-date every freeze on this installation and no verdict is
-ever taken over them — the note says in words that every figure in it is a declared simulation at the next open.
+a paper run is the role's own experiment and no verdict is ever taken over them — the note says in words that every
+figure in it is a declared simulation at the next open. They are NOT held back over a holdout window as the pipe's bars
+are (The holdout, `U-bar-holdout`): the runner reads the forward ledger in process at the present (`ForwardBarStore.Since`,
+never a pipe read), and a cutoff the owner sets later over minutes a run already traded leaves its figures as they were.
+"The bars post-date every freeze" was a premise a later Download breaks; this is a known gap, not a claim.
 
 ## U-promote-bounds — no execution bounds, no promotion — `src/TradeAgent.Core/Strategy/Referee.cs`
 
