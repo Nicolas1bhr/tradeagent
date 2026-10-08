@@ -3437,8 +3437,15 @@ caller can pass it; the refusal writes nothing — no cutoff, no class, no campa
 campaign judges from which cutoff and that holding back a different period means downloading a fresh copy of
 the history and holding months back on that. The same instant again is a no-op answering Ok; a dataset with no
 open campaign, which nothing judges from, may still have its cutoff moved later. There is no clear, and the
-referee keeps judging from `campaign.holdout_from`, unchanged. NOT covered here: the same instant pressed on the
-card's other button still rewrites the class — its own unit if wanted.
+referee keeps judging from `campaign.holdout_from`, unchanged. **The class rides with the cutoff** (`U-holdout-campaign`,
+rule 3; seat A's decision of 2026-10-09): while the dataset has an open campaign, a press that would change its class —
+the card's other button at the same instant — is refused in the owner's words, writing nothing, naming the campaign, the
+class it judges under and the fresh download; the same instant and the same class stays the Ok no-op. The check is in
+the store's write, after the later-cutoff check, so a later press with the other button keeps the later words. Research
+→ fixture would make every later run over the bars free and read the campaign's promotions as plumbing; fixture →
+research would let a promotion judged on fixture bars stand as evidence (`Promotions.Standing` reads the class now), and
+both capital ledgers admit on that standing. A trial's `kind` is still copied at registration, so the class a past run
+was charged under is never rewritten either way.
 
 **The refusal is the DEFAULT path, in the readers themselves.** `DatasetReader.Read`, `BarFeed.Open` and
 `ForwardBarStore.Window` all **require** a `TapeHoldout` — the caller's audience with the dataset ledger — and
@@ -3474,9 +3481,17 @@ keeps the rule above, asked first and unchanged. `Backtest.Over` builds ONE hold
 its bars and its features, and a feed streams only the window it was opened over — a wider stream is refused. The
 referee's holdout reads every window, in process. `ForwardBarStore.Since` and `Bar` take no holdout: they are the
 paper runner's, the paper source's and the collector's reads of the present, and `BarHoldoutTests` reads the pipe
-server's compiled body to hold that it never calls them. NOT covered here: a backtest over a version with no cutoff is
-charged to no campaign, the Settings line reads the newest dataset only, and a paper run's figures are not held back
-(The runner) — each its own unit.
+server's compiled body to hold that it never calls them. A backtest over a version with no cutoff is charged to every
+campaign whose months before its cutoff its bars overlap (`U-holdout-campaign`; The campaign, **THE TRIAL CHARGE**). NOT
+covered here: the Settings line reads the newest dataset only, and a paper run's figures are not held back (The runner)
+— each its own unit.
+
+**A run the app stops is refused** (`U-holdout-campaign`, rule 4): `Backtests.Run` answers a run whose stop token fired —
+the app closing, or the harness turn that asked for it ended — with `IPC_UNAVAILABLE`, the code a pipe client already
+reads when the app closes under it, in words naming the stop: nothing recorded (no version, no run, no trial), nothing
+charged, and no figure returned. It used to come back as an ordinary answer, the halted run's figures over the bars before
+the stop, reaching no caller only because of the order the app shuts down in. Still true: a stopped run is never recorded
+as a FAULTED run blaming the strategy.
 
 ## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
 
@@ -3491,7 +3506,8 @@ campaign would have given itself an unlimited supply of attempts.
 frame carries a version and at most a dataset: the months are the campaign's own, the scorer is
 `ScoringPolicyV1` bound to the sha fixed at open, and the execution model is the cost model the campaign
 pinned when the owner pressed — none of the three is a parameter. The supply is the **verdict budget counted across the whole renewal
-lineage** (three by default), charged by `RequestVerdict` before anything reads a bar. And what crosses
+lineage and every other campaign over the same held months** (three by default; THE JUDGEMENT COUNT below), charged by
+`RequestVerdict` before anything reads a bar. And what crosses
 back is `RefereeFeedback.Text`, which reads the promotion row alone: the verdict and a reason class from
 a closed vocabulary, no metric, no trace hash and no bar. The gateway adds two bounds of its own: a role
 must already have COMPLETED a registered trial of that exact version over that dataset, so a version
@@ -3604,14 +3620,48 @@ concurrent callers can exceed by one is not the campaign-wide limit `docs/COUNCI
 refusal there **rolls the run back and its figures are never served**: the compute is spent either way,
 and the alternative is a run over the held-back data standing in the ledger charged to nobody. A trial
 already registered answers Ok even over a full budget — the same question asked again is the row that is
-already there, and refusing it would make a restart look like an overrun. A dataset with no holdout has no
-campaign, so runs over it are charged nothing at all.
+already there, and refusing it would make a restart look like an overrun.
+
+**THE TRIAL CHARGE: research over a campaign's months is charged to it through any dataset of any pair**
+(`U-holdout-campaign`, rule 1; seat A's decision of 2026-10-09). A cutoff holds market time for every pair (The holdout),
+so a campaign is about market time for every pair, and `CampaignPolicy.V1` already says so — "Research runs are made over
+bars before the campaign's holdout cutoff and every one of them is charged"; its sha is on every campaign row, so the code
+was brought up to the text. Charged to its own dataset's campaign alone, a run over a second download of the same months,
+or over another pair, was served past a spent budget and counted by nobody (the survey's probe, Q1.3-Q1.4). A campaign's
+**development months** are its dataset's bars before the cutoff, `[first_bar, holdout_from)`, read from the dataset ledger
+at each look. A research run's **span** is the market its bars cover — `TapeHoldout`'s span, from the open of the first bar
+to the close of the last — with an open or out-of-range side read as the run dataset's own first or last bar
+(`Backtest.ClosesOf`'s sides), a bar length this build cannot read as no end, and a window that reads no bar as no span.
+`CampaignStore.ChargedBy` answers the open campaigns a run is charged to: its own dataset's first, then, by id, every other
+open campaign whose development months the span overlaps — one shared instant is no overlap. `Backtests.Run` asks
+`TrialRefusal` of each before the run, and `Record` registers each with `RegisterTrial` inside the run's write, so any
+refusal rolls the run back; a refusal for a campaign that is not the run's own names its months and the dataset read.
+The own-first order decides a never-charged version's home (`ChargedCampaignFor` reads the row just written). **A run is
+counted once:** `TrialsCharged` counts `DISTINCT run_id`, because one run now stands on one row per campaign and two of
+them can count in one home, and the gate leaves the run it is registering out of its counts, so a run's second row never
+refuses on the trial its first row took. No schema change: the key `(campaign, version, run)` already takes one row per
+campaign. **What is not charged:** a fixture run is charged nothing — registered uncharged under its own campaign and
+under no other; a campaign over a fixture or REJECTED dataset is charged through its own dataset only; and a FEATURE's
+reach into a campaign's months is NOT counted — a program reading features reads the tape back from its first close by
+its longest reach, and a run whose bars start after a campaign's months while its features reach into them is not
+charged by this rule — what the tape's own holdout refuses is a reach into a held WINDOW, after a cutoff, and the months
+before one are research's to read. Where no campaign's months are read, nothing is charged and nothing is refused.
 
 **`Referee.RequestVerdict(version, campaign)` charges before anything runs, and the charge is what opens
 the door.** The row is written by the request, not by the answer: a budget checked after the holdout run
 refuses nothing that matters, because the bars have been read. Verdicts are counted across the whole
 **renewal lineage**, which is what makes `renewed_from` load-bearing — trials renew, holdout access does
-not. The version must already be in `strategy_version`. Asking twice for one version is one verdict and
+not — **and across every other campaign over the same held months** (`U-holdout-campaign`, rule 2, THE JUDGEMENT
+COUNT): a judgement reads `[the cutoff on its row, its dataset's last bar's close)` (`Referee.Verdict`), and
+`CampaignStore.JudgementsSpent` counts every verdict, of any campaign and any pair, whose read span overlaps the span
+the campaign's own judgements read, its lineage's included. A second press over months already held — a fresh download
+held back at the same date — opens a campaign whose `verdicts_spent` starts at the judgements already taken over them;
+it is TOLD and COUNTED, never refused, because a REJECTED dataset's window stays held and a refusal would dead-end its
+months. The press's note names every other campaign over its months and the judgements each has taken
+(`CampaignStore.PressNote`), and a spent budget names them too and offers a holdout over OTHER months. `ChargeVerdict`,
+the referee's refusals and the verdict reply's `verdicts_spent` read that count; `VerdictsInLineage` stays for the one
+question that is about a lineage — the legacy cost-model pin, "was THIS lineage already judged frictionless".
+The version must already be in `strategy_version`. Asking twice for one version is one verdict and
 one charge, and it stays obtainable after the budget is full, so a crash between the charge and the
 computation does not leave a verdict paid for and unreachable. `Referee.HoldoutFeed(charge)` is the only
 door past a cutoff that any assembly outside `TradeAgent.Core` can reach, it opens **the campaign's own**

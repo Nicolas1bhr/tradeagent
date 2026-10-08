@@ -443,7 +443,17 @@ AI by those doors too. It is two presses, because **once pressed the date never 
 the AI has already been shown the bars before it, and not later, because TradeAgent keeps judging strategies
 on every bar from that date and a later one would show the AI the bars those judgements use. If you press a
 different date, the card says so and changes nothing. To hold back a different period, download a fresh copy
-of the history and hold months back on that. The card also says what a judgement there is **judged under**:
+of the history and hold months back on that. **What the AI may research is counted the same way, across every
+pair:** a backtest over the months *before* your date is charged against that holdout's budget of research runs
+whichever download or pair it reads — a newer download of the same pair or another pair alike — and once the
+budget is spent, the AI is told so in words naming the months. **A fresh download held back over months you already
+hold back shares their judgements:** the new holdout starts with the judgements already taken over those months
+counted as spent, and the card says which holdout took them — a second copy of the same months is not a second
+look at them. To give the AI fresh judgements, hold back OTHER months. **The kind of bars is fixed with the
+date:** once *Hold these bars back* or *These are fixture bars* has been pressed for a download, the other button
+at the same date is refused and changes nothing — real history called fixture bars would make every run over it
+free, and fixture bars called real would turn a judgement on them into evidence. To use the other kind, download a
+fresh copy. The card also says what a judgement there is **judged under**:
 the costs TradeAgent fixed for those months at the moment
 you pressed — the venue's own published fee on every fill (for Binance spot its standard 0.1%, recorded
 with where and when TradeAgent read it), a slippage of 0.02% a fill that is TradeAgent's own assumption
