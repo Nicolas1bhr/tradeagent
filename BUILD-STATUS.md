@@ -8888,3 +8888,42 @@ Integration 644 + 1 skipped, Timing 1/6/91, 0 failed, no retry. **Tests box:** N
 TradeAgent's 64-bit process, the 32-bit bridge only reads); no ATAS box, no app run; a home outside the user profile inherits its directory's DACL — an explicit DACL
 at creation stays the owner's question (on the board); `SecretStore.Write` keeps `MoveFileExW` and its comment that sharing Delete lets a replace through is MEASURED
 FALSE — routed to seat P as a light item. No `bridge.auth.<pid>.tmp` of an older build found on this Mac (the M0 home not looked into).
+
+## 2026-10-08 — U-language-v2a landed: a program reads a feature it declares, bound into its id by the feature's hash, valued at each bar's close from only what had arrived, refused by any reader that cannot run it — every v1 text and id unchanged
+
+Built by two fresh Opus builders under build-fleet seat A from `docs/briefs/U-language-v2a.md` (written by seat A's read-only survey at `30dd8b81` against the
+then-unlanded `u-features`; queued `b73b8855`, re-checked `d2e17037`, dispatched `18a7ab10`): the first paused on the orchestrator's usage throttle (2026-10-07
+16:46, its WIP and a `## Paused` note committed), the second continued from the branch (a usage pause, not a failure — no fresh-fixer question). The second
+split the WIP before rebasing, then rebased over U-tape-holdout onto `6bd92855` (one conflict, `TapeStore.cs`: main's quarantine paragraph kept, the referee's tape
+read folded in); rebased by the manager onto `d73ecd59`, src+tests patch-id identical (`d3c5c7e8ef2a`). Merge `44cd1c16` (ff-only), 7 (5 items, the pause note, the report) commits. **No schema change.**
+EVIDENCE PATH (EDGE-FACTORY § 4.4, § 6.1–6.2): no model output on the signal path (values are `FeatureEvaluator`'s over market rows); evidence binding (a
+declared feature's id is in the program's identity, and a run id adds a SHA-256 over every value read); no look-ahead by construction; the holdout carried into
+feature reads; research-only inputs confer no live authority (every tape source today).
+
+- **Item 1 (`8f2308d1`):** `feature <name> = <spec JSON>`, a declaration never reserved; canonical `feature <name>=<id>` lines only when declared, so the identity names every
+  input hash; `StrategyVersions.Manifest`, `LanguageVersion` and `program/1` do not move — every v1 text, canonical form, id and golden vector unchanged (shipped ids);
+  the two visitors that failed OPEN (`StrategyCanonical`'s `"?"`, `StrategyWarmUp`'s `1`) now throw, so `Parse` refuses.
+- **Item 2 (`3fde795b`):** `StrategyProgram.Requires` — the declaration kinds a program uses, each required; readers name what they implement and refuse the rest in words:
+  the paper runner refuses `feature` before its first bar (`CannotRun`, no replacement) — lifted by `U-runner-features`.
+- **Item 3 (`d3e947d7`):** the evaluator is handed each declared feature's value as it had arrived by the evaluated bar's close, read under the run's audience in
+  deterministic slices; absent → no decision; a `Feature` trace line per feature (id, clean-history start, bars before it, absent, worst class); (p) pinned.
+- **Item 4 (`4b2a7170`):** `Standing` re-reads a version whose canonical holds a `feature` line — another id is INVALIDATED in words; its live refusal is each feature's.
+- **Item 5 (`d4209d60`):** `STRATEGY-LANGUAGE.md` Features, the agents' paragraph, `CONTRACTS.md`.
+- **Declared deviation, accepted (the holdout's API, landed beside it):** `Backtest.Over` keeps its `BarAudience` and builds the feed's `TapeHoldout` from it with the
+  same ledger (a new internal `TapeHoldout.Of`; `Pipe` stays the only public maker), so ONE audience decides bars and features; a run whose features would reach a
+  holdout window is refused before a bar is read (`HOLDOUT_WITHHELD`, nothing charged or recorded), a cutoff set mid-run halts at the next slice; a bounded
+  clean-history start rides on the `Feature` line (`clean_history_bounded`). (i)'s pipe backtest now ends an hour before the cutoff, assertions unchanged.
+
+**Verified by running (the second builder, quoted; then the manager's gate):** at `065b7cbe`: Release `--no-incremental` `0 Warning(s)` `0 Error(s)`; Unit 1485, Fault
+465, 0 failed; `FeatureProgram*` + `EvaluatorLimitTests` 3× 30/30, `FeatureProgramRunnerTests` 3× 1/1. RED before: the two new holdout tests on a naive port —
+`Assert.Throws() Failure: No exception was thrown`, `Assert.StartsWith() Failure … String: null`; (m), (n) at item 3 — `Expected: "invalidated"`, `Expected: "feature
+d9f3e14e5dd8 reads binance-um-pre…" Actual: null`. Mutant: `Backtest.Run` asking the NEXT declared close ⇒ (f) `Expected: COMPLETED Actual: FAULTED`; restored.
+Year benchmark: 8,760 hourly bars over 525,600 minute bars and 525,600 tape rows `COMPLETED` in 11.8 s, again 10.4 s (1,142 trades).
+Manager's gate at `44cd1c16`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1485/1485 (9 m 8 s), Fault 465/465 (2 m 3 s), Integration 736/737, 1 skipped (11 m 22 s) → 0 failed.
+Names vs `main`: 2301 → 2321, 0 removed, 20 added. Scan: one hit, `StrategyParser.cs`'s `new Expressions(line, tokens, constants, indicators, features)` (a constructor handing on the lexer's
+output), excluded by name; no trailers; `rev-list --count` 0 both ways.
+**CI:** run 37689095058 at `065b7cbe` (on `6bd92855`): success on windows-latest (49 min), ubuntu-latest (12 min), macos-latest (15 min), package (3 min).
+**Tests box:** NOT RUN — 23:46 `ready : NO - the machine does not answer (…)`.
+
+**NOT done, NOT verified:** a `Feature` line's clean-history facts are not in the run id (two pipe runs of one id under different holdout windows can state different
+starts; the ledger keeps the first — written into CONTRACTS); the paper runner's feature support (`U-runner-features`); Integration locally (CI ran it); no app run.
