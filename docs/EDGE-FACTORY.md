@@ -431,6 +431,12 @@ aggregate ceilings) → `U-cme-archive` and `U-rulebooks` if the prop path is ch
 **Dispatch waves — superseded 2026-10-02 by `docs/ORGANISATION.md` § 15**, whose waves table is the only copy (two lanes, two heavy builders and a
 light third; M0 after W4b on lane A only; M-org0 after W7; M-org1 after W12, on confined seats). The earlier pairings are kept in git history.
 
+**The switch-on — the target since 2026-10-08 evening (R21).** The moat of § 3 accrues only while the app runs, and by then it had run 6 hours in total. Lane A
+builds toward the loop running unattended, 24/7, on paper, on the owner's always-on Linux machines: `U-tape-chain` → `U-runner-features` →
+`U-holdout-campaign` → `U-paper-books` → `U-trial-returns` → `U-referee-v2` → `U-forward-standing` → `U-incubator`, with `U-linux-host` (the app unattended on
+Linux, owner controls still in-process) as its light; phase 4 starts with `U-decision-port` → `U-decision-card` → `U-annotator` in lane B. Deployed on the
+owner's word, the claim is seven days unattended — M1, M3 and M4's mechanics — not profit.
+
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule: **M0** the observed paper loop · **M1** the tape has
 recorded seven days with gaps accounted, and its endpoints are verified from the owner's laptop · **M2** three or more non-price
 candidates in forward incubation with e-processes running · **M3** a lens answers live and the app publishes an event study ·

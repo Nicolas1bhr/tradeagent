@@ -293,6 +293,25 @@ in the kernel is a **kernel proposal**: a structured record that reaches the own
 the organisation cannot replace its own supervisor (`CLAUDE.md`). Its operating experience becomes the roadmap's best input without touching the code that
 governs it.
 
+### 6.7 The three layers of truth — how a long-running agent stays true (the owner, 2026-10-08)
+The owner's direction, from the AI Concierge canon's doctrine for long-running agents (its §§ 6–9; R21 holds the assessment). Every agent, from the two
+roles of today to the largest organisation, works from three layers that never merge:
+
+- **Canon** — what the agent is: identity, mission, authority, the evidence rules, the boundary, and the capabilities it actually has. Deliberate, short,
+  versioned, changed only by a change that says so; capability facts are generated from what the app grants that seat and runtime, never written as prose
+  a later build can falsify. A seat's canon is the first thing governed change (§ 6.6) protects.
+- **Operational prompts** — the packet a turn starts from: what changed since the agent last looked, what it believes about the work in front of it, what
+  is wanted, and the cause of the wake. Disposable and subordinate: nothing becomes truth or canon because a prompt said it.
+- **Sources of truth** — app data, in three worlds. **Observed:** what the app measured — the tape with its evidence classes, the gateway's reconciled
+  state, verdicts, fills, ledgers. **Believed:** the agent's reconciled interpretation — hypotheses, findings, kill reasons, operational lessons — each
+  entry marked claim, assumption or hypothesis (the agent's) or measurement (linked by the app), versioned so the organisation can answer what it believed
+  when, and why. **Desired:** the objectives a seat holds — what it is responsible for keeping acceptable — so a wake is a divergence between the observed
+  and the desired, not a timer.
+
+Promotion between layers is controlled: a hypothesis becomes a belief only on a measurement, a strategy never becomes canon, a lesson becomes a default
+only through § 6.6. The belief graph, case law, doctrine and sleep of § 7.4 are this layer grown up; their first version is built on the two existing roles
+(`U-canon`, `U-research-ledger`, `U-reconcile-wakes`; R21 § 3), and the organisation extends it to positions rather than inventing a second one.
+
 ## 7. The institutions
 
 ### 7.1 Constitution — pace layers

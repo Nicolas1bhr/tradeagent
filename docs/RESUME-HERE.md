@@ -10,8 +10,19 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the newest
-checkpoint below (2026-10-08 15:25), the audit block right after this paragraph, and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the switch-on block
+right after this paragraph, the audit block after it, the newest checkpoint below (2026-10-08 15:25), and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+
+**2026-10-08 evening — the switch-on and the three layers of truth (`docs/research/2026-10-08/R21-three-layers-of-truth.md`; docs only).** The owner asked
+for the program's turning point and for actionable conclusions. **Target:** the switch-on — the loop unattended 24/7 on paper on his always-on Linux machines
+(a Linux server and a VPS; the MacBook builds; the desktop is likely the ATAS box), because the moat accrues only while the app runs and by then it had run
+6 hours. **Doctrine:** VISION § 6.7, the three layers of truth from his AI Concierge canon (canon · operational prompts · sources of truth; observed ·
+believed · desired), built first on the two existing roles. **Seats:** A — `U-tape-chain` → `U-runner-features` → `U-holdout-campaign` → `U-paper-books` →
+`U-trial-returns` → `U-referee-v2` → `U-forward-standing` → `U-incubator`, light `U-linux-host`; B — `U-quiet-review` → `U-memory-kept` → `U-canon` →
+`U-research-ledger` → `U-reconcile-wakes` → `U-decision-port` → `U-decision-card` → `U-annotator` → `U-hypothesis-library`, then lane B's organisation on top
+(ORGANISATION § 15, re-sequenced). Seat P closed until a Windows box answers; `U-red-says-why` rides as a light. **The owner's words:** open source until the
+"absolute point" (the moat proven), then the private `TradeAgent-Org` (`CLAUDE.md` guards edge-revealing material meanwhile); AgentPool is a separate project,
+out of this plan; "wait a bit before testing though implementation can start whenever" — no observed run and nothing deployed on his machines until he says.
 
 **2026-10-08, after the close — an outside autonomy audit, verified and answered; docs only (`docs/research/2026-10-08/R20-autonomy-audit.md`).** Before
 building resumed the owner shared an outside audit ("not canonical nor authoritative, but rather useful"): the organisation design was starting to govern how

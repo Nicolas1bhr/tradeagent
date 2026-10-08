@@ -28,7 +28,9 @@ mandates, money, evidence and authority — never how an agent reasons inside it
 deliberately bounded in what it activates — every active seat, department and management layer exists because current work requires it or a bounded
 experiment is testing it; one chief with a strategy council that assesses and never owns; a Security & Assurance Council and a watcher per department as the
 accountability line; the authority lattice, invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. It changes no
-unit before M-org1 and outranks no protection.
+unit before M-org1 but one — **§ 6.7, the three layers of truth** (canon, operational prompts and sources of truth; the observed, believed and desired
+worlds — the owner's direction of 2026-10-08 from the AI Concierge canon), built first on the two roles that run today (`docs/research/2026-10-08/R21-three-layers-of-truth.md`,
+which also makes **the switch-on** — the loop unattended 24/7 on paper — the build's target) — and it outranks no protection.
 
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
@@ -169,3 +171,7 @@ during a run. `tools/probe` is the harness behind the two headline claims, re-ru
   CLIs on their own schedule; a wrong command should be a one-line data fix, not a rebuild.
 - **Anything that moves money or removes permission is two-press.**
 - Do not commit credentials, host names or the contents of `%LOCALAPPDATA%\TradeAgent`.
+- **Public until the absolute point (the owner, 2026-10-08).** Open source is the cheaper way to build, and the moat is data and calendar time, not code.
+  The repository stays public until the owner's "absolute point" — the moment the moat is proven — when development moves to the private `TradeAgent-Org`.
+  Until then nothing that reveals a working edge is committed: a promoted or deployed strategy's text, a tape, ledger or forward-record export, or
+  research naming a family whose forward record is positive. Losing and rejected work may be recorded as before.

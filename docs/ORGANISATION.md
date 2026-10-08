@@ -441,6 +441,13 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 run (§ 14), and M-org1 needs both anyway: `U-contain-seats` opens lane B after M-org0 and `U-execution-environment` lands before `U-org-assignments`; the
 waves to M-org1 stay five. (`U-language-v2a`, W8's old lane-A unit, landed `78be3e9d`.)
 
+**Re-sequenced 2026-10-08 evening (the orchestrator on the owner's behalf, R21): the three layers of truth first, on the two roles that run today.** Lane B
+opens with `U-quiet-review` → `U-memory-kept` → `U-canon` → `U-research-ledger` → `U-reconcile-wakes` (VISION § 6.7), and the table above follows them:
+`U-org-wakes` and `U-org-packets` are re-scoped to extend `U-reconcile-wakes` and its packet to positions, `U-org-assignments`' decision records write into
+the research ledger, and W5's `U-org-principals` waits behind them. The organisation inherits true canon, kept belief and reconciling wakes instead of
+multiplying two capped prose files and a 30-minute timer across more seats. `U-decision-port` (W7) is re-checked at dispatch, since its brief assumed the
+principals and envelopes first.
+
 **The chief appears at W12** — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule:

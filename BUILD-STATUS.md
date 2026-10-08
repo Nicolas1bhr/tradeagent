@@ -9299,3 +9299,14 @@ section → eight modified docs and three new files, no `src/`, `tests/` or `too
 **NOT VERIFIED:** everything the amended documents describe is DESIGN; the latitude's value (ORGANISATION § 17) is unmeasured; whether the codex CLI can run
 confined with its login outside the cell is `U-contain-seats`' first item, unproven (R-containment); R13's rows are its own paraphrases of primary sources,
 not re-read here. The two briefs' pointers were surveyed read-only at `30fe7a32`, not exercised.
+
+## 2026-10-08 (evening) — the switch-on becomes the target and the three layers of truth the agents' doctrine; docs only
+
+**What happened.** The owner asked what would be a real turning point and what to improve now for returns, named the AI Concierge canon's "three layers
+of truth" as his model for long-running agents, and settled open source until the "absolute point", his always-on machines, AgentPool out of scope and
+"wait a bit before testing though implementation can start whenever". Record: `docs/research/2026-10-08/R21-three-layers-of-truth.md`. **Decided by the
+orchestrator on his behalf:** the switch-on (the loop unattended 24/7 on paper on his always-on Linux machines) is the build's target; VISION § 6.7 states the
+three layers (canon · operational prompts · sources of truth; observed · believed · desired), built first on the two existing roles; seats A and B carry the
+order in R21 § 3 (ORGANISATION § 15 and EDGE § 9 re-sequenced); seat P closed until a Windows box answers. `CLAUDE.md` gains the public-until-the-absolute-point
+guard. **RUN, 2026-10-08, read-only:** the dev Mac's only tape is the attempt-3 home's, 6,891 rows from 14:38:49Z to 20:43:03Z on 2026-10-07. NO product code,
+test or build changed; the last gate figure in this file stands.
