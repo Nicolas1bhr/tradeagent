@@ -170,15 +170,20 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
                 Backtest.NoTape(program) + " Nothing was run and no trial was charged.");
 
-        // THE TRIAL BUDGET IS ASKED BEFORE THE RUN, NOT AFTER IT. A caller told "your budget is spent"
+        // THE TRIAL BUDGETS ARE ASKED BEFORE THE RUN, NOT AFTER IT. A caller told "your budget is spent"
         // after twenty minutes of evaluation has spent the budget to learn that it was spent — and the
-        // run it just made is a peek at the data that the count was supposed to bound. There is a
-        // campaign only where the owner has set a holdout; over a dataset with none, nothing is charged
-        // and nothing is refused. A `fixture` dataset is free, so it is never refused here either.
-        var campaign = _campaigns.OpenForDataset(ask.Dataset);
-        var kind = EvaluationClass.Or(gateway.Datasets.ById(ask.Dataset)?.EvaluationClass);
-        if (campaign is { } open && _campaigns.TrialRefusal(open.Id, program.StrategyId, kind) is { } spent)
-            throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
+        // run it just made is a peek at the data that the count was supposed to bound. EVERY campaign the
+        // run will be charged to is asked (`CampaignStore.ChargedBy`, U-holdout-campaign): the one over
+        // this dataset first, then every open campaign whose development months the run's bars overlap,
+        // through any dataset of any pair — a second download of a campaign's months is the same peek at
+        // them. Where no campaign's months are read, nothing is charged and nothing is refused; a
+        // `fixture` run is free, so it is never refused here either.
+        var set = gateway.Datasets.ById(ask.Dataset);
+        var kind = EvaluationClass.Or(set?.EvaluationClass);
+        IReadOnlyList<CampaignCharge> charges = set is null ? [] : _campaigns.ChargedBy(set, ask.From, ask.To);
+        foreach (var charge in charges)
+            if (_campaigns.TrialRefusal(charge.Campaign.Id, program.StrategyId, kind, charge.Through) is { } spent)
+                throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
 
         if (!_running.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -202,8 +207,16 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
-            if (!stop.IsCancellationRequested)
-                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source, friction.Source, parent);
+            //
+            // AND IT IS NOT ANSWERED EITHER (U-holdout-campaign, rule 4): refused, with nothing recorded,
+            // nothing charged and no figure returned. It used to come back as an ordinary answer — the
+            // halted run's figures over the bars before the stop — reaching no caller only because of the
+            // order the app shuts down in: a run served while it stops would be a peek at the owner's data
+            // standing in no ledger and charged to no campaign.
+            if (stop.IsCancellationRequested)
+                throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Stopped);
+
+            Record(result, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source)
             {
@@ -215,6 +228,17 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             _running.TryRemove(role, out _);
         }
     }
+
+    /// <summary>
+    /// WHAT A CALLER IS TOLD ABOUT A RUN THE APP STOPPED — no figure of it, because nothing of it was recorded. It is
+    /// <see cref="ErrorCode.IPC_UNAVAILABLE"/>, the code a pipe client already reads when the app closes under it: the
+    /// trading service is going away or the turn that asked was ended, and the request itself was sound.
+    /// </summary>
+    internal const string Stopped =
+        "TradeAgent stopped this run before it answered — it is closing, or the turn that asked for it was ended — "
+        + "so the run was not recorded, no trial was charged against any campaign and no figure from it is returned: "
+        + "a result the ledger does not hold is not an answer TradeAgent gives. Nothing about the program or the "
+        + "request was wrong. Ask for it again once TradeAgent is running.";
 
     /// <summary>
     /// THE ROLE THIS CALLER PROVED IT IS, or a refusal. Never a default and never the folder's.
@@ -507,7 +531,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
     void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        CampaignRow? campaign, string kind, string? incrementSource, string? frictionSource, string? parent)
+        IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource, string? frictionSource, string? parent)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -566,9 +590,14 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // with everything else in this write and its figures are never served. The compute is spent
             // either way; what must not happen is a run over the owner's data standing in the ledger
             // with no trial against it, which is the peek the count exists to bound recorded as free.
-            if (campaign is { } open)
+            //
+            // ONE TRIAL UNDER EVERY CAMPAIGN THE LOOK ASKED, in its order — the run's own dataset's first,
+            // so a version never charged before has that campaign as its home — and any one refusal rolls
+            // the whole write back (U-holdout-campaign).
+            foreach (var charge in charges)
             {
-                var registered = _campaigns.RegisterTrial(open.Id, result.VersionId, result.RunId, kind, at);
+                var registered = _campaigns.RegisterTrial(
+                    charge.Campaign.Id, result.VersionId, result.RunId, kind, at, charge.Through);
                 if (!registered.Ok)
                     throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, registered.Why);
             }

@@ -798,4 +798,120 @@ public class CampaignLedgerTests
         Assert.Equal(1, campaigns.TrialsCharged(campaign.Id));
     }
 
+    // ---- U-holdout-campaign: one run under two campaigns, and a run the app stops --------------------
+
+    /// <summary>
+    /// (c) ONE RUN CHARGED UNDER TWO CAMPAIGNS COUNTS ONCE IN ITS HOME. Since a run is charged to every open campaign whose
+    /// development months its bars overlap (<c>CampaignStore.ChargedBy</c>), one run can stand on two rows that both count
+    /// in one campaign: under X, and under Y with X as its home (<c>charged_to</c>). RED on the base, where
+    /// <c>TrialsCharged</c> was <c>COUNT(*)</c> over rows and read that as two of X's trials for one peek.
+    ///
+    /// <para>The second leg is the gate's: X's last trial taken by the run's first row must not refuse the run's second row
+    /// for X's own count — the run is already counted there, so it costs X nothing more. And over the gateway: a run over
+    /// B, held by campaign Y, inside the months of A's campaign X, is one trial of each.</para>
+    /// </summary>
+    [Fact]
+    public async Task One_run_charged_under_two_campaigns_counts_once_in_its_home()
+    {
+        // THE COUNT: one run on two rows — under X, and under Y with X as its home — is one of X's trials.
+        using (var db = TestEnv.NewDb())
+        {
+            var campaigns = new CampaignStore(db);
+            var x = Opened(db, Held(db), trials: 3);
+            var y = Opened(db, Held(db, "ETHUSDT"), trials: 3);
+            var version = Measured(db, Held(db, "XRPUSDT"), runs: 1);
+
+            Assert.True(campaigns.RegisterTrial(x.Id, version, "run-0", EvaluationClass.Research, At).Ok);
+            var second = campaigns.RegisterTrial(y.Id, version, "run-0", EvaluationClass.Research, At);
+            Assert.True(second.Ok, second.Why);
+            Assert.Equal(x.Id, Assert.Single(campaigns.Trials(y.Id)).ChargedTo);
+
+            var counted = campaigns.TrialsCharged(x.Id);
+            Assert.True(counted == 1, $"one run registered under campaigns {x.Id} and {y.Id} counts {counted} trial(s) in its "
+                + $"home, campaign {x.Id}");
+            Assert.Equal(1, campaigns.TrialsCharged(x.Id, exploration: true));
+            Assert.Equal(1, campaigns.TrialsCharged(y.Id));
+        }
+
+        // THE GATE: X's only trial, taken by the run's first row, does not refuse its second row — the run is already
+        // counted in X, so it costs X nothing more. A different run is still a different peek, with no room for it.
+        using (var db = TestEnv.NewDb())
+        {
+            var campaigns = new CampaignStore(db);
+            var x = Opened(db, Held(db), trials: 1);
+            var y = Opened(db, Held(db, "ETHUSDT"), trials: 1);
+            var version = Measured(db, Held(db, "XRPUSDT"), runs: 2);
+
+            Assert.True(campaigns.RegisterTrial(x.Id, version, "run-0", EvaluationClass.Research, At).Ok);
+            var second = campaigns.RegisterTrial(y.Id, version, "run-0", EvaluationClass.Research, At);
+            Assert.True(second.Ok, $"the run's second row was refused for the trial its own first row took: {second.Why}");
+            Assert.Equal(1, campaigns.TrialsCharged(x.Id));
+            Assert.Equal(1, campaigns.TrialsCharged(y.Id));
+            Assert.False(campaigns.RegisterTrial(y.Id, version, "run-1", EvaluationClass.Research, At).Ok);
+            Assert.NotNull(campaigns.TrialRefusal(x.Id, version, EvaluationClass.Research));
+        }
+
+        // OVER THE GATEWAY: B, a second download of A's minutes, is held by campaign Y at A's cutoff, so a run over B's
+        // development months is charged to Y, its own, and to A's campaign X — one trial of each.
+        var (gw, db2, a, x2) = await Campaigning(trials: 3);
+        using var _2 = db2;
+        var b = gw.Datasets.ById(gw.Datasets.Record(a with { Id = 0, Version = "v2", HoldoutFrom = null }))!;
+        var (pressed, y2) = gw.SetHoldout(b.Id, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
+        Assert.True(pressed.Ok, pressed.Why);
+
+        var ran = Run(gw, b, GivenProgram(CouncilRoles.Research));
+
+        Assert.Equal(ran.Result.RunId, Assert.Single(gw.Campaigns.Trials(y2!.Id)).RunId);
+        var underX = Assert.Single(gw.Campaigns.Trials(x2.Id));
+        Assert.Equal(ran.Result.RunId, underX.RunId);
+        Assert.Equal(y2.Id, underX.ChargedTo);
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(x2.Id));
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(y2.Id));
+    }
+
+    /// <summary>
+    /// (f) A BACKTEST THE APP STOPS IS REFUSED AND CHARGES NOTHING (<c>U-holdout-campaign</c>, rule 4): no run row, no trial
+    /// under any campaign, and no figure returned — the refusal is <c>IPC_UNAVAILABLE</c>, the code a pipe client already
+    /// reads when the app closes under it, in words naming the stop. RED on the base, where the halted run came back as an
+    /// ordinary answer with its figures over the bars before the stop, recorded nowhere.
+    /// </summary>
+    [Fact]
+    public async Task A_backtest_the_app_stops_is_refused_and_charges_nothing()
+    {
+        var (gw, db, set, campaign) = await Campaigning();
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        BacktestRan? served = null;
+        GatewayDeniedException? refused = null;
+        try
+        {
+            served = gw.Backtests.Run(
+                AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1"),
+                new BacktestAsk(path, set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1), 0.001m, Increment: 1m),
+                stop.Token);
+        }
+        catch (GatewayDeniedException ex) { refused = ex; }
+
+        Assert.True(served is null, $"a run the app stopped was answered with its halted figures: outcome "
+            + $"{served?.Result.Outcome}, bars {served?.Result.Metrics.Bars}, trades {served?.Result.Metrics.Trades}, "
+            + $"fault \"{served?.Result.FaultReason}\"");
+        Assert.NotNull(refused);
+        Assert.Equal(ErrorCode.IPC_UNAVAILABLE, refused!.Code);
+        Assert.Contains("TradeAgent stopped this run before it answered", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("no trial was charged against any campaign and no figure from it is returned", refused.Message,
+            StringComparison.Ordinal);
+
+        Assert.Empty(gw.Strategies.Runs());
+        Assert.Empty(gw.Campaigns.Trials(campaign.Id));
+        Assert.Equal(0, gw.Campaigns.TrialsCharged(campaign.Id));
+
+        // AND THE SAME ASK, NOT STOPPED, IS AN ORDINARY RUN: recorded, charged once, answered.
+        var ran = Run(gw, set, path);
+        Assert.Equal(BacktestOutcome.COMPLETED, ran.Result.Outcome);
+        Assert.Single(gw.Strategies.Runs());
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
+    }
 }
