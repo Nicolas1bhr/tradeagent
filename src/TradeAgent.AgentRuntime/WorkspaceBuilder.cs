@@ -190,6 +190,14 @@ public static class WorkspaceBuilder
 
         """;
 
+    /// <summary>
+    /// THE EXAMPLE OF <c>next.json</c>, AS TEXT. Interpolated into the mission rather than written in it,
+    /// because inside the mission's <c>$"""</c> literal a brace opens a hole: written inline, the line was
+    /// the expression <c>"after_seconds"</c> with the format <c> 900</c>, and the agent was shown
+    /// <c>after_seconds</c> with neither brace nor value as the file it should write.
+    /// </summary>
+    const string NextJsonExample = """{"after_seconds": 900}""";
+
     public static string Instructions(WorkspaceContext c) => $"""
     # Your workspace
 
@@ -244,15 +252,15 @@ public static class WorkspaceBuilder
 
     **If there is genuinely nothing to do, say why in one line and finish the turn.**
     An idle turn with its reason stated is a healthy outcome and not a fault.
-    A market that is shut is shut, a backtest that is already running is running, and a turn that
-    ends in ten seconds costs your owner almost nothing — while a turn spent inventing work costs
-    them exactly what a useful one costs. This is not permission to run out of ideas: the research,
-    the backtests and the journal below are always there, and they are the job.
+    On a resumed session it costs your owner about what a working one does. With work in progress,
+    ask for your next wake in `next.json`: the scheduled look slows while nothing happens, until a
+    real event. This is not permission to run out of ideas: the research, the backtests
+    and the journal below are always there, and they are the job.
 
     **Ask to be woken when a job needs it.** Write `.tradeagent/next.json` in your own folder:
 
     ```json
-    {"after_seconds": 900}
+    {NextJsonExample}
     ```
 
     That is the only thing in that file and it means "wake me in fifteen minutes" — for a download
