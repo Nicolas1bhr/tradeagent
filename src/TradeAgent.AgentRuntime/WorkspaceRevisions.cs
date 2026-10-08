@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -26,6 +28,13 @@ namespace TradeAgent.AgentRuntime;
 /// <c>## Situation</c> — a restore the agent is not told about is the app editing its memory behind
 /// its back, and the next turn would spend itself wondering where its work went.</para>
 ///
+/// <para><b>And it never destroys.</b> The write-back lands over the only copy of what the turn
+/// wrote — a refused journal is the turn's newest entries — so that is KEPT first, byte for byte, as
+/// a new file in <see cref="ArchiveDir"/>, and a file that could not be kept is not put back at all
+/// (<c>U-memory-kept</c>; <c>docs/PRINCIPLES.md</c>: "explicit refusal and recoverable output over
+/// silent truncation or destruction"). The copy is not a revision — no publication carries it — and
+/// nothing here reads it back.</para>
+///
 /// <para><b>Written by the app only.</b> Same rule as <c>material</c>, <c>ai_attempt</c> and the
 /// relay's tables: no verb, no pipe op, no path from an agent. A role that could write its own
 /// revisions could publish a plan it never held, or delete the record of one it did.</para>
@@ -46,8 +55,19 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     /// </summary>
     public const int JournalLines = 200;
 
-    /// <summary>Where the agent moves what no longer fits. Tracked, so the record keeps it.</summary>
+    /// <summary>
+    /// Where the agent moves what no longer fits, and where the app keeps a refused file before it
+    /// puts the last revision back. Tracked, so the record keeps it.
+    /// </summary>
     public const string ArchiveDir = "trading/archive";
+
+    /// <summary>
+    /// HOW MANY NAMES ONE REFUSAL MAY TRY before it counts as not kept. Two refusals come to the same
+    /// name only when they name the same launch or the same millisecond, so a second name is rare and
+    /// a hundredth is a folder this class does not understand — and a copy it cannot place is a
+    /// write-back it does not make.
+    /// </summary>
+    const int KeptNames = 100;
 
     /// <summary>The two files that cross a fresh session, and the budget each is held to.</summary>
     public static readonly (string Kind, string Path, int Lines)[] Files =
@@ -64,9 +84,11 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
 
     /// <summary>
     /// ONE FILE THE APP OWES THE WORKSPACE after the transaction: the last valid revision of a file
-    /// whose current contents were refused. Returned rather than written inside the commit, because
-    /// a rollback cannot un-write a file — and because the write-back is idempotent, so a crash
-    /// between the commit and the copy simply has the next turn refuse and restore again.
+    /// whose current contents were refused — and are already kept in <see cref="ArchiveDir"/>.
+    /// Returned rather than written inside the commit, because a rollback cannot un-write a file —
+    /// and because the write-back is idempotent, so a crash between the commit and the write-back
+    /// simply has the next turn refuse, keep and restore again: one more copy in the archive, and
+    /// nothing lost.
     /// </summary>
     public sealed record Restore(string Path, string Content);
 
@@ -78,6 +100,11 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     /// rejection — a role that has not written a plan yet has nothing to refuse — and a file whose
     /// content is unchanged raises no new revision, because the publication's id is the hash of what
     /// is in it and the primary key absorbs the second insert.</para>
+    ///
+    /// <para><b>A refused file with an earlier revision is kept before it is owed a write-back</b>
+    /// (<see cref="Keep"/>): the copy is written here, inside the transaction — a rollback leaves an
+    /// extra file in the archive, which destroys nothing — and a file whose copy is not on disk is
+    /// returned with no <see cref="Restore"/>, so it stays exactly as the agent left it.</para>
     /// </summary>
     public List<Restore> Snapshot(string role, string? attempt)
     {
@@ -85,7 +112,8 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
 
         foreach (var (kind, rel, cap) in Files)
         {
-            var full = Path.Combine(homeOf(role), rel.Replace('/', Path.DirectorySeparatorChar));
+            var home = homeOf(role);
+            var full = Path.Combine(home, rel.Replace('/', Path.DirectorySeparatorChar));
 
             // A FILE THAT IS NOT THERE IS NOT A REFUSAL. A role that has not written a plan yet has
             // nothing to version and nothing to restore; only a file that EXISTS and cannot be read
@@ -95,9 +123,13 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             catch (Exception) { there = false; }
             if (!there) continue;
 
-            string? content;
-            try { content = File.ReadAllText(full); }
-            catch (Exception) { content = null; }    // unreadable reads as refused, below
+            // THE BYTES, READ ONCE. What is judged, recorded and — if it is refused — kept is this one
+            // read: a copy taken by a second read could be of a file that changed in between, and a
+            // copy made by re-encoding the text would not be what the agent wrote.
+            byte[]? bytes;
+            try { bytes = File.ReadAllBytes(full); }
+            catch (Exception) { bytes = null; }      // unreadable reads as refused, below
+            var content = bytes is null ? null : Text(bytes);
 
             if (content is not null && Valid(content, cap))
             {
@@ -127,14 +159,27 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 : $"is {NonEmpty(content)} lines and the limit is {cap}";
 
             var last = _store.Latest(role, kind);
-            var notice = last is null
-                ? $"`{rel}` {why}, so no revision of it was recorded. There is no earlier revision "
-                  + "to put back, so what is on disk is whatever you last wrote."
-                : $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
-                  + $"the app accepted — has been put back in its place. Move what no longer fits to "
-                  + $"`{ArchiveDir}/` and keep it under {cap} lines.";
-
-            if (last is not null) restores.Add(new Restore(full, last.Content));
+            string notice;
+            if (last is null)
+                notice = $"`{rel}` {why}, so no revision of it was recorded. There is no earlier revision "
+                         + "to put back, so what is on disk is whatever you last wrote.";
+            else if (Keep(home, rel, attempt, bytes) is not null)
+            {
+                // KEPT, SO IT MAY BE PUT BACK — and only now: the write-back lands over the file the
+                // copy was made from.
+                restores.Add(new Restore(full, last.Content));
+                notice = $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
+                         + $"the app accepted — has been put back in its place. Move what no longer fits to "
+                         + $"`{ArchiveDir}/` and keep it under {cap} lines.";
+            }
+            else
+                // NOT KEPT, SO NOT PUT BACK. A write-back over the only copy of what the turn wrote is
+                // the destruction this exists to refuse; the file stays the agent's, and it is told.
+                // A file that could not be read has no bytes to keep, so it lands here too.
+                notice = $"`{rel}` {why}, so it was not recorded. What you wrote could not be kept in "
+                         + $"`{ArchiveDir}/`, so revision {last.Revision} — the last one the app accepted — "
+                         + "was not put back: what is on disk is what you last wrote."
+                         + (content is null ? "" : $" Bring it under {cap} lines yourself.");
 
             Note(role, kind, notice);
             try { Rejected?.Invoke($"{CouncilRoles.Title(role)}: {notice}"); }
@@ -157,6 +202,81 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 File.WriteAllText(r.Path, r.Content);
             }
             catch (Exception) { /* the next turn refuses and restores again */ }
+    }
+
+    /// <summary>
+    /// KEEPS WHAT THE AGENT WROTE before anything is put back over it: the bytes
+    /// <see cref="Snapshot"/> read, exactly, as a NEW file
+    /// <c>trading/archive/&lt;PLAN|JOURNAL&gt;-refused-&lt;launch or instant&gt;.md</c> — a name that
+    /// is taken is skipped, never written over, because a copy a later refusal could replace is not
+    /// kept.
+    ///
+    /// <para>Returns the copy's path inside the role's home, in the form the agent writes it, or
+    /// null when no copy is on disk: nothing was read, the folder cannot be made (a FILE where it
+    /// belongs), the write failed, or every name was taken. Null means no write-back.</para>
+    /// </summary>
+    string? Keep(string home, string rel, string? attempt, byte[]? bytes)
+    {
+        if (bytes is null) return null;     // a file that could not be read has nothing here to keep
+
+        try
+        {
+            var dir = Path.Combine(home, ArchiveDir.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(dir);
+            var stem = $"{Path.GetFileNameWithoutExtension(rel)}-refused-{Stamp(attempt)}";
+
+            for (var n = 1; n <= KeptNames; n++)
+            {
+                var name = n == 1 ? $"{stem}.md" : $"{stem}-{n}.md";
+                var path = Path.Combine(dir, name);
+
+                FileStream file;
+                try { file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
+                catch (Exception) when (File.Exists(path) || Directory.Exists(path)) { continue; }
+
+                try
+                {
+                    using (file)
+                    {
+                        file.Write(bytes);
+                        file.Flush(flushToDisk: true);     // on disk before the write-back is owed
+                    }
+                }
+                catch (Exception)
+                {
+                    // A PART-COPY IS NOT A COPY. Taken away rather than left for a later turn to read
+                    // as what it wrote; the original is untouched, because nothing is put back.
+                    try { File.Delete(path); }
+                    catch (Exception) { /* a stray part-copy; the notice names no copy at all */ }
+                    return null;
+                }
+
+                return $"{ArchiveDir}/{name}";
+            }
+        }
+        catch (Exception) { /* no folder to keep it in: not kept, so not put back */ }
+
+        return null;
+    }
+
+    /// <summary>
+    /// WHAT A KEPT COPY IS NAMED FOR: the launch that wrote it — or, for a pass that names none or a
+    /// launch id that is not safe inside a file name, the UTC instant to the millisecond, written
+    /// with no colon, because Windows refuses one in a name.
+    /// </summary>
+    string Stamp(string? attempt) =>
+        attempt is { Length: > 0 and <= 64 } && attempt.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')
+            ? attempt
+            : _now().UtcDateTime.ToString("yyyyMMdd'T'HHmmssfff'Z'", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The text exactly as <see cref="File.ReadAllText(string)"/> reads it — UTF-8 unless a
+    /// byte-order mark says otherwise — from bytes already read, so the bytes can be kept as they are.
+    /// </summary>
+    static string Text(byte[] bytes)
+    {
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
     }
 
     /// <summary>
