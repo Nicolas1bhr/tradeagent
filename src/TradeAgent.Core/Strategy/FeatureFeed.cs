@@ -107,7 +107,7 @@ public sealed class FeatureFeed : IDisposable
 
         // THE LONGEST REACH: how far before a close, by source time, any declared feature's read looks
         // (FeatureEvaluator.Reach) — so a slice's reads, together, cover its first close less this to its last.
-        _reach = _features.Max(f => FeatureEvaluator.Reach(f.Spec));
+        _reach = ReachOf(_features);
 
         var grid = BarGrid.For(program);
         _step = grid.Zone is null ? grid.Length : TimeSpan.FromHours(1);
@@ -146,13 +146,33 @@ public sealed class FeatureFeed : IDisposable
     public string? Refusal(DateTimeOffset firstClose) => Withholds(firstClose.ToUniversalTime(), _until, whole: true);
 
     /// <summary>
+    /// THE LONGEST REACH OF <paramref name="features"/>: how far before a close, by source time, any of their reads looks
+    /// (<see cref="FeatureEvaluator.Reach"/>).
+    /// </summary>
+    internal static TimeSpan ReachOf(IReadOnlyList<FeatureDecl> features) => features.Max(f => FeatureEvaluator.Reach(f.Spec));
+
+    /// <summary>
+    /// WHERE THE READS THAT VALUE CLOSES FROM <paramref name="first"/> TO <paramref name="last"/> (null: no end known) START,
+    /// AND THE TAPE HOLDOUT'S WORDS FOR THEM — from <paramref name="first"/> less <paramref name="reach"/> to
+    /// <paramref name="last"/> — or null when they reach no window. The one arithmetic a feed decides a run or a slice by,
+    /// and a reader decides by whether a recorded run's reads reach a window now (<c>U-run-trace</c>).
+    /// </summary>
+    internal static (DateTimeOffset From, string Why)? Reaching(
+        TapeHoldout holdout, TimeSpan reach, DateTimeOffset first, DateTimeOffset? last)
+    {
+        ArgumentNullException.ThrowIfNull(holdout);
+        var from = FeatureEvaluator.Minus(first, reach);
+        return holdout.Refusal(from, last) is { } why ? (from, why) : null;
+    }
+
+    /// <summary>
     /// The holdout's refusal of the reads that value closes from <paramref name="first"/> to <paramref name="last"/> (null:
     /// no end known), in words saying what was asked and how a backtest avoids it — or null when it reaches no window.
     /// </summary>
     string? Withholds(DateTimeOffset first, DateTimeOffset? last, bool whole)
     {
-        var from = FeatureEvaluator.Minus(first, _reach);
-        if (_holdout.Refusal(from, last) is not { } why) return null;
+        if (Reaching(_holdout, _reach, first, last) is not { } reached) return null;
+        var (from, why) = reached;
 
         var names = string.Join(", ", _features.Select(f => $"`{f.Name}`"));
         var reach = ((long)_reach.TotalSeconds).ToString(CultureInfo.InvariantCulture);

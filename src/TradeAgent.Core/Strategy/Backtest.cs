@@ -821,17 +821,14 @@ public static class Backtest
         // THE RUN'S FIRST AND LAST POSSIBLE CLOSES: the closes of the declared bars holding the first and the last minute
         // the window can hold of the dataset. No feature read reaches past the last — a read of instants the run cannot
         // ask about is a read of months it was never meant to see — and the tape's holdout is asked over both.
-        var grid = BarGrid.For(program);
-        var firstMinute = from is { } f && (feed.Dataset.FirstBar is not { } fb || f >= fb) ? f : feed.Dataset.FirstBar ?? from;
-        var lastMinute = to is { } t && (feed.Dataset.LastBar is not { } lb || t <= lb) ? t : feed.Dataset.LastBar ?? to;
-        DateTimeOffset? until = lastMinute is { } m ? grid.EndOf(grid.StartOf(m)) : null;
+        var closes = ClosesOf(program, feed.Dataset, from, to);
 
         // ONE AUDIENCE FOR THE BARS AND THE FEATURES, AND THE TAPE'S HOLDOUT FOR IT (U-tape-holdout): a run whose features
         // would read the tape inside a dataset's holdout window is REFUSED in the holdout's words before a bar is read.
         using var features = program.Features.Count > 0
-            ? new FeatureFeed(tape!, holdout, program, until)
+            ? new FeatureFeed(tape!, holdout, program, closes.Until)
             : null;
-        if (features?.Refusal(firstMinute is { } first ? grid.EndOf(grid.StartOf(first)) : DateTimeOffset.MinValue) is { } withheld)
+        if (features?.Refusal(closes.FirstClose) is { } withheld)
             return BacktestOpened.No(withheld, isHoldout: true);
 
         try
@@ -849,6 +846,33 @@ public static class Backtest
             return BacktestOpened.No(
                 $"the normalised file of dataset {datasetId} could not be read: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// THE CLOSES A RUN OF <paramref name="program"/> OVER <paramref name="set"/> FROM <paramref name="from"/> TO
+    /// <paramref name="to"/> CAN EVALUATE: the declared bars holding the first and the last minute the window can hold of
+    /// the dataset. What <see cref="Over"/> hands a feature feed, and what a reader of a RECORDED run asks the tape's
+    /// holdout over again (<c>U-run-trace</c>) — one arithmetic, so the two cannot disagree about where a run's reads lie.
+    /// </summary>
+    internal static RunCloses ClosesOf(StrategyProgram program, Db.DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(set);
+
+        var grid = BarGrid.For(program);
+        var firstMinute = from is { } f && (set.FirstBar is not { } fb || f >= fb) ? f : set.FirstBar ?? from;
+        var lastMinute = to is { } t && (set.LastBar is not { } lb || t <= lb) ? t : set.LastBar ?? to;
+        return new RunCloses(grid, firstMinute, lastMinute is { } m ? grid.EndOf(grid.StartOf(m)) : null);
+    }
+
+    /// <summary>
+    /// A RUN'S FIRST AND LAST POSSIBLE CLOSES (<see cref="ClosesOf"/>): <see cref="Until"/>, the close of the declared bar
+    /// holding the last minute, or null for none known; and <see cref="FirstClose"/>, the close of the one holding the first
+    /// — computed when it is asked, as it always was, because only a program that reads features asks it.
+    /// </summary>
+    internal readonly record struct RunCloses(BarGrid Grid, DateTimeOffset? FirstMinute, DateTimeOffset? Until)
+    {
+        public DateTimeOffset FirstClose => FirstMinute is { } first ? Grid.EndOf(Grid.StartOf(first)) : DateTimeOffset.MinValue;
     }
 
     /// <summary>

@@ -142,6 +142,13 @@ public sealed class TapeHoldout
         Audience.MayReadHoldout || _ledger is null ? [] : WindowsOf(_ledger.All());
 
     /// <summary>
+    /// ONE DATASET'S ROW AS THE LEDGER HOLDS IT NOW — its cutoff included, read afresh as the windows are — or null for an
+    /// id the ledger does not hold, and for the referee's, which holds no ledger (<c>U-run-trace</c>: a recorded run's own
+    /// dataset is asked of the same ledger its windows are, at the read, never as it stood when the run was made).
+    /// </summary>
+    internal DatasetRecord? Dataset(long id) => _ledger?.ById(id);
+
+    /// <summary>
     /// THE TAPE WINDOW OF EVERY DATASET HOLDING A CUTOFF, earliest first — whatever its state, its class or its
     /// campaign. A dataset that holds no bar holds no market time; a window that ends where it starts holds nothing.
     /// </summary>

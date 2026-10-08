@@ -1,5 +1,7 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Features;
 using TradeAgent.Core.Strategy;
 
 namespace TradeAgent.Core.Db;
@@ -194,6 +196,29 @@ public sealed record StrategyTradeRow(
     string ExitReason,
     decimal Fees,
     decimal Pnl);
+
+/// <summary>
+/// ONE PAGE OF ONE RECORDED RUN'S CLOSED TRADES, OR WHY THERE IS NONE (<c>U-run-trace</c>) — what
+/// <see cref="StrategyStore.ReadTrades"/> answers.
+///
+/// <para><see cref="Run"/> is the run's row as recorded, <see cref="TradeCount"/> how many closed trades it recorded in
+/// all, and <see cref="Trades"/> the page, in ordinal order. <see cref="More"/> says a bound stopped the page with another
+/// trade after it, and <see cref="CappedBy"/> which: <see cref="TapeReader.CappedByLimit"/> or
+/// <see cref="TapeReader.CappedByBytes"/>, the tape's own words for the same two bounds.</para>
+///
+/// <para><b>A refusal carries NO row and no trade</b>, deliberately, as <c>BarWindow.Refusal</c> and
+/// <c>TapeWindow.Refusal</c> do: a caller that forgets to look at it is handed nothing of the run. <see cref="Withheld"/>
+/// says the refusal is the holdout's — the referee's holdout run, or a run whose bars or feature reads a holdout window
+/// reaches now — rather than a name that matched no one run.</para>
+/// </summary>
+public sealed record RunTradesPage(
+    StrategyRunRow? Run, int TradeCount, IReadOnlyList<StrategyTradeRow> Trades, bool More, string? CappedBy,
+    string? Refusal = null, bool Withheld = false)
+{
+    internal static RunTradesPage No(string why) => new(null, 0, [], false, null, why);
+
+    internal static RunTradesPage Held(string why) => new(null, 0, [], false, null, why, Withheld: true);
+}
 
 /// <summary>
 /// THE STRATEGY LEDGER — what this installation ran, and the app is the only writer.
@@ -427,15 +452,250 @@ public sealed class StrategyStore(Database db)
         return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     });
 
-    /// <summary>One run's closed trades, in the order they were taken.</summary>
+    /// <summary>
+    /// One run's closed trades, in the order they were taken — THE IN-PROCESS READER, for the app's own code. It takes no
+    /// audience, so nothing on the agent-facing pipe calls it: <see cref="ReadTrades"/> is that reader.
+    /// </summary>
     public IReadOnlyList<StrategyTradeRow> TradesOf(string runId) => db.Read(_ =>
     {
-        using var c = db.Cmd("""
-            SELECT run_id, ordinal, entry_bar, entry_price, exit_bar, exit_price, quantity, exit_reason,
-                   fees, pnl
-            FROM strategy_trade WHERE run_id=$id ORDER BY ordinal
-            """, ("$id", runId));
+        using var c = db.Cmd($"SELECT {TradeCols} FROM strategy_trade WHERE run_id=$id ORDER BY ordinal", ("$id", runId));
+        return (IReadOnlyList<StrategyTradeRow>)ReadTradeRows(c);
+    });
 
+    /// <summary>The most closed trades one page of <see cref="ReadTrades"/> serves. Named in every refusal of a larger limit.</summary>
+    public const int MaxTradeRows = 1_000;
+
+    /// <summary>
+    /// THE SHORTEST START OF A RUN'S ID THAT NAMES IT: the twelve characters every report prints of one
+    /// (<c>DailyReports.Short</c>).
+    /// </summary>
+    public const int ShortestRunId = 12;
+
+    /// <summary>
+    /// EVERY CLOSED TRADE OF ONE RECORDED RUN, A PAGE AT A TIME, FOR AN AUDIENCE — the agent-facing read (<c>run-trades</c>,
+    /// <c>U-run-trace</c>). <see cref="TradesOf"/> stays the in-process reader.
+    ///
+    /// <para><b><paramref name="run"/></b> is the run's full id, or a start of it of <see cref="ShortestRunId"/> characters or
+    /// more that no other run's id shares. Fewer, a start two runs share, and one that names no run are each REFUSED in words
+    /// naming what was asked — never answered with the nearest run.</para>
+    ///
+    /// <para><b>The audience is INSIDE the reader</b>, as on every bar and tape reader (<see cref="Holdout"/>'s rule: a
+    /// required argument, and the check inside the read). <paramref name="holdout"/> is the caller's, with the dataset ledger
+    /// its windows are read from at this read (<see cref="TapeHoldout.Pipe"/>), and for every audience but the referee's it
+    /// REFUSES, with no row and no trade: (a) THE REFEREE'S HOLDOUT RUN — a row marked <see cref="Referee.RunRole"/>, or one
+    /// any promotion names as its <c>holdout_run_id</c> — in words naming it so and <c>trade verdict</c> as what serves its
+    /// verdict and reason class, and no figure, count, trace hash or instant of it; (b) A RUN WHOSE BARS A HOLDOUT WINDOW
+    /// REACHES NOW — its own dataset's cutoff (<see cref="Holdout.Refusal"/>), then every other dataset's window over the
+    /// bars' market span (<see cref="TapeHoldout.Refusal(DatasetRecord, DateTimeOffset?, DateTimeOffset?)"/>) — over the
+    /// dataset and the window the run RECORDED, the dataset read from the ledger at this read: a cutoff set after the run
+    /// counts, and a dataset the ledger no longer holds is refused rather than guessed at; (c) A RUN OF A VERSION THAT READS
+    /// FEATURES WHOSE READS A HOLDOUT WINDOW REACHES NOW — exactly what <c>Backtest.Over</c> would refuse today, by its own
+    /// arithmetic (<see cref="Backtest.ClosesOf"/>, <see cref="FeatureFeed.Reaching"/>); a version this build cannot read
+    /// back is refused rather than guessed at. A run's trades say what its bars and its readings did, so they are held back
+    /// exactly as those are — and never clipped: a page is the run's trades or nothing.</para>
+    ///
+    /// <para><b>Bounded twice and never silently.</b> At most <paramref name="limit"/> trades — 1 to
+    /// <see cref="MaxTradeRows"/>, anything else is the caller's mistake and throws — and, as <paramref name="size"/> measures
+    /// each, at most <paramref name="maxBytes"/> of them: a trade is never split, so the first is served whatever it costs.
+    /// A bound that stops the page with another trade after it says so (<see cref="RunTradesPage.More"/>,
+    /// <see cref="RunTradesPage.CappedBy"/>). <paramref name="after"/> is the ordinal the page starts after — −1 for the first
+    /// trade, whose ordinal is 0 — so the last ordinal of one page continues it exactly.</para>
+    ///
+    /// <para>A read in one snapshot, like every method here but <see cref="RecordRun"/>: nothing is run again, nothing is
+    /// charged and nothing is written.</para>
+    /// </summary>
+    public RunTradesPage ReadTrades(string run, TapeHoldout holdout, long after, int limit, long maxBytes,
+        Func<StrategyTradeRow, long> size)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(holdout);
+        ArgumentNullException.ThrowIfNull(size);
+        if (limit is < 1 or > MaxTradeRows)
+            throw new ArgumentOutOfRangeException(nameof(limit), limit,
+                $"a page of a run's trades serves 1 to {MaxTradeRows} of them, and {limit} were asked for");
+        if (after < -1)
+            throw new ArgumentOutOfRangeException(nameof(after), after,
+                "a page starts after an ordinal of 0 or more, or before the first trade at -1");
+        if (maxBytes < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxBytes), maxBytes, "a page of a run's trades needs a byte budget above 0");
+
+        return db.Read(_ =>
+        {
+            var asked = run.Trim();
+            var (row, unnamed) = Named(asked);
+            if (row is null) return RunTradesPage.No(unnamed!);
+
+            if (Withheld(row, asked, holdout) is { } withheld) return RunTradesPage.Held(withheld);
+
+            int count;
+            using (var counted = db.Cmd("SELECT COUNT(*) FROM strategy_trade WHERE run_id=$id", ("$id", row.Id)))
+                count = Convert.ToInt32(counted.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+            // ONE PAST THE LIMIT IS ENOUGH TO KNOW THERE IS MORE, and the last row this page ever asks the disk for.
+            using var c = db.Cmd(
+                $"SELECT {TradeCols} FROM strategy_trade WHERE run_id=$id AND ordinal > $after ORDER BY ordinal LIMIT $n",
+                ("$id", row.Id), ("$after", after), ("$n", limit + 1));
+
+            var page = new List<StrategyTradeRow>();
+            long spent = 0;
+            foreach (var trade in ReadTradeRows(c))
+            {
+                if (page.Count == limit) return new RunTradesPage(row, count, page, true, TapeReader.CappedByLimit);
+
+                var cost = size(trade);
+                if (page.Count > 0 && spent + cost > maxBytes)
+                    return new RunTradesPage(row, count, page, true, TapeReader.CappedByBytes);
+
+                page.Add(trade);
+                spent += cost;
+            }
+
+            return new RunTradesPage(row, count, page, false, null);
+        });
+    }
+
+    /// <summary>
+    /// THE ONE RUN <paramref name="asked"/> NAMES — by its full id, or by a start of it no other run's id shares — or the
+    /// words saying why it names none.
+    /// </summary>
+    (StrategyRunRow? Row, string? Why) Named(string asked)
+    {
+        var shown = Shown(asked);
+        if (asked.Length < ShortestRunId)
+            return (null, asked.Length == 0
+                ? $"a run is named by its id, as 'backtest' answered it, or by the first {ShortestRunId} characters of it or "
+                  + "more, as 'trade report' prints it — and none was given."
+                : $"'{shown}' is {asked.Length} character(s) long, and a run is named by its whole id or by the first "
+                  + $"{ShortestRunId} characters of it or more, as 'trade report' prints it: fewer could name several runs, "
+                  + "and TradeAgent does not pick one for you.");
+
+        if (RunById(asked) is { } exact) return (exact, null);
+
+        using var c = db.Cmd($"SELECT {RunCols} FROM strategy_run WHERE substr(id, 1, $n) = $p ORDER BY id LIMIT 2",
+            ("$n", asked.Length), ("$p", asked));
+        var found = ReadRuns(c);
+        return found.Count switch
+        {
+            1 => (found[0], null),
+            0 => (null, $"there is no run '{shown}' in this installation's strategy ledger, by its whole id or as the start "
+                        + $"of one. Every 'backtest' answer carries its 'run_id', and 'trade report' names the newest runs by "
+                        + $"their first {ShortestRunId} characters."),
+            _ => (null, $"'{shown}' is the start of more than one run's id, so it names none of them: give more of it — "
+                        + "'backtest' answered the whole id.")
+        };
+    }
+
+    /// <summary>
+    /// WHY <paramref name="row"/>'S TRADES ARE NOT SERVED TO <paramref name="holdout"/>'S AUDIENCE, in its words, or null when
+    /// they are. The three refusals of <see cref="ReadTrades"/>, in order; null at once for the referee's own.
+    /// </summary>
+    string? Withheld(StrategyRunRow row, string asked, TapeHoldout holdout)
+    {
+        if (holdout.MayReadHoldout) return null;
+
+        // (a) THE REFEREE'S HOLDOUT RUN, by its mark or by any promotion naming it — a run a research row collided with
+        // carries the research role and is still the one a verdict was judged on. Nothing of it is named but that it is
+        // one: no figure, no count, no trace hash and no instant, not even the cutoff it starts at.
+        if (string.Equals(row.Role, Referee.RunRole, StringComparison.Ordinal) || NamedByAPromotion(row.Id))
+            return $"run {Shown(asked)} is the referee's holdout run of version {Short(row.VersionId)}: TradeAgent's "
+                   + "referee ran it over months held back from research, and nothing of it is served on this channel — "
+                   + "not one of its trades, figures or counts, not its trace hash and not one instant of it — to "
+                   + $"{holdout.Who}, to either director, or to a connection that proved no role at all. What crosses back "
+                   + "from a holdout run is its verdict and its reason class: 'trade verdict --version <its version's id>' "
+                   + "answers them. It is refused rather than shown in part, because a figure from those months, once read, "
+                   + "cannot be unread.";
+
+        // (b) THE BARS' HOLDOUT, over the dataset and the window the run RECORDED, the dataset read from the holdout's own
+        // ledger NOW: its own cutoff first, unchanged, then every other dataset's window over the bars' market span. A
+        // cutoff set after the run counts — it was served when it ran, and is held back from then on.
+        if (holdout.Dataset(row.DatasetId) is not { } set)
+            return $"the trades of run {Shown(asked)} are held back: it ran over dataset {row.DatasetId}, which this "
+                   + "installation's ledger no longer holds, so whether a holdout window reaches its bars cannot be read "
+                   + "now — and a run's trades are not served on a guess.";
+
+        if ((Holdout.Refusal(set, holdout.Audience, row.WindowFrom, row.WindowTo)
+             ?? holdout.Refusal(set, row.WindowFrom, row.WindowTo)) is { } bars)
+            return $"the trades of run {Shown(asked)} are held back: it ran over {Span(row.WindowFrom, row.WindowTo)} of "
+                   + $"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version}), and a run's trades say what those bars "
+                   + $"did, so they are held back exactly as the bars are — {bars} A run's trades are not cut short at the "
+                   + "window either: a run of the same version over a window wholly outside it is served, and 'trade "
+                   + "backtest' records one.";
+
+        // (c) THE TAPE'S HOLDOUT, over the reads its version's features made — exactly what `Backtest.Over` would refuse
+        // a run of it over the same window today.
+        return FeatureReads(row, asked, set, holdout);
+    }
+
+    /// <summary>
+    /// WHY THE FEATURE READS OF <paramref name="row"/> ARE HELD BACK NOW, in words, or null for a version that reads none or
+    /// whose reads reach no window. Its program is read back from the version it records; one this build cannot read back
+    /// is refused, because whether its decisions read the tape cannot then be told.
+    /// </summary>
+    string? FeatureReads(StrategyRunRow row, string asked, DatasetRecord set, TapeHoldout holdout)
+    {
+        var version = VersionById(row.VersionId);
+        var program = version is null ? null : StrategyParser.Parse(version.Source).Program;
+        if (program is null)
+            return $"the trades of run {Shown(asked)} are held back: TradeAgent cannot read back version "
+                   + $"{Short(row.VersionId)}, which ran it — "
+                   + (version is null ? "this installation's ledger no longer holds it" : "its recorded source does not parse in this build")
+                   + " — so it cannot tell what market context that run's decisions read, or whether a holdout window "
+                   + "reaches it now; a run's trades are not served on a guess.";
+
+        if (program.Features.Count == 0) return null;
+
+        if (!string.Equals(program.StrategyId, version!.Id, StringComparison.Ordinal))
+            return $"the trades of run {Shown(asked)} are held back: the recorded source of version "
+                   + $"{Short(row.VersionId)}, which ran it, reads features and parses in this build to a different program, "
+                   + "so TradeAgent cannot tell how far back that run's readings reached, or whether a holdout window "
+                   + "reaches them now; a run's trades are not served on a guess.";
+
+        var closes = Backtest.ClosesOf(program, set, row.WindowFrom, row.WindowTo);
+        var first = closes.FirstClose.ToUniversalTime();
+        var until = closes.Until?.ToUniversalTime();
+        var reach = FeatureFeed.ReachOf(program.Features);
+        if (FeatureFeed.Reaching(holdout, reach, first, until) is not { } reached) return null;
+
+        var names = string.Join(", ", program.Features.Select(f => $"`{f.Name}`"));
+        return $"the trades of run {Shown(asked)} are held back: its version reads the feature(s) {names} at the close of "
+               + $"every bar it evaluates, from the tape stamped up to {((long)reach.TotalSeconds).ToString(CultureInfo.InvariantCulture)} s "
+               + $"before it, so its closes from {FeatureEvaluator.Stamp(first)} to "
+               + (until is { } end ? FeatureEvaluator.Stamp(end) : "the end of a dataset that records no last bar")
+               + $" read it from {FeatureEvaluator.Stamp(reached.From)} — which the tape's holdout withholds: {reached.Why} "
+               + "A run's decisions say what those readings were, so its trades are held back as the readings are, exactly "
+               + "as a backtest of it over the same window is refused today.";
+    }
+
+    /// <summary>
+    /// WHETHER ANY PROMOTION NAMES <paramref name="runId"/> AS ITS HOLDOUT RUN — read off <c>strategy_promotion</c>, which
+    /// <see cref="Promotions"/> alone writes; asked here rather than through it, so neither store builds the other.
+    /// </summary>
+    bool NamedByAPromotion(string runId)
+    {
+        using var c = db.Cmd("SELECT 1 FROM strategy_promotion WHERE holdout_run_id=$id LIMIT 1", ("$id", runId));
+        return c.ExecuteScalar() is not null;
+    }
+
+    /// <summary>A recorded window in words, for a refusal: an open side is the dataset's own first or last bar.</summary>
+    static string Span(DateTimeOffset? from, DateTimeOffset? to) => (from, to) switch
+    {
+        ({ } lo, { } hi) => $"the bars from {lo:u} to {hi:u}",
+        ({ } lo, null) => $"the bars from {lo:u} to the last",
+        (null, { } hi) => $"the bars from the first to {hi:u}",
+        _ => "every bar"
+    };
+
+    /// <summary>What was asked, as a refusal quotes it: at most a whole id's length of it.</summary>
+    static string Shown(string asked) => asked.Length <= 64 ? asked : asked[..64] + "…";
+
+    /// <summary>An id as it is printed for a person. The same twelve characters everything else uses.</summary>
+    static string Short(string id) => id.Length <= ShortestRunId ? id : id[..ShortestRunId];
+
+    const string TradeCols =
+        "run_id, ordinal, entry_bar, entry_price, exit_bar, exit_price, quantity, exit_reason, fees, pnl";
+
+    static List<StrategyTradeRow> ReadTradeRows(SqliteCommand c)
+    {
         var rows = new List<StrategyTradeRow>();
         using var r = c.ExecuteReader();
         while (r.Read())
@@ -444,7 +704,7 @@ public sealed class StrategyStore(Database db)
                 Sql.Time(r.GetString(4)), Sql.Dec(r.GetString(5)), Sql.Dec(r.GetString(6)),
                 r.GetString(7), Sql.Dec(r.GetString(8)), Sql.Dec(r.GetString(9))));
         return rows;
-    });
+    }
 
     static List<StrategyVersionRow> ReadVersions(SqliteCommand c)
     {
