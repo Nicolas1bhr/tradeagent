@@ -702,6 +702,12 @@ public static class StrategyEvaluator
     /// and the gateway's own limits are applied downstream where the instrument is known
     /// (`docs/CONTRACTS.md`). A risk fraction is over the stop DISTANCE, so a stop that is not below
     /// the reference price has no distance and is a defined fault rather than a negative size.</para>
+    ///
+    /// <para><b>A capped risk fraction is the smaller of two</b> (<c>U-size-cap</c>): the risk size, and the
+    /// declared <c>max_capital_fraction</c> of the capital at the reference price — read exactly as
+    /// <c>capital_fraction</c> reads it, so the backtest (capital: the cash its books have left) and the paper
+    /// runner (capital: the allocation's own ceiling) agree. A cap only ever makes a size smaller, and it
+    /// applies at the signal's reference price: fees, slippage and the next open come on top of it.</para>
     /// </summary>
     static decimal Quantity(Sizing sizing, AccountReading account, decimal reference, decimal? stop)
     {
@@ -711,12 +717,7 @@ public static class StrategyEvaluator
                 return sizing.Value;
 
             case SizingKind.CapitalFraction:
-                if (reference <= 0m)
-                    throw new EvaluationFault(
-                        $"the bar's close is {reference}, so a fraction of capital buys no quantity that " +
-                        $"can be divided by a price");
-
-                return account.StrategyCapital * sizing.Value / reference;
+                return OfCapital(account, sizing.Value, reference);
 
             default:
                 if (stop is not { } level)
@@ -730,8 +731,23 @@ public static class StrategyEvaluator
                         $"the stop at {level} is not below the reference price {reference}, so there is " +
                         $"no risk distance to size against");
 
-                return account.Equity * sizing.Value / distance;
+                var risk = account.Equity * sizing.Value / distance;
+                return sizing.MaxCapitalFraction is { } cap ? Math.Min(risk, OfCapital(account, cap, reference)) : risk;
         }
+    }
+
+    /// <summary>
+    /// A FRACTION OF THE CALLER'S CAPITAL AT THE REFERENCE PRICE — a <c>capital_fraction</c> size, and a risk size's
+    /// cap — or the defined fault a close at or below zero is: such a price divides nothing.
+    /// </summary>
+    static decimal OfCapital(AccountReading account, decimal fraction, decimal reference)
+    {
+        if (reference <= 0m)
+            throw new EvaluationFault(
+                $"the bar's close is {reference}, so a fraction of capital buys no quantity that " +
+                $"can be divided by a price");
+
+        return account.StrategyCapital * fraction / reference;
     }
 
     static int MinuteOf(DateTime local) => local.Hour * 60 + local.Minute;
