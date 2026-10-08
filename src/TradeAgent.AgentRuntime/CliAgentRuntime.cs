@@ -635,10 +635,17 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         if (plan.File is { Length: > 0 } && plan.FileTemplate is { Length: > 0 } template)
         {
             var path = ExpandHome(plan.File);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             // JSON-escape so a key containing a quote or backslash cannot corrupt the file.
             var escaped = System.Text.Json.JsonEncodedText.Encode(key).ToString();
-            await File.WriteAllTextAsync(path, template.Replace("{key}", escaped), ct);
+            // THE ONE PUBLISH EVERY CREDENTIAL TAKES (U-credential-replace), with the bytes the in-place
+            // File.WriteAllTextAsync wrote — the template, UTF-8, no byte-order mark — and still the whole
+            // file, as it always was. That write truncated first, so a failure between the truncation and
+            // the write left the owner's working key an empty file, and off Windows it created the file with
+            // no mode of its own, 0644 under the usual umask: the key readable by every account. On the pool,
+            // not the caller's thread — the window's, when the owner presses the button — because the flush to
+            // the device is a wait the window should not make.
+            var bytes = Encoding.UTF8.GetBytes(template.Replace("{key}", escaped));
+            await Task.Run(() => OwnerOnlyFile.Write(path, bytes, beforeRename), ct);
             return;
         }
 
