@@ -18,6 +18,14 @@ differently, it is the direction: the audit line and the watcher (§§ 1, 2, 9) 
 holds the owner's private line — and a watcher beside every department, each a seat that costs nothing until it investigates; the chief stays the one
 accountable owner of strategy and gains a strategy council that assesses and never owns; § 3's numeric bounds are today's defaults, none permanent.
 
+**2026-10-08 — autonomy is the default inside authority** (`docs/PRINCIPLES.md`; the owner's decisions on an outside autonomy audit, verified and answered in
+`docs/research/2026-10-08/R20-autonomy-audit.md`). The owner read "agents shouldn't choose anything" as authority, not thinking — the question R14 § 3 left
+open on 10-02. This file decides who owns structure, mandates, money, acceptance and evidence; it does not prescribe how an agent reasons. So: executors own
+the path inside their mandate (§§ 1, 2, 4); claims rest on instruments and exploration on a stated rationale (§§ 1, 8); information moves laterally while
+authority and resources do not (§ 4); consults, retries, report shapes and task sizes are defaults (§§ 4, 7); a tool an agent makes for its own work is its
+own (§ 8); and containment comes before the governance verbs, with a confined seat keeping its working freedom (§ 15). R20 found each rule changed here
+supported by its cited research only in that narrower form.
+
 ## 0. Where this comes from, and what it changes
 
 - **The owner has asked for this since September.** 2026-09-07: "a council of very smart top level manager agents with different tasks that run their own
@@ -33,6 +41,8 @@ accountable owner of strategy and gains a strategy council that assesses and nev
 - **What changes in doctrine.** PRINCIPLES "Models own the organisation" becomes "The organisation". The factory plan's Law 1 clause against prescribing roles,
   a role count or a delegation tree, its § 10.4, and the first item of its § 18 are superseded for the organisation's SHAPE. Its Laws 2–12 — Law 2 (the
   credential and arbitrary-code split) and Law 10 (observe the loop before generalising) included — its vocabulary, evidence discipline and substrate stand.
+  So do Law 1's other clauses, never superseded: no permanent corporate workflow, no fixed chain of thought, no mandatory reviewer ceremony — they bind how
+  the organisation WORKS (R20, 2026-10-08).
 - **What does not change:** every protection in `CLAUDE.md`, on the code and in EDGE-FACTORY § 6. A manager's authority is over WORK. Money, limits, evidence
   verdicts, credentials and operator controls stay exactly where they are (§ 13).
 
@@ -51,17 +61,20 @@ DIVISIONS — top-level managers, one per information source or capability; each
   └─ sub-divisions only where a paired run shows the extra layer pays (§ 8)                                      [level 3, earned]
 TEAMS — one per strategy family; a head manager who decides: typed assignments, acceptance by checks,
         keep / modify / kill / branch                                                                             [manager level 3]
-EXECUTORS — 1–5 per head (cap 8): choose HOW to do an assigned task, never WHAT to work on          [cheaper model + advisor]
+EXECUTORS — 1–5 per head (cap 8): own the PATH inside a mandate, never the mandate itself            [cheaper model + advisor]
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 APP KERNEL — the chart, identities, envelopes, wakes, assignments, decision records, scorecards, referee, allocator, risk gates,
              gateway: the organisation decides WORK; code decides MONEY and TRUTH; the owner decides AUTHORITY        [code]
 ```
 
-1. **Every choice has exactly one owner, fixed by the chart.** No agent chooses outside its position; an executor never chooses what to work on.
+1. **Every decision about structure, a mandate, resources or acceptance has exactly one owner, fixed by the chart.** No agent decides outside its position;
+   an executor owns the path inside its mandate and never the mandate itself (§ 2; `docs/PRINCIPLES.md` "Autonomy is the default inside authority").
 2. **The chart is app data, not a prompt.** Units, positions, decision rights, envelopes, assignments and records are rows the app writes; a title, a charter
    or a sentence in a message grants nothing (R13 A15, D17; R12 § 3).
-3. **Managers decide from instruments.** Every approve, kill, branch or restructure cites app measurement ids; a manager without an instrument asks for one
-   (a backtest, a canary, a check) instead of giving an opinion (R13 D7).
+3. **Claims rest on instruments; exploration on a rationale.** Every acceptance, kill, restructure and budget move beyond the exploration share cites app
+   measurement ids; a manager without an instrument asks for one (a backtest, a canary, a check) instead of giving an opinion, and never runs a
+   reject-and-revise loop on opinion alone (R13 D7, H3). Opening an exploration — a new hypothesis, a branch, a cheap probe — needs a stated rationale and a
+   scored forecast, not a prior measurement: the probe is the instrument it lacks, paid from the exploration share (§ 8).
 4. **Rules allocate until measurement can; then measurement allocates and judgement explores.** Before any unit has a forward record, budget splits equally,
    with a bounded, recorded, scored tilt by the chief; from ≥ 90 forward days a unit's share follows its measured marginal contribution per AI dollar, and an
    exploration floor stays (§ 8; R14 § 4.1). Narrative never moves budget (R14 #39; R17 #6).
@@ -78,16 +91,17 @@ APP KERNEL — the chart, identities, envelopes, wakes, assignments, decision re
 | **Audit line** | what to inspect inside an audit assignment; findings | anything in production; blocking (only app rules block) | the app ledger → owner and watcher; findings about a unit also to that unit's parent head | sampled deliveries; promotions; flags; the canary schedule | code first; audit agents on a model family other than the audited where the owner's runtimes allow | catch rate on seeded canaries |
 | **Chief** | strategy and priorities inside the mission; charter, merge, close divisions; a bounded tilt of the organisation's envelope (§ 8); cross-division conflicts; appointing division heads; proposals to the owner | money, limits, verdicts, capital allocation, operator controls, its own envelope, anything about `operations`; replacing a division head (it proposes; an app trigger or the owner replaces) | owner | owner words; division escalations; material events (promotion, family kill, envelope exhaustion, alarms); a maximum interval | the strongest model the owner's accounts allow (GPT-6.1 Sol on the plan) | admissible candidates per AI dollar, later marginal contribution per AI dollar (§ 8); division scorecards; calibration of scored forecasts; audit findings |
 | **Division head** (top-level manager) | the division's hypotheses and families inside its charter; charter and close teams; tilt the division envelope by the same rule; which candidates spend the division's verdicts; paper nominations (the allocator decides) | other divisions' work; capital; verdicts; limits | chief | team escalations; verdicts, fills, standing events for its families; a maximum interval | GPT-6.1 Sol | pooled ρ-adjusted forward record of its teams (≥ 90 days); admissible candidates per AI dollar; calibration |
-| **Team head** (head manager) | what the team works on inside division priorities; issue, accept, reject assignments; keep / modify / kill / branch a hypothesis; team backtests inside the envelope | verdicts (unless the division delegates a count); other teams' work | division head | deliveries; escalations; a maximum interval | GPT-6.1 Sol (medium) | candidates admitted; cycle time against forecast; calibration (acceptance rates are diagnostics only, § 8) |
-| **Executor** | the METHOD for its assignment: tools, code, data, its advisor (§ 4), the runtime's own helpers inside its attempt; decline an infeasible assignment with a reason; report an out-of-scope finding as a proposal | what to work on; spend beyond its assignment; contact with other units; verdicts | team head | an assigned task — never a heartbeat | GPT-6 Luna; a harness seat or, within the owner's ceiling, a CLI seat (§ 10) | checks passed; cost against envelope; audit findings |
+| **Team head** (head manager) | what the team works on inside division priorities; issue, accept, reject assignments, and each one's latitude (§ 4); keep / modify / kill / branch a hypothesis; team backtests inside the envelope | verdicts (unless the division delegates a count); other teams' work | division head | deliveries; escalations; a maximum interval | GPT-6.1 Sol (medium) | candidates admitted; cycle time against forecast; calibration (acceptance rates are diagnostics only, § 8) |
+| **Executor** | the PATH inside its mandate: methods, the tools and code it writes, data, intermediate hypotheses, which findings inside its team's mandate to follow with its envelope (§ 4), whether to consult its advisor, helpers inside its own envelope, lateral notes (§ 4); decline an infeasible assignment with a reason; propose a finding beyond its team's mandate | the mandate itself — objective, scope, envelope, acceptance; spend beyond its envelope; another unit's work or resources; verdicts | team head | an assigned task — never a heartbeat | GPT-6 Luna; a harness seat or, within the owner's ceiling, a CLI seat (§ 10) | checks passed; cost against envelope; audit findings |
 | **Risk & Portfolio** (chief's staff) | analysis behind the chief's proposals: drawdown ceiling, paper envelope, retirements (the app decides), crowding; it reads the app's realised-versus-modelled cost — a cost-model change is app-computed from fills and owner-confirmed | limits, capital, the cost model | chief | weekly; standing events | GPT-6.1 Sol | its forecasts |
 | **Liaison** (the owner's chat) | nothing; it answers status from app facts and forwards the owner's words verbatim to the chief and to any unit the owner names | anything | owner | the owner's message | a cheap seat (GPT-6 Luna) unless the owner chooses to talk to the chief directly (§ 16) | — |
 | **Router** (code; System One after shadow) | which unit an event reaches; whether a manager wakes | anything else | — | every event | code rules → a local decision model (§ 11) | routing accuracy |
 
 **Code-enforced verbs** (R12 § 3): only the app mints ids; only a head assigns, and only into its own subtree; only the parent unit's head charters, merges,
 closes, hires or retires, inside depth, span, envelope and throttle bounds; only division heads spend verdicts; executors spend trials only under an
-assignment they hold and get paid turns only for assignments; spend stays inside the unit's envelope, each envelope inside its parent's, the root inside the
-owner's cap. **Order permission stays bound to the legacy `operations` id and never follows headship** (`Council.cs:63`). These rules are HARD for app-hosted
+assignment they hold and get paid turns only for assignments; an executor's helpers are child attempts drawn from its own envelope and capability subset,
+never positions, assignments or a second envelope (`docs/PRINCIPLES.md` "Delegation is one reusable capability"); spend stays inside the unit's envelope,
+each envelope inside its parent's, the root inside the owner's cap. **Order permission stays bound to the legacy `operations` id and never follows headship** (`Council.cs:63`). These rules are HARD for app-hosted
 (harness) seats and ADVISORY against CLI seats until containment (§ 14).
 
 ## 3. Units — the chart as data
@@ -137,21 +151,36 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
 
 - **The assignment** (R13 D5; R12 O5): objective; inputs by content hash; output schema; capability subset; envelope (AI dollars, tokens, wall-clock, trials);
   deadline; acceptance checks the app runs — each assignment type carries app-set minimum checks the issuer may only add to (examples: the program parses; the
-  backtest completes under the app's venue cost model at 1× and 2×; the report is ≤ 20 lines and every number cites an evidence id; the adapter passes the
-  app-owned conformance vectors); the issuer's forecast (§ 5); a priority class.
-- **Size to the horizon:** an assignment is about one to two hours of human-equivalent work — the frontier's 80% horizon (R13 X1); longer work is
-  checkpointed into several assignments.
+  backtest completes under the app's venue cost model at 1× and 2×; the report fits its size and every number cites an evidence id; the adapter passes the
+  app-owned conformance vectors); the issuer's forecast (§ 5); a priority class; its latitude (below). It takes one of two shapes: a **task** — a defined
+  output and its checks; or an **exploration** — an objective, an envelope and a deadline, whose output is an honest account (what was tried, found and
+  spent, every number citing an evidence id, artifacts by reference) and whose minimum checks are only that. Inside an assignment the executor's own
+  sub-plans, hypotheses, branches and scratch work are its working files, never new assignments or records (2026-10-08).
+- **Size to the horizon — a default:** a task starts at about one to two hours of human-equivalent work — the public frontier's 80% horizon on software tasks
+  (R13 X1), unmeasured on trading research and for the cheaper executor seats (R13 U12) — and is recalibrated from the organisation's own success-by-size
+  records; longer work is checkpointed into several assignments. An exploration is sized by its envelope and deadline.
 - **Lifecycle:** issued → accepted or declined with a reason → running → delivered → accepted or rejected → closed; or escalated, cancelled, or expired by code.
-- **Delivery:** a report of at most 20 lines plus artifacts by reference, forwarded upward verbatim (R13 D10, H9). The app runs the checks; the head accepts
+- **Following a finding — the latitude** (2026-10-08): an executor answers the question it was given, or says why it could not, and may spend its envelope on
+  any finding inside its team's mandate it judges worth more; its delivery names each deviation, what it found and what it cost, and the head judges the
+  delivery as a whole. A finding that needs more than the envelope, or lies outside the team's mandate, goes to the head as a proposal with the evidence the
+  executor gathered. A head marks an assignment **exact** — a service assignment, an adapter, a conformance fix — when only the asked-for answer is wanted.
+- **Delivery:** a report that indexes the work — about 20 lines by default, the build fleet's own convention (R13 D10 says ≈ 2k tokens) — plus the
+  artifacts by reference, which are the work; forwarded upward verbatim, never paraphrased (R13 D10, H9). The app runs the checks; the head accepts
   or rejects; a rejection names a failed check or a stated defect — no opinion-only revision loops (R13 D7, D14). The app seeds assignments that are
   impossible by construction at a low rate; a claimed success on one is a fabrication finding for the audit line and the watcher (R13 D18; R17 #15).
-- **Retry:** in a fresh context with a failure note, never in the polluted one (R13 D6, X11); two fresh failures on one assignment and the head re-scopes it —
-  the build fleet's own fresh-fixer rule, applied inside the product.
+- **Retry:** in a fresh context, never in the polluted one (R13 D6, X11); by default two fresh failures on one assignment and the head re-scopes it — the build
+  fleet's own fresh-fixer rule, applied inside the product — and the head may set another policy for an assignment, such as several different approaches to
+  a novel problem.
 - **Escalation** (R13 D13): executor → team head when checks fail twice, the assignment is ambiguous, or half its envelope is gone with no milestone; team
   head → division head; division head → chief for cross-division conflicts or envelope changes; chief → owner for anything touching authority, capital or a
   ceiling — in-process, a proposal the owner answers in the app, never a permission request through the pipe.
-- **Between divisions:** a capability division takes service assignments from other division heads, reserved against the requester's envelope and attributed
-  to it; the capability head may decline with a reason (R17 #16). Everything else crosses divisions through the chief. No channel exists outside the chart.
+- **Between units — information moves, authority does not** (2026-10-08). Any position may send a lateral note to another unit inside its information
+  grant — a finding, a reference, a data defect, an offer to collaborate: app-relayed, its sender app-stamped, logged, and carried in the recipient's next
+  packet as data. A note wakes nobody by itself, is never an assignment, a commitment or an instruction, and an approval inside it is void (R13 S1, S2:
+  tagged sources slow an injection's spread). Work that spends another unit's envelope is a service assignment — a capability division takes them from
+  other division heads, reserved against the requester's envelope and attributed to it, and may decline with a reason (R17 #16) — or crosses through the
+  chain. The audit line, the watcher and protected evidence lie outside every information grant. On CLI seats until containment, shared files remain an
+  undetectable side channel (§ 14); the relayed note is the observable one.
 - **The owner's words** carry the app-stamped sender `owner` and go verbatim to the chief and to any unit the owner names on the Org page; if undispositioned
   after two hours, or while the chief is held at a limit, they also go to every division head (R17 #18).
 - **Messages are data:** every message carries an app-stamped sender; an approval inside text is void. Untrusted material (web pages, news, the inbox) is read
@@ -198,13 +227,16 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
   flows; no latency races, no naive news sentiment, no mirroring; prove families, not versions; costs first; the moat is what compounds with calendar time.
 - **Managers think in portfolios of bets.** Each charter or hypothesis carries a prior from the genome bank's family base rates, a cost estimate, the value if
   right and precommitted kill criteria. Divisions get different data and hypothesis spaces on purpose and the app watches for convergence (R13 D19; R14 § 4.6).
-- **An executor works smartly:** it reads its assignment and the genome bank (was this tried, and why did it die?), plans, consults its advisor before
-  substantive work and before finishing (R13 X15), does the work with code where its seat allows (§ 10), runs the assignment's checks itself before
-  delivering, and delivers at most 20 lines plus artifacts.
-- **Effort scales with the question:** simple → one executor; a comparison → two to four; no fan-out of fifty helpers (R13 O1, D12).
+- **An executor works smartly — its own way** (2026-10-08). What tends to help, as defaults it skips or changes when it judges the call not worth its cost:
+  reading the genome bank first (was this tried, and why did it die?); consulting its advisor before substantive work and before finishing, which pays for
+  a much weaker executor and only while it keeps asking (R13 X15; the consult rate and its gain on our own work are measured, R13 U10); code and tools of
+  its own where its seat allows (§ 10); running the assignment's checks itself before delivering. The app enforces only the envelope, the deadline, the
+  boundaries and the checks at delivery.
+- **Effort scales with the question** (defaults, policy data): simple → one executor; a comparison → two to four; no fan-out of fifty helpers (R13 O1, D12).
 - **What it does not do** is R13 § 3 and R14 § 5: assembly lines by job function; opinion-only supervision; committees; same-model self-review counted as
   verification; unbounded fan-out; paraphrased relays; polling and standing meetings; titles as authority; ever-growing prompts; continuous critics; runs past
-  the horizon; producers who can see the scorer; an organisation that exists only in prompts; role-play of a trading firm that decides trades.
+  the horizon; producers who can see the scorer; an organisation that exists only in prompts; role-play of a trading firm that decides trades; a workflow
+  that prescribes how an agent thinks (the factory plan's Law 1).
 
 ## 8. Performance and evolution — the organisation improves itself
 
@@ -212,7 +244,10 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
   audit findings; refusals and near-misses; admissible candidates per AI dollar; and from ≥ 90 forward days marginal contribution to the book per AI dollar,
   beta to BTC removed (R14 § 4.4). Acceptance rates are diagnostics, never score inputs (R17 #15). Nothing from a backtest, the holdout or E2–E4 enters it.
 - **Budget follows rules, then contribution** (R14 § 4.1; R17 #6; defaults to calibrate): of the organisation's envelope the chief holds ≤ 10%, its staff
-  ≤ 10%, divisions the rest. Inside a pot, an exploration floor of 25% is split equally among active units, new ones included. The other 75% follows
+  ≤ 10%, divisions the rest. Inside a pot, an exploration floor of 25% is split equally among active units, new ones included — the organisation's
+  protected allocation for work no measure can value yet: spending it needs a stated rationale and a forecast, not a measurement, and scorecards read it
+  apart from the yield-funded share, so a speculative line is never ranked against a cheap candidate mill, which trial deflation already prices (EDGE
+  § 4.5; 2026-10-08). The other 75% follows
   `max(0, MC)` for units with ≥ 90 forward days; before any unit has that record it splits equally, and the chief (or a division head inside its division) may
   tilt a unit's share by at most 20 points a week, each tilt a decision record with a scored forecast of admissible candidates per AI dollar; measured leading
   indicators replace the tilt as they accrue.
@@ -225,8 +260,9 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
   finding) or the owner; a manager's wish to replace its subordinate is a proposal to the owner (R17 #14). Trials, spend and open operations carry over.
 - **Seats evolve with the models — the future-proofing:** a new model shadows a seat on real assignments without authority, is scored on the same scorecard,
   and takes the seat only when it is better per AI dollar; seats are pinned by version and never move silently (R15 § 1.1). A new runtime or vendor enters
-  by an owner press; within the owner's allowed classes the app may move a seat after a shadow (R17 #41). New tools enter through the admission ladder
-  (EDGE-FACTORY § 4.7); new information sources through the tape; new edge families through a team.
+  by an owner press; within the owner's allowed classes the app may move a seat after a shadow (R17 #41). A tool an agent makes for its own work is its
+  own — scratch, free inside its cell; a tool offered to other seats enters through the admission ladder (EDGE-FACTORY § 4.7; VISION § 6.6); new
+  information sources through the tape; new edge families through a team.
 - **Unit templates — the organisation's genome:** charter + staffing + seat policies + playbook, versioned with lineage and recorded from the first unit; none
   is cloned or retired before at least five units × 90 forward days per template (R17 #38), because selection on less is selection on noise.
 - **Layers earn their place:** M-org2 runs a paired comparison — same brief, AI budget and window — flat (one head with executors) against headed (division →
@@ -357,25 +393,25 @@ lane waits on the other's number; the gate checks the ladder is contiguous (R17 
 | Unit | Closes | Depends | Status |
 |---|---|---|---|
 | `U-fix-resume-on-start` | the restart test red on hosted Windows in five of six runs on unchanged code — cause named, fixed, nothing weakened | — | READY, first |
-| `R-containment` | the Windows isolation probe: the § 9.3 matrix for two candidates, a decision record for `U-contain-seats` (probe only, on the box) | — | READY |
+| `R-containment` | the Windows isolation probe: the § 9.3 matrix for two candidates, a decision record for `U-contain-seats` (probe only, on the box) | — | LANDED `69589886` (2026-10-06: C2 AppContainer, Topology A; codex and node do not start bare — `docs/research/2026-10-06/R-containment-decision.md`) |
 | `U-price-rows` | GPT-6 models priced from the vendor's page, dated | — | READY |
 | `U-org-ledger` (O1) | the chart is app-minted data: root, two divisions, the legacy positions; one writer; read by nothing yet | `U-cost-model` | READY |
 | `U-org-principals` (O2a) | a third position is a row, not a constant: own home, conversation, attempts and keys, never folded into the chair | O1; after M0 | READY |
 | `U-org-rights` (O2b) | positions may backtest and ask verdicts; only `operations` trades; a non-legacy position's output held, not routed to Research | O2a | READY |
 | `U-org-envelopes` (O4) | the reservation tree in `Begin`, the day-total gate kept first; a seat its unit cannot fund refused by name | O2a | READY |
-| `U-org-wakes` (O3) | heads wake on work and a maximum interval; members only for work; dormant wakes settled; notes reach the author | O2b, after O4 | READY |
+| `U-org-wakes` (O3) | heads wake on work and a maximum interval; members only for work; dormant wakes settled; notes reach the author | O2b, after O4 and `U-quiet-review` | READY |
 | `U-org-seats` | the meter, the conversation and the harness bound read one seat — model, runtime, allowance — so a smaller reservation is an enforced one | O4 | CARD |
 | `U-billing-classes` | the plan-capacity ceiling beside the real-money cap; each seat counted against its class; the Safety page shows both | O4 | CARD |
-| `U-org-assignments` (O5) | typed assignments, deliveries, escalations; decision records with forecasts; forecast RESOLUTION from measurements | O3, O4 | CARD |
-| `U-org-packets` | a fresh session per assignment from an app-built packet; tokens per turn measured | O5 | CARD |
-| `U-org-verbs` (O6) | charter, merge, close, hire, retire, three-dimension child envelopes, throttles; verdicts narrowed to division heads; the unconfined-seat ceiling; the `org` read op | O5 | CARD |
+| `U-org-assignments` (O5) | typed assignments — tasks and explorations, each with its latitude or the exact mark — deliveries naming their deviations, escalations, lateral notes (§ 4); decision records with forecasts; forecast RESOLUTION from measurements | O3, O4 | CARD |
+| `U-org-packets` | a fresh session per assignment from an app-built packet; lateral notes ride the next packet; tokens per turn measured | O5 | CARD |
+| `U-org-verbs` (O6) | charter, merge, close, hire, retire, three-dimension child envelopes, throttles; an executor's helpers as child attempts inside its envelope; verdicts narrowed to division heads; the unconfined-seat ceiling; the `org` read op | O5 | CARD |
 | `U-org-watcher` | layer-1 detectors, the oversight cap beside the organisation's, the owner-only page and code-composed digest | O5 | CARD |
 | `U-org-surface` (O7) | the Org page: chart, seats, assignments, envelopes, spend; the owner's veto and his `operations` controls; one report line per unit | O4, O6 | CARD |
 | `U-org-chief` | the root's head seat, appointed by an owner press; the liaison seat; divisions chartered by the chief | O6, O7 | CARD |
 | `U-org-scorecards` (O8) | scoring against the base rate; scorecards; the rules-then-contribution split; cut-rule review events | O5–O7 | CARD |
-| `U-harness-responses` · `U-harness-anthropic` | GPT-6 tools on the harness (and Sign in with ChatGPT, if admitted); a second vendor for the watcher and audit | `U-key-host-pin` | CARD |
-| `U-contain-seats` | `R-containment`'s chosen route applied to CLI seats: a confined seat cannot read `state/` or the owner's login; confined seats sit outside the unconfined ceiling | `R-containment`'s record | CARD — before M-org1 |
-| `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `U-contain-seats` | CARD — the first before M-org1 |
+| `U-harness-responses` · `U-harness-anthropic` | GPT-6 tools on the harness (and Sign in with ChatGPT, if admitted); a second vendor for the watcher and audit; the harness worker's instructions name only what it has (R20: today's `AGENTS.md` promises it a shell, the internet, `scripts/` and a `next.json` wake it cannot write) | `U-key-host-pin` | CARD |
+| `U-contain-seats` | `R-containment`'s chosen route applied to CLI seats: a confined seat cannot read `state/` or the owner's login; confined seats sit outside the unconfined ceiling; and a confined seat KEEPS its working freedom inside its cell — shell, code, package installs, permitted network, the runtime's own helpers: containment narrows reach, never capability (2026-10-08). First item: the codex CLI running inside the container with its login held outside it (R-containment left both unproven) | `R-containment`'s record | CARD — first after M-org0 (2026-10-08) |
+| `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `U-contain-seats` | CARD — the first right after `U-contain-seats` |
 | `U-org-parallel` (O9) · `U-org-router` · `U-seat-shadow` · `U-org-templates` | concurrent turns; System One in shadow; seats evolving with models; templates | per § 8, § 11 | CARD |
 
 **Waves** — this table is the only copy (R12 § 5 and R18 § 3 conflict matrices; re-check at dispatch; M0 depends on lane A only, factory-plan Law 10,
@@ -394,14 +430,18 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 | W6 | `U-org-envelopes` | `U-features` (CARD) | `U-org-rights` |
 | W7 | `U-org-wakes` | `U-decision-port` | — |
 | **M-org0** | a short observed run of the legacy pair on the new substrate, before anything new is built on it | | |
-| W8 | `U-org-assignments` (next rung) | `U-language-v2a` (CARD) | `U-billing-classes` (CARD; after `U-decision-port`, R18 § 3) |
-| W9 | `U-org-verbs` | `U-org-watcher` | `U-org-packets` |
-| W10 | `U-org-surface` | `U-harness-responses` | `U-org-seats` (CARD; lands before any API-key seat) |
-| W11 | `U-org-chief` | `U-contain-seats` (CARD, from `R-containment`'s record) | — |
-| W12 | `U-execution-environment` (CARD) | a lane-A CARD (`U-universe` or `U-paper-books`) | — |
+| W8 | `U-contain-seats` (CARD, from `R-containment`'s record; on the ATAS box) | a lane-A CARD (`U-universe` or `U-paper-books`) | `U-billing-classes` (CARD; after `U-decision-port`, R18 § 3) |
+| W9 | `U-execution-environment` (CARD; lands first) | `U-org-assignments` (next rung) | — |
+| W10 | `U-org-verbs` | `U-org-watcher` | `U-org-packets` |
+| W11 | `U-org-surface` | `U-harness-responses` | `U-org-seats` (CARD; lands before any API-key seat) |
+| W12 | `U-org-chief` | a lane-A CARD | — |
 | **M-org1** | the observed organisation — its team head and executors on confined seats (the owner's answers, § 16) | | |
 
-**The chief appears at W11** — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
+**Re-sequenced 2026-10-08 (the owner, R20): containment before the governance verbs.** Verbs built first would be advisory on the CLI seats that actually
+run (§ 14), and M-org1 needs both anyway: `U-contain-seats` opens lane B after M-org0 and `U-execution-environment` lands before `U-org-assignments`; the
+waves to M-org1 stay five. (`U-language-v2a`, W8's old lane-A unit, landed `78be3e9d`.)
+
+**The chief appears at W12** — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule:
 - **M-org0 — the substrate is invisible:** the legacy pair runs a short observed session on positions, envelopes and wakes; behaviour, costs and refusals
@@ -409,10 +449,13 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 - **M-org1 — the observed organisation:** the chief, appointed by the owner's press, charters a team inside a division; the team head issues typed
   assignments to two executors on confined seats (the owner's answers, § 16); one is accepted by the app's checks and one rejected
   by a failed check; decision records with forecasts are written and at least one resolves; the watcher's digest is produced on no app path the organisation
-  can reach (unconfined seats could read it); a restart mid-assignment resumes from durable state; costs and interventions are recorded. Claim ceiling: the
-  mechanics on the stated build and plan, with the legacy pair and the chief still unconfined — not profit, not full containment.
+  can reach (unconfined seats could read it); a restart mid-assignment resumes from durable state; costs and interventions are recorded; and the autonomy
+  mechanics hold (2026-10-08): an executor's cell runs a tool it wrote with no admission step, a lateral note reaches another unit's packet, and a finding
+  recorded in one assignment is found by the next fresh session. Claim ceiling: the mechanics on the stated build and plan, with every seat still unconfined
+  named (the legacy pair and the chief, unless `U-contain-seats` confined them) — not profit, not full containment.
 - **M-org2 — the organisation improves:** a worker replaced from position memory; a seat shadowed
-  and decided by its scorecard; a cut-rule review event fired and answered; at least 50 scored forecasts per manager; the flat-versus-headed paired run.
+  and decided by its scorecard; a cut-rule review event fired and answered; at least 50 scored forecasts per manager; the flat-versus-headed paired run;
+  the off-path discovery exam (VISION § 6.4).
 - **M-org3 — the organisation at scale:** at least three divisions and twelve positions, event-driven on an API budget, one System One question out of
   shadow, the effective number of independent teams reported, the watcher's model layer on a second vendor.
 
@@ -426,6 +469,12 @@ local models.
 separate plan-capacity ceiling at the equivalent of $40 a day**, with $5 kept as the real-money cap for API keys (`U-billing-classes`); the watcher — **code
 checks only for now** (layer 1 and a code-composed digest, no model layer, no key); scale — **stay on the plan until M-org1 works**, then decide with its
 measured cost and output.
+
+**Answered 2026-10-08** (an outside autonomy audit the owner shared, verified in R20): "agents shouldn't choose anything" means authority, not thinking —
+agents never choose structure, their mandate, money, risk or verdicts, and inside its mandate and envelope an agent owns its reasoning (R14 § 3's question,
+answered; `docs/PRINCIPLES.md` "Autonomy is the default inside authority"); containment first — after M-org0, `U-contain-seats` then
+`U-execution-environment` before the governance verbs (§ 15), which supersedes the 2026-10-06 "unchanged through M-org1" for the order, not the units;
+SIGNAL-001 stays permanent, restated around its protected property (`docs/VISION.md` §§ 6.3, 9).
 
 **What those answers mean together:** with three unconfined seats, no key and no budget beyond the plan before M-org1, M-org1's team head and executors can
 only run CONFINED — so `R-containment`'s first enforcement unit (`U-contain-seats`: the chosen route applied to CLI seats, so a confined seat cannot read
@@ -447,6 +496,8 @@ manager depth stays at three until a paired run shows a fourth pays; the risk-ce
 ## 17. Open questions (UNKNOWN) and how each closes
 
 - Does a manager layer pay on trading research (R13 U1)? → M-org2's paired run.
+- Does the executor's latitude pay, or leak budget into what executors find interesting (R13 X6: agents that succeed 22% of the time predict 77%)? →
+  every delivery's named deviations with their cost and outcome, recorded from M-org1; the off-path exam (M-org2); a head narrows latitude on the record.
 - The plan's window and weekly caps for the owner's tier → his Settings › Usage and `U-vendor-limit`'s refusal records.
 - What a real research turn costs on a fresh packet rather than a resumed session → `U-org-packets`' measurements.
 - Local decision-model speed and RAM on the owner's laptop → R15 § 5 #6, a probe on the box.

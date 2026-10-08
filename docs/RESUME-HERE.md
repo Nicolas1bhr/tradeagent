@@ -11,7 +11,24 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the newest
-checkpoint below (2026-10-08 15:25) and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+checkpoint below (2026-10-08 15:25), the audit block right after this paragraph, and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+
+**2026-10-08, after the close — an outside autonomy audit, verified and answered; docs only (`docs/research/2026-10-08/R20-autonomy-audit.md`).** Before
+building resumed the owner shared an outside audit ("not canonical nor authoritative, but rather useful"): the organisation design was starting to govern how
+agents THINK, not only what they may spend, touch and decide. Three read-only legs checked it at `30fe7a32`: its facts mostly right, its thesis better
+supported by the repo's own sources than it argued (every contested rule's research supports only a narrower rule; R13 said "method, never the mission";
+R14 § 3's "choose nothing" question had never been answered). **The owner decided:** (1) "agents shouldn't choose anything" means authority, not thinking —
+`docs/PRINCIPLES.md` "Autonomy is the default inside authority", with ORGANISATION, VISION, EDGE § 4.7, `CLAUDE.md` and `manager-prompt.md` amended
+(executors own the path inside their mandate, answer the question they were given or say why not, and name every deviation; claims rest on instruments,
+exploration on a rationale; information moves laterally, authority does not; consults, retries, report sizes and task sizes are defaults; an agent's own
+tools are its own); (2) **containment first** — lane B after M-org0 runs `U-contain-seats` then `U-execution-environment` before the governance verbs
+(ORGANISATION § 15's waves rewritten, still five to M-org1), and a confined seat keeps its shell, code, packages, permitted network and runtime helpers;
+(3) SIGNAL-001 stays permanent, restated around its protected property (VISION §§ 6.3, 9). **Two READY light briefs, both BEFORE M0 attempt 4 (seat P):**
+`U-quiet-review` — the 53 % idle spend of attempt 3 (the checkpoint below assigns it to `U-org-wakes`, which as written KEPT the 30-minute review; it is
+amended to land after this one), plus AGENTS.md's false "an idle turn costs almost nothing"; `U-memory-kept` — a plan or journal refused for size was
+destroyed whole, now kept in `trading/archive/` before the restore. When briefing lane B's CARDs, fold in ORGANISATION §§ 4 and 15 as amended
+(`U-org-assignments`: tasks and explorations, the latitude and the exact mark, lateral notes; `U-contain-seats`: its first item is the codex CLI running
+inside the container with its login held outside — R-containment left both unproven).
 
 **2026-10-02 evening — THE BUILD IS ON.** The owner made the session the orchestrator of the whole build, with top-level manager seats and Opus
 builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allotments and rungs: `fleet/BOARD.md`; each seat's state: `fleet/status/`;

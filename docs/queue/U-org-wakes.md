@@ -1,13 +1,13 @@
 # U-org-wakes — heads wake on work and a maximum interval, members only for work, dormant positions never, and N positions share the serial loop
 **Arrow closed:** "never stopping is a scheduler, not a loop" for an organisation (`docs/COUNCIL.md`; `docs/ORGANISATION.md` §§ 2, 10; R12 § 5 O3; R17 #10;
 R18 § 1.5; the factory plan's `U-worker-events` + `U-worker-scheduler`). **Depends on `U-org-rights`; land after `U-org-envelopes`** (both edit `MissionLoop`,
-other methods). No schema change. **Today (SOURCE at `1275aff`, R12/R18-checked, NOT runtime-verified):** `MissionLoop.Schedule`
+other methods) **and after `U-quiet-review`** (it changes `Schedule`'s review interval; R20, 2026-10-08). No schema change. **Today (SOURCE at `1275aff`, R12/R18-checked, NOT runtime-verified):** `MissionLoop.Schedule`
 (`AgentRuntime/MissionLoop.cs:1853-1888`) writes a review (`:129`, from `MissionReviewMinutes`, `Trading.cs:419`, `AppHost.cs:674`) and renewal wakes, walking
 `CouncilRoles.All` (`:1861`); selection (`:1476-1518`; `MissionEventStore.cs:476-486` `RolesDue` orders by `MIN(due_at), MIN(rowid)`; `DueFor` `:452-464`)
 already serves the oldest due first and steps over turning, unaffordable and vendor-held roles (`MissionLoop.cs:1493, 1497-1502`); `RolesDue` has no status
 filter; verdict and paper notes go to Research only (`Referee.cs:417`; `TradingGateway.cs:426, 1163`); the loop has no `OrgStore`; turns are serial (one
 `LoopAsync`, `:1332, 1391`) and stay so here (parallel turns are `U-org-parallel`).
-**Observable result:** the legacy pair keep their 30-minute review; every other head gets no timer review — it wakes on renewal, deliveries, the notes of item
+**Observable result:** the legacy pair keep their review as `U-quiet-review` left it (every `ReviewEvery`, backing off while only its own ticks wake them); every other head gets no timer review — it wakes on renewal, deliveries, the notes of item
 4, and a maximum interval (default 24 h); members never get a heartbeat and wake only on a delivery addressed to them (until `U-org-assignments`, a
 test-written delivery event); equal `due_at` is served by unit depth, then id; a dormant or ended position's due wakes are settled with a disposition, never
 launched; verdict and paper notes ALSO reach the version's author when it is not one of the legacy pair; legacy routes and behaviour are unchanged.

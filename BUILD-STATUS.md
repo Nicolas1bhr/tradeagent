@@ -9274,3 +9274,28 @@ code tip: all four ✓. Tests box: NOT RUN — "the machine does not answer" (07
 **Limits (in CONTRACTS):** where no history can be asked (ATAS) his word stands alone — a close he answers gone that still works can fill beside the next press's close; a row put back from an EARLIER Close all refuses his next one until answered, like any open press; a row no press waits on is not put back.
 **OWED (seat P, separate; money path / accounting):** `TheOwnersAnswerAsync`, the loss flatten's confirm, still counts his answer as the verdict where a provable final listing contradicts it, the platform's state beside it (`docs/CONTRACTS.md:4485`); his answer is already written when it runs, so it needs its own design (handoff/P.md, queue 2).
 **NOT verified:** ATAS (no box); the card on screen (no app run); a refused put-back write (no test).
+
+## 2026-10-08 — an outside autonomy audit, verified and answered: autonomy is the default inside authority, containment first, SIGNAL-001 restated; two defects briefed; docs only
+
+**What happened.** After the wind-down, before building resumed, the owner shared an outside, read-only audit of `main` at `30fe7a32` ("do not treat it as
+canonical nor authoritative, but rather useful audit"). Its thesis: the organisation design was starting to govern how agents think, not only what they may
+spend, touch and decide. The orchestrator's session checked every factual claim against `30fe7a32` with three read-only legs, re-read the research the
+contested rules cite, and asked the owner the three questions that were the owner's to answer. Record: `docs/research/2026-10-08/R20-autonomy-audit.md`. **The owner
+decided:** "agents shouldn't choose anything" means authority, not thinking (the question R14 § 3 had left open on 2026-10-02); containment before the
+governance verbs; SIGNAL-001 permanent, restated around its protected property. Landed: `docs/PRINCIPLES.md` "Autonomy is the default inside authority" and
+"The organisation"; `docs/ORGANISATION.md` (header, §§ 0–2, 4, 7, 8, 15 — R-containment marked LANDED, the waves rewritten with containment first — 16, 17);
+`docs/VISION.md` (a ninth test, §§ 2, 5.1, 6.1, 6.3–6.6, 7.5, 9, 11, 12, 15); `docs/EDGE-FACTORY.md` §§ 4.7, 9; `CLAUDE.md`; `manager-prompt.md`; the resume
+block; two READY briefs, `docs/queue/U-quiet-review.md` and `docs/queue/U-memory-kept.md`; `docs/queue/U-org-wakes.md` amended to land after the first. NO
+product code, test or build changed; the last gate figure in this file stands.
+
+**SOURCE, read and not run at `30fe7a32` (pointers in R20 § 1):** a refused plan or journal is recorded nowhere and the last accepted revision is written over
+it (`WorkspaceRevisions.cs:102-160`, `CouncilRelay.cs:176-189`); `MissionLoop.Schedule` raises a review per role every `ReviewEvery` whatever woke the last
+turn (`MissionLoop.cs:1968-1974`), and `docs/queue/U-org-wakes.md` as written kept "the legacy pair['s] 30-minute review"; the harness worker's instructions are
+AGENTS.md, which promise it a shell, the internet, `scripts/` and `next.json` (`ApiConversation.cs:469-476`, `GrantedWorkerTools.cs:49-54`, `:74`); AGENTS.md
+says an idle turn "costs your owner almost nothing" (`WorkspaceBuilder.cs:247-248`) against this file's 2.0337 USD for 16 idle review turns (`:8816-8817`).
+**RUN, 2026-10-08:** `git fetch` → `HEAD` = `origin/main` = `30fe7a32`, `git rev-list --count HEAD..origin/main` → 0; `git status --short` before this
+section → eight modified docs and three new files, no `src/`, `tests/` or `tools/` path.
+
+**NOT VERIFIED:** everything the amended documents describe is DESIGN; the latitude's value (ORGANISATION § 17) is unmeasured; whether the codex CLI can run
+confined with its login outside the cell is `U-contain-seats`' first item, unproven (R-containment); R13's rows are its own paraphrases of primary sources,
+not re-read here. The two briefs' pointers were surveyed read-only at `30fe7a32`, not exercised.

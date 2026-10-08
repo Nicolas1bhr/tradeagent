@@ -248,10 +248,12 @@ Each plane extends a working primitive (R01 §B); none replaces the kernel.
   design for the agent substrate. Brief now only `R-containment` (the Windows spike, a light leg with no file overlap) and
   `U-worker-identity`; re-plan the rest after M0, the runtime profiles, the containment record and worker identity (its § 25.5).
 - **The organisation is `docs/ORGANISATION.md`** (the owner's direction of 2026-10-02, superseding "models own the organisation"):
-  one chief, divisions per information source or capability, a team per strategy family with a deciding head, executors who choose
-  how and never what, an audit line, and an invisible watcher reporting to the owner; the chart, orders and decision records are app
+  one chief, divisions per information source or capability, a team per strategy family with a deciding head, executors who own
+  the path inside their mandate and never the mandate (the owner's reading, 2026-10-08: `docs/PRINCIPLES.md` "Autonomy is the
+  default inside authority"), an audit line, and an invisible watcher reporting to the owner; the chart, orders and decision records are app
   data. Code sets envelopes from measured cost and contribution; yield-based budgets still wait for ≥ 90 days of forward record (R10 #10).
-- **Admission ladder** for agent-built adapters, features and tools: scratch → registered → conformance-tested (point-in-time
+- **Admission ladder** for agent-built adapters, features and tools that are shared or feed evidence: scratch (the agent's own, free
+  inside its cell — `docs/VISION.md` § 6.6) → registered → conformance-tested (point-in-time
   vectors; a seeded look-ahead adapter must fail) → evidence-eligible → quarantined on a health signal. Maturity is never
   authority (R05 row 2).
 
@@ -375,7 +377,7 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 | `U-timeframe-b` READY | the runner steps rules on declared bars while protection still acts within the minute | `U-timeframe-a`, `U-runner-forward` |
 | `U-venue-verify` READY | instruments verified by the app against the venue's own definition; no file to edit (the next free rung at landing, expected 29) | `U-cost-model`, `U-tape-store` |
 | `U-paper-friction` READY | paper fills and undeclared research friction default to the venue cost model; the friction in force named | `U-cost-model` |
-| `R-containment` READY | the Windows containment spike (factory plan § 9.3), probe only, on the box; its record decides `U-contain-seats` | — |
+| `R-containment` LANDED `69589886` | the Windows containment spike (factory plan § 9.3), probe only, on the box; its record decides `U-contain-seats` (C2 AppContainer, Topology A; `docs/ORGANISATION.md` § 15 places it first after M-org0, 2026-10-08) | — |
 | **M0** observed loop, attempt 3 | `docs/briefs/U-observed-loop.md`, on the owner's allowance | all of phase 0 (`U-org-ledger` may have landed; it is inert) |
 
 **Phase 1 — start recording**

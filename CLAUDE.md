@@ -18,8 +18,11 @@ floor, with the protections each one touches and how they are kept. Ready briefs
 dated and sourced, is in `docs/research/2026-10-02/`.
 
 **`docs/ORGANISATION.md` is the agent organisation** (2026-10-02, the owner's hierarchical direction: one chief, top-level managers heading
-divisions, team heads who decide, executors who choose how and never what, an audit line, and an invisible watcher that reports only to him). It sets
-how the product's agents are organised, decide, work and improve, and the second build lane; a manager's authority is over work, and it outranks no protection.
+divisions, team heads who decide, executors who own the path inside their mandate and never the mandate, an audit line, and an invisible watcher that reports
+only to him). It sets how the product's agents are organised, decide, work and improve, and the second build lane; a manager's authority is over work, and it
+outranks no protection. **Since 2026-10-08 `docs/PRINCIPLES.md` says autonomy is the default inside authority:** hierarchy and code govern structure,
+mandates, money, evidence and authority — never how an agent reasons inside its mandate (the owner's decisions on an outside audit,
+`docs/research/2026-10-08/R20-autonomy-audit.md`). A new rule over an agent's reversible reasoning or exploration needs a demonstrated failure first.
 
 **`docs/VISION.md` is the end state the organisation grows toward** (2026-10-06, the owner's synthesis): unbounded in what TradeAgent can represent,
 deliberately bounded in what it activates — every active seat, department and management layer exists because current work requires it or a bounded

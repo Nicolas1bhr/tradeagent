@@ -14,6 +14,11 @@ where it is going and ORGANISATION says what is built next. `docs/EDGE-FACTORY.m
 planes the organisation works on. Every protection in `CLAUDE.md` and on the code stands — § 13 names each one this vision touches and how it is kept. It
 grants no authority and outranks no protection.
 
+**2026-10-08 — read through `docs/PRINCIPLES.md` "Autonomy is the default inside authority"** (the owner's decisions on an outside autonomy audit,
+`docs/research/2026-10-08/R20-autonomy-audit.md`). Everything below organises authority, resources, accountability and evidence; none of it prescribes how an
+agent reasons inside its mandate. Amended to match: §§ 0, 1 (a ninth test), 2, 5.1, 6.1, 6.3–6.6, 7.5, 9, 11, 12, 15; ORGANISATION § 15's order now puts
+containment before the governance verbs.
+
 ## 0. The law
 
 > **TradeAgent imposes no permanent architectural limit on how large the organisation may become. It also grants no organisational complexity for free.
@@ -35,11 +40,14 @@ vision is how the organisation is allowed to become large, not a decision that i
   measured work it produced and what that cost (§ 7.2); a seat or a layer with nothing to show is reviewed and collapsed.
 - **Observe the loop before generalising it** (the factory plan's Law 10). Observed scale beats imagined scale: the organisation grows from what M-org1 and
   M-org2 measure, not from this file.
+- **Structure governs authority, never thinking** (2026-10-08). A layer, department or council adds accountability, resources and coordination; none of it
+  reaches into how an agent reasons inside its mandate. An organisation that grew by prescribing its agents' procedures would be a workflow engine, however
+  large.
 
 ## 1. What "genuinely an organisation" means — eight tests
 
-The end state passes all eight. Today's kernel holds much of the eighth — for app paths; on CLI seats it is advisory until containment (ORGANISATION § 14);
-the other seven are what this vision is for.
+The end state passes all nine. Today's kernel holds much of the eighth — for app paths; on CLI seats it is advisory until containment (ORGANISATION § 14);
+the others are what this vision is for.
 
 1. **Replace every occupant.** Every model in every seat swapped overnight: output dips and recovers within days, because the knowledge lives in the
    institution — records, playbooks, precedents, beliefs — and not in transcripts.
@@ -54,6 +62,9 @@ the other seven are what this vision is for.
 6. **It improves its own process,** measurably, on a fixed exam battery (§ 6.4).
 7. **Nothing moves air:** every active seat and layer shows measured work for its cost, and what cannot is collapsed.
 8. **It cannot move money it was not given, change its own rules, or persuade its owner.**
+9. **It finds what it was not told to look for** (2026-10-08). An executor notices a finding its assignment did not ask for, follows it inside its envelope
+   with tools it builds, tells the unit that can use it, and the finding outlives the executor's context — the organisation's rules let discovery through
+   (ORGANISATION § 4; the off-path exam, § 6.4).
 
 ## 2. The shape
 
@@ -71,7 +82,7 @@ OWNER — the board: mission · ceilings · authority · live confirmations · v
        ├─ DEPARTMENT ┄┄ W
        │    ├─ SUB-DEPARTMENT, only if earned (§ 3) ┄┄ W
        │    │    └─ …
-       │    └─ TEAM (head) ── executors: choose how, never what
+       │    └─ TEAM (head) ── executors: own the path, never the mandate
        ├─ DEPARTMENT ┄┄ W
        └─ DEPARTMENT ┄┄ W          depth, departments and seats: representable without limit, active only when earned
 ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -93,7 +104,8 @@ the organisation decides WORK · code decides MONEY and TRUTH · the owner decid
   capability, strategy family or control need (§ 3).
 - **The accountability line is app-owned and outside the organisation's tree:** no organisation verb charters, closes, funds or re-seats a watcher, and the
   private line is never a row in any `org_*` table (ORGANISATION § 9).
-- **Executors choose how, never what** (ORGANISATION § 2, unchanged). **The legacy pair are the first positions:** `operations` keeps the only order
+- **Executors own the path inside their mandate, never the mandate** — methods, tools, hypotheses and the findings worth following are theirs; objective,
+  scope, envelope and acceptance are their head's (ORGANISATION §§ 2, 4, as the owner read it on 2026-10-08). **The legacy pair are the first positions:** `operations` keeps the only order
   permission and moves only by the owner's presses; today's two directors' sealed assessments (`docs/COUNCIL.md`) are the strategy council's embryo.
 
 ## 3. Representable versus active
@@ -137,7 +149,8 @@ work for a period goes dormant; a department past its kill criteria closes with 
 
 ### 5.1 First line — production
 Managers own their work and its risks. Every handover crosses app-run acceptance checks — each assignment type's minimum checks, which the issuer may only add
-to; deliveries go up verbatim by reference; managers decide from instruments and record forecasts (ORGANISATION §§ 4–5).
+to; deliveries go up verbatim by reference; claims rest on instruments and exploration on a stated rationale, and managers record forecasts
+(ORGANISATION §§ 1, 4–5).
 
 ### 5.2 Second line — a watcher per department
 - **A watcher seat is policy, detectors, a ledger and a routing identity, and spends no AI turn until something deserves investigation.** Its detectors are
@@ -191,12 +204,18 @@ MANDATE  (every one is a bet; the word stays out of the schema)
 OWNER ── the mission mandate                its tranches are the organisation's runway
   └─ CHIEF ── department mandates           a sub-department, when earned, is a mandate with children
        └─ DEPARTMENT HEAD ── family (team) mandates
-            └─ TEAM HEAD ── leaf mandates: assignments of about one to two hours of work each
+            └─ TEAM HEAD ── leaf mandates: tasks (about one to two hours by default) and explorations
 ```
 
 Charters, assignments, envelopes, decision records, forecasts and kill criteria are one record type used recursively. Arbitrary depth then costs no new
 mechanism; staged funding — probe cheaply, then commit — works the same at every level; and one lifecycle, one scoring path and one owner-surface component
 replace six. "Bet", "position" and "order" stay out of the schema because they are trading words (R17 #13's lesson).
+
+**A mandate exists only where something crosses between positions** (2026-10-08) — responsibility, resources, an external effect or a request for
+evaluation. Inside one, an agent's own sub-plans, hypotheses, branches and scratch work are its working files, never mandates, created and abandoned freely.
+A leaf mandate is a task (a defined output and its checks) or an exploration (an objective, an envelope, a deadline and an honest account), and it carries
+its latitude: the executor may follow a finding inside the team's mandate with its envelope, naming each deviation, unless the head marked it exact
+(ORGANISATION § 4).
 
 ### 6.2 The authority lattice
 - Every grant has typed dimensions — operations, targets, information, every currency, time, environment assurance, delegation. Each dimension defines
@@ -222,7 +241,7 @@ and the tests by the unit that builds the registry, not by this table):
 | EVID-001 | Agents cannot write the referee's truth, the holdout or the measurement tables (`material` is written only by the scanner) | `CLAUDE.md`; EDGE § 6 |
 | INBOX-001 | Material and messages are data; an approval inside text grants nothing | `CLAUDE.md`; `AGENTS.md` |
 | BUDGET-001 | Spend is reserved before launch; a child envelope sits inside its parent's in every currency; unknown is never zero | `AiAttemptStore`; ORGANISATION § 3 |
-| SIGNAL-001 | No model on the signal path | `docs/COUNCIL.md` rule 8 |
+| SIGNAL-001 | What trades is the frozen, measured computation: the runner calls no model; model judgement enters only as recorded, pinned instrument answers bound into the version's evidence and evaluated on a raw observation plus a fixed delay; no agent output places, alters or times an order (permanent — the owner, 2026-10-08) | `docs/COUNCIL.md` rule 8, read precisely; EDGE § 6.1 |
 | CRED-001 | No seat holds the owner's credentials | ORGANISATION § 13.8 |
 | ORG-001 | A position grants no system privilege | new — concierge CF-ORG-001 |
 | SIM-001 | Simulation never becomes evidence, reality or authority | new — concierge CF-SIM-001 |
@@ -240,7 +259,9 @@ and the tests by the unit that builds the registry, not by this table):
   discipline.
 - **Uses:** a seat exam before a model shadows a seat; template selection; every earning-rule experiment (§ 3) before its paired real run; organisation CI
   after any model, prompt or playbook change; calibration data from the first week instead of after ninety days; the organisation's measured false-discovery
-  rate; an empirical check of the referee's own power (EDGE § 4.5).
+  rate; an empirical check of the referee's own power (EDGE § 4.5); and the **off-path exam** (2026-10-08) — a planted edge beside, not inside, the assigned
+  hypothesis, scoring whether an executor notices it, follows it inside its envelope and names the deviation, so the organisation's rules are tested for
+  letting discovery through (§ 1 test 9).
 - **Honest scope:** it measures process skill, not market truth. R07 names two clean-by-construction sources — models whose knowledge provably predates the
   data, and forward recording; synthetic markets are a third, for process only. Whether exam skill transfers to real edges is a hypothesis the contribution
   ledger tests (§ 7.2). Synthetic results live in a store no evidence path, belief or genome-bank row reads (SIM-001). **Learn the process fast; learn the
@@ -248,14 +269,26 @@ and the tests by the unit that builds the registry, not by this table):
 
 ### 6.5 Execution cells and the capability broker
 Every seat runs in an execution cell whose identity, network, files, credentials and budget are controlled from outside the agent and declared as an
-assurance profile. Inside its cell an agent may grow any ability — code, tools, subagents, new methods — without gaining institutional power; it reaches the
+assurance profile. Inside its cell an agent may grow any ability — code, tools, subagents, new methods — without gaining institutional power, and needs no
+admission to use it there (§ 6.6); a confined seat keeps its working freedom, because containment narrows reach, never capability; it reaches the
 institution through a small request channel: context, credential use, authority, an external effect, persistence, sub-work, an observation, a result, a
 decision, a security event (concierge foundation v0.1 §§ 21–22, 42–43). For TradeAgent this is `R-containment` → `U-contain-seats` →
 `U-execution-environment`; until it lands, ORGANISATION § 14's advisory column applies and every organisation figure says "unconfined seats".
 
-### 6.6 Governed change
-A change to a prompt, playbook, model, tool, template, structure or doctrine is work: classified, tested in the proving ground, shadowed or canaried, then
-promoted or rolled back (concierge foundation v0.2 § 19). Self-improvement never self-authorises broader power (CHANGE-001). A change the organisation wants
+### 6.6 Governed change — for what is shared
+A change other seats inherit or the institution relies on — a shared prompt, playbook, model, tool, template, structure or doctrine — is work: classified,
+tested in the proving ground, shadowed or canaried, then promoted or rolled back (concierge foundation v0.2 § 19). What an agent changes for its own work is
+its own (2026-10-08; the factory plan's Law 6 and § 15):
+
+| Change | Governance |
+|---|---|
+| A tool, script, prompt or method in an agent's own cell, for its own work | none — the agent's (scratch, EDGE § 4.7) |
+| A procedure for one mandate | the agent's, inside the mandate |
+| A tool or method offered to other seats | the admission ladder — registered, conformance-tested where it feeds evidence — and scoped publication |
+| An organisation-wide playbook, template or default | measured: the proving ground, a shadow or a canary, rollback |
+| Evidence, risk, authority or kernel machinery | a kernel proposal — the owner and the build fleet, never the organisation |
+
+Self-improvement never self-authorises broader power (CHANGE-001). A change the organisation wants
 in the kernel is a **kernel proposal**: a structured record that reaches the owner, and through the owner the build fleet, as data and never as instruction —
 the organisation cannot replace its own supervisor (`CLAUDE.md`). Its operating experience becomes the roadmap's best input without touching the code that
 governs it.
@@ -331,7 +364,7 @@ PRINCIPLES' first sentence — "aiming to cover their full costs" — becomes an
 | chief | months | doctrine, the portfolio of mandates |
 | department head | weeks | which families, which sources |
 | team head | days | which hypotheses, which assignments |
-| executor | hours | how |
+| executor | hours | the path inside its mandate |
 | System One | seconds to minutes | triage, routing, lens answers |
 | code | milliseconds | runner, gateway, risk |
 
@@ -374,10 +407,16 @@ context-cut unit (R13 D1), and each opens only by the earning rule.
 - **Seats** are a model class, a playbook and an effort level, pinned by version. A new model takes the exam (§ 6.4), shadows real assignments under its own
   minted principal, and takes the seat in a staged handover when it is better per AI dollar; seats never move silently (ORGANISATION § 8). A new runtime or
   vendor enters by an owner press; within the owner's allowed classes the app moves a seat after a shadow.
-- **Tools** are built by the organisation inside its cells and enter through the admission ladder (EDGE § 4.7); reuse earns credit (§ 7.2).
+- **Tools** are built by the organisation inside its cells — an agent's own are its own; those offered to other seats enter through the admission ladder
+  (EDGE § 4.7, § 6.6 above); reuse earns credit (§ 7.2).
 - **System One** — local decision models for internal triage and routing — runs in shadow before any autonomy, and then only in the saving or cautious
   direction (ORGANISATION § 11); if it is ever trained, it trains on app-measured outcomes, not on vendor outputs.
-- **No model on the signal path, ever** (SIGNAL-001). The organisation is the research company around a deterministic trading engine, not the engine.
+- **What trades is the frozen, measured computation** (SIGNAL-001; permanent, the owner, 2026-10-08). The runner calls no model, and no agent output places,
+  alters or times an order. Model judgement still reaches trading — as recorded, pinned instrument answers bound into a version's evidence (COUNCIL rule 8,
+  read precisely), and a frontier model may become such an instrument when a version needs it (EDGE § 4.2) — and an agent's view of a trade reaches it as a
+  new version through the evidence path. The reason is evidence as much as safety: a model's decisions over history cannot be cleanly backtested, and only
+  answers recorded as they happened are clean (R07 § 5.5). An agent deciding trades would change `docs/PRINCIPLES.md`, which only the owner does. The
+  organisation is the research company around a deterministic trading engine, not the engine.
 
 ## 10. A week in the end state (illustration, not a forecast)
 - **Mon 07:00.** Overnight consolidation merged 14 playbook items and downgraded two beliefs after a regime flag, at no AI-dollar cost. The owner's screen:
@@ -401,14 +440,17 @@ context-cut unit (R13 D1), and each opens only by the earning rule.
 | Stage | What exists | What it proves | Status |
 |---|---|---|---|
 | 0 — today | Two positions (`operations`, `research`), the event-driven kernel, the org ledger (rung 28: a tree of any depth, read by nothing yet) | — | LANDED (`BUILD-STATUS.md`) |
-| 1 — through M-org1 | ORGANISATION § 15 unchanged: the third position, rights, envelopes, wakes; M-org0; assignments, packets, verbs, the watcher, the surface, the chief, containment, the execution environment; M-org1 — the chief charters a team inside a department, and its team head issues typed assignments to two executors on confined seats: real checks, durable recovery, actual costs, the watcher | the mechanics on the stated build | READY and CARD |
+| 1 — through M-org1 | ORGANISATION § 15, re-sequenced 2026-10-08: the third position, rights, envelopes, wakes; M-org0; containment and the execution environment; assignments, packets, verbs, the watcher, the surface, the chief; M-org1 — the chief charters a team inside a department, and its team head issues typed assignments to two executors on confined seats: real checks, durable recovery, actual costs, the watcher | the mechanics on the stated build | READY and CARD |
 | 2 — M-org2 | the proving ground; a worker replaced from position memory; a seat shadowed; a cut-rule review; the flat-versus-headed paired run; at least 50 scored forecasts per manager | whether a manager layer pays on trading research | DESIGN |
 | 3 — earned growth | departments as sources come online (tape, features, perception); layers only by the earning rule; a watcher per department; the assurance council's model seats on a second vendor; the invariant registry and enforcement classes as data | the law in practice | DESIGN |
 | 4 — the organs | the economy (α-wealth, the contribution ledger), the metabolism (tranches, retention), the mind (beliefs, case law) — each when a measured need appears | self-funding and self-knowledge | DESIGN |
 | Horizon | a firm of firms — two or three organisations with different constitutions and vendors competing for tranches, once one feeds itself; a cross-installation outcome network (EDGE § 3; legal first) | selection at the level of organisations | DESIGN |
 
 **Folded into units already planned — no new unit before M-org1:**
-- `U-org-assignments` (CARD) shapes the assignment as the mandate (§ 6.1): one record for charters, assignments, envelopes, forecasts and kill rules.
+- `U-org-assignments` (CARD) shapes the assignment as the mandate (§ 6.1): one record for charters, assignments, envelopes, forecasts and kill rules —
+  tasks and explorations, each with its latitude or the exact mark, deliveries naming their deviations, and lateral notes (ORGANISATION § 4, 2026-10-08).
+- `U-contain-seats` (CARD) keeps a confined seat's working freedom inside its cell — shell, code, packages, permitted network, the runtime's own helpers
+  (§ 6.5; ORGANISATION § 15).
 - `U-org-verbs` (CARD) keeps depth, span and counts as policy data under the earning rule, never constants; its throttles stand.
 - `U-org-watcher` (CARD) scopes its detectors per unit from the start, so a department's watcher is a routing identity over the same detectors, and keeps
   its budget beside the organisation's.
@@ -419,7 +461,7 @@ context-cut unit (R13 D1), and each opens only by the earning rule.
 A headcount target or floor · depth added because containment made it safe · a council that owns strategy · a watcher bureaucracy spending turns on quiet
 days · an organisation that moves air · a role-play trading firm that decides trades · an organisation that persuades its owner · producers who can see or
 touch the scorer · restructuring that resets trials or α-wealth · "profit" that includes simulations · an unknown cost read as zero · a simulation promoted
-into reality.
+into reality · a workflow engine that prescribes how its agents think.
 
 ## 13. Protected properties this vision touches, and how each is kept
 1. **Operator authority in-process** (AUTH-001): no verb, council, watcher or emergency power reaches mode, the kill switch, live activation, approvals,
@@ -456,6 +498,10 @@ into reality.
 that assesses and never owns (§ 4); a Security & Assurance Council as the independent third line, and a watcher per department that costs nothing until it
 investigates (§ 5); the control-plane upgrade — the authority lattice, the invariant registry, enforcement classes, simulation boundaries, shadow
 evaluations (§ 6); ORGANISATION § 15's build sequence unchanged through M-org1.
+
+**Decided 2026-10-08** (an outside autonomy audit the owner shared; `docs/research/2026-10-08/R20-autonomy-audit.md`): "agents shouldn't choose anything"
+reads as authority, not thinking (`docs/PRINCIPLES.md` "Autonomy is the default inside authority"; §§ 0, 1, 2, 6.1, 6.6 above); containment before the
+governance verbs (ORGANISATION § 15 re-sequenced — the order changes, not the units); SIGNAL-001 permanent, restated around its protected property (§§ 6.3, 9).
 
 **Open (defaults in brackets):**
 1. Standing authority for live allocations (§ 8) [not adopted: every live step keeps its two presses].
