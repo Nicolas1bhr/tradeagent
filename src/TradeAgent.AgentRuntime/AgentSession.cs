@@ -565,6 +565,20 @@ public sealed class AgentSession(
             // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
             try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
 
+            // THE LEADER'S EXIT IS THE TURN'S END, AND ITS TREE ENDS WITH IT, AT ONCE (U-agent-tree). A
+            // process the turn left behind that still holds the turn's stdout or stderr used to hold the
+            // turn itself open — the reads below wait for the last writer — so the teardown in the finally
+            // was never reached and the leftover lived as long as it liked: measured on windows-latest, a
+            // finished turn whose leftover held stderr never committed. What the leader wrote stays in the
+            // pipes and is still read; only the processes it left are ended. On macOS and Linux the
+            // resident launcher has already swept its session by the time it exits; this is the same end.
+            _ = process.WaitForExitAsync(CancellationToken.None).ContinueWith(exited =>
+            {
+                _ = exited.Exception;
+                try { contained.End(); }
+                catch (Exception) { /* the finally's teardown runs regardless and says what it could not end */ }
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
             var stderr = process.StandardError.ReadToEndAsync(ct);
             // A read the turn abandons — cancelled, or a pipe the teardown closed — is observed here, so
             // an ending nobody waits for never reaches the app's last-resort error line.
