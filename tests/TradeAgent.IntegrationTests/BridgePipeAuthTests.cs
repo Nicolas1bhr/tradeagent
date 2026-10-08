@@ -594,7 +594,8 @@ public class BridgePipeAuthTests(ITestOutputHelper output)
     /// nothing: red with the reader sharing read only (run 37675671465) and still red with it sharing read,
     /// write and delete (run 37675951756), both "UnauthorizedAccessException: Access to the path is denied" —
     /// <c>MoveFileExW</c> refuses a replace under any open handle. The second half is the POSIX rename
-    /// (<c>BridgePipeAuth.Publish</c>). <c>rename(2)</c> ignores open handles, so on macOS and Linux this is
+    /// (<c>OwnerOnlyFile.Publish</c>, since <c>U-credential-replace</c> the one every credential the app writes
+    /// takes). <c>rename(2)</c> ignores open handles, so on macOS and Linux this is
     /// green whatever the reader does; the claim is Windows'.</para>
     /// </summary>
     [Fact]
