@@ -2427,6 +2427,24 @@ move: no v1 text means anything new, no v1 canonical form has such a line, and e
 (`FeatureProgramGrammarTests` (a) runs the golden vectors' own check). The two visitors that used to fail OPEN — the
 canonical form writing `?` for a node it did not know, the warm-up answering 1 — throw instead, and `Parse` refuses.
 
+**`max_capital_fraction` — a cap on a risk-sized entry** (`U-size-cap`). `size risk_fraction <f> max_capital_fraction <c>`,
+each a NUMBER or a declared number constant, sets `Sizing.MaxCapitalFraction`, and `StrategyEvaluator.Quantity` answers
+`min(equity * f / (reference - stop), capital * c / reference)` — the second term exactly what `capital_fraction` reads,
+so the backtest (capital: the cash its books have left) and the paper runner (capital: the allocation's own ceiling)
+agree. *Why:* with `stop atr` or `stop fixed` a risk size is `f * close / distance` of equity, without bound as the stop
+nears the price, so no `f` and no declared capital kept a tight-stop entry fundable — the backtest dropped it ("the
+declared capital cannot pay") and the gateway refused it whole (ALLOCATION_EXCEEDED). The clause is read only as the size
+line's third word and is NOT a reserved name, so a stored `const max_capital_fraction = 1` keeps parsing; on `fixed` or
+`capital_fraction`, at or below 0, above `StrategyLimits.MaxSizingFraction` or followed by anything it is refused on the
+size line. **Identity.** The canonical size form gains `max_capital_fraction:<c>` ONLY when declared —
+`size risk_fraction:0.01 max_capital_fraction:0.95` — so no existing canonical form, id or result moves, and
+`StrategyVersions.Manifest`, `LanguageVersion` and `Referee.EvaluatorVersion` do not move; the trace gains no column — its
+Signal line carries the capped quantity. It is a declaration kind of its own (`StrategyDeclarations.MaxCapitalFraction`,
+the one kind that is a clause of another line), required when declared and implemented by both readers, which both size
+through the evaluator. Every gate downstream is untouched — rounding stays DOWN, and the cash check, the per-order value
+and the allocation's ceilings still refuse an entry whole and make none smaller — because a cap only ever makes a size
+smaller.
+
 **Every declaration a program uses is REQUIRED** (`U-language-v2a`; R05 row 10). `StrategyProgram.Requires` lists the
 declaration kinds the TYPED program uses, in `StrategyDeclarations.All`'s order — the instrument, the size and an entry
 always, the rest where the program states something other than the default, so two spellings of one program require

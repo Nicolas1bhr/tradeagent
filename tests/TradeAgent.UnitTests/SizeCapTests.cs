@@ -321,6 +321,82 @@ public class SizeCapTests(ITestOutputHelper log)
         Assert.Equal(15L, fills[1].Ordinal);
     }
 
+    // ---------------------------------------------------------------- item 3: the words
+
+    /// <summary>
+    /// THE ROLE THAT WRITES PROGRAMS IS TOLD, where it reads: the backtest's <c>capital</c> argument in the schema says more
+    /// capital does not fund a risk-sized entry and names the clause, and the reference copied into its folder has the
+    /// clause in its grammar, the arithmetic, and that a limit downstream refuses an entry whole.
+    /// </summary>
+    [Fact]
+    public void The_role_is_told_more_capital_does_not_fund_a_risk_size_and_how_to_cap_it()
+    {
+        var backtest = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Backtest);
+        var capital = Assert.Single(backtest.Args, a => a.Name == "capital").Description;
+        log.WriteLine(capital);
+        Assert.Contains("More capital does not fund a 'size risk_fraction' entry", capital, StringComparison.Ordinal);
+        Assert.Contains("'size risk_fraction 0.01 max_capital_fraction 0.95'", capital, StringComparison.Ordinal);
+
+        var reference = File.ReadAllText(Path.Combine(DayOnePrograms.RepoRoot(), "docs", "STRATEGY-LANGUAGE.md"))
+            .ReplaceLineEndings("\n");
+        Assert.Contains("| \"size\" \"risk_fraction\" value (\"max_capital_fraction\" value)?", reference, StringComparison.Ordinal);
+        Assert.Contains("**A risk size can ask for more than everything, and `max_capital_fraction` caps it.**", reference,
+            StringComparison.Ordinal);
+        Assert.Contains("REFUSES an entry WHOLE: nothing downstream makes an order smaller to fit", reference,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("the gateway's limits happen downstream", reference, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A CAP APPLIES AT THE SIGNAL'S CLOSE, SO FEES, SLIPPAGE AND THE NEXT OPEN COME ON TOP — the reference's arithmetic,
+    /// run. Under the venue cost model's fee (0.1 %) and slippage (<see cref="VenueCostModel.SlippageRate"/>), a stop half a
+    /// unit under a close of 100 asks for 200 units, twice the 10,000 of capital, so the cap decides the size:
+    /// <c>max_capital_fraction 1</c> is 100 units, which cost 10,012 at an open equal to the close — the declared capital
+    /// cannot pay — and fill only at an open about 0.12 % below it; <c>0.95</c> is 95 units, which fill at an open equal to
+    /// the close and at one 5 % above it.
+    /// </summary>
+    [Theory]
+    [InlineData("1", "100", false)]
+    [InlineData("1", "99.88", true)]
+    [InlineData("0.95", "100", true)]
+    [InlineData("0.95", "105", true)]
+    public void A_cap_applies_at_the_close_so_costs_and_the_next_open_come_on_top(string cap, string open, bool fills)
+    {
+        var c = decimal.Parse(cap, System.Globalization.CultureInfo.InvariantCulture);
+        var o = decimal.Parse(open, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(0.0002m, VenueCostModel.SlippageRate);
+
+        var program = Parsed($"""
+            instrument BTCUSDT
+            size risk_fraction 0.01 max_capital_fraction {cap}
+            stop fixed 99.5
+            exit when close < 1
+            entry when close > 99.95
+            """);
+        var bars = Rows([100m, 100.05m, 99.95m, 100m], [o, o + 0.05m, o - 0.05m, o]);
+        var model = ExecutionModel.Declare(0.001m, VenueCostModel.SlippageRate, 0.001m, 10_000m).Model!;
+
+        var run = Backtest.Run(program, new BacktestRequest(7, "sha-of-the-normalised-file", model), bars);
+        log.WriteLine(run.Trace.Text);
+
+        var signal = run.Trace.Of(BacktestEventKind.Signal).First();
+        Assert.Equal(10_000m * c / 100m, signal.Quantity);
+        Assert.True(10_000m * 0.01m / 0.5m > signal.Quantity, "the cap did not decide this size");
+
+        if (fills)
+        {
+            var fill = Assert.Single(run.Trace.Of(BacktestEventKind.Fill));
+            Assert.Equal(model.RoundDown(10_000m * c / 100m), fill.Quantity);
+            Assert.Equal(model.Buy(o), fill.Price);
+        }
+        else
+        {
+            Assert.Empty(run.Trace.Of(BacktestEventKind.Fill));
+            Assert.Contains("the declared capital cannot pay for this fill",
+                run.Trace.Of(BacktestEventKind.NoTrade).First().Reason, StringComparison.Ordinal);
+        }
+    }
+
     /// <summary>
     /// GUARD — A STORED PROGRAM WITH A CONSTANT NAMED <c>max_capital_fraction</c> STILL PARSES, TO THE TEXT IT ALWAYS HAD. The
     /// language had no such word before this unit, so a stored program may use it as a name; the clause is read only as the
