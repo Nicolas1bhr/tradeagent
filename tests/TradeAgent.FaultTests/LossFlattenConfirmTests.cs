@@ -601,12 +601,18 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// ONE CONFIRM PER BREACH: A LOST ANSWER TO THE CLOSING AGAIN STAYS FOR THE OWNER (item 2).
+    /// A LOST ANSWER TO THE CLOSING AGAIN THAT NOTHING CAN ANSWER STAYS FOR THE OWNER (item 2; its claim moved by
+    /// <c>U-valuation-close-confirm</c>).
     ///
     /// <para>The first close was refused and the confirm closes again; that second close is taken by
-    /// the platform and ITS answer is lost too. A second confirm would be the app settling its own
-    /// closes in a loop — so there is none: the second close's row stays UNKNOWN and flagged, order
-    /// flow stays paused, the dashboard says unresolved, and pass after pass nothing more is sent.</para>
+    /// the platform and ITS answer is lost too. This test used to assert that it then stayed flagged
+    /// whatever the platform could say — one confirm per breach — and that was the defect: the closing
+    /// again is a close generation of its own, and its own confirm now decides it from the platform's
+    /// history exactly as the first's (<c>CloseGenerationConfirmTests</c> (e)). What stays true, and is
+    /// asserted here, is the case where nothing can answer it: the platform cannot show its history and
+    /// the owner has not answered. Then no confirm is written for it, the second close's row stays UNKNOWN
+    /// and flagged, order flow stays paused, the dashboard says unresolved, and pass after pass nothing
+    /// more is sent.</para>
     /// </summary>
     [Fact]
     public async Task A_lost_answer_to_the_closing_again_stays_for_the_owner()
@@ -620,9 +626,15 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         conn.Faults.RejectNext = 1;
         var lost = await BreachWithALostClose(gw, conn, clock);
 
-        // THE CLOSING AGAIN'S ANSWER IS LOST TOO.
+        // THE CLOSING AGAIN'S ANSWER IS LOST TOO — and from then on the platform cannot show its history.
         conn.Faults.DropAfterBrokerAccept = 1;
-        await Passes(gw, clock, 4);
+        await Passes(gw, clock, 1);
+        Assert.Equal(2, conn.Closes);
+        conn.Faults.HideOrderHistory = true;
+        Assert.False(conn.Capabilities.ReconciliationProvable);
+
+        // PAST THE GRACE BY MINUTES, AND THE OWNER HAS NOT ANSWERED.
+        await Passes(gw, clock, 9);
 
         var again = AppCloses(conn).Last();
         var row = gw.Requests.GetByClientOrderId(again.ClientOrderId!)!;
@@ -637,6 +649,7 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         Assert.True(row.NeedsReconciliation);
         Assert.True(gw.HasUnconfirmedWork());
         Assert.Equal(1, Confirms(db));
+        Assert.Empty(db.KvStartingWith("loss_flatten_again_confirm:"));
         Assert.Equal("unresolved", state.State);
         Assert.NotNull(gw.DayClosed(account));
     }

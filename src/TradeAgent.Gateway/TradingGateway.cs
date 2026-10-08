@@ -4178,8 +4178,9 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para><b>And the closing again, on the same two rules</b> (<c>U-flatten-confirm</c>). A confirm
     /// that decided every lost close from the platform's history and still read the book open is owed
     /// one more flatten — the SAME method, a fresh nonce — keyed on the absence of ITS outcome, and
-    /// never while anything is unconfirmed. Behind it there is no second confirm: a lost answer to the
-    /// closing again stays flagged for the owner.</para>
+    /// never while anything is unconfirmed. Behind it there is no third: a lost answer to the closing
+    /// again is decided by that generation's own confirm (<c>U-valuation-close-confirm</c>), which owes
+    /// nothing — what it reads still open is the owner's.</para>
     /// </summary>
     async Task ReFlattenClosuresWithNoOutcomeAsync(string accountId, DateTimeOffset at, CancellationToken ct)
     {
@@ -4242,8 +4243,10 @@ public sealed class TradingGateway : IAsyncDisposable
     /// WHICH FLATTEN THIS CLOSURE IS STILL OWED, keyed on the ABSENCE of an outcome as the sweep always
     /// was: false for the first attempt (no <c>loss_flatten:</c> row), true for the CLOSING AGAIN — a
     /// confirm from the platform's history (<c>U-flatten-confirm</c>) that found the book still open,
-    /// and no <c>loss_flatten_again:</c> row yet — or null because neither is owed. An unreadable row
-    /// throws, and the sweep sends nothing on it.
+    /// and no <c>loss_flatten_again:</c> row yet — or null because neither is owed. Only the FIRST
+    /// flatten's confirm owes anything: the closing again's own (<c>loss_flatten_again_confirm:</c>,
+    /// <c>U-valuation-close-confirm</c>) is never read here, so nothing is ever owed a third time. An
+    /// unreadable row throws, and the sweep sends nothing on it.
     /// </summary>
     bool? FlattenOwed(LossBreachRecord breach)
     {
@@ -4510,7 +4513,19 @@ public sealed class TradingGateway : IAsyncDisposable
                 return $"TradeAgent confirmed from {word.ConfirmedFrom ?? "your platform's order history"} what became "
                        + "of the close it sent, and it is closing again what is still open";
 
-            if (!word.Flat)
+            // THE CLOSING AGAIN'S OWN CONFIRM READ THE BOOK OPEN (U-valuation-close-confirm): every close TradeAgent
+            // sent is accounted for and it sends nothing more, so the record holds nothing — the BOOK does. The tick
+            // has just read it above and found nothing open in scope, or it would not be here; a surface cannot read
+            // it, so it says whose it is. Held on the record, a closure the owner then closed by hand would be held
+            // for ever, which is the defect this unit removes.
+            if (word.Final && !word.Flat)
+            {
+                if (positions is null)
+                    return "TradeAgent closed twice and still read something open, and it closes nothing more: what is "
+                           + "still open is yours to close at your platform, and the closure lifts once your platform "
+                           + "reads flat";
+            }
+            else if (!word.Flat)
                 return "TradeAgent cannot confirm that what it closed for you is closed";
         }
 
@@ -9730,11 +9745,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// ATAS his answer is the only way a lost close is ever settled; before this, giving it ended the confirm's
     /// interest in the closure, and the closure was held for ever over a book he had accounted for.</para>
     ///
-    /// <para><b>All or nothing, and once per breach.</b> Nothing is written until EVERY lost close is
-    /// decided. Then one record, at the SQL layer, before a single row is settled: the verdicts and a
-    /// fresh read of the book. Flat — nothing is sent. Still open — "closing again", which the sweep does
-    /// with the same flatten once nothing is unconfirmed. A lost answer to that is never confirmed
-    /// again; it stays flagged for the owner.</para>
+    /// <para><b>All or nothing, and once per CLOSE GENERATION</b> (<c>U-valuation-close-confirm</c>). A generation is
+    /// one outcome of the app's own with its two press kinds and nonces (<see cref="CloseGeneration"/>): the first
+    /// flatten, its closing again, a data-loss exit and that exit's closing again. Nothing is written until EVERY
+    /// lost close of the generation is decided. Then one record of its own, at the SQL layer, before a single row is
+    /// settled: the verdicts and a fresh read of the book. Flat — nothing is sent. Still open after the FIRST
+    /// flatten — "closing again", which the sweep does with the same flatten once nothing is unconfirmed; still open
+    /// after the closing again — nothing more, ever: what is open is the owner's. Until this unit there was one
+    /// confirm per breach, and a lost answer to the closing again held its closure for ever.</para>
     ///
     /// <para>It never throws. A confirm that fails is a closure left exactly as it was — flagged, with
     /// the gate refusing off the same rows.</para>
@@ -9755,38 +9773,130 @@ public sealed class TradingGateway : IAsyncDisposable
                 || !string.Equals(breach.Account, accountId, StringComparison.Ordinal))
                 continue;
 
-            var confirmKey = LossFlatten.ConfirmKeyFor(Connector.Id, breach);
-            try { await ConfirmLostCloseAsync(breach, confirmKey, accountId, ct); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+            // EACH GENERATION ITS OWN CONFIRM: the first flatten's, then the closing again's. The second has an
+            // outcome to answer only once the first's confirm asked for it, so the order is the order of events.
+            foreach (var again in new[] { false, true })
             {
-                Note(confirmKey, "loss_flatten_confirm_failed", "warn", $"{ex.GetType().Name}: {ex.Message}");
+                var confirmKey = again
+                    ? LossFlatten.AgainConfirmKeyFor(Connector.Id, breach)
+                    : LossFlatten.ConfirmKeyFor(Connector.Id, breach);
+                try { await ConfirmLostCloseAsync(breach, again, confirmKey, accountId, ct); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Note(confirmKey, "loss_flatten_confirm_failed", "warn", $"{ex.GetType().Name}: {ex.Message}");
+                }
             }
         }
     }
 
-    /// <summary>One closure's confirm: written once and then applied, or asked again on the next pass.</summary>
-    async Task ConfirmLostCloseAsync(LossBreachRecord breach, string confirmKey, string accountId, CancellationToken ct)
+    /// <summary>
+    /// One generation of one closure's confirm — the first flatten's, or its closing again's
+    /// (<paramref name="again"/>): written once and then applied, or asked again on the next pass.
+    /// </summary>
+    async Task ConfirmLostCloseAsync(LossBreachRecord breach, bool again, string confirmKey, string accountId,
+        CancellationToken ct)
     {
         // WRITTEN ALREADY. The record is the decision; all that can be left is applying it, which a pass
         // killed between the two halves did not finish. Nothing is asked of the platform a second time.
         if (ReadConfirm(confirmKey) is { } written)
         {
             _confirmWaits.TryRemove(confirmKey, out _);
-            ApplyTheConfirm(written);
+            ApplyTheConfirm(written.Verdicts, CloseGeneration.OfTheBudget(written.CancelNonce, written.CloseNonce),
+                SettledByTheBudgetsConfirm(written.BreachKey, again));
             return;
         }
 
         // NO GATE ON THE PLATFORM HERE (U-loss-hold-release). ReconciliationProvable gates the HISTORY
         // question — inside AskTheHistoryAsync and the owner's veto — and nothing else, so on a platform that
         // cannot show its history a closure is confirmed once the owner has answered every lost close.
-        var outcomeKey = LossFlatten.KeyFor(Connector.Id, breach);
-        if (ReadFlattenRecord(outcomeKey) is not { } outcome || LostCloses(outcome) is not { } lost)
+        var outcomeKey = again ? LossFlatten.AgainKeyFor(Connector.Id, breach) : LossFlatten.KeyFor(Connector.Id, breach);
+        if (ReadFlattenRecord(outcomeKey) is not { } outcome || LostCloses(CloseGeneration.Of(outcome)) is not { } lost)
         {
             _confirmWaits.TryRemove(confirmKey, out _);
             return;
         }
 
+        if (await DecideTheLostClosesAsync(lost, confirmKey, "loss_flatten_confirm", accountId, ct) is not { } decided)
+            return;
+
+        var stillOpen = InScope(breach, decided.Positions).Where(p => p.Quantity != 0m)
+            .Select(p => $"{p.Symbol} {p.Quantity}").ToList();
+        var record = new LossFlattenConfirm
+        {
+            Account = breach.Account,
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
+            Day = breach.Day,
+            Symbol = breach.Symbol,
+            BreachKey = LossBreach.KeyFor(breach),
+            OutcomeKey = outcomeKey,
+            CancelNonce = outcome.CancelNonce,
+            CloseNonce = outcome.CloseNonce,
+            At = Now,
+            Verdicts = decided.Verdicts,
+            StillOpen = stillOpen,
+            Flat = stillOpen.Count == 0,
+            Why = ConfirmSentence(breach, decided.Verdicts, stillOpen, again)
+        };
+
+        // ONCE, AT THE SQL LAYER, AND BEFORE A SINGLE ROW IS SETTLED. A write that fails settles nothing
+        // and sends nothing: the rows stay flagged and the next pass asks again. A write that loses to
+        // another pass changes nothing either: the row already there is the one that counts.
+        switch (WriteTheConfirmOnce(confirmKey, Json.Write(record), "loss_flatten_confirm"))
+        {
+            case null: return;
+            case true:
+                _log.Activity(record.Why, record.Flat ? "info" : "warn");
+                _log.TryEngineering("Gateway", "loss_flatten_confirmed", record.Flat ? "info" : "warn",
+                    metadataJson: Json.Write(new
+                    {
+                        key = confirmKey, breach = record.BreachKey, again, record.Flat, record.StillOpen,
+                        verdicts = decided.Verdicts.Select(v => $"{v.RequestId} {v.State}").ToList()
+                    }));
+                break;
+            case false when ReadConfirm(confirmKey) is { } there: record = there; break;
+            default: return;
+        }
+
+        ApplyTheConfirm(record.Verdicts, CloseGeneration.OfTheBudget(record.CancelNonce, record.CloseNonce),
+            SettledByTheBudgetsConfirm(record.BreachKey, again));
+    }
+
+    /// <summary>What a row the budget's confirm settles says about who settled it, beside its evidence.</summary>
+    static string SettledByTheBudgetsConfirm(string breachKey, bool again) =>
+        $"settled by TradeAgent's confirm of the loss budget's {(again ? "closing again" : "close")} ({breachKey})";
+
+    /// <summary>
+    /// A CONFIRM'S RECORD, WRITTEN ONCE AT THE SQL LAYER — whichever generation it is. True: this call inserted it.
+    /// False: another pass's is already there, and that one counts. Null: the write failed, and then nothing is
+    /// settled and nothing is sent — the rows stay flagged and the next pass asks again.
+    /// </summary>
+    bool? WriteTheConfirmOnce(string confirmKey, string json, string events)
+    {
+        bool inserted;
+        try { inserted = _db.AddKvOnce(confirmKey, json); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", $"{events}_record_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { key = confirmKey }));
+            return null;
+        }
+
+        _confirmWaits.TryRemove(confirmKey, out _);
+        if (inserted) _confirmNotes.TryRemove(confirmKey, out _);
+        return inserted;
+    }
+
+    /// <summary>
+    /// EVERY LOST CLOSE OF ONE GENERATION, DECIDED — by the owner's answer under the platform's veto, or by the
+    /// platform's history — and then the book read back: the verdicts and the positions, or null because one of
+    /// them is undecided or the book could not be read, said to the engineering log once per change and to the
+    /// surfaces for as long as it stands. Nothing is written or settled here.
+    /// </summary>
+    async Task<(List<LossFlattenVerdict> Verdicts, IReadOnlyList<PositionInfo> Positions)?> DecideTheLostClosesAsync(
+        IReadOnlyList<ExecutionRequest> lost, string confirmKey, string events, string accountId, CancellationToken ct)
+    {
         var verdicts = new List<LossFlattenVerdict>();
         foreach (var leg in lost)
         {
@@ -9801,75 +9911,51 @@ public sealed class TradingGateway : IAsyncDisposable
                 // UNDECIDED, AND NOTHING IS DONE ABOUT IT: not the other legs, not the book. Said to the
                 // engineering log once per change, and to the surfaces for as long as it stands.
                 _confirmWaits[confirmKey] = $"the {leg.Instrument} close — {undecided}";
-                Note(confirmKey, "loss_flatten_confirm_undecided", "info", $"{leg.RequestId} ({leg.Instrument}): {undecided}");
-                return;
+                Note(confirmKey, $"{events}_undecided", "info", $"{leg.RequestId} ({leg.Instrument}): {undecided}");
+                return null;
             }
             verdicts.Add(verdict);
         }
 
         // EVERY LOST CLOSE IS DECIDED, so the book is read back — the half of the answer a state cannot
         // give, exactly as the flatten's own legs are judged.
-        IReadOnlyList<PositionInfo> positions;
-        try { positions = await Connector.GetPositionsAsync(accountId, ct); }
+        try { return (verdicts, await Connector.GetPositionsAsync(accountId, ct)); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _confirmWaits[confirmKey] = $"your account could not be read back to see what is still open ({ex.Message})";
-            Note(confirmKey, "loss_flatten_confirm_undecided", "info", $"the account could not be read back ({ex.Message})");
-            return;
+            Note(confirmKey, $"{events}_undecided", "info", $"the account could not be read back ({ex.Message})");
+            return null;
         }
-
-        var stillOpen = InScope(breach, positions).Where(p => p.Quantity != 0m)
-            .Select(p => $"{p.Symbol} {p.Quantity}").ToList();
-        var record = new LossFlattenConfirm
-        {
-            Account = breach.Account,
-            Connector = Connector.Id,
-            Mode = Settings.Mode,
-            Day = breach.Day,
-            Symbol = breach.Symbol,
-            BreachKey = LossBreach.KeyFor(breach),
-            OutcomeKey = outcomeKey,
-            CancelNonce = outcome.CancelNonce,
-            CloseNonce = outcome.CloseNonce,
-            At = Now,
-            Verdicts = verdicts,
-            StillOpen = stillOpen,
-            Flat = stillOpen.Count == 0,
-            Why = ConfirmSentence(breach, verdicts, stillOpen)
-        };
-
-        // ONCE, AT THE SQL LAYER, AND BEFORE A SINGLE ROW IS SETTLED. A write that fails settles nothing
-        // and sends nothing: the rows stay flagged and the next pass asks again. A write that loses to
-        // another pass changes nothing either: the row already there is the one that counts.
-        bool inserted;
-        try { inserted = _db.AddKvOnce(confirmKey, Json.Write(record)); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.TryEngineering("Gateway", "loss_flatten_confirm_record_failed", "error", ex: ex,
-                metadataJson: Json.Write(new { key = confirmKey }));
-            return;
-        }
-
-        _confirmWaits.TryRemove(confirmKey, out _);
-        if (inserted)
-        {
-            _confirmNotes.TryRemove(confirmKey, out _);
-            _log.Activity(record.Why, record.Flat ? "info" : "warn");
-            _log.TryEngineering("Gateway", "loss_flatten_confirmed", record.Flat ? "info" : "warn",
-                metadataJson: Json.Write(new
-                {
-                    key = confirmKey, breach = record.BreachKey, record.Flat, record.StillOpen,
-                    verdicts = verdicts.Select(v => $"{v.RequestId} {v.State}").ToList()
-                }));
-        }
-        else if (ReadConfirm(confirmKey) is { } there) record = there;
-        else return;
-
-        ApplyTheConfirm(record);
     }
 
     /// <summary>
-    /// THE FIRST FLATTEN'S CLOSES WHOSE ANSWER WAS LOST, still exactly as it left them — or null, because
+    /// ONE CLOSE GENERATION (<c>U-valuation-close-confirm</c>): one outcome of the app's own — the loss flatten, its
+    /// closing again, a data-loss exit or that exit's closing again — with its two press kinds and its two nonces. The
+    /// confirm runs over a generation and never over a breach: each generation's lost closes are decided once, in a
+    /// write-once record of its own, and only that generation's rows — its own two nonces' — are settled and
+    /// unflagged. Never a kind's rows whole: that is <see cref="AccountForTheFlattenAsync"/>'s, which is safe only
+    /// because one app press of each kind runs at a time, and is not widened here.
+    /// </summary>
+    sealed record CloseGeneration(string CancelKind, string CloseKind, string CancelNonce, string CloseNonce,
+        bool Flat, IReadOnlyList<string> OpenersNotSettled, IReadOnlyList<LossFlattenLeg> Legs)
+    {
+        public static CloseGeneration Of(LossFlattenRecord r) =>
+            new(BudgetCancelPress, BudgetClosePress, r.CancelNonce, r.CloseNonce, r.Flat, r.OpenersNotSettled, r.Legs);
+
+        public static CloseGeneration Of(ValuationExitRecord r) =>
+            new(ValuationCancelPress, ValuationClosePress, r.CancelNonce, r.CloseNonce, r.Flat, r.OpenersNotSettled, r.Legs);
+
+        /// <summary>A written budget confirm's generation: its kinds and the nonces the record carries.</summary>
+        public static CloseGeneration OfTheBudget(string cancelNonce, string closeNonce) =>
+            new(BudgetCancelPress, BudgetClosePress, cancelNonce, closeNonce, false, [], []);
+
+        /// <summary>A written exit confirm's generation: its kinds and the nonces the record carries.</summary>
+        public static CloseGeneration OfAnExit(string cancelNonce, string closeNonce) =>
+            new(ValuationCancelPress, ValuationClosePress, cancelNonce, closeNonce, false, [], []);
+    }
+
+    /// <summary>
+    /// ONE GENERATION'S CLOSES WHOSE ANSWER WAS LOST, still exactly as its outcome left them — or null, because
     /// this outcome is not one a confirm answers.
     ///
     /// <para>It is one only when the answer to a close was LOST and nothing else stands unexplained: the
@@ -9880,22 +9966,23 @@ public sealed class TradingGateway : IAsyncDisposable
     /// Dashboard and nothing has contradicted him since, for his answer to decide (<c>U-loss-hold-release</c>,
     /// <see cref="SettledByTheOwner"/>). A lost close the platform has answered some other way, or one flagged
     /// again because the platform answered differently from him, is not this one's to answer, and neither is
-    /// a close the platform answered and has not finished.</para>
+    /// a close the platform answered and has not finished. The rows are the generation's own, under its own kinds
+    /// and nonces (<c>U-valuation-close-confirm</c>).</para>
     /// </summary>
-    List<ExecutionRequest>? LostCloses(LossFlattenRecord outcome)
+    List<ExecutionRequest>? LostCloses(CloseGeneration generation)
     {
-        if (outcome.Flat || outcome.OpenersNotSettled.Count > 0 || outcome.CloseNonce.Length == 0) return null;
+        if (generation.Flat || generation.OpenersNotSettled.Count > 0 || generation.CloseNonce.Length == 0) return null;
 
-        var lostIds = outcome.Legs.Where(l => l.State == nameof(ExecutionState.UNKNOWN))
+        var lostIds = generation.Legs.Where(l => l.State == nameof(ExecutionState.UNKNOWN))
             .Select(l => l.RequestId).ToHashSet(StringComparer.Ordinal);
         if (lostIds.Count == 0) return null;
 
-        if (outcome.CancelNonce.Length > 0
-            && PressRows(BudgetCancelPress, outcome.CancelNonce).Any(r => !OrderStateMachine.IsTerminal(r.State)))
+        if (generation.CancelNonce.Length > 0
+            && PressRows(generation.CancelKind, generation.CancelNonce).Any(r => !OrderStateMachine.IsTerminal(r.State)))
             return null;
 
         var lost = new List<ExecutionRequest>();
-        foreach (var row in PressRows(BudgetClosePress, outcome.CloseNonce))
+        foreach (var row in PressRows(generation.CloseKind, generation.CloseNonce))
         {
             if (lostIds.Contains(row.RequestId))
             {
@@ -10110,22 +10197,24 @@ public sealed class TradingGateway : IAsyncDisposable
 
     /// <summary>
     /// THE CONFIRM, APPLIED — each lost close settled from its verdict by
-    /// <see cref="SettleTheUnresolved"/>'s two steps, and then, once every one of them is, the first
-    /// flatten's own rows unflagged exactly as <see cref="AccountForTheFlattenAsync"/> unflags them when
-    /// every leg resolves (its nonces' rows only, never another attempt's). It writes no state but the
-    /// platform's, and only onto a row still as the flatten left it. Idempotent: a row already settled is
-    /// passed over, so a pass killed half way finishes on the next.
+    /// <see cref="SettleTheUnresolved"/>'s two steps, and then, once every one of them is, the generation's
+    /// own rows unflagged as <see cref="AccountForTheFlattenAsync"/> unflags them when every leg resolves —
+    /// but by ITS TWO NONCES only, never a kind's rows whole and never another generation's
+    /// (<c>U-valuation-close-confirm</c>). It writes no state but the platform's, and only onto a row still as
+    /// the outcome left it. Idempotent: a row already settled is passed over, so a pass killed half way
+    /// finishes on the next.
     ///
     /// <para>A verdict the OWNER gave (<c>U-loss-hold-release</c>) settles nothing — his row is already
     /// terminal — and while the platform has since contradicted him (his row flagged again, see
     /// <see cref="SettledByTheOwner"/>) nothing is unflagged either: a record applied on every pass must not
     /// clear a disagreement written after it.</para>
     /// </summary>
-    void ApplyTheConfirm(LossFlattenConfirm record)
+    /// <param name="settledBy">Who settled a row, beside its evidence: which confirm, of which record.</param>
+    void ApplyTheConfirm(IReadOnlyList<LossFlattenVerdict> verdicts, CloseGeneration generation, string settledBy)
     {
         var settled = true;
         var changed = false;
-        foreach (var verdict in record.Verdicts)
+        foreach (var verdict in verdicts)
         {
             var row = _requests.Get(verdict.RequestId);
             if (row is not null && OrderStateMachine.IsTerminal(row.State))
@@ -10139,8 +10228,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 || !Enum.TryParse<ExecutionState>(verdict.State, ignoreCase: false, out var to)
                 || !Enum.IsDefined(to)
                 || !DecidesALostClose(to)
-                || !SettleTheUnresolved(row, to, verdict.Filled, verdict.ConnectorOrderId,
-                    $"{verdict.Evidence}; settled by TradeAgent's confirm of the loss budget's close ({record.BreachKey})"))
+                || !SettleTheUnresolved(row, to, verdict.Filled, verdict.ConnectorOrderId, $"{verdict.Evidence}; {settledBy}"))
             {
                 settled = false;
                 continue;
@@ -10150,7 +10238,10 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         if (settled)
-            foreach (var (kind, nonce) in new[] { (BudgetCancelPress, record.CancelNonce), (BudgetClosePress, record.CloseNonce) })
+            foreach (var (kind, nonce) in new[]
+                     {
+                         (generation.CancelKind, generation.CancelNonce), (generation.CloseKind, generation.CloseNonce)
+                     })
             {
                 if (nonce.Length == 0) continue;
                 foreach (var row in PressRows(kind, nonce)
@@ -10189,21 +10280,30 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>
     /// The confirm's sentence: what decided each lost close — the platform's history, or the owner's answer on the
     /// Dashboard, each verdict naming its own (<c>U-loss-hold-release</c>) — what the book reads, and what happens next.
+    /// The closing again's own confirm (<paramref name="again"/>, <c>U-valuation-close-confirm</c>) says it is about the
+    /// close sent AGAIN, and over a book still open it says what happens next is the owner's: there is no third close.
     /// </summary>
     static string ConfirmSentence(LossBreachRecord breach, IReadOnlyList<LossFlattenVerdict> verdicts,
-        IReadOnlyList<string> stillOpen)
+        IReadOnlyList<string> stillOpen, bool again = false)
     {
         var what = breach.Symbol is null ? "your daily loss budget" : $"your loss budget for {breach.Symbol}";
         var from = SettledFrom(verdicts);
+        var sent = again ? "the close it sent AGAIN" : "the close it sent";
         var found = string.Join("; ", verdicts.Select(v =>
             $"the {v.Symbol} close is {v.State}{(v.Filled is > 0m ? $" ({v.Filled} filled)" : "")} — {v.Evidence}"));
 
-        return stillOpen.Count == 0
-            ? $"TradeAgent CONFIRMED FROM {from.ToUpperInvariant()} what became of the close it sent when "
-              + $"{what} was reached, whose answer had been lost: {found}. A fresh read of the account says nothing "
-              + "is open, so it reads flat and nothing more was sent. It stays closed to new risk until TradeAgent "
-              + "reopens it."
-            : $"TradeAgent learned from {from} what became of the close it sent when "
+        if (stillOpen.Count == 0)
+            return $"TradeAgent CONFIRMED FROM {from.ToUpperInvariant()} what became of {sent} when "
+                   + $"{what} was reached, whose answer had been lost: {found}. A fresh read of the account says nothing "
+                   + "is open, so it reads flat and nothing more was sent. It stays closed to new risk until TradeAgent "
+                   + "reopens it.";
+
+        return again
+            ? $"TradeAgent learned from {from} what became of {sent} when {what} was reached, whose answer had been "
+              + $"lost: {found}. A fresh read still shows {string.Join(", ", stillOpen)} open, and TradeAgent does NOT "
+              + "close it a third time: what is still open is yours to close — check the platform. It stays closed to "
+              + "new risk until TradeAgent reopens it, which it does only once your platform reads flat."
+            : $"TradeAgent learned from {from} what became of {sent} when "
               + $"{what} was reached, whose answer had been lost: {found}. A fresh read still shows "
               + $"{string.Join(", ", stillOpen)} open, so TradeAgent is CLOSING IT AGAIN, with every check the "
               + "first close had — it may only send an order that reduces what is there. It stays closed to new "
@@ -10258,18 +10358,22 @@ public sealed class TradingGateway : IAsyncDisposable
     /// receipt and every surface ask (<c>U-flatten-confirm</c>), so that what holds a closure and what
     /// the screen says about it cannot be read off two different records.
     ///
-    /// <para>Newest first: the closing again's outcome, its owed note, the confirm, the first outcome,
-    /// the first owed note — and null because nothing has been done about it. Each record is written once
-    /// (an owed note is rewritten only while it is the latest), so the newest one present IS the latest
-    /// word. An unreadable record throws on <see cref="ReadFlattenRecord"/>'s rule; an unreadable note
-    /// answers with a note that says so, on <see cref="ReadOwed"/>'s.</para>
+    /// <para>Newest first: the closing again's own confirm (<c>U-valuation-close-confirm</c>), the closing again's
+    /// outcome, its owed note, the confirm, the first outcome, the first owed note — and null because nothing has
+    /// been done about it. Each record is written once (an owed note is rewritten only while it is the latest), so
+    /// the newest one present IS the latest word. An unreadable record throws on <see cref="ReadFlattenRecord"/>'s
+    /// rule; an unreadable note answers with a note that says so, on <see cref="ReadOwed"/>'s.</para>
     ///
     /// <para>An outcome's word is its sentence AS IT STANDS NOW (<see cref="AsItStandsNow"/>,
     /// <c>U-loss-hold-release</c>): once the owner has answered every record it left, it no longer asks him to.</para>
     /// </summary>
     FlattenWord? LatestFlattenWord(LossBreachRecord breach)
     {
-        if (ReadFlattenRecord(LossFlatten.AgainKeyFor(Connector.Id, breach)) is { } again) return AsItStandsNow(again, null);
+        if (ReadConfirm(LossFlatten.AgainConfirmKeyFor(Connector.Id, breach)) is { } againConfirm)
+            return FlattenWord.Of(againConfirm, ofTheClosingAgain: true);
+        if (ReadFlattenRecord(LossFlatten.AgainKeyFor(Connector.Id, breach)) is { } again)
+            return AsItStandsNow(again,
+                _confirmWaits.TryGetValue(LossFlatten.AgainConfirmKeyFor(Connector.Id, breach), out var againWaits) ? againWaits : null);
         if (ReadOwed(LossFlatten.AgainOwedKeyFor(Connector.Id, breach)) is { } againOwed) return FlattenWord.Of(againOwed);
         if (ReadConfirm(LossFlatten.ConfirmKeyFor(Connector.Id, breach)) is { } confirm)
         {
@@ -10326,8 +10430,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <param name="OwedAttempts">Non-null exactly when the word is an owed note: nothing has happened yet.</param>
     /// <param name="ClosingAgain">A confirm that read the book open, whose closing again has no word of its own yet.</param>
     /// <param name="ConfirmedFrom">For a confirm, what settled its lost closes (<see cref="SettledFrom"/>).</param>
+    /// <param name="Final">The closing again's own confirm (<c>U-valuation-close-confirm</c>): every close TradeAgent
+    /// sent about the breach is accounted for and it sends nothing more, so what it read open, if anything, is the
+    /// owner's — and what holds the closure from then on is the book, never this record.</param>
     sealed record FlattenWord(bool Flat, string Why, IReadOnlyList<string> OpenersNotSettled, int? OwedAttempts,
-        bool ClosingAgain, string? ConfirmedFrom = null)
+        bool ClosingAgain, string? ConfirmedFrom = null, bool Final = false)
     {
         public bool Owed => OwedAttempts is not null;
 
@@ -10335,7 +10442,10 @@ public sealed class TradingGateway : IAsyncDisposable
 
         public static FlattenWord Of(LossFlattenOwed n) => new(false, n.Why, [], n.Attempts, false);
 
-        public static FlattenWord Of(LossFlattenConfirm c) => new(c.Flat, c.Why, [], null, !c.Flat, SettledFrom(c.Verdicts));
+        /// <summary>A confirm's word: the first flatten's says "closing again" over an open book; the closing again's
+        /// own (<paramref name="ofTheClosingAgain"/>) never does — it owes nothing.</summary>
+        public static FlattenWord Of(LossFlattenConfirm c, bool ofTheClosingAgain = false) =>
+            new(c.Flat, c.Why, [], null, !ofTheClosingAgain && !c.Flat, SettledFrom(c.Verdicts), ofTheClosingAgain);
     }
 
     // ------------------------------------------- the data-loss exit (app-owned, U-flatten-3)
