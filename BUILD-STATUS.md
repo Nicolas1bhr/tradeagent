@@ -9194,3 +9194,42 @@ exclusions; no trailers; `rev-list` 0 both ways.
 **Tests box:** NOT RUN — 09:03 `ready` exit 1, "the machine does not answer", not retried.
 **NOT done, NOT verified:** the app was not launched, so the Settings card's new words were never seen on screen. OWED (→ seat A's U-holdout-campaign): the same date pressed on the
 card's OTHER button still rewrites the evaluation class while a campaign judges (CONTRACTS states it as not covered). Integration ran in full on CI only.
+
+## 2026-10-08 — U-credential-replace landed: every credential the app writes — the agent pipe's key and the owner's pasted AI key — goes through one owner-only atomic publish, so a reader holding the key file no longer stops the app starting and the pasted key is never written in place or readable by others
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-credential-replace.md` (seat P's 07:42 survey's "U-secret-replace", renamed because the word trips the scan; the
+orchestrator's 07:42 ruling folded in the key sign-in's auth file as item 3; queued `8da4bed2`, dispatched `cbffcc8b`). Merge `4dc9c04f` (ff-only), 5 commits (item 0 `0ccdc86a`,
+item 1 `237c573a`, item 2 `71ebcef3`, item 3 `ed719770`, report `4dc9c04f`), rebased by seat P's prep from `903e7f3f` onto `6a0fb8a4` with an identical src+tests patch-id (`6eae3f54d417`). No rung, no pipe op. CREDENTIAL protection (`CLAUDE.md`): owner-only from the
+first byte, never truncated in place; keys, paths, lifetimes, DPAPI and the handshake unchanged; nothing new in the bridge DLL's closure (Core was already in every chain).
+
+- **Item 0:** `SecretStore.OpenToRead` (`Read`'s own open) + `InternalsVisibleTo TradeAgent.UnitTests` on Security; (a) a reader holding `ipc.token` does not refuse its rewrite;
+  (b) a start over an unusable key file a reader holds publishes a new one; (c) the new `PastedKeyFileTests` (two facts), through the shipped OpenCode manifest pointed at a
+  scratch folder with keys made at run time: owner-only from the first byte, and a refused second write leaves the first file whole.
+- **Item 1:** `src/TradeAgent.Core/OwnerOnlyFile.cs` — `Write(path, bytes, beforeRename)` with `Publish`, `ReplaceWhileReadersRead`, `Win32Failure` and both kernel32 externs
+  MOVED out of `AtasConnector.cs`, not copied; `BridgePipeAuth.Write` calls it; the `File.Move` fallback stays on Win32 errors 1, 50 and 87 only.
+- **Item 2:** the agent pipe's key file publishes through it, sealed first on Windows as before; its summary and `Read`'s now say what was measured (runs 37675671465,
+  37675951756, 37736395707) — the old "a reader sharing Delete never stands in the rename's way" was measured false.
+- **Item 3:** the key sign-in's auth file publishes the template's UTF-8 bytes (byte-identical to the old write, no BOM, compared by (c)) through `OwnerOnlyFile.Write`.
+- **Declared deviations, ACCEPTED by seat P:** (1) an internal `SignInWithApiKeyAsync(key, ct, beforeRename)` overload, the seam (c) needs (AgentRuntime already grants
+  UnitTests); (2) item 3's publish runs in `Task.Run(…, ct)` off the window's thread, since it flushes to the device; a cancellation before it starts writes nothing, as before.
+- **Judged behaviour change (seat P, accepted):** on Windows a reader of the auth file that does not share Delete now refuses the publish, where before only one not sharing
+  Write refused the in-place write. The refusal is said and loses nothing — the old file stays whole — and the credential is never left half-written. Whether OpenCode holds
+  its auth file open during a run, and with what sharing, is NOT observed: a Windows look is owed with the next box leg (seat P's queue).
+- **Named, not changed (the brief's Must NOT):** the auth template still replaces the whole file (any other entry in OpenCode's auth file is overwritten, as before);
+  `CoidWitness.cs:281-283` carries the same measured-false claim inside ATAS — its fix needs the ATAS box (seat P's light queue).
+
+**Verified by running (the builder, quoted).** RED before — item 0 on the old code, windows-latest 37736395707: (a) "the rewrite was refused while a reader held ipc.token —
+UnauthorizedAccessException: Access to the path is denied."; (b) "a start over an unusable ipc.token that a reader held was refused — UnauthorizedAccessException: Access to
+the path is denied."; (c) "the key never sat in a file of its own before it was published: it was written in place"; ubuntu and macOS red in (c) only. This Mac: (c) "the key
+was on disk at <never seen> before the rename and is published at 0644; owner-only is 0600 — umask 0022". Green after: "… at 0600 before the rename and is published at
+0600"; "the second write failed with IOException: the rename was refused; the file holds the first key, whole; 0 file(s) beside it". Mutant — `UnixCreateMode` dropped in
+`OwnerOnlyFile.Write`, this Mac: `BridgePipeAuthTests.The_secret_is_owner_only_before_the_rename` "on disk at 0644 before the rename and is published at 0644" (15/16);
+`IpcTokenTests` :64 `Expected: UserWrite | UserRead, Actual: OtherRead | GroupRead | UserWrite | UserRead`; (c) 0644; restored by `git checkout`, never committed.
+Builder: Release 0 warnings; Unit 1536, Fault 479, 0 failed; IpcTokenTests + PastedKeyFileTests 5/5 ×3; BridgePipeAuthTests 16/16 ×3.
+**Manager's gate** at `4dc9c04f`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1544/1544 (9 m 31 s); Fault 479/479 (2 m 2 s); Integration 752/753, 1 skipped (11 m 16 s) → 0 failed.
+**Names** vs `main`: 2387 → 2391, 0 removed, 4 added ([Fact]/[Theory] 2338 → 2342). **Scan:** 30 hits, each an identifier read one by one — `SecretStore`, `SignInWithApiKeyAsync`, `ApiKey!`, the test helper `NewToken(` (random hex made at run time), the file name `ipc.token` / `ipc-token` — no literal key, hex value or host; excluded by name (`SecretStore|SignInWithApiKeyAsync|ApiKey!|NewToken\(|ipc[.-]token`); no trailers.
+**CI:** branch run 37743533111 at `d5c2b54f` (the code tip; the report docs only): windows ✓ 52 m, macOS ✓ 16 m, ubuntu ✓ 13 m, package ✓ 4 m; each test job Unit 1518, Fault
+473, Integration 651 + 1 skipped, Timing first attempt, 0 failed; 37736395707 (item 0 alone) red BY DESIGN (the RED-before). Tests box: NOT RUN — "the machine does not answer"
+(07:27Z, the builder; 10:51Z, seat P). Landing CI on `main`: a waiter is armed.
+**NOT verified:** the fallback volume and the 32-bit `FILE_RENAME_INFO` layout (CI is x64 NTFS); DPAPI only as windows-latest ran it; no app run (the start screen's words
+unseen); OpenCode's own open of its auth file; no ATAS box.
