@@ -18,7 +18,8 @@ declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, requ
              | "timeframe" DURATION | "data_freshness" DURATION | "max_decision_age" DURATION
              | "const" NAME "=" (NUMBER | "true" | "false") | "indicator" NAME "=" indicator
              | "feature" NAME "=" SPEC                  # SPEC: one JSON object, the rest of the line; up to 8
-             | "size" ("fixed" | "capital_fraction" | "risk_fraction") value      # required
+             | "size" ("fixed" | "capital_fraction") value  # required: this size line or the next one
+             | "size" "risk_fraction" value ("max_capital_fraction" value)?   # the cap: see Sizing below
              | "stop" ("fixed" value | "percent" value | "atr" value value)
              | "target" ("fixed" value | "percent" value) | "max_hold_bars" value
              | "weekdays" DAY ("," DAY)* | "session_exit" CLOCK    # mon tue wed thu fri sat sun
@@ -136,8 +137,10 @@ version that reads a feature.
 Every declaration a program uses constrains its orders, its risk or how it is evaluated, so every one is
 REQUIRED: a reader that does not implement one refuses the program in words rather than running the rest of it.
 The backtest and the verdict implement every declaration this page lists; the paper runner every one but
-`feature`. Comments are the one optional part — kept byte for byte in the source, outside the id, and required by
-nobody. A declaration that states the default (`timezone UTC`, `bars 1m`, all seven weekdays) requires nothing.
+`feature`. `max_capital_fraction` is one of them although it is written on the size line: a reader that applied a
+risk fraction without its cap would send an entry larger than the program says one may ever be. Comments are the
+one optional part — kept byte for byte in the source, outside the id, and required by nobody. A declaration that
+states the default (`timezone UTC`, `bars 1m`, all seven weekdays) requires nothing.
 
 ## Conditions
 
@@ -206,7 +209,7 @@ before it is refused rather than answered from a half-filled window.
 8192 source bytes · 200 lines · 240 characters a line (512 for a `feature` line) · 32 characters a name ·
 32 constants · 16 indicators · 8 features · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
 period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
-1 (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
+1, the cap's too (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
 second and at most one week. Every count of bars is in the program's declared bars: 500 bars of lookback
 is about eight hours of minutes and about 21 days of hours. Zones a program may name: `UTC`,
 `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
@@ -245,10 +248,26 @@ the evaluator never invents one. It emits **intents** and places nothing.
   spring hour that does not exist admits no bar and the autumn hour that happens twice admits both.
   There is no holiday table, and a southern-hemisphere zone would need a version bump.
 - **Sizing** is the declared rule over the supplied account state: `fixed` is the quantity,
-  `capital_fraction` is `capital * f / close`, `risk_fraction` is `equity * f / (close - stop)`. It is
-  **not** rounded to an instrument increment — a dataset carries none — so that rounding and the
-  gateway's limits happen downstream. A stop that is not below the close has no risk distance and is a
-  fault. An entry that sizes to nothing is counted, not a fault: an account with no capital cannot act.
+  `capital_fraction` is `capital * f / close`, `risk_fraction` is `equity * f / (close - stop)`. Capital
+  is what the caller supplies: in a backtest the cash the run has left, on paper the allocation's ceiling.
+  A size is **not** rounded to an instrument increment — a dataset carries none — so rounding happens
+  downstream, always DOWN; and every limit downstream — a backtest's cash, the gateway's per-order value,
+  an allocation's ceiling — REFUSES an entry WHOLE: nothing downstream makes an order smaller to fit. A
+  stop that is not below the close has no risk distance and is a fault. An entry that sizes to nothing is
+  counted, not a fault: an account with no capital cannot act.
+- **A risk size can ask for more than everything, and `max_capital_fraction` caps it.** With `stop
+  percent p` the notional is the constant `100f/p` of equity — a `capital_fraction` in disguise, and an
+  `f` a margin below `p/100` never overshoots. With `stop atr` or `stop fixed` it is `f * close /
+  distance` of equity, without bound as the stop nears the price: `risk_fraction 0.01` over a stop 0.2 %
+  below the close asks for five times the equity. No fraction keeps such a signal funded and no capital
+  does either — the size grows with the capital — so it is a no-trade in a backtest and refused whole on
+  paper. `size risk_fraction 0.01 max_capital_fraction 0.95` sizes the SMALLER of the risk size and
+  `capital * 0.95 / close` — what `capital_fraction` reads — so a tight stop sizes to the cap instead of
+  to no trade, and a cap only ever makes a size smaller. Only a risk fraction takes one (a capital fraction
+  is its own cap, a fixed quantity a constant), above 0 and at most 1, a number or a constant. The cap
+  applies at the signal's close, so fees, slippage and the next open come on top of it: under the venue
+  cost model's 0.1 % fee and 0.02 % slippage, `max_capital_fraction 1` cannot pay for its own fill unless
+  the next open is about 0.12 % below the close — 0.95 leaves room.
 - **A fault is a value**, `EvaluationOutcome.Faulted` with a reason, and the run halts with no intent:
   a bar out of order or off the interval grid, a division by zero, arithmetic that overflowed, an event
   over the operation budget, state over its size limit, or a run the caller stopped. Nothing throws out
@@ -270,7 +289,8 @@ constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONT
 The canonical form states every bound, present or not, with ONE exception: the `bars` line is written only
 when a program declares a bar that is not one minute — so every program written before `bars` existed keeps
 its canonical text and its id, and an hourly program can never share an id with its minute twin. A `feature`
-line is written only for a declared feature, by its spec's hash, for the same reason.
+line is written only for a declared feature, by its spec's hash, for the same reason, and the size line's
+`max_capital_fraction:<c>` only for a declared cap — `size risk_fraction:0.01 max_capital_fraction:0.95`.
 
 ## The three day-one programs
 
