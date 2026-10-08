@@ -32,28 +32,29 @@ public class MissionInstructionsTests
         Assert.Contains($"At most {WorkspaceRevisions.PlanLines} non-empty lines.", text);
         Assert.Contains($"At most {WorkspaceRevisions.JournalLines} non-empty lines", text);
         Assert.Contains($"`{WorkspaceRevisions.ArchiveDir}/`", text);
-        Assert.Contains("the last version TradeAgent accepted is written back over it", text);
-        Assert.Contains("your next `## Situation` says which file and why", text);
+        // U-memory-kept: the file over its limit is kept before the last accepted one is put back,
+        // so "is not kept: the last version TradeAgent accepted is written back over it, and your
+        // next `## Situation` says which file and why" stopped being true and is said as this now.
+        Assert.Contains($"a file moves to `{WorkspaceRevisions.ArchiveDir}/<PLAN|JOURNAL>-refused-….md`", text);
+        Assert.Contains("accepted one returns; your next `## Situation` says so.", text);
     }
 
     /// <summary>
     /// RED FIRST: WHERE A REFUSED FILE GOES, SAID BEFORE IT HAPPENS (<c>U-memory-kept</c>). The
-    /// archive line said only that old journal entries go there, so an agent learned that the app
-    /// keeps a refused plan or journal in it from the notice after the fact — and an agent that does
-    /// not know its writing is kept reads a put-back plan as lost work. The line names the copies
-    /// and how to recover from one.
+    /// mission said a file over its limit "is not kept" and the archive held only old journal
+    /// entries, so an agent learned that the app keeps a refused plan or journal from the notice
+    /// after the fact — and an agent that does not know its writing is kept reads a put-back plan
+    /// as lost work. Both places now say it, in no more bytes than they used: the file is read at
+    /// its runtime's size limit, and the role section is its tail.
     /// </summary>
     [Fact]
     public void The_mission_says_a_plan_or_journal_refused_for_size_is_kept_in_the_archive()
     {
         var text = Instructions();
 
-        Assert.Contains($"`{WorkspaceRevisions.ArchiveDir}/` is where journal entries go once they no longer fit.", text);
-        Assert.Contains("TradeAgent saves a plan or journal it refuses for size", text);
-        Assert.Contains("`PLAN-refused-….md`", text);
-        Assert.Contains("`JOURNAL-refused-….md`", text);
-        Assert.Contains("nothing you wrote is lost: your next `## Situation` names the copy.", text);
-        Assert.Contains("Take what still matters", text);
+        Assert.Contains($"Over its limit, a file moves to `{WorkspaceRevisions.ArchiveDir}/<PLAN|JOURNAL>-refused-….md`", text);
+        Assert.Contains($"`{WorkspaceRevisions.ArchiveDir}/` — old journal entries, refused files to reuse", text);
+        Assert.DoesNotContain("file over its limit is not kept", text);
     }
 
     static string Instructions(bool executionAvailable = true, bool builtInSimulator = false,
