@@ -11,7 +11,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the newest
-checkpoint below (2026-10-06 18:30) and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+checkpoint below (2026-10-08 ~14:00) and `fleet/handoff/ORCHESTRATOR.md` for the state.**
 
 **2026-10-02 evening — THE BUILD IS ON.** The owner made the session the orchestrator of the whole build, with top-level manager seats and Opus
 builders under them: `docs/FLEET.md` is the charter. Live seats, agent ids, allotments and rungs: `fleet/BOARD.md`; each seat's state: `fleet/status/`;
@@ -41,6 +41,31 @@ bounded experiment is testing it; one chief with a strategy council; a Security 
 invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. **It changes no unit before M-org1 — M0 is still next.**
 When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-org-verbs` keeps the bounds as policy data under the earning rule (§ 3),
 `U-org-watcher` scopes its detectors per unit (§ 5.2).
+
+**Checkpoint 2026-10-08 ~14:00 CEST — the second session under the orchestration standard (2026-10-06 21:33 → the owner's wind-down, 2026-10-08
+~12:55: "naturally wind down the construction, make sure next orchestrator can resume the whole orchestration flawlessly").** Seats P and A (each rotated
+once, fresh from its handoff) plus seat M for M0; four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once on 10-07 and the
+owner reset it). **M0 attempt 3 RECORDED `cc7a0974`, milestone NOT claimed:** six unattended hours on paper, a real model authored, backtested and retired
+three versions before the holdout and never asked for a verdict, so nothing was allocated or filled; `U-resume-agent` verified in the app; 3.84 of 5 USD.
+TWENTY units LANDED (record shas, in order): `U-inflight-settle` `1828a188` · `U-tape-read` `e2f4daf8` · `U-loss-hold-release` `7831bfbe` ·
+`U-bridge-liveness-clock` `824e6717` · `U-inflight-owner` `ddf4b8b3` · `U-features` `34a34ba0` · `U-vendor-limit-quote` `d33d3419` · `U-test-hygiene-2`
+`ad3dc494` · `U-tape-holdout` `cf0760b3` · `U-test-hygiene-3` `8319b390` · `U-bridge-auth-owner-only` `d73ecd59` · `U-language-v2a` `78be3e9d` ·
+`U-press-close-once` `0ae955de` · `U-bar-holdout` `72bcd8dd` · `U-agent-tree` `c05b5d14` · `U-size-cap` `f9212bbd` · `U-valuation-close-confirm` `9b08a077`
+· `U-run-trace` `e203196a` · `U-holdout-later` `6a0fb8a4` · `U-credential-replace` `d30e92a1`. Every local landing gate 0 warnings / 0 failed; branch CI
+green on all three platforms + package, except windows-only reds no diff could reach, judged and recorded as first sightings in their records; no test
+name removed but one disclosed rename (`U-holdout-later`, judged); the tests box NOT RUN in every record (its owner's platform open or no answer); the
+ATAS box unreachable all session. Read-only surveys found and these units fixed: the agent's process tree
+outliving Pause/Stop/quit (and the self-update never stopping the AI), held-back bars served through a second dataset or the forward door, a later
+cutoff releasing held months, and two credential files written readable. **AT THE CHECKPOINT:** `U-press-row-answer` (BEFORE LIVE) was landing or
+parked by seat P — `BUILD-STATUS.md` and `fleet/handoff/P.md` say which; `U-tape-chain` PARKED at `05b308e6` (its `## Paused` note is the resume point;
+items 1 and 3 land together). **NEXT:** seat P (`fleet/handoff/P.md`): `U-red-says-why` (in `docs/queue/`; with the ruling that the Timing step re-runs
+only attempt 1's failures) → the light items (two valuation leftovers, the owner's-answer write-beside in `TheOwnersAnswerAsync`, …) → the BEFORE-LIVE box
+items (the stale-writer drop probe, the ATAS items, OpenCode's own open of `auth.json`). Seat A (`fleet/handoff/A.md`): `U-tape-chain` →
+`U-holdout-campaign` → `U-holdout-served` → `U-features-b` → `U-runner-features` → the conferring dataset (a rung). **M0 attempt 4** (seat M): its
+prerequisites are on main (`U-agent-tree`, `U-run-trace`, `U-size-cap`, `U-bar-holdout`, `U-holdout-later`); it needs a fresh home or months held after
+the old window, exercises the verdict/paper path, and needs the owner's two clicks. Lane B (`U-org-wakes` takes M0's idle-review cost) when a seat frees.
+**For the owner:** the cutoff of a dataset with an open campaign can no longer be moved later (download a fresh copy instead); open questions in
+`fleet/handoff/ORCHESTRATOR.md`. Schema rung 30; next free 31.
 
 **Checkpoint 2026-10-06 18:30 CEST — the first session run under the orchestration standard (`docs/FLEET.md` § "The orchestrator"; the owner's grant
 at 00:50, made the standard that morning; managers keep a top-level manager's full authority inside their lanes).** Seats P and A, four Mac builders and

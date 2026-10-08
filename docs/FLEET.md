@@ -56,6 +56,12 @@ so this orchestration position becomes the standard."
   waits for its next wake instead of costing one. A red no diff can reach is a FIRST SIGHTING, recorded with its run id and a one-line reading — never "a
   flake" by assertion (the fleet's Windows-only reds have twice been real defects); one that threatens a protection (money, evidence) is surveyed at
   once. The orchestrator reads reports, the board and status files, never code: on 2026-10-06 its context stood at 35 % of 1M after eleven hours.
+  **Waiting costs a whole context per call, so every seat and builder waits DETACHED** (Bash `run_in_background`, which re-invokes the agent when the
+  command exits, or `nohup` for durable ledgers), never in foreground slices; a builder ends a waiting turn with one line `WAITING: …`, which is not a
+  report and wakes no one. An OBSERVING seat (a milestone run) ends its turn behind a detached zero-token logger and the orchestrator's cron looks in
+  (2026-10-07: ~100 foreground watch calls, flagged by the owner). A seat holding `land` whose transcript shows no progress for 15 min is STALLED:
+  stop it and resume it by `SendMessage` with its state (2026-10-08: a nested `zsh -c` with mixed quoting sat on stdin for 38 min — run commands
+  plainly, `< /dev/null`, never nested quoting). Board times come from `date`; seats' self-reported clocks ran 4–25 min fast.
 - **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across usage stops: a ONE-SHOT wake at each 5-hour window's
   reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake; deleted when the orchestrator resumes the fleet by hand first) and a RECURRING
   2-hourly backstop. A cron fires only while the session is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac and the
@@ -68,6 +74,10 @@ so this orchestration position becomes the standard."
   the orchestrator checkpoints the resume block, the board, `fleet/handoff/ORCHESTRATOR.md` and memory, removes its crons, and reports.
 - **The reference run, 2026-10-06** (00:50 to 18:30): two seats, four Mac builders and one ATAS-box leg; three usage stops and a clamshell sleep bridged
   with nothing lost; twelve units landed (the resume block's checkpoint lists them).
+- **The second, 2026-10-06 21:33 → 2026-10-08 ~14:00:** seats P and A (each ROTATED once, fresh from its handoff) plus seat M for M0 attempt 3;
+  four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once and the owner reset it); twenty units landed and M0 recorded.
+  Read-only surveys found protection defects nobody had briefed — the agent's process tree outliving Pause, two holdout leaks, two credential files
+  written readable — and each was fixed and landed within the session (the resume block's checkpoint lists them).
 
 ## Grounding — read before acting, verify before trusting
 
@@ -91,7 +101,7 @@ so this orchestration position becomes the standard."
   any commit in the main checkout, held for seconds (dispatch, merge, record); `box` — the ATAS Windows machine, one leg at a time by grant.
 - **The tests box** (`TA_WIN_BOX=tests`, since 2026-10-05; `tools/README.md`) runs the CI test job on real Windows in ~22 min against windows-latest's
   40–50. **When it is available, it is used — the owner's rule:** `tools/win-test.sh ready` (0 yes · 1 unreachable · 4 a run in progress · 5 his own
-  apps open), then `start --src <worktree>` and `wait` in foreground slices. No `lock.sh` lock: the box refuses a second run itself (exit 4 — wait up to
+  apps open), then `start --src <worktree>` and `wait` (detached, like every wait). No `lock.sh` lock: the box refuses a second run itself (exit 4 — wait up to
   30 min, then write NOT RUN). It is a lent laptop with its owner's own TradeAgent and ATAS installed: nothing of ours starts or touches them, a run is a
   gate or a diagnosis, never a loop, and experiments (`R-containment`, the bridge, the app) go to the ATAS box, never there.
 - Worktrees at `~/Projects/ai-trading-software-for-mihael-worktrees/<branch>`, branch = the unit's name in lower case; `git -C`, never `cd` into one inside
@@ -101,7 +111,8 @@ so this orchestration position becomes the standard."
 
 1. **The full suite runs on CI, on the builder's own branch.** The builder rebases on `main`; builds `-c Release --no-incremental` at 0 warnings; runs Unit
    and Fault locally and its touched classes 3×; then `fleet/bin/ci-dispatch.sh <worktree>` (scan-gated push of ITS branch + the workflow on all three
-   platforms) and `ci-wait.sh --run <id> 9` in foreground slices until it stops answering TIMEOUT (windows-latest takes 40–50 min). The report quotes the run id and every job's
+   platforms) and `ci-wait.sh --run <id>` DETACHED (Bash `run_in_background`), ending its turn with `WAITING: …` until the verdict re-invokes it (windows-latest
+   takes 40–60 min). The report quotes the run id and every job's
    verdict. *Why:* one full suite at a time is this Mac's bottleneck, and CI adds Windows — the target, which the Mac cannot prove. `gate.sh` stays available
    to a builder that needs a local full run, under the suite lock. **And on the tests box when `ready` says yes** (HOW-WE-BUILD pass 1): the same tip, the
    run id, verdict and counts in the report — or "tests box: NOT RUN — <ready's answer>". Real Windows hardware, the target, in half CI's time.
@@ -131,7 +142,10 @@ gate, a known red) is written into the record as a judgement.
 - **`fleet/status/<seat>.md`** — rewritten, not appended, at every state change: units and their state, branch tips, live agent ids, what is in flight, what
   is owed, the last CI verdicts. ≤ 40 lines. With git, it is enough for a fresh manager to resume the seat.
 - **Hand-off:** a manager whose context passes about 60 %, or whose scope ends, writes `fleet/handoff/<seat>.md` (≤ 40 lines: state, open judgements,
-  traps met) and reports; the orchestrator opens a fresh seat from it. A killed leg is resumed by `SendMessage` naming its branch state, or re-briefed
+  traps met) and reports; the orchestrator opens a fresh seat from it. In practice the orchestrator ROTATES a seat at ~400–550k, when each wake costs
+  more than a fresh seat's grounding (2026-10-08: A at 02:59, P at 08:51 → a fresh P at 12:12), the outgoing seat writing its handoff before a usage
+  stop; the fresh seat's prompt names the charter, handoff and status files, the verified state and the orchestrator's priorities. Survey outputs live in
+  the session scratchpad, which the OS empties: the orchestrator copies what a seat will need into `fleet/tmp/`. A killed leg is resumed by `SendMessage` naming its branch state, or re-briefed
   fresh from its brief and branch — the branch is the handoff.
 - **A new orchestrator session** starts with § "The orchestrator" (*Starting a session*), then `fleet/handoff/ORCHESTRATOR.md` for the state. Agent ids die with the session that spawned them: it opens FRESH seats from
   `fleet/charters/`, `fleet/handoff/` and `fleet/status/`, and a paused builder's work is continued by a fresh builder from its branch and worktree.
