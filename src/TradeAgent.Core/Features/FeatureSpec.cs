@@ -301,9 +301,11 @@ public sealed class FeatureSpec
 
     /// <summary>
     /// THE SERIES A FEATURE READS, CHECKED AGAINST THIS BUILD'S ROWS AND NOTHING A FILE SAYS: a source the tape reads as
-    /// market numbers (<see cref="TapeSourceCatalog.JsonParser"/>), one of its series, one of the symbols it records,
-    /// and a field that is neither the series' time nor its symbol. A row <c>tape-sources.json</c> adds is not here:
-    /// whether a spec parses is a fact about the build, never about a file an agent can write.
+    /// market numbers (<see cref="TapeSourceCatalog.MarketParsers"/> — Binance's market rows and, since <c>U-tape-chain</c>,
+    /// Hyperliquid's contexts), one of its series, one of the subjects that row records
+    /// (<see cref="TapeSourceCatalog.SubjectsOf"/>), and a field that is neither the series' time nor its symbol. A row
+    /// <c>tape-sources.json</c> adds is not here: whether a spec parses is a fact about the build, never about a file an
+    /// agent can write.
     /// </summary>
     static FeatureInput? ReadInput(JsonElement value, out string why)
     {
@@ -345,20 +347,22 @@ public sealed class FeatureSpec
 
         var (source, series, subject, field) = (text["source"], text["series"], text["subject"], text["field"]);
 
-        var markets = TapeSourceCatalog.Shipped()
-            .Where(r => r.Parser == TapeSourceCatalog.JsonParser)
+        var shipped = TapeSourceCatalog.Shipped();
+        var markets = shipped
+            .Where(r => TapeSourceCatalog.MarketParsers.Contains(r.Parser, StringComparer.Ordinal))
             .Select(r => r.Id)
             .ToList();
-        var row = TapeSourceCatalog.Shipped().FirstOrDefault(r => string.Equals(r.Id, source, StringComparison.Ordinal));
+        var row = shipped.FirstOrDefault(r => string.Equals(r.Id, source, StringComparison.Ordinal));
         if (row is null)
         {
             why = $"'{Clip(source)}' is not a source the tape records; a feature reads one of {string.Join(", ", markets)}";
             return null;
         }
-        if (row.Parser != TapeSourceCatalog.JsonParser)
+        if (!TapeSourceCatalog.MarketParsers.Contains(row.Parser, StringComparer.Ordinal))
         {
             why = $"'{source}' is read by the parser '{row.Parser}': its rows are text, not market numbers, and a feature "
-                  + $"reads only sources read by '{TapeSourceCatalog.JsonParser}' — {string.Join(", ", markets)}";
+                  + $"reads only sources read by '{string.Join("' or '", TapeSourceCatalog.MarketParsers)}' — "
+                  + string.Join(", ", markets);
             return null;
         }
 
@@ -369,9 +373,11 @@ public sealed class FeatureSpec
             return null;
         }
 
-        if (!TapeSourceCatalog.Universe.Contains(subject, StringComparer.Ordinal))
+        // THE ROW'S OWN SUBJECTS: the universe's symbols for Binance's rows, Hyperliquid's own coin names for its contexts.
+        var subjects = TapeSourceCatalog.SubjectsOf(row);
+        if (!subjects.Contains(subject, StringComparer.Ordinal))
         {
-            why = $"the tape records {source} for {string.Join(", ", TapeSourceCatalog.Universe)}, and '{Clip(subject)}' is not one of them";
+            why = $"the tape records {source} for {string.Join(", ", subjects)}, and '{Clip(subject)}' is not one of them";
             return null;
         }
 

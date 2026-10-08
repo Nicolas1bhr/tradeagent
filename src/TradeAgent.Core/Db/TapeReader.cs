@@ -392,8 +392,10 @@ public sealed class TapeReader
             var exact = mine.FirstOrDefault(a => a.Series == series);
             var lastError = exact is not null ? exact.NewestNote : Failing(mine)?.NewestNote;
 
+            // A SERIES OF SYMBOLS LISTS THEM — Binance's market rows, Hyperliquid's contexts (U-tape-chain) and any source no
+            // row names any more; a series keyed by digests or record ids lists none.
             var parser = Row(source)?.Parser;
-            IReadOnlyList<string>? subjects = parser is null or TapeSourceCatalog.JsonParser
+            IReadOnlyList<string>? subjects = parser is null || TapeSourceCatalog.MarketParsers.Contains(parser, StringComparer.Ordinal)
                 ? [.. Distinct(c,
                     "SELECT subject FROM tape_obs INDEXED BY ix_tape_obs_asof WHERE source=$src AND series=$ser AND subject > $after ORDER BY subject LIMIT 1",
                     ("$src", source), ("$ser", series)).Take(64)]
