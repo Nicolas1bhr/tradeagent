@@ -8927,3 +8927,39 @@ output), excluded by name; no trailers; `rev-list --count` 0 both ways.
 
 **NOT done, NOT verified:** a `Feature` line's clean-history facts are not in the run id (two pipe runs of one id under different holdout windows can state different
 starts; the ledger keeps the first — written into CONTRACTS); the paper runner's feature support (`U-runner-features`); Integration locally (CI ran it); no app run.
+
+## 2026-10-08 — U-press-close-once landed: the owner's Close all asks the platform about a same-side market close still in flight before each leg sends, and closes over an order it cannot decide only on his explicit second press
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-press-close-once.md` (draft from seat P's survey at `bdf5affa`; re-checked by seat P at `cc7a0974`, queued
+`c64d9d3a`, dispatched `0dae7079`). Owed BEFORE ANY LIVE USE (`U-close-once`, `U-inflight-settle`). Merge `698e63d7` (ff-only), 4 commits (red-first tests `b0602f53`, item 1
+`a2cb1267`, item 2 `4633269b`, report `698e63d7`), rebased by seat P's prep onto `78be3e9d` then `1891074e` with an identical src+tests patch-id. No rung. MONEY PATH (gateway):
+the emergency press must not send a close beside one still working (a long becomes a short), nor close over an order without a final answer silently (`CLAUDE.md` rule 3).
+
+- **Item 1:** `CloseCapturedAsync`, `ClosePress` legs only, after the UNKNOWN settle → `AskAboutTheClosesInFlightAsync`: every non-DISPATCHING `ClosesInFlightOn` row through
+  seat A's `SettleAnOrderInFlightAsync` alone, the press's deadline checked per row. (a) settled, nothing filled → sends; (b) listed live → cancelled, asked again, else refused
+  on every press; (c) another press's row → waits, no row; (d) undecided → the `unsettled`-shape flagged row, THEN `AddKvOnce("press_told:{request}")`, and a press with
+  another nonce finding it still undecided closes over it, named; (e) filled → said as drift, nothing sent. The app's legs are untouched.
+- **Item 2:** the summary names every waited, refused, told, closed-over or cancelled order and the one action that ends it; the (d) row says what a second press does and
+  its risk ("should it still be working and fill, ES ends the other way by up to 2"); `docs/CONTRACTS.md` turns the NOT-claimed paragraph into a claim with its limits;
+  `docs/USER-GUIDE.md` (Close all); `Errors.cs` CLOSE_IN_FLIGHT no longer says "There is nothing to do" (seat P's owed light item, closed here).
+- **Deviations, ACCEPTED by seat P:** (1) press rows first and every other row asked before any cancel, so a leg that will not send cancels nothing; (2) (d) is the complement
+  of (a)/(b) — an absence inside the clock or a row moved while asking is (d), a row the stream made final meanwhile is settled; (3) a press settle marks the fill pull due, as
+  the sweep's does; (5) `InFlightSettleTests`' helpers made `internal`. **Judged exception (4):** `SecondPressRefusedTests.A_second_close_all_is_refused_while_the_first_is_unresolved`
+  — its second half asserted the doubling this unit removes (`Assert.Equal(2, c.Closes)`, a second close beside press 1's resting close, case (c)); it now asserts 1 close,
+  the resting row named, flat once it fills; name and first half unchanged; disclosed in the report.
+
+**Verified by running (the builder, quoted).** RED before item 1, on the base binaries: (b) "sells at the wire : 1 before the press, 2 after", "ES -2", `Expected: 0 Actual:
+-2`; (b, never closed over) `Expected: 0 Actual: 1` closes; (c) "closes at the wire : 1 before, 2 after"; (d) press 1 closed ES beside the undecided order, `Expected: 1
+Actual: 2`; (e) "the book ES -1", `Expected: 0 Actual: 1`. Guard (the flatten over the agent's WORKING close → one close) green before and after. Mutant: item 1's call
+replaced by a Sends verdict ⇒ (b) red, `Expected: 0 Actual: -2`; restored, green. (e) is simulated by `RecordingConnector.PositionsTrail` (inert unless set): a frozen
+positions list that both the read and the close's own sizing answer, as ATAS's `ClosePosition` sizes from its position object. Builder's gate: Release 0 warnings; Unit
+1466, Fault 470, 0 failed; `PressCloseOnceTests` + `InFlightSettleTests` + `SecondPressRefusedTests` 3×, 17 passed each.
+**Manager's gate** at `bfd02045` (carried to `698e63d7`, only docs moved), Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1485/1485 (9 m 10 s); Fault
+471/471 (2 m 6 s); Integration 736/737, 1 skipped (11 m 17 s) → 0 failed. Names vs `main`: 2321 → 2327, 0 removed, 6 added ([Fact]/[Theory] 2273 → 2279). Scan clean; no trailers.
+**CI:** branch run 37696688736 at `9d5ea94f` (the code tip; later commits docs only): ubuntu ✓ 13 m, macOS ✓ 24 m, windows ✓ 54 m, package ✓ 3 m; item 1 alone, 37694859394
+at `c1a31a56`: all four ✓. Tests box: NOT RUN — "the machine does not answer" (22:33Z). Landing CI on `main`: a waiter is armed.
+**OWED (NOT claimed in CONTRACTS):** the (c) residual — another press's in-flight row the owner confirmed "still working" on the card, whose platform update is then lost,
+holds that Close all leg until the platform reports it: the card offers only "it is working" for such a row and nothing settles a press's row. A liveness gap, not a double
+close; owed BEFORE LIVE as seat P's light `U-press-row-answer` (a two-press "it is not working — close over it" answer on the card, the orchestrator's view).
+**NOT verified:** where ATAS cannot prove its history every in-flight row is (d), never (b) — read, not run; whether ATAS lists a cancelled close at once after the press's
+cancel (no ATAS box; a slow list refuses the leg, named); a lost `press_told` write is not exercised by a test; no app run, the words not seen on screen.
