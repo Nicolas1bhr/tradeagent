@@ -18,11 +18,11 @@ namespace TradeAgent.Tests.Integration;
 ///
 /// <para>The unit tests hold the store's keys and the collector's arithmetic. This holds the two
 /// things only the wire settles. First, that <c>data-bars --source forward</c> serves a bounded
-/// window to a caller whatever role it proved and WITHOUT a holdout refusal — no holdout applies to
-/// a bar that post-dates every freeze on the installation. Second, and this is the one that matters,
-/// that the archive's cutoff is untouched by any of it: the SAME database, the SAME window and the
-/// SAME caller is still refused the held-back months through <c>--source archive</c>, so the new
-/// door is a door onto different evidence and not a way round the old one.</para>
+/// window outside every holdout window to a caller whatever role it proved, with no holdout
+/// refusal. Second, and this is the one that matters, that the door is no way round a cutoff:
+/// a forward window reaching an archive dataset's holdout window is REFUSED, for the same caller
+/// and the same window the archive refuses (<c>U-bar-holdout</c> — "every forward bar post-dates
+/// every freeze" was a premise, and a Download taken after the collector ran breaks it).</para>
 /// </summary>
 public class ForwardBarsOverPipeTests(ITestOutputHelper log)
 {
@@ -161,8 +161,10 @@ public class ForwardBarsOverPipeTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE HEADLINE. The same caller, the same window, the same database: the FORWARD bars come back
-    /// and the ARCHIVE's held-back months do not.
+    /// THE HEADLINE, REWRITTEN BY <c>U-bar-holdout</c>. Outside every holdout window the FORWARD bars
+    /// come back, bounded and with no holdout refusal. The window that reaches the archive's held-back
+    /// months is refused through BOTH doors, for the same caller on the same database: before this
+    /// unit the forward door served those minutes, and this test asserted it as the feature.
     /// </summary>
     [Theory]
     [InlineData(CouncilRoles.Research)]
@@ -178,21 +180,20 @@ public class ForwardBarsOverPipeTests(ITestOutputHelper log)
         GivenForward(db, 120, skipAfter: 9);
         GivenArchiveWithHoldout(db);
 
-        // THE WINDOW REACHES PAST THE ARCHIVE'S CUTOFF ON PURPOSE. Through the archive it is the
-        // refusal; through the forward door it is simply the bars.
-        var window = Args(("pair", Pair), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(119))));
+        // A WINDOW ENDING BEFORE THE ARCHIVE'S CUTOFF: the forward bars, the hole at minute ten kept.
+        var before = Args(("pair", Pair), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(HoldoutAtBar - 1))));
 
         var forward = await client.SendAsync(new IpcRequest
         {
             Op = Ops.DataBars, Session = "agent-fwd",
-            Args = new Dictionary<string, JsonElement>(window) { ["source"] = JsonSerializer.SerializeToElement("forward") }
+            Args = new Dictionary<string, JsonElement>(before) { ["source"] = JsonSerializer.SerializeToElement("forward") }
         });
 
         Assert.True(forward.Ok, Json.Write(forward.Error));
         var reply = Data(forward);
         log.WriteLine(reply.ToString());
 
-        Assert.Equal(119, reply.GetProperty("count").GetInt32());
+        Assert.Equal(HoldoutAtBar - 1, reply.GetProperty("count").GetInt32());
         Assert.Equal(ForwardBars.Source, reply.GetProperty("source").GetString());
 
         // WHAT THESE BARS ARE NOT, IN THE ANSWER AND NOT ONLY IN A SCHEMA.
@@ -211,7 +212,23 @@ public class ForwardBarsOverPipeTests(ITestOutputHelper log)
             Assert.True(bar.GetProperty("close_time").GetDateTimeOffset()
                         < bar.GetProperty("received_at").GetDateTimeOffset());
 
-        // THE ARCHIVE'S CUTOFF IS UNTOUCHED, for this very caller, on this very window.
+        // THE WINDOW REACHES PAST THE ARCHIVE'S CUTOFF ON PURPOSE: refused through the forward door, in
+        // the holdout's words, for this very caller — and through the archive, as it always was.
+        var window = Args(("pair", Pair), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(119))));
+
+        var held = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.DataBars, Session = "agent-fwd",
+            Args = new Dictionary<string, JsonElement>(window) { ["source"] = JsonSerializer.SerializeToElement("forward") }
+        });
+
+        log.WriteLine(Json.Write(held.Error));
+        Assert.False(held.Ok, "the forward door served minutes inside the archive's holdout window");
+        Assert.Equal(nameof(ErrorCode.HOLDOUT_WITHHELD), held.Error!.Code);
+        Assert.Contains($"holds out every bar from {Start.AddMinutes(HoldoutAtBar):u}", held.Error.Message, StringComparison.Ordinal);
+        Assert.Contains($"the forward bars of {Pair}", held.Error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("received_at", Json.Write(held), StringComparison.Ordinal);
+
         var archive = await client.SendAsync(new IpcRequest
         {
             Op = Ops.DataBars, Session = "agent-fwd", Args = window

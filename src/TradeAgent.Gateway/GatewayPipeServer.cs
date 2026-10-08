@@ -2784,7 +2784,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             var word = (req.Str("source") ?? "").Trim().ToLowerInvariant();
             if (word.Length > 0 && word != "archive")
                 return word == ForwardBars.SourceWord
-                    ? ForwardBars_(pair, from, to)
+                    ? ForwardBars_(ctx, pair, from, to)
                     : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                         $"'{word}' is not a source this build serves bars from. It has 'archive' — the "
                         + "frozen, checksummed history the account owner collected — and "
@@ -2851,24 +2851,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>
     /// THE FORWARD BARS — the closed minutes TradeAgent collected itself while it was running.
     ///
-    /// <para><b>No holdout applies, and that is a statement about what these bars ARE rather than a
-    /// relaxation.</b> A holdout is a cutoff the account owner drew across a FROZEN dataset; every
-    /// forward bar post-dates every freeze on this installation, because it did not exist when the
-    /// freeze was taken. There is nothing here to hold back. The archive reader's cutoff is
-    /// untouched, still checked inside <c>DatasetReader.Read</c>, and still refuses every caller —
-    /// this method does not go near it, and a program judged over held-back months cannot reach one
-    /// of them through this door.</para>
+    /// <para><b>Held back over every holdout window, as the archive's bars are</b> (<c>U-bar-holdout</c>).
+    /// "Every forward bar post-dates every freeze" was a premise, and a Download taken after the
+    /// collector ran breaks it: the archive's newest months are minutes the collector already holds, and
+    /// a minute TradeAgent collected says what that minute did as surely as the archive's bar for it. So
+    /// the read is <c>ForwardBarStore.Window</c>, which takes the caller's holdout with the dataset
+    /// ledger and REFUSES a window whose market span reaches any dataset's holdout window —
+    /// <c>HOLDOUT_WITHHELD</c>, in the words naming the dataset, its cutoff and the window, never
+    /// clipped. <c>ForwardBarStore.Since</c> takes no holdout and is never called from here.</para>
     ///
     /// <para><b>And they are not evaluation evidence.</b> There is no vendor checksum for a live
     /// window and none is claimed, so the reply says so in the same words <c>data-list</c> uses.
-    /// Served to any role for the reason above; the refusal a research caller would deserve is on
-    /// the EVIDENCE side, and it is that no verdict is taken over these bars at all.</para>
+    /// Outside every holdout window they are served to any role alike; the further refusal is on the
+    /// EVIDENCE side, and it is that no verdict is taken over these bars at all.</para>
     ///
     /// <para>Bounded exactly as the archive read is bounded: at most <c>DatasetReader.MaxBars</c>,
     /// and a window holding more is REFUSED naming the cap rather than truncated. An answer quietly
     /// cut short is a different window from the one that was asked for.</para>
     /// </summary>
-    object ForwardBars_(string pair, DateTimeOffset? from, DateTimeOffset? to)
+    object ForwardBars_(AgentContext ctx, string pair, DateTimeOffset? from, DateTimeOffset? to)
     {
         var series = gateway.Forward.Series(pair);
         if (series.Bars == 0)
@@ -2879,14 +2880,16 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 + "switches that on in TradeAgent's own window under Market data; there is no command "
                 + "here that does it.");
 
-        // ONE PAST THE CAP IS ENOUGH TO KNOW THE WINDOW IS TOO BIG, and it is the last row this asks
-        // the database for — the reading `DatasetReader.Read` takes, so the two doors refuse alike.
-        var bars = gateway.Forward.Since(pair,
-            from is { } lo ? lo - ForwardBars.BarLength : null, DatasetReader.MaxBars + 1);
+        // THE CALLER'S HOLDOUT, WITH THE LEDGER, IS ASKED INSIDE THE READ (U-bar-holdout), before a row
+        // is read, whatever role it proved; and one past the cap is the last row the read asks the
+        // database for — the reading `DatasetReader.Read` takes, so the two doors refuse alike.
+        var window = gateway.Forward.Window(TapeHoldout.Pipe(ctx.Role, gateway.Datasets), pair, from, to);
 
-        if (to is { } hi) bars = [.. bars.Where(b => b.OpenTime <= hi)];
+        if (window.Refusal is { } withheld)
+            throw new GatewayDeniedException(ErrorCode.HOLDOUT_WITHHELD, withheld);
 
-        if (bars.Count > DatasetReader.MaxBars)
+        var bars = window.Bars;
+        if (window.OverCap)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"That window holds more than {DatasetReader.MaxBars} forward bars, which is the most "
                 + "one call may have. Ask for a shorter period with --from and --to; the series covers "

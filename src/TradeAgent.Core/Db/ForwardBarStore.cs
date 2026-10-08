@@ -29,7 +29,10 @@ namespace TradeAgent.Core.Db;
 ///
 /// <para><b>It is app-owned, like the dataset ledger.</b> There is no verb and no pipe op that
 /// appends here; the collector in the app's own process is the only caller. What the agent can reach
-/// is <see cref="Since"/> and <see cref="Series"/>, which are reads.</para>
+/// is <see cref="Window"/> — which takes the holdout, and refuses a window reaching any dataset's
+/// holdout window (<c>U-bar-holdout</c>) — and <see cref="Series"/>, which are reads. <see cref="Since"/>
+/// and <see cref="Bar"/> take no holdout and are never a pipe read: they are the paper runner's, the
+/// paper source's and the collector's in-process reads of the present.</para>
 /// </summary>
 public sealed class ForwardBarStore(Database db)
 {
@@ -221,8 +224,15 @@ public sealed class ForwardBarStore(Database db)
     ///
     /// <para>The limit is capped at <see cref="MaxRows"/> rather than refused, because this read has
     /// no window to be a different window from: "the next N after X" is answered exactly, and the
-    /// caller asks again with the last open time it got. A caller that DOES own a window — the pipe
-    /// op — asks for one past the cap and refuses on what comes back.</para>
+    /// caller asks again with the last open time it got. A caller that DOES own a window reads
+    /// <see cref="Window"/>, which refuses one past the cap.</para>
+    ///
+    /// <para><b>It takes no <see cref="TapeHoldout"/>, and that is why it is never a pipe read</b>
+    /// (<c>U-bar-holdout</c>; the precedent is <c>TapeStore.Revisions</c>): it is the paper runner's
+    /// (<c>ForwardRuns</c>), the paper source's (<c>ForwardBarSource</c>) and the collector's own read
+    /// of the minutes as they close, in process. The pipe's forward door reads <see cref="Window"/>, which
+    /// takes the holdout. <c>BarHoldoutTests</c> holds the list of public bar reads that take none to
+    /// this, <see cref="Bar"/> and a feed's own streams, by name.</para>
     /// </summary>
     public IReadOnlyList<ForwardBar> Since(string symbol, DateTimeOffset? openExclusive = null,
         int limit = DatasetReader.MaxBars, string source = ForwardBars.Source) => db.Read(_ =>
@@ -243,6 +253,53 @@ public sealed class ForwardBarStore(Database db)
         while (r.Read()) rows.Add(Read(r));
         return rows;
     });
+
+    /// <summary>
+    /// THE PIPE'S READ OF THE FORWARD BARS (<c>U-bar-holdout</c>): the bars of <paramref name="symbol"/>
+    /// whose open time is in [<paramref name="from"/>, <paramref name="to"/>], both inclusive and both
+    /// optional, ascending — or none at all, because they are held back from this caller or because
+    /// the window holds more than <paramref name="cap"/>.
+    ///
+    /// <para><b><paramref name="holdout"/> is required, and asked BEFORE a row is read</b>
+    /// (<see cref="TapeHoldout.ForwardRefusal"/>). Forward bars belong to no dataset, so every dataset's
+    /// holdout window holds them: a Download taken after the collector ran holds months the collector
+    /// already has, and a minute TradeAgent collected says what that minute did as surely as the archive's
+    /// bar for it. A window whose market span reaches one is REFUSED, never clipped.</para>
+    ///
+    /// <para>The cap REFUSES, as the archive reader's does: one row past it is read, so "exactly the
+    /// cap" and "more" are told apart, and a window holding more comes back
+    /// <see cref="ForwardWindow.OverCap"/> with no bars.</para>
+    /// </summary>
+    public ForwardWindow Window(TapeHoldout holdout, string symbol, DateTimeOffset? from, DateTimeOffset? to,
+        int cap = DatasetReader.MaxBars, string source = ForwardBars.Source)
+    {
+        ArgumentNullException.ThrowIfNull(holdout);
+        ArgumentNullException.ThrowIfNull(symbol);
+        ArgumentOutOfRangeException.ThrowIfNegative(cap);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(cap, DatasetReader.MaxBars);
+
+        if (holdout.ForwardRefusal(symbol, from, to) is { } withheld) return new ForwardWindow([], false, withheld);
+
+        var rows = db.Read(_ =>
+        {
+            using var c = db.Cmd($"""
+                SELECT {BarCols} FROM forward_bar
+                WHERE source=$src AND symbol=$sym
+                  AND ($from IS NULL OR open_time >= $from) AND ($to IS NULL OR open_time <= $to)
+                ORDER BY open_time LIMIT $n
+                """,
+                ("$src", source), ("$sym", symbol),
+                ("$from", from is { } lo ? Sql.T(lo) : null), ("$to", to is { } hi ? Sql.T(hi) : null),
+                ("$n", cap + 1));
+
+            var read = new List<ForwardBar>();
+            using var r = c.ExecuteReader();
+            while (r.Read()) read.Add(Read(r));
+            return read;
+        });
+
+        return rows.Count > cap ? new ForwardWindow([], true) : new ForwardWindow(rows, false);
+    }
 
     /// <summary>
     /// HOW OLD THE NEWEST CLOSED BAR IS AT <paramref name="now"/>, or null because there is none.
@@ -386,7 +443,11 @@ public sealed class ForwardBarStore(Database db)
         return (r.GetInt32(0), r.GetInt32(1));
     });
 
-    /// <summary>One stored bar, or null. The read <see cref="Append"/> uses to spot a disagreement.</summary>
+    /// <summary>
+    /// One stored bar, or null. The read <see cref="Append"/> uses to spot a disagreement, and the paper
+    /// source's announcement of a minute that closed (<c>ForwardBarSource.Announce</c>). It takes no
+    /// holdout and, like <see cref="Since"/>, is never a pipe read.
+    /// </summary>
     public ForwardBar? Bar(string source, string symbol, DateTimeOffset openTime) => db.Read(_ =>
     {
         using var c = db.Cmd(

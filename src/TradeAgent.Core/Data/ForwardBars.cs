@@ -189,6 +189,16 @@ public sealed record ForwardBar(
     decimal Close, decimal Volume, DateTimeOffset CloseTime, DateTimeOffset ReceivedAt, long FetchId);
 
 /// <summary>
+/// A WINDOW OF FORWARD BARS AS THE PIPE IS SERVED IT (<c>ForwardBarStore.Window</c>, <c>U-bar-holdout</c>): the bars, whether
+/// the window holds more than a caller may have at once, and whether it may be served to this caller at all —
+/// <see cref="BarWindow"/>'s shape, for the forward ledger.
+///
+/// <para><see cref="Refusal"/> is the holdout's, in words, or null, and it comes with an EMPTY <see cref="Bars"/>: a caller
+/// that forgets to look at it is handed nothing, never a minute inside a holdout window.</para>
+/// </summary>
+public sealed record ForwardWindow(IReadOnlyList<ForwardBar> Bars, bool OverCap, string? Refusal = null);
+
+/// <summary>
 /// ONE ATTEMPT TO FETCH FORWARD BARS, SUCCEEDED OR FAILED, as the collector observed it.
 ///
 /// <para>Every attempt is one of these and every one of them is written. A fetch that got no answer

@@ -311,6 +311,38 @@ public class BarHoldoutOverPipeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// (b) THE FORWARD DOOR SERVES NO BAR INSIDE A HOLDOUT WINDOW — the probe's leg 5: <c>data-bars --source forward</c>
+    /// over A's window, over a window straddling its cutoff, and with no window at all, for each director and a caller
+    /// with none, over the pipe and in process: <c>HOLDOUT_WITHHELD</c> naming A's cutoff and the forward bars. RED on the
+    /// base, where every forward bar was served on the premise that it post-dates every freeze.
+    /// </summary>
+    [Fact]
+    public async Task The_forward_door_serves_no_bar_inside_a_holdout_window()
+    {
+        await using var rig = await Ready();
+        var leaks = new List<string>();
+
+        foreach (var role in EveryCaller)
+        {
+            await using var client = await rig.Dial(role);
+            foreach (var (from, to) in new (DateTimeOffset?, DateTimeOffset?)[]
+                     {
+                         (Cutoff, WindowEnd.AddMinutes(-1)), (Start.AddMinutes(30), Start.AddMinutes(90)), (null, null)
+                     })
+            {
+                var asked = $"[{(from is { } f ? Iso(f) : "no start")}, {(to is { } t ? Iso(t) : "no end")}]";
+                Withheld(rig, leaks, $"data-bars --source forward BTCUSDT {asked} as {Who(role)} over the pipe",
+                    await client.SendAsync(Bars("BTCUSDT", from, to, "forward")), role, "the forward bars of BTCUSDT");
+                Withheld(rig, leaks, $"data-bars --source forward BTCUSDT {asked} as {Who(role)} in process",
+                    await rig.CallAsync(role, Bars("BTCUSDT", from, to, "forward")), role, "the forward bars of BTCUSDT");
+            }
+        }
+
+        log.WriteLine(leaks.Count == 0 ? "VERDICT: NO LEAK" : $"VERDICT: LEAK in {leaks.Count} legs");
+        Assert.True(leaks.Count == 0, "the forward door served A's held-back minutes: " + string.Join(" | ", leaks));
+    }
+
+    /// <summary>
     /// (c) A READ WHOLLY OUTSIDE EVERY WINDOW IS SERVED FROM THE SECOND DATASET — before A's cutoff, and from its window's
     /// close on, whole: B's and C's bars, the forward bars and a backtest over B, to every caller; and the two minutes that
     /// bound the window are each refused, so the boundary is where A says it is.
