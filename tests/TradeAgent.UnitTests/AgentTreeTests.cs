@@ -31,9 +31,20 @@ namespace TradeAgent.Tests.Unit;
 ///
 /// <para><b>Cleanup kills only what this test recorded</b>, by pid, and only while that pid still has the
 /// start time it was recorded with — never by name, which is the same proof the product's teardown keeps.</para>
+///
+/// <para><b>TIMING CATEGORY, ARGUED WITH THE NUMBERS.</b> Every verdict here needs the runner to keep a wall
+/// clock: the brief's bound is a ceiling on a duration — every process dead within five seconds of the press —
+/// over real processes, and each turn has a minute to start. What the product does is not slow: on this Mac
+/// the class runs in 21 s, the five-second bound met with seconds to spare, and three runs in a row agree. What
+/// is slow is a loaded runner. windows-latest run 37712519465, beside the other two assemblies: an in-memory
+/// test of this class took 9.4 s (0.1 s here), three PowerShell turns started at 01:49–01:52Z had not written
+/// their pids sixty seconds later, and the same probe came up in 7 s from 01:53Z on; run 37707921636 showed the
+/// same two-minute window. The timing step runs this category on its own, after that load, on every platform.</para>
 /// </summary>
 // The probe runtime goes into runtimes.json under the shared test home, so this class may not run beside
 // the tests that corrupt that file on purpose; the launcher in the shared bin folder is the other reason.
+// The Timing trait goes above the collection: VendorOverrideFileTests reads the line right above the class.
+[Trait("Category", "Timing")]
 [Collection(VendorOverrideFiles.Name)]
 public class AgentTreeTests : IDisposable
 {
