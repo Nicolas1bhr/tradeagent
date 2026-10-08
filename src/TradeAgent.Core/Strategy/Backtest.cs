@@ -359,6 +359,10 @@ public static class Backtest
     /// THE DECLARATION KINDS THE BACKTEST IMPLEMENTS: every one this build parses (<see cref="StrategyDeclarations.All"/>).
     /// A program requiring a kind not on this list would be refused in words (<see cref="StrategyDeclarations.Refusal"/>),
     /// never run without it — <c>FeatureProgramBacktestTests</c> holds that every kind the parser reads is on it.
+    ///
+    /// <para><b><c>max_capital_fraction</c> among them</b> (<c>U-size-cap</c>): an entry here is sized by the evaluator
+    /// (<c>StrategyEvaluator.Quantity</c>), which applies the cap to the cash this run's books hand it as capital, so the
+    /// signal, the rounding and the cash check below all see the capped size and never the uncapped one.</para>
     /// </summary>
     public static readonly IReadOnlyList<string> Implements = StrategyDeclarations.All;
 

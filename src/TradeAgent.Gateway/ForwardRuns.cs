@@ -836,6 +836,11 @@ public sealed class ForwardRuns
     /// parses but <c>feature</c>. It computes no feature value — <c>U-runner-features</c> values features at its decision
     /// instant, absent meaning no decision, and lifts this — so a program that reads one is refused here rather than
     /// stepped without its inputs.
+    ///
+    /// <para><b><c>max_capital_fraction</c> among them</b> (<c>U-size-cap</c>): an entry's size is the evaluator's
+    /// (<c>StrategyEvaluator.Quantity</c>), which applies the cap to the capital this runner hands it — the allocation's
+    /// own ceiling (<see cref="Capital"/>) — before <see cref="Sized"/> rounds it down, so what is sent is the capped size.
+    /// The gateway's ceilings are untouched: they still refuse an order whole and nothing makes one smaller to fit.</para>
     /// </summary>
     public static readonly IReadOnlyList<string> Implements =
         [.. StrategyDeclarations.All.Where(k => k != StrategyDeclarations.Feature)];

@@ -163,12 +163,29 @@ public static class StrategyCanonical
         _ => "volume"
     };
 
-    static string Size(Sizing s) => s.Kind switch
+    /// <summary>
+    /// THE SIZE, AND ITS CAP ONLY WHEN ONE IS DECLARED (<c>U-size-cap</c>) — the exception <c>bars</c> and <c>feature</c>
+    /// above already make to "always stated", for their reason: no stored text has a cap, so every canonical form written
+    /// before the clause existed, and every id and result recorded against it, is the one it always was, while a capped
+    /// program — <c>size risk_fraction:0.01 max_capital_fraction:0.95</c> — can never share an id with its uncapped twin.
+    ///
+    /// <para>The parser puts a cap on a risk fraction and nowhere else. A cap on another kind is a defect that would
+    /// hash a constraint the evaluator does not apply, so it fails CLOSED, as an unknown node does below.</para>
+    /// </summary>
+    static string Size(Sizing s)
     {
-        SizingKind.FixedQuantity => $"fixed:{StrategyParser.Number(s.Value)}",
-        SizingKind.CapitalFraction => $"capital_fraction:{StrategyParser.Number(s.Value)}",
-        _ => $"risk_fraction:{StrategyParser.Number(s.Value)}"
-    };
+        if (s.MaxCapitalFraction is not null && s.Kind != SizingKind.EquityRiskFraction)
+            throw new InvalidOperationException(
+                "a size that is not a risk fraction carries a capital cap, which this build neither parses nor applies, so it gives it no id");
+
+        return s.Kind switch
+        {
+            SizingKind.FixedQuantity => $"fixed:{StrategyParser.Number(s.Value)}",
+            SizingKind.CapitalFraction => $"capital_fraction:{StrategyParser.Number(s.Value)}",
+            _ => $"risk_fraction:{StrategyParser.Number(s.Value)}"
+                 + (s.MaxCapitalFraction is { } cap ? $" max_capital_fraction:{StrategyParser.Number(cap)}" : "")
+        };
+    }
 
     static string Stop(StopRule s) => s.Kind switch
     {
