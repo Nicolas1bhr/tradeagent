@@ -424,4 +424,61 @@ public class HoldoutCampaignOverPipeTests(ITestOutputHelper log)
         Assert.Single(rig.Gw.Campaigns.Verdicts(c2.Id));
         Assert.Equal(2, rig.Gw.Campaigns.JudgementsSpent(c2.Id));
     }
+
+    /// <summary>
+    /// (e) THE OTHER BUTTON AT THE SAME DATE IS REFUSED WHILE A CAMPAIGN JUDGES — both directions, through the owner's own
+    /// press (<c>TradingGateway.SetHoldout</c>). A, held as real history under campaign 1, pressed "These are fixture bars"
+    /// at its own date; F, held as fixture bars under its own campaign, pressed "Hold these bars back" at its own date: each
+    /// is refused in the owner's words naming the campaign, the class it judges under and the fresh download, and the
+    /// ledger is unchanged — both cutoffs, both classes, both campaigns, the count of campaigns and every held window. The
+    /// same instant and the same class stays the Ok no-op. RED on the base, where both presses answered Ok and rewrote the
+    /// class.
+    /// </summary>
+    [Fact]
+    public async Task The_other_button_at_the_same_date_is_refused_while_a_campaign_judges()
+    {
+        await using var rig = await Ready(trials: 3);
+        var f = Recorded(rig.Db, "ETHUSDT", "v1", Start, 120);
+        var (fixtureHeld, fixture) = rig.Gw.SetHoldout(f.Id, Cutoff, EvaluationClass.Fixture);
+        Assert.True(fixtureHeld.Ok, fixtureHeld.Why);
+
+        (DateTimeOffset? A, string AClass, DateTimeOffset? F, string FClass, long? OpenA, long? OpenF, int Campaigns, string Windows) Ledger()
+        {
+            var a = rig.Gw.Datasets.ById(rig.A.Id)!;
+            var held = rig.Gw.Datasets.ById(f.Id)!;
+            return (a.HoldoutFrom, a.EvaluationClass, held.HoldoutFrom, held.EvaluationClass,
+                rig.Gw.Campaigns.OpenForDataset(a.Id)?.Id, rig.Gw.Campaigns.OpenForDataset(held.Id)?.Id,
+                rig.Gw.Campaigns.All().Count,
+                string.Join(" | ", TapeHoldout.WindowsOf(rig.Gw.Datasets.All()).Select(w => $"{w.DatasetId} [{w.From:u}, {w.Until:u})")));
+        }
+
+        var before = Ledger();
+        foreach (var (set, campaign, asked, judgedAs) in new[]
+                 {
+                     (rig.A, rig.Campaign, EvaluationClass.Fixture, "real history"),
+                     (f, fixture!, EvaluationClass.Research, "fixture bars")
+                 })
+        {
+            var (done, opened) = rig.Gw.SetHoldout(set.Id, Cutoff, asked);
+            log.WriteLine($"dataset {set.Id}, held as {judgedAs} under campaign {campaign.Id}, pressed {asked} at {Cutoff:u}: "
+                + $"Ok={done.Ok} Why=\"{done.Why}\"");
+
+            Assert.False(done.Ok, $"the press rewrote dataset {set.Id}'s class to {asked} while campaign {campaign.Id} judges it as {judgedAs}");
+            Assert.Null(opened);
+            Assert.Null(done.Cutoff);
+            Assert.StartsWith("Nothing was changed.", done.Why, StringComparison.Ordinal);
+            Assert.Contains($"Campaign {campaign.Id} judges strategies on these bars as {judgedAs}", done.Why, StringComparison.Ordinal);
+            Assert.Contains("download a fresh copy of the history and hold months back on that", done.Why, StringComparison.Ordinal);
+            Assert.Equal(before, Ledger());
+        }
+
+        // THE SAME INSTANT AND THE SAME CLASS STAYS THE Ok NO-OP, handing back the campaign already open.
+        var (again, same) = rig.Gw.SetHoldout(rig.A.Id, Cutoff, EvaluationClass.Research);
+        Assert.True(again.Ok, again.Why);
+        Assert.Equal(rig.Campaign.Id, same!.Id);
+        var (fixtureAgain, sameFixture) = rig.Gw.SetHoldout(f.Id, Cutoff, EvaluationClass.Fixture);
+        Assert.True(fixtureAgain.Ok, fixtureAgain.Why);
+        Assert.Equal(fixture!.Id, sameFixture!.Id);
+        Assert.Equal(before, Ledger());
+    }
 }
