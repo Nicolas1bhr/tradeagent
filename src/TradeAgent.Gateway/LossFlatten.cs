@@ -82,7 +82,8 @@ public static class LossFlatten
 
     /// <summary>
     /// The confirm's family (<see cref="LossFlattenConfirm"/>, <c>U-flatten-confirm</c>) — its own
-    /// prefix, written ONCE per breach at the SQL layer, and never a field on the outcome it answers.
+    /// prefix, written ONCE per close generation at the SQL layer, and never a field on the outcome it
+    /// answers: this one the FIRST flatten's, and the closing again's under <see cref="AgainConfirmPrefix"/>.
     /// </summary>
     public const string ConfirmPrefix = "loss_flatten_confirm:";
 
@@ -116,6 +117,22 @@ public static class LossFlatten
         ArgumentNullException.ThrowIfNull(breach);
         return AgainOwedPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
     }
+
+    /// <summary>
+    /// THE CLOSING AGAIN'S OWN CONFIRM (<c>U-valuation-close-confirm</c>): a <see cref="LossFlattenConfirm"/> of the
+    /// second close generation, written once at the SQL layer exactly as the first flatten's is, and never a field on
+    /// either outcome or on the first confirm. A close the closing again lost the answer to is decided here, by the
+    /// same history question and the same owner's answer, and it OWES NOTHING: flat, or still open and the owner's to
+    /// close — there is no third flatten.
+    /// </summary>
+    public const string AgainConfirmPrefix = "loss_flatten_again_confirm:";
+
+    /// <summary><c>loss_flatten_again_confirm:{connector}:{account}:[{symbol}:]{utcDay}</c>.</summary>
+    public static string AgainConfirmKeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return AgainConfirmPrefix + KeyFor(connectorId, breach)[Prefix.Length..];
+    }
 }
 
 /// <summary>
@@ -146,10 +163,12 @@ public sealed record LossFlattenVerdict(string RequestId, string Symbol, string 
 /// nothing rewrites it. This is a later fact about the same breach, from a different source: the
 /// platform's own history, read on a later pass, and a fresh read of the book after it.</para>
 ///
-/// <para><b>Written once per breach, at the SQL layer, BEFORE a single row is settled</b>, so it is the
-/// decision and the rows are its application: a pass killed between the two finishes on the next one
-/// from the record, and a second lost answer — the closing again's — is never confirmed a second time.
-/// It stays flagged for the owner.</para>
+/// <para><b>Written once per CLOSE GENERATION, at the SQL layer, BEFORE a single row is settled</b>, so it is
+/// the decision and the rows are its application: a pass killed between the two finishes on the next one
+/// from the record. A generation is one outcome with its own two press nonces (<c>U-valuation-close-confirm</c>):
+/// the first flatten's confirm is filed under <see cref="LossFlatten.ConfirmPrefix"/>, and a lost answer to the
+/// closing again is decided by that generation's OWN confirm under <see cref="LossFlatten.AgainConfirmPrefix"/>
+/// — never by re-reading this one, and never by settling a row of another generation.</para>
 ///
 /// <para><b>Only every lost close decided by the platform's own word, by absence only behind a claim, or
 /// by the owner's answer under the platform's veto.</b> A close the history holds in a terminal state, or
@@ -177,10 +196,11 @@ public sealed record LossFlattenConfirm
 
     public string BreachKey { get; init; } = "";
 
-    /// <summary>The outcome this answers for: the first flatten's <c>loss_flatten:</c> key.</summary>
+    /// <summary>The outcome this answers for: the first flatten's <c>loss_flatten:</c> key, or the closing
+    /// again's <c>loss_flatten_again:</c> key for the closing again's own confirm.</summary>
     public string OutcomeKey { get; init; } = "";
 
-    /// <summary>The first flatten's two press nonces, whose rows this record settles and unflags.</summary>
+    /// <summary>That outcome's two press nonces, whose rows — and no other generation's — this record settles and unflags.</summary>
     public string CancelNonce { get; init; } = "";
 
     public string CloseNonce { get; init; } = "";
@@ -194,8 +214,10 @@ public sealed record LossFlattenConfirm
     public IReadOnlyList<string> StillOpen { get; init; } = [];
 
     /// <summary>
-    /// The read-back was flat: nothing is sent. False is CLOSING AGAIN — the sweep runs the same flatten
-    /// once nothing is unconfirmed, and files it under <see cref="LossFlatten.AgainPrefix"/>.
+    /// The read-back was flat: nothing is sent. False on the FIRST flatten's confirm is CLOSING AGAIN — the
+    /// sweep runs the same flatten once nothing is unconfirmed, and files it under
+    /// <see cref="LossFlatten.AgainPrefix"/>. False on the closing again's own confirm sends nothing more: what is
+    /// still open is the owner's to close, and the sentence says so.
     /// </summary>
     public bool Flat { get; init; }
 
