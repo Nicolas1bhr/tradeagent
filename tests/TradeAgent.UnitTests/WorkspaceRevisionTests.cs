@@ -198,12 +198,17 @@ public class WorkspaceRevisionTests
         Assert.Equal(overCap, world.ReadKept(CouncilRoles.Research, "PLAN-refused-turn-b.md"));
         Assert.Equal(Encoding.UTF8.GetBytes(overCap), world.KeptBytes(CouncilRoles.Research, "PLAN-refused-turn-b.md"));
 
-        // AND THE TURN IS TOLD, in the words its next Situation will carry.
+        // AND THE TURN IS TOLD, in the words its next Situation will carry — including where what it
+        // wrote now is, because a copy nobody can find is a copy in name only.
         var notice = Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research));
         Assert.Contains("trading/PLAN.md", notice);
         Assert.Contains($"revision {p.Revision}", notice);
         Assert.Contains(WorkspaceRevisions.ArchiveDir, notice);
-        Assert.Contains("trading/PLAN.md", Assert.Single(said));
+        Assert.Contains("what you wrote is kept at `trading/archive/PLAN-refused-turn-b.md`", notice);
+        Assert.Contains($"Move what still matters into the plan under {WorkspaceRevisions.PlanLines} lines.", notice);
+        var line = Assert.Single(said);
+        Assert.Contains("trading/PLAN.md", line);
+        Assert.Contains("`trading/archive/PLAN-refused-turn-b.md`", line);
 
         // AND IT STOPS BEING TOLD once it has written a plan the app accepts.
         world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(41, "plan line"));
@@ -271,6 +276,10 @@ public class WorkspaceRevisionTests
         Assert.Equal(wrote, world.KeptBytes(CouncilRoles.Research, "JOURNAL-refused-turn-b.md"));
         var kept = world.ReadKept(CouncilRoles.Research, "JOURNAL-refused-turn-b.md");
         foreach (var entry in entries) Assert.Contains(entry, kept);
+
+        var notice = Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research));
+        Assert.Contains("what you wrote is kept at `trading/archive/JOURNAL-refused-turn-b.md`", notice);
+        Assert.Contains($"into the journal under {WorkspaceRevisions.JournalLines} lines", notice);
     }
 
     /// <summary>
@@ -400,7 +409,12 @@ public class WorkspaceRevisionTests
         Assert.Equal(2, kept.Length);
         Assert.Contains(named, kept);
         Assert.Equal(first, world.ReadKept(CouncilRoles.Research, named));
-        Assert.Equal(second, world.ReadKept(CouncilRoles.Research, Assert.Single(kept, k => k != named)));
+        var other = Assert.Single(kept, k => k != named);
+        Assert.Equal(second, world.ReadKept(CouncilRoles.Research, other));
+
+        // And the notice the second refusal left names the second copy, not the first.
+        Assert.Contains($"kept at `trading/archive/{other}`",
+            Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research)));
     }
 
     /// <summary>
@@ -429,6 +443,14 @@ public class WorkspaceRevisionTests
         Assert.Equal(journal, world.ReadKept(CouncilRoles.Research, "JOURNAL-refused-turn-b.md"));
         Assert.Equal(Lines(40, "plan line"), world.Read(CouncilRoles.Research, PublicationKind.Plan));
         Assert.Equal(Lines(100, "2026-09-08 tried something"), world.Read(CouncilRoles.Research, PublicationKind.Journal));
+
+        // Each notice names its own file's copy.
+        var notices = WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research);
+        Assert.Equal(2, notices.Count);
+        Assert.Contains(notices, n => n.StartsWith("`trading/PLAN.md`", StringComparison.Ordinal)
+                                      && n.Contains("`trading/archive/PLAN-refused-turn-b.md`"));
+        Assert.Contains(notices, n => n.StartsWith("`trading/JOURNAL.md`", StringComparison.Ordinal)
+                                      && n.Contains("`trading/archive/JOURNAL-refused-turn-b.md`"));
     }
 
     /// <summary>

@@ -32,8 +32,8 @@ namespace TradeAgent.AgentRuntime;
 /// wrote — a refused journal is the turn's newest entries — so that is KEPT first, byte for byte, as
 /// a new file in <see cref="ArchiveDir"/>, and a file that could not be kept is not put back at all
 /// (<c>U-memory-kept</c>; <c>docs/PRINCIPLES.md</c>: "explicit refusal and recoverable output over
-/// silent truncation or destruction"). The copy is not a revision — no publication carries it — and
-/// nothing here reads it back.</para>
+/// silent truncation or destruction"). The copy is not a revision — no publication carries it —
+/// nothing here reads it back, and it reaches the next turn only as a name in the notice.</para>
 ///
 /// <para><b>Written by the app only.</b> Same rule as <c>material</c>, <c>ai_attempt</c> and the
 /// relay's tables: no verb, no pipe op, no path from an agent. A role that could write its own
@@ -163,14 +163,16 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             if (last is null)
                 notice = $"`{rel}` {why}, so no revision of it was recorded. There is no earlier revision "
                          + "to put back, so what is on disk is whatever you last wrote.";
-            else if (Keep(home, rel, attempt, bytes) is not null)
+            else if (Keep(home, rel, attempt, bytes) is { } kept)
             {
                 // KEPT, SO IT MAY BE PUT BACK — and only now: the write-back lands over the file the
-                // copy was made from.
+                // copy was made from. The notice names the copy, because a copy the next turn cannot
+                // find is a copy in name only.
                 restores.Add(new Restore(full, last.Content));
                 notice = $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
-                         + $"the app accepted — has been put back in its place. Move what no longer fits to "
-                         + $"`{ArchiveDir}/` and keep it under {cap} lines.";
+                         + $"the app accepted — has been put back in its place; what you wrote is kept at "
+                         + $"`{kept}`. Move what still matters into the "
+                         + $"{(kind == PublicationKind.Plan ? "plan" : "journal")} under {cap} lines.";
             }
             else
                 // NOT KEPT, SO NOT PUT BACK. A write-back over the only copy of what the turn wrote is
@@ -280,7 +282,8 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     }
 
     /// <summary>
-    /// WHAT THIS ROLE'S NEXT TURN HAS TO BE TOLD: one line per file the app refused and restored.
+    /// WHAT THIS ROLE'S NEXT TURN HAS TO BE TOLD: one line per file the app refused — what it put
+    /// back and where it kept what was written, or why it put nothing back.
     ///
     /// It is kept in the database rather than on this object because the turn that reads it is a
     /// different process's worth of work away, and because a notice the app forgot across a restart
