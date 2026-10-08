@@ -8963,3 +8963,44 @@ holds that Close all leg until the platform reports it: the card offers only "it
 close; owed BEFORE LIVE as seat P's light `U-press-row-answer` (a two-press "it is not working — close over it" answer on the card, the orchestrator's view).
 **NOT verified:** where ATAS cannot prove its history every in-flight row is (d), never (b) — read, not run; whether ATAS lists a cancelled close at once after the press's
 cancel (no ATAS box; a slow list refuses the leg, named); a lost `press_told` write is not exercised by a test; no app run, the words not seen on screen.
+
+## 2026-10-08 — U-bar-holdout landed: no caller on the agent-facing pipe reads a bar from inside any holdout window, of any pair, through another dataset or the forward door — refused in words, never clipped — and the referee still does
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-bar-holdout.md` (briefed from seat A's read-only survey on the orchestrator's urgent ruling
+of 2026-10-07 23:52; the survey's probe `SBarHoldoutProbe` was RED on `d73ecd59`: a second dataset of the pair served the Research Director and a roleless caller 60
+held-back bars, a `backtest --dataset B` over A's window answered metrics and 5 trades charged to no campaign, and `data-bars --source forward` served the same minutes;
+dispatched `1891074e`). The builder rebased once onto `7e29fc65`, no conflict. Merge `ea88e72b` (ff-only), 5 commits (3 items, a CI fix, the report), 21 files, +1097/−113.
+**No schema change.** EVIDENCE: the holdout (`docs/COUNCIL.md` "holdout data the research process cannot reach", "a leaked holdout cannot become unseen").
+**The rule (seat A's decision at dispatch, on the orchestrator's view):** EVERY subject, as the tape since U-tape-holdout — a cutoff on any dataset holds every pair's bars
+over its window `[holdout_from, last bar + one bar)`, from every dataset and the forward bars; a dataset's own cutoff keeps `Holdout.Refusal`, asked first, unchanged.
+
+- **Item 1 (`03c310fe`):** `DatasetReader.Read` and `BarFeed.Open` take the `TapeHoldout` with its ledger as a REQUIRED argument, ask `Holdout.Refusal` first, then refuse
+  any OTHER dataset's window reached by the read's span `[from, to + one bar)`; `Backtest.Over` builds ONE `TapeHoldout.Of` for bars and features; `data-bars` and the referee's feed pass theirs; a refusal answers `HOLDOUT_WITHHELD`.
+- **Item 2 (`a40d7369`):** the forward door — `ForwardBarStore.Window(holdout, symbol, from, to, cap)` is the pipe's read; `ForwardBars_` calls it; `Since` and `Bar`
+  say they are never a pipe read (the paper runner's and `ForwardBarSource.Announce`'s).
+- **Item 3 (`1e8c81b6`):** CONTRACTS "The holdout" states the rule; "Forward bars" and the runner's paragraph drop the post-dates-every-freeze premise, the latter
+  stating as a KNOWN GAP that a paper run's figures over a later-held window are not held back; `GatewaySchema` (`market_data`, `data-list`, `data-bars`, `backtest` and its `to`) and `WorkspaceBuilder`'s history paragraph tell agents.
+- **CI fix (`6e126d9d`):** `FeatureProgramBacktestTests.A_backtest_whose_features_reach_a_holdout_window_is_refused`'s other-dataset leg asserted the old rule (CI
+  37714038502 red on all three jobs in that one test); moved to the new one.
+- **Answer first:** no in-process bar read needs a read without the holdout — every one is the referee's (`TapeHoldout.Of` under `BarAudience.Referee`, passing every
+  window) or the forward runner's (`ForwardBarStore.Since`/`Bar`); `DatasetReader.Read` has one caller, `data-bars`.
+- **Declared deviations, accepted:** (1) no rename — `TapeHoldout` gains `Refusal(DatasetRecord, …)` and `ForwardRefusal`, `TapeHoldoutWindow` gains `Overlaps` and
+  `BarWords`; (2) the forward read bounds `from` inclusively in SQL (the old door read from one bar before it); (3) test (f) names FOUR reads without a holdout —
+  `ForwardBarStore.Since`, `ForwardBarStore.Bar` (public for `Announce`), a feed's `Bars`/`Chunks` — a feed streams only the window it was opened over (a wider stream
+  throws, tested), and an IL read of `GatewayPipeServer` holds that it never calls `Since`/`Bar`.
+- **Rewritten under this protection, JUDGED (seat A):** `ForwardBarsOverPipeTests.Data_bars_serves_forward_bars_to_a_role_bounded_and_without_a_holdout_refusal` —
+  it asserted the leak as the feature; the name is kept and stays true (a window outside every holdout is served), the window reaching the archive's holdout is now refused through both doors. No test deleted or renamed.
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed 1487, Failed 0` (6e126d9d);
+Fault `Passed 471, Failed 0` (1e8c81b6, same src); Integration `Passed 741, Skipped 1, Failed 0`; 3× unit BarHoldoutTests, FeatureProgramBacktestTests, BarFeedTests,
+CampaignLedgerTests, CandleSourceTests, DatasetLedgerTests 57/57 and integration BarHoldoutOverPipeTests, ForwardBarsOverPipeTests, MidpointEvidenceTests 18/18 each run.
+RED before (base `1891074e` + the new tests): (a) "VERDICT: LEAK in 14 legs" ("data-bars BTCUSDT [2026-08-01T01:00:00Z, 2026-08-01T01:59:00Z] as the Research Director
+over the pipe: SERVED 60 bars from dataset 2"); (b) "VERDICT: LEAK in 18 legs" (the forward door); (c)(d)(e) red on the base. Mutant (the cross-dataset check in
+`BarFeed.Open` removed) ⇒ (a) "VERDICT: LEAK in 2 legs" (`backtest --dataset 2` for both directors); restored.
+Manager's gate at `ea88e72b`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1487/1487 (9 m 9 s), Fault 471/471 (2 m), Integration 741/742, 1 skipped
+(11 m 15 s) → 0 failed. Names vs `main`: 2327 → 2334, 0 removed, 7 added. Scan: one hit, JUDGED a false positive (seat A) — `Grants.Issue(role, "attempt-bar-holdout").Token`,
+a test's in-process role grant read at run time, no literal value (the pattern of `ForwardBarsOverPipeTests.cs:48`) — excluded by name at check and record; no trailers; `rev-list` 0 both ways.
+**CI:** run 37717270395 at `6e126d9d` (the code of the merge; only the report follows): success on all four jobs (windows 57 m, ubuntu 13, macos 16, package 4).
+**Tests box:** NOT RUN — 03:40 `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it` (exit 5), not retried.
+**NOT done, NOT verified (→ seat A's U-holdout-campaign):** a backtest over a version with no cutoff is charged to no campaign; the owner's Settings line after a second
+Download says nothing is held while the first campaign is open; `SetHoldout` over months already served; a paper run's figures over a later-held window are not held back.
+Tests (a) and (b) cover the pipe AND the in-process surface (`CallAsync`). Whether attempt 3's agent read held minutes is unknown (its record claims no verdict).
