@@ -921,8 +921,11 @@ says decides that instrument:
   **It was filled**, or **It is no longer working at your platform** — then press again. If you had
   already answered it as still working, Close all puts it back on the Dashboard for that answer. Where
   your platform can show its order history and still lists that order working, your answer is turned
-  down and nothing is recorded, because an order still working there can still fill. Close all never
-  closes beside another press's order.
+  down and nothing is recorded, because an order still working there can still fill. Where that history
+  shows the order already finished the other way — filled when you answered it is no longer working, or
+  cancelled when you answered it was filled — your answer is turned down too and nothing is recorded:
+  the message names what your platform shows and the answer that matches it. Close all never closes
+  beside another press's order.
 - **ATAS cannot say what became of it** — that instrument is left alone and its line says so by name,
   with what a second press would do: *"Answer this press on the Dashboard and press Close all again, and
   it closes ES over that order: should it still be working and fill, ES ends the other way by up to 2."*

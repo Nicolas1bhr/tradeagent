@@ -255,4 +255,120 @@ public class PressRowAnswerTests(ITestOutputHelper log)
         Assert.Equal(0m, PressCloseOnceTests.Held(h.C));
         await h.Gw.DisposeAsync();
     }
+
+    // ------------------------------------------------------------- (d) a final listing his answer contradicts
+
+    /// <summary>What the card's route told the engineering log about each answer a final listing contradicted.</summary>
+    static List<string> Contradicted(InFlightSettleTests.Harness h)
+    {
+        using var c = h.Db.Cmd("SELECT COALESCE(metadata,'') FROM engineering_log WHERE event='card_answer_contradicted' ORDER BY id");
+        using var r = c.ExecuteReader();
+        var rows = new List<string>();
+        while (r.Read()) rows.Add(r.GetString(0));
+        return rows;
+    }
+
+    /// <summary>
+    /// (d) AN ANSWER A PROVABLE FINAL LISTING CONTRADICTS IS REFUSED, NEVER WRITTEN.
+    ///
+    /// <para>The flatten's close rests and the owner answers it still working; Close all 1 waits on it and puts it back on
+    /// the card. The platform then finishes it and its update never arrives — it FILLS (<see cref="FakeBroker.FillWorking"/>)
+    /// or it is CANCELLED (<see cref="FakeBroker.Cancel"/>) — and he answers it on the card the other way: "It is no longer
+    /// working at your platform" over a close the platform's history lists <c>FILLED</c>, "It was filled" over one it lists
+    /// <c>CANCELLED</c>. The history can be asked and its answer is final, so his answer is refused, naming the order, the
+    /// state listed and the card's answer that matches it, and nothing is written: the row keeps its state, its flag and
+    /// its words, still on the card. He answers the one that matches, and it is written. Close all 2 sends nothing where
+    /// the close filled and one close where it was cancelled; the account is flat with one sell filled.</para>
+    ///
+    /// <para><b>RED on the base</b>: his contradicted answer is written — a close recorded <c>CANCELLED</c> that the
+    /// platform holds <c>FILLED</c>, or <c>FILLED</c> that never filled — with the platform's state beside it in his note:
+    /// a record false about what ran, written with the proof of that in hand. <b>The mutant</b> — the new refusal dropped
+    /// — is the same.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("fills it")]
+    [InlineData("cancels it")]
+    public async Task An_answer_a_final_listing_contradicts_is_refused_and_never_written(string platform)
+    {
+        var fills = platform == "fills it";
+        var (h, flatten) = await AFlattenCloseAnsweredStillWorking(fills ? "prd-filled" : "prd-cancelled");
+        using var dbh = h.Db;
+
+        var closes = h.C.Closes;
+        var p1 = await h.Gw.OperatorCloseAllAsync();
+        var closesAfter1 = h.C.Closes;
+        log.WriteLine($"[{platform}] press 1      : {PressCloseOnceTests.Said(p1)}");
+        Assert.Equal(closes, closesAfter1);
+        Assert.True(OnTheCard(h, flatten), $"after Close all 1 the flatten's close {flatten.RequestId} is not on the card");
+
+        // THE PLATFORM FINISHES IT, AND ITS UPDATE NEVER ARRIVES.
+        if (fills) Assert.Equal(ExecutionState.FILLED, h.C.Broker.FillWorking(flatten.ConnectorOrderId!)?.State);
+        else Assert.True(h.C.Broker.Cancel(flatten.ConnectorOrderId!));
+        var (listed, wrong, right, matching) = fills
+            ? (ExecutionState.FILLED, ExecutionState.CANCELLED, ExecutionState.FILLED, "It was filled")
+            : (ExecutionState.CANCELLED, ExecutionState.FILLED, ExecutionState.CANCELLED,
+                "It is no longer working at your platform");
+        var before = h.Gw.GetRequest(flatten.RequestId)!;
+        Assert.Equal(listed, AtThePlatform(h, before));
+        log.WriteLine($"[{platform}] the close    : {before.State}, flagged {before.NeedsReconciliation}, at the platform "
+                      + $"{AtThePlatform(h, before)} — {before.LastError ?? "-"}");
+
+        // HE ANSWERS IT THE OTHER WAY.
+        GatewayDeniedException? refused = null;
+        try
+        {
+            await h.Gw.AnswerFromTheCardAsync(flatten.RequestId, wrong, "checked in ATAS: the other way (test)");
+        }
+        catch (GatewayDeniedException ex) { refused = ex; }
+        var after = h.Gw.GetRequest(flatten.RequestId)!;
+        log.WriteLine($"[{platform}] his {wrong,-9}: {(refused is null ? "WRITTEN" : $"refused — {refused.Message}")}");
+        log.WriteLine($"[{platform}] the close    : {after.State}, flagged {after.NeedsReconciliation}, "
+                      + $"{(OnTheCard(h, after) ? "on the card" : "not on the card")} — {after.LastError ?? "-"}");
+
+        Assert.True(refused is not null, $"his answer {wrong} over a close the platform's history lists {listed} was WRITTEN: "
+                                         + $"{after.State}, flagged {after.NeedsReconciliation} — {after.LastError}");
+        Assert.Contains(flatten.RequestId, refused!.Message, StringComparison.Ordinal);
+        Assert.Contains($"holds it as {listed}", refused.Message, StringComparison.Ordinal);
+        Assert.Contains($"\"{matching}\"", refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was recorded.", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(ExecutionState.WORKING, after.State);
+        Assert.True(after.NeedsReconciliation);
+        Assert.Equal(before.LastError, after.LastError);
+        Assert.True(OnTheCard(h, after));
+        var engineering = Assert.Single(Contradicted(h));
+        Assert.Contains($"\"listed\":\"{listed}\"", engineering, StringComparison.Ordinal);
+        Assert.Contains($"\"answered\":\"{wrong}\"", engineering, StringComparison.Ordinal);
+
+        // HE ANSWERS THE ONE THAT MATCHES, AND IT IS WRITTEN. Then he presses again.
+        await h.Gw.AnswerFromTheCardAsync(flatten.RequestId, right, "checked in ATAS again (test)");
+        var answered = h.Gw.GetRequest(flatten.RequestId)!;
+        log.WriteLine($"[{platform}] his {right,-9}: {answered.State}, flagged {answered.NeedsReconciliation} — {answered.LastError ?? "-"}");
+
+        var p2 = await h.Gw.OperatorCloseAllAsync();
+        var closesAfter2 = h.C.Closes;
+        PressCloseOnceTests.PriceArrives(h.C);
+        log.WriteLine($"[{platform}] press 2      : {PressCloseOnceTests.Said(p2)}");
+        log.WriteLine($"[{platform}] closes       : {closesAfter1} before press 2, {closesAfter2} after");
+        log.WriteLine($"[{platform}] the book     : {PressCloseOnceTests.Book(h.C)}");
+        log.WriteLine($"[{platform}] position     : {PressCloseOnceTests.Pos(h.C)}");
+
+        Assert.Equal(right, answered.State);
+        Assert.False(answered.NeedsReconciliation);
+        Assert.StartsWith(TradingGateway.ResolvedByOwnerPrefix, answered.LastError, StringComparison.Ordinal);
+        Assert.Contains("checked in ATAS again (test)", answered.LastError, StringComparison.Ordinal);
+        Assert.Single(Contradicted(h));
+        if (fills)
+        {
+            Assert.Equal(closesAfter1, closesAfter2);
+            Assert.Empty(p2.Targets);
+        }
+        else
+        {
+            Assert.Equal(1, closesAfter2 - closesAfter1);
+            Assert.Equal(ExecutionState.FILLED, Assert.Single(p2.Targets).State);
+        }
+        Assert.Equal(1, PressCloseOnceTests.SellsFilled(h.C));
+        Assert.Equal(0m, PressCloseOnceTests.Held(h.C));
+        await h.Gw.DisposeAsync();
+    }
 }

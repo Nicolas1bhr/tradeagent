@@ -12733,10 +12733,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// (<see cref="ThePlatformsLiveOrderVetoAsync"/>, the one <see cref="TheOwnersAnswerAsync"/> reads): where the platform's
     /// history can be asked and still holds the order live, or cannot be read, his answer is refused, named, and nothing is
     /// written — a close the platform still lists live is never answered away, so no press ever closes beside it. Where no
-    /// history can be asked his word stands alone, as it does for an UNKNOWN order. A final state the history lists that is
-    /// not his answer is written beside his words, as the confirm writes it beside its verdict. Nothing but the owner
-    /// settles a press's row — the reconciler, the in-flight sweep and the press's own settle all leave it to him — so
-    /// without these answers a close whose platform update was lost held every Close all for good
+    /// history can be asked his word stands alone, as it does for an UNKNOWN order. <b>A final state the history lists is
+    /// the platform's last word on whether the close filled</b>, and an answer that says otherwise is refused the same way,
+    /// naming the state listed and the card's answer that matches it, and nothing is written
+    /// (<see cref="TheAnswerAFinalListingGives"/>): "It is no longer working at your platform" over a listed FILLED would
+    /// record a close that never filled while the platform holds it filled, "It was filled" over a listed CANCELLED a fill
+    /// that never happened — a record false about what ran, written with the proof of that in hand. A final state that
+    /// agrees with him under another name — his CANCELLED over a listed REJECTED — is written beside his words. Nothing
+    /// but the owner settles a press's row — the reconciler, the in-flight sweep and the press's own settle all leave it
+    /// to him — so without these answers a close whose platform update was lost held every Close all for good
     /// (<c>U-press-close-once</c>'s residual). Every other row's answer goes to <see cref="ForceResolve"/> as before.</para>
     ///
     /// <para><b>In-process only.</b> The card is its one caller; no pipe op, <c>trade</c> verb or GatewayHost console
@@ -12767,6 +12772,23 @@ public sealed class TradingGateway : IAsyncDisposable
                     $"{outranked}. Nothing was recorded: answer it again once your platform shows it filled or cancelled.");
             }
 
+            // A FINAL LISTING HIS ANSWER CONTRADICTS IS REFUSED, NEVER WRITTEN (U-press-row-answer item 3). Past the veto a
+            // listing is final, and it settles whether the close filled: written over it, his answer would be a record
+            // false about what ran, made with the proof of that in hand. The row keeps its state, its flag and its words.
+            if (listed is not null && TheAnswerAFinalListingGives(outcome, listed.State) is { } matching)
+            {
+                _log.TryEngineering("Gateway", "card_answer_contradicted", "warn", requestId: row.RequestId,
+                    metadataJson: Json.Write(new
+                    {
+                        state = row.State.ToString(), answered = outcome.ToString(), listed = listed.State.ToString(),
+                        matching
+                    }));
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"{said}, but your platform's order history holds it as {listed.State}: "
+                    + (listed.State == ExecutionState.FILLED ? "it filled there" : "it ended there without filling in full")
+                    + $", so the answer that matches it is \"{matching}\". Nothing was recorded.");
+            }
+
             if (listed is not null && listed.State != outcome)
                 note = $"{note} (your platform's order history held it as {listed.State} when you answered)";
         }
@@ -12774,6 +12796,23 @@ public sealed class TradingGateway : IAsyncDisposable
         var answered = ForceResolve(requestId, outcome, note);
         await RefreshHealthAsync(ct);
         return answered;
+    }
+
+    /// <summary>
+    /// THE CARD'S ANSWER A FINAL LISTING GIVES, WHERE IT CONTRADICTS THE ONE HE GAVE (<c>U-press-row-answer</c>): null
+    /// where <paramref name="listed"/> is not final (<see cref="OrderStateMachine.IsTerminal"/>), or where his answer
+    /// agrees with it on the one thing a final listing settles — whether the close FILLED. "It was filled" (FILLED) needs
+    /// a listed FILLED; "It is no longer working at your platform" (CANCELLED) needs a listed final state other than
+    /// FILLED — CANCELLED or REJECTED, a close that ended without filling in full, whatever part of it filled. An answer
+    /// that is not final is contradicted by every final listing: the order is over at the platform. Otherwise the card's
+    /// words for what the listing says.
+    /// </summary>
+    static string? TheAnswerAFinalListingGives(ExecutionState answered, ExecutionState listed)
+    {
+        if (!OrderStateMachine.IsTerminal(listed)) return null;
+        var filled = listed == ExecutionState.FILLED;
+        if (OrderStateMachine.IsTerminal(answered) && (answered == ExecutionState.FILLED) == filled) return null;
+        return filled ? "It was filled" : "It is no longer working at your platform";
     }
 
     /// <summary>
