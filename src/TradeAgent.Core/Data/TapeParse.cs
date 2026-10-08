@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,7 +10,8 @@ namespace TradeAgent.Core.Data;
 /// <summary>
 /// ONE ANSWER INTO ITEMS, OR THE REASON IT IS NOT ONE — the parser family
 /// <see cref="TapeSourceCatalog.JsonParser"/>: a JSON object, or a list of them, one item each.
-/// <see cref="TryReadItems"/> is the second family's, an exchange's announcements.
+/// <see cref="TryReadItems"/> is the second family's, an exchange's announcements, and
+/// <see cref="TryReadAssetContexts"/> the fourth's, Hyperliquid's perpetual contexts.
 ///
 /// <para><b>A body that does not read is a recorded failure and never an item</b> — the rule
 /// <c>ForwardBars.TryParse</c> follows, for the same reason: an error page served with a 200, or an
@@ -222,6 +224,175 @@ public static class TapeParse
 
         items = read;
         return true;
+    }
+
+    /// <summary>
+    /// THE MOST ONE COIN'S CONTEXT MAY HOLD, in UTF-8 bytes once merged and made canonical — 2 KB, against 299-335 bytes
+    /// measured for every coin on 2026-10-08 (<c>docs/RESEARCH-REQUIRED.md</c>, C5f). So a day of the six at a look every
+    /// five minutes keeps at most 6 × 2 KB × 288, about 3.5 MB, whatever the vendor sends.
+    /// </summary>
+    public const int MaxAssetContextBytes = 2 * 1024;
+
+    /// <summary>
+    /// ONE ANSWER OF HYPERLIQUID'S <c>metaAndAssetCtxs</c> INTO ITEMS, OR THE REASON IT IS NOT ONE — the parser family
+    /// <see cref="TapeSourceCatalog.HyperliquidParser"/> (<c>U-tape-chain</c>).
+    ///
+    /// <para><b>Two lists, zipped by index.</b> The answer is <c>[meta, contexts]</c>: <c>meta.universe</c> names each asset
+    /// in its <see cref="TapeSeriesEntry.SymbolField"/> (<c>name</c>) and the context at the same index is that asset's
+    /// open interest, funding, premium, prices and day's volume — with no name and no time of its own. Item <c>i</c> is the
+    /// universe entry and the context merged, whole and canonical; its subject is the name, kept to the row's own subjects
+    /// (<see cref="TapeSourceCatalog.SubjectsOf"/>); its source time is <paramref name="date"/>, the answer's
+    /// <c>Date</c> header — never this machine's clock, which says when TradeAgent received it and not what time the vendor
+    /// says the contexts are.</para>
+    ///
+    /// <para><b>What refuses the whole answer, in words, and stores nothing</b>, for the reason <see cref="TryRead"/> gives —
+    /// a zip that may be off by one would file one coin's open interest under another's name: a root that is not the
+    /// two-element list, a universe or contexts list that is missing, the two of unequal length, an entry of either that is
+    /// not an object, a universe entry that does not name itself in a string; a key in both halves of a kept coin, which
+    /// the merge could not keep as one item; a kept name twice; a kept coin over <see cref="MaxAssetContextBytes"/>; no
+    /// <c>Date</c>; and none of the row's subjects in the answer. A coin outside the row's subjects is not this
+    /// installation's to record and is passed over.</para>
+    /// </summary>
+    /// <param name="body">What the host answered.</param>
+    /// <param name="date">The answer's own <c>Date</c> header, or null because it carried none.</param>
+    /// <param name="row">The row asked for: which subjects it keeps.</param>
+    /// <param name="series">The series asked for: which field of a universe entry names its asset.</param>
+    public static bool TryReadAssetContexts(string? body, DateTimeOffset? date, TapeSourceEntry row, TapeSeriesEntry series,
+        out IReadOnlyList<TapeItem> items, out string? why)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        ArgumentNullException.ThrowIfNull(series);
+        items = [];
+        why = null;
+
+        var nameField = series.SymbolField;
+        if (string.IsNullOrEmpty(nameField)) { why = "the series names no field that names an asset"; return false; }
+        if (date is not { } at)
+        {
+            why = "the answer carried no Date header, and its contexts carry no time of their own";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(body)) { why = "the body was empty"; return false; }
+
+        var kept = TapeSourceCatalog.SubjectsOf(row);
+        var read = new List<TapeItem>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() != 2)
+            {
+                why = "the answer is not the two-element list of a universe and its contexts";
+                return false;
+            }
+
+            if (root[0].ValueKind != JsonValueKind.Object || !root[0].TryGetProperty("universe", out var universe)
+                || universe.ValueKind != JsonValueKind.Array)
+            {
+                why = "the answer holds no 'universe' list";
+                return false;
+            }
+
+            var contexts = root[1];
+            if (contexts.ValueKind != JsonValueKind.Array)
+            {
+                why = "the answer holds no list of contexts beside its universe";
+                return false;
+            }
+
+            var count = universe.GetArrayLength();
+            if (contexts.GetArrayLength() != count)
+            {
+                why = $"the answer's universe names {count.ToString(CultureInfo.InvariantCulture)} assets and holds "
+                      + $"{contexts.GetArrayLength().ToString(CultureInfo.InvariantCulture)} contexts, so the two lists do not zip";
+                return false;
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                var entry = universe[i];
+                var context = contexts[i];
+                var place = i.ToString(CultureInfo.InvariantCulture);
+                if (entry.ValueKind != JsonValueKind.Object || context.ValueKind != JsonValueKind.Object)
+                {
+                    why = $"entry {place} of the universe or of the contexts is not an object, so the two lists do not zip";
+                    return false;
+                }
+
+                if (!entry.TryGetProperty(nameField, out var named) || named.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(named.GetString()))
+                {
+                    why = $"universe entry {place} has no '{nameField}' naming its asset, so the two lists cannot be zipped by name";
+                    return false;
+                }
+
+                var name = named.GetString()!;
+                if (!kept.Contains(name, StringComparer.Ordinal)) continue;
+
+                if (!seen.Add(name))
+                {
+                    why = $"the answer names {name} twice, and the tape cannot say which of the two contexts is {name}'s";
+                    return false;
+                }
+
+                foreach (var p in context.EnumerateObject())
+                    if (entry.TryGetProperty(p.Name, out _))
+                    {
+                        why = $"{name}'s universe entry and its context both name '{p.Name}', so the two cannot be kept as one item";
+                        return false;
+                    }
+
+                string payload;
+                try { payload = Merged(entry, context); }
+                catch (JsonException ex)
+                {
+                    why = $"{name}'s context cannot be kept as one payload: " + ex.Message.ReplaceLineEndings(" ");
+                    return false;
+                }
+
+                var bytes = Encoding.UTF8.GetByteCount(payload);
+                if (bytes > MaxAssetContextBytes)
+                {
+                    why = $"{name}'s context is {bytes.ToString(CultureInfo.InvariantCulture)} bytes, and one coin's context "
+                          + $"here is at most {MaxAssetContextBytes.ToString(CultureInfo.InvariantCulture)}";
+                    return false;
+                }
+
+                read.Add(new TapeItem(name, at, payload));
+            }
+        }
+        catch (JsonException ex)
+        {
+            why = "the body is not JSON: " + ex.Message.ReplaceLineEndings(" ");
+            return false;
+        }
+
+        if (read.Count == 0)
+        {
+            why = $"the answer names none of {string.Join(", ", kept)}";
+            return false;
+        }
+
+        items = read;
+        return true;
+    }
+
+    /// <summary>
+    /// A universe entry and its context as ONE object — every property of both, as served — in the canonical spelling of
+    /// <see cref="TapeJson"/>. Throws <see cref="JsonException"/> for an object that names a key twice.
+    /// </summary>
+    static string Merged(JsonElement entry, JsonElement context)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            foreach (var p in entry.EnumerateObject()) p.WriteTo(w);
+            foreach (var p in context.EnumerateObject()) p.WriteTo(w);
+            w.WriteEndObject();
+        }
+        return TapeJson.Canonical(Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
 
     /// <summary>
