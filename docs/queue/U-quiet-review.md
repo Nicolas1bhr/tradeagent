@@ -1,6 +1,6 @@
 # U-quiet-review — the app's scheduled look slows down while nothing but its own ticks wakes a role, and an idle turn's cost is told truthfully
 **Protects:** the owner's AI allowance and `docs/PRINCIPLES.md` "No useful eligible work is healthy idleness … It does not mean constant paid inference" (COUNCIL rule 7: justified idleness
-launches no inference), while keeping the agent's own choice of when to work ("Agents can choose a next task or wake condition within their allowance"). Light; seat P; no rung; not the money
+launches no inference), while keeping the agent's own choice of when to work ("Agents can choose a next task or wake condition within their allowance"). Light; seat B (seat P closed, R21); no rung; not the money
 path. Lands before M0 attempt 4 and before `U-org-wakes` (both edit `MissionLoop.Schedule`). From R20 (`docs/research/2026-10-08/R20-autonomy-audit.md` § 4).
 **Facts (RECORD and SOURCE at `30fe7a32`, read and not run).**
 - M0 attempt 3 (`BUILD-STATUS.md:8816-8817`): "after the last brief/report (15:54:58Z) 16 review turns (16:10–20:15Z) spent 2.0337 USD, 53 % of the run, while Operations' plan read

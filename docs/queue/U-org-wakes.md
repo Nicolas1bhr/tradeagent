@@ -1,4 +1,5 @@
 # U-org-wakes — heads wake on work and a maximum interval, members only for work, dormant positions never, and N positions share the serial loop
+**RE-SCOPE BEFORE DISPATCH (R21, R22):** R21 re-scoped this unit to extend `U-reconcile-wakes` (objectives per role, a wake on a divergence, the packet) to positions; the text below is the pre-R21 scope — re-brief it as a CARD after `U-reconcile-wakes` lands, and never dispatch it as written.
 **Arrow closed:** "never stopping is a scheduler, not a loop" for an organisation (`docs/COUNCIL.md`; `docs/ORGANISATION.md` §§ 2, 10; R12 § 5 O3; R17 #10;
 R18 § 1.5; the factory plan's `U-worker-events` + `U-worker-scheduler`). **Depends on `U-org-rights`; land after `U-org-envelopes`** (both edit `MissionLoop`,
 other methods) **and after `U-quiet-review`** (it changes `Schedule`'s review interval; R20, 2026-10-08). No schema change. **Today (SOURCE at `1275aff`, R12/R18-checked, NOT runtime-verified):** `MissionLoop.Schedule`

@@ -385,25 +385,32 @@ critical path: every organisation figure is labelled "unconfined seats" until it
 
 ## 15. Build plan — two lanes
 
-Every unit follows `docs/HOW-WE-BUILD.md`. Lane A is EDGE-FACTORY's phase 0 and the tape; lane B is the organisation; at most two heavy builders at once,
-plus a light third. **READY** = a brief in `docs/queue/`, re-checked at dispatch; **CARD** = briefed just before its turn, against what its dependencies
-landed. Schema rungs: `U-cost-model` 27; then `U-org-ledger` and `U-venue-verify` each take the next free rung at landing (expected 28 and 29), so neither
-lane waits on the other's number; the gate checks the ladder is contiguous (R17 #23).
+Every unit follows `docs/HOW-WE-BUILD.md`. Lane A (seat A since 2026-10-08) is EDGE-FACTORY's factory floor and the tape; lane B (seat B) is the agents —
+the three layers of truth on the two roles that run today, perception, then the organisation; the orchestrator allots builders per seat, at most four at once
+on this Mac (`docs/FLEET.md`). **READY** = a brief in `docs/queue/`, re-checked at dispatch against `main` AND against the current order below; **CARD** = briefed just
+before its turn, against what its dependencies landed; **RE-BRIEF** / **RE-SCOPE** = a brief in the queue that may not be dispatched as written. Schema
+rungs are assigned at dispatch in landing order (main's next free is 31; `tape.db`'s rung 2 is `U-decision-port`'s); the gate checks the ladder is
+contiguous (R17 #23).
 
 | Unit | Closes | Depends | Status |
 |---|---|---|---|
-| `U-fix-resume-on-start` | the restart test red on hosted Windows in five of six runs on unchanged code — cause named, fixed, nothing weakened | — | READY, first |
+| `U-fix-resume-on-start` | the restart test red on hosted Windows in five of six runs on unchanged code — cause named, fixed, nothing weakened | — | LANDED `c8d6642a` (2026-10-02) |
 | `R-containment` | the Windows isolation probe: the § 9.3 matrix for two candidates, a decision record for `U-contain-seats` (probe only, on the box) | — | LANDED `69589886` (2026-10-06: C2 AppContainer, Topology A; codex and node do not start bare — `docs/research/2026-10-06/R-containment-decision.md`) |
-| `U-price-rows` | GPT-6 models priced from the vendor's page, dated | — | READY |
-| `U-org-ledger` (O1) | the chart is app-minted data: root, two divisions, the legacy positions; one writer; read by nothing yet | `U-cost-model` | READY |
-| `U-org-principals` (O2a) | a third position is a row, not a constant: own home, conversation, attempts and keys, never folded into the chair | O1; after M0 | READY |
+| `U-price-rows` | GPT-6 models priced from the vendor's page, dated | — | LANDED `492ae794` (2026-10-02) |
+| `U-org-ledger` (O1) | the chart is app-minted data: root, two divisions, the legacy positions; one writer; read by nothing yet | `U-cost-model` | LANDED `33017817` (schema 28, 2026-10-03) |
+| `U-quiet-review` | the app's scheduled look backs off while only its own looks wake a role, and AGENTS.md tells an idle turn's cost truthfully (R20 § 4) | — | READY (light, seat B) |
+| `U-memory-kept` | a plan or journal refused for size is kept in `trading/archive/` before the last accepted revision is put back, never destroyed (R20 § 1) | — | READY (light, seat B) |
+| `U-canon` | a short, deliberate canon per role — identity, mission, authority, the evidence rules, the boundary — with capability facts generated from what the app grants that role and runtime, and a test that fails when the canon names a tool, verb or file the runtime cannot reach (VISION § 6.7; R21 § 3.2) | both lights (they edit AGENTS.md) | CARD |
+| `U-research-ledger` | the believed world as app data: hypotheses, experiments, findings and kill reasons, each the agent's (claim, assumption or hypothesis) with the app's links to the measurements it bears on, versioned; the ledger stores references to app records, never copies (R22) | `U-canon` (each of the three builds on the last) | CARD — a main rung |
+| `U-reconcile-wakes` | explicit objectives per role; a wake when an observation touches what the role owns, not a fixed timer; each turn's packet says what changed, what the role believes and what is wanted | `U-quiet-review`, `U-research-ledger` | CARD |
+| `U-org-principals` (O2a) | a third position is a row, not a constant: own home, conversation, attempts and keys, never folded into the chair | O1; after M0 attempt 3 (`cc7a0974`, the run it waited for) and seat B's three layers (R21) — M0 attempt 4 does not wait for it; keeps `perception` a meter role that is no position (R22) | READY |
 | `U-org-rights` (O2b) | positions may backtest and ask verdicts; only `operations` trades; a non-legacy position's output held, not routed to Research | O2a | READY |
-| `U-org-envelopes` (O4) | the reservation tree in `Begin`, the day-total gate kept first; a seat its unit cannot fund refused by name | O2a | READY |
-| `U-org-wakes` (O3) | heads wake on work and a maximum interval; members only for work; dormant wakes settled; notes reach the author | O2b, after O4 and `U-quiet-review` | READY |
+| `U-org-envelopes` (O4) | the reservation tree in `Begin`, the day-total gate kept first; a seat its unit cannot fund refused by name | O2a; keeps `perception`'s reservation working (R22) | READY |
+| `U-org-wakes` (O3) | heads wake on work and a maximum interval; members only for work; dormant wakes settled; notes reach the author | O2b, after O4 and `U-reconcile-wakes`, which it extends to positions (R21) | RE-SCOPE — its queue brief is the pre-R21 scope; a CARD after `U-reconcile-wakes` (R22) |
 | `U-org-seats` | the meter, the conversation and the harness bound read one seat — model, runtime, allowance — so a smaller reservation is an enforced one | O4 | CARD |
 | `U-billing-classes` | the plan-capacity ceiling beside the real-money cap; each seat counted against its class; the Safety page shows both | O4 | CARD |
-| `U-org-assignments` (O5) | typed assignments — tasks and explorations, each with its latitude or the exact mark — deliveries naming their deviations, escalations, lateral notes (§ 4); decision records with forecasts; forecast RESOLUTION from measurements | O3, O4 | CARD |
-| `U-org-packets` | a fresh session per assignment from an app-built packet; lateral notes ride the next packet; tokens per turn measured | O5 | CARD |
+| `U-org-assignments` (O5) | typed assignments — tasks and explorations, each with its latitude or the exact mark — deliveries naming their deviations, escalations, lateral notes (§ 4); decision records with forecasts; forecast RESOLUTION from measurements | O3, O4; its decision records write into `U-research-ledger` (R21) | CARD |
+| `U-org-packets` | a fresh session per assignment from an app-built packet; lateral notes ride the next packet; tokens per turn measured | O5; extends `U-reconcile-wakes`' packet to positions (R21) | CARD |
 | `U-org-verbs` (O6) | charter, merge, close, hire, retire, three-dimension child envelopes, throttles; an executor's helpers as child attempts inside its envelope; verdicts narrowed to division heads; the unconfined-seat ceiling; the `org` read op | O5 | CARD |
 | `U-org-watcher` | layer-1 detectors, the oversight cap beside the organisation's, the owner-only page and code-composed digest | O5 | CARD |
 | `U-org-surface` (O7) | the Org page: chart, seats, assignments, envelopes, spend; the owner's veto and his `operations` controls; one report line per unit | O4, O6 | CARD |
@@ -414,8 +421,32 @@ lane waits on the other's number; the gate checks the ladder is contiguous (R17 
 | `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `U-contain-seats` | CARD — the first right after `U-contain-seats` |
 | `U-org-parallel` (O9) · `U-org-router` · `U-seat-shadow` · `U-org-templates` | concurrent turns; System One in shadow; seats evolving with models; templates | per § 8, § 11 | CARD |
 
-**Waves** — this table is the only copy (R12 § 5 and R18 § 3 conflict matrices; re-check at dispatch; M0 depends on lane A only, factory-plan Law 10,
-R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
+**The current order — the only copy (2026-10-08 late evening: R21's order, corrected by R22).** Each seat works its queue in this order inside its builder
+allotment, and a unit whose dependencies have landed may run beside the one ahead of it. A seat's manager may reorder its own lane on its own judgement: it
+writes the new order into its row here (a docs commit) before the dispatch that depends on it, and tells the orchestrator; the order across seats is the
+orchestrator's. A brief is dispatched only when its Depends line, seat and status agree with this block (`docs/HOW-WE-BUILD.md`). Every other statement of
+an order — the waves below, EDGE § 9, R21 § 3, a dated block of `docs/RESUME-HERE.md`, a fleet handoff, charter or board — is history wherever it differs.
+
+| Seat | In order | Status (2026-10-08) |
+|---|---|---|
+| **A — Edge & evidence** (EDGE-FACTORY; the switch-on) | `U-tape-chain` → `U-runner-features` → `U-holdout-campaign` → `U-paper-books` → `U-trial-returns` → `U-referee-v2` → `U-forward-standing` → `U-incubator`; light: `U-linux-host`, its survey first (the app has never run unattended on Linux) | `U-tape-chain` PARKED at `05b308e6` (`docs/briefs/`, its `## Paused` note); the rest CARD |
+| **B — Agents & truth**: the three layers (VISION § 6.7, on the two roles) | `U-quiet-review` → `U-memory-kept` → `U-canon` → `U-research-ledger` → `U-reconcile-wakes` | the two lights READY; the rest CARD |
+| **B**: perception (EDGE phase 4) — in the seat's second slot beside the three layers, as seat B planned on 2026-10-08 | `U-decision-port` (`tape.db` rung 2) → `U-decision-card` → `U-lenses` → `U-annotator` → `U-event-study`; `U-hypothesis-library` after `U-research-ledger` | `U-decision-port` RE-BRIEF: it now lands before O2a and O4 (its brief says how); the rest CARD |
+| **B**, a light | `U-red-says-why` | READY |
+| **B**, then the organisation (after the three layers) | O2a → O4 ∥ O2b → O3 → **M-org0** → `U-contain-seats` (the ATAS box) ∥ `U-billing-classes` (after `U-decision-port`, R18 § 3) → `U-execution-environment` → O5 → O6 ∥ `U-org-watcher` ∥ `U-org-packets` → O7 ∥ `U-harness-responses` ∥ `U-org-seats` (before any API-key seat) → `U-org-chief` → **M-org1** | O2a, O2b, O4 READY; O3 RE-SCOPE; the rest CARD |
+| **P — Platform & money path** | CLOSED until a Windows box answers; its BEFORE-LIVE items wait while live is closed (licence, venue, broker) | — |
+
+**M0 attempt 4** (seat M, opened for it) needs `U-quiet-review` and `U-memory-kept` — the idle reviews that took 53 % of attempt 3 and the memory a refusal
+destroys — and runs when the owner says testing may start ("wait a bit before testing", 2026-10-08): in a fresh home or with months held after the old
+window (seat A's holdout survey), at a GO sha pinned to the newest green `main`, with the owner's two clicks, under seat M's handoff (`fleet/handoff/M.md`,
+"What attempt 4 needs"). Neither the three layers nor `U-runner-features` gates it (R22): a feature program has at most days of clean history in any home
+today (CONTRACTS, the clean-history start; GDELT's backfill reaches seven days), so it cannot pass a verdict in the attempt, and the INCONCLUSIVE path into
+paper is `U-referee-v2`'s, not built; the runner matters once a home has recorded weeks of tape (the switch-on). Whatever has landed by then, it runs on;
+if the three layers have not, its record is the old canon's run for `U-canon`'s comparison.
+
+**Waves of 2026-10-02 → 2026-10-08 — HISTORICAL since R22.** The current order above replaces them; they stay because records cite their W-numbers. W0–W4b,
+M0 attempt 3, W5–W6's lane-A units and `U-language-v2a` have landed; lane B's rows live on in the current order's organisation row (R12 § 5 and R18 § 3 conflict
+matrices; M0 depends on lane A only, factory-plan Law 10, R17 #7):
 
 | Wave | Heavy | Heavy | Light |
 |---|---|---|---|
@@ -441,14 +472,13 @@ R17 #7; in W1 three builders share this Mac, so builder gates are serialised):
 run (§ 14), and M-org1 needs both anyway: `U-contain-seats` opens lane B after M-org0 and `U-execution-environment` lands before `U-org-assignments`; the
 waves to M-org1 stay five. (`U-language-v2a`, W8's old lane-A unit, landed `78be3e9d`.)
 
-**Re-sequenced 2026-10-08 evening (the orchestrator on the owner's behalf, R21): the three layers of truth first, on the two roles that run today.** Lane B
-opens with `U-quiet-review` → `U-memory-kept` → `U-canon` → `U-research-ledger` → `U-reconcile-wakes` (VISION § 6.7), and the table above follows them:
-`U-org-wakes` and `U-org-packets` are re-scoped to extend `U-reconcile-wakes` and its packet to positions, `U-org-assignments`' decision records write into
-the research ledger, and W5's `U-org-principals` waits behind them. The organisation inherits true canon, kept belief and reconciling wakes instead of
-multiplying two capped prose files and a 30-minute timer across more seats. `U-decision-port` (W7) is re-checked at dispatch, since its brief assumed the
-principals and envelopes first.
+**Re-sequenced 2026-10-08 evening (the orchestrator on the owner's behalf, R21; corrected by R22): the three layers of truth first, on the two roles that
+run today** — so the organisation inherits true canon, kept belief and reconciling wakes instead of multiplying two capped prose files and a 30-minute timer
+across more seats. The current order above carries it: `U-org-wakes` and `U-org-packets` extend `U-reconcile-wakes` and its packet to positions,
+`U-org-assignments`' decision records write into the research ledger, O2a waits behind the three layers, `U-decision-port` lands before O2a and O4, and M0
+attempt 4 waits only on the two lights (R22).
 
-**The chief appears at W12** — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
+**The chief comes last before M-org1** (W12 in the historical waves) — after the verbs it needs to act and the veto the owner needs to correct it (R17 #42).
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule:
 - **M-org0 — the substrate is invisible:** the legacy pair runs a short observed session on positions, envelopes and wakes; behaviour, costs and refusals

@@ -5,7 +5,7 @@ moat over the markets. this isn't just a catchy trading agent. it's an ai orches
 making the best possible investment decisions. for this time as orchesrator you can now summon not only sub agents but also what we called previously top
 level managers as you are now the orchestrator through the whole build and exquisite grounding and context preservation is key. all shall be opus agents".
 It adds one layer to `docs/HOW-WE-BUILD.md` and changes none of its honesty, safety or landing rules; where this file differs, it says so and why. The
-build it runs is `docs/ORGANISATION.md` § 15 (the only waves table) over `docs/EDGE-FACTORY.md` § 9. This is the BUILD fleet, not the product's organisation.
+build it runs is `docs/ORGANISATION.md` § 15's current order — the only copy of the order (R22) — over `docs/EDGE-FACTORY.md`'s units. This is the BUILD fleet, not the product's organisation.
 
 ## Seats
 
@@ -42,7 +42,9 @@ so this orchestration position becomes the standard."
   adds a layer above them and takes nothing from their authority, freedom or judgement inside their lanes. It does not hold his
   authority over money, credentials, legal status, paid commitments or anything sent in his name — each still needs his explicit yes — and it changes no
   protection in `CLAUDE.md`. The sibling projects' orchestration standard is inspiration only; `docs/HOW-WE-BUILD.md` and this file govern.
-- **Starting a session** (the owner says "you are the orchestrator"): (1) arm the heartbeat, first, since crons die with the session that set them;
+- **Starting a session** (the owner says "you are the orchestrator" in a build session he has opened — in a meeting or a planning session, which his words
+  decide, the orchestrator lands its conclusions as docs and arms no heartbeat, opens no seat and dispatches no builder; "implementation can start whenever"
+  means allowed later, not now — 2026-10-08, R22): (1) arm the heartbeat, first, since crons die with the session that set them;
   (2) the Mac — `pmset -g batt`, `ioreg -r -k AppleClamshellState -d 4`, `df -h /` (a closed lid on battery sleeps the fleet); (3) `get_usage` — the
   5-hour window and its reset (the weekly figure is reported, not rationed); (4) the state — `fleet/BOARD.md`, `fleet/status/`, `fleet/handoff/`,
   `git log origin/main`, `git worktree list`, `fleet/bin/lock.sh status`, `gh run list`, the resume block, `tools/win-state.sh` and

@@ -9310,3 +9310,37 @@ three layers (canon · operational prompts · sources of truth; observed · beli
 order in R21 § 3 (ORGANISATION § 15 and EDGE § 9 re-sequenced); seat P closed until a Windows box answers. `CLAUDE.md` gains the public-until-the-absolute-point
 guard. **RUN, 2026-10-08, read-only:** the dev Mac's only tape is the attempt-3 home's, 6,891 rows from 14:38:49Z to 20:43:03Z on 2026-10-07. NO product code,
 test or build changed; the last gate figure in this file stands.
+
+## 2026-10-08 (late evening) — a second outside audit, verified and answered: one current order, the briefs reconciled, VISION § 6.7 back on the canon; docs only
+
+**What happened.** The owner shared an outside "canon & architecture drift" audit of `main` at `b29dcead`, the output of "an automated vision rectifying
+agent", not canonical, and asked that it be addressed and that stray worktrees from an orchestrator that should not have run be looked for. Record:
+`docs/research/2026-10-08/R22-canon-drift-audit.md`. **Verified:** the order of work stood in at least fourteen places across the repository and the fleet's
+files, at least six still giving the pre-R21 order (the waves table, the 15:25 checkpoint's NEXT and the fleet's orchestrator handoff among them);
+`U-fix-resume-on-start`, `U-price-rows` and `U-org-ledger` read READY though landed (`c8d6642a`, `492ae794`, `33017817`); `U-quiet-review`, `U-memory-kept`
+and `U-red-says-why` named the closed seat P; `U-decision-port`'s brief required units R21 moved after it; `U-org-wakes`' brief had the scope R21 replaced;
+VISION § 6.7's "a hypothesis becomes a belief only on a measurement" is not in the canon and contradicted § 6.7 itself, § 7.4 and PRINCIPLES' autonomy
+section; R21's operational-truth row and its "4 %" lacked their sense and their period. A fresh Opus review leg pinned to the draft (never pushed) returned
+24 findings (2 HIGH, 11 MEDIUM, 11 LOW), all answered before landing; it overturned the draft's keeping of `U-runner-features` as an attempt-4 prerequisite.
+**Decided on the owner's behalf (his to overrule):** one current order, in ORGANISATION § 15 only — a seat's manager rewrites its own row when it reorders
+its lane, the waves table is historical, a dispatch checks its brief against it (`docs/HOW-WE-BUILD.md`); VISION § 6.7 on the canon's two axes, provisional
+beliefs allowed, an entry the agent's claim and a measurement the app's record linked to it; M0 attempt 4 after `U-quiet-review` and `U-memory-kept` only, on
+the owner's word to test; seat B's perception chain in its second slot, as the seat planned; a meeting arms no heartbeat and opens no seat (`docs/FLEET.md`).
+Not adopted: running the factory now — "wait a bit before testing" stands. Landed: R22; R21 (a banner and marked corrections); VISION; ORGANISATION § 15;
+EDGE § 9; `CLAUDE.md`; `docs/HOW-WE-BUILD.md`; `docs/FLEET.md`; the resume block; seven queue briefs. NO product code, test or build changed; the last gate
+figure in this file stands.
+
+**SOURCE, read and not run at `b29dcead`:** `ForwardRuns.Implements` is every declaration but `feature` (`Gateway/ForwardRuns.cs:845-846`) and such a run
+ends before a bar (`:849-853`); a feature counts only from its clean-history start (`docs/CONTRACTS.md:3259-3262`) and GDELT's backfill reaches seven days
+(this file, `:8198`), so no feature program can reach a verdict in attempt 4; the app keeps its operational record in `mission_event`, `ai_attempt`,
+`activity`, `health_event`, `tool_call`, `deployment_op`, `execution_request`, `fill` and the `strategy_*` tables; Avalonia 12.1.1
+(`App/TradeAgent.App.csproj:12-14`). **RUN, 2026-10-08 late evening:** `git fetch` → `HEAD` = `origin/main` = `b29dcead`; `mdfind -name tape.db` → one
+outside the test homes, the attempt-3 home's, `select count(*) from tape_obs` → 6891 (R21's figure reproduced; 6 h 04 min over ≈ 143.5 h since `a912261b`
+≈ 4.2 %); `git worktree list` → the main checkout, `u-tape-chain` (PARKED; `git status --porcelain` empty; equal to its origin at `05b308e6`) and `m0-run`
+(`git status --porcelain` empty; `git cherry main 4a06a8d0` → `- 4a06a8d0…`, its patch on main as `3119a12d`); `git for-each-ref --sort=-committerdate
+refs/heads` → no branch moved after `b29dcead` (21:47:05) but `main`; `crontab -l` → "no crontab"; the app's scheduled-task list → "No scheduled tasks
+found"; the app's session list (≈ 22:30) → every other session `isRunning: false`; `ps` → one fleet process, `ci-wait.sh --run 37834544025 100` (started
+22:14:23; the push run of `b29dcead`). No stray worktree: R21's two plan-only seats opened none.
+
+**NOT VERIFIED:** everything the amended documents describe is DESIGN; the canon is the owner's side-project document, quoted from outside this repository;
+`U-decision-port`'s re-brief, `U-runner-features`' scope and `U-linux-host`'s survey are owed reading at `main`, not done here.

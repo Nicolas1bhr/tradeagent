@@ -1,8 +1,8 @@
 # U-decision-port — bounded decision models (Jev) behind one replaceable port, every call reserved, recorded, priced and pinned
 **Arrow closed:** perception (`docs/EDGE-FACTORY.md` § 4.2, phase 4) — the substrate lenses and the annotator stand on; nothing here annotates automatically,
 no agent can call it, and the owner's Perception card with its Test press is the follow-up `U-decision-card`. **Depends on `U-tape-store`** (rung 2 of `tape.db`,
-written THROUGH `TapeStore`) **and `U-key-host-pin`**; **lands after `U-org-principals`/`U-org-envelopes`**, which key `Fence`, `Refuse`, `ComposeRecovery` and the loop's
-counters by exact position and keep `RoleCap` for a role that is no position — at dispatch only (e)'s day-counter half stays red (R18 D1). **Today:** nothing reaches a decision model (`git grep -i "systemone|typesafe|
+written THROUGH `TapeStore`) **and `U-key-host-pin`**; **RE-BRIEF BEFORE DISPATCH (R22):** written to land after `U-org-principals`/`U-org-envelopes` (which key `Fence`, `Refuse`,
+`ComposeRecovery` and the counters by exact position and keep `RoleCap` for a role that is no position), it now lands BEFORE them (R21): re-read at `main` how item 3 turns ALL of (e) green on today's role keys and how `Begin`'s role filter and share treat a role that is no council role; those two briefs carry `perception` forward. **Today:** nothing reaches a decision model (`git grep -i "systemone|typesafe|
 openrouter" src` is empty); Core holds no HTTP client. **Observable result (connected mechanics, by test):** a call to the pinned instrument is reserved inside the
 owner's daily AI cap and a perception budget before it is sent, recorded with what was asked and answered, settled with the billed or estimated cost, and
 refused in words for a different answering model, an over-limit schema, an exhausted budget or a key bound to another origin — and no existing role, report or

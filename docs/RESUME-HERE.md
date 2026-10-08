@@ -10,17 +10,31 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: arm the heartbeat first), then the switch-on block
-right after this paragraph, the audit block after it, the newest checkpoint below (2026-10-08 15:25), and `fleet/handoff/ORCHESTRATOR.md` for the state.**
+**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
+heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-08 15:25)
+and `fleet/handoff/ORCHESTRATOR.md` for the state. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
+below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-08, late evening — a second outside audit (canon and architecture drift), verified and answered; docs only
+(`docs/research/2026-10-08/R22-canon-drift-audit.md`).** The owner shared it as the output of "an automated vision rectifying agent", not canonical. Checked
+at `b29dcead`, against the fleet's own files, and by a pinned review leg before landing: the order of work stood in at least fourteen places, at least six
+still giving the pre-R21 order; three landed units still read READY; three light briefs named the closed seat P; `U-decision-port`'s brief depended on units
+R21 moved after it; `U-org-wakes`' brief had the scope R21 replaced. **Now:** one current order in ORGANISATION § 15 (a seat's manager rewrites its own row
+when it reorders its lane), the waves historical, the briefs, handoffs, charter and board reconciled, and a dispatch checks the brief against § 15
+(`docs/HOW-WE-BUILD.md`). **VISION § 6.7 follows the canon the owner named:** an agent may hold any hypothesis as a provisional belief with its provenance
+and confidence; an entry stays the agent's claim and a measurement stays the app's record, linked to it; unknowns stay unknown; the canon's five truth
+domains and its three worlds are two axes; operational truth is learned knowledge of how work gets done; the observed world's integrity is app-mediated
+until containment. **M0 attempt 4** no longer waits on the three layers or `U-runner-features` (its prerequisites and run conditions: ORGANISATION § 15)
+and runs when the owner says testing may start. **A meeting arms nothing** (FLEET § The orchestrator): the R21 meeting had armed the heartbeat and opened
+two plan-only seats before the owner stood it down; nothing was dispatched.
 
 **2026-10-08 evening — the switch-on and the three layers of truth (`docs/research/2026-10-08/R21-three-layers-of-truth.md`; docs only).** The owner asked
 for the program's turning point and for actionable conclusions. **Target:** the switch-on — the loop unattended 24/7 on paper on his always-on Linux machines
-(a Linux server and a VPS; the MacBook builds; the desktop is likely the ATAS box), because the moat accrues only while the app runs and by then it had run
-6 hours. **Doctrine:** VISION § 6.7, the three layers of truth from his AI Concierge canon (canon · operational prompts · sources of truth; observed ·
-believed · desired), built first on the two existing roles. **Seats:** A — `U-tape-chain` → `U-runner-features` → `U-holdout-campaign` → `U-paper-books` →
-`U-trial-returns` → `U-referee-v2` → `U-forward-standing` → `U-incubator`, light `U-linux-host`; B — `U-quiet-review` → `U-memory-kept` → `U-canon` →
-`U-research-ledger` → `U-reconcile-wakes` → `U-decision-port` → `U-decision-card` → `U-annotator` → `U-hypothesis-library`, then lane B's organisation on top
-(ORGANISATION § 15, re-sequenced). Seat P closed until a Windows box answers; `U-red-says-why` rides as a light. **The owner's words:** open source until the
+(a Linux server and a VPS; the MacBook builds; the desktop is likely the ATAS box), because the moat accrues only while the app runs and by then it had
+recorded 6 h 04 min of tape (≈ 4 % of the time since the tape store landed, on this Mac; R22); never yet run unattended on Linux, so `U-linux-host`'s survey comes first. **Doctrine:** VISION § 6.7, the three layers of truth from his AI Concierge canon (canon · operational prompts · sources of truth; observed ·
+believed · desired), built first on the two existing roles. **Seats:** A (edge & evidence, toward the switch-on) and B (the three layers
+on the two roles, then perception, then the organisation); seat P closed until a Windows box answers — the order itself is ORGANISATION § 15's current
+order (R22 removed the copies that had drifted). **The owner's words:** open source until the
 "absolute point" (the moat proven), then the private `TradeAgent-Org` (`CLAUDE.md` guards edge-revealing material meanwhile); AgentPool is a separate project,
 out of this plan; "wait a bit before testing though implementation can start whenever" — no observed run and nothing deployed on his machines until he says.
 
@@ -34,7 +48,7 @@ R14 § 3's "choose nothing" question had never been answered). **The owner decid
 exploration on a rationale; information moves laterally, authority does not; consults, retries, report sizes and task sizes are defaults; an agent's own
 tools are its own); (2) **containment first** — lane B after M-org0 runs `U-contain-seats` then `U-execution-environment` before the governance verbs
 (ORGANISATION § 15's waves rewritten, still five to M-org1), and a confined seat keeps its shell, code, packages, permitted network and runtime helpers;
-(3) SIGNAL-001 stays permanent, restated around its protected property (VISION §§ 6.3, 9). **Two READY light briefs, both BEFORE M0 attempt 4 (seat P):**
+(3) SIGNAL-001 stays permanent, restated around its protected property (VISION §§ 6.3, 9). **Two READY light briefs, both BEFORE M0 attempt 4 (seat P then; seat B since R21):**
 `U-quiet-review` — the 53 % idle spend of attempt 3 (the checkpoint below assigns it to `U-org-wakes`, which as written KEPT the 30-minute review; it is
 amended to land after this one), plus AGENTS.md's false "an idle turn costs almost nothing"; `U-memory-kept` — a plan or journal refused for size was
 destroyed whole, now kept in `trading/archive/` before the restore. When briefing lane B's CARDs, fold in ORGANISATION §§ 4 and 15 as amended

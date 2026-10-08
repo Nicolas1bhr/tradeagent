@@ -1,5 +1,9 @@
 # R21 — The three layers of truth, the switch-on, and the owner's decisions of 2026-10-08 (evening)
 
+**Amended by R22 the same evening (`docs/research/2026-10-08/R22-canon-drift-audit.md`), where marked "(R22)":** § 0.1's figure and the observed world's
+integrity, § 2's operational-truth row, § 3.3's `U-decision-port` and § 3.4's M0 prerequisites (now `U-quiet-review` and `U-memory-kept` only). § 3's seat orders are this file's proposal; the order of work
+now lives only in `docs/ORGANISATION.md` § 15's current order.
+
 **What it is.** On the evening of 2026-10-08 the owner asked what would be a real turning point for the program, what to improve now for returns (a deeper
 hierarchy, "the three layers of truth", immaculate prompts, canonical strategies like trading courses, copy trading, a Jev prediction engine), and settled
 four things: open source until the "absolute point", his machines, AgentPool out of scope, and when testing resumes. "The three layers of truth" are the AI
@@ -10,10 +14,12 @@ run on 2026-10-08; INFERENCE = this file's reasoning. Docs only: nothing was bui
 
 ## 0. Verdict
 
-1. **The observed world is TradeAgent's strongest part and runs 4 % of the time.** App-measured truth is stronger than the concierge canon asks — evidence
+1. **The observed world is TradeAgent's strongest part and has recorded about 4 % of the time since the tape store landed (on this Mac).** App-measured truth is stronger than the concierge canon asks — evidence
    classes per observation, a first-seen gate, a private holdout, UNKNOWN reconciled and never retried, measurement and claim in separate tables — because
-   money forced it. But the app records only while it runs: the only tape on the dev Mac is 6 h 04 min, 2026-10-07 14:38–20:43Z (RUN: 6,891 rows in the
-   attempt-3 home), and a market feature counts only from a live reading (`docs/CONTRACTS.md:3003-3005`, `:3259`). Every feature program has ≤ 6 hours of
+   money forced it — through the app's own paths: an unconfined CLI seat can still reach `state/` (ORGANISATION § 14), so the integrity is app-mediated until
+   containment (R22). But the app records only while it runs: the only tape on the dev Mac is 6 h 04 min, 2026-10-07 14:38–20:43Z (RUN: 6,891 rows in the
+   attempt-3 home) — ≈ 4.2 % of the ≈ 143.5 h from `U-tape-store`'s landing record (`a912261b`, 2026-10-02 22:18 CEST) to this file, tape coverage on this
+   Mac, not an availability metric (R22), and a market feature counts only from a live reading (`docs/CONTRACTS.md:3003-3005`, `:3259`). Every feature program has ≤ 6 hours of
    clean history, and the paper runner refuses every feature program (`Gateway/ForwardRuns.cs:845-846`).
 2. **The believed world is prose.** The agents' hypotheses, findings, kill reasons and next steps live in `PLAN.md` (≤ 60 lines) and `JOURNAL.md` (≤ 200)
    (`AgentRuntime/WorkspaceRevisions.cs:40,47`) and an uncapped, unversioned archive; facts, assumptions and hypotheses are not told apart, and every turn
@@ -44,7 +50,7 @@ run on 2026-10-08; INFERENCE = this file's reasoning. Docs only: nothing was bui
 | World truth | tape classes (`docs/CONTRACTS.md:2995-3020`), first-seen gate (`:3224-3234`), referee and holdouts, gateway UNKNOWN, ledgers | strong; intermittent | the switch-on |
 | Work truth | campaigns, frozen versions, backtests, verdicts, deployments are app data; the agents' own reasoning is two capped prose files | the believed world is prose; promotion uncontrolled | `U-research-ledger` |
 | System truth | tools and verbs stated in the canon's prose | drifts (R20 § 1) | `U-canon` |
-| Operational truth | none kept | — | `U-research-ledger` (as claims) |
+| Operational truth — the canon's "learned knowledge about how work actually gets done" (R22) | not kept as such: the app keeps the operational RECORD it would be learned from (`mission_event`, `ai_attempt`, `activity`, `tool_call`, the gateway's requests and fills), and the lessons sit in the two prose files | the record is authoritative; the learning is prose | `U-research-ledger` (the agent's claims, with app links to the record — never copies of it) |
 | Desired world | the mission text and the owner's guidance; a 30-minute review | polls instead of reconciling | `U-quiet-review` → `U-reconcile-wakes` |
 VISION § 7.4 (the belief graph, case law, doctrine, sleep) is the mature form of the last three rows; nothing of it is built, and its first version
 belongs to the two roles that run today, not to an organisation that does not yet exist.
@@ -66,14 +72,14 @@ belongs to the two roles that run today, not to an organisation that does not ye
    packet of what changed, what it believes and what is wanted; `U-org-wakes` and `U-org-packets` re-scoped to extend it).
 3. **The owner's list:** prompts = `U-canon` (measured over two observed runs, old canon against new, same budget, when testing resumes); Jev = a reader, not
    an oracle (R02 § 0: strong on short scoped judgements, weak on numbers, dates and finance text; the one public news-to-returns test found no tradeable
-   next-close signal) — `U-decision-port` (re-check at dispatch: its brief assumed lane B's principals and envelopes first) → `U-decision-card` →
+   next-close signal) — `U-decision-port` (RE-BRIEF (R22): it lands before lane B's principals and envelopes, which its brief assumed first) → `U-decision-card` →
    `U-annotator`, answers recorded at arrival; canonical strategies = `U-hypothesis-library` after the ledger — documented families (trend, carry, momentum,
    reversal, event drift) and the owner's course notes entered as claims and hypotheses, judged by the referee like any idea, never canon (one course rule,
    never cutting a loss inside a "buy zone", is what the app's loss limits refuse); copy trading = positioning features only (`U-tape-chain`; R03 § 0
    item 5); the hierarchy = lane B after the three layers, its first teams on distinct information (a data world each, Jev's labels).
 4. **Seat P closes** until a Windows box answers: live stays closed (licence, venue, broker), so its BEFORE-LIVE items and `TheOwnersAnswerAsync` wait;
-   `U-red-says-why` rides as a light. **M0 attempt 4** tests the new loop, on the owner's word, after `U-canon`, `U-research-ledger`, `U-reconcile-wakes` and
-   `U-runner-features`.
+   `U-red-says-why` rides as a light. **M0 attempt 4** runs on the owner's word after `U-quiet-review` and `U-memory-kept`
+   (R22; this file first said after `U-canon`, `U-research-ledger`, `U-reconcile-wakes` and `U-runner-features` — none of the four gates it; ORGANISATION § 15).
 
 ## 4. The owner's words and decisions, 2026-10-08 evening (verbatim)
 - "it is substantially cheaper to develop this as opensource. absolute point meant the moment the moat it proven and this should have become gatekept." →

@@ -42,7 +42,8 @@ on the tip): the report quotes the run id and its counts, or "tests box: NOT RUN
 **Pass 2 — land.** The manager, in the same session, runs the landing checklist below on the reported tip, writes a
 `BUILD-STATUS.md` section of at most 40 lines from the report, and deletes the brief. `docs/briefs/` holds only work
 in flight; empty means nothing is. `docs/queue/` holds READY briefs not yet dispatched: re-check each pointer against `main`,
-then `git mv` it into `docs/briefs/` to dispatch. Nothing sits between the passes: built once, landed once.
+and its Depends line, seat and status against `docs/ORGANISATION.md` § 15's current order — a disagreement is fixed in
+the docs first, never in a builder's prompt (R22) — then `git mv` it into `docs/briefs/` to dispatch. Nothing sits between the passes: built once, landed once.
 
 ## Ask questions later — the milestone review
 

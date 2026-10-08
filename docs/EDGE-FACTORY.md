@@ -414,7 +414,7 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 | `U-incubator` CARD | many paper runs, weekly paper allocation, bounded replacement, retirement wired | standing |
 | `U-mission-v2` CARD | the agents' mission rewritten for the edge factory; starting points as suggestions | phases 1–2 |
 
-**Phase 4 — perception** (raw items have been recording since phase 1): `U-decision-port` READY (needs `U-tape-store` and
+**Phase 4 — perception** (raw items have been recording since phase 1): `U-decision-port` RE-BRIEF (ORGANISATION § 15; needs `U-tape-store` and
 `U-key-host-pin`) → `U-decision-card` (the owner's Perception card and Test press) → `U-lenses` → `U-annotator` → `U-event-study`; `U-decision-fallbacks` (LLM-verbalised and local runtimes)
 deferred until a version binds to one or a schema is too sensitive to send out.
 
@@ -428,14 +428,14 @@ aggregate ceilings) → `U-cme-archive` and `U-rulebooks` if the prop path is ch
 
 **Phase 7 — moat extensions** (owner decisions): a local outcome-card format; an opt-in pooled outcome network after legal review.
 
-**Dispatch waves — superseded 2026-10-02 by `docs/ORGANISATION.md` § 15**, whose waves table is the only copy (two lanes, two heavy builders and a
-light third; M0 after W4b on lane A only; M-org0 after W7; M-org1 after W12, on confined seats). The earlier pairings are kept in git history.
+**Dispatch waves — superseded 2026-10-02 by `docs/ORGANISATION.md` § 15**, whose waves table is HISTORICAL since R22; the order is § 15's
+current order (below). The earlier pairings are kept in git history.
 
-**The switch-on — the target since 2026-10-08 evening (R21).** The moat of § 3 accrues only while the app runs, and by then it had run 6 hours in total. Lane A
-builds toward the loop running unattended, 24/7, on paper, on the owner's always-on Linux machines: `U-tape-chain` → `U-runner-features` →
-`U-holdout-campaign` → `U-paper-books` → `U-trial-returns` → `U-referee-v2` → `U-forward-standing` → `U-incubator`, with `U-linux-host` (the app unattended on
-Linux, owner controls still in-process) as its light; phase 4 starts with `U-decision-port` → `U-decision-card` → `U-annotator` in lane B. Deployed on the
-owner's word, the claim is seven days unattended — M1, M3 and M4's mechanics — not profit.
+**The switch-on — the target since 2026-10-08 evening (R21).** The moat of § 3 accrues only while the app runs, and by then it had recorded 6 h 04 min of
+tape — about 4 % of the time since the tape store landed, on this Mac (R22). Lane A builds toward the loop running unattended, 24/7, on paper, on the owner's always-on
+Linux machines — not yet shown: the app has never run unattended on Linux, so `U-linux-host`'s survey comes first, and owner controls stay in-process; phase 4
+starts in lane B with `U-decision-port`. The order is `docs/ORGANISATION.md` § 15's current order, the only copy (R22). Deployed on the owner's word, the
+claim is seven days unattended — M1, M3 and M4's mechanics — not profit.
 
 **Milestones**, each a distinct claim under `BUILD-STATUS.md`'s honesty rule: **M0** the observed paper loop · **M1** the tape has
 recorded seven days with gaps accounted, and its endpoints are verified from the owner's laptop · **M2** three or more non-price

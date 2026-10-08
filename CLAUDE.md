@@ -12,10 +12,10 @@ stay as they are — where a change touches one, name the protected property and
 keeps it. `docs/HOW-WE-BUILD.md` governs the build fleet; its roles and passes are not a design for the
 agent organisation inside the product. `manager-prompt.md` at the root is the fleet's handoff.
 
-**`docs/EDGE-FACTORY.md` is the target architecture and the build order** (2026-10-02, the owner's "too stiff, no moat"
+**`docs/EDGE-FACTORY.md` is the target architecture and its units** (2026-10-02, the owner's "too stiff, no moat"
 direction): the tape, perception, features, strategy language v2, the evidence cascade, selection, and the re-sequenced factory
 floor, with the protections each one touches and how they are kept. Ready briefs wait in `docs/queue/`; the research behind it,
-dated and sourced, is in `docs/research/2026-10-02/`.
+dated and sourced, is in `docs/research/2026-10-02/`. The order of work is `docs/ORGANISATION.md` § 15's current order (R22).
 
 **`docs/ORGANISATION.md` is the agent organisation** (2026-10-02, the owner's hierarchical direction: one chief, top-level managers heading
 divisions, team heads who decide, executors who own the path inside their mandate and never the mandate, an audit line, and an invisible watcher that reports
@@ -30,7 +30,8 @@ experiment is testing it; one chief with a strategy council that assesses and ne
 accountability line; the authority lattice, invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. It changes no
 unit before M-org1 but one — **§ 6.7, the three layers of truth** (canon, operational prompts and sources of truth; the observed, believed and desired
 worlds — the owner's direction of 2026-10-08 from the AI Concierge canon), built first on the two roles that run today (`docs/research/2026-10-08/R21-three-layers-of-truth.md`,
-which also makes **the switch-on** — the loop unattended 24/7 on paper — the build's target) — and it outranks no protection.
+which also makes **the switch-on** — the loop unattended 24/7 on paper, not yet shown on Linux — the build's target; R22 corrected § 6.7's promotion rule
+and keeps the order of work in ORGANISATION § 15 alone) — and it outranks no protection.
 
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
@@ -174,4 +175,6 @@ during a run. `tools/probe` is the harness behind the two headline claims, re-ru
 - **Public until the absolute point (the owner, 2026-10-08).** Open source is the cheaper way to build, and the moat is data and calendar time, not code.
   The repository stays public until the owner's "absolute point" — the moment the moat is proven — when development moves to the private `TradeAgent-Org`.
   Until then nothing that reveals a working edge is committed: a promoted or deployed strategy's text, a tape, ledger or forward-record export, or
-  research naming a family whose forward record is positive. Losing and rejected work may be recorded as before.
+  research naming a family whose forward record is positive. Losing and rejected work may be recorded as before. This is a policy, not a barrier: no gate
+  detects edge-revealing text and a repository made private later does not unpublish its history, so whoever writes a record checks it, and the move to
+  `TradeAgent-Org` comes before the first record that would need it (R22).

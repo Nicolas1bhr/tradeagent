@@ -1,6 +1,6 @@
 # U-org-envelopes — spend is reserved against the unit tree: a launch fits its unit and every ancestor inside the day's cap, in one transaction
 **Protects:** spend — reserved before launch, unknown never zero, a cap is a cap (`CLAUDE.md`; `docs/COUNCIL.md` rules 3–4; `docs/ORGANISATION.md` §§ 3, 10, 13.4;
-R12 § 4, § 5 O4; R17 #1, #11; R18 § 1.4). **Money-adjacent: red-first and mutants.** **Depends on `U-org-principals`** (exact keys). No schema change (the share
+R12 § 4, § 5 O4; R17 #1, #11; R18 § 1.4). **Money-adjacent: red-first and mutants.** **Depends on `U-org-principals`** (exact keys); if `U-decision-port` landed first, the tree keeps its `perception` reservation — its `RoleCap` and its own counters — working (R22). No schema change (the share
 column came with `U-org-ledger`). Per-seat allowances are NOT in this unit: they are the CARD `U-org-seats`, because the harness enforces one role-blind bound
 (`AppHost.cs:137-139` → `ApiConversation.cs:311`) and a reservation priced below what a turn may spend would walk past the cap (R18 § 1.4 row 1).
 **Today (SOURCE at `1275aff`, R12/R18-checked, NOT runtime-verified):** `AiAttemptStore.Begin` reads the day's and the role's totals and inserts in one

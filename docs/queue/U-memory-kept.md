@@ -1,6 +1,6 @@
 # U-memory-kept — a plan or journal the app refuses for size is kept in the archive before the last accepted revision is put back, never destroyed
 **Protects:** `docs/PRINCIPLES.md` "Useful autonomy needs code, tools and durable memory" — "a short summary limit is not a reason to discard the underlying research. Prefer a bounded summary
-with artifact references, explicit refusal and recoverable output over silent truncation or destruction" — and the role's own memory (COUNCIL's tier iii). Light; seat P; no rung; not the money
+with artifact references, explicit refusal and recoverable output over silent truncation or destruction" — and the role's own memory (COUNCIL's tier iii). Light; seat B (seat P closed, R21); no rung; not the money
 path. Lands before M0 attempt 4. From R20 (`docs/research/2026-10-08/R20-autonomy-audit.md` § 1), an outside audit's claim checked at `main` `30fe7a32` and found worse than it said.
 **Facts (SOURCE at `30fe7a32`, read and not run).**
 - `AgentRuntime/WorkspaceRevisions.cs`: caps `PlanLines` 60 (`:40`), `JournalLines` 200 (`:47`), counted on non-empty lines (`:183-186`); `ArchiveDir` = `trading/archive` (`:50`), which
