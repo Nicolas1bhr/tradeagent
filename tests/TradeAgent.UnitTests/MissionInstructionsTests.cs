@@ -121,6 +121,34 @@ public class MissionInstructionsTests
     }
 
     /// <summary>
+    /// AN IDLE TURN IS NOT CALLED CHEAP, AND THE AGENT IS TOLD HOW TO KEEP WORKING — RED FIRST
+    /// (<c>U-quiet-review</c>), on the sentence that is gone: "a turn that ends in ten seconds costs
+    /// your owner almost nothing". M0 attempt 3 measured the opposite (<c>BUILD-STATUS.md</c>, gap (b)):
+    /// sixteen idle looks in four quiet hours spent 2.0337 USD, 53 % of the run, because a turn on a
+    /// resumed session carries the session with it. An agent told an idle turn is nearly free has no
+    /// reason to ask for its own wake rather than wait for the app's look.
+    ///
+    /// <para>And the example of that file has to BE the file. It sat in an interpolated string, where
+    /// <c>{"after_seconds": 900}</c> is a hole and not text, so the agent was shown <c>after_seconds</c>
+    /// with neither brace nor value. Asserted on the text with its line breaks folded, because the
+    /// sentences are wrapped wherever the source file wraps them. The whole file sits at a runtime's
+    /// read limit, so the truth replaced the old sentence at a shorter length.</para>
+    /// </summary>
+    [Fact]
+    public void An_idle_turn_is_not_called_cheap_and_the_agent_is_told_how_to_keep_working()
+    {
+        var text = string.Join(" ", Instructions().Split(new[] { ' ', '\r', '\n' },
+            StringSplitOptions.RemoveEmptyEntries));
+
+        Assert.DoesNotContain("almost nothing", text);
+        Assert.Contains("An idle turn with its reason stated is a healthy outcome and not a fault. On a resumed "
+                        + "session it costs your owner about what a working one does.", text);
+        Assert.Contains("With work in progress, ask for your next wake in `next.json`", text);
+        Assert.Contains("the scheduled look slows while nothing happens, until a real event.", text);
+        Assert.Contains("""{"after_seconds": 900}""", Instructions());
+    }
+
+    /// <summary>
     /// AN UNKNOWN IS NEVER A ZERO, said to the reader of the number as well as enforced by whatever
     /// produces it. A missing fee makes the headline larger than the truth, and an AI that plans off
     /// the headline compounds the error every turn.
