@@ -77,6 +77,44 @@ public static class ValuationLoss
         $"{ExitPrefix}{Scope(connectorId, account)}:{LossBreach.Part(symbol)}:{EpisodeStamp(since)}";
 
     /// <summary>
+    /// THE EXIT'S CONFIRM (<see cref="ValuationExitConfirm"/>, <c>U-valuation-close-confirm</c>): what became of an
+    /// exit's close whose answer was lost, asked of the platform's order history or decided by the owner's answer —
+    /// its own family, written once at the SQL layer, keyed exactly as the exit it answers and never a field on it.
+    /// </summary>
+    public const string ExitConfirmPrefix = "loss_valuation_exit_confirm:";
+
+    /// <summary>
+    /// THE EXIT'S CLOSING AGAIN: the <see cref="ValuationExitRecord"/> of the second close a confirm that read the
+    /// symbol still open asked for, sent only while the reason the exit was sent for still holds. Its own family,
+    /// because the exit is written once and a second close is a second fact, not an edit of the first.
+    /// </summary>
+    public const string ExitAgainPrefix = "loss_valuation_exit_again:";
+
+    /// <summary>
+    /// THE CLOSING AGAIN'S OWN CONFIRM: a <see cref="ValuationExitConfirm"/> of the second generation. It owes nothing
+    /// — flat, or still open and the owner's to close — so there is never a third close for one episode.
+    /// </summary>
+    public const string ExitAgainConfirmPrefix = "loss_valuation_exit_again_confirm:";
+
+    /// <summary><c>loss_valuation_exit_confirm:{connector}:{account}:{symbol}:{yyyyMMddTHHmmssZ}</c>, off the exit's own key.</summary>
+    public static string ExitConfirmKeyFor(string exitKey) => Sibling(ExitConfirmPrefix, exitKey);
+
+    /// <summary><c>loss_valuation_exit_again:{connector}:{account}:{symbol}:{yyyyMMddTHHmmssZ}</c>, off the exit's own key.</summary>
+    public static string ExitAgainKeyFor(string exitKey) => Sibling(ExitAgainPrefix, exitKey);
+
+    /// <summary><c>loss_valuation_exit_again_confirm:{connector}:{account}:{symbol}:{yyyyMMddTHHmmssZ}</c>.</summary>
+    public static string ExitAgainConfirmKeyFor(string exitKey) => Sibling(ExitAgainConfirmPrefix, exitKey);
+
+    /// <summary>The exit key's own suffix — platform, account, symbol and episode — under another family's prefix.</summary>
+    static string Sibling(string prefix, string exitKey)
+    {
+        ArgumentNullException.ThrowIfNull(exitKey);
+        if (!exitKey.StartsWith(ExitPrefix, StringComparison.Ordinal))
+            throw new ArgumentException($"'{exitKey}' is not a data-loss exit's key", nameof(exitKey));
+        return prefix + exitKey[ExitPrefix.Length..];
+    }
+
+    /// <summary>
     /// THE BOUND AS A DURATION, from the owner's number in minutes. At or below zero is OFF — no
     /// data-loss exit at all — which is the WIDEST value it has and the reading every other zero in
     /// <see cref="RiskPolicy"/> already has (the notional cap, both loss budgets, the strike window).
@@ -117,21 +155,73 @@ public static class ValuationLoss
     /// would get wrong: WHAT was closed and when, WHY (the valuation, not the money), and that the
     /// day is NOT closed and nothing was lost through a budget — an owner who reads a close and
     /// assumes their budget went is an owner who will go looking for a loss that did not happen.
+    ///
+    /// <para>The CLOSING AGAIN (<paramref name="again"/>, <c>U-valuation-close-confirm</c>) says so first: the answer to
+    /// its first close was lost, what settled it (<paramref name="settledFrom"/>: the platform's history, the owner's
+    /// answer on the Dashboard, or both), and that the platform still read the position open — this is TradeAgent
+    /// finishing the job, once.</para>
     /// </summary>
     public static string ExitSentence(string symbol, decimal quantity, DateTimeOffset since,
-        DateTimeOffset at, TimeSpan bound, bool flat, string? trouble) =>
-        (flat
+        DateTimeOffset at, TimeSpan bound, bool flat, string? trouble, bool again = false, string? settledFrom = null) =>
+        (flat && again
+            ? $"TradeAgent CLOSED AGAIN your open {Math.Abs(quantity)} {symbol} at {at.UtcDateTime:HH:mm} UTC on "
+              + $"{at.UtcDateTime:yyyy-MM-dd}, by code and with nobody pressing anything: the answer to its first close "
+              + $"had been lost, {settledFrom ?? "your platform's order history"} settled it and your platform still "
+              + "read the position open, and it now reads flat. "
+            : flat
             ? $"TradeAgent closed your open {Math.Abs(quantity)} {symbol} at {at.UtcDateTime:HH:mm} UTC on "
               + $"{at.UtcDateTime:yyyy-MM-dd}, by code and with nobody pressing anything, and your platform "
               + "reads flat on it. "
-            : $"TradeAgent tried to close your open {Math.Abs(quantity)} {symbol} at {at.UtcDateTime:HH:mm} UTC "
-              + $"on {at.UtcDateTime:yyyy-MM-dd} and CANNOT CONFIRM that it is closed — go and look. ")
-        + $"The reason is {Reason}: it had been unable to work out what the position was worth since "
+            : $"TradeAgent tried {(again ? "AGAIN " : "")}to close your open {Math.Abs(quantity)} {symbol} at "
+              + $"{at.UtcDateTime:HH:mm} UTC on {at.UtcDateTime:yyyy-MM-dd} and CANNOT CONFIRM that it is closed — go "
+              + "and look. ")
+        + ReasonSentence(symbol, since, bound)
+        + (trouble is { Length: > 0 } ? $" {trouble}" : "");
+
+    /// <summary>The reason every exit sentence ends on: the valuation, never the money.</summary>
+    static string ReasonSentence(string symbol, DateTimeOffset since, TimeSpan bound) =>
+        $"The reason is {Reason}: it had been unable to work out what the position was worth since "
         + $"{since.UtcDateTime:yyyy-MM-dd HH:mm} UTC, which is longer than the {Spell(bound)} it is set to "
         + "wait, and a position nobody can measure is a position your loss budget is not bounding. "
         + "Your loss budget was NOT reached, no day and no instrument is closed to new risk because of this, "
-        + $"and {symbol} is refused new risk only for as long as it still cannot be valued."
-        + (trouble is { Length: > 0 } ? $" {trouble}" : "");
+        + $"and {symbol} is refused new risk only for as long as it still cannot be valued.";
+
+    /// <summary>
+    /// WHAT AN EXIT'S CONFIRM SAYS (<c>U-valuation-close-confirm</c>): what decided each lost close — the platform's
+    /// history or the owner's answer, each verdict naming its own (<paramref name="from"/>) — what a fresh read of the
+    /// symbol shows, and what happens next.
+    ///
+    /// <para>Next is one of three, and only the first exit's confirm can say the first: CLOSING IT AGAIN, while the
+    /// position still cannot be valued (<paramref name="notAgain"/> null); NOT closing it again, and why
+    /// (<paramref name="notAgain"/>: it can be valued again, the exit is switched off, the stretch has ended); or —
+    /// the closing again's own confirm (<paramref name="again"/>) over a position still open — not a third time:
+    /// it is the owner's.</para>
+    /// </summary>
+    public static string ConfirmSentence(string symbol, decimal quantity, DateTimeOffset since, TimeSpan bound,
+        string from, IReadOnlyList<LossFlattenVerdict> verdicts, IReadOnlyList<string> stillOpen, bool again,
+        string? notAgain)
+    {
+        var sent = $"the close it sent {(again ? "AGAIN " : "")}for your {Math.Abs(quantity)} {symbol}";
+        var found = string.Join("; ", verdicts.Select(v =>
+            $"the {v.Symbol} close is {v.State}{(v.Filled is > 0m ? $" ({v.Filled} filled)" : "")} — {v.Evidence}"));
+        var open = string.Join(", ", stillOpen);
+
+        var head = stillOpen.Count == 0
+            ? $"TradeAgent CONFIRMED FROM {from.ToUpperInvariant()} what became of {sent}, whose answer had been lost: "
+              + $"{found}. A fresh read of your account says {symbol} is closed, so nothing more was sent. "
+            : again
+            ? $"TradeAgent learned from {from} what became of {sent}, whose answer had been lost: {found}. A fresh read "
+              + $"still shows {open} open, and TradeAgent does NOT close it a third time: what is still open is yours to "
+              + "close — check the platform. "
+            : notAgain is null
+            ? $"TradeAgent learned from {from} what became of {sent}, whose answer had been lost: {found}. A fresh read "
+              + $"still shows {open} open and TradeAgent still cannot value it, so it is CLOSING IT AGAIN, once, with "
+              + "every check the first close had — it may only send an order that reduces what is there. "
+            : $"TradeAgent learned from {from} what became of {sent}, whose answer had been lost: {found}. A fresh read "
+              + $"still shows {open} open, and TradeAgent is NOT closing it again: {notAgain}. ";
+
+        return head + ReasonSentence(symbol, since, bound);
+    }
 
     /// <summary>
     /// WHAT THE THRESHOLDS DO AND WHAT THEY CANNOT DO — the disclosure, in one place, so the daily
@@ -290,5 +380,73 @@ public sealed record ValuationExitRecord
     /// <summary>True only behind a fresh read-back saying the instrument is flat.</summary>
     public bool Flat { get; init; }
 
+    public string Why { get; init; } = "";
+}
+
+/// <summary>
+/// WHAT BECAME OF A DATA-LOSS EXIT'S CLOSES WHOSE ANSWER WAS LOST, ASKED OF THE PLATFORM'S ORDER HISTORY — or decided
+/// by the owner's answer on the Dashboard under its live-order veto — AND THE SYMBOL READ BACK AFTER IT
+/// (<c>U-valuation-close-confirm</c>).
+///
+/// <para><b><see cref="LossFlattenConfirm"/>'s rules, for the exit's own event.</b> A third record beside the episode
+/// and the exit, never an edit of either: the exit was true when it finished — a close went out and its answer was
+/// lost — and stays true. This is a later fact about the same close, from the platform's own history or the owner's
+/// own measurement, written ONCE at the SQL layer BEFORE a single row is settled, so it is the decision and the rows
+/// are its application. Only every lost close decided by the same history question and the same owner's answer the
+/// budget's confirm asks — absence only where the connector's closes carry our id, the owner only past his clock and
+/// never over a close the history holds live — and nothing is written while one is undecided.</para>
+///
+/// <para><b>One per close generation.</b> The exit's confirm is filed under <see cref="ValuationLoss.ExitConfirmPrefix"/>;
+/// the exit's closing again — sent only while the reason the exit was sent for still holds — has its own, under
+/// <see cref="ValuationLoss.ExitAgainConfirmPrefix"/>, which owes nothing. Each settles and unflags its own two nonces'
+/// rows and no other's, which lifts the pause the lost close imposed and lets later exits go out.</para>
+/// </summary>
+public sealed record ValuationExitConfirm
+{
+    public string Account { get; init; } = "";
+
+    public string Connector { get; init; } = "";
+
+    public TradingMode Mode { get; init; }
+
+    public string Symbol { get; init; } = "";
+
+    /// <summary>The UTC day this confirm was written on, <c>yyyy-MM-dd</c> — for a reader, never for the key.</summary>
+    public string Day { get; init; } = "";
+
+    /// <summary>The episode the exit answered: the instant it began.</summary>
+    public DateTimeOffset Since { get; init; }
+
+    /// <summary>The FIRST exit's key — the generation family this record belongs to, whichever generation it answers.</summary>
+    public string ExitKey { get; init; } = "";
+
+    /// <summary>The outcome this answers for: the exit's own <c>loss_valuation_exit:</c> key, or its closing again's
+    /// <c>loss_valuation_exit_again:</c> key.</summary>
+    public string OutcomeKey { get; init; } = "";
+
+    /// <summary>That outcome's two press nonces, whose rows — and no other generation's — this record settles and unflags.</summary>
+    public string CancelNonce { get; init; } = "";
+
+    public string CloseNonce { get; init; } = "";
+
+    public DateTimeOffset At { get; init; }
+
+    /// <summary>One verdict per close whose answer was lost.</summary>
+    public IReadOnlyList<LossFlattenVerdict> Verdicts { get; init; } = [];
+
+    /// <summary>What a fresh read of the platform showed open on the symbol, as <c>"ES 1"</c>.</summary>
+    public IReadOnlyList<string> StillOpen { get; init; } = [];
+
+    /// <summary>True only behind that fresh read saying the symbol is flat: nothing more is sent.</summary>
+    public bool Flat { get; init; }
+
+    /// <summary>
+    /// The first exit's confirm read the symbol open while the episode it was sent for still stood: it said
+    /// CLOSING IT AGAIN. Whether the closing again then runs is decided on the tick, against the episodes that tick
+    /// could not value; a reader whose episode has since ended says so instead. Never true of the closing again's own.
+    /// </summary>
+    public bool ClosingAgain { get; init; }
+
+    /// <summary>The sentence the owner and the agent are shown.</summary>
     public string Why { get; init; } = "";
 }

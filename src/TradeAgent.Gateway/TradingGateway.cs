@@ -9751,8 +9751,10 @@ public sealed class TradingGateway : IAsyncDisposable
     /// lost close of the generation is decided. Then one record of its own, at the SQL layer, before a single row is
     /// settled: the verdicts and a fresh read of the book. Flat — nothing is sent. Still open after the FIRST
     /// flatten — "closing again", which the sweep does with the same flatten once nothing is unconfirmed; still open
-    /// after the closing again — nothing more, ever: what is open is the owner's. Until this unit there was one
-    /// confirm per breach, and a lost answer to the closing again held its closure for ever.</para>
+    /// after the closing again — nothing more, ever: what is open is the owner's. A data-loss exit's confirm closes
+    /// again only while the reason the exit was sent for still holds (<see cref="CloseAgainWhatAnExitLeftOpenAsync"/>),
+    /// and its closing again's confirm owes nothing either. Until this unit there was one confirm per breach: a lost
+    /// answer to the closing again held its closure for ever, and an exit's lost close was never asked about.</para>
     ///
     /// <para>It never throws. A confirm that fails is a closure left exactly as it was — flagged, with
     /// the gate refusing off the same rows.</para>
@@ -9760,10 +9762,11 @@ public sealed class TradingGateway : IAsyncDisposable
     async Task ConfirmLostClosesAsync(string accountId, CancellationToken ct)
     {
         // A CLOSURE THAT CANNOT BE READ IS NOT ONE TO CONFIRM ANYTHING ABOUT — and the gate is refusing
-        // off the same rows, so nothing is lost by asking again next pass.
+        // off the same rows, so nothing is lost by asking again next pass. The data-loss exits below are
+        // not closures, and are asked whatever this read says.
         IReadOnlyList<LossBreachRecord> standing;
         try { standing = OpenClosures(accountId); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { standing = []; }
 
         foreach (var breach in standing)
         {
@@ -9788,6 +9791,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 }
             }
         }
+
+        await ConfirmTheExitsLostClosesAsync(accountId, ct);
     }
 
     /// <summary>
@@ -9866,6 +9871,213 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>What a row the budget's confirm settles says about who settled it, beside its evidence.</summary>
     static string SettledByTheBudgetsConfirm(string breachKey, bool again) =>
         $"settled by TradeAgent's confirm of the loss budget's {(again ? "closing again" : "close")} ({breachKey})";
+
+    /// <summary>What a row an exit's confirm settles says about who settled it, beside its evidence.</summary>
+    static string SettledByTheExitsConfirm(string exitKey, bool again) =>
+        $"settled by TradeAgent's confirm of its {(again ? "closing again" : "close")} of a position it could not value ({exitKey})";
+
+    /// <summary>
+    /// EVERY DATA-LOSS EXIT OF THIS PLATFORM, MODE AND ACCOUNT, AND ITS CLOSING AGAIN, CONFIRMED BY THE SAME ROUTINE
+    /// AS THE LOSS FLATTEN'S (<c>U-valuation-close-confirm</c>) — on the health pass, and from nowhere an agent can reach.
+    ///
+    /// <para><b>Why it is asked at all.</b> An exit whose close lost its answer left its rows flagged: every order was
+    /// refused, every later exit was refused behind them (one app press of each kind at a time), and nothing ever
+    /// asked the platform what had become of the close — so a position nobody could value stayed open, beside others
+    /// the exit could no longer reach, until a person answered a record the platform could have (seat P's survey,
+    /// "valuation_exit_press_already_open x91" in thirty simulated minutes). Each exit is a close generation, and each
+    /// of its generations is decided exactly as the budget's are: one write-once record, then its own rows settled and
+    /// unflagged, the pause lifted, and the exits behind it free to go out.</para>
+    ///
+    /// <para><b>Every exit, not only today's or a standing episode's.</b> A lost close's rows pause the product until
+    /// they are decided, whatever day the exit ran on and whether or not its episode has since ended — the position
+    /// it was for may have been closed by the very close whose answer was lost. An exit that read flat has no lost
+    /// close and no closing again, and costs a parse.</para>
+    ///
+    /// <para>It never throws.</para>
+    /// </summary>
+    async Task ConfirmTheExitsLostClosesAsync(string accountId, CancellationToken ct)
+    {
+        IReadOnlyList<(string Key, string Value)> exits;
+        try { exits = _db.KvStartingWith($"{ValuationLoss.ExitPrefix}{ValuationLoss.Scope(Connector.Id, accountId)}:"); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "valuation_exit_confirm_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { account = accountId }));
+            return;
+        }
+
+        foreach (var (exitKey, json) in exits)
+        {
+            ValuationExitRecord? exit;
+            try { exit = Json.Read<ValuationExitRecord>(json); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // AN EXIT THAT CANNOT BE READ DECIDES NOTHING: its rows stay flagged, and the gate refuses off them.
+                Note(exitKey, "valuation_exit_confirm_failed", "warn", $"the exit could not be read ({ex.Message})");
+                continue;
+            }
+
+            // ONLY WHERE THE EXIT RAN: its platform, its mode and its account. The key carries the first and the
+            // last; the mode is on the record, for the reason the budget's confirm asks it — PAPER and LIVE are
+            // different money over the same account id.
+            if (exit is null || exit.Flat
+                || !string.Equals(exit.Connector, Connector.Id, StringComparison.Ordinal)
+                || exit.Mode != Settings.Mode
+                || !string.Equals(exit.Account, accountId, StringComparison.Ordinal))
+                continue;
+
+            // EACH GENERATION ITS OWN CONFIRM: the exit's, then its closing again's.
+            foreach (var again in new[] { false, true })
+            {
+                var confirmKey = again ? ValuationLoss.ExitAgainConfirmKeyFor(exitKey) : ValuationLoss.ExitConfirmKeyFor(exitKey);
+                try { await ConfirmAnExitsLostCloseAsync(exit, exitKey, again, confirmKey, accountId, ct); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Note(confirmKey, "valuation_exit_confirm_failed", "warn", $"{ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// One generation of one exit's confirm — the exit's own, or its closing again's (<paramref name="again"/>):
+    /// written once and then applied, or asked again on the next pass. <see cref="ConfirmLostCloseAsync"/>'s steps,
+    /// under the exit's own press kinds and its own families.
+    /// </summary>
+    async Task ConfirmAnExitsLostCloseAsync(ValuationExitRecord exit, string exitKey, bool again, string confirmKey,
+        string accountId, CancellationToken ct)
+    {
+        // WRITTEN ALREADY: the record is the decision, and all that can be left is applying it.
+        if (ReadExitConfirm(confirmKey) is { } written)
+        {
+            _confirmWaits.TryRemove(confirmKey, out _);
+            ApplyTheConfirm(written.Verdicts, CloseGeneration.OfAnExit(written.CancelNonce, written.CloseNonce),
+                SettledByTheExitsConfirm(exitKey, again));
+            return;
+        }
+
+        var outcomeKey = again ? ValuationLoss.ExitAgainKeyFor(exitKey) : exitKey;
+        var outcome = again ? ReadExitRecord(outcomeKey) : exit;
+        if (outcome is null || LostCloses(CloseGeneration.Of(outcome)) is not { } lost)
+        {
+            _confirmWaits.TryRemove(confirmKey, out _);
+            return;
+        }
+
+        if (await DecideTheLostClosesAsync(lost, confirmKey, "valuation_exit_confirm", accountId, ct) is not { } decided)
+            return;
+
+        var stillOpen = decided.Positions
+            .Where(p => p.Quantity != 0m && string.Equals(p.Symbol, exit.Symbol, StringComparison.Ordinal))
+            .Select(p => $"{p.Symbol} {p.Quantity}").ToList();
+
+        // WHAT HAPPENS NEXT, AS FAR AS THIS RECORD CAN SAY IT. Only the exit's own confirm over an open symbol can ask
+        // for a closing again, and only while the episode it was sent for still stands with the exit on; the again
+        // itself is decided on the tick (CloseAgainWhatAnExitLeftOpenAsync), never from this record alone.
+        var notAgain = again || stillOpen.Count == 0 ? null : WhyNoExitAgain(exit, exitKey);
+        var record = new ValuationExitConfirm
+        {
+            Account = exit.Account,
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
+            Symbol = exit.Symbol,
+            Day = LossBreach.Stamp(Now),
+            Since = exit.Since,
+            ExitKey = exitKey,
+            OutcomeKey = outcomeKey,
+            CancelNonce = outcome.CancelNonce,
+            CloseNonce = outcome.CloseNonce,
+            At = Now,
+            Verdicts = decided.Verdicts,
+            StillOpen = stillOpen,
+            Flat = stillOpen.Count == 0,
+            ClosingAgain = !again && stillOpen.Count > 0 && notAgain is null,
+            Why = ValuationLoss.ConfirmSentence(exit.Symbol, outcome.Legs.Select(l => l.Captured).FirstOrDefault(q => q != 0m),
+                exit.Since, exit.Bound, SettledFrom(decided.Verdicts), decided.Verdicts, stillOpen, again, notAgain)
+        };
+
+        switch (WriteTheConfirmOnce(confirmKey, Json.Write(record), "valuation_exit_confirm"))
+        {
+            case null: return;
+            case true:
+                _log.Activity(record.Why, record.Flat ? "info" : "warn");
+                _log.TryEngineering("Gateway", "valuation_exit_confirmed", record.Flat ? "info" : "warn",
+                    metadataJson: Json.Write(new
+                    {
+                        key = confirmKey, exit = exitKey, again, record.Flat, record.StillOpen, record.ClosingAgain,
+                        verdicts = decided.Verdicts.Select(v => $"{v.RequestId} {v.State}").ToList()
+                    }));
+                break;
+            case false when ReadExitConfirm(confirmKey) is { } there: record = there; break;
+            default: return;
+        }
+
+        ApplyTheConfirm(record.Verdicts, CloseGeneration.OfAnExit(record.CancelNonce, record.CloseNonce),
+            SettledByTheExitsConfirm(exitKey, again));
+    }
+
+    /// <summary>
+    /// WHY AN EXIT'S CLOSING AGAIN IS NOT FOR THIS EPISODE ANY MORE, in the owner's words — or null because, as far
+    /// as the rows say, it still is: the exit is switched on, and the episode row still stands on this exit.
+    ///
+    /// <para><b>For a SENTENCE, never for the send.</b> The closing again is decided against the episodes the tick
+    /// could not value (<see cref="TheEpisodeItWasSentFor"/>); this reads the rows a surface can read, so that the
+    /// confirm's sentence and the reading say why nothing more was sent once the reason has gone. A row that cannot be
+    /// read says nothing different, and the tick decides.</para>
+    /// </summary>
+    string? WhyNoExitAgain(ValuationExitRecord exit, string exitKey)
+    {
+        if (ValuationExitBound() <= TimeSpan.Zero)
+            return "the data-loss exit is now switched off in your safety limits";
+
+        ValuationUnavailableRecord? episode;
+        try { episode = ReadValuationEpisode(ValuationLoss.KeyFor(exit.Connector, exit.Account, exit.Symbol)); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+
+        if (episode is { Standing: true } && string.Equals(episode.ExitKey, exitKey, StringComparison.Ordinal))
+            return null;
+
+        return episode is { Standing: false } && string.Equals(episode.ExitKey, exitKey, StringComparison.Ordinal)
+               && episode.Quantity != 0m
+            ? $"it can value {exit.Symbol} again, so your loss budget measures it again"
+            : $"the stretch in which TradeAgent could not value {exit.Symbol} has ended";
+    }
+
+    /// <summary>
+    /// The exit's confirm under <paramref name="key"/>, or null because there is none. An unreadable row THROWS, on
+    /// <see cref="ReadConfirm"/>'s rule: "TradeAgent cannot tell whether it confirmed this" is not "it did not".
+    /// </summary>
+    ValuationExitConfirm? ReadExitConfirm(string key) =>
+        ReadOneRecord<ValuationExitConfirm>(key, "what TradeAgent confirmed about a position it closed because it could not value it");
+
+    /// <summary>One exit record — the exit or its closing again — or null because there is none. Unreadable throws.</summary>
+    ValuationExitRecord? ReadExitRecord(string key) =>
+        ReadOneRecord<ValuationExitRecord>(key, "what TradeAgent did about a position it could not value");
+
+    /// <summary>One write-once record, or null because there is none; an unreadable or empty row THROWS, in words.</summary>
+    T? ReadOneRecord<T>(string key, string what) where T : class
+    {
+        string? json;
+        try { json = _db.GetKv(key); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE, $"TradeAgent could not read {what} ({ex.Message})");
+        }
+
+        if (json is null) return null;
+
+        try
+        {
+            return Json.Read<T>(json)
+                   ?? throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE, $"the record of {what} ({key}) is empty");
+        }
+        catch (Exception ex) when (ex is not GatewayDeniedException and not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"the record of {what} ({key}) could not be read ({ex.Message})");
+        }
+    }
 
     /// <summary>
     /// A CONFIRM'S RECORD, WRITTEN ONCE AT THE SQL LAYER — whichever generation it is. True: this call inserted it.
@@ -10649,7 +10861,7 @@ public sealed class TradingGateway : IAsyncDisposable
             try
             {
                 if (bound > TimeSpan.Zero && episode.ExitKey is null && episode.Age(at) >= bound)
-                    await ExitLostValuationAsync(accountId, episode, at, epoch, bound, ct);
+                    await ExitLostValuationAsync(accountId, episode, at, epoch, bound, again: false, ct);
                 else if (episode.ExitKey is null
                          && (episode.CancelNonce is null || episode.CancelsNotSettled.Count > 0))
                     await CancelWhileUnvaluableAsync(accountId, episode, at, ct);
@@ -10661,7 +10873,91 @@ public sealed class TradingGateway : IAsyncDisposable
                     metadataJson: Json.Write(new { account = accountId, episode.Symbol, episode.Since }));
             }
         }
+
+        // AND EACH EXIT A CONFIRM READ STILL OPEN, CLOSED AGAIN — ONCE, AND ONLY WHILE ITS REASON HOLDS
+        // (U-valuation-close-confirm). After the first exits, so a confirm that freed the kinds this pass lets the
+        // exits it was holding up go out first; either order sends the same closes.
+        try { await CloseAgainWhatAnExitLeftOpenAsync(accountId, standing, at, epoch, bound, ct); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "valuation_exit_again_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { account = accountId }));
+        }
     }
+
+    /// <summary>
+    /// THE DATA-LOSS EXIT'S CLOSING AGAIN (<c>U-valuation-close-confirm</c>): an exit whose lost close its confirm has
+    /// decided, and whose symbol that confirm still read open, is closed again — ONCE, and only while the reason it
+    /// was sent for still holds.
+    ///
+    /// <para><b>The reason, all of it, checked here on the tick.</b> Its confirm read the symbol open; no closing
+    /// again has been written for it yet; the EPISODE IT WAS SENT FOR STILL STANDS — one this tick could not value,
+    /// still pointing at that exit (<see cref="TheEpisodeItWasSentFor"/>); and the first exit's own condition holds:
+    /// the bound on and the episode at least that old, with the connection up, which the caller has already
+    /// required. A position valued again is measured by the owner's loss budget again, a position gone has nothing
+    /// to close, and a new stretch of silence is a new episode with its own clock and its own first exit — none of
+    /// them is this exit's to close again, and the confirm's sentence and the reading say why.</para>
+    ///
+    /// <para><b>The same exit, not a second copy.</b> <see cref="ExitLostValuationAsync"/> with <c>again</c>: cancels
+    /// first, a fresh capture, reduction-only at the wire, one valuation press of each kind at a time, written once
+    /// under <see cref="ValuationLoss.ExitAgainPrefix"/>. The episode keeps the exit it was sent for. Its own lost
+    /// close is decided by its own confirm, which owes nothing: there is never a third close for one episode.</para>
+    /// </summary>
+    async Task CloseAgainWhatAnExitLeftOpenAsync(string accountId, IReadOnlyList<ValuationUnavailableRecord> standing,
+        DateTimeOffset at, int epoch, TimeSpan bound, CancellationToken ct)
+    {
+        // THE FIRST EXIT'S OWN CONDITION: switched on. (Connected: the caller sent nothing otherwise.)
+        if (bound <= TimeSpan.Zero) return;
+
+        foreach (var (confirmKey, json) in _db.KvStartingWith(
+                     $"{ValuationLoss.ExitConfirmPrefix}{ValuationLoss.Scope(Connector.Id, accountId)}:"))
+        {
+            // A CONFIRM THAT CANNOT BE READ ASKS FOR NOTHING: nothing is sent on it, and the others are still asked.
+            ValuationExitConfirm? confirm;
+            try { confirm = Json.Read<ValuationExitConfirm>(json); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Note(confirmKey, "valuation_exit_again_unreadable", "warn", ex.Message);
+                continue;
+            }
+
+            // ITS CONFIRM READ THE SYMBOL OPEN, on this platform and in this mode.
+            if (confirm is not { Flat: false }
+                || !string.Equals(confirm.Connector, Connector.Id, StringComparison.Ordinal)
+                || confirm.Mode != Settings.Mode)
+                continue;
+
+            // ONCE: a closing again already written — whatever it found — is the closing again.
+            if (ReadExitRecord(ValuationLoss.ExitAgainKeyFor(confirm.ExitKey)) is not null) continue;
+
+            // THE EPISODE IT WAS SENT FOR STILL STANDS, or nothing is sent: valued again, gone, or a new stretch.
+            // Said to the engineering log once per change; the confirm's sentence and the reading say it to the owner.
+            if (TheEpisodeItWasSentFor(standing, confirm) is not { } episode)
+            {
+                Note(confirmKey, "valuation_exit_again_not_owed", "info", $"{confirm.Symbol}: the episode it was sent for no longer stands");
+                continue;
+            }
+
+            // AND THE FIRST EXIT'S OWN CLOCK.
+            if (episode.Age(at) < bound) continue;
+
+            await ExitLostValuationAsync(accountId, episode, at, epoch, bound, again: true, ct);
+        }
+    }
+
+    /// <summary>
+    /// THE EPISODE AN EXIT'S CLOSING AGAIN WOULD BE FOR — among the episodes THIS TICK could not value, the one still
+    /// pointing at the exit whose confirm read the symbol open — or null because it no longer stands: the position
+    /// was valued again, it has gone, or a later silence is a new episode with an exit of its own. This is the
+    /// closing again's one guard on its episode (<c>U-valuation-close-confirm</c>): the tick's own evidence, never a
+    /// row a failed write may have left behind.
+    /// </summary>
+    static ValuationUnavailableRecord? TheEpisodeItWasSentFor(IReadOnlyList<ValuationUnavailableRecord> standing,
+        ValuationExitConfirm confirm) =>
+        standing.FirstOrDefault(e => e.Standing
+                                     && string.Equals(e.ExitKey, confirm.ExitKey, StringComparison.Ordinal)
+                                     && string.Equals(e.Symbol, confirm.Symbol, StringComparison.Ordinal));
 
     /// <summary>
     /// THE ORDERS THAT COULD MAKE AN UNMEASURABLE POSITION BIGGER, CANCELLED — through the same
@@ -10750,25 +11046,50 @@ public sealed class TradingGateway : IAsyncDisposable
     /// row, no <c>LOSS_BUDGET_REACHED</c>, no closed day, no closed instrument and no strike. The
     /// owner's budget was not reached; nobody has measured a loss at all, which is the problem.</para>
     ///
-    /// <para><b>One attempt per episode, and then a person.</b> The record is written whatever the
-    /// outcome and the key is the episode's, so nothing re-sends over rows it left behind. An exit
-    /// that could not confirm leaves its rows FLAGGED, which pauses every order exactly as an
-    /// owner's press does — the product's answer everywhere else, and the only safe one when the app
-    /// is holding an order it cannot account for on an instrument it cannot value.</para>
+    /// <para><b>One attempt per episode, then its confirm, and then a person.</b> The record is written whatever
+    /// the outcome and the key is the episode's, so nothing re-sends over rows it left behind. An exit that could
+    /// not confirm leaves its rows FLAGGED, which pauses every order exactly as an owner's press does — the
+    /// product's answer everywhere else, and the only safe one when the app is holding an order it cannot account
+    /// for on an instrument it cannot value — until its confirm (<c>U-valuation-close-confirm</c>) decides what
+    /// became of the lost close from the platform's history or the owner's answer.</para>
+    ///
+    /// <para><b>And once more, never twice</b> (<paramref name="again"/>): a confirm that read the symbol still open
+    /// asks for ONE closing again, which <see cref="CloseAgainWhatAnExitLeftOpenAsync"/> sends only while the reason
+    /// holds. It is this method, every step of it, written under <see cref="ValuationLoss.ExitAgainPrefix"/>; the
+    /// episode keeps the exit it was sent for.</para>
     /// </summary>
     async Task<ValuationExitRecord?> ExitLostValuationAsync(string accountId, ValuationUnavailableRecord episode,
-        DateTimeOffset at, int epoch, TimeSpan bound, CancellationToken ct)
+        DateTimeOffset at, int epoch, TimeSpan bound, bool again, CancellationToken ct)
     {
-        var key = ValuationLoss.ExitKey(Connector.Id, accountId, episode.Symbol, episode.Since);
+        var exitKey = ValuationLoss.ExitKey(Connector.Id, accountId, episode.Symbol, episode.Since);
+        var key = again ? ValuationLoss.ExitAgainKeyFor(exitKey) : exitKey;
 
-        // WRITTEN ONCE, PER EPISODE. A second run would be a second close over a book the first one
-        // already closed, and the day is deliberately not in the key: see ValuationLoss.ExitKey.
+        // WRITTEN ONCE, PER EPISODE — and its closing again once, under its own key. A second run would be a
+        // second close over a book the first one already closed, and the day is deliberately not in the key:
+        // see ValuationLoss.ExitKey.
         try { if (_db.GetKv(key) is not null) return null; }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.TryEngineering("Gateway", "valuation_exit_unreadable", "error", ex: ex,
                 metadataJson: Json.Write(new { key }));
             return null;
+        }
+
+        // THE CLOSING AGAIN RUNS ONLY BEHIND A CONFIRM THAT READ THE SYMBOL OPEN — every lost close of the exit
+        // decided, by the platform's own history or the owner's answer under its veto — and nothing else reaches
+        // it. An unreadable confirm sends nothing.
+        ValuationExitConfirm? asked = null;
+        if (again)
+        {
+            try { asked = ReadExitConfirm(ValuationLoss.ExitConfirmKeyFor(exitKey)); }
+            catch (GatewayDeniedException) { asked = null; }
+
+            if (asked is not { Flat: false })
+            {
+                _log.TryEngineering("Gateway", "valuation_exit_again_not_asked", "warn",
+                    metadataJson: Json.Write(new { key, exit = exitKey }));
+                return null;
+            }
         }
 
         // ONE APP PRESS OF EACH KIND AT A TIME — the budget flatten's rule, and here for its reason:
@@ -10784,8 +11105,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
         var startedAt = Now;
         var paused = $"TradeAgent could not work out what your {episode.Symbol} position was worth for "
-                     + $"{ValuationLoss.Spell(episode.Age(at))} and closed it; your loss budget was NOT reached. "
-                     + "It is waiting for you on the Dashboard";
+                     + $"{ValuationLoss.Spell(episode.Age(at))} and closed it{(again ? " again" : "")}; your loss budget "
+                     + "was NOT reached. It is waiting for you on the Dashboard";
 
         // ON THE PLATFORM'S CLOCK, NOT THE DISK'S (U-flatten-confirm, owed by U-fix-loss-reopen's
         // judgement 3). This exit is the budget flatten's mechanics with nobody at the keyboard, and it
@@ -10874,7 +11195,8 @@ public sealed class TradingGateway : IAsyncDisposable
             Residual = residual,
             Flat = flat,
             Why = ValuationLoss.ExitSentence(episode.Symbol, episode.Quantity, episode.Since, at, bound,
-                flat, trouble.Count == 0 ? null : string.Join("; ", trouble))
+                flat, trouble.Count == 0 ? null : string.Join("; ", trouble), again,
+                asked is null ? null : SettledFrom(asked.Verdicts))
         };
 
         // WRITE-ONCE AT THE SQL LAYER, on LossReopen's rule: this row is what stops a second close
@@ -10891,21 +11213,24 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // THE EPISODE ROW POINTS AT ITS EXIT whether or not the insert was ours: the row that is
         // already there is the one that counts, and either way this episode has had its one attempt.
-        WriteValuationEpisode(ValuationLoss.KeyFor(Connector.Id, accountId, episode.Symbol), episode with
+        // The CLOSING AGAIN leaves it pointing at the exit it was sent for (U-valuation-close-confirm): that
+        // exit is the episode's, and its again and their confirms are found from it.
+        var row = episode with
         {
             LastSeenAt = at,
-            ExitKey = key,
             CancelNonce = openers.Nonce,
             CancelledOrders = openers.Cancelled,
             CancelsNotSettled = openers.NotSettled
-        });
+        };
+        WriteValuationEpisode(ValuationLoss.KeyFor(Connector.Id, accountId, episode.Symbol),
+            again ? row : row with { ExitKey = key });
 
         OpenValuationBoundary(record);
 
         _log.Activity(record.Why, "warn");
         _log.TryEngineering("Gateway", "valuation_exit", flat ? "info" : "warn", metadataJson: Json.Write(new
         {
-            key, inserted, record.Symbol, record.Since, record.Flat, legs = legs.Count, residual
+            key, inserted, again, record.Symbol, record.Since, record.Flat, legs = legs.Count, residual
         }));
 
         // THE PAUSE THIS EXIT IMPOSED IS LIFTED BY THE SAME TWO LINES THE BUDGET FLATTEN USES, so a

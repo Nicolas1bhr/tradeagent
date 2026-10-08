@@ -197,13 +197,25 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
         if (InstrumentsThrow is { } boom) return Task.FromException<IReadOnlyList<InstrumentInfo>>(boom);
         return InstrumentsAnswer is { } answer ? Task.FromResult(answer) : Inner.GetInstrumentsAsync(ct);
     }
+    /// <summary>
+    /// ONE INSTRUMENT'S PRICE, AS OLD AS A TEST SAYS, while every other keeps <see cref="FaultProfile.QuoteAge"/>
+    /// (<c>U-valuation-close-confirm</c>): one feed back and another still silent, which the profile's single age
+    /// cannot express. The age the answer for <c>symbol</c> is stamped with, on the simulator's own quote clock, or
+    /// null for the simulator's own answer. Only what this read RETURNS moves — the simulator has already raised
+    /// its own quote event, and a caller that stores the answer it is handed stores this one after it. Inert until set.
+    /// </summary>
+    public Func<string, TimeSpan?>? QuoteAgeOf;
+
     /// <summary>Gated, and still counted as the read it is. See <see cref="HeldCall.Quote"/>.</summary>
     public async Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Reads);
         Interlocked.Increment(ref Quotes);
         await Gate(HeldCall.Quote);
-        return await Inner.GetQuoteAsync(s, ct);
+        var quote = await Inner.GetQuoteAsync(s, ct);
+        return quote is not null && QuoteAgeOf?.Invoke(s) is { } age
+            ? Broker.Quote(s, Inner.QuoteClock.GetUtcNow() - age)
+            : quote;
     }
 
     /// <summary>

@@ -317,4 +317,280 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         Assert.Null(gw.DayClosed(account));
         Assert.Equal(2, conn.Closes);
     }
+
+    // ------------------------------------------------------------------- the data-loss exit
+
+    /// <summary>
+    /// ES AND NQ OPEN AND VALUED, THEN THE FEED GOES SILENT ON BOTH: the pass that reaches the one-minute bound
+    /// exits ES first, its close lost the way the caller armed, and NQ's exit is refused behind ES's flagged rows.
+    /// Answers ES's lost close row.
+    /// </summary>
+    static async Task<ExecutionRequest> TwoUnvaluableAndTheFirstExitsCloseLost(TradingGateway gw,
+        RecordingConnector conn, Database db, TestClock clock, Action<FaultProfile> arm)
+    {
+        await gw.PlaceAsync(new AgentContext("a"), "es-open", TestEnv.Buy("ES"));
+        await gw.PlaceAsync(new AgentContext("a"), "nq-open", TestEnv.Buy("NQ"));
+        await Passes(gw, clock, 1);
+        Assert.Equal(1m, Held(conn, "ES"));
+        Assert.Equal(1m, Held(conn, "NQ"));
+
+        conn.Faults.QuoteAge = Silent;
+        arm(conn.Faults);
+        for (var passes = 0; conn.Closes == 0; passes++)
+        {
+            Assert.True(passes < 10, $"no data-loss exit went out in {passes} silent passes past a one-minute bound");
+            await Passes(gw, clock, 1);
+        }
+
+        Assert.Equal(1, conn.Closes);
+        var leg = Assert.Single(Rows(db, $"{TradingGateway.ValuationClosePress}-"));
+        var lost = gw.Requests.Get(leg.Split(' ')[0])!;
+        Assert.Equal("ES", lost.Instrument);
+        Assert.Equal(ExecutionState.UNKNOWN, lost.State);
+        Assert.True(lost.NeedsReconciliation);
+        Assert.NotNull(RecordFor(db, conn, "loss_valuation_exit:", "ES"));
+        Assert.Null(RecordFor(db, conn, "loss_valuation_exit:", "NQ"));
+        Assert.True(gw.HasUnconfirmedWork());
+        return lost;
+    }
+
+    /// <summary>
+    /// (a) THE EXIT'S CLOSE FILLED AND ITS ANSWER WAS LOST: CONFIRMED FILLED FROM THE PLATFORM'S HISTORY, THE ROWS
+    /// UNFLAGGED, THE PAUSE LIFTED — AND NQ, WHOSE EXIT WAS REFUSED BEHIND THEM, IS EXITED (item 2).
+    ///
+    /// <para>Before this unit the data-loss exit's lost close was never asked about: its row stayed flagged, every
+    /// order stayed refused ("2 earlier request(s) are unconfirmed"), and NQ — a position nobody could value either —
+    /// stayed open past its bound, its exit refused 91 times in thirty simulated minutes
+    /// (<c>valuation_exit_press_already_open</c>), until a person answered a record the platform could have.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_exits_lost_close_the_platform_filled_is_confirmed_from_its_history_and_the_next_exit_goes_out()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var lost = await TwoUnvaluableAndTheFirstExitsCloseLost(gw, conn, db, clock, f => f.DropAfterBrokerAccept = 1);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal(1m, Held(conn, "NQ"));
+
+        await Passes(gw, clock, 1);
+
+        var settled = gw.Requests.Get(lost.RequestId)!;
+        var confirm = RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES");
+        log.WriteLine($"closes on the wire    : {conn.Closes}; ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
+        log.WriteLine($"valuation rows        : {string.Join(" | ", Rows(db, "op-valuation-"))}");
+        log.WriteLine($"ES's confirm          : {WhyOf(confirm)}");
+
+        Assert.Equal(ExecutionState.FILLED, settled.State);
+        Assert.False(settled.NeedsReconciliation);
+        Assert.Contains("CONFIRMED FROM YOUR PLATFORM'S ORDER HISTORY", WhyOf(confirm), StringComparison.Ordinal);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_again:"));
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal(0m, Held(conn, "NQ"));
+        Assert.NotNull(RecordFor(db, conn, "loss_valuation_exit:", "NQ"));
+        Assert.Empty(Flagged(db, "op-valuation-"));
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // AND NOTHING MORE: later passes send nothing and write nothing.
+        await Passes(gw, clock, 6);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_again:"));
+    }
+
+    /// <summary>
+    /// (b) THE EXIT'S CLOSE NEVER REACHED THE PLATFORM: NOTHING INSIDE THE GRACE, THEN CANCELLED FROM THE SIMULATOR'S
+    /// COMPLETE HISTORY, ES CLOSED AGAIN — ONCE, UNDER ITS OWN FAMILY — NQ EXITED, AND BOTH FLAT (item 2).
+    ///
+    /// <para>The simulator's closes carry the id they are handed, so a history that answered and lists nothing
+    /// under it, once the close can no longer be on its way, says it never reached the platform
+    /// (<c>U-flatten-absence</c>'s one guard). ES still reads open and still cannot be valued, so the reason the
+    /// exit was sent for still holds: the same exit runs again — cancels first, reduction only at the wire — and
+    /// files itself under <c>loss_valuation_exit_again:</c>. Before this unit ES stayed open for as long as nobody
+    /// came, behind a pause, with NQ open beside it.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_exits_lost_close_that_never_reached_the_platform_is_closed_again_once_and_the_next_exit_goes_out()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var lost = await TwoUnvaluableAndTheFirstExitsCloseLost(gw, conn, db, clock, f => f.DropBeforeBrokerAccept = 1);
+        Assert.Equal(0, conn.Broker.CountByClientOrderId(lost.ClientOrderId));
+        Assert.Equal(1m, Held(conn, "ES"));
+
+        // ONE SECOND SHORT OF THE GRACE: nothing decided, nothing written, nothing sent.
+        clock.MoveTo(NoLongerOnItsWay(gw, lost) - TimeSpan.FromSeconds(1));
+        await gw.RefreshHealthAsync();
+        var inside = gw.Requests.Get(lost.RequestId)!;
+        log.WriteLine($"inside the grace      : {inside.State} flagged={inside.NeedsReconciliation}, closes {conn.Closes}");
+        Assert.Equal(ExecutionState.UNKNOWN, inside.State);
+        Assert.True(inside.NeedsReconciliation);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(0, Records(db, "loss_valuation_exit_confirm:"));
+
+        // PAST IT.
+        await Passes(gw, clock, 1);
+
+        var settled = gw.Requests.Get(lost.RequestId)!;
+        var closes = ClosesAtTheBook(conn, TradingGateway.ValuationClosePress);
+        log.WriteLine($"closes on the wire    : {conn.Closes}; ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
+        log.WriteLine($"exit closes at book   : [{string.Join(" | ", closes.Select(o => $"{o.ClientOrderId} {o.Symbol} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"valuation rows        : {string.Join(" | ", Rows(db, "op-valuation-"))}");
+        log.WriteLine($"ES's confirm          : {WhyOf(RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES"))}");
+        log.WriteLine($"ES's closing again    : {WhyOf(RecordFor(db, conn, "loss_valuation_exit_again:", "ES"))}");
+
+        Assert.Equal(ExecutionState.CANCELLED, settled.State);
+        Assert.False(settled.NeedsReconciliation);
+        Assert.Contains("never reached the platform", settled.LastError!, StringComparison.Ordinal);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(1, Records(db, "loss_valuation_exit_again:"));
+        Assert.NotNull(RecordFor(db, conn, "loss_valuation_exit_again:", "ES"));
+        Assert.Equal(3, conn.Closes);
+        Assert.Equal(2, closes.Count);
+        Assert.All(closes, o => Assert.Equal(ExecutionState.FILLED, o.State));
+        Assert.Equal(1, closes.Count(o => o.Symbol == "ES"));
+        Assert.Equal(1, closes.Count(o => o.Symbol == "NQ"));
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal(0m, Held(conn, "NQ"));
+        Assert.Empty(Flagged(db, "op-valuation-"));
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // THE EPISODE KEEPS THE EXIT IT WAS SENT FOR, and later passes send nothing and write nothing.
+        var episode = Json.Read<ValuationUnavailableRecord>(db.GetKv(ValuationLoss.KeyFor(conn.Id, conn.Broker.AccountId, "ES"))!)!;
+        Assert.Equal(ValuationLoss.ExitKey(conn.Id, conn.Broker.AccountId, "ES", episode.Since), episode.ExitKey);
+        await Passes(gw, clock, 6);
+        Assert.Equal(3, conn.Closes);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_again:"));
+        Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_again_confirm:"));
+    }
+
+    /// <summary>
+    /// (c) THE GUARD: (b), WITH ES VALUED AGAIN BEFORE THE CONFIRM — CONFIRMED, NOTHING SENT FOR ES, AND SAID
+    /// (item 2, and the mutant).
+    ///
+    /// <para>The reason the exit was sent for is that nobody could value ES. Its price comes back inside the grace
+    /// while NQ's stays silent, so ES's episode ends. Past the grace the confirm still decides the lost close
+    /// (CANCELLED) and still reads ES open — and closes nothing: ES is measured again, the loss budget bounds it
+    /// again, and the confirm's sentence says that is why. NQ, still unvaluable, is exited.</para>
+    ///
+    /// <para><b>The mutant this watches:</b> the closing again's check that the episode it was sent for still
+    /// stands, removed. The again then closes ES over a position the owner's budget measures — a third close at
+    /// the wire, and ES 0, where it must stay 1.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_exits_lost_close_over_a_position_valued_again_is_confirmed_and_nothing_more_is_sent_for_it()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var lost = await TwoUnvaluableAndTheFirstExitsCloseLost(gw, conn, db, clock, f => f.DropBeforeBrokerAccept = 1);
+
+        // ES'S PRICE COMES BACK, INSIDE THE GRACE; NQ'S DOES NOT.
+        conn.QuoteAgeOf = s => s == "ES" ? TimeSpan.Zero : null;
+        await Passes(gw, clock, 1);
+        var es = Json.Read<ValuationUnavailableRecord>(db.GetKv(ValuationLoss.KeyFor(conn.Id, conn.Broker.AccountId, "ES"))!)!;
+        log.WriteLine($"ES's episode          : cleared {es.ClearedAt:HH:mm:ss}, exit {es.ExitKey}");
+        Assert.False(es.Standing);
+        Assert.Equal(0, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(1, conn.Closes);
+
+        // PAST THE GRACE.
+        clock.MoveTo(NoLongerOnItsWay(gw, lost));
+        await Passes(gw, clock, 1);
+
+        var confirm = RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES");
+        log.WriteLine($"closes on the wire    : {conn.Closes}; ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
+        log.WriteLine($"valuation rows        : {string.Join(" | ", Rows(db, "op-valuation-"))}");
+        log.WriteLine($"ES's confirm          : {WhyOf(confirm)}");
+
+        Assert.Equal(ExecutionState.CANCELLED, gw.Requests.Get(lost.RequestId)!.State);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_again:"));
+        Assert.Contains("NOT closing it again", WhyOf(confirm), StringComparison.Ordinal);
+        Assert.Contains("can value ES again", WhyOf(confirm), StringComparison.Ordinal);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(1m, Held(conn, "ES"));
+        Assert.Equal(0m, Held(conn, "NQ"));
+        Assert.Empty(Flagged(db, "op-valuation-"));
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // AND NOTHING MORE.
+        await Passes(gw, clock, 6);
+        Assert.Equal(2, conn.Closes);
+        Assert.Equal(1m, Held(conn, "ES"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_again:"));
+    }
+
+    /// <summary>
+    /// (d) (b) WITH THE HISTORY HIDDEN, AS ON ATAS: WITH NO ANSWER, NOTHING IS DECIDED OR SENT (green before this
+    /// unit and after it); THE OWNER'S "NO ORDER EXISTS", PAST HIS CLOCK, CLOSES ES AGAIN ONCE AND NQ IS EXITED
+    /// (item 2).
+    ///
+    /// <para>Where no history can be asked, nothing but the owner can say what became of the close, and minutes of
+    /// passes past the grace decide nothing, write nothing and send nothing. His answer on the card is his own
+    /// measurement: counted once the close can no longer be on its way, it decides the leg, the confirm reads ES
+    /// open while it still cannot be valued, and ES is closed again exactly as in (b). Before this unit his answer
+    /// settled the row and nothing else — ES 1 stayed open, its episode standing (probe P_exit, "never reached").</para>
+    /// </summary>
+    [Fact]
+    public async Task An_exits_lost_close_with_the_history_hidden_waits_for_the_owner_and_his_answer_closes_it_again_once()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var lost = await TwoUnvaluableAndTheFirstExitsCloseLost(gw, conn, db, clock, f => f.DropBeforeBrokerAccept = 1);
+        conn.Faults.HideOrderHistory = true;
+        Assert.False(conn.Capabilities.ReconciliationProvable);
+
+        // PAST THE GRACE BY MINUTES, AND NOBODY HAS ANSWERED.
+        await Passes(gw, clock, 9);
+        Assert.True(clock.GetUtcNow() > NoLongerOnItsWay(gw, lost));
+        var waiting = gw.Requests.Get(lost.RequestId)!;
+        log.WriteLine($"no answer             : {waiting.State} flagged={waiting.NeedsReconciliation}, closes {conn.Closes}; "
+                      + $"ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
+        Assert.Equal(ExecutionState.UNKNOWN, waiting.State);
+        Assert.True(waiting.NeedsReconciliation);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(1m, Held(conn, "ES"));
+        Assert.Equal(1m, Held(conn, "NQ"));
+        Assert.Equal(0, Records(db, "loss_valuation_exit_confirm:"));
+        Assert.True(gw.HasUnconfirmedWork());
+
+        // HE ANSWERS "NO ORDER EXISTS" ON THE CARD, PAST HIS CLOCK.
+        gw.ForceResolve(lost.RequestId, ExecutionState.CANCELLED, "I checked in ATAS: no such order exists");
+        await Passes(gw, clock, 1);
+
+        var confirm = RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES");
+        var closes = ClosesAtTheBook(conn, TradingGateway.ValuationClosePress);
+        log.WriteLine($"closes on the wire    : {conn.Closes}; ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
+        log.WriteLine($"exit closes at book   : [{string.Join(" | ", closes.Select(o => $"{o.ClientOrderId} {o.Symbol} {o.Side} {o.Quantity} {o.State}"))}]");
+        log.WriteLine($"ES's confirm          : {WhyOf(confirm)}");
+
+        Assert.Contains("CONFIRMED", WhyOf(confirm).ToUpperInvariant(), StringComparison.Ordinal);
+        Assert.Contains("your answer on the Dashboard", WhyOf(confirm), StringComparison.Ordinal);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_again:"));
+        Assert.Equal(3, conn.Closes);
+        Assert.Equal(1, closes.Count(o => o.Symbol == "ES"));
+        Assert.Equal(1, closes.Count(o => o.Symbol == "NQ"));
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Equal(0m, Held(conn, "NQ"));
+        Assert.Empty(Flagged(db, "op-valuation-"));
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // HIS ANSWER STAYS HIS, and nothing more is sent.
+        var row = gw.Requests.Get(lost.RequestId)!;
+        Assert.Equal(ExecutionState.CANCELLED, row.State);
+        Assert.StartsWith(TradingGateway.ResolvedByOwnerPrefix, row.LastError, StringComparison.Ordinal);
+        await Passes(gw, clock, 6);
+        Assert.Equal(3, conn.Closes);
+        Assert.Equal(1, Records(db, "loss_valuation_exit_again:"));
+    }
 }
