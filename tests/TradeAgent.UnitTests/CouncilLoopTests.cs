@@ -976,6 +976,56 @@ public class CouncilLoopTests
         Assert.False(File.Exists(
             Path.Combine(host.HomeFor(CouncilRoles.Research), ".tradeagent", "next.json")));
     }
+
+    /// <summary>
+    /// M0 ATTEMPT 3's QUIET HOURS, REPLAYED — RED FIRST (<c>U-quiet-review</c>).
+    ///
+    /// <para><c>BUILD-STATUS.md</c>, gap (b): after the last brief and report (15:54:58Z) nothing woke
+    /// either director for four hours, and the scheduled look took 16 paid turns (16:10–20:15Z) for
+    /// 2.0337 USD — 53 % of the run, while the chair's own plan read "No agenda or wake is pending".
+    /// Two roles, each looked at every half hour whatever had woken the turn before: 16 here too on the
+    /// base.</para>
+    ///
+    /// <para>With the look slowing while only looks wake a role, the same four hours buy each director a
+    /// look at 30, 90 and 210 minutes — six in all, and each of them still looks: the look slows, it
+    /// does not stop.</para>
+    /// </summary>
+    [Fact]
+    public async Task Attempt_threes_quiet_hours_cost_at_most_six_turns()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var events = host.Events!;
+        var now = Noon();
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) },
+            now: () => now);
+
+        // THE LAST REAL EVENTS: the chair's brief reaches Research, and its report reaches the chair.
+        events.Raise(MissionEventIds.Task("brief-1"), MissionEventKind.Brief, now, role: CouncilRoles.Research);
+        await loop.TurnAsync();
+        now = now.AddMinutes(5);
+        events.Raise(MissionEventIds.Task("report-1"), MissionEventKind.Report, now, role: CouncilRoles.Operations);
+        await loop.TurnAsync();
+        Assert.Equal([CouncilRoles.Research, CouncilRoles.Operations], host.Opened.Select(o => o.Role));
+
+        // FOUR HOURS IN WHICH NOTHING HAPPENS, slept through as the loop sleeps: to the earliest wake,
+        // and every turn due there taken.
+        var end = now.AddHours(4);
+        for (var step = 0; step < 50 && events.NextDueAt() is { } next && next <= end; step++)
+        {
+            now = next;
+            for (var i = 0; i < 10 && events.RolesDue(now).Count > 0; i++) await loop.TurnAsync();
+        }
+
+        var quiet = host.Opened.Skip(2).ToList();
+        Assert.True(quiet.Count <= 6, $"{quiet.Count} paid looks in four quiet hours; attempt 3 paid for 16");
+        // EVERY ONE OF THEM A LOOK AND NOTHING ELSE: the reason line ends where the look's reason does.
+        Assert.All(quiet, o => Assert.Contains(
+            "- Why you are awake: a scheduled look; nothing else has happened" + Environment.NewLine, o.Prompt));
+        foreach (var role in CouncilRoles.All)
+            Assert.True(quiet.Any(o => o.Role == role), $"the {role} director never looked in four quiet hours");
+    }
     // ---- U-council-concurrent-2, item 4: the deadline's default is applied by CODE ---------------
 
     /// <summary>

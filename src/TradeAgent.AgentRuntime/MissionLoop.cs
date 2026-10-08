@@ -126,6 +126,10 @@ public sealed record MissionOptions
     /// hour is not a reason to stop working on them. It is a setting rather than a constant because
     /// every tick costs a turn, and what a turn costs is the owner's business — see
     /// <c>TradeAgentSettings.MissionReviewMinutes</c>, where lowering it asks twice.
+    ///
+    /// <para>It is the FASTEST the look comes round. While only looks wake a role, each one raises
+    /// the next at twice its own interval, up to eight of these; the first real event brings it back
+    /// (<see cref="MissionLoop"/>, <c>NextLook</c>).</para>
     /// </summary>
     public TimeSpan ReviewEvery { get; init; } = TimeSpan.FromMinutes(30);
 }
@@ -1862,7 +1866,7 @@ public sealed class MissionLoop
             return Holding(role);
         }
 
-        return failed ? Backoff(errors) : NextWait(events, attemptId, role);
+        return failed ? Backoff(errors) : NextWait(events, attemptId, role, wake);
     }
 
     /// <summary>
@@ -1954,8 +1958,15 @@ public sealed class MissionLoop
     /// One pending row of each kind at a time. Without that check every early wake would leave
     /// another review behind it, and a burst of owner messages would buy a trickle of paid reviews
     /// over the following half hour.
+    ///
+    /// <para><b>HOW FAR OUT A LOOK IS RAISED depends on what woke the turn before it</b>
+    /// (<c>U-quiet-review</c>). <paramref name="turned"/> is the role whose turn just ended cleanly and
+    /// <paramref name="woke"/> the wakes that turn consumed: that role's look is raised where
+    /// <see cref="NextLook"/> says, and a real event brings a look it had pushed out back to the
+    /// interval. Every other role, and every call with no turn behind it — a start, a restart, the
+    /// call after a failed turn or a vendor's hold — gets <see cref="MissionOptions.ReviewEvery"/>.</para>
     /// </summary>
-    void Schedule(MissionEventStore events)
+    void Schedule(MissionEventStore events, string? turned = null, IReadOnlyList<MissionEvent>? woke = null)
     {
         var now = _now();
         try
@@ -1965,12 +1976,20 @@ public sealed class MissionLoop
             // Research Director that is never scheduled at all on a quiet day.
             foreach (var role in CouncilRoles.All)
             {
-                if (_options.ReviewEvery > TimeSpan.Zero
-                    && !events.HasUnconsumed(MissionEventKind.Review, role))
+                // What woke THIS role's turn, or null: nothing that happened to one role moves the
+                // other's look.
+                var woken = role == turned ? woke : null;
+
+                if (_options.ReviewEvery > TimeSpan.Zero)
                 {
-                    var due = now + _options.ReviewEvery;
-                    events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(due), role),
-                        MissionEventKind.Review, now, due, role: role);
+                    if (!events.HasUnconsumed(MissionEventKind.Review, role))
+                    {
+                        var due = now + (woken is null ? _options.ReviewEvery : NextLook(woken));
+                        events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(due), role),
+                            MissionEventKind.Review, now, due, role: role);
+                    }
+                    else if (woken is not null && !OnlyLooks(woken))
+                        BringLookForward(events, role, now);
                 }
 
                 // NOT A SETTING. The allowance the AI works under is the owner's day, and the moment
@@ -1990,6 +2009,64 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// THE SLOWEST A QUIET LOOK GETS, in intervals: four hours at the shipped half hour. Not a setting
+    /// — the owner's setting is the interval itself, and lowering that still asks twice.
+    /// </summary>
+    const int QuietLookCeiling = 8;
+
+    /// <summary>
+    /// HOW FAR OUT A ROLE'S NEXT LOOK IS RAISED, read from the wakes its last turn consumed
+    /// (<c>U-quiet-review</c>).
+    ///
+    /// <para>A turn that only scheduled looks woke raises the next at twice the interval of the look it
+    /// took — that row's own <c>due_at − created_at</c> — never sooner than
+    /// <see cref="MissionOptions.ReviewEvery"/> and never later than <see cref="QuietLookCeiling"/> of
+    /// them: 30, 60, 120, 240 minutes at the shipped half hour, and 240 from then on. Any other wake
+    /// raises it at the interval again: the owner's words, a delivery, a fill, the renewal, a boundary,
+    /// the role's own request in <c>next.json</c>, and the owner's "work on its own" press.</para>
+    ///
+    /// <para>M0 attempt 3: after the last brief and report, sixteen looks in four quiet hours spent
+    /// 2.0337 USD, 53 % of the run, with nothing else happening (<c>BUILD-STATUS.md</c>). A look the
+    /// role had no use for is the owner paying for the clock. A role with work in progress asks for its
+    /// own wake, and this never delays one.</para>
+    ///
+    /// <para>The interval is read back from the row, so a restart continues where the queue stands.
+    /// There is no counter to lose.</para>
+    /// </summary>
+    TimeSpan NextLook(IReadOnlyList<MissionEvent> woke)
+    {
+        var every = _options.ReviewEvery;
+        if (!OnlyLooks(woke)) return every;
+
+        var ceiling = TimeSpan.FromTicks(every.Ticks * QuietLookCeiling);
+        var last = woke.Max(e => e.DueAt - e.CreatedAt);
+        var next = last.Ticks > ceiling.Ticks / 2 ? ceiling : last + last;
+        return next < every ? every : next;
+    }
+
+    /// <summary>
+    /// WHETHER ONLY THE LOOP'S OWN SCHEDULED LOOKS WOKE A TURN — reviews with no payload. The owner's
+    /// "work on its own" press is a review WITH one (<c>AppHost.LetTheAiWorkOnItsOwn</c>), and here it
+    /// is what it is to the owner: a request for work, not the clock.
+    /// </summary>
+    static bool OnlyLooks(IReadOnlyList<MissionEvent> woke) =>
+        woke.Count > 0 && woke.All(e => e.Kind == MissionEventKind.Review && e.Payload is null);
+
+    /// <summary>
+    /// A REAL EVENT WOKE THIS ROLE, so a look it had pushed out comes back to
+    /// <see cref="MissionOptions.ReviewEvery"/> from now. Only this role's own scheduled look, and only
+    /// when it is due later than that — the store's statement refuses everything else
+    /// (<see cref="MissionEventStore.BringLookForward"/>). Never throws: a look left where it was is a
+    /// role that looks later, and every wake it is owed keeps its own timing.
+    /// </summary>
+    void BringLookForward(MissionEventStore events, string role, DateTimeOffset now)
+    {
+        var due = now + _options.ReviewEvery;
+        try { events.BringLookForward(role, MissionEventIds.ForRole(MissionEventIds.Review(due), role), now, due); }
+        catch (Exception) { /* the look stays where it was; nothing the role is owed moves */ }
     }
 
     /// <summary>
@@ -2184,8 +2261,12 @@ public sealed class MissionLoop
     /// and then the queue decides, exactly as it does when the loop was idle. The file is read and
     /// deleted either way — a request left on disk would make one "leave me half an hour" into every
     /// turn being half an hour apart for ever.
+    ///
+    /// <para><paramref name="woke"/> is what this turn consumed, and it decides how far out the role's
+    /// next look is raised (<see cref="NextLook"/>). The role's own request is a wake of its own and
+    /// keeps its own time whatever that look does.</para>
     /// </summary>
-    TimeSpan NextWait(MissionEventStore? events, string? attemptId, string role)
+    TimeSpan NextWait(MissionEventStore? events, string? attemptId, string role, IReadOnlyList<MissionEvent> woke)
     {
         var asked = AskedForDelay(role);
         if (events is null) return asked;
@@ -2203,7 +2284,7 @@ public sealed class MissionLoop
             catch (Exception) { /* the schedule below still gives the loop something to wake for */ }
         }
 
-        Schedule(events);
+        Schedule(events, role, woke);
         return Idle(events);
     }
 
