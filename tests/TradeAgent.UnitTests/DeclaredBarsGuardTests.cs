@@ -32,8 +32,12 @@ public class DeclaredBarsGuardTests(ITestOutputHelper log)
         return parse.Program!;
     }
 
-    /// <summary>The ids `DayOneStrategyTests` pins for the three shipped programs, restated as the contract.</summary>
-    static readonly Dictionary<string, string> ShippedIds = new(StringComparer.Ordinal)
+    /// <summary>
+    /// The ids of the three day-one programs' v1 texts, restated as the contract: the ids `DayOneStrategyTests` pins for the
+    /// shipped crossover and mean reversion, and the breakout's before `U-size-cap` gave its size line a cap — a declared
+    /// re-pin of the shipped file — whose v1 text is the fixture `DayOnePrograms.BreakoutV1`.
+    /// </summary>
+    static readonly Dictionary<string, string> V1Ids = new(StringComparer.Ordinal)
     {
         ["ma-crossover.strategy"] = "3b3364734ea97e715479476ffd9992ade4074bfd52bc1a9220ef4b7605ffbd42",
         ["opening-range-breakout.strategy"] = "70ec1a6e45dc45096995564fc11d76f24f13c5ae156beab05aa9d1639ee7d26d",
@@ -59,12 +63,12 @@ public class DeclaredBarsGuardTests(ITestOutputHelper log)
     {
         foreach (var name in DayOnePrograms.Names)
         {
-            var text = DayOnePrograms.Text(name);
+            var text = DayOnePrograms.V1Text(name);
             var program = Parsed(text);
             var declared = Parsed(text.TrimEnd('\n') + "\nbars 1m\n");
 
             log.WriteLine($"{name,-34} {program.StrategyId}");
-            Assert.Equal(ShippedIds[name], program.StrategyId);
+            Assert.Equal(V1Ids[name], program.StrategyId);
             Assert.DoesNotContain("\nbars ", program.Canonical, StringComparison.Ordinal);
             Assert.Equal(program.Canonical, declared.Canonical);
             Assert.Equal(program.StrategyId, declared.StrategyId);
@@ -73,7 +77,7 @@ public class DeclaredBarsGuardTests(ITestOutputHelper log)
                 program.StrategyId);
         }
 
-        Assert.Equal(ShippedIds.Keys.Order(StringComparer.Ordinal), DayOnePrograms.Names.Order(StringComparer.Ordinal));
+        Assert.Equal(V1Ids.Keys.Order(StringComparer.Ordinal), DayOnePrograms.Names.Order(StringComparer.Ordinal));
 
         new EvaluationGoldenVectorTests(log).Changed_evaluation_output_without_a_version_bump_fails_the_golden_vectors();
     }

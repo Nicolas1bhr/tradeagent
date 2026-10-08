@@ -267,7 +267,9 @@ the evaluator never invents one. It emits **intents** and places nothing.
   is its own cap, a fixed quantity a constant), above 0 and at most 1, a number or a constant. The cap
   applies at the signal's close, so fees, slippage and the next open come on top of it: under the venue
   cost model's 0.1 % fee and 0.02 % slippage, `max_capital_fraction 1` cannot pay for its own fill unless
-  the next open is about 0.12 % below the close — 0.95 leaves room.
+  the next open is about 0.12 % below the close — 0.95 leaves room. The shipped opening-range breakout
+  declares 0.95: one per cent of equity over two minute ATRs asks for more than all of it whenever a
+  minute's ATR(14) is under 0.5 % of the price, so without the cap it would never trade.
 - **A fault is a value**, `EvaluationOutcome.Faulted` with a reason, and the run halts with no intent:
   a bar out of order or off the interval grid, a division by zero, arithmetic that overflowed, an event
   over the operation budget, state over its size limit, or a run the caller stopped. Nothing throws out
@@ -333,7 +335,7 @@ const riskfraction = 0.01
 indicator rangehigh = opening_range_high()
 indicator rangelow = opening_range_low()
 indicator truerange = atr(atrperiod)
-size risk_fraction riskfraction
+size risk_fraction riskfraction max_capital_fraction 0.95
 stop atr atrmultiple atrperiod
 max_hold_bars 120
 weekdays mon,tue,wed,thu,fri

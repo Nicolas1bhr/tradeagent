@@ -43,4 +43,47 @@ internal static class DayOnePrograms
     /// <c>core.autocrlf=true</c>), three cases of one theory, <c>Sub-string not found</c>.
     /// </summary>
     public static string Text(string name) => File.ReadAllText(At(name)).ReplaceLineEndings("\n");
+
+    /// <summary>The shipped breakout's file name, which <see cref="V1Text"/> answers the fixture for.</summary>
+    public const string Breakout = "opening-range-breakout.strategy";
+
+    /// <summary>
+    /// THE SHIPPED BREAKOUT'S TEXT BEFORE <c>U-size-cap</c>, BYTE FOR BYTE — a FIXTURE now, under its old id
+    /// <c>70ec1a6e…</c>. The shipped file gained <c>max_capital_fraction 0.95</c> on its size line, a declared re-pin of its
+    /// id; this is the v1 text that <c>DeclaredBarsGuardTests</c> and <c>FeatureProgramGrammarTests</c> go on proving keeps
+    /// its id, and <c>SizeCapTests</c> runs it beside the shipped file. Its SHA-256 is the old file's,
+    /// <c>ca509cf4…</c>, asserted there. A string rather than a <c>.strategy</c> file, so there is still one copy of each
+    /// shipped program in the repository (<c>The_programs_the_parser_tests_read_are_the_shipped_files</c>).
+    /// </summary>
+    public const string BreakoutV1 = """
+        # An opening-range breakout with ATR risk sizing and a time stop.
+        instrument BTCUSDT
+        timezone America/New_York
+        timeframe 1m
+        data_freshness 2m
+        max_decision_age 30s
+        const atrperiod = 14
+        const atrmultiple = 2
+        const riskfraction = 0.01
+        indicator rangehigh = opening_range_high()
+        indicator rangelow = opening_range_low()
+        indicator truerange = atr(atrperiod)
+        size risk_fraction riskfraction
+        stop atr atrmultiple atrperiod
+        max_hold_bars 120
+        weekdays mon,tue,wed,thu,fri
+        opening_range 09:30-10:00
+        entry_window 10:00-15:30
+        session_exit 15:55
+        exit when low < rangelow
+        entry when close > rangehigh
+
+        """;
+
+    /// <summary>
+    /// THE V1 TEXT OF A DAY-ONE PROGRAM — the text whose id was pinned before any v2 declaration existed: the shipped file,
+    /// but for the breakout, whose v1 text is <see cref="BreakoutV1"/>.
+    /// </summary>
+    public static string V1Text(string name) =>
+        string.Equals(name, Breakout, StringComparison.Ordinal) ? BreakoutV1 : Text(name);
 }

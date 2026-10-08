@@ -2443,7 +2443,9 @@ Signal line carries the capped quantity. It is a declaration kind of its own (`S
 the one kind that is a clause of another line), required when declared and implemented by both readers, which both size
 through the evaluator. Every gate downstream is untouched — rounding stays DOWN, and the cash check, the per-order value
 and the allocation's ceilings still refuse an entry whole and make none smaller — because a cap only ever makes a size
-smaller.
+smaller. The shipped opening-range breakout declares `max_capital_fraction 0.95` — a DECLARED re-pin of its id,
+`70ec1a6e…` → `5ac50a1e…` — and its text before the cap is kept as the fixture `DayOnePrograms.BreakoutV1`, which still
+hashes to `70ec1a6e…` and is what the v1 guards prove keeps its id.
 
 **Every declaration a program uses is REQUIRED** (`U-language-v2a`; R05 row 10). `StrategyProgram.Requires` lists the
 declaration kinds the TYPED program uses, in `StrategyDeclarations.All`'s order — the instrument, the size and an entry

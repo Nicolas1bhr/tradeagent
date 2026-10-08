@@ -49,10 +49,20 @@ public class DayOneStrategyTests
     /// text, a newline, the parameter lines, a newline and the manifest, exactly as
     /// `docs/COUNCIL.md` states the rule — so what is pinned here is the documented formula's answer
     /// rather than whatever this build happened to produce. Every input to them is asserted below.
+    ///
+    /// <para><b>The breakout's moved once, by declaration</b> (<c>U-size-cap</c>): its size line gained
+    /// <c>max_capital_fraction 0.95</c>, because one per cent of equity over two minute ATRs asks for more
+    /// than all of it whenever a minute's ATR(14) is under 0.5 % of the price, so it never traded. A
+    /// different text is a different program: <c>70ec1a6e…</c> → <c>5ac50a1e…</c>, the new one computed
+    /// outside the build with <c>shasum -a 256</c> over the formula's input. Nothing moved for any stored
+    /// text — the old one is the fixture <c>DayOnePrograms.BreakoutV1</c>, still <c>70ec1a6e…</c>.</para>
     /// </summary>
     const string CrossoverId = "3b3364734ea97e715479476ffd9992ade4074bfd52bc1a9220ef4b7605ffbd42";
-    const string BreakoutId = "70ec1a6e45dc45096995564fc11d76f24f13c5ae156beab05aa9d1639ee7d26d";
+    const string BreakoutId = "5ac50a1e374b634581b429130e02bd3a29c7be16238bf7fb3d02d92ddcd9bb0c";
     const string MeanReversionId = "16d6192f798908637d3ae246056f4e2d65e0231531604202204783e62760b624";
+
+    /// <summary>The breakout's id before its cap: the id its v1 text, the fixture <c>DayOnePrograms.BreakoutV1</c>, keeps.</summary>
+    const string BreakoutV1Id = "70ec1a6e45dc45096995564fc11d76f24f13c5ae156beab05aa9d1639ee7d26d";
 
     /// <summary>
     /// THE SHIPPED PROGRAMS AND THE DOCUMENT ARE THE SAME BYTES. Both reach a role's home on every
@@ -108,13 +118,17 @@ public class DayOneStrategyTests
         Assert.Equal(CrossoverId, p.StrategyId);
     }
 
-    /// <summary>An opening-range breakout with ATR risk sizing and a time stop (`docs/COUNCIL.md:165`).</summary>
+    /// <summary>
+    /// An opening-range breakout with ATR risk sizing and a time stop (`docs/COUNCIL.md:165`) — the risk
+    /// size capped at 0.95 of the capital (<c>U-size-cap</c>), so a tight stop sizes to the cap instead of
+    /// to no trade.
+    /// </summary>
     [Fact]
     public void The_opening_range_breakout_parses_canonicalises_and_hashes_to_its_id()
     {
         var p = Parsed("opening-range-breakout.strategy");
 
-        Assert.Equal(new Sizing(SizingKind.EquityRiskFraction, 0.01m), p.Sizing);
+        Assert.Equal(new Sizing(SizingKind.EquityRiskFraction, 0.01m, 0.95m), p.Sizing);
         Assert.Equal(new StopRule(StopKind.EntryAtr, 2m, 14), p.Stop);       // risk is measured over an ATR distance
         Assert.Equal(120, p.MaxHoldBars);                                    // the time stop
         Assert.Equal(new TimeOfDay(15, 55), p.Time.SessionExit);
@@ -137,7 +151,7 @@ public class DayOneStrategyTests
             ind rangehigh=opening_range_high()
             ind rangelow=opening_range_low()
             ind truerange=atr(14)
-            size risk_fraction:0.01
+            size risk_fraction:0.01 max_capital_fraction:0.95
             stop atr:2:14
             target none
             hold 120
@@ -148,6 +162,33 @@ public class DayOneStrategyTests
             """.ReplaceLineEndings("\n"), p.Canonical);
         Assert.Equal("atrmultiple=number:2\natrperiod=number:14\nriskfraction=number:0.01", p.Parameters);
         Assert.Equal(BreakoutId, p.StrategyId);
+    }
+
+    /// <summary>
+    /// THE BREAKOUT'S V1 TEXT IS KEPT, BYTE FOR BYTE, AND KEEPS ITS ID (<c>U-size-cap</c>). The fixture
+    /// <c>DayOnePrograms.BreakoutV1</c> hashes to the SHA-256 the shipped file had before its cap, differs from
+    /// the shipped file by its size line and nothing else, and parses to the id pinned for it then, with the
+    /// canonical form it had — the shipped one but for the cap.
+    /// </summary>
+    [Fact]
+    public void The_breakouts_v1_text_is_kept_byte_for_byte_and_keeps_its_id()
+    {
+        Assert.Equal("ca509cf461a0e8fe81d7fb26a541ae2bb071f3b2c4ebab6b91663eb43ec83485",
+            TradeAgent.Core.Sha256Hex.Of(DayOnePrograms.BreakoutV1));
+        Assert.Equal(DayOnePrograms.BreakoutV1,
+            Fixture("opening-range-breakout.strategy").Replace(
+                "size risk_fraction riskfraction max_capital_fraction 0.95\n", "size risk_fraction riskfraction\n",
+                StringComparison.Ordinal));
+
+        var v1 = StrategyParser.Parse(DayOnePrograms.BreakoutV1);
+        Assert.True(v1.Ok, v1.Why);
+        var shipped = Parsed("opening-range-breakout.strategy");
+        Assert.Equal(BreakoutV1Id, v1.Program!.StrategyId);
+        Assert.Equal(new Sizing(SizingKind.EquityRiskFraction, 0.01m), v1.Program.Sizing);
+        Assert.Equal(shipped.Canonical.Replace(" max_capital_fraction:0.95\n", "\n", StringComparison.Ordinal),
+            v1.Program.Canonical);
+        Assert.Equal(shipped.Parameters, v1.Program.Parameters);
+        Assert.NotEqual(BreakoutV1Id, BreakoutId);
     }
 
     /// <summary>An RSI mean reversion with a profit exit and a maximum holding time (`docs/COUNCIL.md:166`).</summary>
