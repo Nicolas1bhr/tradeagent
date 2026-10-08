@@ -629,12 +629,34 @@ public sealed class DatasetStore(Database db)
                 + "the AI bars those judgements use. To hold back a different period, download a fresh "
                 + "copy of the history and hold months back on that.");
 
+        // AND THE CLASS RIDES WITH THE CUTOFF (U-holdout-campaign, rule 3; seat A's decision of 2026-10-09). Asked AFTER the
+        // later-cutoff check, so a later press of the other button keeps the later words. The same instant pressed on the
+        // card's other button used to rewrite the class under a campaign judging from it: research → fixture made every
+        // later run over these bars free and read its promotions as plumbing, and fixture → research let a promotion judged
+        // on fixture bars stand as evidence — `Promotions.Standing` reads the class now, and both capital ledgers admit on
+        // that standing. Read off the campaign ledger inside this write, as the later check is.
+        var judgedAs = Data.EvaluationClass.Or(row.EvaluationClass);
+        if (!string.Equals(judgedAs, evaluationClass, StringComparison.Ordinal)
+            && new CampaignStore(db).OpenForDataset(id) is { } classed)
+            return HoldoutSet.No(
+                $"Nothing was changed. Campaign {classed.Id} judges strategies on these bars as {ClassWords(judgedAs)}, and "
+                + $"that was fixed with the date when you pressed. Calling them {ClassWords(evaluationClass)} now would "
+                + (judgedAs == Data.EvaluationClass.Research
+                    ? "make every later run over them free and read the judgements already taken on them as plumbing"
+                    : "turn judgements taken on bars nobody called evidence into evidence")
+                + ". To use them as the other kind, download a fresh copy of the history and hold months back on that.");
+
         using var c = db.Cmd(
             "UPDATE dataset SET holdout_from=$at, evaluation_class=$class WHERE id=$id",
             ("$at", Sql.T(at)), ("$class", evaluationClass), ("$id", id));
         c.ExecuteNonQuery();
         return HoldoutSet.Yes(at);
     });
+
+    /// <summary>An evaluation class in the owner's words, as the holdout card's two buttons say it.</summary>
+    static string ClassWords(string evaluationClass) => evaluationClass == Data.EvaluationClass.Fixture
+        ? "fixture bars — made-up minutes that prove the machinery works, never evidence and never charged"
+        : "real history — evidence, every research run over it charged against the campaign";
 
     /// <summary>
     /// An instant as the owner's card writes it — the minute, in UTC, whatever this machine's culture — and

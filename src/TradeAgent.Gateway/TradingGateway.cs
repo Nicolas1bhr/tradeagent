@@ -1625,9 +1625,17 @@ public sealed class TradingGateway : IAsyncDisposable
     /// same instant again is a no-op answering Ok with that campaign, and any other is refused by
     /// <c>DatasetStore.SetHoldout</c> itself — earlier because those bars were served, later because the
     /// campaign judges from the cutoff it was opened at and a later one would serve research the bars its
-    /// judgements read (<c>U-holdout-later</c>). That campaign is left alone — its trial history is the
-    /// whole point of it, and a fresh campaign would reset a count that must survive a team's
-    /// replacement.</para>
+    /// judgements read (<c>U-holdout-later</c>), and the card's OTHER button at the same instant because the
+    /// class rides with the cutoff (<c>U-holdout-campaign</c>): research turned fixture would make every later
+    /// run free, fixture turned research would make judgements on fixture bars evidence. Each refusal is
+    /// returned as the store wrote it, with nothing written and no campaign. That campaign is left alone — its
+    /// trial history is the whole point of it, and a fresh campaign would reset a count that must survive a
+    /// team's replacement.</para>
+    ///
+    /// <para><b>A press on a DIFFERENT dataset over months another campaign already holds is TOLD and COUNTED,
+    /// never refused</b> (<c>U-holdout-campaign</c>, rule 2): the campaign it opens counts every judgement already
+    /// taken over those months (<c>CampaignStore.JudgementsSpent</c>), and the owner's note names each campaign
+    /// that took them (<c>CampaignStore.PressNote</c>).</para>
     ///
     /// <para><b>The judge's cost model is settled FIRST, before anything is written.</b> The campaign
     /// pins a <c>VenueCostModel</c> from the DATASET's recorded venue with the owner's
