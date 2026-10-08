@@ -393,8 +393,10 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
     /// research backtest ending at 02:59 has every bar before the cutoff, so the bars' holdout serves them — yet its last
     /// hourly bar closes AT 03:00, where its features would be read: it is REFUSED as <c>HOLDOUT_WITHHELD</c> in the
     /// holdout's words, before a bar is read, and nothing is charged or recorded. So is a backtest over ANOTHER dataset,
-    /// one holding no cutoff at all, over the same hours: the tape's window is the market's time, not the dataset's.
-    /// Ended an hour earlier, the first runs. And a cutoff set after a feed was asked halts the run at the next slice in
+    /// one holding no cutoff at all, over the same hours: the tape's window is the market's time, not the dataset's. Over
+    /// all eight hours that dataset's BARS are refused too, in the bars' words (<c>U-bar-holdout</c>: a cutoff holds every
+    /// pair's bars over its window, from every dataset) — before this unit they were served there and only the features
+    /// were refused. Ended an hour earlier, the first runs. And a cutoff set after a feed was asked halts the run at the next slice in
     /// the same words, which the feed keeps for <c>Backtest.Over</c> to answer as a refusal — never a run on the values
     /// before it.
     ///
@@ -432,13 +434,23 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
         Assert.True(over.IsHoldout);
         Assert.Equal(refused.Message, over.Why + ".");
 
-        // ANOTHER DATASET, NO CUTOFF OF ITS OWN, OVER THE SAME EIGHT HOURS: its bars are served, its features are not.
+        // ANOTHER DATASET, NO CUTOFF OF ITS OWN, OVER THE SAME HOURS: its bars end before the window and are clear, its
+        // features are not — the tape's window is the market's time, not the dataset's.
         var twin = Dataset(w.Gw, "v2", Bar0, 8 * 60);
         Assert.Null(w.Gw.Datasets.ById(twin)!.HoldoutFrom);
-        var elsewhere = Assert.Throws<GatewayDeniedException>(() => Research(w, to: Bar0.AddHours(8).AddMinutes(-1), dataset: twin));
+        var elsewhere = Assert.Throws<GatewayDeniedException>(() => Research(w, to: Bar0.AddHours(3).AddMinutes(-1), dataset: twin));
         log.WriteLine(elsewhere.Message);
         Assert.Equal(ErrorCode.HOLDOUT_WITHHELD, elsewhere.Code);
         Assert.Contains(window.Words, elsewhere.Message, StringComparison.Ordinal);
+        Assert.Null(w.Gw.Strategies.VersionById(program.StrategyId));
+
+        // AND OVER ALL EIGHT HOURS ITS BARS ARE HELD TOO (U-bar-holdout): the cutoff on v1 holds every pair's bars over
+        // its window, from every dataset, so the run is refused in the bars' words before its features are asked.
+        var barsHeld = Assert.Throws<GatewayDeniedException>(() => Research(w, to: Bar0.AddHours(8).AddMinutes(-1), dataset: twin));
+        log.WriteLine(barsHeld.Message);
+        Assert.Equal(ErrorCode.HOLDOUT_WITHHELD, barsHeld.Code);
+        Assert.Contains(window.BarWords, barsHeld.Message, StringComparison.Ordinal);
+        Assert.Contains($"dataset {twin} (BTCUSDT 1m v2) opening from {Bar0:u}", barsHeld.Message, StringComparison.Ordinal);
         Assert.Null(w.Gw.Strategies.VersionById(program.StrategyId));
 
         // AN HOUR EARLIER, IT RUNS: its last bar closes at 02:00, and its reads end there.
