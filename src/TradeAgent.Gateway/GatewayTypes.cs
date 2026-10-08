@@ -567,6 +567,12 @@ public sealed record GatewayStatus(
     /// reached: the position was closed because the app could not measure it, and an unmeasured
     /// position is one the budget is not bounding. The instrument goes on being refused new risk for
     /// exactly as long as it still cannot be valued, and not one tick longer.</para>
+    ///
+    /// <para><b>Each entry is that exit's LATEST word</b> (<c>U-valuation-close-confirm</c>). A close whose answer
+    /// was lost is asked of the platform's order history — or decided by the owner's answer on the Dashboard —
+    /// exactly as the loss budget's own closes are: confirmed closed, or, while the position still cannot be
+    /// valued, CLOSED AGAIN once; never a third time, and never once it can be valued again. The entry says
+    /// which.</para>
     /// </summary>
     public IReadOnlyList<string>? LossValuationExit { get; init; }
 
