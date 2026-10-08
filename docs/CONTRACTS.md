@@ -3348,14 +3348,25 @@ id it could ask for and a second set of provenance that could drift from the fir
 asked for, because asking is what is refused. **The class and the cutoff are orthogonal:** the cutoff
 decides which bars are served, the class decides whether a run over them is charged.
 
-**Only the owner's own window sets it, and it can never move EARLIER.** `DatasetStore.SetHoldout` is the
-one writer of both columns — deliberately not part of `DatasetStore.Record`, so collecting months cannot
-declare a holdout as a side effect — and it is reached from the two-press card on the Data page and from
-nowhere else. There is no pipe op, no `trade` verb and no request field: `HoldoutOverPipeTests` asks
-**every op this build has**, in both directions, and the row does not move. Moving the cutoff back is
-refused in words because the bars in between have already been served, and COUNCIL:212 is literal about
-it — "a leaked holdout cannot become unseen". Moving it LATER is allowed: it withholds bars nothing has
-read. There is no clear, and nothing lowers the class back either.
+**Only the owner's own window sets it, it can never move EARLIER, and it cannot move LATER while a campaign
+judges from it.** `DatasetStore.SetHoldout` is the one writer of both columns — deliberately not part of
+`DatasetStore.Record`, so collecting months cannot declare a holdout as a side effect — and it is reached from
+the two-press card on the Data page and from nowhere else. There is no pipe op, no `trade` verb and no request
+field: `HoldoutOverPipeTests` asks **every op this build has**, in both directions, and the row does not move.
+Moving the cutoff back is refused in words because the bars in between have already been served, and
+COUNCIL:212 is literal about it — "a leaked holdout cannot become unseen". **Moving it LATER is refused too
+while the dataset has an open campaign** (`U-holdout-later`; seat A's decision of 2026-10-08) — in this build
+from the first press on, because the press opens the campaign with the cutoff and a campaign is renewed, never
+closed. A later cutoff does not withhold anything: it RELEASES `[old, new)` to every reader, while the referee
+judges from the campaign's own `holdout_from` — the cutoff at opening, which a renewal carries — so every
+judgement after the move would read minutes research may have read, and `strategy_verdict.holdout_from` would
+record them as private. The check is in the store, reading the campaign ledger in the same transaction, so no
+caller can pass it; the refusal writes nothing — no cutoff, no class, no campaign — and tells the owner which
+campaign judges from which cutoff and that holding back a different period means downloading a fresh copy of
+the history and holding months back on that. The same instant again is a no-op answering Ok; a dataset with no
+open campaign, which nothing judges from, may still have its cutoff moved later. There is no clear, and the
+referee keeps judging from `campaign.holdout_from`, unchanged. NOT covered here: the same instant pressed on the
+card's other button still rewrites the class — its own unit if wanted.
 
 **The refusal is the DEFAULT path, in the readers themselves.** `DatasetReader.Read`, `BarFeed.Open` and
 `ForwardBarStore.Window` all **require** a `TapeHoldout` — the caller's audience with the dataset ledger — and

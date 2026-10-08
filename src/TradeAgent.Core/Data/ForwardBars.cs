@@ -17,11 +17,13 @@ namespace TradeAgent.Core.Data;
 /// vendor checksum and no freeze. Letting the two read alike would let a program be judged on bars
 /// that arrived while it was being judged — see <c>docs/CONTRACTS.md</c>, "Forward bars".</para>
 ///
-/// <para><b>And no holdout applies to them.</b> A holdout is a time cutoff the owner set on a
-/// dataset; every forward bar post-dates every freeze this installation holds, because it did not
-/// exist when the freeze was taken. There is therefore nothing here to hold back and the read is
-/// open to any role — which is a statement about WHAT these bars are, not a relaxation: the archive
-/// reader's cutoff is untouched and still refuses every caller.</para>
+/// <para><b>And they are held back over every holdout window, as the archive's bars are</b>
+/// (<c>U-bar-holdout</c>). A holdout is a time cutoff the owner set on a dataset, and its window —
+/// from the cutoff to the close of the dataset's last bar — is held on every pair's bars, these
+/// included. That every forward bar post-dates every freeze was a premise, and a Download taken after
+/// the collector ran breaks it: the archive's newest months are minutes the collector already holds.
+/// So the pipe reads them through <c>ForwardBarStore.Window</c>, which refuses a window whose market
+/// span reaches any dataset's holdout window; outside every window the read is open to any role.</para>
 /// </summary>
 public static class ForwardBars
 {
