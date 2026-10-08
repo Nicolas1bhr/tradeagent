@@ -8931,8 +8931,8 @@ starts; the ledger keeps the first — written into CONTRACTS); the paper runner
 ## 2026-10-08 — U-press-close-once landed: the owner's Close all asks the platform about a same-side market close still in flight before each leg sends, and closes over an order it cannot decide only on his explicit second press
 
 One fresh Opus builder under seat P built it from `docs/briefs/U-press-close-once.md` (draft from seat P's survey at `bdf5affa`; re-checked by seat P at `cc7a0974`, queued
-`c64d9d3a`, dispatched `0dae7079`). Owed BEFORE ANY LIVE USE (`U-close-once`, `U-inflight-settle`). Merge `698e63d7` (ff-only), 4 commits (red-first tests `b0602f53`, item 1
-`a2cb1267`, item 2 `4633269b`, report `698e63d7`), rebased by seat P's prep onto `78be3e9d` then `1891074e` with an identical src+tests patch-id. No rung. MONEY PATH (gateway):
+`c64d9d3a`, dispatched `0dae7079`). Owed BEFORE ANY LIVE USE (`U-close-once`, `U-inflight-settle`). Merge `698e63d7` (ff-only), 4 commits (red-first tests `f08ed131`, item 1
+`6ed9bff4`, item 2 `30a0a6af`, report `698e63d7`), rebased by seat P's prep onto `78be3e9d` then `1891074e` with an identical src+tests patch-id. No rung. MONEY PATH (gateway):
 the emergency press must not send a close beside one still working (a long becomes a short), nor close over an order without a final answer silently (`CLAUDE.md` rule 3).
 
 - **Item 1:** `CloseCapturedAsync`, `ClosePress` legs only, after the UNKNOWN settle → `AskAboutTheClosesInFlightAsync`: every non-DISPATCHING `ClosesInFlightOn` row through
