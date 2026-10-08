@@ -1,6 +1,8 @@
 # U-org-envelopes — spend is reserved against the unit tree: a launch fits its unit and every ancestor inside the day's cap, in one transaction
 **Protects:** spend — reserved before launch, unknown never zero, a cap is a cap (`CLAUDE.md`; `docs/COUNCIL.md` rules 3–4; `docs/ORGANISATION.md` §§ 3, 10, 13.4;
-R12 § 4, § 5 O4; R17 #1, #11; R18 § 1.4). **Money-adjacent: red-first and mutants.** **Depends on `U-org-principals`** (exact keys); if `U-decision-port` landed first, the tree keeps its `perception` reservation — its `RoleCap` and its own counters — working (R22). No schema change (the share
+R12 § 4, § 5 O4; R17 #1, #11; R18 § 1.4). **Money-adjacent: red-first and mutants.** **Depends on `U-org-principals`** (exact keys); once `U-decision-port` has landed (§ 15 puts it first), its
+`perception` rule — built by the decision port, never by `TurnMeter.RuleFor`; `Cap` the day's, `RoleCap` the perception budget — carries no ancestor chain and keeps working: perception spend counts in
+the day-total gate and in no subtree, and `Totals`' role-less count split survives the subtree form (R22). No schema change (the share
 column came with `U-org-ledger`). Per-seat allowances are NOT in this unit: they are the CARD `U-org-seats`, because the harness enforces one role-blind bound
 (`AppHost.cs:137-139` → `ApiConversation.cs:311`) and a reservation priced below what a turn may spend would walk past the cap (R18 § 1.4 row 1).
 **Today (SOURCE at `1275aff`, R12/R18-checked, NOT runtime-verified):** `AiAttemptStore.Begin` reads the day's and the role's totals and inserts in one
@@ -30,7 +32,7 @@ Red-first tests: (a) `Two_sibling_teams_cannot_both_take_the_parents_last_room` 
 (e) `A_seat_whose_reservation_exceeds_its_units_whole_envelope_is_refused_by_name`; (g) `Non_position_spend_still_counts_against_the_daily_cap_under_the_tree`.
 Mutants to watch red and quote: the subtree check removed ⇒ (a) red; subtree totals computed in `TurnMeter.RuleFor` and carried in `AiAdmissionRule` (the
 defect `AiAttemptStore.cs:108-114` names) ⇒ (a)'s sequential half red.
-Conflicts (R18 § 3): `U-features` (W6, CARD) — re-check at its briefing; `U-org-rights` (W6 light) must not touch `AiAttemptStore.Refuse`; `U-decision-port`
-(W7) re-checks `RuleFor`/`Share`/`AiAdmissionRule` against this unit; `U-key-host-pin`'s `TurnMeter.Charge` zero branch is another method (L).
+Conflicts (R18 § 3): `U-features` landed (`90aece2a`); `U-org-rights` must not touch `AiAttemptStore.Refuse`; `U-decision-port` lands first, so THIS unit re-checks its `AiAdmissionRule` use, its
+`Refuse` branch and its `Totals` count split, and keeps its tests (d) and (e) green, names kept; `U-key-host-pin`'s `TurnMeter.Charge` zero branch is another method (L).
 Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
 names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.

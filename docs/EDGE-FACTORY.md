@@ -414,7 +414,7 @@ against the code its dependencies actually landed. Schema rungs land in ladder o
 | `U-incubator` CARD | many paper runs, weekly paper allocation, bounded replacement, retirement wired | standing |
 | `U-mission-v2` CARD | the agents' mission rewritten for the edge factory; starting points as suggestions | phases 1–2 |
 
-**Phase 4 — perception** (raw items have been recording since phase 1): `U-decision-port` RE-BRIEF (ORGANISATION § 15; needs `U-tape-store` and
+**Phase 4 — perception** (raw items have been recording since phase 1): `U-decision-port` READY (re-briefed 2026-10-09; ORGANISATION § 15; needs `U-tape-store` and
 `U-key-host-pin`) → `U-decision-card` (the owner's Perception card and Test press) → `U-lenses` → `U-annotator` → `U-event-study`; `U-decision-fallbacks` (LLM-verbalised and local runtimes)
 deferred until a version binds to one or a schema is too sensitive to send out.
 

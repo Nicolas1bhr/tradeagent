@@ -1,40 +1,40 @@
 # U-decision-port — bounded decision models (Jev) behind one replaceable port, every call reserved, recorded, priced and pinned
-**Arrow closed:** perception (`docs/EDGE-FACTORY.md` § 4.2, phase 4) — the substrate lenses and the annotator stand on; nothing here annotates automatically,
-no agent can call it, and the owner's Perception card with its Test press is the follow-up `U-decision-card`. **Depends on `U-tape-store`** (rung 2 of `tape.db`,
-written THROUGH `TapeStore`) **and `U-key-host-pin`**; **RE-BRIEF BEFORE DISPATCH (R22):** written to land after `U-org-principals`/`U-org-envelopes` (which key `Fence`, `Refuse`,
-`ComposeRecovery` and the counters by exact position and keep `RoleCap` for a role that is no position), it now lands BEFORE them (R21): re-read at `main` how item 3 turns ALL of (e) green on today's role keys and how `Begin`'s role filter and share treat a role that is no council role; those two briefs carry `perception` forward. **Today:** nothing reaches a decision model (`git grep -i "systemone|typesafe|
-openrouter" src` is empty); Core holds no HTTP client. **Observable result (connected mechanics, by test):** a call to the pinned instrument is reserved inside the
-owner's daily AI cap and a perception budget before it is sent, recorded with what was asked and answered, settled with the billed or estimated cost, and
-refused in words for a different answering model, an over-limit schema, an exhausted budget or a key bound to another origin — and no existing role, report or
-card mistakes a perception call for an Operations turn.
-Facts (R02 § 1, DOC 2026-10-02): `POST {base}/v1/systemone` (OpenRouter `{base}/api/v1/systemone`); `{model, state, questions}` → `{model, answers, usage}` (+ `usage.cost`
-on OpenRouter); pins TypeSafe `jev-1.13.0`, OpenRouter `typesafe/jev-1.13`; Choice ≤ 255, Score 2–10 (schema enforces neither); 64K / 32K budgets (OpenRouter 32K);
-$0.042 per M input, output free; Bearer; 429/529; answers not repeatable; no C# SDK (hand-write against OpenAPI v0.2.0, no unofficial NuGet).
-Read first: `docs/EDGE-FACTORY.md` § 4.2, § 6.7, § 6.10; R02 § 2 (never distil or imitate); `CLAUDE.md`; the `HarnessKey` holder as `U-key-host-pin` left it;
-`Core/Db/AiAttemptStore.cs:119-162` (`AiAdmissionRule`), `:256-281` (`Begin`: totals and INSERT in ONE `db.Write`), `:297-299` (`Refuse`), `:325-340` (`End`),
-`:425-445` (day counters, `Totals` `:441`); `AgentRuntime/TurnMeter.cs:380-395` (`LiveAttempts.Shared`), `:570-580` (`LoseOpen`), `:820-860` (`RuleFor`, `Share`,
-private `LocalDay`/`Midnight`), `:1050-1060` (the "estimated" card); `CouncilRelay.cs:495-505` (`Fence`); `DailyReports.cs:875-885` (`ComposeRecovery`);
-`TradingGateway.cs:2340-2345` (`AiTurnsToday`); the `TapeStore` ladder; `RuntimeManifest.cs:384,495-686`; `FakeProvider.cs`; `SuiteReachesNoVendorTests.cs:40-66`.
+**Arrow closed:** perception (`docs/EDGE-FACTORY.md` § 4.2, phase 4), the substrate lenses and the annotator stand on; nothing here annotates and no agent can call it; the owner's Perception card (key,
+budget, Test press) is `U-decision-card`. **Protects (EDGE § 6):** 3 measurement vs claim; 7 spend, reserved in `AiAttemptStore`'s one transaction under the daily AI cap, unknown never zero; 10 a key goes
+only to its built-in origin. Money-adjacent: red-first, mutants. Seat B. **Depends on `U-tape-store`** (merge `c8fc2cc`, `BUILD-STATUS.md:7291`; `tape.db` rung 2 is this unit's) **and `U-key-host-pin`**
+(`3065e39`, `:7134`), both landed; **lands BEFORE `U-org-principals` (O2a) and `U-org-envelopes` (O4)**, on today's role keys (§ 15; R22), and before `U-billing-classes` (R18 § 3). Main schema 30 stays.
+**Facts (SOURCE at `eb906b17`, read and not run; DOC read 2026-10-09).**
+- Nothing reaches a decision model (`git grep -i "systemone|typesafe|openrouter" src` is empty); Core holds no HTTP client. The one keyed sender is `AgentRuntime/ApiConversation.cs:252-293`: the key leaves
+  `Security/HarnessKey.cs` only by `ReadFor(origin)` (`:113-126`; rule `Core/UrlOrigin.cs:31-46`). Provisioning references neither Security (keys) nor AgentRuntime (`LiveAttempts`).
+- `perception` is `AppPrincipals.Perception` (`Core/Db/OrgStore.cs:121-126`). `AiAttemptStore.Begin` (`:256-281`) totals the day over EVERY row and a named role by exact match (`:441`): a perception rule binds
+  the cap and its own budget, no council share reads it. `TurnMeter` keys by `CouncilRoles.Or` (`:1173`; it would take the chair's slot, `:836-838`) and halves the day for a role with no `RoleShare` (`:873-902`).
+- Misread today: `Fence` (`CouncilRelay.cs:500` publishes it as Operations'), `Refuse` (`AiAttemptStore.cs:297-299`: "The Operations Director has used its share"), `ComposeRecovery` (`DailyReports.cs:945`), and
+  `Totals`' role-less counts (`:431-439`) behind the card (`App/DashboardView.cs:479-496`; label `TurnMeter.cs:1105`), `AiTurnsToday` (`App/AppHost.cs:955-970`), the Situation, the report (`DailyReports.cs:587-596`).
+- `tape.db` is at rung 1 (`TapeStore.cs:64`, `:167-218`; `Write` `:707-716`); `TapeReader.cs:145` wants the exact version; the app holds one store (`AppHost.cs:508, 625`), null when refused.
+- DOC: TypeSafe (docs.typesafe.ai/api, /models, OpenAPI 3.1.0 v0.2.0) `POST https://api.typesafe.ai/v1/systemone`, Bearer, `{model, state, questions{name: {type, instructions, criteria}}}` → `{model,
+  answers, usage{input_tokens, output_tokens}}`; `jev-1.13.0` answers as itself; $0.042/M input, output free; 64K a request, 32K state + longest question; 100K tokens and 80 requests a second; 401, 422, 429
+  (`retry-after`), 529; Choice ≤ 255 and Score 2–10, unenforced by the schema; ~300 tokens billed for 70 bytes. OpenRouter `POST https://openrouter.ai/api/v1/systemone`, same shapes + `id`, `provider`,
+  `usage.cost`; asked `typesafe/jev-1.13`, it answers `typesafe/jev-1.13-20260917`; 32K prompt (model page: 64K). No C# SDK, no unofficial NuGet. MCA § 2.3(b): never distil or imitate.
+Read first: `CLAUDE.md`; EDGE §§ 4.2, 6; R02 §§ 1–2, 6.1–6.4; `docs/CONTRACTS.md:2320-2343` (the holder rule); the files above; `FakeProvider.cs`; `SuiteReachesNoVendorTests.cs:40-97, 143-188`.
+Must NOT: route perception through `TurnMeter` or give it a `RoleShare`, a schedule, a home or an AGENTS.md line; touch `MissionLoop`, `MissionEventStore`, `WorkspaceBuilder` or `TradingGateway`; send an
+alias or OpenRouter's alpha Decisions API; send twice on one reservation; keep the state's text (its sha and source refs only); call with no `TapeStore` open; add a main rung.
 Items, one commit each, one-sentence messages:
-1. `IDecisionModel` and its request/result types in Core (no HTTP there): `SchemaRef(id, version, sha)`, canonical-JSON state, typed questions, instrument id;
-   every unrounded distribution, the answered model id, usage, client-measured latency, status, error class. Limits checked BEFORE sending. The `TypeSafeWire`
-   adapter lives in Provisioning beside the other HTTP clients; built-in instruments `typesafe-direct` and `openrouter-jev` with per-host pins, dated price,
-   limits and doc URL; hosts only from built-ins (any override may change prices or limits, never an origin); its own key holder under the origin rule.
-2. Spend: `Begin` with `AiAdmissionRule { Role = "perception", Cap = the owner's daily AI cap, RoleCap = new setting PerceptionDailyBudget (default 1 USD) }`,
-   From/To/ResumesAt from the owner's local day (move `LocalDay`/`Midnight` into one shared helper); register the launch in `LiveAttempts.Shared` so
-   `LoseOpen` does not declare it LOST; settle with the answered model id and the billed cost when the host reports it, else the estimate; a lost answer keeps its reservation.
-3. `perception` is a meter role, never scheduled and never a council role. Fix every reader that would say otherwise: `Refuse` names the perception budget, not
-   the Operations Director; `CouncilRelay.Fence` QUARANTINES an attempt whose role is not a council role instead of reading it as Operations; `ComposeRecovery`
-   labels it perception; the day counters and `AiTurnsToday` count it apart from council turns; a settled perception row never flips the council cost card to
-   "estimated".
-4. Record: `decision_call` (tape.db rung 2, written through `TapeStore`) keyed by the attempt id — instrument, origin, requested and answered model id, schema sha,
-   state sha, instants, latency, tokens, estimated and billed cost apart, status, `UNPINNED` (answered ≠ pin ⇒ excluded from evidence), the full answers.
-   `CONTRACTS.md` (claimed: what was asked and answered, by which instrument, at what cost; NOT claimed: repeatability, calibration, correctness; never used to
-   distil or imitate Jev), `docs/RESEARCH-REQUIRED.md`; add `api.typesafe.ai` and `openrouter.ai` to `SuiteReachesNoVendorTests`.
-Tests (loopback host serving canned TypeSafe JSON): (a) `An_answer_from_a_model_other_than_the_hosts_pin_is_recorded_unpinned`; (b) `Limits_are_refused_before
-_sending`; (c) `A_call_is_reserved_in_the_main_database_before_it_is_sent_and_a_lost_answer_keeps_it`; (d) `The_perception_budget_and_the_daily_cap_bind_in_one
-_transaction`; (e) `A_perception_attempt_is_never_read_as_an_operations_turn` (`Fence`, `Refuse`, `ComposeRecovery`, counters); (f) `The_key_goes_only_to_its
-_pasted_origin_and_is_never_written`; (g) `No_pipe_op_reaches_the_decision_port`. Mutants to watch red and quote: (i) the pin comparison removed ⇒ (a) red;
-(ii) the reservation moved after the send ⇒ (c) red (the loopback host reads the ledger when the request arrives); (iii) `Fence` back on `CouncilRoles.Or` ⇒ (e) red.
-Gate and report per `docs/HOW-WE-BUILD.md`: rebase on `main` first; `--no-incremental` Release build 0 warnings; three suites 0 failed; touched classes 3×;
-names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push, no merge; touch nothing in `docs/briefs/` but this file.
+1. Port: `IDecisionModel` and its types in Core (no HTTP): `SchemaRef(id, version, sha)`, canonical-JSON state, typed questions, instrument id; unrounded distributions, answered model id, usage, host
+   response id, latency, status, error class; structural limits refused BEFORE sending. `TypeSafeWire` in AgentRuntime beside `ApiConversation`; built-in `typesafe-direct` and `openrouter-jev`, each with origin,
+   request id, answered-id pin, dated price, limits, doc URL (an override may change prices or limits, never an origin); its key holder a second `HarnessKey` (never `.Shared`), read at the send.
+2. Spend: `AiAttemptStore.Begin` with `AiAdmissionRule { Role = AppPrincipals.Perception, Cap = the daily AI cap (one delegate, as `AppHost.cs:750`), RoleCap = new setting PerceptionDailyBudget (1 USD; 0 in
+   `Unreadable()`), Reservation = 64K tokens × the dated input price }`; From/To/ResumesAt from `LocalDay`/`Midnight` moved from `TurnMeter` (`:1129-1138`) to one Core helper; held in `LiveAttempts.Shared` until
+   settled with the answered id and the host's billed cost, else input tokens × the dated price (`pricing_basis` says which); no answer keeps the reservation.
+3. Readers: `Fence` compares `a.Role ?? CouncilRoles.Default` exactly, so a perception id is quarantined in every pass; `Refuse` names the perception budget (a new label); `ComposeRecovery` calls it a
+   perception call; `Totals`' role-less counts (turns, unpriced, estimated, open, unreported) skip app principals, spent and reserved keep them; the report's basis line names perception's billed cost.
+4. Record: `decision_call` (tape.db rung 2, `Schema` 2, one `TapeStore` transaction) keyed by the attempt id — instrument, origin, requested and answered id, host response id, schema and state sha, instants,
+   latency, tokens, estimated and billed cost apart, status, `UNPINNED` (answered ≠ the pin ⇒ out of evidence), the full answers — written BEFORE the attempt settles; `TapeStoreTests.cs:341-409` and
+   `TapeReadTests.cs:74-81` to `Schema`/`Schema + 1`, `TapeOverPipeTests.cs:362` dumps it; `CONTRACTS.md` (claimed: asked, answered, by which instrument, at what cost; NOT: repeatability, calibration,
+   correctness; never to distil or imitate Jev); `RESEARCH-REQUIRED.md` § D2 (your re-read of the DOC); the vendor scan adds `api.typesafe.ai`, `openrouter.ai` and an adapter file rule like `:184-188`.
+Tests (loopback host, canned TypeSafe JSON; `FakeProvider` gains a hook run as a request arrives): (a) `An_answer_from_a_model_other_than_the_hosts_pin_is_recorded_unpinned` (per instrument); (b)
+`Limits_are_refused_before_sending`; (c) `A_call_is_reserved_in_the_main_database_before_it_is_sent_and_a_lost_answer_keeps_it`; (d) `The_perception_budget_and_the_daily_cap_bind_in_one_transaction` (a council
+share unchanged); (e) `A_perception_attempt_is_never_read_as_an_operations_turn` (`Fence`, `Refuse`, `ComposeRecovery`, counters, the card's label, `AiTurnsToday`; red at base on a seeded row); (f)
+`The_key_goes_only_to_its_pasted_origin_and_is_never_written`; (g) `No_pipe_op_reaches_the_decision_port` (nor its budget, pin or key). Mutants, red and quoted: (i) no pin comparison ⇒ (a); (ii) the
+reservation after the send ⇒ (c), the hook reading the ledger; (iii) `Fence` back on `CouncilRoles.Or` ⇒ (e).
+Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; three suites 0 failed; touched classes 3×; branch CI on
+all three platforms; tests box or NOT RUN with `ready`'s answer; names vs `main` 0 removed (both set sizes printed); `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
