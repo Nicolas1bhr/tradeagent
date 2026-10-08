@@ -1069,6 +1069,17 @@ close working, the platform outranks your answer: nothing is decided until the p
 once you have answered every record TradeAgent left, it stops asking you to confirm them; the Safety
 page, the daily report and the AI's status say what it is still waiting on instead.
 
+**Every close it sends is answered this way, the second one too.** If the answer to the close it sends
+once more is lost as well, TradeAgent asks your platform's history about that one the same way — or takes
+your answer to it — and then it is done: the account reads flat, or what is still open is yours to close
+at your platform, and TradeAgent says so. It never closes a third time. Once your platform reads flat and
+the closure has run its time, the account reopens as usual. The same goes for a position TradeAgent closes
+because it could not work out what it was worth for longer than your Safety page allows: if the answer to
+that close is lost, it asks your platform's history (or takes your answer), clears its records so trading
+and its other such closes are not held up, and — only if the position is still open and still cannot be
+valued — closes it once more. If a price for it has come back, it leaves it open and says why: your loss
+budget can measure it again.
+
 **And one more, which is not an answer yet: "has NOT closed your open positions yet".** That is
 TradeAgent saying it could send nothing at all to your platform — your account or your positions
 could not be read in time — so nothing was sent and there is nothing for you to confirm. It tries

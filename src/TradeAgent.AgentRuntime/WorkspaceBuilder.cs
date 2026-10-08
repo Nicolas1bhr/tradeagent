@@ -443,7 +443,12 @@ public static class WorkspaceBuilder
     Dashboard, their answer settles it the same way (`flat`, or closed once more with the same
     checks), counted only once the close can no longer be on its way, and never while a platform
     that can show its history holds that close still working, which outranks their answer.
+    The close sent once more is asked the same way when its own answer is lost, and nothing is
+    ever sent a third time: what it then reads open is the account owner's to close.
     Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
+    A position TradeAgent closed because nothing could value it is on `loss_valuation_exit` — never
+    a budget breach — and a lost answer to that close is asked the same way: confirmed closed, or
+    closed once more only while it still cannot be valued, never once it can be valued again.
 
     ## Rules that matter
 

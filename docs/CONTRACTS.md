@@ -1784,7 +1784,10 @@ because a shared id would let a valuation exit open the very boundary a loss-bud
 extension names (`LossBoundaryIdFor`), moving a closure's clock with an event that was never about
 the closure. **WITH THE CONNECTION DOWN NOTHING IS SENT AT ALL** (`CLAUDE.md` rule 3): the clock goes
 on running, the pause the gate is already enforcing holds, and every surface says so on every day it
-lasts.
+lasts. **A LOST CLOSE IS CONFIRMED** (`U-valuation-close-confirm`, below): an exit whose close lost its
+answer is asked of the platform's history — or decided by the owner's answer — exactly as the budget's
+closes are, its own rows settled and unflagged, and closed again ONCE only while the episode it was sent
+for still stands; until then its flagged rows pause every order and refuse every later exit, as before.
 
 **IT IS NOT A BREACH, AND THIS IS THE CHOICE THE BRIEF LEFT OPEN.** A `VALUATION_LOST` exit does NOT
 close the day, does NOT close the instrument, writes NO `loss_breach` row and counts towards NO
@@ -4315,12 +4318,13 @@ settled; then each lost close goes `UNKNOWN → RECONCILING → {the history's s
 steps, unflagged, reconciled) and the rows of the outcome's two nonces are unflagged as
 `AccountForTheFlattenAsync` unflags them when every leg resolves. A failed write settles and sends nothing; a
 pass killed between the record and the rows finishes from the record on the next pass; there is ONE confirm per
-breach. **Flat → nothing is sent.** **Still open → "closing again"**: the killed-flatten sweep, on its own two
+breach (since `U-valuation-close-confirm`, below: one per close generation). **Flat → nothing is sent.** **Still open → "closing again"**: the killed-flatten sweep, on its own two
 rules (keyed on an outcome's absence, never while anything is unconfirmed), runs the SAME
 `FlattenForBreachAsync` under a fresh nonce — every check of the first attempt, the reduction-only re-read at
 the wire included — and files its outcome under `loss_flatten_again:` and an owed note under
 `loss_flatten_again_owed:`, owed and retried on every pass on `U-fix-loss-reopen`'s rule. A lost answer to the
-closing again is never confirmed a second time: it stays flagged for the owner. The first `loss_flatten:` row,
+closing again is never confirmed a second time: it stays flagged for the owner (until `U-valuation-close-confirm`,
+below, gave the closing again a confirm of its own, which owes nothing). The first `loss_flatten:` row,
 the breach row and every `op-valuation-` row are never touched.
 
 **One accessor for the latest word.** `HeldBy`, `FlattenStateToday` and `FlattenFlagFor` read what was last
@@ -4329,8 +4333,9 @@ first outcome, the first owed note, newest first — so the reopen's hold and ev
 status field, the Situation, section 4, `AGENTS.md` and the guide say so.
 
 **Not in this unit:** absence as proof (`U-flatten-absence`); the data-loss exit's own lost close
-(`op-valuation-close-` rows are not confirmed here); the hold a `Flat=false` outcome keeps after the owner has
-resolved its rows on the card — this step deliberately does not answer a lost close somebody else has settled.
+(`op-valuation-close-` rows are not confirmed here — `U-valuation-close-confirm`, below); the hold a `Flat=false`
+outcome keeps after the owner has resolved its rows on the card — this step deliberately does not answer a lost
+close somebody else has settled.
 
 ## U-flatten-absence — where a connector's closes carry our id, a lost budget close its complete history never saw is settled as never sent
 
@@ -4396,7 +4401,48 @@ rewritten. The status schema's `loss_flatten`, `AGENTS.md` and the guide say so.
 
 **Not in this unit:** the closing again's own lost close, once the owner answers it, still holds the closure —
 there is one confirm per breach, and answering it needs a record family this unit may not write; the data-loss
-exit's (`U-valuation-close-confirm`); ATAS (nothing run on the box).
+exit's; ATAS (nothing run on the box). The first two are `U-valuation-close-confirm`'s, next.
+
+## U-valuation-close-confirm — every lost close the app sends is confirmed once per close generation, never once per breach
+
+**No schema, four write-once kv families.** Seat P's survey at `d73ecd59` reproduced three defects by probe: the loss
+flatten's closing again was never asked about, so once the owner answered its lost close its outcome's `Flat=false`
+held the closure for ever ("past eligibility : reopened []"); a data-loss exit whose close lost its answer paused all
+trading and refused every later exit behind its flagged rows (`valuation_exit_press_already_open` ×91 in thirty
+simulated minutes, NQ left open past its bound); and the exit's lost close, even once answered, was never closed
+again — its episode standing over an open position.
+
+**A close generation** (`TradingGateway.CloseGeneration`) is one outcome of the app's own with its two press kinds
+and nonces: the loss flatten (`loss_flatten:`), its closing again (`loss_flatten_again:`), a data-loss exit
+(`loss_valuation_exit:`) and that exit's closing again (`loss_valuation_exit_again:`). The confirm runs over a
+generation, never over a breach: `LostCloses` reads that generation's own outcome and rows; the verdicts are
+`U-flatten-confirm`'s and `U-loss-hold-release`'s, unchanged (`AskTheHistoryAsync`, `TheOwnersAnswerAsync`,
+`SettledByTheOwner`, absence only where `AbsenceDecidesALostClose`); ONE write-once record per generation is written
+BEFORE any row is settled — `loss_flatten_confirm:` (as before), `loss_flatten_again_confirm:`,
+`loss_valuation_exit_confirm:`, `loss_valuation_exit_again_confirm:` (`LossFlattenConfirm` for the budget's two,
+`ValuationExitConfirm` for the exit's two); and `ApplyTheConfirm` settles that generation's lost closes and unflags
+its two nonces' rows and no other's — never a kind's rows whole, which stays `AccountForTheFlattenAsync`'s alone.
+
+**What each confirm owes.** Only the first flatten's not-flat confirm owes the closing again (`FlattenOwed`, as
+before). The closing again's own owes nothing: flat, or still open and the owner's — its sentence says "does NOT
+close it a third time: what is still open is yours to close", and `HeldBy` then holds the closure on the BOOK the
+tick reads, not on the record, so a closure the owner closes by hand lifts once its time has run. `LatestFlattenWord`
+reads the closing again's confirm first. An exit's confirm runs on the health pass over every
+`loss_valuation_exit:` of this connector, mode and account, whatever its day; settled, its pause lifts and the
+exits waiting behind it go out. A confirm that read the symbol open closes it again ONCE — the same
+`ExitLostValuationAsync`, cancels first, reduction-only at the wire, one valuation press of each kind, under
+`loss_valuation_exit_again:` — from `AnswerLostValuationsAsync` (`CloseAgainWhatAnExitLeftOpenAsync`) and only while
+the reason holds: its confirm read the symbol open, no closing again is written yet, the episode it was sent for
+still stands on this tick with `ExitKey` = that exit (`TheEpisodeItWasSentFor`, the tick's own evidence), the bound
+is on, the episode is at least that old, and the connection is up. Valued again, gone or a new stretch → nothing is
+sent, and the confirm's sentence (written once) and the reading (`LatestExitWord`, as it stands now) say why. The
+episode keeps its `ExitKey`; the exit's closing again's confirm owes nothing either. `ValuationReading` says each
+exit's latest word — the closing again's confirm, the closing again ("CLOSED AGAIN"), the confirm, the exit — for
+an exit of today or whose latest word was written today. The status field, its schema, `AGENTS.md` and the guide say so.
+
+**Not in this unit:** a not-flat closing again with no lost close (an opener that would not settle, a leg refused
+at the wire) still holds its closure on its record; the owner's card for a press's in-flight row
+(`U-press-row-answer`); ATAS (nothing run on the box).
 
 ## U-fix-press-budget — the owner's two presses run on the platform's clock
 

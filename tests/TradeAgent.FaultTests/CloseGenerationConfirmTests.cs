@@ -129,6 +129,14 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED or
         ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING;
 
+    /// <summary>
+    /// What the surfaces say about one symbol's data-loss exit today — the reading the status, the Situation and the
+    /// daily report all take (<see cref="TradingGateway.ValuationReading"/>), picked out by the size and symbol every
+    /// exit sentence names.
+    /// </summary>
+    static string ExitWordFor(TradingGateway gw, string symbol) =>
+        Assert.Single(gw.ValuationReading().Exits, e => e.Contains($" 1 {symbol}", StringComparison.Ordinal));
+
     /// <summary>When a lost close can no longer be on its way to the platform: the dispatch plus the bound, then the grace.</summary>
     static DateTimeOffset NoLongerOnItsWay(TradingGateway gw, ExecutionRequest lost) =>
         lost.DispatchedAt!.Value + gw.DispatchStrandedAfter + Grace;
@@ -394,6 +402,13 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         Assert.Empty(Flagged(db, "op-valuation-"));
         Assert.False(gw.HasUnconfirmedWork());
 
+        // THE SURFACES SAY ES'S LATEST WORD — the confirm — and never "cannot confirm" about a close it has decided.
+        var word = ExitWordFor(gw, "ES");
+        log.WriteLine($"ES on the surfaces    : {word}");
+        Assert.Contains("CONFIRMED FROM YOUR PLATFORM'S ORDER HISTORY", word, StringComparison.Ordinal);
+        Assert.DoesNotContain("CANNOT CONFIRM", word, StringComparison.Ordinal);
+        Assert.Equal(2, gw.ValuationReading().Exits.Count);
+
         // AND NOTHING MORE: later passes send nothing and write nothing.
         await Passes(gw, clock, 6);
         Assert.Equal(2, conn.Closes);
@@ -460,6 +475,12 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         Assert.Empty(Flagged(db, "op-valuation-"));
         Assert.False(gw.HasUnconfirmedWork());
 
+        // THE SURFACES SAY THE CLOSING AGAIN, AND WHAT SETTLED THE FIRST CLOSE.
+        var word = ExitWordFor(gw, "ES");
+        log.WriteLine($"ES on the surfaces    : {word}");
+        Assert.Contains("CLOSED AGAIN", word, StringComparison.Ordinal);
+        Assert.Contains("your platform's order history settled it", word, StringComparison.Ordinal);
+
         // THE EPISODE KEEPS THE EXIT IT WAS SENT FOR, and later passes send nothing and write nothing.
         var episode = Json.Read<ValuationUnavailableRecord>(db.GetKv(ValuationLoss.KeyFor(conn.Id, conn.Broker.AccountId, "ES"))!)!;
         Assert.Equal(ValuationLoss.ExitKey(conn.Id, conn.Broker.AccountId, "ES", episode.Since), episode.ExitKey);
@@ -472,38 +493,58 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
 
     /// <summary>
     /// (c) THE GUARD: (b), WITH ES VALUED AGAIN BEFORE THE CONFIRM — CONFIRMED, NOTHING SENT FOR ES, AND SAID
-    /// (item 2, and the mutant).
+    /// (item 2, and the mutant; the second case is item 3's reading).
     ///
-    /// <para>The reason the exit was sent for is that nobody could value ES. Its price comes back inside the grace
-    /// while NQ's stays silent, so ES's episode ends. Past the grace the confirm still decides the lost close
-    /// (CANCELLED) and still reads ES open — and closes nothing: ES is measured again, the loss budget bounds it
-    /// again, and the confirm's sentence says that is why. NQ, still unvaluable, is exited.</para>
+    /// <para>The reason the exit was sent for is that nobody could value ES. Its price comes back while NQ's stays
+    /// silent, so ES's episode ends. Past the grace the confirm still decides the lost close (CANCELLED) and still
+    /// reads ES open — and closes nothing: ES is measured again, the loss budget bounds it again, and what the
+    /// owner reads says that is why. NQ, still unvaluable, is exited.</para>
+    ///
+    /// <para>Two windows. "before the confirm": the price is back inside the grace, so the confirm's own sentence
+    /// says it. "in the confirm's own pass": the price comes back on the very pass the confirm is written — the
+    /// confirm, at the start of the pass, still reads the episode standing and its record says CLOSING IT AGAIN, true
+    /// of its instant; the watch, at the end of the same pass, values ES — and then nothing may be sent, and the
+    /// reading must not go on saying it will be.</para>
     ///
     /// <para><b>The mutant this watches:</b> the closing again's check that the episode it was sent for still
     /// stands, removed. The again then closes ES over a position the owner's budget measures — a third close at
     /// the wire, and ES 0, where it must stay 1.</para>
     /// </summary>
-    [Fact]
-    public async Task An_exits_lost_close_over_a_position_valued_again_is_confirmed_and_nothing_more_is_sent_for_it()
+    [Theory]
+    [InlineData("before the confirm")]
+    [InlineData("in the confirm's own pass")]
+    public async Task An_exits_lost_close_over_a_position_valued_again_is_confirmed_and_nothing_more_is_sent_for_it(string valuedAgain)
     {
         var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
         using var _1 = db;
         await using var _2 = gw;
 
         var lost = await TwoUnvaluableAndTheFirstExitsCloseLost(gw, conn, db, clock, f => f.DropBeforeBrokerAccept = 1);
+        log.WriteLine($"[{valuedAgain}]");
 
-        // ES'S PRICE COMES BACK, INSIDE THE GRACE; NQ'S DOES NOT.
-        conn.QuoteAgeOf = s => s == "ES" ? TimeSpan.Zero : null;
-        await Passes(gw, clock, 1);
-        var es = Json.Read<ValuationUnavailableRecord>(db.GetKv(ValuationLoss.KeyFor(conn.Id, conn.Broker.AccountId, "ES"))!)!;
-        log.WriteLine($"ES's episode          : cleared {es.ClearedAt:HH:mm:ss}, exit {es.ExitKey}");
-        Assert.False(es.Standing);
-        Assert.Equal(0, Records(db, "loss_valuation_exit_confirm:"));
-        Assert.Equal(1, conn.Closes);
+        if (valuedAgain == "before the confirm")
+        {
+            // ES'S PRICE COMES BACK, INSIDE THE GRACE; NQ'S DOES NOT.
+            conn.QuoteAgeOf = s => s == "ES" ? TimeSpan.Zero : null;
+            await Passes(gw, clock, 1);
+            var es = Json.Read<ValuationUnavailableRecord>(db.GetKv(ValuationLoss.KeyFor(conn.Id, conn.Broker.AccountId, "ES"))!)!;
+            log.WriteLine($"ES's episode          : cleared {es.ClearedAt:HH:mm:ss}, exit {es.ExitKey}");
+            Assert.False(es.Standing);
+            Assert.Equal(0, Records(db, "loss_valuation_exit_confirm:"));
+            Assert.Equal(1, conn.Closes);
 
-        // PAST THE GRACE.
-        clock.MoveTo(NoLongerOnItsWay(gw, lost));
-        await Passes(gw, clock, 1);
+            // PAST THE GRACE.
+            clock.MoveTo(NoLongerOnItsWay(gw, lost));
+            await Passes(gw, clock, 1);
+        }
+        else
+        {
+            // PAST THE GRACE, AND ES'S PRICE COMES BACK ON THAT VERY PASS.
+            clock.MoveTo(NoLongerOnItsWay(gw, lost));
+            conn.QuoteAgeOf = s => s == "ES" ? TimeSpan.Zero : null;
+            await Passes(gw, clock, 1);
+            Assert.Contains("CLOSING IT AGAIN", WhyOf(RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES")), StringComparison.Ordinal);
+        }
 
         var confirm = RecordFor(db, conn, "loss_valuation_exit_confirm:", "ES");
         log.WriteLine($"closes on the wire    : {conn.Closes}; ES {Held(conn, "ES")} NQ {Held(conn, "NQ")}");
@@ -513,13 +554,23 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         Assert.Equal(ExecutionState.CANCELLED, gw.Requests.Get(lost.RequestId)!.State);
         Assert.Equal(1, Records(db, "loss_valuation_exit_confirm:"));
         Assert.Equal(0, Records(db, "loss_valuation_exit_again:"));
-        Assert.Contains("NOT closing it again", WhyOf(confirm), StringComparison.Ordinal);
-        Assert.Contains("can value ES again", WhyOf(confirm), StringComparison.Ordinal);
+        if (valuedAgain == "before the confirm")
+        {
+            Assert.Contains("NOT closing it again", WhyOf(confirm), StringComparison.Ordinal);
+            Assert.Contains("can value ES again", WhyOf(confirm), StringComparison.Ordinal);
+        }
         Assert.Equal(2, conn.Closes);
         Assert.Equal(1m, Held(conn, "ES"));
         Assert.Equal(0m, Held(conn, "NQ"));
         Assert.Empty(Flagged(db, "op-valuation-"));
         Assert.False(gw.HasUnconfirmedWork());
+
+        // SAID, AS IT STANDS NOW: not closing it again, and why — whatever the record said at its own instant.
+        var word = ExitWordFor(gw, "ES");
+        log.WriteLine($"ES on the surfaces    : {word}");
+        Assert.Contains("NOT closing it again", word, StringComparison.Ordinal);
+        Assert.Contains("can value ES again", word, StringComparison.Ordinal);
+        Assert.DoesNotContain("CLOSING IT AGAIN", word, StringComparison.Ordinal);
 
         // AND NOTHING MORE.
         await Passes(gw, clock, 6);
@@ -584,6 +635,11 @@ public class CloseGenerationConfirmTests(ITestOutputHelper log)
         Assert.Equal(0m, Held(conn, "NQ"));
         Assert.Empty(Flagged(db, "op-valuation-"));
         Assert.False(gw.HasUnconfirmedWork());
+
+        var word = ExitWordFor(gw, "ES");
+        log.WriteLine($"ES on the surfaces    : {word}");
+        Assert.Contains("CLOSED AGAIN", word, StringComparison.Ordinal);
+        Assert.Contains("your answer on the Dashboard settled it", word, StringComparison.Ordinal);
 
         // HIS ANSWER STAYS HIS, and nothing more is sent.
         var row = gw.Requests.Get(lost.RequestId)!;

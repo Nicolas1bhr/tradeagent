@@ -11279,7 +11279,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para>The episodes shown are the STANDING ones. The exits shown are TODAY's, by the exit
     /// record's own UTC day, because the episode that caused one ends the moment the position goes
     /// and an exit that vanished from every screen the instant it succeeded would be the software
-    /// closing a position and then saying nothing about it.</para>
+    /// closing a position and then saying nothing about it — and, for the same reason, an older exit
+    /// whose latest word was written today (<c>U-valuation-close-confirm</c>).</para>
+    ///
+    /// <para><b>Each exit's LATEST word</b> (<see cref="LatestExitWord"/>): its closing again's confirm, its
+    /// closing again — which says CLOSED AGAIN — its confirm, or the exit itself, so the screen never says
+    /// "cannot confirm" about a close the platform's history or the owner has since decided.</para>
     /// </summary>
     public (IReadOnlyList<string> Lost, IReadOnlyList<string> Exits) ValuationReading()
     {
@@ -11307,10 +11312,13 @@ public sealed class TradingGateway : IAsyncDisposable
         try
         {
             var today = LossBreach.Stamp(at);
-            foreach (var (_, json) in _db.KvStartingWith($"{ValuationLoss.ExitPrefix}{scope}:"))
-                if (Json.Read<ValuationExitRecord>(json) is { } row
-                    && string.Equals(row.Day, today, StringComparison.Ordinal))
-                    exits.Add(row.Why);
+            foreach (var (key, json) in _db.KvStartingWith($"{ValuationLoss.ExitPrefix}{scope}:"))
+            {
+                if (Json.Read<ValuationExitRecord>(json) is not { } row) continue;
+                var (why, day) = LatestExitWord(key, row);
+                if (string.Equals(row.Day, today, StringComparison.Ordinal) || string.Equals(day, today, StringComparison.Ordinal))
+                    exits.Add(why);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -11318,6 +11326,33 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         return (lost, exits);
+    }
+
+    /// <summary>
+    /// THE LATEST WORD ON ONE DATA-LOSS EXIT (<c>U-valuation-close-confirm</c>), and the UTC day it was written on —
+    /// newest first: the closing again's own confirm, the closing again, the exit's confirm, the exit. Each is
+    /// written once, so the newest one present IS the latest word. An unreadable one throws, and the reading says so.
+    ///
+    /// <para><b>A confirm's word as it stands now.</b> One that read the symbol open while the episode it was sent
+    /// for still stood said CLOSING IT AGAIN. If no closing again followed and the reason has since gone — the
+    /// position valued again, the episode ended, the exit switched off — that promise is no longer true, and the
+    /// word says instead that nothing more was sent, and why (<see cref="WhyNoExitAgain"/>). The record on disk is
+    /// never rewritten.</para>
+    /// </summary>
+    (string Why, string Day) LatestExitWord(string exitKey, ValuationExitRecord exit)
+    {
+        if (ReadExitConfirm(ValuationLoss.ExitAgainConfirmKeyFor(exitKey)) is { } againConfirm)
+            return (againConfirm.Why, againConfirm.Day);
+        if (ReadExitRecord(ValuationLoss.ExitAgainKeyFor(exitKey)) is { } again)
+            return (again.Why, again.Day);
+        if (ReadExitConfirm(ValuationLoss.ExitConfirmKeyFor(exitKey)) is not { } confirm)
+            return (exit.Why, exit.Day);
+
+        return confirm.ClosingAgain && WhyNoExitAgain(exit, exitKey) is { } why
+            ? (ValuationLoss.ConfirmSentence(confirm.Symbol, exit.Legs.Select(l => l.Captured).FirstOrDefault(q => q != 0m),
+                confirm.Since, exit.Bound, SettledFrom(confirm.Verdicts), confirm.Verdicts, confirm.StillOpen, again: false,
+                notAgain: why), confirm.Day)
+            : (confirm.Why, confirm.Day);
     }
 
     /// <summary>
