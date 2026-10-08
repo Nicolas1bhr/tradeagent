@@ -203,10 +203,11 @@ public class FeatureSpecTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (m) A TEXT SOURCE IS REFUSED: OKX's announcements and GDELT's news items are text, read by parsers other than
-    /// <c>binance-um-json</c>, and a feature reads numbers from market rows only. A source the tape does not record at
-    /// all — a row <c>tape-sources.json</c> might add included — is refused as unknown: whether a spec parses is a fact
-    /// about this build, never about a file an agent can write.
+    /// (m) A TEXT SOURCE IS REFUSED: OKX's announcements and GDELT's news items are text, read by parsers other than the
+    /// market ones (<c>binance-um-json</c> and, since <c>U-tape-chain</c>, <c>hyperliquid-ctx-json</c>), and a feature reads
+    /// numbers from market rows only — each over a subject of its own row. A source the tape does not record at all — a row
+    /// <c>tape-sources.json</c> might add included — is refused as unknown: whether a spec parses is a fact about this
+    /// build, never about a file an agent can write.
     /// </summary>
     [Fact]
     public void A_text_source_is_refused()
@@ -222,19 +223,23 @@ public class FeatureSpecTests(ITestOutputHelper log)
         {
             Assert.Contains("its rows are text", why, StringComparison.Ordinal);
             Assert.Contains(TapeSourceCatalog.JsonParser, why, StringComparison.Ordinal);
+            Assert.Contains(TapeSourceCatalog.HyperliquidParser, why, StringComparison.Ordinal);
         }
 
         var added = Refused(Spec(source: "my-premium"));
         Assert.Contains("'my-premium' is not a source the tape records", added, StringComparison.Ordinal);
 
-        // EVERY MARKET ROW THIS BUILD SHIPS IS A SOURCE A FEATURE MAY READ, AND NO OTHER.
-        var markets = TapeSourceCatalog.Shipped().Where(r => r.Parser == TapeSourceCatalog.JsonParser).ToList();
-        Assert.Equal(5, markets.Count);
+        // EVERY MARKET ROW THIS BUILD SHIPS IS A SOURCE A FEATURE MAY READ, AND NO OTHER: Binance's five and, since
+        // U-tape-chain, Hyperliquid's contexts — each over a subject of its own row, BTCUSDT on Binance's and BTC on Hyperliquid's.
+        var markets = TapeSourceCatalog.Shipped().Where(r => TapeSourceCatalog.MarketParsers.Contains(r.Parser)).ToList();
+        Assert.Equal(6, markets.Count);
+        Assert.Equal(5, markets.Count(r => r.Parser == TapeSourceCatalog.JsonParser));
         foreach (var row in markets)
         {
             var series = row.Series[0];
             var field = series.Id == "funding-rate" ? "fundingRate" : "someValue";
-            Assert.True(FeatureSpec.Parse(Spec(source: row.Id, series: series.Id, field: field)).Ok, row.Id);
+            var subject = TapeSourceCatalog.SubjectsOf(row)[0];
+            Assert.True(FeatureSpec.Parse(Spec(source: row.Id, series: series.Id, subject: subject, field: field)).Ok, row.Id);
             Assert.Contains(row.Id, added, StringComparison.Ordinal);
         }
     }
