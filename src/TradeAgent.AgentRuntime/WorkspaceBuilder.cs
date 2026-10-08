@@ -281,9 +281,9 @@ public static class WorkspaceBuilder
       that reads it next week. **At most {WorkspaceRevisions.JournalLines} non-empty lines** — move
       older entries to `{WorkspaceRevisions.ArchiveDir}/`, which is tracked and is not capped.
 
-    **TradeAgent keeps a copy of both at the end of every turn, and enforces those two limits.** A
-    file over its limit is not kept: the last version TradeAgent accepted is written back over it,
-    and your next `## Situation` says which file and why. So a long plan does not get you a long
+    **TradeAgent keeps a copy of both at the end of every turn, and enforces those two limits.**
+    Over its limit, a file moves to `{WorkspaceRevisions.ArchiveDir}/<PLAN|JOURNAL>-refused-….md` and the last
+    accepted one returns; your next `## Situation` says so. So a long plan does not get you a long
     plan — it gets you last turn's. Trim it yourself, in the turn that writes it.
 
     ### When you cannot trade, the job does not stop
@@ -576,11 +576,7 @@ public static class WorkspaceBuilder
     - `../inbox` — what the owner gave you. Read it, copy out of it, do not write into it.
     - `trading/` — **`PLAN.md` and `JOURNAL.md` live here**, plus order plans and notes on what you
       actually did and why. These two files are your memory; nothing else survives a fresh session.
-      `trading/archive/` is where journal entries go once they no longer fit. It is also where
-      TradeAgent saves a plan or journal it refuses for size — as `PLAN-refused-….md` or
-      `JOURNAL-refused-….md` — before it writes your last accepted version back over it, so
-      nothing you wrote is lost: your next `## Situation` names the copy. Take what still matters
-      from it back into the file, under its limit.
+      `trading/archive/` — old journal entries, refused files to reuse
     - `research/` — market research, sources, working notes
     - `strategies/` — strategy descriptions and their code
     - `data/` — your own workings. The APP's collected history is not here and is not yours to write:
