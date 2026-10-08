@@ -9157,3 +9157,40 @@ test's in-process role grant read at run time, no literal value (as at U-bar-hol
 **Tests box:** NOT RUN — `ready` exit 1, "NO - the machine does not answer", not retried.
 **NOT done, NOT verified:** CI's windows job is the only Windows evidence; no test drives a page over 262,144 bytes through the pipe (the byte bound is the reader's test); a
 tape-reading run's trades over the pipe are tested at the reader, not the wire; no app run.
+
+## 2026-10-08 — U-holdout-later landed: a held window never shrinks while a campaign judges on it — moving a cutoff LATER is refused in the owner's words, and the words that called it harmless are corrected
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-holdout-later.md` (the later-cutoff leak, MEASURED by seat A's U-holdout-campaign survey at `ea88e72b`:
+the owner's press moved A's cutoff from 01:00 to 01:30, research was then served the 30 minutes in between, while the referee kept judging from 01:00 and its verdict recorded
+01:00 as what was private; ruled urgent by the orchestrator; dispatched `82b3592c`). The builder's tip was on `9b08a077`; the manager's prep rebased it onto `b35653c2` and, docs only, onto `c4d2bdb3`; src+tests patch-id identical
+(`032ace6bcdce`). Merge `fb6cac36` (ff-only), 3 commits (2 items, the report), 13 files, +642/−67.
+**No schema change.** EVIDENCE: the holdout (`docs/COUNCIL.md` "a leaked holdout cannot become unseen") and the verdict's record of what was private (`strategy_verdict.holdout_from`).
+
+- **Answer first:** no other writer — the cutoff has one write in `src/`, `DatasetStore.SetHoldout`'s UPDATE, whose one caller is `TradingGateway.SetHoldout`, whose one caller is
+  `SettingsView.ApplyHoldout`, the owner's press; `Record`/`RecordNew` never write it; only tests call the store directly.
+- **Item 1 (`6c8fa8ac`):** the check lives IN THE STORE, reading the campaign ledger inside its own write, so no caller can leave it out. A later date while the dataset has an open
+  campaign → Ok=False, nothing written (cutoff, class, campaign); the owner reads: "Nothing was changed. Campaign 1 still judges strategies on every bar from 2026-08-01 01:00 UTC
+  on, and moving the date to 2026-08-01 01:30 UTC would show the AI bars those judgements use. To hold back a different period, download a fresh copy of the history and hold months
+  back on that." The same date → Ok, same campaign; earlier → refused as before, minus "Moving it later is allowed"; a renewed child is named the same way; with no open campaign,
+  later stays allowed (nothing judges). The press's comment and the Settings card say the date never moves and name the fresh download.
+- **Item 2 (`50035ea0`):** the words the right way round — CONTRACTS' holdout paragraph, USER-GUIDE "Holding months back" (every pair's bars, the forward bars and the tape; the
+  date never moves), the `data-list` note (the every-dataset rule, no forward exemption — U-bar-holdout's leftover) and `ForwardBars.cs`'s header. **Declared extension, accepted:**
+  two rung comments in `Database.cs` and `VerdictRow`'s ("a cutoff can later move later"), the same false premise. `GatewaySchema` untouched (U-size-cap's file; its text still true).
+- **Rewritten under this protection, JUDGED (seat A):** `CampaignLedgerTests`' second press (same date Ok, later refused, cutoff unmoved); and the brief's disclosed RENAME
+  `HoldoutLedgerTests.A_cutoff_may_be_moved_later_because_that_withholds_bars_nothing_has_read` → `A_cutoff_moves_later_only_while_no_campaign_judges_from_it` (its name stated
+  the false premise; `names.sh` counts it as 1 removed, accepted on the brief's terms).
+- **Process, JUDGED (seat A):** the builder pushed its docs-only report commit `1879d3cb` with a plain `git push` instead of `ci-dispatch.sh` (FLEET.md: a builder pushes only through
+  it) — disclosed, its own branch only, scanned main..tip first; no code moved after the CI run (the scan's three hits on the branch — the test's
+  grant read, the report quoting it, and the word naming the private network, already on main — judged false positives, excluded by name at check and record). Accepted; the next builders were told again.
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `6f2a8ee2` (the code of `50035ea0` before the rebases): Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed: 1532, Failed: 0`;
+Fault `Passed: 479, Failed: 0`; 3× `HoldoutLaterOverPipeTests` 5/5 and `HoldoutLedgerTests|CampaignLedgerTests` 37/37. RED before (base `82b3592c` + the new tests, 4 of 5 failed):
+(a) "a later cutoff was written while campaign 1 judges from 2026-08-01 01:00:00Z: A's cutoff is now 2026-08-01 01:30:00Z", its log `L.2 … SERVED 30 bars` for the Research Director
+and a caller with no role, over the pipe and in process; (b) `Found: "later is allowed"`; (c) `Assert.False() … Actual: True`; (d) `Found: "No holdout applies"`. Mutant (the later
+refusal deleted) ⇒ (a) RED, `L.2 … SERVED 30 bars` ×4; restored.
+Manager's gate at `35c6a7e4` (carried to `fb6cac36`: build tree identical), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1540/1540 (9 m 30 s), Fault 479/479
+(2 m 1 s), Integration 752/753, 1 skipped (11 m 10 s) → 0 failed. Names vs `main`: 2381 → 2387, 1 removed = the disclosed rename above (JUDGED), 7 added. Scan clean with the
+exclusions; no trailers; `rev-list` 0 both ways.
+**CI:** run 37741041936 at `6f2a8ee2` (the code of the merge): success on all four jobs (ubuntu 13 m, macos 16, windows 52, package); pre-rebase `382fa9d7` green too (37738255440).
+**Tests box:** NOT RUN — 09:03 `ready` exit 1, "the machine does not answer", not retried.
+**NOT done, NOT verified:** the app was not launched, so the Settings card's new words were never seen on screen. OWED (→ seat A's U-holdout-campaign): the same date pressed on the
+card's OTHER button still rewrites the evaluation class while a campaign judges (CONTRACTS states it as not covered). Integration ran in full on CI only.
