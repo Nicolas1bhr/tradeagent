@@ -15,47 +15,39 @@ public static class SecretStore
 
     /// <summary>
     /// PUTS <paramref name="value"/> AT <paramref name="path"/> IN ONE STEP, AND OWNER-ONLY FROM ITS FIRST
-    /// BYTE (<c>U-test-hygiene-2</c>).
+    /// BYTE (<c>U-test-hygiene-2</c>), THROUGH THE ONE PUBLISH EVERY CREDENTIAL TAKES (<c>U-credential-replace</c>).
     ///
     /// <para>It used to be <c>File.WriteAllBytes</c> on the file itself, then a chmod. The first truncates
     /// before it writes, so a reader in between read an empty file and took it for "absent"; the second
-    /// left the bytes readable by every account for as long as the write took. Now the bytes go to a
-    /// temp of this call's own beside the file, created new — on Unix created 0600 by the open itself —
-    /// are flushed to the device, and the temp is then renamed over <paramref name="path"/>. A reader sees
-    /// the old file or the new one and nothing between them; a rename the platform refuses leaves the
-    /// file as it was and throws.</para>
+    /// left the bytes readable by every account for as long as the write took. Then it was a temp of its
+    /// own renamed over the file by <c>File.Move</c> — on Windows <c>MoveFileExW</c>, whose replace is
+    /// refused while ANY handle is open on the file it replaces, sharing delete included. MEASURED on
+    /// windows-latest, "Access to the path is denied": runs 37675671465 and 37675951756 on the bridge's key,
+    /// and run 37736395707 on this file — a rewrite under a reader sharing read, write and delete, and
+    /// <see cref="IpcToken.Ensure(string)"/> over an unusable file such a reader held. Ensure writes here only
+    /// over a file holding nothing usable, on a start, so a reader holding the file at that moment — the
+    /// <c>trade</c> command, a scanner — made the start fail with those words and nothing else. Now the
+    /// bytes, sealed to this account first on Windows as always, go through <see cref="OwnerOnlyFile.Write"/>:
+    /// a temp of its own, created 0600 off Windows, flushed, and renamed over <paramref name="path"/> by a
+    /// rename a reader that shares delete does not refuse. A reader sees the old file or the new one and
+    /// nothing between them; a rename the platform refuses leaves the file as it was and throws.</para>
     /// </summary>
     public static void Write(string path, string value)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var plain = System.Text.Encoding.UTF8.GetBytes(value);
         var bytes = OperatingSystem.IsWindows()
             ? ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser)
             : plain;
-
-        var temp = $"{path}.{Guid.NewGuid():n}.tmp";
-        try
-        {
-            var create = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
-            if (!OperatingSystem.IsWindows()) create.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            using (var fs = new FileStream(temp, create))
-            {
-                fs.Write(bytes);
-                fs.Flush(flushToDisk: true);
-            }
-            File.Move(temp, path, overwrite: true);
-        }
-        finally
-        {
-            // Only after a failure is there anything here; the rename consumed it otherwise.
-            try { File.Delete(temp); } catch (Exception) { /* a temp the OS will not let go of is litter, not a fault */ }
-        }
+        OwnerOnlyFile.Write(path, bytes);
     }
 
     /// <summary>
     /// The secret at <paramref name="path"/>, or null when there is none or this account cannot unseal it.
-    /// Opened sharing write and delete, so a reader never stands in the way of <see cref="Write"/>'s rename
-    /// — on Windows a replace is refused while the old file is open without <see cref="FileShare.Delete"/>.
+    /// Opened sharing write and delete (<see cref="OpenToRead"/>). That is half of what lets
+    /// <see cref="Write"/> replace the file while a reader holds it, and measured alone it is nothing: on
+    /// windows-latest <c>MoveFileExW</c> refused the replace under a reader sharing read, write and delete
+    /// (run 37675951756). The other half is <see cref="OwnerOnlyFile.Write"/>'s POSIX rename, which a reader
+    /// that shares delete does not refuse.
     /// </summary>
     public static string? Read(string path)
     {
