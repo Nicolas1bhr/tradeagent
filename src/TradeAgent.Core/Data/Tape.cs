@@ -80,7 +80,8 @@ public sealed record TapeFetch
 ///
 /// <para>No natural key, no revision, no hash and no class: the store computes all four, so none of
 /// them can be a caller's claim. The natural key is <c>subject|source time in milliseconds</c> — the
-/// vendor's own time field for each series (<c>time</c>, <c>timestamp</c>, <c>fundingTime</c>) — and the
+/// vendor's own time field for each series (<c>time</c>, <c>timestamp</c>, <c>fundingTime</c>), or for
+/// Hyperliquid's contexts, which carry none, the <c>Date</c> its answer was sent with — and the
 /// payload is made canonical by the store whatever spacing or key order it arrives in.</para>
 /// </summary>
 public sealed record TapeItem(string Subject, DateTimeOffset SourceTime, string Payload);

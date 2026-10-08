@@ -96,8 +96,9 @@ first word of a line, never a reserved name, so a stored `const feature = 2` sti
 
 **The author writes the spec; the app computes the value and states the id.** Everything after the first `=` is one
 JSON object, read by the same parser `docs/CONTRACTS.md` "Features" describes: a `kind` (`latest`, `change`, `mean`,
-`min`, `max`, `pct-rank`), the `input` (`source`, `series`, `subject`, `field` — one of this build's Binance USDⓈ-M
-rows, one of its six symbols), `latency_s`, `max_age_s`, and the keys its kind needs. Every key is required, no
+`min`, `max`, `pct-rank`), the `input` (`source`, `series`, `subject`, `field` — one of this build's market rows,
+Binance USDⓈ-M's or Hyperliquid's contexts, and one of that row's own six subjects: `BTCUSDT` … on Binance's, `BTC` …
+on Hyperliquid's), `latency_s`, `max_age_s`, and the keys its kind needs. Every key is required, no
 other is accepted, and a spec the parser refuses is refused on its line with the parser's own words. A `#` starts
 a comment here as on every line, so a spec holding one is cut there and refused as the JSON it then is not. A
 feature line may be up to 512 characters; every other line is still held to 240. A program declares at most 8.

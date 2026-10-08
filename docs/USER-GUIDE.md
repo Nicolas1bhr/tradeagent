@@ -357,8 +357,9 @@ once to stop and once more to start again. **Nothing in it is ever overwritten**
 changes a reading TradeAgent already has, the change is kept as a new revision beside the first, so what
 TradeAgent knew at a given moment stays apart from what it learned later. A reading that arrived on time
 from its source's own address — Binance's futures host for this market data, OKX's EU domain for its
-announcements, GDELT's data host for the news below — is marked *live*; a late one, or one from anywhere
-else, is marked *archive* (a GDELT file fetched late can be marked *point-in-time* instead, below).
+announcements, Hyperliquid's API address for its figures, GDELT's data host for the news below — is marked
+*live*; a late one, or one from anywhere else, is marked *archive* (a GDELT file fetched late can be marked
+*point-in-time* instead, below).
 Like the live bars it cannot be caught up later — it is recorded only while TradeAgent is running — and
 it is context for research, never what a strategy is judged on. The AI cannot start, stop or change it.
 
@@ -371,6 +372,18 @@ every announcement each time it is read, and one that looks addressed to an AI i
 its text is withheld when the tape is read for the AI. The check catches the common tricks, not
 every one, and an announcement it does not flag is not thereby safe. Bybit's announcements are not recorded:
 TradeAgent could not read Bybit's terms for them.
+
+The same button also records **Hyperliquid's perpetual futures** for the same six coins — BTC, ETH, SOL, BNB,
+XRP and DOGE. Every five minutes TradeAgent asks Hyperliquid's public address for every coin's figures at once
+and keeps those six: each coin's open interest, funding rate, premium, mark, oracle and mid prices and the day's
+volume, whole, as Hyperliquid sent them. Hyperliquid's figures carry no time of their own, so each is stamped
+with the time Hyperliquid's answer gives, never with your computer's clock. These are totals for the whole
+market: nothing about any account, position or trade is asked for or kept. It moves about 21 MB a day and keeps
+about half a megabyte. Hyperliquid publishes no terms for its data; TradeAgent read the terms of its website on
+8 October 2026 and found nothing there against one such look every five minutes, kept on your computer for
+research — that is a reading, not legal advice, and it is no licence to trade on the figures. Deribit's
+volatility index and DefiLlama's figures are not recorded: their terms forbid collecting or copying their data,
+and TradeAgent waits for their written consent. Nor is Kalshi: its site would not let its terms be read.
 
 **Record GDELT news** is the fourth, and it is **on to start with** too. While TradeAgent is running it
 records news items about crypto from the GDELT Project (<https://www.gdeltproject.org/>), a free and open

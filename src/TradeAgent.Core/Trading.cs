@@ -378,10 +378,14 @@ public sealed class TradeAgentSettings
     /// <summary>
     /// WHETHER TRADEAGENT RECORDS THE MARKET'S CONTEXT AS IT ARRIVES — the tape (<c>U-tape-store</c>):
     /// Binance USDⓈ-M premium index with the live funding rate, open interest, the 5-minute long/short
-    /// and taker ratios and settled funding, for six symbols, into <c>state/tape.db</c>; and OKX's
+    /// and taker ratios and settled funding, for six symbols, into <c>state/tape.db</c>; OKX's
     /// announcements for EU users, page 1 once a minute (<c>U-tape-events</c>), every one screened at each
-    /// read and none of their links ever fetched. One switch for both: the second family is as public,
-    /// keyless and powerless as the first, and a switch of its own would be one more control to get wrong.
+    /// read and none of their links ever fetched; and Hyperliquid's public perpetual contexts for the same six
+    /// coins — open interest, funding, premium, mark, oracle and mid prices, the day's volume — every five minutes
+    /// from its API address, stamped with its answer's own <c>Date</c> (<c>U-tape-chain</c>; about 21 MB a day on
+    /// the wire, under 1 MB kept). One switch for all three: each later family is as public, keyless and powerless
+    /// as the first, and a switch of its own would be one more control to get wrong — GDELT's, at about 420 MB a
+    /// day, is the one that earned its own.
     ///
     /// <para>ON by default and ONE press, for the reasons <see cref="CollectLiveBars"/> is: it reads
     /// public endpoints with no key, grants nothing, changes no limit and touches no order — and it

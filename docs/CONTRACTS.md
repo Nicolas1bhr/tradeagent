@@ -2960,8 +2960,11 @@ with the live funding rate, open interest, the 5-minute long/short and taker rat
 six symbols into `state/tape.db` (`U-tape-store`; `docs/EDGE-FACTORY.md` § 4.1) — and OKX's announcements for
 EU users, page 1 once a minute, each screened at every read for text addressed to an automated reader
 (`U-tape-events`; § 4.2) — and GDELT's news items about crypto, from its fifteen-minute GKG files, with GDELT's
-own first-seen time, on a switch of their own (`U-tape-archive`). It places no order, holds no credential and
-reaches nothing that could: every request is an unauthenticated GET of a public endpoint.
+own first-seen time, on a switch of their own (`U-tape-archive`) — and Hyperliquid's public perpetual contexts for
+the same six coins every five minutes, stamped with its answer's own `Date` (`U-tape-chain`; § 4.1, "Hyperliquid
+public positioning"). It places no order, holds no credential and reaches nothing that could: every request is
+unauthenticated and asks a public endpoint — a GET, or, for Hyperliquid's one built-in series, a POST of the body
+this build wrote, as `application/json` with nothing else added.
 It is read — by every role over `data-tape`, in `data-list`, in `status` and in the owner's daily report — through a
 reader that cannot write it (`U-tape-read`, **THE READ** below).
 
@@ -2980,7 +2983,7 @@ the answer carried, this build's SHA-256 of the body, and the reason in words wh
 observation is a `tape_obs` row naming its fetch (a foreign key) with its subject, the vendor's source time,
 the instant it arrived, its natural key — `symbol|time` for the premium index and open interest,
 `symbol|timestamp` for the 5-minute series, `symbol|fundingTime` for funding, the vendor's time in
-milliseconds — its revision, and its payload: the vendor's item, whole, as canonical JSON (keys in ordinal
+milliseconds; `coin|Date` for Hyperliquid's contexts, which carry no time of their own — its revision, and its payload: the vendor's item, whole, as canonical JSON (keys in ordinal
 order, no whitespace, every decimal string and number exactly as served), at most 64 KB, with its SHA-256.
 
 **CLAIMED — APPEND-ONLY, REVISIONS KEPT.** A re-reading whose payload matches the latest revision writes
@@ -3000,7 +3003,7 @@ build's rows, never accepted from a caller: `O-LIVE` iff the fetch's source is a
 that row's built-in origin, and the reading arrived no later than the row's cadence plus its documented
 publication delay plus 30 s after its source time, and no earlier than the cadence plus 30 s before it (the
 delay is 300 s for OKX's announcements, whose answer OKX documents may lag ~5 minutes, and 0 for every market
-row); everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
+row, Hyperliquid's contexts included); everything else is `O-ARCH` — a late reading, any other origin (a test's loopback listener
 included), and every row `tape-sources.json` added, at any address. A later revision is never above the one
 before it. `O-PIT` is written only for a file of a vendor's checksummed archive (`AppendArchive`, below);
 `O-HIND` is never written here and stays in the column's `CHECK` for the unit that adds its writer.
@@ -3054,6 +3057,29 @@ kept. GDELT's terms ask every use to cite the GDELT Project and link to its site
 data card and the user guide show, and which every `data-tape` answer and `data-list` entry holding GDELT's rows carries,
 the CLI prints on its own line, and the daily report's tape line names whenever any of its rows are GDELT's.
 
+**CLAIMED — HYPERLIQUID'S CONTEXTS (`U-tape-chain`).** One built-in row, `hyperliquid-asset-ctxs`: `POST
+https://api.hyperliquid.xyz/info` with the body `{"type":"metaAndAssetCtxs"}` as `application/json` — no key, no
+account, no `dex` (the first perp dex) — every 300 s, once for every coin, read by the `hyperliquid-ctx-json`
+parser. The answer is `[meta, contexts]`, two lists zipped by index: item `i` is `meta.universe[i]` and
+`contexts[i]` merged whole — open interest, funding, premium, mark, oracle and mid prices, impact prices, the
+day's base and notional volume and the previous day's price, beside the coin's name, size decimals, leverage,
+margin table and any delisted flag — its subject the coin's `name`, kept to BTC ETH SOL BNB XRP DOGE (another coin
+is passed over), its source time the answer's `Date` header: the contexts carry no time, and this machine's clock
+is never used for one. The whole answer is a recorded failure that stores nothing when its root is not the
+two-element list, the universe or the contexts list is missing, the two differ in length, an entry of either is
+not an object, a universe entry does not name itself in a string `name`, a kept coin's entry and context share a
+key (or either names one twice), a kept coin is named twice, a kept coin's merged item passes 2 KB, the answer
+carried no `Date`, or none of the six is in it. An answer declared past 512 KB is refused unread, and one that
+runs past it is not buffered. `O-LIVE` by the one rule above: from the row's own origin within 300 + 30 s of the
+`Date`. Bounded by construction at 6 × 2 KB × 288 ≈ 3.5 MB kept a day and 151 MB on the wire; measured, about
+21 MB a day on the wire and 0.56 MB kept. The row's terms basis is Hyperliquid's Terms of Use for its Interface
+(last updated June 15, 2026: § 1.6 closes it to US, Ontario and sanctioned persons; § 3.1.8 bars bots only past
+reasonable usage, rate limits, denial of service or disruption; §§ 4.1–4.2 information only), read on
+2026-10-08: no API terms are published and no clause speaks to a data licence, storage, redistribution or credit,
+so the row carries no citation (`docs/RESEARCH-REQUIRED.md`, C5f). Nothing about any address, position or fill is
+asked. Deribit's DVOL, DefiLlama and Kalshi are not recorded: their terms, read on 2026-10-08, bar a stored copy
+or could not be read (C5f).
+
 **CLAIMED — THE SCREEN (`TapeScreen` v2).** Every observation read carries `Quarantine`: null, or the rule and
 the screen version, never the text — computed at that read from the payload's decoded property names and
 string values, their character references resolved since v2 (`&#x200B;`, `&lt;`, `&amp;lt;` — GDELT writes its titles
@@ -3068,7 +3094,7 @@ chat-role markup; a payload it cannot read is `unreadable`. A quarantined item i
 with its verdict. The rules are code: no
 file, setting or verb adds, removes or relaxes one. It reads every source, the market rows included.
 
-**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b), the announcement row and the archive row above:
+**THE SOURCES ARE DATA, AND THE FILE MAY ONLY ADD.** Five built-in market rows (`docs/RESEARCH-REQUIRED.md`, C5b), the announcement row, the archive row and the positioning row above:
 `binance-um-premium` (60 s, one call for every symbol, kept to the six), `binance-um-oi` (60 s per symbol),
 `binance-um-oi-5m` and `binance-um-ratios-5m` (300 s), `binance-um-funding` (900 s); the universe is BTCUSDT
 ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms note, doc URL and measurement.
@@ -3076,13 +3102,17 @@ ETHUSDT SOLUSDT BNBUSDT XRPUSDT DOGEUSDT; each row carries its cadence, terms no
 UNKEYED rows — no row type can hold a key and the collector sends none — at a cadence of 60 s to a day. A row
 naming a built-in id is refused in words and the built-in stands as shipped; so is one with a user name, query
 or fragment in its address, an unknown parser, the announcement parser (an exchange's own text must not
-enter the tape from wherever a file row points), the archive parser, an items path or id field, or a malformed series. An unreadable file stops only its own
+enter the tape from wherever a file row points), the archive parser, the asset-context parser (it POSTs a body
+this build wrote and stamps its rows with a host's header), an items path or id field, or a malformed series. A
+request body or a list of subjects is no part of the file: a row it adds is asked by GET and keeps the universe,
+whatever it names. An unreadable file stops only its own
 rows: unlike `sources.json`, the built-ins stand in for nothing it said, and a file anyone can corrupt must not
 be able to switch the tape off.
 
 **THE COLLECTOR.** One loop per row, the archive row excepted (it is `GdeltRecorder`'s). On the working path the next look is at the next multiple of the row's
 cadence plus `ForwardBars.LookOffset` (2 s), through `TickAlignment` — the one helper the forward collector
-also looks on; a request is on a 10 s leash; a body over 4 MB is refused; a failing row backs off on a doubling wait
+also looks on; a request is on a 10 s leash and is a GET, or a POST of a built-in series' own body; a body over
+4 MB is refused, Hyperliquid's over 512 KB; a failing row backs off on a doubling wait
 that stops at 5 minutes and is back on its cadence at the first look that works; a 429 or 418 ends the look at
 once. A redirect is not followed: the origin recorded is the origin that answered. A body that does not read,
 or an item about a symbol nobody asked for, is a recorded failure and never an observation. No first-start
@@ -3115,7 +3145,8 @@ it arrived; O-LIVE rows only are first-hand; not evaluation evidence", every cat
 rows of (GDELT's `gkg-batch` file records among them) and every series a source no row names any more was attempted under,
 each with the switch that records it, its rows, the arrival of its first and newest row in the order the tape wrote them,
 what its newest attempt got wrong (for GDELT's row series, the newest failure among the source's attempt series that are
-failing now), its symbols — or `subjects: null` and a `subject_key` sentence for digest-keyed series — and the source's
+failing now), its symbols — Hyperliquid's by its own coin names — or `subjects: null` and a `subject_key` sentence for
+digest-keyed series — and the source's
 `citation`; `tape: null` when no tape is open. **`status.tape`**, off the tape's own rows at the gateway's clock and absent
 when no tape is open or the read throws: `recording` (either switch's recorder recording), `rows_today` (rows that arrived
 since UTC midnight), `failures_last_hour` (attempts in the last hour that delivered nothing), `market_context` and
@@ -3191,7 +3222,14 @@ dataset's market time and nothing beyond it — a row stamped just outside says 
 forward bar after a freeze does; counts, names and arrival instants over a window are still served, and so is a refusal's
 own statement that the window is reached; a cutoff set while a read is in flight applies from the next read; an in-process
 read that takes no holdout (`Revisions`, `ObservationsOf`) is out of the gateway's reach, not out of the app's; and an
-agent running unconfined could still read `state/tape.db` itself, as (4) says.
+agent running unconfined could still read `state/tape.db` itself, as (4) says. (15) *What Hyperliquid's contexts do not
+say* (`U-tape-chain`): the chain's state at that second — the answer names no block, and its `Date` is when Hyperliquid's
+API answered, to the second, not when the figures were computed; anything per address — no address, position, fill,
+vault or leaderboard is asked; the oracle's inputs — `oraclePx` is Hyperliquid's figure, checked against nothing;
+completeness while the app is closed — Hyperliquid's monthly, requester-pays archive of these contexts is not fetched,
+so a gap stays one; that the two lists are aligned beyond their lengths — the zip is by index, nothing in a context
+names its coin, and only the prices of the answers measured on 2026-10-08 put each coin where its name is; and any
+licence for live use — the terms reading is research-only, on the day, and not legal advice.
 
 ## Features — `src/TradeAgent.Core/Features/FeatureSpec.cs`, `FeatureCanonical.cs`, `FeatureVersions.cs`, `FeatureEvaluator.cs`, `FeatureSeries.cs`, `FeatureLicence.cs`
 
@@ -3207,10 +3245,11 @@ each evaluated bar's close ("The backtest").
 change adds `mode` (`diff` or `ratio`) and `lookback_s` (1 s to 366 days), a window kind `window_s` (1 s to 366 days)
 and `min_rows` (1–50,000). Every key a kind has is required and no other is accepted. The parse is TOTAL — `FeatureSpec.Parse` never
 throws — and refuses in words: an unknown key or kind; a key named twice; a source that is not one of THIS BUILD's rows
-read by `binance-um-json` (the five Binance USDⓈ-M rows: OKX's announcements and GDELT's items are text, and a row
-`tape-sources.json` adds is unknown, so whether a spec parses is never a fact about a file an agent can write); an
-unknown series; a subject outside the tape's six symbols; a field that is not a field name, or is the series' time or
-symbol; a duration missing, negative, out of range, or not written as whole digits (`5.0`, `5e0` and `"5"` are refused).
+read by a market parser — `binance-um-json` (the five Binance USDⓈ-M rows) or, since `U-tape-chain`, `hyperliquid-ctx-json`
+(Hyperliquid's contexts): OKX's announcements and GDELT's items are text, and a row `tape-sources.json` adds is unknown,
+so whether a spec parses is never a fact about a file an agent can write; an unknown series; a subject outside that
+row's own six — `BTCUSDT` … `DOGEUSDT` on Binance's rows, `BTC` … `DOGE` on Hyperliquid's; a field that is not a field
+name, or is the series' time or symbol (Hyperliquid's `name`); a duration missing, negative, out of range, or not written as whole digits (`5.0`, `5e0` and `"5"` are refused).
 **Look-ahead cannot be written**: no key reads ahead of the instant, and a negative latency is refused as look-ahead.
 
 **ONE MEANING, ONE ID.** `FeatureCanonical` writes `feature/1` and then one fact a line, in a fixed order — `kind`,

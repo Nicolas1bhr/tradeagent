@@ -2915,7 +2915,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     static readonly string TapeListNote =
         "TAPE — recorded by TradeAgent as it arrived; O-LIVE rows only are first-hand; not evaluation evidence. "
         + "These are the market's context series — Binance USDⓈ-M premium index and funding, open interest and the "
-        + "long/short and taker ratios for six pairs, OKX's announcements for EU users, GDELT's news items about crypto — "
+        + "long/short and taker ratios for six pairs, Hyperliquid's perpetual contexts for the same six coins (open "
+        + "interest, funding, premium, prices and the day's volume, subjects BTC to DOGE by Hyperliquid's own names, every "
+        + "five minutes), OKX's announcements for EU users, GDELT's news items about crypto — "
         + "each with the owner's switch that records it ('switch'), its 'rows', the arrival of its first and newest row in "
         + "the order the tape wrote them, and what its newest attempt got wrong ('last_error', null when it delivered). "
         + "'subjects' lists a series' symbols; a series keyed by digests or record ids lists none and 'subject_key' says "
@@ -3211,7 +3213,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     static readonly string TapeNote =
         "TAPE — recorded by TradeAgent as it arrived. Each row is one reading of what the source said about one "
-        + "subject at one source time: 'source_time' is the vendor's own time, 'received_at' the instant it arrived "
+        + "subject at one source time: 'source_time' is the vendor's own time — for Hyperliquid's contexts, which carry "
+        + "none, the Date its answer was sent with — 'received_at' the instant it arrived "
         + "here, and 'revision' which reading of that datum it is — a re-reading that differed is a new revision beside "
         + "the first, and nothing is ever overwritten. 'evidence_class' is computed by TradeAgent from what it recorded: "
         + "O-LIVE rows only are first-hand, received on time from the source's own address; O-PIT is a vendor's "
