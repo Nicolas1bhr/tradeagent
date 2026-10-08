@@ -885,7 +885,10 @@ exists to show you.
 You clear each line the same way you clear any unconfirmed order: type what you saw into the box —
 it says *"What you saw in ATAS — required"*, and the buttons stay switched off until you have — then
 press the button that matches. Editing what you typed switches the buttons off again, because the
-words are the assertion. Trading resumes when the last line is cleared.
+words are the assertion. Trading resumes when the last line is cleared. A close the platform took and
+has not finished offers three answers: **Our record is right — it is working**, **It is no longer
+working at your platform** (it was cancelled there, even if part of it filled first) and **It was
+filled**.
 
 **A second press while lines are still open is refused**, with the time of the first one: *"close-all
 sent at 14:32; resolve it first."* There is no retry button, and there is no press that a failure can
@@ -914,8 +917,12 @@ says decides that instrument:
 - **It filled** — nothing is sent for that instrument this time: your position has changed, and ATAS's
   own position may not show the fill yet. Press again; the next press closes what is left.
 - **It belongs to another press** — the loss budget's close, say, or your own earlier Close all — nothing
-  is sent beside it. Answer it on the Dashboard once it has filled or you have cancelled it in ATAS, then
-  press again. Close all never closes beside another press's order.
+  is sent beside it. Answer it on the Dashboard once it has filled or you have cancelled it in ATAS —
+  **It was filled**, or **It is no longer working at your platform** — then press again. If you had
+  already answered it as still working, Close all puts it back on the Dashboard for that answer. Where
+  your platform can show its order history and still lists that order working, your answer is turned
+  down and nothing is recorded, because an order still working there can still fill. Close all never
+  closes beside another press's order.
 - **ATAS cannot say what became of it** — that instrument is left alone and its line says so by name,
   with what a second press would do: *"Answer this press on the Dashboard and press Close all again, and
   it closes ES over that order: should it still be working and fill, ES ends the other way by up to 2."*
