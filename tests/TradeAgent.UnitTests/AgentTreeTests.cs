@@ -25,7 +25,9 @@ namespace TradeAgent.Tests.Unit;
 /// <see cref="CliAgentRuntime"/>, meter and loop. The turn is a <c>/bin/sh</c> script that writes the pid
 /// of every process it starts; "dead" is the pid gone or reused — the start time read when the pid was
 /// recorded no longer matches. The launcher is deployed as <c>ContainmentTests.DeployLauncher</c>
-/// deploys it: a shim that runs the built <c>trade.dll</c> with the flag.</para>
+/// deploys it: a shim that runs the built <c>trade.dll</c> with the flag. On Windows the job's arm runs
+/// wherever a test is not about groups, sessions or the launcher: the turn is a PowerShell probe writing its
+/// pids, and "dead" is the pid gone or carrying another start.</para>
 ///
 /// <para><b>Cleanup kills only what this test recorded</b>, by pid, and only while that pid still has the
 /// start time it was recorded with — never by name, which is the same proof the product's teardown keeps.</para>
@@ -85,13 +87,12 @@ public class AgentTreeTests : IDisposable
     /// <summary>
     /// (a) PAUSE, WITH THE LAUNCHER — the product's state. Every process of the turn is gone within five
     /// seconds of Pause, including (d) the child that made itself its own process group and the one that
-    /// made itself its own session, which the group kill orphaned and left running.
+    /// made itself its own session, which the group kill orphaned and left running. On Windows the same
+    /// test is the job's arm: a PowerShell turn, its child and a grandchild whose parent has exited.
     /// </summary>
     [Fact]
     public async Task A_paused_turn_held_in_its_own_session_ends_its_whole_tree()
     {
-        if (OperatingSystem.IsWindows()) return;   // the Unix arm; Windows' job is covered beside it
-
         var turn = await HungTurn(launcher: true);
         try
         {
@@ -128,8 +129,6 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task A_paused_research_turn_ends_its_whole_tree()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var turn = await HungTurn(launcher: true, role: CouncilRoles.Research);
         try
         {
@@ -145,8 +144,6 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task A_stopped_turn_ends_its_whole_tree()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var turn = await HungTurn(launcher: true);
         try
         {
@@ -166,18 +163,27 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task A_finished_turns_leftover_ends_with_its_turn()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var dir = NewDir("finished");
         // The turn ends by itself, exit 0 — once the test has recorded it, so the leftover is known by pid
         // and start before anything could end it.
-        var body =
-            $"echo $$ > \"{dir}/leader.pid\"\n" +
-            "/bin/sleep 905 > /dev/null 2>&1 &\n" +
-            $"echo $! > \"{dir}/leftover.pid\"\n" +
-            "echo 'Nothing needs doing this turn.'\n" +
-            $"while [ ! -f \"{dir}/go\" ]; do /bin/sleep 0.1; done\n" +
-            "exit 0\n";
+        var body = OperatingSystem.IsWindows()
+            ? $$"""
+              $D = '{{dir}}'
+              Set-Content -Path (Join-Path $D 'leader.pid') -Value $PID
+              $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
+              $left = Start-Process -FilePath $ping -ArgumentList '-n','905','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'leftover.out')
+              Set-Content -Path (Join-Path $D 'leftover.pid') -Value $left.Id
+              'Nothing needs doing this turn.'
+              while (-not (Test-Path (Join-Path $D 'go'))) { Start-Sleep -Milliseconds 100 }
+              exit 0
+
+              """
+            : $"echo $$ > \"{dir}/leader.pid\"\n" +
+              "/bin/sleep 905 > /dev/null 2>&1 &\n" +
+              $"echo $! > \"{dir}/leftover.pid\"\n" +
+              "echo 'Nothing needs doing this turn.'\n" +
+              $"while [ ! -f \"{dir}/go\" ]; do /bin/sleep 0.1; done\n" +
+              "exit 0\n";
         var turn = await Start(dir, body, launcher: true, role: null, waitFor: ["leader.pid", "leftover.pid"]);
         try
         {
@@ -278,8 +284,6 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task The_apps_dispose_mid_turn_ends_the_turns_whole_tree()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var turn = await HungTurn(launcher: true);
         try
         {
@@ -400,8 +404,6 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task A_paused_turns_row_ends_and_its_presence_ends_only_after_its_tree_is_dead()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var turn = await HungTurn(launcher: true);
         try
         {
@@ -451,18 +453,16 @@ public class AgentTreeTests : IDisposable
     [Fact]
     public async Task A_process_outside_the_tree_running_the_turns_own_command_survives_the_pause()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var outsideDir = NewDir("outside");
         var turn = await HungTurn(launcher: true, before: sh =>
         {
             // The turn's own script, as a process of the test's: it writes its pids into a folder of its own.
-            var psi = new ProcessStartInfo("/bin/sh")
+            var psi = new ProcessStartInfo(OperatingSystem.IsWindows() ? PowerShell : "/bin/sh")
             {
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
             };
-            psi.ArgumentList.Add(sh);
+            foreach (var a in OperatingSystem.IsWindows() ? RunScript(sh) : [sh]) psi.ArgumentList.Add(a);
             psi.ArgumentList.Add("outside");
             psi.Environment["TREE_DIR"] = outsideDir;
             _ours.Add(Process.Start(psi)!);
@@ -684,7 +684,7 @@ public class AgentTreeTests : IDisposable
     /// itself its own session (sleep 904, perl setsid); and then waits on a foreground sleep 900 that
     /// holds the turn's stdout. <c>TREE_DIR</c> moves the pid files, so the guard can run the same script.
     /// </summary>
-    static string HungBody(string dir, bool orphan) =>
+    static string HungBody(string dir, bool orphan) => OperatingSystem.IsWindows() ? HungPowerShell(dir) :
         $"D=\"${{TREE_DIR:-{dir}}}\"\n" +
         "echo $$ > \"$D/leader.pid\"\n" +
         "/bin/sleep 901 > /dev/null 2>&1 &\n" +
@@ -699,9 +699,44 @@ public class AgentTreeTests : IDisposable
         "echo $! > \"$D/fg.pid\"\n" +
         "wait $!\n";
 
-    static string[] HungFiles(bool orphan) => orphan
-        ? ["leader.pid", "child.pid", "orphan.pid", "ownpgrp.pid", "ownsess.pid", "fg.pid"]
+    static string[] HungFiles(bool orphan) =>
+        OperatingSystem.IsWindows() ? ["leader.pid", "child.pid", "orphan.pid"]
+        : orphan ? ["leader.pid", "child.pid", "orphan.pid", "ownpgrp.pid", "ownsess.pid", "fg.pid"]
         : ["leader.pid", "child.pid", "ownpgrp.pid", "ownsess.pid", "fg.pid"];
+
+    /// <summary>
+    /// THE JOB'S ARM: the same turn on Windows, as PowerShell — a <c>.cmd</c> would be run by <c>cmd.exe</c>,
+    /// which parses the Situation the turn is handed as a command line of its own (ResumeOnStartTests). The
+    /// leader starts a plain child (ping 901) and a middle PowerShell that starts a grandchild (ping 902) and
+    /// exits, so the grandchild's parent is gone; then it sleeps. Every leaf's output goes to a file, so only
+    /// the leader holds the turn's stdout. Groups and sessions are Unix's; the job holds all three.
+    /// </summary>
+    static string HungPowerShell(string dir) => $$"""
+        $D = if ($env:TREE_DIR) { $env:TREE_DIR } else { '{{dir}}' }
+        Set-Content -Path (Join-Path $D 'leader.pid') -Value $PID
+        $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
+        $child = Start-Process -FilePath $ping -ArgumentList '-n','901','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'child.out')
+        Set-Content -Path (Join-Path $D 'child.pid') -Value $child.Id
+        $middle = Join-Path $PSScriptRoot 'middle.ps1'
+        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"' + $middle + '"'),('"' + $D + '"') -NoNewWindow -RedirectStandardOutput (Join-Path $D 'middle.out')
+        'working on it'
+        Start-Sleep -Seconds 900
+
+        """;
+
+    /// <summary>The middle process of the Windows probe: starts the grandchild, writes its pid, and exits.</summary>
+    const string Middle = """
+        param($D)
+        $ping = Join-Path $env:SystemRoot 'System32\ping.exe'
+        $o = Start-Process -FilePath $ping -ArgumentList '-n','902','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $D 'orphan.out')
+        Set-Content -Path (Join-Path $D 'orphan.pid') -Value $o.Id
+
+        """;
+
+    static string PowerShell => Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+
+    static string[] RunScript(string script) =>
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
 
     async Task<Turn> HungTurn(bool launcher, string? role = null, bool orphan = true, Action<string>? before = null)
     {
@@ -717,16 +752,27 @@ public class AgentTreeTests : IDisposable
     async Task<Turn> Start(string dir, string body, bool launcher, string? role, string[] waitFor,
         Action<string>? before = null, string[]? mayHaveExited = null)
     {
-        if (launcher) DeployLauncher();
-        else if (File.Exists(LauncherPath)) File.Delete(LauncherPath);
-        Assert.Equal(launcher, ProcessContainment.DefaultLauncher() is not null);
+        // Windows holds a turn in its job and needs no launcher; the no-launcher arm is Unix's alone.
+        if (!OperatingSystem.IsWindows())
+        {
+            if (launcher) DeployLauncher();
+            else if (File.Exists(LauncherPath)) File.Delete(LauncherPath);
+            Assert.Equal(launcher, ProcessContainment.DefaultLauncher() is not null);
+        }
 
         var sh = WriteScript(dir, body);
-        RuntimeCatalog.SaveOverrides([new RuntimeManifest
-        {
-            Id = Probe, DisplayName = "Tree probe", Executable = sh,
-            VersionArgs = ["version"], ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"]
-        }]);
+        RuntimeCatalog.SaveOverrides([OperatingSystem.IsWindows()
+            ? new RuntimeManifest
+            {
+                Id = Probe, DisplayName = "Tree probe", Executable = PowerShell,
+                VersionArgs = [.. RunScript(sh), "version"], ExecArgs = [.. RunScript(sh), "{prompt}"],
+                ResumeArgs = [.. RunScript(sh), "{prompt}"]
+            }
+            : new RuntimeManifest
+            {
+                Id = Probe, DisplayName = "Tree probe", Executable = sh,
+                VersionArgs = ["version"], ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"]
+            }]);
 
         var path = Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db");
         var db = new Database(path);
@@ -799,7 +845,16 @@ public class AgentTreeTests : IDisposable
     }
 
     /// <summary>The recorded process, still running: the pid there and carrying the start time it was recorded with.</summary>
-    static bool Alive(Member m) => Posix.Alive(m.Pid) && StartOf(m.Pid) == m.Start;
+    static bool Alive(Member m)
+    {
+        if (!OperatingSystem.IsWindows()) return Posix.Alive(m.Pid) && StartOf(m.Pid) == m.Start;
+        try
+        {
+            using var p = Process.GetProcessById(m.Pid);
+            return !p.HasExited && p.StartTime == m.Start;
+        }
+        catch (Exception) { return false; }
+    }
 
     static List<Member> Living(IEnumerable<Member> members) => [.. members.Where(Alive)];
 
@@ -832,6 +887,7 @@ public class AgentTreeTests : IDisposable
     /// <summary>What <c>ps</c> says of the recorded pids, for a red that has to say which process is which.</summary>
     static string Ps(IEnumerable<Member> members)
     {
+        if (OperatingSystem.IsWindows()) return "\n" + string.Join(", ", members.Select(m => $"{m.Name}={m.Pid}"));
         try
         {
             var psi = new ProcessStartInfo("/bin/ps") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -879,6 +935,7 @@ public class AgentTreeTests : IDisposable
     /// <summary>The launcher as <c>ContainmentTests.DeployLauncher</c> deploys it: the built trade CLI, run with the flag.</summary>
     static void DeployLauncher()
     {
+        if (OperatingSystem.IsWindows()) return;   // the job needs no launcher
         Directory.CreateDirectory(Paths.Bin);
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
         if (string.IsNullOrWhiteSpace(host) || !File.Exists(host)) host = Environment.ProcessPath;
@@ -889,6 +946,14 @@ public class AgentTreeTests : IDisposable
 
     static string WriteScript(string dir, string body)
     {
+        if (OperatingSystem.IsWindows())
+        {
+            var ps1 = Path.Combine(dir, "probe.ps1");
+            File.WriteAllText(ps1, "if ($args.Count -gt 0 -and $args[0] -eq 'version') { 'tree-probe 1.0.0'; exit 0 }\r\n" + body);
+            File.WriteAllText(Path.Combine(dir, "middle.ps1"), Middle);
+            return ps1;
+        }
+
         var sh = Path.Combine(dir, "probe.sh");
         File.WriteAllText(sh, "#!/bin/sh\n[ \"$1\" = \"version\" ] && { echo 'tree-probe 1.0.0'; exit 0; }\n" + body);
         if (!OperatingSystem.IsWindows())
