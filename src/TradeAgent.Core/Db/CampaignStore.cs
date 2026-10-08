@@ -309,8 +309,19 @@ public sealed record VerdictRow(
     DateTimeOffset RequestedAt,
     DateTimeOffset HoldoutFrom);
 
-/// <summary>What charging a verdict did, and where the campaign's LINEAGE now stands.</summary>
+/// <summary>
+/// What charging a verdict did, and where the campaign now stands: <see cref="Spent"/> is
+/// <see cref="CampaignStore.JudgementsSpent"/> — every judgement over the months it holds, its lineage's and every other
+/// campaign's alike.
+/// </summary>
 public sealed record VerdictCharged(bool Ok, string Why, int Spent, int Budget);
+
+/// <summary>
+/// ANOTHER CAMPAIGN WHOSE JUDGEMENTS READ THE SAME HELD MONTHS AS ONE CAMPAIGN'S — not of its renewal lineage — with its
+/// dataset as the ledger holds it now (null when it holds none), and the judgements it has taken over those months
+/// (<c>U-holdout-campaign</c>, rule 2). What the owner's press and a spent judgement budget name.
+/// </summary>
+public sealed record CampaignOverMonths(CampaignRow Campaign, DatasetRecord? Dataset, int Judgements);
 
 /// <summary>
 /// THE CAMPAIGN LEDGER — the referee's protocol, and the app is the only writer.
@@ -991,12 +1002,17 @@ public sealed class CampaignStore(Database db)
     // ---- verdicts ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// HOW MANY VERDICTS HAVE BEEN CHARGED ACROSS THIS CAMPAIGN'S WHOLE RENEWAL LINEAGE.
+    /// HOW MANY VERDICTS HAVE BEEN CHARGED ACROSS THIS CAMPAIGN'S WHOLE RENEWAL LINEAGE — and no other campaign's.
     ///
     /// <para>The lineage and not the campaign, and that is the point of <c>renewed_from</c>: renewal buys
     /// ATTEMPTS, and it must not buy holdout access (<c>docs/COUNCIL.md</c>:132, "campaign renewal
     /// authorised by code so no new campaign resets holdout access"). Every verdict already taken read the
     /// same months, so every verdict already taken still counts.</para>
+    ///
+    /// <para><b>It is no longer the judgement budget's count</b> (<c>U-holdout-campaign</c>): that is
+    /// <see cref="JudgementsSpent"/>, which also counts every other campaign's judgements over the same months. One
+    /// question still wants this one — <c>Referee</c>'s legacy cost-model pin, "was THIS lineage already judged
+    /// frictionless", because another campaign's verdicts were judged under that campaign's own pin.</para>
     /// </summary>
     public int VerdictsInLineage(long campaignId)
     {
@@ -1010,6 +1026,130 @@ public sealed class CampaignStore(Database db)
             return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
         });
     }
+
+    /// <summary>
+    /// THE FINAL JUDGEMENTS THIS CAMPAIGN HAS SPENT: every verdict, of any campaign and any pair, whose read span overlaps
+    /// the span this campaign's own judgements read — its renewal lineage's included (<c>U-holdout-campaign</c>, rule 2;
+    /// seat A's decision of 2026-10-09).
+    ///
+    /// <para><b>Why across campaigns.</b> A judgement reads the held months themselves — <c>Referee.Verdict</c> runs from
+    /// the cutoff on its row to the close of its dataset's last bar — and its answer tells the research process something
+    /// about those months, whichever campaign took it. A cutoff holds market time for every pair, so a second download of
+    /// the same months held back by a second press opens a second campaign over months already judged: counted over its
+    /// own lineage alone, its budget started untouched and one version stood judged twice over one held hour, "1 of 3"
+    /// each time (the survey's probe, S.5-S.9). A second press over held months is TOLD and COUNTED — never refused,
+    /// because a REJECTED dataset's window stays held (<c>TapeHoldout.WindowsOf</c>, "whatever its state") and a refusal
+    /// would leave its months nothing but a dead end.</para>
+    ///
+    /// <para><b>The spans, from recorded facts only.</b> A verdict's read span is <c>[holdout_from on its row, the close
+    /// of its campaign's dataset's last bar)</c>; this campaign's is the same from its own row's cutoff. A dataset whose
+    /// last bar or bar length this build cannot read spans with no end — refused, never guessed short — and a span that
+    /// ends where it starts reads nothing, so it overlaps nothing; its lineage's verdicts count whatever their spans.</para>
+    /// </summary>
+    public int JudgementsSpent(long campaignId) => db.Read(_ =>
+    {
+        if (ById(campaignId) is not { } campaign) return 0;
+
+        var lineage = Lineage(campaignId).ToHashSet();
+        var closes = new Dictionary<long, DateTimeOffset?>();
+        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+
+        return JudgementSpans(closes).Count(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until));
+    });
+
+    /// <summary>
+    /// EVERY OTHER CAMPAIGN OVER THE MONTHS THIS ONE JUDGES — not this campaign and not its renewal lineage — oldest
+    /// first, each with its dataset and the judgements it has taken over them: a campaign whose own read span overlaps
+    /// this one's, counting its verdicts whose spans do (<see cref="JudgementsSpent"/>). What the owner's press names, and
+    /// what a spent judgement budget names.
+    /// </summary>
+    public IReadOnlyList<CampaignOverMonths> OverTheSameMonths(long campaignId) => db.Read(_ =>
+    {
+        if (ById(campaignId) is not { } campaign) return (IReadOnlyList<CampaignOverMonths>)[];
+
+        var lineage = Lineage(campaignId).ToHashSet();
+        var closes = new Dictionary<long, DateTimeOffset?>();
+        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+        var judged = JudgementSpans(closes);
+        var datasets = new DatasetStore(db);
+
+        var shared = new List<CampaignOverMonths>();
+        foreach (var other in All().OrderBy(c => c.Id))
+        {
+            if (lineage.Contains(other.Id)) continue;
+            if (!Overlaps(other.HoldoutFrom, Close(other.HoldoutDatasetId, closes), from, until)) continue;
+
+            shared.Add(new CampaignOverMonths(other, datasets.ById(other.HoldoutDatasetId),
+                judged.Count(v => v.CampaignId == other.Id && Overlaps(v.From, v.Until, from, until))));
+        }
+
+        return (IReadOnlyList<CampaignOverMonths>)shared;
+    });
+
+    /// <summary>Every verdict ever charged, as the market time it read: its campaign, its row's cutoff, its dataset's close.</summary>
+    List<(long CampaignId, DateTimeOffset From, DateTimeOffset? Until)> JudgementSpans(Dictionary<long, DateTimeOffset?> closes)
+    {
+        var rows = new List<(long CampaignId, DateTimeOffset From, long Dataset)>();
+        using (var c = db.Cmd("""
+            SELECT v.campaign_id, v.holdout_from, c.holdout_dataset_id
+              FROM strategy_verdict v JOIN strategy_campaign c ON c.id = v.campaign_id
+            """))
+        using (var r = c.ExecuteReader())
+            while (r.Read())
+                rows.Add((r.GetInt64(0), Sql.Time(r.GetString(1)), r.GetInt64(2)));
+
+        return [.. rows.Select(v => (v.CampaignId, v.From, Close(v.Dataset, closes)))];
+    }
+
+    /// <summary>
+    /// THE CLOSE OF A HOLDOUT DATASET'S LAST BAR — where a judgement over it stops reading — or null for no end: a dataset
+    /// this ledger does not hold, one that records no last bar, or a bar length this build cannot read. Asked once per
+    /// dataset per question, through <paramref name="closes"/>.
+    /// </summary>
+    DateTimeOffset? Close(long datasetId, Dictionary<long, DateTimeOffset?> closes)
+    {
+        if (closes.TryGetValue(datasetId, out var known)) return known;
+
+        var close = new DatasetStore(db).ById(datasetId) is { LastBar: { } last } set
+                    && BarLength(set.Interval) is { } bar && last <= DateTimeOffset.MaxValue - bar
+            ? last + bar
+            : (DateTimeOffset?)null;
+        closes[datasetId] = close;
+        return close;
+    }
+
+    /// <summary>
+    /// WHAT THE OWNER'S PRESS SAYS ABOUT THE CAMPAIGN IT OPENED, in his words: what it is measured against, and — when other
+    /// campaigns already hold the same months — each of them, the judgements each has taken over them, and how many of this
+    /// campaign's are therefore spent already (<c>U-holdout-campaign</c>, rule 2). A static so the sentence the card prints
+    /// is the sentence a test reads; <paramref name="spent"/> is <see cref="JudgementsSpent"/> and
+    /// <paramref name="others"/> <see cref="OverTheSameMonths"/>, both read after the press.
+    /// </summary>
+    public static string PressNote(CampaignRow campaign, int spent, IReadOnlyList<CampaignOverMonths> others)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+        ArgumentNullException.ThrowIfNull(others);
+
+        var note = $"Campaign {campaign.Id} is measured against them: {campaign.TrialBudget:N0} research runs and "
+            + $"{campaign.VerdictBudget:N0} final judgements, and the standard it will be judged by is fixed as of now.";
+        if (others.Count == 0) return note;
+
+        return note + " The same months are already held back by "
+            + string.Join("; ", others.Select(o => $"campaign {o.Campaign.Id} ({Named(o)}), which has taken "
+                + (o.Judgements switch { 0 => "no judgement", 1 => "1 judgement", var n => $"{n} judgements" }) + " over them"))
+            + ", so "
+            + (spent == 0
+                ? $"none of campaign {campaign.Id}'s {campaign.VerdictBudget:N0} final judgements is spent yet"
+                : $"{spent:N0} of campaign {campaign.Id}'s {campaign.VerdictBudget:N0} final judgements "
+                  + (spent == 1 ? "is" : "are") + " already spent")
+            + ": a judgement over months already held counts against every campaign that holds them, and research over "
+            + "them is charged to each — a fresh download buys no fresh look at them. To judge strategies on months no "
+            + "judgement has read, hold back OTHER months.";
+    }
+
+    /// <summary>A campaign's dataset as a refusal or a note names it: its pair, interval and version, or its id when the ledger holds none.</summary>
+    static string Named(CampaignOverMonths over) =>
+        over.Dataset is { } set ? $"{set.Pair} {set.Interval} {set.Version}" : $"dataset {over.Campaign.HoldoutDatasetId}";
 
     /// <summary>Every verdict charged against this campaign alone, oldest first.</summary>
     public IReadOnlyList<VerdictRow> Verdicts(long campaignId) => db.Read(_ =>
@@ -1053,7 +1193,9 @@ public sealed class CampaignStore(Database db)
         if (ById(campaignId) is not { } campaign)
             return new VerdictCharged(false, $"there is no campaign {campaignId}.", 0, 0);
 
-        var spent = VerdictsInLineage(campaignId);
+        // EVERY JUDGEMENT OVER THE MONTHS THIS CAMPAIGN HOLDS, its lineage's and every other campaign's alike
+        // (U-holdout-campaign, rule 2), read inside the write that adds one.
+        var spent = JudgementsSpent(campaignId);
 
         if (VerdictCharged(campaignId, versionId))
             return new VerdictCharged(true, "", spent, campaign.VerdictBudget);
@@ -1072,13 +1214,7 @@ public sealed class CampaignStore(Database db)
                 spent, campaign.VerdictBudget);
 
         if (spent >= campaign.VerdictBudget)
-            return new VerdictCharged(false,
-                $"this campaign's lineage has spent all {campaign.VerdictBudget} of its final judgements, so "
-                + "this one is refused BEFORE anything is computed over the held-back bars. Every verdict "
-                + "leaks: its answer tells the research process something about months it was never shown, "
-                + "which is why the number is small and why it is counted across every renewal of this "
-                + "campaign rather than per campaign — a renewal buys attempts and never holdout access. "
-                + "What is left is a new holdout, which the account owner sets in TradeAgent's own window.",
+            return new VerdictCharged(false, JudgementsGone(campaign, OverTheSameMonths(campaignId)),
                 spent, campaign.VerdictBudget);
 
         using var c = db.Cmd("""
@@ -1091,6 +1227,24 @@ public sealed class CampaignStore(Database db)
 
         return new VerdictCharged(true, "", spent + 1, campaign.VerdictBudget);
     });
+
+    /// <summary>
+    /// THE SENTENCE A SPENT JUDGEMENT BUDGET ANSWERS WITH: counted across every renewal and every other campaign over the
+    /// same months — each named, with what it took — and the way on, which is a holdout over OTHER months, because a fresh
+    /// copy of the same months shares these judgements (<c>U-holdout-campaign</c>, rule 2).
+    /// </summary>
+    static string JudgementsGone(CampaignRow campaign, IReadOnlyList<CampaignOverMonths> others) =>
+        $"campaign {campaign.Id} has spent all {campaign.VerdictBudget} of its final judgements, so this one is refused "
+        + "BEFORE anything is computed over the held-back bars. Every verdict leaks: its answer tells the research process "
+        + "something about months it was never shown, which is why the number is small and why it is counted across every "
+        + "renewal of this campaign — a renewal buys attempts and never holdout access — and across every judgement any "
+        + "other campaign has taken over the same held months, whichever download of them it holds"
+        + (others.Count == 0
+            ? ""
+            : " (" + string.Join("; ", others.Select(o => $"campaign {o.Campaign.Id} over dataset {o.Campaign.HoldoutDatasetId} "
+                + $"({Named(o)}) has taken {o.Judgements}")) + ")")
+        + ". What is left is a holdout over OTHER months, which the account owner sets in TradeAgent's own window: a fresh "
+        + "copy of the history held back over these same months shares these judgements.";
 
     /// <summary>A short list of campaign ids for an IN clause. They are longs this code read itself.</summary>
     static string Ids(IReadOnlyList<long> ids) =>

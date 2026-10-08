@@ -133,7 +133,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// ASKS FOR A FINAL VERDICT ON ONE VERSION, AND CHARGES IT BEFORE ANYTHING RUNS.
     ///
     /// <para>The order is the guarantee: the campaign is read, the version is checked to exist, the
-    /// lineage's verdicts are counted, and the charge is WRITTEN — all before a
+    /// judgements over its months are counted — its lineage's and every other campaign's over the same
+    /// held months (<c>CampaignStore.JudgementsSpent</c>) — and the charge is WRITTEN — all before a
     /// <see cref="BarAudience"/> that may read the holdout comes back. Over budget, nothing is written
     /// and nothing is returned that could read a bar.</para>
     ///
@@ -178,7 +179,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
             return VerdictCharge.No(campaignId, versionId,
                 $"this installation has never accepted a version {versionId}, so there is nothing to judge. A "
                 + "verdict is about a program TradeAgent has parsed and measured, named by the program's own "
-                + "hash.", _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
+                + "hash.", _campaigns.JudgementsSpent(campaignId), campaign.VerdictBudget);
 
         // THE PROGRAM MUST TRADE THE HOLDOUT DATASET'S INSTRUMENT, and that is settled before the budget
         // is touched: a verdict on a program about another instrument would score it on bars it does not
@@ -189,7 +190,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
             && InstrumentMatch.Refusal(program, holdout) is { } mismatch)
             return VerdictCharge.No(campaignId, versionId,
                 $"version {Short(versionId)}: {mismatch} No verdict was charged.",
-                _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
+                _campaigns.JudgementsSpent(campaignId), campaign.VerdictBudget);
 
         // A VERSION THAT READS FEATURES IS JUDGED ON THEM OR NOT AT ALL, and where no tape is open that is settled
         // before the budget is touched: the holdout run would be refused for want of its values, after the scarcest
@@ -197,7 +198,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         if (StrategyParser.Parse(version.Source).Program is { Features.Count: > 0 } reads && tape is null)
             return VerdictCharge.No(campaignId, versionId,
                 $"version {Short(versionId)}: {Backtest.NoTape(reads)} No verdict was charged.",
-                _campaigns.VerdictsInLineage(campaignId), campaign.VerdictBudget);
+                _campaigns.JudgementsSpent(campaignId), campaign.VerdictBudget);
 
         // THE CHARGE AND THE JUDGE IT BUYS. Written here, in one transaction, before the audience below
         // exists — and the pin of a legacy campaign lands only with a charge that was taken.
@@ -208,7 +209,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
             var pinned = JudgeOf(current);
             if (pinned.Model is not { } model)
-                return (new VerdictCharged(false, pinned.Why, _campaigns.VerdictsInLineage(campaignId),
+                return (new VerdictCharged(false, pinned.Why, _campaigns.JudgementsSpent(campaignId),
                     current.VerdictBudget), null);
 
             var result = _campaigns.ChargeVerdict(campaignId, versionId, _now());
@@ -245,7 +246,9 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
         // OPENED BEFORE SCHEMA 27, AND A VERDICT WAS ALREADY CHARGED IN ITS LINEAGE: every such verdict
         // was judged frictionless, so this one is too, and re-asking about the version already paid for
-        // cannot quietly re-score it under a different judge.
+        // cannot quietly re-score it under a different judge. THE LINEAGE'S OWN COUNT, and the one place
+        // that is still the question (U-holdout-campaign): another campaign's verdicts over the same months
+        // were judged under that campaign's own pin, and say nothing about which judge this lineage used.
         if (_campaigns.VerdictsInLineage(campaign.Id) > 0)
             return VenueCostModelResolved.Yes(VenueCostModel.LegacyFrictionless);
 
