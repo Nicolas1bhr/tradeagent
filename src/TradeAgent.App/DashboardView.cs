@@ -841,6 +841,16 @@ sealed class DashboardPage
     /// DIFFERENT outcome on purpose: that is the stream and the platform disagreeing, something to investigate rather than to
     /// overwrite. A live one the platform answered WORKING is the same agreement.</para>
     ///
+    /// <para><b>Except a press's own close the platform answered and has not finished</b>
+    /// (<see cref="TradingGateway.IsPressRecord"/>, <see cref="TradingGateway.AnsweredAndUnfinished"/>): it is offered "It is
+    /// no longer working at your platform" (CANCELLED) and "It was filled" (FILLED) beside its own answer. Nothing but the
+    /// owner settles a press's row — the reconciler, the in-flight sweep and the press's own settle all leave it to him — so
+    /// a close whose platform update was lost after he answered "it is working" had no answer that could end it, and every
+    /// Close all waited on it for good. Not "It did not fill": a partly filled close did, and the fill it carries stays on
+    /// the record. Both outcomes are reachable from all four states, and the route puts them under the platform's live-order
+    /// veto, so a close the platform still lists live is refused there rather than answered away. Every other row in those
+    /// states keeps its one answer.</para>
+    ///
     /// <para><b>Anything else</b> — UNKNOWN, RECONCILING, a stranded DISPATCHING, a refused leg's CREATED — is offered FILLED
     /// and CANCELLED, and nothing else, because they are the only two outcomes <c>OrderStateMachine</c> lets
     /// <c>ForceResolve</c> reach from EVERY state a flagged request can hold. "Still working" is the obvious third answer and
@@ -854,8 +864,17 @@ sealed class DashboardPage
         if (SpokenByThePlatform(state))
         {
             var tense = OrderStateMachine.IsTerminal(state) ? "was" : "is";
-            return [($"Our record is right — it {tense} {Word(state)}",
-                $"Confirm: I checked in ATAS and this order {tense} {Word(state)}", state)];
+            (string, string, ExecutionState) itsOwn = ($"Our record is right — it {tense} {Word(state)}",
+                $"Confirm: I checked in ATAS and this order {tense} {Word(state)}", state);
+            if (!isPress || !TradingGateway.AnsweredAndUnfinished(state)) return [itsOwn];
+
+            return
+            [
+                itsOwn,
+                ("It is no longer working at your platform",
+                    "Confirm: I checked in ATAS and this order is no longer working there", ExecutionState.CANCELLED),
+                ("It was filled", "Confirm: I checked in ATAS and this order was filled", ExecutionState.FILLED)
+            ];
         }
 
         var (label, armed) = CancelledAnswer(reference);
@@ -947,7 +966,9 @@ sealed class DashboardPage
     /// WORKING — and the two buttons offered for a non-terminal record ("It was filled", "No order
     /// exists") are both false about it. <c>ForceResolve</c> takes an assertion equal to the stored
     /// state on any state at all, clearing the flag without rewriting the record, so agreeing with
-    /// the platform is the one answer that is always available and always true.
+    /// the platform is the one answer that is always available and always true. It stops being
+    /// true of a press's close once the platform's update about it is lost, and that close alone is
+    /// also offered the two that can end it (<see cref="Answers"/>, <c>U-press-row-answer</c>).
     /// </summary>
     static bool SpokenByThePlatform(ExecutionState s) => s is
         ExecutionState.FILLED or ExecutionState.CANCELLED or ExecutionState.REJECTED or

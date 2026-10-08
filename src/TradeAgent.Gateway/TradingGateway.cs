@@ -8138,6 +8138,20 @@ public sealed class TradingGateway : IAsyncDisposable
         requestId.StartsWith($"{ValuationCancelPress}-", StringComparison.Ordinal);
 
     /// <summary>
+    /// A STATE THE PLATFORM ANSWERED AND HAS NOT FINISHED — <c>ACKNOWLEDGED</c>, <c>WORKING</c>, <c>PARTIALLY_FILLED</c> or
+    /// <c>CANCEL_PENDING</c>, the four only the platform's event stream moves (<see cref="OnOrderChanged"/>).
+    ///
+    /// <para>On a press's own row (<see cref="IsPressRecord"/>) they are the states the Dashboard card offers "It is no
+    /// longer working at your platform" and "It was filled" beside "Our record is right", and the ones
+    /// <see cref="AnswerFromTheCardAsync"/> puts under the platform's live-order veto (<c>U-press-row-answer</c>): nothing
+    /// but the owner settles a press's row, so a close whose platform update was lost needs an answer that can end it. The
+    /// card and the route read this one rule, so what is offered and what is vetoed cannot drift apart.</para>
+    /// </summary>
+    public static bool AnsweredAndUnfinished(ExecutionState state) =>
+        state is ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING or ExecutionState.PARTIALLY_FILLED
+            or ExecutionState.CANCEL_PENDING;
+
+    /// <summary>
     /// Which control wrote this row. Only meaningful for a <see cref="IsPressRecord"/> id.
     ///
     /// <para>The app's kinds are tested FIRST and every arm is an explicit prefix test, because the
@@ -10254,31 +10268,55 @@ public sealed class TradingGateway : IAsyncDisposable
                           + "your platform");
 
         var evidence = $"you confirmed it on the Dashboard: {leg.LastError![ResolvedByOwnerPrefix.Length..]}";
-        if (Connector.Capabilities.ReconciliationProvable)
-        {
-            OrderInfo? match;
-            try
-            {
-                match = (await Connector.GetOrdersAsync(leg.AccountId, true, leg.CreatedAt - TimeSpan.FromMinutes(5), ct))
-                    .FirstOrDefault(o => o.ClientOrderId == leg.ClientOrderId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                return (null, $"{said}, and your platform's order history could not be read to check that the "
-                              + $"close is not still live ({ex.Message})");
-            }
+        var (listed, outranked) = await ThePlatformsLiveOrderVetoAsync(leg, said, ct);
+        if (outranked is not null) return (null, outranked);
 
-            // THE VETO: a live close decides nothing, whatever he said.
-            if (match is not null && !DecidesALostClose(match.State))
-                return (null, $"{said}, but your platform's order history holds it as {match.State}: a close that "
-                              + "is still live can still fill, and that outranks your answer");
-
-            if (match is not null && match.State != leg.State)
-                evidence += $"; your platform's order history holds it as {match.State}";
-        }
+        if (listed is not null && listed.State != leg.State)
+            evidence += $"; your platform's order history holds it as {listed.State}";
 
         return (new LossFlattenVerdict(leg.RequestId, leg.Instrument, leg.State.ToString(),
             leg.FilledQuantity > 0m ? leg.FilledQuantity : null, leg.ConnectorOrderId, evidence, ByTheOwner: true), "");
+    }
+
+    /// <summary>
+    /// THE PLATFORM'S LIVE-ORDER VETO OVER AN ANSWER OF THE OWNER'S (<c>U-loss-hold-release</c>; one helper since
+    /// <c>U-press-row-answer</c>): the one read and the one rule both places that take his word about an order in flight
+    /// call — the loss flatten's confirm (<see cref="TheOwnersAnswerAsync"/>) and the Dashboard card's route for a press's
+    /// own close the platform answered and has not finished (<see cref="AnswerFromTheCardAsync"/>).
+    ///
+    /// <para><b>Asked only where the platform's history can be</b> (<see cref="ConnectorCapabilities.ReconciliationProvable"/>):
+    /// the order under the row's own client id, in a history read back to five minutes before the row. Found in a state
+    /// that is not final, it outranks him — it can still fill, and his answer would settle a live order and let a close be
+    /// sent on top of it. A read that throws decides nothing either, and outranks him the same way. Where no history can be
+    /// asked nothing is read, and his answer stands alone.</para>
+    ///
+    /// <para><paramref name="said"/> is the caller's words for what he answered; every refusal begins with them. Returns the
+    /// order as the history lists it (null where it lists none, or was not asked) and the refusal (null where his answer
+    /// stands). It writes nothing, sends nothing and cancels nothing.</para>
+    /// </summary>
+    async Task<(OrderInfo? Listed, string? Outranked)> ThePlatformsLiveOrderVetoAsync(ExecutionRequest row, string said,
+        CancellationToken ct)
+    {
+        if (!Connector.Capabilities.ReconciliationProvable) return (null, null);
+
+        OrderInfo? match;
+        try
+        {
+            match = (await Connector.GetOrdersAsync(row.AccountId, true, row.CreatedAt - TimeSpan.FromMinutes(5), ct))
+                .FirstOrDefault(o => o.ClientOrderId == row.ClientOrderId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, $"{said}, and your platform's order history could not be read to check that the "
+                          + $"close is not still live ({ex.Message})");
+        }
+
+        // THE VETO: a live close decides nothing, whatever he said.
+        if (match is not null && !DecidesALostClose(match.State))
+            return (match, $"{said}, but your platform's order history holds it as {match.State}: a close that "
+                           + "is still live can still fill, and that outranks your answer");
+
+        return (match, null);
     }
 
     /// <summary>
@@ -12609,6 +12647,18 @@ public sealed class TradingGateway : IAsyncDisposable
     /// the reconciler left PAUSED is recomputed only by <see cref="RefreshHealthAsync"/>, so without it trading stays
     /// paused until the next tick and the button reads as doing nothing.
     ///
+    /// <para><b>A press's own close the platform answered and has not finished</b> (<see cref="IsPressRecord"/>,
+    /// <see cref="AnsweredAndUnfinished"/>), answered as something other than what TradeAgent records — "It is no longer
+    /// working at your platform" or "It was filled" — goes under the platform's live-order veto first
+    /// (<see cref="ThePlatformsLiveOrderVetoAsync"/>, the one <see cref="TheOwnersAnswerAsync"/> reads): where the platform's
+    /// history can be asked and still holds the order live, or cannot be read, his answer is refused, named, and nothing is
+    /// written — a close the platform still lists live is never answered away, so no press ever closes beside it. Where no
+    /// history can be asked his word stands alone, as it does for an UNKNOWN order. A final state the history lists that is
+    /// not his answer is written beside his words, as the confirm writes it beside its verdict. Nothing but the owner
+    /// settles a press's row — the reconciler, the in-flight sweep and the press's own settle all leave it to him — so
+    /// without these answers a close whose platform update was lost held every Close all for good
+    /// (<c>U-press-close-once</c>'s residual). Every other row's answer goes to <see cref="ForceResolve"/> as before.</para>
+    ///
     /// <para><b>In-process only.</b> The card is its one caller; no pipe op, <c>trade</c> verb or GatewayHost console
     /// verb reaches it, so an agent that wants a record settled has nowhere to ask. A refusal is thrown in the owner's
     /// own words, and nothing is written.</para>
@@ -12616,6 +12666,31 @@ public sealed class TradingGateway : IAsyncDisposable
     public async Task<ExecutionRequest> AnswerFromTheCardAsync(string requestId, ExecutionState outcome, string note,
         CancellationToken ct = default)
     {
+        if (_requests.Get(requestId) is { } row && IsPressRecord(row.RequestId) && AnsweredAndUnfinished(row.State)
+            && outcome != row.State)
+        {
+            var said = $"You answered that {Described(row)} " + outcome switch
+            {
+                ExecutionState.FILLED => "was filled",
+                ExecutionState.CANCELLED => "is no longer working at your platform",
+                _ => $"is {outcome}"
+            };
+            var (listed, outranked) = await ThePlatformsLiveOrderVetoAsync(row, said, ct);
+            if (outranked is not null)
+            {
+                _log.TryEngineering("Gateway", "card_answer_outranked", "warn", requestId: row.RequestId,
+                    metadataJson: Json.Write(new
+                    {
+                        state = row.State.ToString(), answered = outcome.ToString(), listed = listed?.State.ToString()
+                    }));
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"{outranked}. Nothing was recorded: answer it again once your platform shows it filled or cancelled.");
+            }
+
+            if (listed is not null && listed.State != outcome)
+                note = $"{note} (your platform's order history held it as {listed.State} when you answered)";
+        }
+
         var answered = ForceResolve(requestId, outcome, note);
         await RefreshHealthAsync(ct);
         return answered;
