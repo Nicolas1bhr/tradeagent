@@ -568,7 +568,11 @@ public static class WorkspaceBuilder
     - `../inbox` — what the owner gave you. Read it, copy out of it, do not write into it.
     - `trading/` — **`PLAN.md` and `JOURNAL.md` live here**, plus order plans and notes on what you
       actually did and why. These two files are your memory; nothing else survives a fresh session.
-      `trading/archive/` is where journal entries go once they no longer fit
+      `trading/archive/` is where journal entries go once they no longer fit. It is also where
+      TradeAgent saves a plan or journal it refuses for size — as `PLAN-refused-….md` or
+      `JOURNAL-refused-….md` — before it writes your last accepted version back over it, so
+      nothing you wrote is lost: your next `## Situation` names the copy. Take what still matters
+      from it back into the file, under its limit.
     - `research/` — market research, sources, working notes
     - `strategies/` — strategy descriptions and their code
     - `data/` — your own workings. The APP's collected history is not here and is not yours to write:
