@@ -8853,3 +8853,38 @@ success on every job in both; no `Timing` retry file in either (green on the fir
 
 **NOT done, NOT verified:** item 4's class on the tests box beside the full suite; whether (a)'s windows red was the grace race or a refused lease (both printed
 "Actual 1"; the new body tells them apart); `QuoteClockTests.A_bar_fed_feed…` was hygiene-2's item 5, not this unit's.
+
+## 2026-10-07 — U-bridge-auth-owner-only landed: the bridge pipe's shared key is owner-only from its first byte on macOS and Linux, published by one rename, and on Windows a reader holding it no longer refuses its rewrite
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-bridge-auth-owner-only.md` (written by seat A's read-only survey of 2026-10-07
+16:38, which found the 0644-before-chmod window; queued `a8bee682`, dispatched `923fcb57`; a seat-P-lane item kept by seat A to its landing on the orchestrator's
+ruling); rebased by the manager onto `6bd92855` (over U-test-hygiene-3 and M0's record), src+tests patch-id identical (`2f663fd23e58`). Merge `40b0036c` (ff-only),
+5 commits (3 items, a declared item 4, the report), 4 files, +329/−20. **No schema change (30).** CREDENTIAL (`CLAUDE.md`): who can read the bridge's shared key,
+and when. The handshake is unchanged: path, JSON, the key's lifetime, `Proof`, `BridgeProtocolVersion` 3 and `Versions.BridgeCompatible`'s exact match.
+
+- **Item 1 (`b7158266`):** a seam in the write at the instant the key sits in the temp, before anything else touches it; test (a) red at this item.
+- **Item 2 (`1170532a`):** the write takes `SecretStore.Write`'s shape inside `BridgePipeAuth` (no new assembly in the bridge DLL's closure): a temp of the call's
+  own, `CreateNew`, `FileShare.None`, `UnixCreateMode` 0600 off Windows, flushed, renamed over, deleted when the rename did not consume it; `Restrict` gone.
+- **Item 3 (`56063045`):** the reader opens sharing `ReadWrite | Delete`. MEASURED INSUFFICIENT on Windows: windows-latest still refused the replace ("Access to
+  the path is denied") while a reader held the file, with either sharing — `File.Move` (`MoveFileExW`) refuses a replace under ANY open handle.
+- **Item 4 (`ecbd4255`), a declared DEVIATION, ACCEPTED (seat A; the orchestrator's view the same):** on Windows the publish is `FileRenameInfoEx` with
+  `FILE_RENAME_FLAG_POSIX_SEMANTICS` (kernel32 P/Invoke inside `BridgePipeAuth`), so readers keep reading while it is replaced; it falls back to `File.Move` ONLY
+  on errors 1, 50 and 87 (invalid function, not supported, invalid parameter — a volume without the POSIX rename), and ANY other refusal throws as before
+  (refuse, never guess — read in the code at `AtasConnector.cs` `ReplaceWhileReadersRead`). (b) green on windows-latest in 37682749524.
+- **Deviation 2, accepted:** (a)'s Windows arm reads the owner-only claim off `%LOCALAPPDATA%`'s DACL (read, never written), beside "the temp at the seam equals
+  the published file" and "no entry of its own" — not off the test home, whose `TEMP` on the tests box inherits `C:\`'s broader entries (inferred, NOT checked).
+- **The brief's STOP rule did not fire:** (a)'s Windows DACL arm green in all three windows-latest runs (37675671465, 37675951756, 37682749524).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder at `511fd627`: Release `--no-incremental` 0 warnings, 0 errors; Unit 1466, Fault 464,
+0 failed; `BridgePipeAuthTests` 3× 16/16; `BridgeRoundTripTests` 41, 0 failed. RED before, this Mac at item 1: (a) "the secret was on disk at 0644 before the rename
+and is published at 0600 … umask 0022"; (c) "the refused rewrite left bridge.auth.44184.tmp beside bridge.auth"; run 37675671465: (a), (c) red on ubuntu and macos,
+(b) and (c) on windows — (b) "UnauthorizedAccessException: Access to the path is denied". Mutant (`UnixCreateMode` dropped) ⇒ (a) "published at 0644"; restored 16/16.
+Manager's gate at `40b0036c`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1466/1466 (9 m 7 s), Fault 464/464 (2 m), Integration 736/737, 1 skipped (11 m 14 s) → 0 failed.
+Names vs `main`: 2298 → 2301, 0 removed, 3 added. Scan: 24 hits, every one the word "secret" in prose, a test name, the `Secret` property or the `Secret('a')` helper (64 characters built at run time; no literal key or hex value in the diff, checked) — excluded by name at check and record; no trailers; `rev-list --count` 0 both ways.
+**CI:** run 37682749524 at `511fd627`: success on ubuntu-latest, macos-latest, windows-latest (51 min) and package — each test job Unit 1465, Fault 458,
+Integration 644 + 1 skipped, Timing 1/6/91, 0 failed, no retry. **Tests box:** NOT RUN — 23:29 `ready : NO - the machine does not answer (…)` (exit 1).
+
+**NOT done, NOT verified:** the fallback path (a volume without the POSIX rename) and the 32-bit `FILE_RENAME_INFO` layout never ran (CI is x64 NTFS; the writer is
+TradeAgent's 64-bit process, the 32-bit bridge only reads); no ATAS box, no app run; a home outside the user profile inherits its directory's DACL — an explicit DACL
+at creation stays the owner's question (on the board); `SecretStore.Write` keeps `MoveFileExW` and its comment that sharing Delete lets a replace through is MEASURED
+FALSE — routed to seat P as a light item. No `bridge.auth.<pid>.tmp` of an older build found on this Mac (the M0 home not looked into).
