@@ -196,8 +196,9 @@ sealed class DashboardPage
         };
 
         // Orders TradeAgent could not confirm. This is the ONLY route into
-        // TradingGateway.ForceResolve anywhere in the product: operator authority is deliberately
-        // absent from the agent-facing pipe and from the trade CLI, so an agent that wants this
+        // TradingGateway.AnswerFromTheCardAsync, and through it into ForceResolve, anywhere in the
+        // product: operator authority is deliberately absent from the agent-facing pipe, from the
+        // trade CLI and from the GatewayHost console, so an agent that wants this
         // permission has nowhere to ask. Without this card, on a backend that cannot prove its own
         // order history — which is ATAS, permanently — the first ambiguous order pauses trading and
         // nothing in the app can ever start it again.
@@ -600,7 +601,7 @@ sealed class DashboardPage
         /// <summary>
         /// The two halves of the bottom of the row, and exactly one of them is on screen.
         ///
-        /// <see cref="Answer"/> is the note box and the two assertions. <see cref="OnTheWire"/> is
+        /// <see cref="Answer"/> is the note box and the answers. <see cref="OnTheWire"/> is
         /// the sentence that replaces them while a dispatcher of this process is still inside the
         /// connector call for this request: there is nothing for the owner to have seen yet, so the
         /// buttons would be asserting an outcome that does not exist. The lease is asked every tick
@@ -610,14 +611,19 @@ sealed class DashboardPage
         /// </summary>
         public required Control Answer { get; init; }
         public required TextBlock OnTheWire { get; init; }
-        public required IReadOnlyList<Button> Buttons { get; init; }
 
         /// <summary>
-        /// The button that records CANCELLED, on a row that offers it. Its words follow the row's reference every
-        /// tick (<see cref="CancelledAnswer"/>): a reference can arrive after the row was built, and "No order exists"
-        /// is false of an order the platform has answered.
+        /// The answers, one button each, in <see cref="Answers"/>' order for <see cref="BuiltAs"/> and <see cref="IsPress"/>.
+        /// Their words follow the row's reference every tick: a reference can arrive after the row was built, and "No
+        /// order exists" is false of an order the platform has answered (<see cref="CancelledAnswer"/>).
         /// </summary>
-        public Button? Cancelled { get; init; }
+        public required IReadOnlyList<Button> Buttons { get; init; }
+
+        /// <summary>The state the row's answers were built for: they are what the owner is offered until the row is rebuilt.</summary>
+        public required ExecutionState BuiltAs { get; init; }
+
+        /// <summary>Whether the row is a press's own record (<see cref="TradingGateway.IsPressRecord"/>).</summary>
+        public required bool IsPress { get; init; }
     }
 
     /// <summary>
@@ -694,12 +700,11 @@ sealed class DashboardPage
             row.BrokerId.Text = r.ConnectorOrderId ?? "none — the broker never sent one back";
             row.LastCheck.Text = LastCheckSentence(r);
 
-            // The CANCELLED answer's words follow the reference, in place; Relabel disarms only when they change.
-            if (row.Cancelled is { } cancel)
-            {
-                var (label, armed) = CancelledAnswer(r.ConnectorOrderId);
-                Ui.Relabel(cancel, label, armed);
-            }
+            // The answers' words follow the reference, in place; Relabel disarms only when they change. Only the
+            // reference can change them here — the state and the press are the ones the row was built for.
+            var answers = Answers(row.BuiltAs, row.IsPress, r.ConnectorOrderId);
+            if (answers.Count == row.Buttons.Count)
+                for (var i = 0; i < answers.Count; i++) Ui.Relabel(row.Buttons[i], answers[i].Label, answers[i].Armed);
 
             // THE CARD ASKS THE LEASE, and it is the only surface that has to. `Unreconciled()`
             // deliberately still lists a row a dispatcher is inside the connector call for — it is
@@ -750,38 +755,11 @@ sealed class DashboardPage
             Margin = new Thickness(0, Theme.S2, 0, 0)
         };
 
+        // THE ANSWERS, FROM THE ONE FUNCTION THAT SAYS WHICH ARE TRUE OF THIS ROW (Answers), each a two-press
+        // button behind the same note and the same route.
         var buttons = new List<Button>();
-        Button? cancelled = null;
-        if (SpokenByThePlatform(r.State))
-        {
-            // A record the event stream already settled, flagged afterwards because the dispatch
-            // that wrote it never got an answer. Terminal states have no outgoing edges, so the
-            // ONLY answer that can be given about one is whether the state it already holds is
-            // true — ForceResolve takes that as finalState == current state and clears the flag
-            // without rewriting the record. Asserting a DIFFERENT outcome is refused there on
-            // purpose, and rightly: that is the stream and the platform disagreeing, which is
-            // something to investigate rather than to overwrite. So one button, not two.
-            var settled = r.State;
-            var tense = OrderStateMachine.IsTerminal(settled) ? "was" : "is";
-            buttons.Add(Ui.Confirm($"Our record is right — it {tense} {Word(settled)}",
-                $"Confirm: I checked in ATAS and this order {tense} {Word(settled)}",
-                () => ResolveAsync(id, settled, note)));
-        }
-        else
-        {
-            // FILLED and CANCELLED, and nothing else, because they are the only two outcomes
-            // OrderStateMachine lets ForceResolve reach from EVERY state a flagged request can hold.
-            // "Still working" is the obvious third answer and is unreachable from WORKING,
-            // PARTIALLY_FILLED and CANCEL_PENDING — a button that throws on the states where it is
-            // most likely to be the true answer is worse than no button, so the card asks the user
-            // to cancel it in ATAS first instead. The CANCELLED button's words are the row's own
-            // (CancelledAnswer): an order the platform answered existed, and did not fill.
-            buttons.Add(Ui.Confirm("It was filled", "Confirm: I checked in ATAS and this order was filled",
-                () => ResolveAsync(id, ExecutionState.FILLED, note)));
-            var (label, armed) = CancelledAnswer(r.ConnectorOrderId);
-            cancelled = Ui.Confirm(label, armed, () => ResolveAsync(id, ExecutionState.CANCELLED, note));
-            buttons.Add(cancelled);
-        }
+        foreach (var (label, armed, outcome) in Answers(r.State, isPress, r.ConnectorOrderId))
+            buttons.Add(Ui.Confirm(label, armed, () => ResolveAsync(id, outcome, note)));
 
         // Stacked, not in a row. An armed two-step button carries its whole sentence — "Confirm: I
         // checked in ATAS and this order was filled" is about 340px — and two of those beside each
@@ -808,7 +786,7 @@ sealed class DashboardPage
         {
             RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value,
             Press = isPress ? press.Value : null,
-            Answer = answer, OnTheWire = onTheWire, Buttons = buttons, Cancelled = cancelled
+            Answer = answer, OnTheWire = onTheWire, Buttons = buttons, BuiltAs = r.State, IsPress = isPress
         });
 
         var row = Ui.Col(Theme.S2,
@@ -833,20 +811,59 @@ sealed class DashboardPage
     }
 
     /// <summary>
-    /// The override itself. RefreshHealthAsync is not decoration: ForceResolve clears the
-    /// needs-reconciliation flag and nothing else, while TryAuthorizeExecution ALSO requires the
-    /// ExecutionCapability health row to be READY — and that row was set PAUSED by the failed
-    /// dispatch and by the reconciler. Without this second call the user presses the button, sees
-    /// "AI trading — paused" stay on screen for up to five seconds until the background tick
-    /// recomputes health, and reasonably concludes the button does nothing.
+    /// The override itself, through the gateway's one route for it,
+    /// <see cref="TradingGateway.AnswerFromTheCardAsync"/>: <c>ForceResolve</c>, then the health pass —
+    /// which is not decoration: ForceResolve clears the needs-reconciliation flag and nothing else, while
+    /// TryAuthorizeExecution ALSO requires the ExecutionCapability health row to be READY, and that row was
+    /// set PAUSED by the failed dispatch and by the reconciler. Without the second call the user presses the
+    /// button, sees "AI trading — paused" stay on screen for up to five seconds until the background tick
+    /// recomputes health, and reasonably concludes the button does nothing. A refusal is thrown in its own
+    /// words, and the two-step button shows it.
     /// </summary>
     async Task ResolveAsync(string requestId, ExecutionState outcome, TextBox note)
     {
         var text = (note.Text ?? "").Trim();
         if (text.Length == 0) { Ui.ReportError?.Invoke("Say what you saw in ATAS before confirming."); return; }
 
-        _host.Gateway.ForceResolve(requestId, outcome, text);
-        await _host.Gateway.RefreshHealthAsync();
+        await _host.Gateway.AnswerFromTheCardAsync(requestId, outcome, text);
+    }
+
+    /// <summary>
+    /// WHAT THE CARD OFFERS ONE ROW, AND WHAT EACH ANSWER RECORDS (<c>U-press-row-answer</c>): every button's label, the
+    /// sentence its first press arms it with, and the state its second press asks
+    /// <see cref="TradingGateway.AnswerFromTheCardAsync"/> to write — in the order they stand on the row. One pure function:
+    /// the card builds the row's buttons from it once, and relabels them from it on every tick, because a reference can
+    /// arrive after the row was built.
+    ///
+    /// <para><b>A state only the platform's own answer can have produced</b> (<see cref="SpokenByThePlatform"/>) is offered
+    /// one answer: that it is still true. A terminal one has no outgoing edge, so whether the state it holds is right is the
+    /// only answer there is — <c>ForceResolve</c> takes an assertion equal to the stored state as a flag-clear, and refuses a
+    /// DIFFERENT outcome on purpose: that is the stream and the platform disagreeing, something to investigate rather than to
+    /// overwrite. A live one the platform answered WORKING is the same agreement.</para>
+    ///
+    /// <para><b>Anything else</b> — UNKNOWN, RECONCILING, a stranded DISPATCHING, a refused leg's CREATED — is offered FILLED
+    /// and CANCELLED, and nothing else, because they are the only two outcomes <c>OrderStateMachine</c> lets
+    /// <c>ForceResolve</c> reach from EVERY state a flagged request can hold. "Still working" is the obvious third answer and
+    /// is unreachable from WORKING, PARTIALLY_FILLED and CANCEL_PENDING — a button that throws on the states where it is most
+    /// likely to be the true answer is worse than no button. The CANCELLED answer's words are the row's own
+    /// (<see cref="CancelledAnswer"/>): an order the platform answered existed, and did not fill.</para>
+    /// </summary>
+    public static IReadOnlyList<(string Label, string Armed, ExecutionState Outcome)> Answers(ExecutionState state,
+        bool isPress, string? reference)
+    {
+        if (SpokenByThePlatform(state))
+        {
+            var tense = OrderStateMachine.IsTerminal(state) ? "was" : "is";
+            return [($"Our record is right — it {tense} {Word(state)}",
+                $"Confirm: I checked in ATAS and this order {tense} {Word(state)}", state)];
+        }
+
+        var (label, armed) = CancelledAnswer(reference);
+        return
+        [
+            ("It was filled", "Confirm: I checked in ATAS and this order was filled", ExecutionState.FILLED),
+            (label, armed, ExecutionState.CANCELLED)
+        ];
     }
 
     /// <summary>

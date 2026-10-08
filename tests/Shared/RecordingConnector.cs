@@ -245,10 +245,19 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     /// </summary>
     public Exception? HistoryThrows;
 
-    public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default) =>
-        since is not null && HistoryThrows is { } boom
+    /// <summary>
+    /// Reads of the platform's order HISTORY — an order list asked with its finished orders included — counted so that
+    /// "his answer was written without asking the platform" can be ASSERTED rather than inferred (<c>PressRowAnswerTests</c>).
+    /// </summary>
+    public int HistoryReads;
+
+    public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default)
+    {
+        if (inactive) Interlocked.Increment(ref HistoryReads);
+        return since is not null && HistoryThrows is { } boom
             ? Read(Task.FromException<IReadOnlyList<OrderInfo>>(boom))
             : Read(Inner.GetOrdersAsync(a, inactive, since, ct));
+    }
 
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
         Read(Inner.GetExecutionsAsync(a, since, ct));
