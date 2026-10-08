@@ -363,7 +363,9 @@ public static class GatewaySchema
             + "comes from the venue catalogue for that dataset's own instrument, or the run is REFUSED when "
             + "nothing verified is recorded for it. Capital omitted is 10,000. What comes back is the run "
             + "id, the version id, the metrics the app computed from its own trace, 'missing' naming every "
-            + "figure it could not compute and why, and the closed trades. One run at a time per role. It "
+            + $"figure it could not compute and why, and the FIRST {Backtests.TradesShown} closed trades in 'trades', "
+            + "with 'trade_count' counting every one it closed: 'trade run trades --run <run_id>' serves them all, in "
+            + "pages, to every role. One run at a time per role. It "
             + "is a READ as far as trading is concerned: no order is placed, nothing is granted, and there "
             + "is no operation that edits or deletes a run.",
             [

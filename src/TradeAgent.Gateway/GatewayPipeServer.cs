@@ -2339,6 +2339,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "and 'missing': a null is an UNKNOWN and never a zero. 'net_pnl' covers CLOSED trades only "
             + "— a position still open at the last bar is in the equity the drawdown is measured on, not "
             + "in it. "
+            // U-run-trace: the answer lists the first twenty and counts the rest, and says where the rest are.
+            + $"'trades' lists the first {Backtests.TradesShown} closed trades and 'trade_count' counts every one: "
+            + "'trade run trades --run <run_id>' serves them all, in pages, to every role, and runs nothing again. "
             // U-paper-friction: an undeclared fee is no longer zero, so the answer no longer says that
             // leaving it out runs frictionless. It says what the run WAS charged, and who chose it.
             + (result.Request.Model.Frictionful

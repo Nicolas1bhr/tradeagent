@@ -811,7 +811,9 @@ public static class Errors
         // The owner's own sentence for both of these says what was refused and that nothing is broken:
         // the AI asking for the months you held back, and the AI running out of attempts, are the
         // referee's protocol working rather than a fault to repair.
-        [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read the market data you are holding back, and was refused.", "No action needed. The bars you held back stay private; TradeAgent uses them itself to judge a finished strategy.", false),
+        // WHAT IS HELD BACK NOW (U-run-trace): not one dataset's bars alone but every pair's over the same months, the
+        // market context TradeAgent recorded over them, and the trades of any run that reaches them.
+        [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read something you are holding back, and was refused.", "No action needed. What you hold back stays private: every pair's prices over those months, the market news and figures TradeAgent recorded over them, and the trades of any strategy run that reaches them. TradeAgent uses them itself to judge a finished strategy.", false),
         [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next

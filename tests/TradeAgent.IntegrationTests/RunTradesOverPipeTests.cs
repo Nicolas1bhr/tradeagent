@@ -208,6 +208,8 @@ public class RunTradesOverPipeTests(ITestOutputHelper log)
         log.WriteLine($"backtest {runId[..12]}: trade_count {total}, {answer.GetProperty("trades").GetArrayLength()} listed");
         Assert.True(total > Backtests.TradesShown, $"the fixture closed only {total} trades");
         Assert.Equal(Backtests.TradesShown, answer.GetProperty("trades").GetArrayLength());
+        Assert.Contains($"'trades' lists the first {Backtests.TradesShown} closed trades and 'trade_count' counts every one: "
+                        + "'trade run trades --run <run_id>' serves them all", answer.GetProperty("note").GetString()!, StringComparison.Ordinal);
 
         var recorded = rig.Gw.Strategies.TradesOf(runId);
         Assert.Equal(total, recorded.Count);

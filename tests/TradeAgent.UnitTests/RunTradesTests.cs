@@ -377,4 +377,27 @@ public class RunTradesTests(ITestOutputHelper log)
         Assert.True(bytes <= GatewayPipeServer.MaxRunTradesReplyBytes,
             $"a page of {page.Count} trades of the observed shape is {bytes} bytes, over the {GatewayPipeServer.MaxRunTradesReplyBytes} cap");
     }
+
+    /// <summary>
+    /// (3) THE WORDS SAY WHERE THE REST ARE AND WHAT IS HELD BACK. The backtest's schema text and its answer's note say the
+    /// answer lists the first 20 closed trades, that <c>trade_count</c> counts them all and that <c>trade run trades</c>
+    /// serves every one; and <c>HOLDOUT_WITHHELD</c>'s owner sentence names what is held back now — every pair's prices over
+    /// the months, the market context recorded over them and the trades of a run that reaches them — not one dataset's bars.
+    /// </summary>
+    [Fact]
+    public void The_backtest_says_where_the_rest_of_its_trades_are_and_the_owner_is_told_what_is_held_back()
+    {
+        var backtest = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.Backtest).Description;
+        Assert.Contains($"the FIRST {Backtests.TradesShown} closed trades in 'trades', with 'trade_count' counting every one it "
+                        + "closed: 'trade run trades --run <run_id>' serves them all", backtest, StringComparison.Ordinal);
+        Assert.DoesNotContain("and the closed trades.", backtest, StringComparison.Ordinal);
+
+        var withheld = Errors.Get(ErrorCode.HOLDOUT_WITHHELD);
+        log.WriteLine($"{withheld.UserMessage} / {withheld.Repair}");
+        Assert.Equal("The AI asked to read something you are holding back, and was refused.", withheld.UserMessage);
+        foreach (var held in new[] { "every pair's prices over those months", "the market news and figures TradeAgent recorded over them",
+                     "the trades of any strategy run that reaches them" })
+            Assert.Contains(held, withheld.Repair, StringComparison.Ordinal);
+        Assert.DoesNotContain("The bars you held back", withheld.Repair, StringComparison.Ordinal);
+    }
 }
