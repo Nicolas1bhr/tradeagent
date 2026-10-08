@@ -9122,3 +9122,38 @@ Fault 479/479 (2 m 2 s); Integration 742/743, 1 skipped (11 m 17 s) → 0 failed
 **OWED (light, seat P):** a closing again that ends not flat WITHOUT a lost close (an order that would not cancel, a leg refused at the wire) still holds its closure on its
 record; no test kills a pass between writing a confirm and settling its rows (the write-once-before-settle order is the design, not exercised by a crash test).
 **NOT verified:** no ATAS (no box), no app run, the words not seen on screen.
+
+## 2026-10-08 — U-run-trace landed: a read-only verb serves every closed trade of a completed research run, in bounded pages, to any role — never the referee's holdout run, never a run any holdout window now reaches
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-run-trace.md` (M0 gap (a): attempt 3's Research had "no retained per-trade rows or read-only command"
+to attribute two runs' exits — trades 21+ of its three runs were served to no one; briefed by seat A's M0-gaps survey of 2026-10-07 23:51, re-checked at `72bcd8dd` over
+U-bar-holdout's holdout object, dispatched `28a2e3fb`). The builder rebased three times, last onto `9b08a077`, no conflict. Merge `006696c2` (ff-only), 4 commits (3 items, the report),
+16 files, +1615/−31. **No schema change.** EVIDENCE: the holdout and verdict-only evidence (`EDGE-FACTORY.md` "Agents see verdict and reason class only"); no op writes a run or a trade.
+
+- **First, the measurement (the brief asked for figures, not guesses):** a 1,000-trade page of attempt 3's shape (its RSI program, BTCUSDT's 0.01/0.00001 grid, 0.1 % fee and 0.02 %
+  slippage, 1,281 trades over 180,000 one-minute decisions) is 230,459 bytes on the wire, 224–236 a trade — under the 262,144 cap, so the 1,000-row limit stops an ordinary page.
+- **Item 1 (`d953ad4e`):** `StrategyStore.ReadTrades` → `RunTradesPage`, taking the caller's `TapeHoldout` with its ledger; refuses (a) a row of role `referee` or any promotion's
+  `holdout_run_id` — no instant, figure or hash of it; (b) a run whose dataset, re-read from the holdout's own ledger, `Holdout.Refusal` or any other window now refuses; (c) a version
+  reading features whose read window reaches a tape holdout (`Backtest.ClosesOf` + `FeatureFeed.Reaching`, the arithmetic `Backtest.Over` now calls); a gone dataset or an
+  unreadable version is refused, never guessed. `TradesOf` stays the in-process reader.
+- **Item 2 (`2c67603d`):** op `run-trades` (a READ), its dispatcher arm, drain row, schema entry, `TradeOps`, `trade run trades`, a CONTRACTS paragraph (not in the brief); an IL scan
+  holds that the pipe server never calls `TradesOf`.
+- **Item 3 (`bdd42f5b`):** the backtest schema text and note name the first 20, `trade_count` and `trade run trades`; `HOLDOUT_WITHHELD`'s owner text names prices, recorded context
+  and trades (seat A's light fold).
+- **Declared deviations, accepted:** (1) `TapeHoldout.Refusal(DatasetRecord, …)` does not ask the set's own cutoff, so 1(b) asks `Holdout.Refusal` first, as `DatasetReader` and
+  `BarFeed` do; (2) test (e) cannot go red with 1(a) removed, because 1(b) refuses the referee's run too (no end; a cutoff never clears) — so (b) carries two clause-alone legs (a
+  referee-marked row no promotion names, a research row a promotion names); (3) ordinals are `Backtest`'s, from 0 — no `after` = from the first; (4) `figures` use the backtest's
+  metric names (`signals` = intents).
+**Verified by running (the builder, quoted; then the manager's gate):** builder: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed 1539, Failed 0` and Fault `Passed 479,
+Failed 0` at `e46dd19584` (the tip less one unit test); 3×: RunTradesTests 8/8 (tip), RunTradesTests + BarHoldoutTests 9/9, RunTradesOverPipeTests + HoldoutOverPipeTests 17/17.
+RED before (guards off for pipe callers, `ed7df631`): (b) "3f17aa4eca81 as the Research Director over the pipe: the referee's holdout run was served"; (c) "the Operations Director
+over the pipe was served a run whose window a cutoff set after it now reaches"; (e) 4/4 "'run-trades' served a bar at 2026-08-01 01:01:00Z, which is at or after the holdout cutoff
+2026-08-01 01:00:00Z"; 1(c) "a run's trades were served though its feature reads now reach a holdout window". Mutants: the role clause dropped ⇒ (b) red ((e) green, deviation 2);
+the dataset read once ⇒ (c) red; 1(a) dropped whole ⇒ (b) red; 1(c) removed ⇒ 1(c) red. All restored.
+Manager's gate at `006696c2`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1540/1540 (9 m 29 s), Fault 479/479 (2 m 2 s), Integration 747/748, 1 skipped
+(11 m 20 s) → 0 failed. Names vs `main`: 2369 → 2381, 0 removed, 12 added. Scan: one hit, JUDGED a false positive (seat A) — `Grants.Issue(role, "attempt-run-trace").Token`, a
+test's in-process role grant read at run time, no literal value (as at U-bar-holdout) — excluded by name at check and record; no trailers; `rev-list` 0 both ways.
+**CI:** run 37742320644 at `bdd42f5b` (the code of the merge): success on all four jobs (windows 46 m, ubuntu 12, macos 16, package 4).
+**Tests box:** NOT RUN — `ready` exit 1, "NO - the machine does not answer", not retried.
+**NOT done, NOT verified:** CI's windows job is the only Windows evidence; no test drives a page over 262,144 bytes through the pipe (the byte bound is the reader's test); a
+tape-reading run's trades over the pipe are tested at the reader, not the wire; no app run.
