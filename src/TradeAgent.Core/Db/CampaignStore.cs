@@ -205,12 +205,14 @@ public sealed record TrialRow(
     /// THE CAMPAIGN WHOSE BUDGET THIS TRIAL WAS CHARGED AGAINST, which is not always the campaign the
     /// run was made under.
     ///
-    /// <para><see cref="CampaignId"/> is the PEEK: which holdout's pre-cutoff bars this run read. This
-    /// is the COST: which family of versions paid for it. They are the same number for a version that
-    /// declared no parent, and they differ for a variant — <c>docs/COUNCIL.md</c>:201's "comparable
-    /// trials". A child is charged to the campaign lineage its ancestry was already being charged to,
-    /// so submitting a variant against a fresh holdout cannot buy a family an untouched trial budget
-    /// by being a new hash.</para>
+    /// <para><see cref="CampaignId"/> is the PEEK: which campaign's development months this run read — through
+    /// its own dataset or, since <c>U-holdout-campaign</c>, through any dataset of any pair. This is the COST: which
+    /// family of versions paid for it, the campaign lineage the family — the version and every parent it declares —
+    /// was first charged to. They are the same number for the first trial of a family, and they differ for a
+    /// variant — <c>docs/COUNCIL.md</c>:201's "comparable trials" — and for any later run of a family charged under
+    /// another campaign, a run charged through several campaigns included. A child is charged to the campaign
+    /// lineage its ancestry was already being charged to, so submitting a variant against a fresh holdout cannot
+    /// buy a family an untouched trial budget by being a new hash.</para>
     ///
     /// <para>Null on a row written before schema 21 only until the rung backfills it to
     /// <see cref="CampaignId"/> — which is what every trial registered before this unit genuinely was:
@@ -250,7 +252,8 @@ public sealed record TrialAdmission
 
     /// <summary>
     /// The campaign this version's FAMILY is charged to — <see cref="CampaignStore.ChargedCampaignFor"/>.
-    /// The same row as <see cref="RunCampaign"/> for a version that declared no parent.
+    /// The same row as <see cref="RunCampaign"/> for a family's first trial, and for every later trial of a
+    /// family under the campaign lineage it was first charged to.
     /// </summary>
     public required CampaignRow? HomeCampaign { get; init; }
 
@@ -276,6 +279,16 @@ public sealed record TrialAdmission
 /// never carried into it. See <c>AiAdmissionRule</c>, which omits the day's totals for the same reason.
 /// </summary>
 public sealed record TrialCounts(int Run, int RunPot, int Home, int HomePot);
+
+/// <summary>
+/// ONE OPEN CAMPAIGN A RESEARCH RUN IS CHARGED TO — <see cref="CampaignStore.ChargedBy"/>'s answer, one per campaign.
+///
+/// <para><see cref="Through"/> is null for the campaign over the run's OWN dataset, which is charged as it always was. For
+/// every other it is the sentence a refusal adds: the dataset the run read, the market time its bars span, and the
+/// campaign's development months that span overlaps — because "campaign 4 has spent its trials" is a mystery to a caller
+/// that asked about dataset 7 until it is told why campaign 4 is in the question at all.</para>
+/// </summary>
+public sealed record CampaignCharge(CampaignRow Campaign, string? Through);
 
 /// <summary>
 /// ONE VERDICT THAT WAS ASKED FOR. The row exists because the question was put, not because it was
@@ -468,6 +481,133 @@ public sealed class CampaignStore(Database db)
         return Read(c);
     });
 
+    /// <summary>Every campaign still open, oldest first — the order <see cref="ChargedBy"/> charges them in.</summary>
+    IReadOnlyList<CampaignRow> OpenCampaigns() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {Cols} FROM strategy_campaign WHERE closed_at IS NULL ORDER BY id");
+        return Read(c);
+    });
+
+    /// <summary>
+    /// THE OPEN CAMPAIGNS A RESEARCH RUN OF <paramref name="set"/> FROM <paramref name="from"/> TO <paramref name="to"/>
+    /// (both inclusive, either null) IS CHARGED TO: the campaign over its own dataset first, then, by id, every other open
+    /// campaign whose DEVELOPMENT MONTHS the run's bars overlap — through any dataset, of any pair
+    /// (<c>U-holdout-campaign</c>, rule 1; seat A's decision of 2026-10-09).
+    ///
+    /// <para><b>Why through any dataset.</b> A cutoff holds MARKET TIME for every pair (<c>U-bar-holdout</c>): every
+    /// Download press records a new version of the pair with no cutoff, a correlated pair carries the same months' regime,
+    /// and both say what those months did. So a campaign is about market time, and the months before its cutoff are what
+    /// its research is about whichever dataset serves them. Its own precommitted policy says so already —
+    /// <see cref="CampaignPolicy.V1"/>: "Research runs are made over bars before the campaign's holdout cutoff and every
+    /// one of them is charged" — and its sha is on every campaign row, so the code is brought up to the text rather than
+    /// the text edited. Charged to the dataset's own campaign alone, a run over a second download of the same months was
+    /// served past a spent budget and counted by nobody (the survey's probe, Q1.3 and Q1.4, RED at <c>ea88e72b</c>).</para>
+    ///
+    /// <para><b>The two spans, both read from the ledger at each call.</b> A campaign's development months are its
+    /// dataset's bars before the cutoff, <c>[first bar, holdout_from)</c> — a dataset that records no first bar reads as
+    /// one with no start. The run's span is the market its bars cover: from the open of the first it reads to the close of
+    /// the last, one bar of the set's interval after it — <c>TapeHoldout</c>'s span — with an open or out-of-range side
+    /// read as the set's own first or last bar, as <c>Backtest.ClosesOf</c> reads it, and a bar length this build cannot
+    /// read as no end. A window that reads no bar overlaps nothing. One instant shared is no overlap: a run whose last bar
+    /// closes as a campaign's first opens has read none of it.</para>
+    ///
+    /// <para><b>What is not charged here, and why.</b> A FIXTURE run is charged nothing: it is registered under its own
+    /// campaign, uncharged, exactly as before, and against no other — it establishes plumbing, never evidence. A campaign
+    /// over a FIXTURE or a REJECTED dataset is charged through its own dataset only: its months are not evidence, or not
+    /// bars TradeAgent vouches for. And a FEATURE's reach is not counted: a program that reads features reads the tape back
+    /// from its first close by its longest reach, and a run whose bars start after a campaign's months while its features
+    /// reach into them is not charged by this rule — the tape's own holdout is what keeps that reach out of the held
+    /// window, and <c>docs/CONTRACTS.md</c> says so.</para>
+    ///
+    /// <para><b>Asked by the look and registered by the gate</b>: <c>Backtests.Run</c> asks <see cref="TrialRefusal"/>
+    /// of each before the run, and registers each with <see cref="RegisterTrial"/> inside the run's own write, so any
+    /// refusal rolls the run back. The order matters once: the first registration decides a never-charged version's home
+    /// (<see cref="ChargedCampaignFor"/> reads the row just written), so the run's own campaign is first.</para>
+    /// </summary>
+    public IReadOnlyList<CampaignCharge> ChargedBy(DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+
+        return db.Read(_ =>
+        {
+            var charges = new List<CampaignCharge>();
+            if (OpenForDataset(set.Id) is { } own) charges.Add(new CampaignCharge(own, null));
+
+            // A FIXTURE RUN STOPS HERE: charged nothing anywhere, and no row under any campaign but its own.
+            if (EvaluationClass.Or(set.EvaluationClass) == EvaluationClass.Fixture) return charges;
+            if (RunSpan(set, from, to) is not { } span) return charges;
+
+            var datasets = new DatasetStore(db);
+            foreach (var other in OpenCampaigns())
+            {
+                if (other.HoldoutDatasetId == set.Id) continue;
+
+                // CHARGED THROUGH ITS OWN DATASET ONLY: a campaign whose bars are fixture or rejected — or whose dataset this
+                // ledger no longer holds — has no months anybody else's research could be evidence about.
+                if (datasets.ById(other.HoldoutDatasetId) is not { } held
+                    || EvaluationClass.Or(held.EvaluationClass) == EvaluationClass.Fixture
+                    || held.State == DatasetState.REJECTED)
+                    continue;
+
+                var months = (From: held.FirstBar, Until: held.HoldoutFrom ?? other.HoldoutFrom);
+                if (!Overlaps(span.From, span.Until, months.From, months.Until)) continue;
+
+                charges.Add(new CampaignCharge(other, Through(set, span, other, held, months)));
+            }
+
+            return charges;
+        });
+    }
+
+    /// <summary>
+    /// THE MARKET A RUN'S BARS COVER, or null because the window reads no bar of the set: from the open of the first to
+    /// the close of the last. See <see cref="ChargedBy"/>.
+    /// </summary>
+    static (DateTimeOffset? From, DateTimeOffset? Until)? RunSpan(DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        var first = from is { } f && (set.FirstBar is not { } fb || f >= fb) ? f : set.FirstBar ?? from;
+        var last = to is { } t && (set.LastBar is not { } lb || t <= lb) ? t : set.LastBar ?? to;
+        DateTimeOffset? until = last is { } l && BarLength(set.Interval) is { } bar && l <= DateTimeOffset.MaxValue - bar
+            ? l + bar
+            : null;
+
+        if (first is { } a && until is { } b && a >= b) return null;
+        return (first, until);
+    }
+
+    /// <summary>One bar of <paramref name="interval"/>, or null for one this build cannot read — which reads as no end.</summary>
+    static TimeSpan? BarLength(string interval)
+    {
+        try { return KlineNormaliser.BarLength(interval); }
+        catch (TradeAgentException) { return null; }
+    }
+
+    /// <summary>
+    /// Whether <c>[a, b)</c> and <c>[c, d)</c> share market time; a null start or end is no bound on that side. One
+    /// instant shared is not an overlap: a span that closes as the other opens holds none of it.
+    /// </summary>
+    static bool Overlaps(DateTimeOffset? a, DateTimeOffset? b, DateTimeOffset? c, DateTimeOffset? d) =>
+        (b is not { } hi || c is not { } lo || hi > lo) && (d is not { } end || a is not { } start || start < end);
+
+    /// <summary>The sentence a refusal adds for a campaign charged through another dataset. See <see cref="CampaignCharge"/>.</summary>
+    static string Through(DatasetRecord read, (DateTimeOffset? From, DateTimeOffset? Until) span, CampaignRow campaign,
+        DatasetRecord held, (DateTimeOffset? From, DateTimeOffset Until) months) =>
+        $"This run reads dataset {read.Id} ({read.Pair} {read.Interval} {read.Version}), whose bars "
+        + (span switch
+        {
+            ({ } lo, { } hi) => $"span the market from {lo:u} to the close of the last at {hi:u}",
+            ({ } lo, null) => $"span the market from {lo:u} with no end this build can measure",
+            (null, { } hi) => $"span the market up to the close of the last at {hi:u}, from no recorded start",
+            _ => "span the market with neither a recorded start nor an end"
+        })
+        + $", and that overlaps the development months of campaign {campaign.Id}: the bars of dataset {held.Id} "
+        + $"({held.Pair} {held.Interval} {held.Version}) "
+        + (months.From is { } first ? $"from {first:u}" : "from its first")
+        + $" up to its cutoff at {months.Until:u}. Research over a campaign's months is charged to it through any dataset "
+        + "of any pair — another download of the same months, or a pair that moved with them, says what those months did "
+        + "as surely as the campaign's own bars — because its precommitted policy charges every research run made over bars "
+        + "before its cutoff. ";
+
     /// <summary>
     /// THIS CAMPAIGN AND EVERY CAMPAIGN IT WAS RENEWED FROM, newest first — the chain
     /// <c>Referee.RequestVerdict</c> counts verdicts over.
@@ -495,31 +635,38 @@ public sealed class CampaignStore(Database db)
     // ---- trials -----------------------------------------------------------------------------------
 
     /// <summary>
-    /// HOW MANY CHARGED TRIALS THIS CAMPAIGN HAS REGISTERED. A fixture run is not among them.
+    /// HOW MANY CHARGED RUNS THIS CAMPAIGN HAS REGISTERED. A fixture run is not among them.
     ///
     /// <para>A trial counts here when this campaign was the PEEK (<c>campaign_id</c>) or when it was
     /// the COST (<c>charged_to</c>) — a variant run over another holdout, charged back to the campaign
-    /// lineage its ancestry was already being charged to. A row that is both counts once, which is what
-    /// <c>COUNT(*)</c> over an OR does and what every version that declared no parent produces.</para>
+    /// lineage its ancestry was already being charged to.</para>
+    ///
+    /// <para><b>RUNS, not rows: <c>COUNT(DISTINCT run_id)</c></b> (<c>U-holdout-campaign</c>). Since one run is charged to
+    /// every open campaign whose months its bars overlap (<see cref="ChargedBy"/>), one run can stand on two rows that
+    /// both count here — under campaign X, and under campaign Y with X as its home — and <c>COUNT(*)</c> read that as two
+    /// trials of X's budget for one peek. A run id hashes its version, its bars and its execution model, so one id is one
+    /// question asked once.</para>
     /// </summary>
-    public int TrialsCharged(long campaignId) => db.Read(_ =>
-    {
-        using var c = db.Cmd(
-            "SELECT COUNT(*) FROM strategy_trial WHERE charged=1 AND (campaign_id=$id OR charged_to=$id)",
-            ("$id", campaignId));
-        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
-    });
+    public int TrialsCharged(long campaignId) => TrialsCharged(campaignId, null, null);
 
     /// <summary>
-    /// How many charged trials of ONE POT this campaign has registered — the exploration reserve, or
+    /// How many charged runs of ONE POT this campaign has registered — the exploration reserve, or
     /// the rest of the trial budget. The two together are <see cref="TrialsCharged(long)"/>.
     /// </summary>
-    public int TrialsCharged(long campaignId, bool exploration) => db.Read(_ =>
+    public int TrialsCharged(long campaignId, bool exploration) => TrialsCharged(campaignId, exploration, null);
+
+    /// <summary>
+    /// The count both public overloads read, and the GATE's reading of it: <paramref name="exceptRun"/> leaves out the run
+    /// being registered, because a run already counted here through an earlier row of the same write costs this
+    /// campaign nothing more — and a ceiling that counted it would refuse the run for its own trial.
+    /// </summary>
+    int TrialsCharged(long campaignId, bool? exploration, string? exceptRun) => db.Read(_ =>
     {
         using var c = db.Cmd(
-            "SELECT COUNT(*) FROM strategy_trial WHERE charged=1 AND exploration=$e "
+            "SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged=1 "
+            + "AND ($e IS NULL OR exploration=$e) AND ($run IS NULL OR run_id<>$run) "
             + "AND (campaign_id=$id OR charged_to=$id)",
-            ("$id", campaignId), ("$e", exploration ? 1 : 0));
+            ("$id", campaignId), ("$e", exploration is { } pot ? pot ? 1 : 0 : null), ("$run", exceptRun));
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     });
 
@@ -620,8 +767,11 @@ public sealed class CampaignStore(Database db)
     ///
     /// <para>A <c>fixture</c> run is never refused here — it is charged nothing, so there is nothing for
     /// a budget to refuse.</para>
+    ///
+    /// <para><paramref name="through"/> is <see cref="CampaignCharge.Through"/>: null for the campaign over the run's own
+    /// dataset, and for any other the sentence a refusal carries naming its months and the dataset the run reads.</para>
     /// </summary>
-    public string? TrialRefusal(long campaignId, string versionId, string kind)
+    public string? TrialRefusal(long campaignId, string versionId, string kind, string? through = null)
     {
         // THE FENCE COMES FIRST AND IT IS NOT A BUDGET. A retired candidate takes no new assignment at
         // all, so a fixture run of one is refused here too — the exemption above is about the trial
@@ -632,7 +782,7 @@ public sealed class CampaignStore(Database db)
         if (ById(campaignId) is null) return null;
 
         var rule = Admission(campaignId, versionId, kind);
-        return Refusal(rule, Counts(rule), made: false);
+        return Refusal(rule, Counts(rule, null), made: false, through);
     }
 
     /// <summary>
@@ -668,59 +818,66 @@ public sealed class CampaignStore(Database db)
 
     /// <summary>
     /// The counts this rule is decided on. Read by the LOOK in its own transaction, where they are a
-    /// cheap honest answer, and by the GATE inside the write, where nothing can move them.
+    /// cheap honest answer, and by the GATE inside the write, where nothing can move them — the gate with
+    /// <paramref name="exceptRun"/>, the run it is registering, left out (see <see cref="TrialsCharged(long)"/>).
     /// </summary>
-    TrialCounts Counts(TrialAdmission rule) => new(
-        rule.RunCampaign is { } run ? TrialsCharged(run.Id) : 0,
-        rule.RunCampaign is { } runPot ? TrialsCharged(runPot.Id, rule.Exploration) : 0,
-        rule.HomeCampaign is { } home ? TrialsCharged(home.Id) : 0,
-        rule.HomeCampaign is { } homePot ? TrialsCharged(homePot.Id, rule.Exploration) : 0);
+    TrialCounts Counts(TrialAdmission rule, string? exceptRun) => new(
+        rule.RunCampaign is { } run ? TrialsCharged(run.Id, null, exceptRun) : 0,
+        rule.RunCampaign is { } runPot ? TrialsCharged(runPot.Id, rule.Exploration, exceptRun) : 0,
+        rule.HomeCampaign is { } home ? TrialsCharged(home.Id, null, exceptRun) : 0,
+        rule.HomeCampaign is { } homePot ? TrialsCharged(homePot.Id, rule.Exploration, exceptRun) : 0);
 
     /// <summary>
     /// WHY THIS TRIAL WOULD NOT BE REGISTERED, in words, or null because it would. One rule, both
-    /// callers; <paramref name="made"/> only chooses the tense of the sentence.
+    /// callers; <paramref name="made"/> only chooses the tense of the sentence, and <paramref name="through"/> is the
+    /// sentence naming the months and the dataset read when the run campaign is not the run's own dataset's.
     /// </summary>
-    static string? Refusal(TrialAdmission rule, TrialCounts spent, bool made)
+    static string? Refusal(TrialAdmission rule, TrialCounts spent, bool made, string? through)
     {
         if (!rule.Charged || rule.RunCampaign is not { } run) return null;
 
-        if (spent.Run >= run.TrialBudget) return Spent(run.Id, run.TrialBudget, made);
+        if (spent.Run >= run.TrialBudget) return Spent(run.Id, run.TrialBudget, made, through);
 
         // THE POT, AND IT IS READ AT THE GATE. A campaign's trial budget is two budgets: the reserve
         // kept for versions with no promoted parent, and the rest. Both ceilings are inside the
         // transaction that writes the row, because a reservation taken outside it is the look
         // `U-referee-1` named — two roles both honestly told there is room, and both taking it.
-        if (spent.RunPot >= rule.PotOf(run)) return Pot(rule, run, made);
+        if (spent.RunPot >= rule.PotOf(run)) return Pot(rule, run, made, through);
 
-        // AND THE FAMILY'S OWN CAMPAIGN, which is a second ceiling and never a looser one: a variant
-        // run against a fresh holdout is charged back to the campaign lineage its ancestry is already
-        // being charged to (`docs/COUNCIL.md`:201, comparable trials).
+        // AND THE FAMILY'S OWN CAMPAIGN, which is a second ceiling and never a looser one: a version is
+        // charged back to the campaign lineage its family was first charged to (`docs/COUNCIL.md`:201,
+        // comparable trials).
         if (rule.HomeCampaign is not { } home || rule.OneCampaign) return null;
 
-        if (spent.Home >= home.TrialBudget) return Spent(home.Id, home.TrialBudget, made) + Elsewhere;
+        if (spent.Home >= home.TrialBudget) return Spent(home.Id, home.TrialBudget, made, null) + Elsewhere;
 
-        return spent.HomePot >= rule.PotOf(home) ? Pot(rule, home, made) + Elsewhere : null;
+        return spent.HomePot >= rule.PotOf(home) ? Pot(rule, home, made, null) + Elsewhere : null;
     }
 
     /// <summary>The sentence a spent POT answers with, naming which of the two had no room.</summary>
-    static string Pot(TrialAdmission rule, CampaignRow campaign, bool made) =>
+    static string Pot(TrialAdmission rule, CampaignRow campaign, bool made, string? through) =>
         $"campaign {campaign.Id} has registered all {rule.PotOf(campaign)} of the trials it reserves for "
         + (rule.Exploration
             ? "EXPLORATION — versions that declare no parent, or one nothing has promoted — so "
             : "REFINEMENT — versions whose declared parent is promoted — so ")
         + (made ? "this run is not recorded and its result is not served. " : "this run is refused before it is made. ")
+        + through
         + $"The reserve is {campaign.ExplorationBudget} of this campaign's {campaign.TrialBudget} trials "
         + $"for exploration and {campaign.RefinementBudget} for refinement, fixed when the campaign "
         + "opened. The two sum to the trial budget, so declaring a parent moves a trial from one pot to "
         + "the other and creates no allowance: what is left is a renewal, which the account owner "
         + "authorises in TradeAgent's own window.";
 
-    /// <summary>The clause a refusal adds when the budget that had no room was the family's, not this run's.</summary>
+    /// <summary>
+    /// The clause a refusal adds when the budget that had no room was the family's, not this run's. A family is the
+    /// version and every ancestor it declares, and its home is where the eldest of them was first charged — which, since
+    /// a run is charged through any dataset (<see cref="ChargedBy"/>), can be another campaign for a version that
+    /// declared no parent at all.
+    /// </summary>
     const string Elsewhere =
-        " This run is over another holdout and is charged there as well as here, because the version it "
-        + "runs declares a parent: a variant is charged to the campaign lineage its ancestry is already "
-        + "being charged to, so a family cannot buy itself an untouched trial budget by submitting a new "
-        + "hash against a second dataset.";
+        " This run is charged there as well as here, because a version is charged to the campaign lineage its "
+        + "family — itself and every parent it declares — was first charged to, so a family cannot buy itself an "
+        + "untouched trial budget by running against a second dataset or by submitting a new hash.";
 
     /// <summary>
     /// REGISTERS ONE TRIAL, CHARGING IT AGAINST THE BUDGET IN THE SAME TRANSACTION THAT READS IT — or
@@ -744,9 +901,14 @@ public sealed class CampaignStore(Database db)
     /// already spent either way, and the alternative is a run over the campaign's data standing in the
     /// ledger with no trial against it — which is the peek the count exists to bound, recorded as free.
     /// The caller is told in these words rather than quietly served the figures.</para>
+    ///
+    /// <para><b>One run may be registered under several campaigns</b> — every open campaign whose months its bars overlap
+    /// (<see cref="ChargedBy"/>), <paramref name="through"/> naming them for a campaign that is not the run's own
+    /// dataset's. Each row is its own trial of its own campaign, and the count reads RUNS, so the second row of one run
+    /// costs a campaign that already counted it nothing: the gate's counts leave this run out.</para>
     /// </summary>
     public TrialRegistered RegisterTrial(long campaignId, string versionId, string runId, string kind,
-        DateTimeOffset at) => db.Write(_ =>
+        DateTimeOffset at, string? through = null) => db.Write(_ =>
     {
         if (ById(campaignId) is not { } campaign)
             return new TrialRegistered(false, $"there is no campaign {campaignId}.", false, 0, 0);
@@ -758,13 +920,13 @@ public sealed class CampaignStore(Database db)
         // this transaction and nowhere else. That is `AiAttemptStore.Begin`'s shape and it is the whole
         // of the guard.
         var rule = Admission(campaignId, versionId, kind);
-        var spent = Counts(rule);
+        var spent = Counts(rule, runId);
         var chargedTo = rule.HomeCampaign?.Id ?? campaignId;
 
         // ALREADY REGISTERED: the same question, asked again. The first row stands and the answer is Ok
         // whatever the budget now says — see the doc comment.
         if (Registered(campaignId, versionId, runId))
-            return new TrialRegistered(true, "", charged, spent.Run, campaign.TrialBudget);
+            return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
 
         // AND THE RETIREMENT FENCE, AFTER IT. `docs/COUNCIL.md`:223: retirement "stops new assignments
         // and fences attempts". A trial already on the table is not a new assignment — it is a row that
@@ -774,7 +936,7 @@ public sealed class CampaignStore(Database db)
             return new TrialRegistered(false, retired, false, spent.Run, campaign.TrialBudget);
 
         // THE GATE, AND IT IS THIS TRANSACTION'S OWN READING RATHER THAN THE CALLER'S.
-        if (Refusal(rule, spent, made: true) is { } why)
+        if (Refusal(rule, spent, made: true, through) is { } why)
             return new TrialRegistered(false, why, false, spent.Run, campaign.TrialBudget);
 
         using var c = db.Cmd("""
@@ -785,7 +947,8 @@ public sealed class CampaignStore(Database db)
             """,
             ("$id", campaignId), ("$ver", versionId), ("$run", runId), ("$kind", kind),
             ("$charged", charged ? 1 : 0), ("$at", Sql.T(at)),
-            // THE COST, BESIDE THE PEEK. They are one number for a version that declared no parent.
+            // THE COST, BESIDE THE PEEK. They are one number for a family's first trial and for every
+            // later one under the lineage it was first charged to.
             ("$home", chargedTo),
             // AND WHICH POT IT CAME OUT OF, as the question stood now. Copied, never re-derived: a
             // parent promoted later must not reclassify what this trial cost.
@@ -809,13 +972,14 @@ public sealed class CampaignStore(Database db)
     /// halves rather than two texts, because everything after the first clause is the same fact and a
     /// second copy of it is a second thing to keep true.
     /// </summary>
-    static string Spent(long campaignId, int budget, bool made) =>
+    static string Spent(long campaignId, int budget, bool made, string? through) =>
         $"campaign {campaignId} has registered all {budget} of its research trials, so "
         + (made
             ? "this run is not recorded and its result is not served: the count is charged in the same "
               + "transaction that reads it, so two roles asking for the last trial at once cannot both "
               + "take it. "
             : "this run is refused before it is made. ")
+        + through
         + "A trial is one registered run of one version over one "
         + "dataset under one execution model, and the count is the CAMPAIGN's: it is keyed by the "
         + "campaign, the version and the run and by nothing about who asked, so it is not reset by a "
