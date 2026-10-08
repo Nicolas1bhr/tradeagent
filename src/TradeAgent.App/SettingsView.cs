@@ -323,8 +323,9 @@ sealed class SettingsPage
         // THE HOLDOUT. Two presses, and here rather than on the Safety page because it is about the
         // DATA: the owner is drawing a line across the months they have just collected and saying that
         // everything after it is evidence the research process never sees. Two presses because the line
-        // can only ever move forward — a bar that has been served cannot become holdout again — so a
-        // mis-click is not something the owner can take back.
+        // never moves once pressed — not back, because a bar that has been served cannot become holdout
+        // again, and not forward, because the campaign the press opens judges from it (`U-holdout-later`)
+        // — so a mis-click is not something the owner can take back.
         _holdoutFrom = Ui.TextField(null, "2026-06-01");
         _holdoutFrom.Width = 180;
         _holdoutFrom.HorizontalAlignment = HorizontalAlignment.Left;
@@ -355,10 +356,13 @@ sealed class SettingsPage
                      "read them nor backtest over them: a window that reaches the date is refused in words rather " +
                      "than quietly cut short, and every part of the AI is refused equally. TradeAgent itself reads " +
                      "them, to judge a finished strategy on months it was never shown."),
-            Ui.Micro("The line can only be moved LATER. A bar that has already been served to the AI cannot become " +
-                     "held-back afterwards, so TradeAgent refuses to move the date back rather than pretending the " +
-                     "AI never saw it. Fixture bars are the other choice: made-up minutes that prove the machinery " +
-                     "works, never counted as evidence and never charged against the AI's budget of attempts.")));
+            Ui.Micro("Once pressed, the date never moves. Not earlier: a bar the AI has already been shown cannot " +
+                     "become held back afterwards, and TradeAgent will not pretend the AI never saw it. Not later: " +
+                     "TradeAgent keeps judging strategies on every bar from the date you pressed, and a later date " +
+                     "would show the AI the bars those judgements use. To hold back a different period, download a " +
+                     "fresh copy of the history and hold months back on that. Fixture bars are the other choice: " +
+                     "made-up minutes that prove the machinery works, never counted as evidence and never charged " +
+                     "against the AI's budget of attempts.")));
 
         // Updates are here rather than on Checks because this is where somebody looks for "what
         // version am I on". Nothing on this card happens on its own: the automatic half is the
@@ -852,8 +856,9 @@ sealed class SettingsPage
     }
 
     /// <summary>
-    /// The owner's second press. It moves the cutoff on the newest dataset — the one the card above
-    /// describes — and prints what the ledger did, refusal included.
+    /// The owner's second press. It sets the cutoff on the newest dataset — the one the card above
+    /// describes — and prints what the ledger did, refusal included: a cutoff already held by a campaign
+    /// is not moved, and the refusal says which campaign and what to do instead.
     /// </summary>
     void ApplyHoldout(DateTimeOffset at, string evaluationClass)
     {
@@ -874,9 +879,13 @@ sealed class SettingsPage
             // made against them would be a holdout with no protocol behind it.
             var (done, campaign) = _host.Gateway.SetHoldout(newest.Id, at, evaluationClass);
             _holdoutNote.Foreground = done.Ok ? Theme.TextMuted : Theme.Caution;
+            // A REFUSAL IS PRINTED AS THE LEDGER SAID IT and the line above is re-read below, so after a
+            // refused press the card still names the date that is really held back. "No longer be moved"
+            // is said only with the campaign that holds it there (`DatasetStore.SetHoldout`).
             _holdoutNote.Text = done.Ok
                 ? $"Bars from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on are held back. The AI cannot read them "
-                  + "or backtest over them, and this date can no longer be moved earlier."
+                  + "or backtest over them, and this date can no longer be moved"
+                  + (campaign is null ? " earlier." : ".")
                   + (campaign is { } c
                       ? $" Campaign {c.Id} is measured against them: {c.TrialBudget:N0} research runs and "
                         + $"{c.VerdictBudget:N0} final judgements, and the standard it will be judged by is "
