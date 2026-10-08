@@ -544,6 +544,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         _login = null;
     }
 
+    /// <summary>Storing a key is a local operation. Anything slower than this has stopped working.</summary>
+    static readonly TimeSpan KeySignInTimeout = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// Signs in with a key the user pasted into TradeAgent's own window.
     ///
@@ -552,10 +555,16 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// anyone to type a key into one. The key is not logged, not stored by TradeAgent, and not kept
     /// in memory beyond this call.
     /// </summary>
-    /// <summary>Storing a key is a local operation. Anything slower than this has stopped working.</summary>
-    static readonly TimeSpan KeySignInTimeout = TimeSpan.FromSeconds(30);
+    public Task SignInWithApiKeyAsync(string key, CancellationToken ct = default) =>
+        SignInWithApiKeyAsync(key, ct, beforeRename: null);
 
-    public async Task SignInWithApiKeyAsync(string key, CancellationToken ct = default)
+    /// <summary>See <see cref="SignInWithApiKeyAsync(string, CancellationToken)"/>.</summary>
+    /// <param name="beforeRename">
+    /// A test seam, and the product passes nothing: for the credentials-file shape, handed the path of the
+    /// file the key sits in before it is published at the manifest's path — the instant at which "who can
+    /// read this" is the question, and the last one at which a failure must leave the old file whole.
+    /// </param>
+    internal async Task SignInWithApiKeyAsync(string key, CancellationToken ct, Action<string>? beforeRename)
     {
         var plan = manifest.ApiKey
             ?? throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,

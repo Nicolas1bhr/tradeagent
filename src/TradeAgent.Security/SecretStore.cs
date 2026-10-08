@@ -62,7 +62,7 @@ public static class SecretStore
         byte[] bytes;
         try
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var fs = OpenToRead(path);
             using var copy = new MemoryStream();
             fs.CopyTo(copy);
             bytes = copy.ToArray();
@@ -81,6 +81,14 @@ public static class SecretStore
             return null; // written by another user or corrupt: treat as absent, regenerate.
         }
     }
+
+    /// <summary>
+    /// How a reader holds the file while it reads it: the one open <see cref="Read"/> makes, so a test that
+    /// holds a handle across <see cref="Write"/> holds exactly the handle a reader does — the <c>trade</c>
+    /// command's <see cref="IpcToken.Peek"/>, from any process, at any moment the app is starting.
+    /// </summary>
+    internal static FileStream OpenToRead(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 }
 
 /// <summary>The shared secret an agent must present before the gateway will talk to it.</summary>
