@@ -22,7 +22,11 @@ public sealed class TapeSeriesEntry
     /// </summary>
     public string UrlShape { get; set; } = "";
 
-    /// <summary>The item field holding the vendor's time for it: <c>time</c>, <c>timestamp</c>, <c>fundingTime</c>.</summary>
+    /// <summary>
+    /// The item field holding the vendor's time for it: <c>time</c>, <c>timestamp</c>, <c>fundingTime</c>. EMPTY for the
+    /// asset-context parser (<see cref="TapeSourceCatalog.HyperliquidParser"/>), whose items carry no time at all: its
+    /// source time is the answer's own <c>Date</c> header.
+    /// </summary>
     public string TimeField { get; set; } = "";
 
     /// <summary>
@@ -46,6 +50,16 @@ public sealed class TapeSeriesEntry
     /// subject itself (<c>TapeStore.IsSubject</c>). EMPTY for the market parser.
     /// </summary>
     public string IdField { get; set; } = "";
+
+    /// <summary>
+    /// THE REQUEST BODY THE SERIES IS ASKED WITH, or EMPTY for a GET (<c>U-tape-chain</c>): a series that carries one is
+    /// POSTed as <c>application/json</c> — Hyperliquid's info endpoint answers only that way. NOT part of the file, like
+    /// <see cref="TapeSourceEntry.PublicationDelay"/>: only a built-in row ever sends a body, and a row
+    /// <c>tape-sources.json</c> adds is asked by GET whatever it says, so a file an agent can write cannot make TradeAgent
+    /// send a body of its choosing to an address of its choosing.
+    /// </summary>
+    [JsonIgnore]
+    public string Body { get; set; } = "";
 }
 
 /// <summary>
@@ -116,6 +130,14 @@ public sealed class TapeSourceEntry
     /// </summary>
     [JsonIgnore]
     public TimeSpan PublicationDelay { get; set; }
+
+    /// <summary>
+    /// THE SUBJECTS THIS ROW KEEPS, BY THE VENDOR'S OWN NAMES — Hyperliquid's <c>BTC</c>, not Binance's <c>BTCUSDT</c> — or
+    /// EMPTY for <see cref="TapeSourceCatalog.Universe"/> (<see cref="TapeSourceCatalog.SubjectsOf"/>). NOT part of the
+    /// file: a row the file adds records the universe and nothing it names.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> Subjects { get; set; } = [];
 }
 
 /// <summary>
@@ -126,10 +148,11 @@ public sealed record TapeSourceCatalogRead(
     IReadOnlyList<TapeSourceEntry> Sources, string? Unreadable, IReadOnlyList<string> Refused);
 
 /// <summary>
-/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS: three built-in families — five rows over Binance USDⓈ-M public
-/// market data for six symbols (<c>U-tape-store</c>), OKX's announcements for EU users (<c>U-tape-events</c>) and
-/// GDELT's news items about crypto, from its fifteen-minute GKG files (<c>U-tape-archive</c>) — and whatever
-/// unkeyed market rows <c>tape-sources.json</c> adds.
+/// THE SOURCES THE MARKET-CONTEXT TAPE RECORDS: four built-in families — five rows over Binance USDⓈ-M public
+/// market data for six symbols (<c>U-tape-store</c>), OKX's announcements for EU users (<c>U-tape-events</c>),
+/// GDELT's news items about crypto, from its fifteen-minute GKG files (<c>U-tape-archive</c>), and Hyperliquid's
+/// public perpetual contexts for the same six coins (<c>U-tape-chain</c>) — and whatever unkeyed market rows
+/// <c>tape-sources.json</c> adds.
 ///
 /// <para><b>The file may ADD rows. It may never replace, redirect or remove a built-in one</b>, and
 /// that is the difference from <c>sources.json</c>, where a file row replaces the built-in with its id.
@@ -211,6 +234,32 @@ public static class TapeSourceCatalog
 
     /// <summary>The credit GDELT's terms ask of every use: the project's name and a link to its site.</summary>
     public const string GdeltCitation = "The GDELT Project, https://www" + ".gdeltproject" + ".org/";
+
+    /// <summary>
+    /// Hyperliquid's perpetuals' asset contexts — open interest, funding, premium, mark, oracle and mid prices, impact
+    /// prices and the day's volume — for every coin in one answer, kept to six (<c>U-tape-chain</c>).
+    /// </summary>
+    public const string HyperliquidAssetCtxs = "hyperliquid-asset-ctxs";
+
+    /// <summary>HYPERLIQUID'S API HOST, spelled in pieces for the reason <see cref="BinanceUmBaseUrl"/> is.</summary>
+    public const string HyperliquidBaseUrl = "https://api" + ".hyperliquid" + ".xyz";
+
+    /// <summary>
+    /// HYPERLIQUID'S TERMS OF USE, the page its app serves them on, spelled in pieces like every vendor address here.
+    /// Hyperliquid publishes no terms for its API; these govern its Interface.
+    /// </summary>
+    public const string HyperliquidTermsUrl = "https://app" + ".hyperliquid" + ".xyz/terms";
+
+    /// <summary>
+    /// THE ASSET-CONTEXT PARSER FAMILY (<c>U-tape-chain</c>): Hyperliquid's <c>metaAndAssetCtxs</c> answer — its universe
+    /// and its contexts, two lists zipped by index — one item per kept coin, stamped with the answer's own <c>Date</c>
+    /// (<see cref="TapeParse.TryReadAssetContexts"/>). Asked by POST with the series' <see cref="TapeSeriesEntry.Body"/>.
+    /// Built-in rows only.
+    /// </summary>
+    public const string HyperliquidParser = "hyperliquid-ctx-json";
+
+    /// <summary>The coins Hyperliquid's row keeps: the universe's six, by Hyperliquid's own names.</summary>
+    public static readonly IReadOnlyList<string> HyperliquidCoins = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE"];
 
     /// <summary>The symbols every row is recorded for, built-in and added alike.</summary>
     public static readonly IReadOnlyList<string> Universe =
@@ -459,13 +508,78 @@ public static class TapeSourceCatalog
         }
     ];
 
+    const string HyperliquidTerms =
+        "Hyperliquid publishes no terms for its API: its documentation lists none. Its Terms of Use (" + HyperliquidTermsUrl
+        + ", last updated on June 15, 2026), read in full on 2026-10-08 and re-read the same day (U-tape-chain), govern its "
+        + "Interface: § 1.6 closes it to persons in the United States, Ontario and sanctioned territories, which Belgium is "
+        + "not; § 3.1.8 bars bots and scripts only where they exceed reasonable usage, bypass rate limits, cause "
+        + "denial-of-service conditions or disrupt Hyperliquid; §§ 4.1-4.2 make its information informational only and "
+        + "possibly inaccurate; and no clause speaks to a data licence, storage, redistribution or credit, so the row carries "
+        + "no citation. Its documentation allows 1,200 weight a minute per IP and this request weighs 20: TradeAgent asks it "
+        + "once every five minutes, keeps the six coins' aggregate contexts on the owner's own machine for research and "
+        + "passes them to no one. Nothing about any address, position or fill is asked, and no licence for live use is "
+        + "claimed (docs/RESEARCH-REQUIRED.md, C5f).";
+
+    /// <summary>
+    /// THE POSITIONING ROWS THIS BUILD SHIPS (<c>U-tape-chain</c>), a fresh copy on every call: Hyperliquid's public
+    /// perpetual contexts, every coin in one answer every five minutes, of which the six coins of
+    /// <see cref="HyperliquidCoins"/> are kept — aggregates only, nothing about any address, position or fill.
+    ///
+    /// <para><b>One POST of a body this build wrote.</b> Hyperliquid's info endpoint answers only a POST, so the series
+    /// carries its <see cref="TapeSeriesEntry.Body"/>, which only a built-in row can: no key, no account, and the documented
+    /// first perp dex (no <c>dex</c> is sent). <b>Its time is the answer's own <c>Date</c></b>: the contexts carry none — a
+    /// context is "now" by the vendor's clock — so the parser stamps every item with the header the vendor sent, never
+    /// with this machine's clock. A reading first received within the 300 s cadence plus 30 s of that header, from this
+    /// row's own origin, is <c>O-LIVE</c> by the store's one rule.</para>
+    ///
+    /// <para><b>Hyperliquid's own archive is not here</b>: its documentation offers a monthly, requester-pays copy of
+    /// these contexts with no guarantee of timely updates, and says the API may be used to record more yourself — which
+    /// is what this row does. Deribit, DefiLlama and Kalshi are not here either: their terms were read on 2026-10-08 as
+    /// barring, or not allowing a reading of, a stored copy (<c>docs/RESEARCH-REQUIRED.md</c>, C5f).</para>
+    /// </summary>
+    public static List<TapeSourceEntry> Positioning() =>
+    [
+        new()
+        {
+            Id = HyperliquidAssetCtxs,
+            DisplayName = "Hyperliquid perpetuals, asset contexts",
+            BaseUrl = HyperliquidBaseUrl,
+            CadenceSeconds = 300,
+            PerSymbol = false,
+            Parser = HyperliquidParser,
+            Series =
+            [
+                new() { Id = "asset-ctxs", UrlShape = "{base}/info", Body = """{"type":"metaAndAssetCtxs"}""", SymbolField = "name" }
+            ],
+            Subjects = [.. HyperliquidCoins],
+            Terms = HyperliquidTerms,
+            TermsUrl = HyperliquidTermsUrl,
+            DocUrl = "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals",
+            Measured = "measured 2026-10-08 from the dev Mac with no key (U-tape-chain; docs/RESEARCH-REQUIRED.md, C5f): "
+                       + "POST /info {\"type\":\"metaAndAssetCtxs\"} HTTP 200 in 0.40, 0.65 and 0.60 s, 72,225, 72,294 and "
+                       + "71,993 bytes (00:19:47Z, 00:28:24Z, 10:38:38Z); 234 universe entries beside 234 contexts, zipped by "
+                       + "index — BTC 0, ETH 1, SOL 5, BNB 7, XRP 25, DOGE 12 — no key in both, each of the six merged in "
+                       + "299-331 bytes; no time in the body, the Date header the answer's only time"
+        }
+    ];
+
     /// <summary>
     /// EVERY ROW THIS BUILD SHIPS, family by family — the market rows (<see cref="BuiltIn"/>), the announcement
-    /// rows (<see cref="Announcements"/>) and the archive rows (<see cref="Archives"/>) — a fresh copy on every
-    /// call. The live rule, the ids a file may not reuse and <see cref="Read"/> all take this list, so another
-    /// family joins by being added here and nowhere else.
+    /// rows (<see cref="Announcements"/>), the archive rows (<see cref="Archives"/>) and the positioning rows
+    /// (<see cref="Positioning"/>) — a fresh copy on every call. The live rule, the ids a file may not reuse and
+    /// <see cref="Read"/> all take this list, so another family joins by being added here and nowhere else.
     /// </summary>
-    public static List<TapeSourceEntry> Shipped() => [.. BuiltIn(), .. Announcements(), .. Archives()];
+    public static List<TapeSourceEntry> Shipped() => [.. BuiltIn(), .. Announcements(), .. Archives(), .. Positioning()];
+
+    /// <summary>
+    /// THE SUBJECTS A ROW KEEPS: its own <see cref="TapeSourceEntry.Subjects"/> where a built-in row names them by the
+    /// vendor's own names, else <see cref="Universe"/>.
+    /// </summary>
+    public static IReadOnlyList<string> SubjectsOf(TapeSourceEntry row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return row.Subjects is { Count: > 0 } own ? own : Universe;
+    }
 
     /// <summary>
     /// What a built-in row lets the store call live: its ORIGIN, its CADENCE and its documented
@@ -557,6 +671,15 @@ public static class TapeSourceCatalog
             return $"'{id}' names the parser '{AnnouncementParser}', which only TradeAgent's built-in announcement rows use: "
                    + "an announcement is an exchange's own text, and a row in tape-sources.json must not be able to put text "
                    + $"into the tape from wherever it points. A row there may add market data read with '{JsonParser}'.";
+
+        // THE ASSET-CONTEXT PARSER IS BUILT-IN ONLY (U-tape-chain). It is asked by POST with a body this build wrote,
+        // and every item it reads is stamped with a header of the answer rather than a field of the item: a row here
+        // that named it would send a request body to wherever the row points and take its rows' time from that host.
+        if (string.Equals(row.Parser, HyperliquidParser, StringComparison.Ordinal))
+            return $"'{id}' names the parser '{HyperliquidParser}', which only TradeAgent's built-in Hyperliquid row uses: it is "
+                   + "asked by POST with a body this build wrote and stamped with the answer's own Date, and a row in "
+                   + "tape-sources.json may neither send a body nor take its rows' time from a host's header. A row there may "
+                   + $"add market data read with '{JsonParser}', asked by GET.";
 
         if (!string.IsNullOrEmpty(row.Parser) && row.Parser != JsonParser)
             return $"'{id}' names the parser '{row.Parser}'; a row in tape-sources.json may name only '{JsonParser}'.";
