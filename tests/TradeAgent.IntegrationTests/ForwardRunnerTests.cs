@@ -162,8 +162,13 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// <paramref name="envelopeQuantity"/> and <paramref name="envelopeNotional"/> are the owner's grant — and so the
+    /// allocation's ceilings, which the app's own policy copies from it — 5 and 5,000,000 unless a test is about them.
+    /// </summary>
     static async Task<Rig> ReadyAsync(string program, string? bookFile = null, Database? db = null,
-        DateTimeOffset? origin = null, Func<PaperConnector, ITradingConnector>? through = null)
+        DateTimeOffset? origin = null, Func<PaperConnector, ITradingConnector>? through = null,
+        decimal envelopeQuantity = 5m, decimal? envelopeNotional = 5_000_000m)
     {
         db ??= TestEnv.NewDb();
 
@@ -219,7 +224,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         if (db.GetKv("rig-seeded") is null)
         {
             var granted = await gw.GrantPaperEnvelopeAsync(
-                "BTCUSDT", 5m, 5_000_000m, start.AddDays(30), start);
+                "BTCUSDT", envelopeQuantity, envelopeNotional, start.AddDays(30), start);
             Assert.True(granted.Ok, granted.Why);
 
             Judged(db, program, start);

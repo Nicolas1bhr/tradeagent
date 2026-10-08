@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using Xunit;
@@ -30,6 +31,19 @@ public class SizeCapTests(ITestOutputHelper log)
         Assert.True(parse.Ok, parse.Why);
         return parse.Program!;
     }
+
+    static readonly DateTimeOffset Monday = new(2026, 1, 5, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// <paramref name="count"/> one-minute bars from <see cref="Monday"/>, each opening and closing at <paramref name="price"/>
+    /// and reaching <paramref name="half"/> either side — so every true range is <c>2 * half</c>, and so is every ATR.
+    /// </summary>
+    static IReadOnlyList<KlineBar> Flat(int count, decimal price, decimal half) =>
+        [.. Enumerable.Range(0, count).Select(i => new KlineBar(Monday.AddMinutes(i), price, price + half, price - half, price, 1m))];
+
+    /// <summary>Bars from explicit OHLC rows, one minute apart from <see cref="Monday"/>, so nothing about a fixture is implicit.</summary>
+    static IReadOnlyList<KlineBar> Rows(params decimal[][] rows) =>
+        [.. rows.Select((r, i) => new KlineBar(Monday.AddMinutes(i), r[0], r[1], r[2], r[3], 1m))];
 
     /// <summary>A program whose size line is <paramref name="size"/>, on line 4 — under two constants it may read.</summary>
     static string WithSize(string size) => $"""
@@ -172,6 +186,139 @@ public class SizeCapTests(ITestOutputHelper log)
         Assert.StartsWith("this program requires `max_capital_fraction`, which a reader that sizes without the cap does not implement",
             refused, StringComparison.Ordinal);
         Assert.Null(StrategyDeclarations.Refusal(uncapped, without, "a reader that sizes without the cap"));
+    }
+
+    // ---------------------------------------------------------------- item 2: the size
+
+    /// <summary>
+    /// (a) A CAPPED RISK SIZE IS THE SMALLER OF THE TWO: the risk size, <c>equity * f / (close - stop)</c>, and
+    /// <c>capital * c / close</c> — what <c>capital_fraction</c> reads, so the backtest and the paper runner agree. The account
+    /// reads a capital of 8,000 and an equity of 10,000, as a paper run's does when its ceiling is 8,000 and it is up 2,000:
+    /// the risk is measured on the equity and the cap on the capital.
+    ///
+    /// <para>A SMALL ATR — bars a tenth of a unit wide at 100, so atr(3) is 0.1 and the stop 0.2 below the close — asks
+    /// <c>10,000 * 0.01 / 0.2 = 500</c>, fifty thousand of notional, and is capped at <c>8,000 * 0.95 / 100 = 76</c>. A LARGE
+    /// one — four units wide, atr(3) 4, the stop 8 below — asks 12.5, and 12.5 it is. Without the clause the small ATR
+    /// sizes to 500, exactly as it did before this unit.</para>
+    ///
+    /// <para><b>RED before item 2</b>: the capped program parsed and sized 500. <b>The mutant</b> — the <c>min</c> dropped,
+    /// so the risk size is answered whatever the cap — goes red here, in (b) and in (f).</para>
+    /// </summary>
+    [Fact]
+    public void A_capped_risk_size_is_the_smaller_of_the_two()
+    {
+        const string Text = """
+            instrument BTCUSDT
+            size risk_fraction 0.01 max_capital_fraction 0.95
+            stop atr 2 3
+            exit when close < 1
+            entry when close > 0
+            """;
+        var capped = Parsed(Text);
+        var uncapped = Parsed(Text.Replace(" max_capital_fraction 0.95", "", StringComparison.Ordinal));
+        var account = new AccountReading(8_000m, 10_000m, PositionSide.Flat, 0m, 0m, false, 0);
+
+        StrategyIntent Entry(StrategyProgram program, IReadOnlyList<KlineBar> bars)
+        {
+            var run = StrategyEvaluator.Run(program, bars, (_, _) => account);
+            Assert.False(run.Faulted, run.FaultReason);
+            var intent = Assert.Single(run.Intents);
+            log.WriteLine($"{(program.Sizing.MaxCapitalFraction is null ? "uncapped" : "capped  ")} stop {intent.StopPrice} → {intent.Quantity}");
+            return intent;
+        }
+
+        // A SMALL ATR: the risk size is fifty thousand of notional, and the cap is what is asked.
+        var small = Entry(capped, Flat(4, 100m, 0.05m));
+        Assert.Equal(100m - 2m * 0.1m, small.StopPrice);
+        Assert.Equal(8_000m * 0.95m / 100m, small.Quantity);
+        Assert.Equal(76m, small.Quantity);
+        Assert.Equal(new Sizing(SizingKind.EquityRiskFraction, 0.01m, 0.95m), small.Sizing);
+
+        // A LARGE ATR: the risk size is the smaller, and the cap changes nothing.
+        var large = Entry(capped, Flat(4, 100m, 2m));
+        Assert.Equal(100m - 2m * 4m, large.StopPrice);
+        Assert.Equal(10_000m * 0.01m / 8m, large.Quantity);
+        Assert.Equal(12.5m, large.Quantity);
+
+        // WITHOUT THE CLAUSE, the small ATR sizes as it always did.
+        Assert.Equal(10_000m * 0.01m / 0.2m, Entry(uncapped, Flat(4, 100m, 0.05m)).Quantity);
+        Assert.Equal(12.5m, Entry(uncapped, Flat(4, 100m, 2m)).Quantity);
+    }
+
+    /// <summary>
+    /// (b) A TIGHT STOP FILLS CAPPED AND IS NO TRADE UNCAPPED — one backtest over a fixture whose ATR shrinks.
+    ///
+    /// <para>Four bars four units wide put atr(3) at 4; the fifth rises and signals with a stop 4 below, a risk size of
+    /// <c>10,000 * 0.01 / 4 = 25</c> — a quarter of the capital — and both programs fill 25 at the next open: the cap
+    /// (<c>10,000 * 0.5 / 100.1</c>, about 49.95) is the larger and changes nothing. The maximum hold closes it flat, and
+    /// nine bars a tenth of a unit wide shrink the ATR to about 0.2 before the next rise signals: a risk size of about
+    /// 496, near fifty thousand of notional. Without the clause the declared capital cannot pay for it; with it the entry
+    /// sizes to <c>10,000 * 0.5 / 100.15</c>, the trace's Signal line carries that, and it fills rounded DOWN to 49.925.</para>
+    /// </summary>
+    [Fact]
+    public void A_tight_stop_fills_capped_and_is_no_trade_uncapped()
+    {
+        const string Text = """
+            instrument BTCUSDT
+            size risk_fraction 0.01 max_capital_fraction 0.5
+            stop atr 1 3
+            max_hold_bars 1
+            exit when close < 1
+            entry when close > close[1]
+            """;
+
+        decimal[] wide = [100m, 102m, 98m, 100m], narrow = [100.1m, 100.15m, 100.05m, 100.1m];
+        var bars = Rows(
+            wide, wide, wide, wide,                     // 0-3: atr(3) 4, nothing rises
+            [100m, 102.1m, 98.1m, 100.1m],              // 4: rises with atr(3) still 4 — the first entry signals
+            narrow,                                     // 5: both fill 25 at 100.1
+            narrow,                                     // 6: held one bar — the maximum hold closes it at 100.1, flat
+            narrow, narrow, narrow, narrow, narrow, narrow,   // 7-12: the ATR shrinks toward 0.25
+            [100.1m, 100.2m, 100.1m, 100.15m],          // 13: rises with atr(3) about 0.2 — the second entry signals
+            [100.15m, 100.2m, 100.1m, 100.15m]);        // 14: the capped one fills here; the uncapped one cannot pay
+
+        var model = ExecutionModel.Declare(0m, 0m, 0.001m, 10_000m).Model!;
+        BacktestResult Run(string text)
+        {
+            var result = Backtest.Run(Parsed(text), new BacktestRequest(7, "sha-of-the-normalised-file", model), bars);
+            log.WriteLine(result.Trace.Text);
+            Assert.Equal(BacktestOutcome.COMPLETED, result.Outcome);
+            return result;
+        }
+
+        var capped = Run(Text);
+        var uncapped = Run(Text.Replace(" max_capital_fraction 0.5", "", StringComparison.Ordinal));
+
+        // THE WIDE STOP: one signal, one fill, one trade, the same in both — the cap is the larger of the two.
+        foreach (var run in new[] { capped, uncapped })
+        {
+            var first = run.Trace.Of(BacktestEventKind.Signal).ToList()[0];
+            Assert.Equal(5L, first.Ordinal);
+            Assert.Equal(25m, first.Quantity);
+            var trade = run.Trades[0];
+            Assert.Equal(25m, trade.Quantity);
+            Assert.Equal(100.1m, trade.EntryPrice);
+            Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
+        }
+
+        // THE TIGHT STOP, UNCAPPED: the risk size, which the declared capital cannot pay for — no trade, with the reason.
+        var asked = uncapped.Trace.Of(BacktestEventKind.Signal).ToList()[1];
+        Assert.Equal(14L, asked.Ordinal);
+        Assert.True(asked.Quantity * 100.15m > 10_000m, $"the uncapped risk size {asked.Quantity} is payable");
+        var refused = Assert.Single(uncapped.Trace.Of(BacktestEventKind.NoTrade));
+        Assert.Contains("the declared capital cannot pay for this fill", refused.Reason, StringComparison.Ordinal);
+        Assert.Single(uncapped.Trace.Of(BacktestEventKind.Fill));
+
+        // THE TIGHT STOP, CAPPED: half the capital at the signal's close, in the trace's Signal line, filled rounded DOWN.
+        var cappedAsk = capped.Trace.Of(BacktestEventKind.Signal).ToList()[1];
+        Assert.Equal(14L, cappedAsk.Ordinal);
+        Assert.Equal(10_000m * 0.5m / 100.15m, cappedAsk.Quantity);
+        Assert.Empty(capped.Trace.Of(BacktestEventKind.NoTrade));
+        var fills = capped.Trace.Of(BacktestEventKind.Fill).ToList();
+        Assert.Equal(2, fills.Count);
+        Assert.Equal(49.925m, fills[1].Quantity);
+        Assert.Equal(100.15m, fills[1].Price);
+        Assert.Equal(15L, fills[1].Ordinal);
     }
 
     /// <summary>
