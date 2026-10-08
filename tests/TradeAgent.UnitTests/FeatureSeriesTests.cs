@@ -254,7 +254,7 @@ public class FeatureSeriesTests(ITestOutputHelper log) : IDisposable
         // AN INSTALLATION'S OWN READINGS: none for any source a feature can read.
         using var db = TestEnv.NewDb();
         var licences = new DataLicences(db);
-        foreach (var source in TapeSourceCatalog.Shipped().Where(r => r.Parser == TapeSourceCatalog.JsonParser).Select(r => r.Id))
+        foreach (var source in TapeSourceCatalog.Shipped().Where(r => TapeSourceCatalog.MarketParsers.Contains(r.Parser)).Select(r => r.Id))
             Assert.Null(licences.Newest(source));
         Assert.NotNull(FeatureLicence.LiveRefusal(spec, licences.Newest));
 

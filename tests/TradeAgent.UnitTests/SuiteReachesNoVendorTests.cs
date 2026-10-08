@@ -96,6 +96,14 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string GdeltHost = "gdeltproject" + ".org";
 
+    /// <summary>
+    /// HYPERLIQUID'S NAME (<c>U-tape-chain</c>), spelled the same way: the positioning row ships pointing at Hyperliquid's API
+    /// host and its terms at Hyperliquid's app, and the collector's own rule above is what keeps a test from asking it — by
+    /// POST, every five minutes. A test that named any Hyperliquid host would be one edit away from a request to it, so the
+    /// name is refused outright.
+    /// </summary>
+    const string HyperliquidHost = "hyperliquid" + ".xyz";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -164,6 +172,9 @@ public class SuiteReachesNoVendorTests
 
                 if (code.Contains(GdeltHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names a GDELT host, which the tape's archive recorder reaches");
+
+                if (code.Contains(HyperliquidHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names a Hyperliquid host, which the tape's positioning row reaches");
 
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
@@ -362,6 +373,20 @@ public class SuiteReachesNoVendorTests
         await using var recorder = new GdeltRecorder(store);
         Assert.Equal(row.BaseUrl, recorder.Root);
         Assert.Empty(store.Fetches());
+    }
+
+    /// <summary>
+    /// AND THE POSITIONING ROW SHIPS POINTING AT HYPERLIQUID (<c>U-tape-chain</c>), its terms too — asserted through the name
+    /// spelled in this file, which is why the tape collector's own rule above exists for this row as well.
+    /// </summary>
+    [Fact]
+    public void The_positioning_source_ships_pointing_at_hyperliquid()
+    {
+        var row = Assert.Single(TapeSourceCatalog.Positioning());
+        Assert.Contains(HyperliquidHost, row.BaseUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", row.BaseUrl);
+        Assert.Contains(HyperliquidHost, row.TermsUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", row.TermsUrl);
     }
 
     /// <summary>
