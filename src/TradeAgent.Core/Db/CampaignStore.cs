@@ -282,8 +282,9 @@ public sealed record TrialCounts(int Run, int RunPot, int Home, int HomePot);
 /// answered: <c>docs/COUNCIL.md</c>:134 makes final evaluation scarce "because every verdict leaks", and a
 /// budget checked after the holdout run has already let the leak happen.
 ///
-/// <para><see cref="HoldoutFrom"/> is the cutoff as it stood when the verdict was charged. A cutoff can
-/// later move LATER, so this is the record of what was private when the answer was taken.</para>
+/// <para><see cref="HoldoutFrom"/> is the cutoff as it stood when the verdict was charged — the record of
+/// what was private when the answer was taken. The dataset's own cutoff does not move while the campaign
+/// judges from it, in either direction (<c>DatasetStore.SetHoldout</c>, <c>U-holdout-later</c>).</para>
 ///
 /// <para>The verdict's OUTCOME is not here. The holdout run, the promotion record and the delivery are
 /// <c>U-referee-2</c>; this is the budget and the precommitment, which had to exist first because they are

@@ -874,7 +874,8 @@ public sealed class Database : IDisposable
             // `strategy_trial` has none.
             //
             // `holdout_from` is the cutoff as it stood when the verdict was charged — a record of what was
-            // private when the answer was taken, kept because a cutoff can later move later.
+            // private when the answer was taken. (Since `U-holdout-later` a cutoff no longer moves while
+            // its campaign judges from it, in either direction.)
             //
             // The verdict's OUTCOME is not here: the holdout run, the promotion record and the delivery
             // are `U-referee-2` at schema 15. This table is the budget and the precommitment, and it is
@@ -1422,11 +1423,12 @@ public sealed class Database : IDisposable
             // is likewise a count and never a repair.
             //
             // NO HOLDOUT COLUMN, deliberately. A holdout is a cutoff the owner set on a frozen
-            // dataset; every forward bar post-dates every freeze this installation holds, because it
-            // did not exist when the freeze was taken. There is nothing here to hold back — and the
-            // reverse is what matters: these bars are NOT evaluation evidence, which is said in
-            // words on every surface that serves them rather than enforced by a column that would
-            // imply they could be.
+            // dataset, and what holds a forward bar back is every dataset's holdout window, read off
+            // the dataset ledger at read time (`ForwardBarStore.Window`, U-bar-holdout) — not a
+            // column here. (This comment once said every forward bar post-dates every freeze; a
+            // Download taken after the collector ran breaks that.) And the reverse is what matters:
+            // these bars are NOT evaluation evidence, which is said in words on every surface that
+            // serves them rather than enforced by a column that would imply they could be.
             Exec("""
             CREATE TABLE IF NOT EXISTS forward_fetch(
               id            INTEGER PRIMARY KEY AUTOINCREMENT,

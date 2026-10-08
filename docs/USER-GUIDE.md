@@ -423,8 +423,15 @@ CC BY-NC-SA 4.0.*
 
 **Holding months back.** The card below, *Private evaluation evidence*, is where you draw a line across
 the history: every bar from that date on becomes evidence the AI never sees, and TradeAgent alone uses it
-to judge a finished strategy. It is two presses, because the date can only ever move later. The card also
-says what a judgement there is **judged under**: the costs TradeAgent fixed for those months at the moment
+to judge a finished strategy. Those months are held back on **every** pair's bars, not only the one you
+pressed it on — a newer download of the same pair, another pair and the minutes TradeAgent collected itself
+alike — and on the market context TradeAgent records over the same time, because the same months reach the
+AI by those doors too. It is two presses, because **once pressed the date never moves**: not earlier, because
+the AI has already been shown the bars before it, and not later, because TradeAgent keeps judging strategies
+on every bar from that date and a later one would show the AI the bars those judgements use. If you press a
+different date, the card says so and changes nothing. To hold back a different period, download a fresh copy
+of the history and hold months back on that. The card also says what a judgement there is **judged under**:
+the costs TradeAgent fixed for those months at the moment
 you pressed — the venue's own published fee on every fill (for Binance spot its standard 0.1%, recorded
 with where and when TradeAgent read it), a slippage of 0.02% a fill that is TradeAgent's own assumption
 and is labelled as one, the instrument's confirmed size step, and the amount the judge pretends to start

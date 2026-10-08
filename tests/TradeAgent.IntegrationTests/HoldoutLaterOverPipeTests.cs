@@ -410,4 +410,44 @@ public class HoldoutLaterOverPipeTests(ITestOutputHelper log)
         Assert.Equal(EvaluationClass.Research, a.EvaluationClass);
         Assert.Equal(child, rig.Gw.Campaigns.OpenForDataset(rig.A.Id));
     }
+
+    /// <summary>
+    /// (d) <c>data-list</c>'S NOTE STATES THE EVERY-DATASET RULE AND NO LONGER EXEMPTS THE FORWARD BARS — U-bar-holdout's
+    /// leftover. The note every pipe caller reads beside the cutoff said "No holdout applies to them either … every forward
+    /// bar post-dates every freeze", and that 'data-bars' and 'backtest' refuse a window reaching the dataset's OWN cutoff,
+    /// while since U-bar-holdout a cutoff holds its window on every pair's bars, the forward bars and the tape; and it
+    /// offered the owner's later move as the one he may still make. RED on the base, for the Research Director and a
+    /// caller that proved no role alike.
+    /// </summary>
+    [Fact]
+    public async Task Data_list_states_the_every_dataset_rule_and_no_longer_exempts_the_forward_bars()
+    {
+        await using var rig = await Ready();
+
+        foreach (var role in new[] { CouncilRoles.Research, null })
+        {
+            await using var client = await rig.Dial(role);
+            var reply = await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "holdout-later" });
+            Assert.True(reply.Ok, Json.Write(reply.Error));
+            var note = Data(reply).GetProperty("note").GetString()!;
+            log.WriteLine($"data-list's note as {Who(role)}: {note}");
+
+            // GONE: the exemption, its premise, and the move offered as harmless.
+            Assert.DoesNotContain("No holdout applies", note, StringComparison.Ordinal);
+            Assert.DoesNotContain("post-dates every freeze", note, StringComparison.Ordinal);
+            Assert.DoesNotContain("moving it earlier is refused", note, StringComparison.Ordinal);
+
+            // STATED: the window, every pair's bars and the tape, the forward bars, and the cutoff that does not move.
+            Assert.Contains("HOLDOUT WINDOW runs from it to the close of its last bar", note, StringComparison.Ordinal);
+            Assert.Contains("THE SAME MONTHS ARE HELD BACK ON EVERY PAIR'S BARS AND ON THE TAPE", note, StringComparison.Ordinal);
+            Assert.Contains("reach ANY dataset's holdout window — through that dataset, a newer version of the same pair, "
+                + "another pair or the forward bars alike", note, StringComparison.Ordinal);
+            Assert.Contains("held back over every dataset's holdout window exactly as the archive's bars are", note, StringComparison.Ordinal);
+            Assert.Contains("never earlier, and never later while a campaign judges strategies from it", note, StringComparison.Ordinal);
+
+            // AND WHAT IT ALWAYS SAID STILL STANDS: the field is named, and forward bars are a different kind of thing.
+            Assert.Contains("'holdout_from'", note, StringComparison.Ordinal);
+            Assert.Contains("DIFFERENT KIND OF THING", note, StringComparison.Ordinal);
+        }
+    }
 }

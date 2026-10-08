@@ -2684,13 +2684,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "on disk since; those bars are not served. 'months_present' against 'months_attempted' is "
             + "the real coverage, 'gaps' counts minutes with no bar INSIDE the covered period and nothing "
             + "was filled in, and 'incomplete' counts bars excluded because they had not closed when the "
-            + "archive was read. 'holdout_from' is the instant from which the account owner is HOLDING "
-            + "THESE BARS BACK, or null: every bar at or after it is private evaluation evidence, and "
-            + "'data-bars' and 'backtest' refuse any window that reaches it — for you, for the other "
-            + "director and for a caller that proved no role, with no exception and no quiet truncation. "
-            + "The cutoff is told to you rather than hidden so that you need not find it one refusal at a "
-            + "time; nothing on this channel can set, clear or move it, and moving it earlier is refused "
-            + "even to the account owner. 'evaluation_class' is 'research' for real collected history and "
+            + "archive was read. "
+            // THE EVERY-DATASET RULE (U-bar-holdout), stated where the cutoff is named — this note once said a
+            // window was refused only over its own dataset, and that the forward bars were exempt — and the
+            // cutoff that does not move under a campaign (U-holdout-later).
+            + "'holdout_from' is the instant from which the account owner is HOLDING THESE BARS BACK, or "
+            + "null: every bar at or after it is private evaluation evidence, and the dataset's HOLDOUT "
+            + "WINDOW runs from it to the close of its last bar. THE SAME MONTHS ARE HELD BACK ON EVERY "
+            + "PAIR'S BARS AND ON THE TAPE: 'data-bars' and 'backtest' refuse any read whose bars reach ANY "
+            + "dataset's holdout window — through that dataset, a newer version of the same pair, another "
+            + "pair or the forward bars alike — and 'data-tape' refuses any read reaching one, whatever its "
+            + "source or symbol; for you, for the other director and for a caller that proved no role, with "
+            + "no exception and no quiet truncation. The cutoff is told to you rather than hidden so that "
+            + "you need not find it one refusal at a time; nothing on this channel can set, clear or move "
+            + "it, and the account owner cannot move it either — never earlier, and never later while a "
+            + "campaign judges strategies from it, which is from the moment it is set. "
+            + "'evaluation_class' is 'research' for real collected history and "
             + "'fixture' for bars that exist to prove the machinery works and are never evidence. "
             // AND THE FORWARD SERIES, NAMED HERE AND KEPT APART FROM THE DATASETS. A caller that could
             // not tell the two lists apart would be one bar count away from asking for a verdict over
@@ -2698,10 +2707,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "'forward' is a DIFFERENT KIND OF THING and is listed separately: bars TradeAgent "
             + "collected itself, minute by minute, while it was running. They carry NO vendor "
             + "checksum — none is published for a live window and none could be — so they are NOT "
-            + "evaluation evidence and no verdict is ever taken over them. No holdout applies to them "
-            + "either, and that is a fact about what they are rather than a relaxation: every forward "
-            + "bar post-dates every freeze on this installation, because it did not exist when the "
-            + "freeze was taken. Read them with 'data-bars --source forward'. "
+            + "evaluation evidence and no verdict is ever taken over them; and they are held back over "
+            + "every dataset's holdout window exactly as the archive's bars are, because a Download taken "
+            + "after TradeAgent collected them freezes the same minutes. Read them with 'data-bars "
+            + "--source forward'. "
             // AND THE TAPE, NAMED HERE AND KEPT APART FROM BOTH (U-tape-read): readings of the market's context, not
             // bars, with three times each and a class — a third kind of thing in a third list.
             + "'tape' is a THIRD kind of thing, in its own list: the market's context as TradeAgent recorded it "
