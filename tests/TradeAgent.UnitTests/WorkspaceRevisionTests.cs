@@ -1,3 +1,4 @@
+using System.Text;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -49,6 +50,20 @@ public class WorkspaceRevisionTests
 
         public List<Publication> Of(string role, string kind) =>
             [.. new PublicationStore(Db).By(role).Where(p => p.Kind == kind)];
+
+        /// <summary>The role's <c>trading/archive/</c>, where a refused file is kept.</summary>
+        public string Archive(string role) =>
+            Path.Combine(Home(role), WorkspaceRevisions.ArchiveDir.Replace('/', Path.DirectorySeparatorChar));
+
+        /// <summary>The names in the archive, in ordinal order; none when it does not exist.</summary>
+        public string[] Kept(string role) =>
+            Directory.Exists(Archive(role))
+                ? [.. Directory.GetFiles(Archive(role)).Select(f => Path.GetFileName(f)).Order(StringComparer.Ordinal)]
+                : [];
+
+        public byte[] KeptBytes(string role, string name) => File.ReadAllBytes(Path.Combine(Archive(role), name));
+
+        public string ReadKept(string role, string name) => File.ReadAllText(Path.Combine(Archive(role), name));
 
         public void Dispose() => Db.Dispose();
     }
@@ -149,6 +164,12 @@ public class WorkspaceRevisionTests
     /// <para>The write-back is the half that matters. Refusing without restoring would leave the
     /// agent reading a plan the app has decided not to stand behind, and the record would say the
     /// role's plan is something that is not on its disk.</para>
+    ///
+    /// <para><b>And it destroys nothing</b> (<c>U-memory-kept</c>, RED FIRST): the write-back used
+    /// to land over the only copy of what the turn wrote, so a refused plan was simply gone. What the
+    /// agent wrote is now kept in <c>trading/archive/</c>, byte for byte, before the restore is
+    /// handed back — "explicit refusal and recoverable output over silent truncation or
+    /// destruction", <c>docs/PRINCIPLES.md</c>.</para>
     /// </summary>
     [Fact]
     public void An_over_cap_plan_is_refused_and_the_last_valid_revision_is_written_back()
@@ -170,6 +191,12 @@ public class WorkspaceRevisionTests
         var p = Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Plan));
         Assert.Equal(good, p.Content);
         Assert.Equal(good, world.Read(CouncilRoles.Research, PublicationKind.Plan));
+
+        // WHAT THE AGENT WROTE IS KEPT, exactly, under the launch that wrote it — and nothing else
+        // is written there.
+        Assert.Equal(["PLAN-refused-turn-b.md"], world.Kept(CouncilRoles.Research));
+        Assert.Equal(overCap, world.ReadKept(CouncilRoles.Research, "PLAN-refused-turn-b.md"));
+        Assert.Equal(Encoding.UTF8.GetBytes(overCap), world.KeptBytes(CouncilRoles.Research, "PLAN-refused-turn-b.md"));
 
         // AND THE TURN IS TOLD, in the words its next Situation will carry.
         var notice = Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research));
@@ -206,9 +233,53 @@ public class WorkspaceRevisionTests
     }
 
     /// <summary>
+    /// RED FIRST: A REFUSED JOURNAL TOOK THE TURN'S NEW ENTRIES WITH IT. A journal is appended to, so
+    /// the turn that takes it over its budget is the turn that wrote the newest entries in it — and
+    /// the write-back of the last accepted journal landed over the only copy of them. The refusal is
+    /// of the revision; the entries are kept in <c>trading/archive/</c> before anything is put back.
+    ///
+    /// <para>Written the way an agent on Windows writes it — a byte-order mark and CRLF — because the
+    /// copy is of the BYTES the app read: a copy made by re-encoding the text would drop the mark,
+    /// and a kept copy that is not what was written is not a kept copy.</para>
+    /// </summary>
+    [Fact]
+    public void A_refused_journal_keeps_the_turns_new_entries()
+    {
+        using var world = new World();
+        var accepted = Lines(WorkspaceRevisions.JournalLines - 2, "2026-09-08 tried something");
+        world.Write(CouncilRoles.Research, PublicationKind.Journal, accepted);
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        string[] entries =
+        [
+            "2026-09-09 backtest of the opening-range rule on March: 41 trades, -0.8 R net",
+            "2026-09-09 the 40-minute gap on 2026-03-09 is in the download, not the archive",
+            "2026-09-09 next: download that day again and re-run before trusting any March figure"
+        ];
+        var wrote = Encoding.UTF8.GetPreamble()
+            .Concat(Encoding.UTF8.GetBytes(string.Join("\r\n", accepted.Split('\n').Concat(entries))))
+            .ToArray();
+        File.WriteAllBytes(world.PathOf(CouncilRoles.Research, PublicationKind.Journal), wrote);
+
+        WorkspaceRevisions.Apply(world.Revisions().Snapshot(CouncilRoles.Research, "turn-b"));
+
+        // The journal the app stands behind is back on disk, and the turn's entries are not lost.
+        Assert.Equal(accepted, world.Read(CouncilRoles.Research, PublicationKind.Journal));
+        Assert.Equal(accepted, Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Journal)).Content);
+
+        Assert.Equal(["JOURNAL-refused-turn-b.md"], world.Kept(CouncilRoles.Research));
+        Assert.Equal(wrote, world.KeptBytes(CouncilRoles.Research, "JOURNAL-refused-turn-b.md"));
+        var kept = world.ReadKept(CouncilRoles.Research, "JOURNAL-refused-turn-b.md");
+        foreach (var entry in entries) Assert.Contains(entry, kept);
+    }
+
+    /// <summary>
     /// THE FIRST TURN'S FAILURE. A role whose very first plan is over the cap has no earlier
     /// revision to restore, and inventing one would be the app writing a plan the role never held.
     /// It is refused, nothing is written back, and the notice says exactly that.
+    ///
+    /// <para>Nothing is copied into the archive either: nothing is put back over the file, so the
+    /// file on disk IS the copy, and this case is exactly what it was before <c>U-memory-kept</c>.</para>
     /// </summary>
     [Fact]
     public void An_over_cap_plan_with_no_earlier_revision_is_refused_and_nothing_is_written_back()
@@ -222,8 +293,142 @@ public class WorkspaceRevisionTests
         Assert.Empty(restores);
         Assert.Empty(world.Of(CouncilRoles.Research, PublicationKind.Plan));
         Assert.Equal(tooLong, world.Read(CouncilRoles.Research, PublicationKind.Plan));
+        Assert.Empty(world.Kept(CouncilRoles.Research));
         Assert.Contains("no earlier revision",
             Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research)));
+    }
+
+    /// <summary>
+    /// RED FIRST: NO COPY, NO RESTORE. The write-back lands over the only copy of what the turn
+    /// wrote, so it may land only once that copy is on disk. Here it cannot be: a FILE sits where the
+    /// archive folder belongs, which refuses the copy the same way on Windows, macOS and Linux. The
+    /// over-cap plan then stays exactly as the agent left it — unrecorded, and nothing of the role's
+    /// moved aside to make room — and the notice says it could not be kept, so the next turn knows
+    /// the file it opens is its own and still over the limit.
+    /// </summary>
+    [Fact]
+    public void No_restore_without_a_kept_copy()
+    {
+        using var world = new World();
+        var good = Lines(40, "plan line");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, good);
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        var inTheWay = world.Archive(CouncilRoles.Research);
+        File.WriteAllText(inTheWay, "a file, where the archive folder belongs");
+
+        var overCap = Lines(WorkspaceRevisions.PlanLines + 20, "plan line");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, overCap);
+
+        var said = new List<string>();
+        var revisions = world.Revisions();
+        revisions.Rejected = said.Add;
+        var restores = revisions.Snapshot(CouncilRoles.Research, "turn-b");
+        WorkspaceRevisions.Apply(restores);
+
+        Assert.Empty(restores);
+        Assert.Equal(overCap, world.Read(CouncilRoles.Research, PublicationKind.Plan));
+        Assert.Equal(good, Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Plan)).Content);
+        Assert.Equal("a file, where the archive folder belongs", File.ReadAllText(inTheWay));
+
+        var notice = Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research));
+        Assert.Contains("trading/PLAN.md", notice);
+        Assert.Contains("could not be kept", notice);
+        Assert.Contains("was not put back", notice);
+        Assert.Contains("could not be kept", Assert.Single(said));
+    }
+
+    /// <summary>
+    /// RED FIRST: A PLAN THE APP COULD NOT READ WAS WRITTEN OVER UNREAD. It is refused like an
+    /// over-cap one, but no bytes were read, so there is nothing to keep — and by the rule above
+    /// nothing is put back over it either. Held open with no sharing for the length of the pass,
+    /// which refuses the read on Windows, macOS and Linux alike; let go before the write-back, which
+    /// is when the old code destroyed it.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_plan_has_nothing_to_keep_and_is_not_put_back_over()
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        var mine = Lines(10, "a plan the pass could not read");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, mine);
+
+        List<WorkspaceRevisions.Restore> restores;
+        using (new FileStream(world.PathOf(CouncilRoles.Research, PublicationKind.Plan),
+                   FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            restores = world.Revisions().Snapshot(CouncilRoles.Research, "turn-b");
+        WorkspaceRevisions.Apply(restores);
+
+        Assert.Empty(restores);
+        Assert.Equal(mine, world.Read(CouncilRoles.Research, PublicationKind.Plan));
+        Assert.Empty(world.Kept(CouncilRoles.Research));
+
+        var notice = Assert.Single(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Research));
+        Assert.Contains("could not be read", notice);
+        Assert.Contains("was not put back", notice);
+    }
+
+    /// <summary>
+    /// RED FIRST: A KEPT COPY IS NEVER WRITTEN OVER. Two refusals can come to the same name — the
+    /// same launch refused twice, or two passes that name no launch inside one millisecond (this
+    /// test's clock does not move at all) — and the second copy is a NEW file: the first keeps its
+    /// name and every byte, because a copy that a later refusal can replace is not kept.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("turn-b")]
+    public void A_second_refusal_never_overwrites_the_first_copy(string? attempt)
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        var first = Lines(WorkspaceRevisions.PlanLines + 1, "first draft");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, first);
+        WorkspaceRevisions.Apply(world.Revisions().Snapshot(CouncilRoles.Research, attempt));
+
+        var second = Lines(WorkspaceRevisions.PlanLines + 2, "second draft");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, second);
+        WorkspaceRevisions.Apply(world.Revisions().Snapshot(CouncilRoles.Research, attempt));
+
+        // A pass that names no launch is named for the UTC instant, to the millisecond, in a form
+        // every file system takes — no colon, which Windows refuses in a name.
+        var named = $"PLAN-refused-{attempt ?? "20260908T120000000Z"}.md";
+        var kept = world.Kept(CouncilRoles.Research);
+        Assert.Equal(2, kept.Length);
+        Assert.Contains(named, kept);
+        Assert.Equal(first, world.ReadKept(CouncilRoles.Research, named));
+        Assert.Equal(second, world.ReadKept(CouncilRoles.Research, Assert.Single(kept, k => k != named)));
+    }
+
+    /// <summary>
+    /// RED FIRST: A TURN THAT TAKES BOTH FILES OVER THEIR BUDGETS LOSES NEITHER. Each is kept under
+    /// its own name before either is put back, so the plan's copy and the journal's are two files.
+    /// </summary>
+    [Fact]
+    public void A_plan_and_a_journal_refused_in_one_turn_are_kept_as_two_files()
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Write(CouncilRoles.Research, PublicationKind.Journal, Lines(100, "2026-09-08 tried something"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        var plan = Lines(WorkspaceRevisions.PlanLines + 1, "plan line");
+        var journal = Lines(WorkspaceRevisions.JournalLines + 1, "2026-09-09 and again");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, plan);
+        world.Write(CouncilRoles.Research, PublicationKind.Journal, journal);
+
+        var restores = world.Revisions().Snapshot(CouncilRoles.Research, "turn-b");
+        Assert.Equal(2, restores.Count);
+        WorkspaceRevisions.Apply(restores);
+
+        Assert.Equal(["JOURNAL-refused-turn-b.md", "PLAN-refused-turn-b.md"], world.Kept(CouncilRoles.Research));
+        Assert.Equal(plan, world.ReadKept(CouncilRoles.Research, "PLAN-refused-turn-b.md"));
+        Assert.Equal(journal, world.ReadKept(CouncilRoles.Research, "JOURNAL-refused-turn-b.md"));
+        Assert.Equal(Lines(40, "plan line"), world.Read(CouncilRoles.Research, PublicationKind.Plan));
+        Assert.Equal(Lines(100, "2026-09-08 tried something"), world.Read(CouncilRoles.Research, PublicationKind.Journal));
     }
 
     /// <summary>

@@ -272,6 +272,11 @@ public class TurnCommitTests
     /// A REFUSED PLAN IS PUT BACK OUTSIDE THE TRANSACTION, and only after it commits. A rollback
     /// cannot un-write a file, so a restore made inside the commit would survive a failure that took
     /// the revision it was restoring from with it.
+    ///
+    /// <para>The COPY of what the agent wrote is the one file made inside it (U-memory-kept, RED
+    /// FIRST here: nothing was kept at all). An extra file in the archive is all a rollback can leave
+    /// behind, and that destroys nothing; the restore is still made after the commit, and only over a
+    /// file whose copy is already on disk.</para>
     /// </summary>
     [Fact]
     public void A_plan_restored_by_the_commit_is_written_after_it_and_not_before()
@@ -291,16 +296,23 @@ public class TurnCommitTests
         meter.Record(Ended(world.At), CouncilRoles.Research);
 
         var relay = world.RelayOver(db);
+        var kept = $"trading/archive/PLAN-refused-{attempt}.md";
         relay.Boundary = at =>
         {
-            // At the instant the transaction has landed, the file is still the agent's own.
+            // At the instant the transaction has landed, the file is still the agent's own — and
+            // what it wrote is already kept (U-memory-kept), so the write-back that follows lands
+            // over a file whose copy is on disk, never over the only copy there is.
             if (at == CouncilRelay.AfterCommit)
+            {
                 Assert.Equal(tooLong, world.Read(CouncilRoles.Research, "trading/PLAN.md"));
+                Assert.Equal(tooLong, world.Read(CouncilRoles.Research, kept));
+            }
         };
         relay.CommitTurn(CouncilRoles.Research, attempt,
             () => meter.CommitStaged(CouncilRoles.Research), () => { });
 
         Assert.Equal(good, world.Read(CouncilRoles.Research, "trading/PLAN.md"));
+        Assert.Equal(tooLong, world.Read(CouncilRoles.Research, kept));
         Assert.Single(Of(db, PublicationKind.Plan));
     }
 
