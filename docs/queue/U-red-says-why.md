@@ -1,7 +1,7 @@
-# U-emergency-red-says-why — an emergency's wall-clock red names a cause it never measured: a runner that did not run the process reads as "the owner's cancel is still on the full deadline"
+# U-red-says-why — an emergency's wall-clock red names a cause it never measured: a runner that did not run the process reads as "the owner's cancel is still on the full deadline"
 **Protects:** the owner's emergency deadline (`BridgeBudgets.Emergency`, 2 s; MONEY PATH: cancel, cancel-all, close) by keeping its red a red AND legible, and the honesty rule (`fleet/ci-ledger.md`,
 `BUILD-STATUS.md`): a red says what it measured; and CI's one retry (item 3, the orchestrator's 08:11 ruling — shared by both lanes). Tests + `build.yml` only; seat P; no rung; light.
-Surveyed read-only at `main` `7e29fc65` (SURVEY-P-cancel); every pointer re-checked by seat P at `b35653c2` — none of these files changed since.
+Surveyed read-only at `main` `7e29fc65` (SURVEY-P-cancel); pointers re-checked by seat P at `b35653c2` (none changed since). RENAMED from U-emergency-red-says-why: its 12:54 dispatch was parked by the wind-down unstarted; that branch stays at `11dba05c`.
 **Facts (`main` `7e29fc65`; the connector's send path is byte-identical at `c51502ba`).**
 - Windows run 37524459410 (`u-bridge-liveness-clock` `c51502ba`), Timing RETRY only: `A_cancellation_fails_fast_on_a_stalled_bridge_whoever_issued_it(caller: "button")` "took 11.80s behind a stalled
   write — it is still on the full deadline" (`tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs:459-460`). Attempt 1 of that job: 91/91 green; the retry ran only because FaultTests' press
