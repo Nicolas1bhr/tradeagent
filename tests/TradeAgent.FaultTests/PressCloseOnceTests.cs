@@ -30,30 +30,30 @@ public class PressCloseOnceTests(ITestOutputHelper log)
     static readonly AgentContext Ai = new("ai");
 
     /// <summary>A gateway over the simulator whose emergency budget is sized for <paramref name="legs"/>.</summary>
-    static Task<InFlightSettleTests.Harness> Ready(int legs, Database? db = null, FakeBroker? broker = null,
+    internal static Task<InFlightSettleTests.Harness> Ready(int legs, Database? db = null, FakeBroker? broker = null,
         MovableClock? clock = null, bool? closesCarryTheId = null) =>
         InFlightSettleTests.Ready(db, new RecordingConnector(new FakeConnector(broker ?? new FakeBroker())
         {
             EmergencyBudget = Unresolved.PressBudgetFor(legs)
         }) { ClosesCarryTheId = closesCarryTheId }, clock);
 
-    static decimal Held(RecordingConnector c, string symbol = "ES") =>
+    internal static decimal Held(RecordingConnector c, string symbol = "ES") =>
         c.Broker.Positions.FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
 
-    static string Book(RecordingConnector c) =>
+    internal static string Book(RecordingConnector c) =>
         string.Join(" | ", c.Broker.Orders.Select(o => $"{o.ConnectorOrderId} {o.Side} {o.Quantity} {o.Symbol} {o.State}"));
 
-    static string Pos(RecordingConnector c) =>
+    internal static string Pos(RecordingConnector c) =>
         string.Join(" ", c.Broker.Positions.Select(p => $"{p.Symbol} {p.Quantity}"));
 
     /// <summary>PRICE ARRIVES: every order still resting at the platform fills, as a real book's would.</summary>
-    static void PriceArrives(RecordingConnector c)
+    internal static void PriceArrives(RecordingConnector c)
     {
         foreach (var o in c.Broker.Orders.Where(o => o.State == ExecutionState.WORKING).ToList())
             c.Broker.FillWorking(o.ConnectorOrderId);
     }
 
-    static int SellsFilled(RecordingConnector c) =>
+    internal static int SellsFilled(RecordingConnector c) =>
         c.Broker.Orders.Count(o => o.Side == OrderSide.Sell && o.State == ExecutionState.FILLED);
 
     static List<ExecutionRequest> Rows(InFlightSettleTests.Harness h, string kind, string nonce) =>
@@ -72,7 +72,7 @@ public class PressCloseOnceTests(ITestOutputHelper log)
         await h.Gw.RefreshHealthAsync();
     }
 
-    static string Said(TradingGateway.PressOutcome p) =>
+    internal static string Said(TradingGateway.PressOutcome p) =>
         $"{p.Summary} [{string.Join("; ", p.Targets.Select(t => $"{t.RequestId} {t.Target} {t.State} resolved {t.Resolved}: {t.Outcome}"))}]";
 
     // ------------------------------------------------------------------------------------------------- (b) listed live
@@ -239,7 +239,7 @@ public class PressCloseOnceTests(ITestOutputHelper log)
     /// A CLOSURE OF TODAY ON THIS PLATFORM, MODE AND ACCOUNT, written as the loss watch writes one, and the health pass
     /// whose sweep flattens a closure with no outcome beside it (<c>LossFlattenTests</c>' killed-flatten fixture).
     /// </summary>
-    static async Task AClosureIsRecordedAndFlattened(InFlightSettleTests.Harness h)
+    internal static async Task AClosureIsRecordedAndFlattened(InFlightSettleTests.Harness h)
     {
         var at = h.Clock.GetUtcNow();
         var account = h.C.Broker.AccountId;

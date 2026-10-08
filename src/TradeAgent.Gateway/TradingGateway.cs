@@ -12603,6 +12603,25 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE DASHBOARD CARD'S ONE ROUTE TO AN ANSWER (<c>U-press-row-answer</c>): what the owner says became of one
+    /// unconfirmed request, written by <see cref="ForceResolve"/>, and then the health pass. The pass is not decoration:
+    /// <see cref="ForceResolve"/> clears the flag and nothing else, and the ExecutionCapability row a failed dispatch or
+    /// the reconciler left PAUSED is recomputed only by <see cref="RefreshHealthAsync"/>, so without it trading stays
+    /// paused until the next tick and the button reads as doing nothing.
+    ///
+    /// <para><b>In-process only.</b> The card is its one caller; no pipe op, <c>trade</c> verb or GatewayHost console
+    /// verb reaches it, so an agent that wants a record settled has nowhere to ask. A refusal is thrown in the owner's
+    /// own words, and nothing is written.</para>
+    /// </summary>
+    public async Task<ExecutionRequest> AnswerFromTheCardAsync(string requestId, ExecutionState outcome, string note,
+        CancellationToken ct = default)
+    {
+        var answered = ForceResolve(requestId, outcome, note);
+        await RefreshHealthAsync(ct);
+        return answered;
+    }
+
+    /// <summary>
     /// The human override for a request no machine can settle. Recorded loudly, because it is the
     /// one place a person asserts a fact the software could not prove.
     /// </summary>
