@@ -11566,6 +11566,11 @@ public sealed class TradingGateway : IAsyncDisposable
         var closedOver = new List<string>();
         var cancelledFirst = new List<string>();
 
+        // AND THE PRESS ROWS THE OWNER ANSWERED "STILL WORKING" THAT A LEG WAITED ON (U-press-row-answer): each goes
+        // back on his card, but only once every leg has written its rows — see PutBackOnTheCard. Where its words stand
+        // in heldByAPress, its instrument, and the row as the leg read it.
+        var backOnTheCard = new List<(int At, string Symbol, ExecutionRequest Row)>();
+
         // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
         // position — so the claim rides on the first row this press actually writes, and only that
         // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
@@ -11637,7 +11642,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (asked.Leg is InFlightLeg.Waits)
                 {
                     // ANOTHER PRESS'S OWN ORDER, and only its press and its owner answer it: nothing is
-                    // asked, cancelled, written or sent for this leg.
+                    // asked, cancelled, written or sent for this leg. One he answered "still working" goes
+                    // back on his card after the last leg (PutBackOnTheCard).
+                    if (asked.AnsweredStillWorking is { } answered)
+                        backOnTheCard.Add((heldByAPress.Count, symbol, answered));
                     heldByAPress.Add(asked.Words);
                     continue;
                 }
@@ -11814,11 +11822,68 @@ public sealed class TradingGateway : IAsyncDisposable
                 // one situation where finishing matters most (the previous unit's residual).
                 SafelySettle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
         }
+
+        // BACK ON THE CARD, AND ONLY NOW THAT EVERY LEG HAS WRITTEN ITS ROWS (U-press-row-answer): a flag reopens its
+        // press, and a press row's insert loses its claim to any flagged row of its kind — flagged mid-loop, an earlier
+        // Close all's row would have refused this press's own later legs.
+        foreach (var (at, symbol, row) in backOnTheCard)
+            heldByAPress[at] += PutBackOnTheCard(row, symbol, nonce);
+
         return new CloseRun(drifted, waited, unsettled, refused)
         {
             HeldByAPress = heldByAPress, StillLive = stillLive, Told = told, ClosedOver = closedOver,
             CancelledFirst = cancelledFirst
         };
+    }
+
+    /// <summary>
+    /// A PRESS'S OWN CLOSE THE OWNER ANSWERED "STILL WORKING", WHICH HIS CLOSE ALL WAITED ON, PUT BACK ON HIS CARD
+    /// (<c>U-press-row-answer</c>) — and the end of that leg's words, saying what was done.
+    ///
+    /// <para><b>Why.</b> His answer cleared the row's flag and left it in flight, and nothing but him settles a press's row:
+    /// the reconciler skips it, the in-flight sweep and <see cref="SettleAnOrderInFlightAsync"/> decline it, the UNKNOWN
+    /// settle refuses on it. A platform update lost after his answer — the order cancelled or filled at the platform — left
+    /// it in flight for good, on no card, and every Close all waiting on it. Flagged again, it is on the card with the
+    /// answers that can end it, "It is no longer working at your platform" and "It was filled", under the platform's
+    /// live-order veto (<see cref="AnswerFromTheCardAsync"/>); and the press it came from is open again, so that kind's next
+    /// press is refused until he has answered, as any open press's is.</para>
+    ///
+    /// <para><b>Only after the last leg</b>, because a flagged row reopens its press and a press row's insert loses its
+    /// claim to any flagged row of its kind (<see cref="OpenPressRow"/>). <b>Only a row still answered and unfinished, and
+    /// unflagged</b>, read again: one that has moved since its leg read it is said, not flagged.
+    /// <see cref="ExecutionRequestStore.MarkNeedsReconciliation"/> never changes the state, and its sentence names this
+    /// press and the answers. A refused write is said in the leg's words, never thrown: the press has done everything else
+    /// it came to do, and the next press tries again.</para>
+    /// </summary>
+    string PutBackOnTheCard(ExecutionRequest row, string symbol, string nonce)
+    {
+        var onTheCard = ", so it is back on the Dashboard for your answer: if it is no longer working at your platform, "
+                        + $"or it has filled, say so there and press again; while it is still working, it closes {symbol} "
+                        + "when it fills";
+        try
+        {
+            var now = _requests.Get(row.RequestId)
+                      ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, $"{row.RequestId} has no record");
+            if (now.NeedsReconciliation || _unconfirmed.ContainsKey(now.RequestId)) return onTheCard;
+            if (!AnsweredAndUnfinished(now.State))
+                return $"; it has since moved to {now.State} in TradeAgent's record, so press again";
+
+            _requests.MarkNeedsReconciliation(now.RequestId,
+                $"You pressed Close all positions at {Now.ToLocalTime():HH:mm} and it sent nothing for {symbol} beside "
+                + "this order, which you had answered on the Dashboard as still working. If it is no longer working at "
+                + "your platform, answer \"It is no longer working at your platform\"; if it has filled, \"It was "
+                + "filled\"; if it is still working, say so again. Trading is paused until you have.");
+            _log.TryEngineering("Gateway", "press_row_back_on_the_card", "warn", requestId: now.RequestId,
+                metadataJson: Json.Write(new { press = nonce, symbol, state = now.State.ToString() }));
+            return onTheCard;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "press_row_back_on_the_card_failed", "warn", requestId: row.RequestId, ex: ex,
+                metadataJson: Json.Write(new { press = nonce, symbol }));
+            return $"; TradeAgent could not put it back on the Dashboard for your answer ({ex.Message}), so press again "
+                   + $"to try once more — while it is still working, it closes {symbol} when it fills";
+        }
     }
 
     /// <summary>What one run of <see cref="CloseCapturedAsync"/> could not do, and why.</summary>
@@ -11874,7 +11939,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// platform first, in words, whatever the leg then does.
     /// </summary>
     sealed record InFlightAsked(InFlightLeg Leg, string Words, List<(ExecutionRequest Row, string Why)> Undecided,
-        List<string> ClosedOver, List<string> Cancelled);
+        List<string> ClosedOver, List<string> Cancelled)
+    {
+        /// <summary>
+        /// (c) only: another press's own row this leg waits on that is neither flagged nor latched — one the owner answered
+        /// on the Dashboard as still working — which goes back on the card once every leg has written its rows
+        /// (<see cref="PutBackOnTheCard"/>, <c>U-press-row-answer</c>). <see cref="Words"/> is then the start of the leg's
+        /// account, and what putting it back did ends it.
+        /// </summary>
+        public ExecutionRequest? AnsweredStillWorking { get; init; }
+    }
 
     /// <summary>
     /// THE OWNER'S CLOSE ALL ASKS THE PLATFORM ABOUT EVERY SAME-SIDE MARKET ORDER IN FLIGHT ON ONE LEG'S INSTRUMENT
@@ -11896,7 +11970,8 @@ public sealed class TradingGateway : IAsyncDisposable
     /// (b) LIVE: cancelled at the platform and asked again — settled with nothing filled, the next row; settled with a
     /// fill, (e); anything else refuses the leg, on every press, because the platform lists it live;
     /// (c) another press's own row: the leg waits, naming it — only that press's owner answers it, and nothing here
-    /// asks about it, cancels it or closes beside it;
+    /// asks about it, cancels it or closes beside it; one he has already answered "still working" goes back on his card
+    /// once every leg has written its rows (<see cref="PutBackOnTheCard"/>, <c>U-press-row-answer</c>);
     /// (d) undecided — <see cref="InFlightAnswer.Unlisted"/>, a connector that cannot prove its history, a read that
     /// threw, this press's deadline, a flagged <c>RECONCILING</c> row the reconciler holds, or any other answer that
     /// is neither final nor live: refused, and this press tells the owner (<see cref="RecordThatThisPressTold"/>) — or,
@@ -11941,17 +12016,22 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             // NAMED, WITH WHAT ENDS THE WAIT. Still the owner's to answer: his answer on the Dashboard once it has
-            // filled or he has cancelled it at the platform. Already answered by him as still working: its fill, or
-            // his cancel at the platform once the platform reports it — the card has no other answer for such a row.
+            // filled or he has cancelled it at the platform — the card offers a press's own live close "It was filled"
+            // and "It is no longer working at your platform" (U-press-row-answer).
             var press = PressName(PressKindOf(now.RequestId));
-            return Leg(InFlightLeg.Waits, now.NeedsReconciliation || _unconfirmed.ContainsKey(now.RequestId)
-                ? $"{symbol} waits on {Described(now)}, still {now.State}: it belongs to another press — {press} — and "
-                  + "is waiting for your answer on the Dashboard; once it has filled at your platform, or you have "
-                  + "cancelled it there, answer it on the Dashboard and press again"
-                : $"{symbol} waits on {Described(now)}, which TradeAgent still records as {now.State}: it belongs to "
-                  + $"another press — {press} — and you have answered it on the Dashboard as still working, so it "
-                  + $"closes {symbol} when it fills; to close {symbol} another way, cancel that order at your platform "
-                  + "and press again — once your platform has reported the cancel, the press closes what is left");
+            if (now.NeedsReconciliation || _unconfirmed.ContainsKey(now.RequestId))
+                return Leg(InFlightLeg.Waits,
+                    $"{symbol} waits on {Described(now)}, still {now.State}: it belongs to another press — {press} — and "
+                    + "is waiting for your answer on the Dashboard; once it has filled at your platform, or you have "
+                    + "cancelled it there, answer it on the Dashboard and press again");
+
+            // ALREADY ANSWERED BY HIM AS STILL WORKING, and on no card: nothing else settles a press's row, so a platform
+            // update lost since would hold this leg for good. It goes back on the card once every leg has written its
+            // rows, and what that did ends these words (PutBackOnTheCard).
+            return Leg(InFlightLeg.Waits,
+                    $"{symbol} waits on {Described(now)}, which TradeAgent still records as {now.State}: it belongs to "
+                    + $"another press — {press} — and you answered it on the Dashboard as still working")
+                with { AnsweredStillWorking = now };
         }
 
         // EVERY OTHER ROW IS ASKED ABOUT FIRST, AND NOTHING IS CANCELLED YET.

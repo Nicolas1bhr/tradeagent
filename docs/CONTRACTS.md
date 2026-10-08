@@ -1066,11 +1066,33 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   the fill pull due. **NOT claimed**: the app's own presses (the loss flatten, its close-again, the
   data-loss exit) do not ask — they cancel every working order on a position they close and read the
   book back before any close goes out; a closed-over order that was still working and fills leaves
-  the position the other way by up to its size, which the first press said in words; another press's
-  in-flight row that the owner has confirmed on the card as still working, and whose platform update
-  was then lost, holds that leg until the platform reports it — the card offers no other answer for a
-  working row, and nothing else settles a press's row; and a fill the position read has not caught up
-  with is seen only while its order is still in flight in TradeAgent's record.
+  the position the other way by up to its size, which the first press said in words; and a fill the
+  position read has not caught up with is seen only while its order is still in flight in TradeAgent's
+  record.
+  **And another press's row the owner answered "still working" goes back on his card**
+  (`U-press-row-answer`). Nothing but the owner settles a press's row — the reconciler skips it, the
+  in-flight sweep and `SettleAnOrderInFlightAsync` decline it, the `UNKNOWN` settle refuses on it — so
+  such a row whose platform update was then lost held that leg for good, on no card. Now, once every
+  leg has written its rows (a flag reopens its press, and a press row's insert loses its claim to any
+  flagged row of its kind, so no earlier Close all's row can take this press's claim mid-press), each
+  such row a leg waited on that is still `ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED` or
+  `CANCEL_PENDING` and unflagged is flagged again, its state untouched, with a sentence naming this
+  press and the answers; a refused write is said in that leg's words, never thrown, and the next press
+  tries again. The card offers a press's own row in those four states "It is no longer working at
+  your platform" (`CANCELLED`; not "It did not fill" — a partly filled close did) and "It was filled"
+  (`FILLED`) beside "Our record is right", two presses behind the required note as every answer, and
+  hidden while the order is on the wire. Its one route, `AnswerFromTheCardAsync` — in-process, the
+  card its only caller, no pipe op, `trade` verb or console verb — puts either under the platform's
+  live-order veto, the one helper the loss flatten's confirm also reads (`ThePlatformsLiveOrderVetoAsync`):
+  where `ReconciliationProvable`, an order history that holds the order in a state that is not final,
+  or a read that throws, refuses his answer, naming the order and why, and writes nothing — a row the
+  platform still lists live is never answered away, so no press closes beside it — and a final state
+  the history lists other than his is written beside his words. **Its limits:** where no history can
+  be asked (ATAS) his word stands alone, as it does for an `UNKNOWN` order, so a close he answers gone
+  that is in fact still working can fill beside the next press's close — the risk his own look at the
+  platform carries; the flagged row pauses trading and refuses its own kind's next press until he has
+  answered it, as any open press does; and a row a press never waits on — its instrument already flat,
+  or no Close all pressed — is not put back.
 - **And a row this platform's stream never moves is read back from the platform's own order list**
   (`U-inflight-settle`) — a fill or a cancel the platform never reports: the ATAS bridge drops an
   event it has no peer for and nothing replays it, the simulator's book fills and cancels without

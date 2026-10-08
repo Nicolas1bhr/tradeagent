@@ -179,9 +179,9 @@ public class PressCloseOnceTests(ITestOutputHelper log)
     /// <para>The loss budget's flatten closed ES and its close RESTS at the platform: <c>WORKING</c>, its own row, flagged
     /// and the owner's to answer. The owner presses Close all. The ES leg waits on that row — never asks the platform about
     /// it, never cancels it, never closes beside it — writes nothing and names it. He answers the flatten on the Dashboard
-    /// (the card offers one answer for a close the platform holds working: "Our record is right — it is working") and presses
-    /// again: still nothing is sent beside it, and the leg names it again. Price arrives: the flatten's close fills and the
-    /// account is flat.</para>
+    /// as still working ("Our record is right — it is working") and presses again: still nothing is sent beside it, the leg
+    /// names it again, and it is back on the Dashboard for his answer (<c>U-press-row-answer</c>). Price arrives: the
+    /// flatten's close fills and the account is flat.</para>
     ///
     /// <para><b>RED on the base</b>: press 1 sends a second close beside the flatten's — two sells, ES −2 once price arrives
     /// (seat P's probe: "closes=2").</para>
@@ -229,7 +229,7 @@ public class PressCloseOnceTests(ITestOutputHelper log)
         Assert.Empty(p2.Targets);
         Assert.Contains(flatten.RequestId, p2.Summary, StringComparison.Ordinal);
         Assert.DoesNotContain("waiting for your answer on the Dashboard", p2.Summary, StringComparison.Ordinal);
-        Assert.Contains("cancel that order at your platform and press again", p2.Summary, StringComparison.Ordinal);
+        Assert.Contains("back on the Dashboard for your answer", p2.Summary, StringComparison.Ordinal);
         Assert.Equal(1, SellsFilled(h.C));
         Assert.Equal(0m, Held(h.C));
         await h.Gw.DisposeAsync();
