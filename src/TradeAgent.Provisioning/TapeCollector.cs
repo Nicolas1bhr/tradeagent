@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using TradeAgent.Core.Data;
@@ -25,13 +26,15 @@ public sealed record TapeTick(bool Off, int Attempts, int Delivered, int Stored,
 /// <summary>
 /// THE TAPE'S COLLECTOR: while the app runs, the market's context — Binance USDⓈ-M premium index with
 /// the live funding rate, open interest, the 5-minute long/short and taker ratios, settled funding — for
-/// six symbols, into <c>state/tape.db</c> through <see cref="TapeStore"/> (<c>U-tape-store</c>), and OKX's
-/// announcements for EU users, its first page once a minute (<c>U-tape-events</c>). Every announcement URL
+/// six symbols, into <c>state/tape.db</c> through <see cref="TapeStore"/> (<c>U-tape-store</c>), OKX's
+/// announcements for EU users, its first page once a minute (<c>U-tape-events</c>), and Hyperliquid's public
+/// perpetual contexts for the same six coins every five minutes (<c>U-tape-chain</c>). Every announcement URL
 /// it records is data: none is ever fetched.
 ///
 /// <para><b>It places no order, holds no credential and reaches nothing that could.</b> Every request
-/// is an unauthenticated GET of a public endpoint; there is nothing to send a key with and no key to
-/// send. It writes only the tape. There is no verb and no pipe op that starts, stops, steers or writes
+/// is unauthenticated and asks a public endpoint: a GET, or — for a built-in series that carries a body,
+/// Hyperliquid's one — a POST of that body as <c>application/json</c>. There is nothing to send a key with
+/// and no key to send. It writes only the tape. There is no verb and no pipe op that starts, stops, steers or writes
 /// it: the owner's one-press toggle on the Settings page — "Record market context" — is the only
 /// control, read at every look, and it is in-process.</para>
 ///
@@ -69,6 +72,16 @@ public sealed class TapeCollector : IAsyncDisposable
 
     /// <summary>An answer here is a few hundred small objects at most. Anything past this is not one and is not buffered.</summary>
     public const int MaxBodyBytes = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// HYPERLIQUID'S ANSWER, BOUNDED ON ITS OWN (<c>U-tape-chain</c>): every coin's context in one answer, measured at 71,993
+    /// to 72,294 bytes on 2026-10-08, so 512 KB is seven times that and a look every five minutes moves at most about
+    /// 151 MB a day. An answer declared past it is refused unread, and one that runs past it is not buffered.
+    /// </summary>
+    public const int MaxAssetContextAnswerBytes = 512 * 1024;
+
+    /// <summary>The media type a series that carries a body is POSTed as — the only one Hyperliquid's info endpoint documents.</summary>
+    const string JsonMediaType = "application/json";
 
     // ONE CLIENT, NO TIMEOUT OF ITS OWN (the leash is per request) AND NO REDIRECTS: see the type summary.
     static readonly HttpClient Http = new(new SocketsHttpHandler
@@ -137,7 +150,8 @@ public sealed class TapeCollector : IAsyncDisposable
         // A ROW WHOSE PARSER THIS BUILD DOES NOT HAVE CANNOT BE READ, so it is refused here in words for the
         // same reason: the catalogue's own rows are fixed and a file's parser is checked, so only a caller
         // can hand one over — and a look that guessed at a parser would record a guess as a delivery.
-        if (rows.FirstOrDefault(r => r.Parser is not (TapeSourceCatalog.JsonParser or TapeSourceCatalog.AnnouncementParser)) is { } unread)
+        if (rows.FirstOrDefault(r => r.Parser is not (TapeSourceCatalog.JsonParser or TapeSourceCatalog.AnnouncementParser
+                                                     or TapeSourceCatalog.HyperliquidParser)) is { } unread)
             throw new ArgumentException($"tape row '{unread.Id}' names the parser '{unread.Parser}', which this build does not have", nameof(catalog));
 
         Rows = rows;
@@ -233,7 +247,7 @@ public sealed class TapeCollector : IAsyncDisposable
             {
                 var url = Url(series, root, symbol);
                 var requestedAt = _now();
-                var (status, body, failure) = await GetAsync(url, ct);
+                var (status, body, failure, date) = await AskAsync(series, url, LimitOf(row), ct);
                 var receivedAt = _now();
                 attempts++;
 
@@ -241,7 +255,7 @@ public sealed class TapeCollector : IAsyncDisposable
                 IReadOnlyList<TapeItem> items = [];
                 if (note is null && status != 200)
                     note = $"the host answered {status} and nothing was read";
-                else if (note is null && !Read(row, series, body, symbol, out items, out var why))
+                else if (note is null && !Read(row, series, body, symbol, date, out items, out var why))
                 {
                     note = $"the answer could not be read: {why}";
                     items = [];
@@ -279,14 +293,22 @@ public sealed class TapeCollector : IAsyncDisposable
 
     /// <summary>
     /// THE ROW'S OWN PARSER, NEVER A GUESS AT ONE: the market family reads the body as its items and keeps
-    /// them to the universe; the announcement family reads the list at the series' path. The constructor
-    /// refused every other name, so there is no third arm for a row to fall into.
+    /// them to the universe; the announcement family reads the list at the series' path; the asset-context family
+    /// zips Hyperliquid's two lists and stamps every item with <paramref name="date"/>, the answer's own <c>Date</c>
+    /// (<c>U-tape-chain</c>). The constructor refused every other name, so there is no fourth arm for a row to fall into.
     /// </summary>
-    static bool Read(TapeSourceEntry row, TapeSeriesEntry series, string? body, string? symbol,
-        out IReadOnlyList<TapeItem> items, out string? why) =>
-        row.Parser == TapeSourceCatalog.AnnouncementParser
-            ? TapeParse.TryReadItems(body, series, out items, out why)
-            : TapeParse.TryRead(body, series, symbol, TapeSourceCatalog.Universe, out items, out why);
+    static bool Read(TapeSourceEntry row, TapeSeriesEntry series, string? body, string? symbol, DateTimeOffset? date,
+        out IReadOnlyList<TapeItem> items, out string? why)
+    {
+        if (row.Parser == TapeSourceCatalog.AnnouncementParser) return TapeParse.TryReadItems(body, series, out items, out why);
+        if (row.Parser == TapeSourceCatalog.HyperliquidParser)
+            return TapeParse.TryReadAssetContexts(body, date, row, series, out items, out why);
+        return TapeParse.TryRead(body, series, symbol, TapeSourceCatalog.Universe, out items, out why);
+    }
+
+    /// <summary>The most a row's answer may be: Hyperliquid's family has its own bound, every other row the market one.</summary>
+    static int LimitOf(TapeSourceEntry row) =>
+        row.Parser == TapeSourceCatalog.HyperliquidParser ? MaxAssetContextAnswerBytes : MaxBodyBytes;
 
     /// <summary>The URL for one series, built from the row's shape and never from a literal here.</summary>
     public static string Url(TapeSeriesEntry series, string root, string? symbol) =>
@@ -295,38 +317,53 @@ public sealed class TapeCollector : IAsyncDisposable
             .Replace("{symbol}", symbol ?? "", StringComparison.Ordinal);
 
     /// <summary>
-    /// ONE REQUEST, ON ITS OWN LEASH: the status, the body, and — when nothing was answered — why, in
-    /// words. A timeout or a refused socket is a NULL status with a reason, never a status this build
-    /// invented: "the vendor said nothing" and "the vendor said 503" are different facts.
+    /// ONE REQUEST, ON ITS OWN LEASH: the status, the body, the answer's own <c>Date</c> header (null when it sent none),
+    /// and — when nothing was answered — why, in words. A timeout or a refused socket is a NULL status with a reason,
+    /// never a status this build invented: "the vendor said nothing" and "the vendor said 503" are different facts.
+    ///
+    /// <para><b>A GET, or a POST of the series' own body</b> (<c>U-tape-chain</c>): a series that carries a
+    /// <see cref="TapeSeriesEntry.Body"/> — which only a built-in row can — is POSTed as <c>application/json</c>, and
+    /// nothing else is added: no key, no header of this build's own. Every other series is asked by GET, as it always
+    /// was. An answer declared past <paramref name="limit"/> is refused unread, and one that runs past it is not
+    /// buffered.</para>
     /// </summary>
-    async Task<(int? Status, string? Body, string? Failure)> GetAsync(string url, CancellationToken ct)
+    async Task<(int? Status, string? Body, string? Failure, DateTimeOffset? Date)> AskAsync(TapeSeriesEntry series, string url,
+        int limit, CancellationToken ct)
     {
         using var leash = CancellationTokenSource.CreateLinkedTokenSource(ct);
         leash.CancelAfter(RequestTimeout);
 
         try
         {
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, leash.Token);
-            var status = (int)response.StatusCode;
+            using var request = new HttpRequestMessage(series.Body.Length == 0 ? HttpMethod.Get : HttpMethod.Post, url);
+            if (series.Body.Length > 0)
+            {
+                request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(series.Body));
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue(JsonMediaType);
+            }
 
-            if (response.Content.Headers.ContentLength is { } declared && declared > MaxBodyBytes)
-                return (status, null, $"the answer declared {declared} bytes, which is not a market-context answer");
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, leash.Token);
+            var status = (int)response.StatusCode;
+            var date = response.Headers.Date;
+
+            if (response.Content.Headers.ContentLength is { } declared && declared > limit)
+                return (status, null, $"the answer declared {declared} bytes, past the {limit} this source's answer may be", date);
 
             await using var stream = await response.Content.ReadAsStreamAsync(leash.Token);
-            var body = await Downloader.ReadLimitedAsync(stream, MaxBodyBytes, leash.Token);
+            var body = await Downloader.ReadLimitedAsync(stream, limit, leash.Token);
 
             return body is null
-                ? (status, null, $"the answer was longer than {MaxBodyBytes} bytes, which is not a market-context answer")
-                : (status, body, null);
+                ? (status, null, $"the answer was longer than the {limit} bytes this source's answer may be", date)
+                : (status, body, null, date);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
         {
-            return (null, null, $"the host did not answer within {RequestTimeout.TotalSeconds:0.#} s");
+            return (null, null, $"the host did not answer within {RequestTimeout.TotalSeconds:0.#} s", null);
         }
         catch (Exception ex)
         {
-            return (null, null, $"the host could not be reached: {ex.Message.ReplaceLineEndings(" ")}");
+            return (null, null, $"the host could not be reached: {ex.Message.ReplaceLineEndings(" ")}", null);
         }
     }
 

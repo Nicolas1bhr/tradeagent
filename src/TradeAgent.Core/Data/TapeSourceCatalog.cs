@@ -261,6 +261,13 @@ public static class TapeSourceCatalog
     /// <summary>The coins Hyperliquid's row keeps: the universe's six, by Hyperliquid's own names.</summary>
     public static readonly IReadOnlyList<string> HyperliquidCoins = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE"];
 
+    /// <summary>
+    /// THE PARSER FAMILIES WHOSE ROWS ARE MARKET NUMBERS, keyed by a symbol: Binance's market rows and Hyperliquid's
+    /// contexts. A feature reads these and no other, and <c>data-list</c> lists their subjects; the announcement and
+    /// archive families are text, keyed by digests and record ids.
+    /// </summary>
+    public static readonly IReadOnlyList<string> MarketParsers = [JsonParser, HyperliquidParser];
+
     /// <summary>The symbols every row is recorded for, built-in and added alike.</summary>
     public static readonly IReadOnlyList<string> Universe =
         ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"];

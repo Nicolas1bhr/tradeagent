@@ -21,6 +21,10 @@ namespace TradeAgent.Tests.Unit;
 /// sent, and whether the write and the close actually completed. A harness that stops answering is
 /// indistinguishable from a vendor that has nothing to say unless the harness says what it did, and
 /// on windows-latest this suite once spent thirty minutes proving exactly that.
+///
+/// <para><b>And every request as it arrived</b> (<see cref="Requests"/>, <c>U-tape-chain</c>): its method, path and
+/// query, the content type it named, the body it carried and the names of the headers it sent — so a test can say what
+/// a POST carried, and what it did not.</para>
 /// </summary>
 public sealed class FakeArchive : IDisposable
 {
@@ -33,6 +37,7 @@ public sealed class FakeArchive : IDisposable
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
     readonly ConcurrentDictionary<string, (string Name, string Value)[]> _headers = new(StringComparer.Ordinal);
     readonly ConcurrentQueue<string> _marks = new();
+    readonly ConcurrentQueue<Received> _received = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
 
     /// <param name="answers">
@@ -58,6 +63,21 @@ public sealed class FakeArchive : IDisposable
                 var pathAndQuery = ctx.Request.Url!.PathAndQuery;
                 var method = ctx.Request.HttpMethod;
                 Mark($"got {method} {pathAndQuery}");
+
+                // THE REQUEST AS IT ARRIVED, its body read before anything is answered: a client that sent one is owed
+                // a server that took it, and a test is owed what it was.
+                var sent = "";
+                try
+                {
+                    if (ctx.Request.HasEntityBody)
+                    {
+                        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+                        sent = await reader.ReadToEndAsync();
+                    }
+                }
+                catch (Exception ex) { Mark($"reading the body THREW {ex.GetType().Name}: {One(ex.Message)}"); }
+                _received.Enqueue(new Received(method, pathAndQuery, ctx.Request.ContentType, sent,
+                    [.. ctx.Request.Headers.AllKeys.OfType<string>()]));
 
                 if (!Answers) { Mark("answering nothing, on purpose"); continue; }
 
@@ -159,6 +179,15 @@ public sealed class FakeArchive : IDisposable
 
     /// <summary>What this server received and what it did about it, oldest first.</summary>
     public IReadOnlyList<string> Marks => [.. _marks];
+
+    /// <summary>Every request this server received, oldest first, as it arrived.</summary>
+    public IReadOnlyList<Received> Requests => [.. _received];
+
+    /// <summary>
+    /// ONE REQUEST AS IT ARRIVED: its method, path and query, the content type it named (null for none), the body it
+    /// carried (empty for none) and the names of the headers it sent.
+    /// </summary>
+    public sealed record Received(string Method, string PathAndQuery, string? ContentType, string Body, IReadOnlyList<string> Headers);
 
     void Mark(string what) => _marks.Enqueue($"{_clock.ElapsedMilliseconds,7} ms  srv {what}");
 
