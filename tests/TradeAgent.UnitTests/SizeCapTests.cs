@@ -397,6 +397,82 @@ public class SizeCapTests(ITestOutputHelper log)
         }
     }
 
+    // ---------------------------------------------------------------- item 4: the shipped breakout
+
+    /// <summary>
+    /// A QUIET NEW YORK MORNING FOR THE SHIPPED BREAKOUT — Monday 2026-07-06 from 09:00 ET (13:00Z), minutes two tenths of a
+    /// unit wide at 100, so a minute's ATR(14) is about 0.2 % of the price: thirty minutes before the opening range, the
+    /// range itself (high 100.2, low 99.9), then at 10:00 a close of 100.3 above it — the entry's signal — and five more.
+    /// </summary>
+    static IReadOnlyList<KlineBar> QuietMorning()
+    {
+        var start = new DateTimeOffset(2026, 7, 6, 13, 0, 0, TimeSpan.Zero);
+        return [.. Enumerable.Range(0, 66).Select(i =>
+        {
+            var (open, high, low, close) = i switch
+            {
+                < 30 => (100m, 100.1m, 99.9m, 100m),
+                < 60 => i % 2 == 0 ? (100m, 100.1m, 99.9m, 100m) : (100.1m, 100.2m, 100m, 100.1m),
+                60 => (100.1m, 100.4m, 100.1m, 100.3m),
+                _ => (100.3m, 100.4m, 100.2m, 100.3m)
+            };
+            return new KlineBar(start.AddMinutes(i), open, high, low, close, 1m);
+        })];
+    }
+
+    /// <summary>
+    /// (f) THE SHIPPED BREAKOUT IS FUNDED AT ITS CAP. Over a morning whose minute ATR(14) is under 0.5 % of the price, one
+    /// per cent of equity over two ATRs asks for more than all of it: the breakout's text before this unit
+    /// (<c>DayOnePrograms.BreakoutV1</c>) answers "the declared capital cannot pay" on every signal and never trades, and the
+    /// shipped file — <c>max_capital_fraction 0.95</c> — signals <c>0.95 * cash / close</c> and fills it rounded DOWN, at the
+    /// next open, under the venue cost model's fee and slippage.
+    /// </summary>
+    [Fact]
+    public void The_shipped_breakout_is_funded_at_its_cap()
+    {
+        var shipped = Parsed(DayOnePrograms.Text(DayOnePrograms.Breakout));
+        var v1 = Parsed(DayOnePrograms.BreakoutV1);
+        var bars = QuietMorning();
+
+        // THE PREMISE: at the signal, a minute's ATR(14) is under 0.5 % of the price, and the risk size is more than all of
+        // the capital — the case the breakout's v1 text could not trade.
+        var intent = Assert.Single(StrategyEvaluator.Run(v1, bars.Take(61), (_, _) => AccountReading.Flat(10_000m)).Intents);
+        var atr = (intent.ReferencePrice - intent.StopPrice!.Value) / 2m;
+        log.WriteLine($"signal at {intent.Bar:u}: close {intent.ReferencePrice}, atr(14) {atr}, risk size {intent.Quantity}");
+        Assert.Equal(100.3m, intent.ReferencePrice);
+        Assert.True(atr < 0.005m * intent.ReferencePrice, $"atr(14) {atr} is not under 0.5 % of {intent.ReferencePrice}");
+        Assert.True(intent.Quantity * intent.ReferencePrice > 10_000m, $"the risk size {intent.Quantity} is payable");
+
+        var model = ExecutionModel.Declare(0.001m, VenueCostModel.SlippageRate, 0.001m, 10_000m).Model!;
+        BacktestResult Run(StrategyProgram program)
+        {
+            var result = Backtest.Run(program, new BacktestRequest(7, "sha-of-the-normalised-file", model), bars);
+            log.WriteLine(string.Join("\n", result.Trace.Text.Split('\n').Skip(58)));
+            Assert.Equal(BacktestOutcome.COMPLETED, result.Outcome);
+            return result;
+        }
+
+        // THE V1 TEXT: every signal is a no-trade the declared capital cannot pay for.
+        var before = Run(v1);
+        Assert.Empty(before.Trace.Of(BacktestEventKind.Fill));
+        var refused = before.Trace.Of(BacktestEventKind.NoTrade).ToList();
+        Assert.NotEmpty(refused);
+        Assert.All(refused, r => Assert.Contains("the declared capital cannot pay for this fill", r.Reason, StringComparison.Ordinal));
+
+        // THE SHIPPED FILE: 0.95 of the cash at the signal's close, filled rounded down at the next open.
+        var after = Run(shipped);
+        var signal = after.Trace.Of(BacktestEventKind.Signal).First();
+        Assert.Equal(61L, signal.Ordinal);
+        Assert.Equal(10_000m * 0.95m / 100.3m, signal.Quantity);
+        var fill = Assert.Single(after.Trace.Of(BacktestEventKind.Fill));
+        Assert.Equal(62L, fill.Ordinal);
+        Assert.Equal(model.RoundDown(10_000m * 0.95m / 100.3m), fill.Quantity);
+        Assert.Equal(94.715m, fill.Quantity);
+        Assert.Equal(model.Buy(100.3m), fill.Price);
+        Assert.Empty(after.Trace.Of(BacktestEventKind.NoTrade));
+        Assert.True(after.Metrics.PositionOpenAtEnd);
+    }
+
     /// <summary>
     /// GUARD — A STORED PROGRAM WITH A CONSTANT NAMED <c>max_capital_fraction</c> STILL PARSES, TO THE TEXT IT ALWAYS HAD. The
     /// language had no such word before this unit, so a stored program may use it as a name; the clause is read only as the

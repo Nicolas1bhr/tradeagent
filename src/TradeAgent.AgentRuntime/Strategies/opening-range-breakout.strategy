@@ -10,7 +10,7 @@ const riskfraction = 0.01
 indicator rangehigh = opening_range_high()
 indicator rangelow = opening_range_low()
 indicator truerange = atr(atrperiod)
-size risk_fraction riskfraction
+size risk_fraction riskfraction max_capital_fraction 0.95
 stop atr atrmultiple atrperiod
 max_hold_bars 120
 weekdays mon,tue,wed,thu,fri
