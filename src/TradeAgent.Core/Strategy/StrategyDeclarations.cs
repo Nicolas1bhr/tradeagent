@@ -5,7 +5,7 @@ namespace TradeAgent.Core.Strategy;
 /// (<c>U-language-v2a</c> item 2; <c>docs/EDGE-FACTORY.md</c> § 4.4; R05 row 10).
 ///
 /// <para><b>Every declaration a program uses is REQUIRED</b>, because every one of them constrains its orders, its risk
-/// or how it is evaluated: an instrument and a size say what is bought; a stop, a target, a holding limit and a session
+/// or how it is evaluated: an instrument, a size and its cap say what is bought; a stop, a target, a holding limit and a session
 /// exit say when a position must end; the bounds say how stale a decision may be; a bar, a zone, a window, a weekday, an
 /// indicator, a constant, a feature and a rule say what is decided. R05 row 10 is the failure this prevents: "a silently
 /// dropped stop is an unprotected live strategy". So a reader that does not implement one of them REFUSES the program in
@@ -31,6 +31,15 @@ public static class StrategyDeclarations
     public const string Indicator = "indicator";
     public const string Feature = "feature";
     public const string Size = "size";
+
+    /// <summary>
+    /// THE CAP ON A RISK-SIZED ENTRY (<c>U-size-cap</c>): <c>size risk_fraction 0.01 max_capital_fraction 0.95</c>. A clause
+    /// of the size line rather than a line of its own — the one kind here that is never a line's first word — and a kind
+    /// of its own anyway, because it constrains the orders: a reader that sized the risk fraction and dropped the cap would
+    /// send an entry larger than the program says one may ever be, so a reader that does not apply it refuses the program.
+    /// </summary>
+    public const string MaxCapitalFraction = "max_capital_fraction";
+
     public const string Stop = "stop";
     public const string Target = "target";
     public const string MaxHoldBars = "max_hold_bars";
@@ -41,11 +50,14 @@ public static class StrategyDeclarations
     public const string Exit = "exit";
     public const string Entry = "entry";
 
-    /// <summary>Every declaration kind this build's parser reads, in the order its refusals name them.</summary>
+    /// <summary>
+    /// Every declaration kind this build's parser reads, in the order its refusals name them — every one a line's first
+    /// word but <see cref="MaxCapitalFraction"/>, the size line's clause, which is named right after the size it caps.
+    /// </summary>
     public static readonly IReadOnlyList<string> All =
     [
         Instrument, TimeZone, Bars, Timeframe, DataFreshness, MaxDecisionAge, Const, Indicator, Feature, Size,
-        Stop, Target, MaxHoldBars, Weekdays, EntryWindow, OpeningRange, SessionExit, Exit, Entry
+        MaxCapitalFraction, Stop, Target, MaxHoldBars, Weekdays, EntryWindow, OpeningRange, SessionExit, Exit, Entry
     ];
 
     /// <summary>
@@ -63,6 +75,7 @@ public static class StrategyDeclarations
         if (p.Constants.Count > 0) uses.Add(Const);
         if (p.Indicators.Count > 0) uses.Add(Indicator);
         if (p.Features.Count > 0) uses.Add(Feature);
+        if (p.Sizing.MaxCapitalFraction is not null) uses.Add(MaxCapitalFraction);
         if (p.Stop.Kind != StopKind.None) uses.Add(Stop);
         if (p.Target.Kind != TargetKind.None) uses.Add(Target);
         if (p.MaxHoldBars is not null) uses.Add(MaxHoldBars);

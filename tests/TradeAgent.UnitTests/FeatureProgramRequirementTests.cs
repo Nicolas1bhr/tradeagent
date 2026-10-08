@@ -28,7 +28,7 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
         indicator m = sma(close, k)
         indicator orh = opening_range_high()
         feature funding = {FeatureProgramGrammarTests.FundingSpec}
-        size fixed 1
+        size risk_fraction 0.01 max_capital_fraction 0.95
         stop percent 2
         target percent 3
         max_hold_bars 10
@@ -49,25 +49,35 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
 
     /// <summary>
     /// (l) EVERY KIND PARSED IS ONE THE BACKTEST IMPLEMENTS. The parser's own list — the one its refusal of an unknown
-    /// word prints — is <see cref="StrategyDeclarations.All"/>, word for word, so a kind added to the parser and not to
-    /// the list fails here; every one of them is accepted as a line's first word; the backtest implements every one; a
-    /// program using every kind requires every kind and the backtest does not refuse it, while the paper runner refuses
-    /// it naming <c>feature</c> and nothing else.
+    /// word prints — is <see cref="StrategyDeclarations.All"/>, word for word, but for the one kind that is a clause of
+    /// another line rather than a line of its own (<c>max_capital_fraction</c>, <c>U-size-cap</c>), so a kind added to the
+    /// parser and not to the list fails here; every line kind is accepted as a line's first word, and the clause on the
+    /// size line; the backtest implements every one; a program using every kind requires every kind and the backtest
+    /// does not refuse it, while the paper runner refuses it naming <c>feature</c> and nothing else.
     /// </summary>
     [Fact]
     public void Every_kind_parsed_is_one_the_backtest_implements()
     {
+        var lines = StrategyDeclarations.All.Where(k => k != StrategyDeclarations.MaxCapitalFraction).ToList();
+        Assert.Equal(StrategyDeclarations.All.Count - 1, lines.Count);
+
         var unknown = StrategyParser.Parse("instrument BTCUSDT\nnonsense here\n");
         const string Lead = "The declarations are: ";
         var listed = unknown.Why[(unknown.Why.IndexOf(Lead, StringComparison.Ordinal) + Lead.Length)..].Split(", ");
         log.WriteLine(string.Join(" ", listed));
-        Assert.Equal(StrategyDeclarations.All, listed);
+        Assert.Equal(lines, listed);
 
-        foreach (var kind in StrategyDeclarations.All)
+        foreach (var kind in lines)
         {
             var parse = StrategyParser.Parse($"{kind} x\n");
             Assert.DoesNotContain("is not a declaration this language has", parse.Why, StringComparison.Ordinal);
         }
+
+        // THE CLAUSE IS READ WHERE IT IS WRITTEN — the size line's third word — and is a line of its own nowhere.
+        Assert.Contains("is not a declaration this language has",
+            StrategyParser.Parse($"{StrategyDeclarations.MaxCapitalFraction} 0.95\n").Why, StringComparison.Ordinal);
+        Assert.Equal(0.95m, Parsed("instrument BTCUSDT\nsize risk_fraction 0.01 max_capital_fraction 0.95\nstop percent 2\n"
+                                   + "exit when close < 1\nentry when close > 2\n").Sizing.MaxCapitalFraction);
 
         Assert.Equal(StrategyDeclarations.All, Backtest.Implements);
 

@@ -621,12 +621,31 @@ public static class StrategyParser
         return symbol;
     }
 
+    /// <summary>
+    /// `max_capital_fraction` — THE CAP ON A RISK-SIZED ENTRY (<c>U-size-cap</c>), A CLAUSE OF THE SIZE LINE AND NOTHING
+    /// ELSE: <c>size risk_fraction 0.01 max_capital_fraction 0.95</c>. Recognised only as the size line's third word,
+    /// never as a line's first word and never as a reserved name, for the reason <see cref="BarsDeclaration"/> is not one:
+    /// the language had no such word before, a stored program may well say <c>const max_capital_fraction = 1</c>, and
+    /// reserving it now would turn a recorded version into a refusal.
+    /// </summary>
+    const string CapClause = StrategyDeclarations.MaxCapitalFraction;
+
+    const string SizeGrammar =
+        "size reads `size fixed <quantity>`, `size capital_fraction <fraction>` or `size risk_fraction <fraction>`, " +
+        "and a risk fraction may add the most of its capital an entry may spend: " +
+        "`size risk_fraction <fraction> max_capital_fraction <fraction>`";
+
     static Sizing ReadSizing(Decl d, Dictionary<string, StrategyConstant> constants)
     {
         var words = Words(d.Rest);
+
+        // THE CAP, read before the base form so that a cap where it means nothing is refused in its own words rather
+        // than as a line one word too long. Only as the third word: anywhere else it is a word this line does not take.
+        if (words.Length >= 3 && string.Equals(words[2], CapClause, StringComparison.OrdinalIgnoreCase))
+            return ReadCappedSizing(d, words, constants);
+
         if (words.Length != 2)
-            throw new Refused(d.No,
-                "size reads `size fixed <quantity>`, `size capital_fraction <fraction>` or `size risk_fraction <fraction>`");
+            throw new Refused(d.No, SizeGrammar);
 
         var value = Value(d.No, words[1], constants);
         switch (words[0].ToLowerInvariant())
@@ -639,19 +658,73 @@ public static class StrategyParser
 
             case "capital_fraction":
             case "risk_fraction":
-                if (value <= 0m || value > StrategyLimits.MaxSizingFraction)
-                    throw new Refused(d.No,
-                        $"a fraction must be above 0 and at most {Number(StrategyLimits.MaxSizingFraction)} — " +
-                        $"{Number(value)} is more than everything there is, which is leverage, and leverage is not " +
-                        "something this language can say");
                 return new Sizing(
                     words[0].ToLowerInvariant() == "capital_fraction" ? SizingKind.CapitalFraction : SizingKind.EquityRiskFraction,
-                    value);
+                    Fraction(d, value));
 
             default:
                 throw new Refused(d.No,
                     $"`{Clip(words[0])}` is not a way to size. The three are: fixed, capital_fraction, risk_fraction");
         }
+    }
+
+    /// <summary>
+    /// <c>size risk_fraction &lt;f&gt; max_capital_fraction &lt;c&gt;</c> (<c>U-size-cap</c>): the risk fraction under the
+    /// base form's rule, and a cap above 0 and at most <see cref="StrategyLimits.MaxSizingFraction"/>, each a NUMBER or a
+    /// declared number constant. Every other shape with the clause in it is refused on the size line, in words: a cap on a
+    /// size that cannot grow, a cap that is no fraction of capital, and anything after it.
+    /// </summary>
+    static Sizing ReadCappedSizing(Decl d, string[] words, Dictionary<string, StrategyConstant> constants)
+    {
+        switch (words[0].ToLowerInvariant())
+        {
+            case "fixed":
+                throw new Refused(d.No,
+                    $"`{CapClause}` caps a RISK-sized entry, whose size grows as its stop nears the price, and " +
+                    "`size fixed` is a constant quantity with nothing to cap. Write `size fixed <quantity>` alone");
+
+            case "capital_fraction":
+                throw new Refused(d.No,
+                    $"`{CapClause}` caps a RISK-sized entry, and `size capital_fraction` already is a fraction of " +
+                    "capital — it is its own cap. Write `size capital_fraction <fraction>` alone");
+
+            case "risk_fraction":
+                break;
+
+            default:
+                throw new Refused(d.No,
+                    $"`{Clip(words[0])}` is not a way to size. The three are: fixed, capital_fraction, risk_fraction");
+        }
+
+        if (words.Length != 4)
+            throw new Refused(d.No,
+                $"a capped risk size reads `size risk_fraction <fraction> {CapClause} <fraction>`: the fraction of " +
+                "equity to risk, then the most of its capital the entry may spend, and nothing after it");
+
+        var risk = Fraction(d, Value(d.No, words[1], constants));
+        var cap = Value(d.No, words[3], constants);
+
+        if (cap <= 0m)
+            throw new Refused(d.No,
+                $"`{CapClause}` must be above 0, and this one is {Number(cap)}: a cap of nothing would size every " +
+                "entry to nothing, which is a program that can never trade");
+        if (cap > StrategyLimits.MaxSizingFraction)
+            throw new Refused(d.No,
+                $"`{CapClause}` must be at most {Number(StrategyLimits.MaxSizingFraction)} — {Number(cap)} is more " +
+                "than everything there is, which is leverage, and leverage is not something this language can say");
+
+        return new Sizing(SizingKind.EquityRiskFraction, risk, cap);
+    }
+
+    /// <summary>A capital or risk fraction: above 0 and at most <see cref="StrategyLimits.MaxSizingFraction"/>, or refused on its line.</summary>
+    static decimal Fraction(Decl d, decimal value)
+    {
+        if (value <= 0m || value > StrategyLimits.MaxSizingFraction)
+            throw new Refused(d.No,
+                $"a fraction must be above 0 and at most {Number(StrategyLimits.MaxSizingFraction)} — " +
+                $"{Number(value)} is more than everything there is, which is leverage, and leverage is not " +
+                "something this language can say");
+        return value;
     }
 
     static StopRule ReadStop(Decl d, Dictionary<string, StrategyConstant> constants)

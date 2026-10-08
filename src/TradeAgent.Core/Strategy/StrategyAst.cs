@@ -149,8 +149,17 @@ public sealed record FeatureDecl(string Name, Features.FeatureSpec Spec);
 /// <summary>One rule: what it does, and the condition under which it does it.</summary>
 public sealed record StrategyRule(RuleKind Kind, Expr Condition);
 
-/// <summary>How much to buy. <paramref name="Value"/> is a quantity or a fraction, per the kind.</summary>
-public sealed record Sizing(SizingKind Kind, decimal Value);
+/// <summary>
+/// How much to buy. <paramref name="Value"/> is a quantity or a fraction, per the kind.
+///
+/// <para><paramref name="MaxCapitalFraction"/> (<c>U-size-cap</c>) is the most of its capital a RISK-sized entry may
+/// spend — <c>size risk_fraction 0.01 max_capital_fraction 0.95</c> — or null because the program declares none. Only a
+/// risk fraction takes one: a capital fraction is already its own cap and a fixed quantity is a constant. A risk size is
+/// <c>equity * f / (close - stop)</c>, without bound as the stop nears the price, so no fraction and no capital keeps a
+/// tight-stop entry fundable; with the cap the entry sizes to the smaller of that and <c>capital * c / close</c>
+/// (<c>StrategyEvaluator.Quantity</c>), so a cap only ever makes a size smaller.</para>
+/// </summary>
+public sealed record Sizing(SizingKind Kind, decimal Value, decimal? MaxCapitalFraction = null);
 
 /// <summary>
 /// The protective stop. <paramref name="AtrPeriod"/> is 0 unless the kind is
