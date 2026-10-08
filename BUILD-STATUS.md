@@ -9084,3 +9084,41 @@ Manager's gate at `982e4525` (carried to `ccfcca96`: build tree identical), Rele
 **Tests box:** NOT RUN — 02:13Z `ready : NO - his own OFT.Platform is open; nothing of ours runs beside it` (exit 5), not retried.
 **NOT done, NOT verified:** that the shipped breakout never traded is arithmetic plus the (f) fixture (a 0.2 %-ATR New York morning: the old text "cannot pay" on every
 signal, the new fills 94.715 = RoundDown(10,000 · 0.95 / 100.3)) — not run over a real dataset's minutes; no app run.
+
+## 2026-10-08 — U-valuation-close-confirm landed: every lost close the app sends — the loss flatten, its again, the data-loss exit and the exit's new again — is confirmed from the platform's history per close generation, never once per breach
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-valuation-close-confirm.md` (queued `13aa9e48`; re-briefed by seat P's read-only survey at `78be3e9d`, its probes
+at `d73ecd59` reproducing all three defects; committed `c0097bee`, dispatched `da4b06a6`). Owed BEFORE ANY LIVE USE (`U-flatten-confirm`; the again-flatten's owner-answered lost
+close owed by `U-loss-hold-release`, folded in as one class fix). Merge `833dade5` (ff-only), 4 commits (item 1 `94f23e43`, item 2 `3f3ab893`, item 3 `870c67a7`, report `833dade5`), rebased by
+seat P's prep onto `f9212bbd` then `e9234372` with an identical src+tests patch-id. No rung (kv JSON only). MONEY PATH (gateway): a lost close is never re-sent blind (`CLAUDE.md` rule 3); a position nobody can value
+must not stay open because one close lost its answer.
+
+- **Item 1:** a `CloseGeneration` record; `LostCloses` and `ApplyTheConfirm` work per generation, ONLY on that generation's own nonces; `loss_flatten_again_confirm:` written once,
+  before any row is settled; only the first flatten's not-flat confirm owes a closing again, the again's own confirm owes nothing ("does NOT close it a third time … yours to
+  close"); `LatestFlattenWord` reads the again's confirm first.
+- **Item 2:** every `loss_valuation_exit:` of this connector, mode and account, and its again, is confirmed by the same routine (`loss_valuation_exit_confirm:`,
+  `loss_valuation_exit_again_confirm:`): rows unflagged, the pause lifts, later exits go out. `CloseAgainWhatAnExitLeftOpenAsync` closes again ONCE (`loss_valuation_exit_again:`)
+  only behind a not-flat confirm, no again written yet, the episode standing on THIS tick with `ExitKey` = that exit, the bound on and the episode at least that old, the
+  connection up; the episode keeps its `ExitKey`; valued again → nothing sent, said. **The episode check is the one thing between this design and a THIRD close** (the mutant).
+- **Item 3:** `ValuationReading` shows each exit's latest word (`LatestExitWord`: the again's confirm, the again "CLOSED AGAIN", the confirm as it stands now, the exit);
+  `docs/CONTRACTS.md` (three notes and a section), `docs/USER-GUIDE.md`, the status field's doc, the schema's `loss_flatten` text, `AGENTS.md`.
+- **Declared deviations, ACCEPTED by seat P:** (1) the again's not-flat confirm holds its closure on the book the tick reads, not on its record — else a position the owner
+  closed by hand stayed held for ever; (f) asserts a hand close lifts it; (2) the exit's again checks its episode against the tick's own standing list
+  (`TheEpisodeItWasSentFor`), not a disk row a failed write may leave stale; (3) the reading also shows an older exit whose latest word is today's, and says "NOT closing it
+  again" once the reason has gone ((c)'s second arm); (4) a test knob, `RecordingConnector.QuoteAgeOf`. **Judged change:** `LossFlattenConfirmTests.A_lost_answer_to_the_
+  closing_again_stays_for_the_owner` (name kept) asserted the defect; its claim moved to the history-hidden, no-answer case; every original assertion kept (the brief named it).
+
+**Verified by running (the builder, quoted).** RED before, the base product: (a) `Expected: FILLED Actual: UNKNOWN`, "closes on the wire : 1; ES 0 NQ 1"; (b), (c) `Expected:
+CANCELLED Actual: UNKNOWN`; (d) no confirm written (`Sub-string not found`), closes 1; (e) both arms `Expected: 1 Actual: 0` again's confirms; (f) `Expected: 1 Actual: 0`; (c)'s
+second arm came with item 3 (no red-before run). Mutant: `TheEpisodeItWasSentFor` replaced by the ES episode row read from disk unchecked → (c) `Expected: 0 Actual: 1` again
+records, "closes on the wire : 3; ES 0 NQ 0" — a third close — on item 2's code and on both arms of the final code; the other six green; restored (sha256 matches, 33/33).
+Unchanged vs main, sha256 per function: `AskTheHistoryAsync`, `TheOwnersAnswerAsync`, `SettledByTheOwner`, `CloseCapturedAsync`, the in-flight sweep, `AccountForTheFlattenAsync`
+(its whole-kind unflag neither widened nor copied — seat P's Must NOT held), the precautionary cancel, the bound, `TrackValuations`. Builder: Release 0 warnings; Unit 1485,
+Fault 479, 0 failed; the four touched classes 33/33 ×3.
+**Manager's gate** at `bef297db` (carried to `833dade5`, only docs moved), Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1532/1532 (9 m 29 s);
+Fault 479/479 (2 m 2 s); Integration 742/743, 1 skipped (11 m 17 s) → 0 failed. Names vs `main`: 2363 → 2369, 0 removed, 6 added ([Fact]/[Theory] 2315 → 2321). Scan clean; no trailers.
+**CI:** branch run 37714909967 at `9d6954ec` (the code tip; the report docs only): ubuntu ✓ 12 m, macOS ✓ 24 m, windows ✓ 62 m, package ✓ 4 m; 37714046749 at item 2's
+`6ef5ff4e`: all four ✓. Tests box: NOT RUN — "his own OFT.Platform is open" (01:51Z). Landing CI on `main`: a waiter is armed.
+**OWED (light, seat P):** a closing again that ends not flat WITHOUT a lost close (an order that would not cancel, a leg refused at the wire) still holds its closure on its
+record; no test kills a pass between writing a confirm and settling its rows (the write-once-before-settle order is the design, not exercised by a crash test).
+**NOT verified:** no ATAS (no box), no app run, the words not seen on screen.
