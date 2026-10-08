@@ -9004,3 +9004,44 @@ a test's in-process role grant read at run time, no literal value (the pattern o
 **NOT done, NOT verified (→ seat A's U-holdout-campaign):** a backtest over a version with no cutoff is charged to no campaign; the owner's Settings line after a second
 Download says nothing is held while the first campaign is open; `SetHoldout` over months already served; a paper run's figures over a later-held window are not held back.
 Tests (a) and (b) cover the pipe AND the in-process surface (`CallAsync`). Whether attempt 3's agent read held minutes is unknown (its record claims no verdict).
+
+## 2026-10-08 — U-agent-tree landed: Pause, Stop, a turn's end and the app's quit, update or death end the turn's whole process tree on macOS and Linux before its spend row closes, its presence ends and its grant lapses, killing only what is proved the turn's
+
+One fresh Opus builder under seat P built it from `docs/briefs/U-agent-tree.md` (seat A's read-only survey `s-agent-tree`, measured on this Mac at `cc7a0974`; re-checked by seat P
+at `8319b390`, queued `7efb5f7d`, dispatched `6bd92855`; the orchestrator's protection ruling of 23:18). Merge `e7129357` (ff-only), 9 commits (tests `146378e6`, items 2–5 `7473ca35` `08c2c751` `d44489ef` `00ca678a`, Windows arms `49c391fa`,
+`d67d1c0e`, `f840042c`, report `e7129357`), rebased by seat P's prep onto `28a2e3fb` then `cbffcc8b` with an identical src+tests patch-id. No rung, no schema, wire or verb change. PROTECTION: operator authority (Pause means the AI is stopped) and the owner's
+spend (the ledger measures every paid process or refuses the next turn; nothing a turn spawned reaches the pipe after its turn).
+- **Item 1:** `AgentTreeTests`, 17 tests — (a) a paused turn with and without the launcher, a Research role's too; (b) a stopped turn; (c) a finished turn's leftover; (d) children
+  that left the group or the session; (e) the app's dispose mid-turn; (f) the app's death; (g) the row and presence only after the tree; (h) the guard — a process outside the
+  tree with the turn's command survives; and the failed-teardown path. Windows arms in PowerShell (cmd parses the Situation, ResumeOnStartTests' reason).
+- **Item 2:** `TreeTeardown`/`ProcessTable` (Core; libproc on macOS, `/proc` on Linux, no `ps`): freeze from the leader down parent links and across the session, re-prove pid +
+  start time after SIGSTOP (else SIGCONT, left alone), SIGKILL, repeat ≤ 3 s; never the app's own session or group. A failed teardown revokes the grant at once and `TurnMeter`
+  refuses every launch, naming the pids, until they end. Declared deviation, ACCEPTED: the session id is remembered at the start (the leader's pid by construction), not at
+  `Held`'s latch, so a leader that exits unobserved still leaves its session findable.
+- **Item 3:** Pause cancels the chair's conversation and every conversation the loop took a turn on before it cancels the loop (kept as `ConversationFor` gave them — asking the
+  host at Pause would race its lazy dictionary); presence ends after the teardown, never on the leader's exit; `Run`'s timeout and the key sign-in take the same order.
+- **Item 4:** `AppHost.DisposeAsync` pauses (`Mission.PauseAsync`; the resume choice asserted kept) and stops the AI first, once; Quit holds `ShutdownRequested` ≤ 15 s.
+  **FINDING, from Avalonia 12.1.1's IL:** `Shutdown()` passes force and raises NO `ShutdownRequested`, so the app's SELF-UPDATE path never ran the old handler — before this
+  unit an update never stopped the AI nor disposed what that handler disposes; `Exit` now runs the same stop, and `MainWindow`'s comment (which claimed it did) is corrected.
+- **Item 5:** `--spawn-contained` stays resident (setsid, `Process.Start` with stdio inherited, the exit code forwarded) and sweeps its session when the command exits or
+  `getppid()` changes: (f), the parent SIGKILLed, leaves every process dead within 5 s on macOS and ubuntu. The launcher still grants nothing and opens no pipe.
+- **Extra commits, ACCEPTED (inside the brief's "a turn's end" path):** `d67d1c0e` ends the tree the moment the leader exits — CI 37707921636 measured a finished turn whose
+  leftover held stderr and never committed; `49c391fa` adds the Windows arms. **Judged: a PROTECTION class in `Timing`** (`f840042c`): its verdict is a 5 s ceiling over real
+  processes, argued at the class with measured numbers (37712519465 under load: an in-memory test 9.4 s against 0.1 s here; three PowerShell turns not up within 60 s at
+  01:49–01:52Z, the same probe up in 7 s from 01:53Z); no timeout raised, no assertion changed. Timing grants a second attempt, so the FIRST-ATTEMPT results are recorded
+  here: 37717264247, all three platforms passed on the first attempt (Unit Timing 18/18) — a later run that passes only on its retry is to be read as a sighting.
+**Verified by running (the builder, quoted).** RED before (`6bd92855` + the item-1 tests, this Mac): 10 of 10 red — "5 s after Mission.PauseAsync, the launcher deployed, the
+turn's tree still ran: ownpgrp (pid 68379), ownsess (pid 68380)"; (g) "presence.Live read 0 while leader (pid 68448), ownpgrp (pid 68452), ownsess (pid 68453) still ran; the
+turn's ai_attempt row read ENDED while …". Mutant `Dispose` → `if (!Process.HasExited) End();`: at item 2 "5 s after the turn's own end (exit 0), the turn's tree still ran:
+leftover (pid 69508)"; at item 5 "… after the session's leader had exited, the turn's tree still ran: leftover (pid 74365)"; reverted. Builder: Release 0 warnings; Unit 1502,
+Fault 471, 0 failed; `AgentTreeTests` 3× 17/17; no probe process left on the Mac.
+**Manager's gate** at `6f3baf5f` (carried to `e7129357`, only docs moved), Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1504/1504 (9 m 28 s);
+Fault 471/471 (2 m); Integration 741/742, 1 skipped (11 m 15 s) → 0 failed. Names vs `main`: 2334 → 2351, 0 removed, 17 added ([Fact]/[Theory] 2286 → 2303). Scan: 12 hits,
+all "token" in identifiers and comments (`launch.Token`, `bound.Token`, "the loop's token"), no value: judged false positives, excluded by name. No trailers.
+**CI:** branch run 37717264247 at `81ed13ce` (the code tip; the report docs only): macOS ✓, ubuntu ✓, windows ✓, package ✓. Earlier runs on the branch, read: 37694897915 red
+only on items 3–5 not yet built; 37712519465 and 37707921636 windows red on the new PowerShell arms before `2d35f6d9`/`81ed13ce`; 37707921636 ubuntu red in
+`BridgeRoundTripTests.A_live_refusal_is_not_masked_by_a_stale_one` (TimeoutException :813, the stub bridge's pipe; unreachable by this diff, green on main 37706652101 and on
+every later run) — a FIRST SIGHTING. Tests box: NOT RUN — "his own OFT.Platform is open" (02:28, 03:21). Landing CI on `main`: a waiter is armed.
+**NOT verified / owed:** (f) on Windows and Windows' start gap → `U-contain-seats`; a process that leaves the session AND loses its parent before a teardown cannot be proved
+the turn's and is left (the honest limit); on Unix without the launcher a leftover holding the turn's pipes holds the turn open; no app launched and no real codex turn — the
+quit hold, the update path's stop and the supervisor are proven in tests only.
