@@ -2076,8 +2076,12 @@ most 60 non-empty lines) and `journal` (`trading/JOURNAL.md`, at most 200; older
 `trading/archive/`), `recipients` = the role itself, `classification` `private`. No delivery and no
 `mission_event` come with them — `PublicationStore.Record`, not `Commit` — because a role woken to read
 its own plan is the owner paying for the app to hand an agent its own memory back. An unchanged file
-raises no revision (the id is the content hash). An over-cap or unreadable file is REJECTED, the last
-valid revision is written back over it, and the role's next `## Situation` says so. `revision` is
+raises no revision (the id is the content hash). An over-cap or unreadable file is REJECTED. One with an
+earlier revision is first KEPT — the bytes read, as a new `trading/archive/<PLAN|JOURNAL>-refused-<attempt
+id, or the UTC instant yyyyMMddTHHmmssfffZ>.md`, a taken name skipped and never written over — and only
+then is the last valid revision written back over it; a file that could not be kept (an unreadable one
+included) is not written back over at all. The role's next `## Situation` says which, naming the copy;
+nothing reads the archive back. `revision` is
 assigned inside the transaction that inserts the row. `ix_publication_kind (role, kind, revision)` is
 what the restore reads; it is the whole of schema 11.
 
@@ -2085,7 +2089,8 @@ what the restore reads; it is the whole of schema 11.
 record closed (`AiAttemptStore.End`), what the turn published, its two revisions, and the dispositions
 of the wakes it consumed. `Database.Write` is re-entrant — a nested call joins the transaction already
 open rather than starting a second. The disk work is after the commit: the copy into `in/`, and the
-restore of a refused plan. **The property:** a crash either side of it leaves exactly one revision per
+restore of a refused plan — whose kept copy is the one file written inside it, so a rollback can leave
+only an extra file in the archive. **The property:** a crash either side of it leaves exactly one revision per
 file and the attempt in one identifiable state — `LOST` (nothing of the transition landed; the next
 meter to open the database turns every open row `LOST` and the reconcile pass publishes that attempt's
 files under it) or `ENDED` (all of it landed) — never an `ENDED` attempt whose work is nowhere, and
