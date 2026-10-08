@@ -74,8 +74,8 @@ so this orchestration position becomes the standard."
   the orchestrator checkpoints the resume block, the board, `fleet/handoff/ORCHESTRATOR.md` and memory, removes its crons, and reports.
 - **The reference run, 2026-10-06** (00:50 to 18:30): two seats, four Mac builders and one ATAS-box leg; three usage stops and a clamshell sleep bridged
   with nothing lost; twelve units landed (the resume block's checkpoint lists them).
-- **The second, 2026-10-06 21:33 → 2026-10-08 ~14:00:** seats P and A (each ROTATED once, fresh from its handoff) plus seat M for M0 attempt 3;
-  four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once and the owner reset it); twenty units landed and M0 recorded.
+- **The second, 2026-10-06 21:33 → 2026-10-08 15:25:** seats P and A (each ROTATED once, fresh from its handoff) plus seat M for M0 attempt 3;
+  four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once and the owner reset it); twenty-one units landed and M0 recorded.
   Read-only surveys found protection defects nobody had briefed — the agent's process tree outliving Pause, two holdout leaks, two credential files
   written readable — and each was fixed and landed within the session (the resume block's checkpoint lists them).
 
