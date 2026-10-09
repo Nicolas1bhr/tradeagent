@@ -1075,6 +1075,14 @@ public static class MissionInbox
 /// </summary>
 public sealed class MissionLoop
 {
+    /// <summary>
+    /// THE FILE A ROLE WRITES TO ASK FOR ITS NEXT WAKE, relative to its own folder. One constant, read here by
+    /// <see cref="AskedForDelay"/> and by <see cref="AgentReach"/>, which renders it into the canon of every seat that
+    /// can write it — so the canon cannot name a path the loop does not read, and a seat whose writes cannot reach its
+    /// folder (the harness) is never told of one.
+    /// </summary>
+    public const string WakeFile = ".tradeagent/next.json";
+
     readonly IMissionHost _host;
     readonly MissionOptions _options;
     readonly Func<DateTimeOffset> _now;
@@ -2416,7 +2424,7 @@ public sealed class MissionLoop
     /// </summary>
     TimeSpan AskedForDelay(string role)
     {
-        var path = Path.Combine(_host.HomeFor(role), ".tradeagent", "next.json");
+        var path = Path.Combine(_host.HomeFor(role), WakeFile.Replace('/', Path.DirectorySeparatorChar));
         try
         {
             if (!File.Exists(path)) return TimeSpan.Zero;

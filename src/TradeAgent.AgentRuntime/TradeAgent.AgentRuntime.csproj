@@ -3,6 +3,10 @@
     <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
     <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
     <ProjectReference Include="../TradeAgent.Provisioning/TradeAgent.Provisioning.csproj" />
+    <!-- READ, NEVER CALLED INTO: `AgentReach` takes a CLI seat's verbs from `GatewaySchema.Ops()`, the description the
+         gateway itself serves to `trade schema`, so the canon cannot name a command the gateway does not have (U-canon).
+         Nothing in this assembly constructs a gateway or reaches one except through `IGatewayCalls`. -->
+    <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- WHAT A ROLE IS GIVEN TO READ. `ResearchLibrary` writes these into every role's home on every
