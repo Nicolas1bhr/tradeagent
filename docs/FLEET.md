@@ -66,7 +66,11 @@ so this orchestration position becomes the standard."
   plainly, `< /dev/null`, never nested quoting). Board times come from `date`; seats' self-reported clocks ran 4–25 min fast.
 - **The heartbeat — the practice he named.** Session crons (`CronCreate`) carry the fleet across usage stops: a ONE-SHOT wake at each 5-hour window's
   reset + 4 min (from `get_usage`'s `resetsAt`, re-armed at every wake; deleted when the orchestrator resumes the fleet by hand first) and a RECURRING
-  2-hourly backstop. A cron fires only while the session is idle, which a usage stop leaves it; on the wake the orchestrator reads usage, the Mac and the
+  2-hourly backstop. A cron fires only while the session is idle — but a usage stop that cuts the orchestrator off MID-TURN leaves the session BLOCKED,
+  not idle, and its crons queue until a user turn (2026-10-09: ~8 h lost overnight; proved at the second stop, when two queued backstops arrived with the
+  owner's "continue"). So near a window's end the orchestrator ends its turns at once, and it also arms an EXTERNAL wake: an app scheduled task
+  (`fireAt` = reset + 4 min) whose run sends a message into its session — it works only once the owner has approved that task's send tool (NOT VERIFIED
+  on a blocked session). On the wake the orchestrator reads usage, the Mac and the
   fleet's state and resumes every seat and builder that died at the stop by one `SendMessage` naming its branch state and the CI runs that finished
   meanwhile — nothing is lost, because the branch is the handoff. The window, not the week, binds: spend each window on the highest-value units first, and
   let CI and detached gates run through the stop. Crons are session-only (a recurring one expires after 7 days).
@@ -80,6 +84,8 @@ so this orchestration position becomes the standard."
   four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once and the owner reset it); twenty-one units landed and M0 recorded.
   Read-only surveys found protection defects nobody had briefed — the agent's process tree outliving Pause, two holdout leaks, two credential files
   written readable — and each was fixed and landed within the session (the resume block's checkpoint lists them).
+- **The third, 2026-10-09 00:00 → ~17:00:** fresh seats A and B (P and M closed); ~8 h lost overnight to the blocked heartbeat (above); six units
+  landed by the wind-down at 93 % of the week, among them an evidence leak in holdout campaigns and a paper run's book read against the account.
 
 ## Grounding — read before acting, verify before trusting
 
