@@ -9344,3 +9344,37 @@ found"; the app's session list (≈ 22:30) → every other session `isRunning: f
 
 **NOT VERIFIED:** everything the amended documents describe is DESIGN; the canon is the owner's side-project document, quoted from outside this repository;
 `U-decision-port`'s re-brief, `U-runner-features`' scope and `U-linux-host`'s survey are owed reading at `main`, not done here.
+
+## 2026-10-09 — U-tape-chain landed: Hyperliquid's public perp contexts for the six coins are recorded on the tape every five minutes, stamped with its answer's own `Date`; Deribit, DefiLlama and Kalshi left out on their terms
+
+Built under build-fleet seat A from `docs/briefs/U-tape-chain.md` by two fresh Opus builders on one branch: the first (2026-10-08) committed items 1–3 and PAUSED at `05b308e6` on the owner's wind-down
+(its CI 37767125097 green); the second (2026-10-09, from the `## Paused` note, the v2a pattern) rebased onto `138d0d0c`, wrote and ran every test, did item 4 and the gate. The manager's prep rebased it onto
+`a3cbb086`, then — docs only, the gate carried — onto `a0de1392`; src+tests patch-id identical (`c284a3c06758`). Merge `f9c773a1` (ff-only): 7 commits, 23 files, +1,280/−100. On main: item 1 `7dcdb5a9`,
+item 2 `1c5209f6`, item 3 `2b2c6b15`, the pause note `07d8c903`, the tests `68e60ed5`, item 4 `e12806b1`, the report `f9c773a1`.
+**No schema change** (main 30, `tape.db` 1; rung 2 is `U-decision-port`'s, dispatched `a0de1392` — whichever lands second fixes the "tape.db 1" wording and the shared `SuiteReachesNoVendorTests` hosts).
+EVIDENCE (EDGE § 6.2/6.3): a row's source time is the vendor's `Date`, never this machine's clock; 6.10: only the built-in origin earns `O-LIVE`, and a file row can neither POST nor name the family; aggregates only — nothing per address.
+
+- **Terms re-read** (2026-10-08 22:12–22:13Z = 10-09 00:12 CEST): `/terms` still loads `assets/TermsOfUse-D5AmfbGD.js` (42,673 B) — "Last updated on June 15, 2026"; § 1.6 and § 3.1.8 as briefed; no data-licence clause.
+  One POST `{"type":"metaAndAssetCtxs"}` at 22:13:12.193Z: HTTP 200 in 0.51 s, 72,429 B; universe 234 = contexts 234; BTC 0, ETH 1, SOL 5, BNB 7, XRP 25, DOGE 12; merged 311–333 B; `Date` 22:13:12 GMT, received 22:13:12.730Z.
+- **Item 1:** `TapeSourceCatalog.Positioning()` joins `Shipped()` — row `hyperliquid-asset-ctxs`, one POST of a built-in body every 300 s for the six coins; body and subjects `[JsonIgnore]`, built-in only; a file row naming the parser refused in words.
+- **Item 2:** `TapeParse.TryReadAssetContexts` zips universe and contexts by index into one item per kept coin, stamped with the answer's `Date`; 24 malformed answers refused whole in words (lists that do not zip, a key in both,
+  a coin twice, over 2 KB, no `Date`, none of the six), storing only the fetch.
+- **Item 3:** the collector POSTs a series that carries a body as `application/json`, nothing else added; the answer's `Date` reaches the parser; this family's answer past 512 KB refused unread; `TapeReader` lists the coins;
+  `FeatureSpec` admits the row's own subjects (a feature may read BTC's `openInterest`); the vendor scan refuses `hyperliquid` + `.xyz` and pins the row's host.
+- **Item 4:** the Market data card, USER-GUIDE, `Trading.cs`, CONTRACTS "The tape" (incl. NOT CLAIMED: chain state at that second, anything per address, the oracle's inputs, completeness while closed, any live licence)
+  and "Features", RESEARCH-REQUIRED C5f, `TapeListNote`/`TapeNote`, `GatewaySchema` `data-tape`, STRATEGY-LANGUAGE.
+- **AGENTS.md** (the orchestrator's size ruling of 00:52), rendered through `WorkspaceBuilder.Instructions`, base `138d0d0c` → tip: operations 31,487 → 31,484 B (with the simulator 32,701 → 32,698), research
+  31,403 → 31,400 (32,617 → 32,614) — net −3 B each, paid by four equivalent trims; the line carries no cadence or address.
+- **Deviations, JUDGED (seat A), accepted:** items 1 and 3 land together (the collector's constructor refuses the new parser otherwise); `TryReadAssetContexts` takes the series (its `name` is the series' `SymbolField`);
+  merged sizes 299–333 B, not the brief's 310–331; item 4 also corrected CONTRACTS' "every request is an unauthenticated GET", `TapeListNote`, `TapeNote`'s `source_time`, `GatewaySchema`'s `data-tape`, and
+  the Features contract and STRATEGY-LANGUAGE (both said Binance rows only); the agents' line names no cadence or address (the byte ruling).
+**Verified by running (the builder, quoted; then the manager's gate).** Builder at `98438b3c`: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed: 1559, Failed: 0`; Fault `Passed: 485, Failed: 0`;
+TapeHyperliquidTests + TapeSourceCatalogTests + SuiteReachesNoVendorTests + FeatureSpecTests + FeatureSeriesTests 38/38 ×3. RED before, each guard disabled alone: (a) coin filter ⇒ "Expected (1, 1, 6, True) Actual (1, 1, 8,
+True)"; (c) length check ⇒ the 7/8 answer read; (d) always GET ⇒ `("GET", "/info", null, "")`; (e) `[JsonIgnore]` off ⇒ the file row's body read; (f) cadence 301 ⇒ 331 s `O-LIVE`; (g) 4 MB limit ⇒ `(1, 1, True)`;
+(h) subjects from `Universe` ⇒ "'BTC' is not one of them". **Mutant watched, (b):** `var date = (DateTimeOffset?)_now();` ⇒ 6/6 red, "source time 2019-03-04T05:06:07… is not the Date of an answer sent between …"; restored.
+Manager's gate at `242076c6` (carried to `f9c773a1`: build tree identical), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1559/1559 (10 m 5 s), Fault 485/485 (1 m 59 s), Integration 752/753,
+1 skipped (11 m 15 s) → 0 failed. Names vs `main`: 2397 → 2407, removed 0, added 10. Scan clean with `collateralToken` (the vendor's field) and `leash.Token` (a CancellationToken) judged and excluded by name; `rev-list` 0 both ways.
+**CI:** run 37856338682 at `98438b3c` (the code of the merge): test ubuntu-latest success 12 m, macos-latest 16 m, windows-latest 51 m, package 4 m. Pre-pause tip `05b308e6`: 37767125097 ✓×3 + package.
+**Tests box:** NOT RUN — `ready` exit 1 at ~01:05, 11:01 and 11:04 CEST: "NO - the machine does not answer".
+**NOT done, NOT verified:** no request to Deribit, DefiLlama or Kalshi (their terms keep them out; the CARD's rest waits on written consent); the app was not run, so the card's words are unseen on screen; no live look through
+the collector (the suite talks to loopback only); http.sys's own `Date` is proven by CI's windows job only; how far `Date` trails Hyperliquid's computation is unmeasured.
