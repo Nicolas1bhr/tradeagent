@@ -28,6 +28,13 @@ public static class NodeRuntime
 
     public static bool IsInstalled => NodeExe is not null;
 
+    /// <summary>
+    /// WHETHER A NODE.JS CAN BE HAD HERE AT ALL: the private copy is already in place, or this is Windows, where
+    /// TradeAgent installs it. Off Windows with none in place, a route that would need one has no second step,
+    /// and its caller refuses with its own failure rather than reaching <see cref="InstallAsync"/>'s.
+    /// </summary>
+    public static bool CanProvide => IsInstalled || OperatingSystem.IsWindows();
+
     /// <summary>Full path to node.exe inside TradeAgent's own tools folder, or null.</summary>
     public static string? NodeExe
     {
@@ -65,10 +72,13 @@ public static class NodeRuntime
 
     public static async Task InstallAsync(IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default)
     {
+        // OFF WINDOWS, A REFUSAL THAT ASKS NOTHING OF THE OWNER. The private copy is the official Windows zip; it
+        // said "install Node.js yourself" here, which is a terminal in other words, and nothing this product
+        // installs off Windows needs Node anyway — the AI tools there are self-contained downloads.
         if (!OperatingSystem.IsWindows())
             throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
-                "TradeAgent can only install its private copy of Node.js on Windows. " +
-                "On this computer, install Node.js yourself and TradeAgent will use it.");
+                "TradeAgent keeps a private copy of Node.js on Windows only, so it has none to install on this " +
+                "computer. Nothing was changed.");
 
         progress?.Report(new ProvisionProgress("node", "Finding the current version of Node.js"));
         var version = await ResolveLtsVersionAsync(ct) ?? PinnedLtsVersion;

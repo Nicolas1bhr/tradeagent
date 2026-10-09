@@ -599,7 +599,9 @@ public sealed class OnboardingView
             {
                 Ui.Ghost("Choose a different AI assistant", GoBack)
             };
-            if (DownloadPage() is { } page)
+            // Not off Windows: a download page is the owner sent to install it himself, and on a Linux host the
+            // window is seen through Screen Sharing, with no browser behind it to open one in.
+            if (OperatingSystem.IsWindows() && DownloadPage() is { } page)
                 alternatives.Add(Ui.Ghost("Open the download page in your browser",
                     () => MainWindow.OpenPath(page, ShowProblem)));
 
@@ -737,20 +739,28 @@ public sealed class OnboardingView
                 return new Screen(lede, KeyEntry(key), _keyButton, [], HideBack: false);
 
             var intro = Ui.Col(Theme.S5,
-                Note("Press Sign in. TradeAgent opens the sign-in page in your web browser, and this screen " +
-                     "continues on its own as soon as you are signed in.", Theme.Info));
+                Note(manifest is { AuthCodePattern.Length: > 0 }
+                    ? "Press Sign in. TradeAgent shows a web address and a one-time code: open the address on your " +
+                      "phone or another computer, sign in there and type the code. This screen continues on its own " +
+                      "as soon as you are signed in."
+                    : "Press Sign in. TradeAgent opens the sign-in page in your web browser, and this screen " +
+                      "continues on its own as soon as you are signed in.", Theme.Info));
             if (key is not null) intro.Children.Add(KeyEntry(key, alternative: true));
 
             return new Screen(lede, intro, Ui.Primary("Sign in", Act(BeginSignInAsync)));
         }
 
+        // A SIGN-IN WITH A CODE IS FINISHED ON ANOTHER DEVICE: the address and the code are shown, and nothing
+        // is opened here — on a Linux host there is no browser behind the window to open one in.
+        var elsewhere = !string.IsNullOrWhiteSpace(_auth.Code);
         var body = Ui.Col(Theme.S5);
         if (!string.IsNullOrWhiteSpace(_auth.Message)) body.Children.Add(Ui.Body(_auth.Message));
-        if (!string.IsNullOrWhiteSpace(_auth.Code)) body.Children.Add(CodeWell(_auth.Code!));
-        if (!string.IsNullOrWhiteSpace(_auth.Url)) body.Children.Add(LinkWell(_auth.Url!));
+        // The vendor's own order: first the address, then the code typed there.
+        if (!string.IsNullOrWhiteSpace(_auth.Url)) body.Children.Add(LinkWell(_auth.Url!, elsewhere));
+        if (elsewhere) body.Children.Add(CodeWell(_auth.Code!));
         body.Children.Add(Ui.Busy("Waiting for you to finish signing in."));
 
-        var primary = _auth.Url is { } url
+        var primary = _auth.Url is { } url && !elsewhere
             ? Ui.Primary("Open the sign-in page again", () => MainWindow.OpenPath(url, ShowProblem))
             : Ui.Primary("Start sign-in again", Act(BeginSignInAsync));
 
@@ -803,8 +813,10 @@ public sealed class OnboardingView
     {
         if (Runtime() is not { } rt) throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
         _auth = await rt.BeginAuthenticationAsync();
-        // The app opens the browser, so the user never has to find and click a link somewhere else.
-        if (!string.IsNullOrWhiteSpace(_auth.Url)) MainWindow.OpenPath(_auth.Url!, ShowProblem);
+        // The app opens the browser, so the user never has to find and click a link somewhere else — unless the
+        // sign-in shows a code, which is typed on another device and opens nothing here.
+        if (!string.IsNullOrWhiteSpace(_auth.Url) && string.IsNullOrWhiteSpace(_auth.Code))
+            MainWindow.OpenPath(_auth.Url!, ShowProblem);
     }
 
     /// <summary>A device code, sized to be read off the screen and typed into a phone.</summary>
@@ -827,8 +839,11 @@ public sealed class OnboardingView
             }
         });
 
-    /// <summary>The address, in full, for the case where the browser did not open by itself.</summary>
-    Control LinkWell(string url)
+    /// <summary>
+    /// The address, in full: for the case where the browser did not open by itself, or — for a sign-in
+    /// finished <paramref name="elsewhere"/> — the address to open on the other device.
+    /// </summary>
+    Control LinkWell(string url, bool elsewhere)
     {
         Button copy = null!;
         copy = Ui.Secondary("Copy link", async () =>
@@ -851,7 +866,9 @@ public sealed class OnboardingView
         };
 
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { well, copy } };
-        return Ui.Col(Theme.S2, Ui.Eyebrow("If your browser did not open, go to this address"), row);
+        return Ui.Col(Theme.S2, Ui.Eyebrow(elsewhere
+            ? "On your phone or another computer, open this address"
+            : "If your browser did not open, go to this address"), row);
     }
 
     Screen ChoosePlatform() => new(
