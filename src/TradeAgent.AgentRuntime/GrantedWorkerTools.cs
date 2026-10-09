@@ -128,10 +128,32 @@ public sealed class GrantedWorkerTools(
     /// </summary>
     public static readonly string[] DataOps = [Ops.DataList, Ops.DataBars, Ops.DataTape];
 
+    /// <summary>The one op <c>report</c> carries: a read of the owner's daily report.</summary>
+    public static readonly string[] ReportOps = [Ops.Report];
+
+    /// <summary>
+    /// THE OPS ONE TOOL CARRIES, and nothing for a tool that carries none. The one map from a tool to its closed list:
+    /// <see cref="InvokeAsync"/> dispatches on it and <see cref="AgentReach"/> renders a seat's verbs from it, so the
+    /// canon cannot tell a worker a tool carries an op the call would refuse.
+    /// </summary>
+    public static IReadOnlyList<string> OpsOf(string tool) => tool switch
+    {
+        Trade => TradeOps,
+        Data => DataOps,
+        Report => ReportOps,
+        _ => []
+    };
+
+    /// <summary>
+    /// WHAT EVERY LAUNCH OF THIS SURFACE IS TOLD EXISTS: six tools, the same for every role. One list, so the provider
+    /// is offered exactly what <see cref="AgentReach"/> describes to the seat.
+    /// </summary>
+    public static IReadOnlyList<ToolSpec> Granted { get; } = Specs();
+
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <inheritdoc />
-    public IReadOnlyList<ToolSpec> Offered { get; } = Specs();
+    public IReadOnlyList<ToolSpec> Offered => Granted;
 
     /// <inheritdoc />
     public async Task<ToolAnswer> InvokeAsync(ToolRequest call, CancellationToken ct = default)
@@ -144,9 +166,7 @@ public sealed class GrantedWorkerTools(
                 ReadFile => Read(args),
                 ListFiles => List(args),
                 WriteFile => Write(args),
-                Trade => await Call(Trade, TradeOps, args, ct),
-                Data => await Call(Data, DataOps, args, ct),
-                Report => await Call(Report, [Ops.Report], args, ct),
+                Trade or Data or Report => await Call(call.Name, OpsOf(call.Name), args, ct),
                 // DEFAULT DENY, and it is the switch's own default rather than a check somewhere above.
                 _ => ToolAnswer.Refused(WorkerTools.NotGranted(call.Name), call.Name)
             };
