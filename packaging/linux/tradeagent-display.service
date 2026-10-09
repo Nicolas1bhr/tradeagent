@@ -1,0 +1,27 @@
+# TradeAgent's display: one X server that is itself the VNC server (TigerVNC's Xvnc), listening on ONE
+# address — the owner's private network — with VNC password authentication, and an X cookie so that no
+# other account on this host can open the window. The owner looks at the app from his Mac's Screen
+# Sharing; nothing in the app listens on a network, and every control stays the window's.
+#
+# A template: packaging/linux/install.sh fills the @NAMES@ in and installs it root-owned in
+# /etc/systemd/system, so the app's own account — which is the agent's — cannot change it.
+[Unit]
+Description=TradeAgent's display (Xvnc :@DISPLAY@ on @ADDRESS@ only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@ACCOUNT@
+Group=@ACCOUNT@
+UMask=0077
+ExecStartPre=+@KIT@/display-prepare x11-dir
+ExecStartPre=@KIT@/display-prepare cookie @HOME@/.Xauthority :@DISPLAY@
+ExecStart=@XVNC@ :@DISPLAY@ -geometry @GEOMETRY@ -depth 24 -interface @ADDRESS@ -rfbport @PORT@ -SecurityTypes VncAuth -PasswordFile @HOME@/.vnc/vncauth -auth @HOME@/.Xauthority -nolisten tcp -desktop TradeAgent
+ExecStartPost=@KIT@/display-prepare wait :@DISPLAY@
+# The address may come up after this unit does: a failed bind is retried until it exists.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

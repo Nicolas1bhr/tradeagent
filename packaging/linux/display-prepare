@@ -1,0 +1,51 @@
+#!/bin/sh
+# The three small steps of tradeagent-display.service around Xvnc. install.sh puts this file at
+# /opt/tradeagent/kit/display-prepare, root-owned, and the unit runs it; nothing else does.
+#
+#   display-prepare x11-dir             (as root)        the folder every X server's socket lives in, 1777
+#   display-prepare cookie <file> <:n>  (as the account) a fresh X cookie for display :n, in <file>, 0600
+#   display-prepare wait <:n>           (as the account) until the X server's socket exists, at most 10 s
+#
+# THE COOKIE IS WHY NO OTHER ACCOUNT ON THE HOST CAN OPEN THE WINDOW. An X server started without one
+# lets every local client in, and a client of the app's display can press its buttons: the operator's
+# authority would be reachable by any account on the machine. With one cookie in the file Xvnc reads
+# (-auth), the server turns local access off and asks every client for it, and the file sits in the
+# account's own 0700 home. The owner reaches the window through VNC, with its own password; the app
+# reaches it with the cookie. A new one is made at every start of the display, so nothing stale is kept.
+set -eu
+
+case "${1:-}" in
+    x11-dir)
+        mkdir -p /tmp/.X11-unix
+        chmod 1777 /tmp/.X11-unix
+        ;;
+    cookie)
+        file="${2:?display-prepare cookie needs the cookie file}"
+        display="${3:?display-prepare cookie needs the display, e.g. :1}"
+        umask 077
+        rm -f "$file" "$file-c" "$file-l" "$file-n"
+        cookie="$(od -An -N16 -tx1 /dev/urandom | tr -dc 0-9a-f)"
+        if [ "${#cookie}" -ne 32 ]; then
+            echo "display-prepare: could not read 16 random bytes for the X cookie" >&2
+            exit 1
+        fi
+        xauth -q -f "$file" add "$display" . "$cookie"
+        ;;
+    wait)
+        display="${2:?display-prepare wait needs the display, e.g. :1}"
+        socket="/tmp/.X11-unix/X${display#:}"
+        tries=0
+        while [ ! -S "$socket" ]; do
+            tries=$((tries + 1))
+            if [ "$tries" -gt 100 ]; then
+                echo "display-prepare: the X server made no socket at $socket within 10 s" >&2
+                exit 1
+            fi
+            sleep 0.1
+        done
+        ;;
+    *)
+        echo "usage: display-prepare x11-dir | cookie <file> <:n> | wait <:n>" >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,37 @@
+# TradeAgent, unattended: the app on its own display, under an account of its own, started again after a
+# crash or a stop. A template: packaging/linux/install.sh fills the @NAMES@ in and installs it root-owned
+# in /etc/systemd/system, beside the app's root-owned files under /opt/tradeagent — so the app's own
+# account, which is also the agent's, cannot change what systemd starts or what it runs.
+#
+#   - The stop is the app's own quit: SIGTERM to the app alone (KillMode=mixed), which holds it until the
+#     AI has stopped and the ledgers are closed, bounded at 15 s by the app (AppHost.QuitBound); whatever
+#     is left of the unit after that, an AI turn's tree included, is killed with the unit's cgroup.
+#   - The day is the owner's: TZ is his zone, not the server's UTC — the daily report and the AI's daily
+#     spending cap turn at his midnight.
+#   - TMPDIR is inside the account's 0700 home: it is where .NET puts the gateway's pipe socket, and no
+#     other account can reach into it.
+[Unit]
+Description=TradeAgent on display :@DISPLAY@
+Requires=tradeagent-display.service
+After=tradeagent-display.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@ACCOUNT@
+Group=@ACCOUNT@
+UMask=0077
+WorkingDirectory=@HOME@
+Environment=HOME=@HOME@
+Environment=DISPLAY=:@DISPLAY@
+Environment=XAUTHORITY=@HOME@/.Xauthority
+Environment=TZ=@ZONE@
+Environment=TMPDIR=@HOME@/tmp
+ExecStart=@ROOT@/current/TradeAgent
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
