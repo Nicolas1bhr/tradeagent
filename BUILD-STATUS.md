@@ -9378,3 +9378,36 @@ Manager's gate at `242076c6` (carried to `f9c773a1`: build tree identical), Rele
 **Tests box:** NOT RUN — `ready` exit 1 at ~01:05, 11:01 and 11:04 CEST: "NO - the machine does not answer".
 **NOT done, NOT verified:** no request to Deribit, DefiLlama or Kalshi (their terms keep them out; the CARD's rest waits on written consent); the app was not run, so the card's words are unseen on screen; no live look through
 the collector (the suite talks to loopback only); http.sys's own `Date` is proven by CI's windows job only; how far `Date` trails Hyperliquid's computation is unmeasured.
+
+## 2026-10-09 — U-quiet-review landed: the app's scheduled look slows while only its own looks wake a role, a real event brings it back at once, and AGENTS.md no longer tells the agent an idle turn costs almost nothing
+
+One fresh Opus builder under seat B built it from `docs/briefs/U-quiet-review.md` (R20 § 4; queued with R20 `c317606a`; pointers re-checked by seat B at `d1f4cfa4` — no `src/` or `tests/`
+change since `30fe7a32` — and dispatched `cd7d9f38`). Merge `7471908e` (ff-only), 3 commits (item 1 `fadd0cb6`, item 2 `1e653227`, report `7471908e`), rebased by seat B's prep from `1e2fd66a` onto `e493578c` (gated as
+`42975bc3`) and onto `e541b3a6` (docs only; the gate carries), the src+tests patch-id identical throughout (`0b1ce28514a9`). No rung, setting,
+table or pipe op; not the money path. One of M0 attempt 4's two prerequisites (ORGANISATION § 15); the other is `U-memory-kept`.
+
+- **Item 1:** a turn woken only by payload-less scheduled Reviews raises that role's next look at 2× the consumed row's `due_at − created_at` (floor `ReviewEvery`, cap 8× — 4 h at the
+  default 30 min); any other wake — the owner's payload Review and the role's own Self wake included — raises it at `ReviewEvery`. Read back from the consumed rows in `NextWait`, so a
+  restart keeps the interval; no new state; failed and vendor-held turns skip `NextWait` as before.
+- **Declared deviation, ACCEPTED by seat B:** one look is pending per role, so a real event between looks raised nothing and the decayed look still fired and doubled ((a)–(c) red that
+  way). `MissionEventStore.BringLookForward` now supersedes that role's own pending payload-less look due after now + `ReviewEvery` with one at now + `ReviewEvery`, in one write (the old
+  row consumed by no launch, `superseded`, its detail the new id), and refuses every other wake and the other role's look (`Only_a_roles_own_pending_scheduled_look_is_ever_brought_forward`).
+  Accepted: the brief's "a real event resets the look" cannot hold without it, and it settles nothing but a scheduled look, keeping its row.
+- **Item 2:** AGENTS.md's idle clause now says what attempt 3 measured (16 idle looks, 2.0337 USD, 53 % of the run, `BUILD-STATUS.md:8816-8817`): "On a resumed session it costs your
+  owner about what a working one does. With work in progress, ask for your next wake in `next.json`: the scheduled look slows while nothing happens, until a real event."
+  **Declared fix, ACCEPTED:** the `next.json` example was a hole in the `$"""` literal — the agents were shown "```json|after_seconds|```" — and is now `{NextJsonExample}`.
+- **AGENTS.md bytes** (seat B's rule for both lights: net ≤ 0 per role — codex-cli 0.160.1 carries `project_doc_max_bytes = 32768`, its cut NOT VERIFIED, and the role section is the
+  tail): real render at default settings (a throwaway probe, never committed): operations 31,566 → 31,549, with the built-in simulator paragraph 32,780 → 32,763; research 31,482 →
+  31,465 / 32,696 → 32,679 — net −17 each. Renders of one base differ by up to 79 B with the settings, so whether a home passes the limit depends on its settings: `U-canon` caps the
+  canon at 16 KiB, and M0 attempt 4's GO measures its home's own render.
+
+**Verified by running (the builder, quoted).** RED at base: (a) Expected "30 60 120 240 240" Actual "30 30 30 30 30"; (b), (c), (d) Expected "30 60 120" Actual "30 30 30"; (e) "16 paid
+looks in four quiet hours; attempt 3 paid for 16"; item 2 "Sub-string found" (almost nothing). Mutants (reverted, never committed): no reset ⇒ (a) Actual "30 60 120 240 240 240" (b, c
+red); no decay ⇒ all five red. Builder: Release 0 warnings; Unit 1,556, Fault 485, 0 failed; 33 classes 245/245 ×3; Fault `EmptyAllowlistTests` 4/4 ×3.
+**Manager's gate** at `42975bc3`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1566/1566 (9 m 59 s); Fault 485/485 (1 m 59 s); Integration 752/753,
+1 skipped (11 m 14 s) → 0 failed; carried to `7471908e` (build tree identical, only docs moved).
+**Names** vs `main`: 2407 → 2414, 0 removed, 7 added ([Fact]/[Theory] 2358 → 2365). **Scan:** clean.
+**CI:** branch run 37855848570 at `380c93c3` (the pre-rebase code tip; same patch-id): ubuntu ✓, macOS ✓, windows ✓ 61 m, package ✓. Tests box: NOT RUN — "the machine does not answer"
+(22:24Z, 22:49Z, 23:08Z, 09:01Z, the builder; 09:53:59Z, seat B). Landing CI on `main`: a waiter is armed.
+**NOT done / NOT verified:** the Safety page's "how often it is woken to look around anyway" still states only the fastest pace — owed, a one-line follow-up (seat B carries it); codex's
+cut at 32,768; no app run; Windows beyond hosted CI.
