@@ -171,7 +171,7 @@ jobs:
           dotnet --version
 
       - name: Lint the Linux scripts
-        run: shellcheck --version && shellcheck packaging/build-linux.sh
+        run: shellcheck --version && shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare
 
       - name: Build the Linux artifact
         run: packaging/build-linux.sh --runtime linux-x64
