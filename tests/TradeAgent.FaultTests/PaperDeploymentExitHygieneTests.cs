@@ -12,7 +12,7 @@ namespace TradeAgent.Tests.Fault;
 /// THE WIRE IS OVER (<c>U-runner-exit-hygiene-a</c>).
 ///
 /// <para>Same harness as the rest of this class: the owner's grant, the app's own allocation and deployment,
-/// a filled long the owner placed by hand, every order through <see cref="TradingGateway.PlaceAsync"/> over
+/// the run's own filled entry, every order through <see cref="TradingGateway.PlaceAsync"/> over
 /// <see cref="RecordingConnector"/> and the built-in simulator. A gate is staged with
 /// <see cref="TradingGateway.InstallInProgress"/> — the update window, refused before anything is written —
 /// or with the instrument allowlist, refused inside the order path; a process that died is a call held on the
@@ -56,7 +56,7 @@ public partial class PaperDeploymentTests
         await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
 
         // THE END, WITH THE UPDATE WINDOW OPEN.
         gw.InstallInProgress = () => true;
@@ -72,7 +72,7 @@ public partial class PaperDeploymentTests
         // WHILE THE GATE STILL REFUSES, A PASS WRITES NOTHING: in the END's own minute, and in the next.
         await PassAt(gw, clock, At.AddSeconds(30));
         await PassAt(gw, clock, At.AddMinutes(1).AddSeconds(5));
-        var whileHeld = gw.Deployments.OpsOf(deployment.Id).Count;
+        var whileHeld = gw.Deployments.OpsOf(deployment.Id).Select(o => o.Kind).ToList();
 
         // THE WINDOW LIFTS: two passes in this minute, one in the next.
         gw.InstallInProgress = null;
@@ -88,7 +88,7 @@ public partial class PaperDeploymentTests
         log.WriteLine($"the END's close      : {refused.State} — {refused.Answer}");
         log.WriteLine($"its request row      : {gw.GetRequest(refused.RequestId)?.State.ToString() ?? "none"}");
         log.WriteLine($"while owed           : started {whileOwed} with the account holding {heldWhileOwed}; "
-                      + $"ops while the gate held {whileHeld}");
+                      + $"ops while the gate held {string.Join(", ", whileHeld)}");
         log.WriteLine($"line                 : {line}");
         log.WriteLine($"status               : {listed?.State ?? "not listed"} — {listed?.Why ?? "-"}");
         foreach (var f in flattens)
@@ -113,8 +113,8 @@ public partial class PaperDeploymentTests
         Assert.NotNull(listed);
         Assert.Contains("NOT closed", listed!.Why, StringComparison.Ordinal);
 
-        // NOTHING WRITTEN WHILE THE GATE REFUSED IT.
-        Assert.Equal(1, whileHeld);
+        // NOTHING WRITTEN WHILE THE GATE REFUSED IT: the run's own entry, and the END's refused close.
+        Assert.Equal([DeploymentOpKind.Entry, DeploymentOpKind.Flatten], whileHeld);
 
         // EXACTLY ONE NEW FLATTEN, UNDER ITS OWN ID, FILLED — AND THE ACCOUNT FLAT.
         Assert.Equal(2, flattens.Count);
@@ -160,7 +160,7 @@ public partial class PaperDeploymentTests
         await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
         var placesBefore = conn.Places;
 
         // THE PROCESS THAT DIED: the END's close, held on a position read once — on the stale-close read when its
@@ -239,22 +239,22 @@ public partial class PaperDeploymentTests
     }
 
     /// <summary>
-    /// (d) AN OWED CLOSE HOLDS ITS ACCOUNT'S INSTRUMENT ACROSS A NEW GRANT, AND WAITS WHILE ANOTHER RUN TRADES THE
-    /// SAME POSITION.
+    /// (d) AN OWED CLOSE HOLDS ITS ACCOUNT'S INSTRUMENT ACROSS A NEW GRANT, AND GOES OUT BESIDE ANOTHER RUN ON THE SAME
+    /// POSITION, SELLING ONLY ITS OWN (<c>U-paper-books</c> replaced the test that made it wait).
     ///
-    /// <para>The END's close is refused and owed; the owner then withdraws that grant and grants a larger one on
-    /// the same account and instrument, two runs at a time, and a second version is allocated beside the first.
-    /// The owed run is not in the new grant, but the position it has not closed is on the same account and
-    /// instrument: it holds one of the two slots, so one run starts, not two. And once the gate lifts its close
-    /// is NOT sent while that run is live — a close is of the account's whole position, and sent now it would
-    /// close the other run's position under it. That run's own END closes the position; the owed close then
-    /// finds the book flat and resolves, so exactly one close reaches the wire.</para>
+    /// <para>The END's close is refused and owed; the owner then withdraws that grant and grants a larger one on the same
+    /// account and instrument, two runs at a time, and a second version is allocated beside the first. The owed run is not
+    /// in the new grant, but the position it has not closed is on the same account and instrument: it holds one of the two
+    /// slots, so one run starts, not two. That run enters and holds its own 1 beside the owed run's 1. Once the gate lifts
+    /// the owed close goes out on the next minute although the other run is live — a run's close is of its OWN book, so
+    /// there is nothing of the other run's for it to sell — and it sells the owed run's 1 alone; the account then holds the
+    /// other run's 1, which that run's own END sells.</para>
     ///
-    /// <para><b>Mutants</b>: the slot counted per grant, as before — two runs start; the owed close sent while
-    /// the other run is live — a second flatten goes out under it.</para>
+    /// <para><b>RED on the base</b>: the owed close waits while the other run is live ("held while run …"), because a close
+    /// was the account's whole position. <b>Mutant</b>: the slot counted per grant, as before — two runs start.</para>
     /// </summary>
     [Fact]
-    public async Task An_owed_close_holds_its_instrument_across_a_new_grant_and_waits_while_another_run_trades_it()
+    public async Task An_owed_close_holds_its_instrument_across_a_new_grant_and_goes_out_beside_another_run_selling_its_own()
     {
         var (gw, conn, db, clock) = await Ready();
         using var _1 = db;
@@ -262,7 +262,7 @@ public partial class PaperDeploymentTests
         var (first, _) = await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var owed = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, owed);
 
         gw.InstallInProgress = () => true;
         await gw.EndPaperDeploymentAsync(owed.Id, "test: the owner stopped it");
@@ -282,38 +282,48 @@ public partial class PaperDeploymentTests
         log.WriteLine($"started under the larger grant : {started}");
         Assert.Equal(1, started);
         var other = Assert.Single(gw.Deployments.Open());
+
+        // THE GATE LIFTS, AND THE OTHER RUN ENTERS: the account holds the two runs' 1 each.
+        gw.InstallInProgress = null;
+        await SeedAPosition(gw, conn, other);
+        var bothHeld = Held(conn);
         var placesBefore = conn.Places;
 
-        // THE GATE LIFTS WHILE THE OTHER RUN IS LIVE.
-        gw.InstallInProgress = null;
+        // THE NEXT MINUTE'S PASS, WITH THE OTHER RUN LIVE: the owed close goes out, of the owed run's 1.
         await PassAt(gw, clock, At.AddMinutes(1).AddSeconds(5));
-        var whileOtherLive = Flattens(gw, owed.Id).Count;
+        var flattens = Flattens(gw, owed.Id);
         var line = gw.DeploymentReadings().Single(d => d.Id == owed.Id).Line;
+        var heldAfterTheOwedClose = Held(conn);
 
-        // THE OTHER RUN ENDS, AND ITS OWN END CLOSES THE POSITION.
+        // THE OTHER RUN'S OWN END SELLS ITS OWN 1.
         clock.At = At.AddMinutes(1).AddSeconds(30);
         await gw.EndPaperDeploymentAsync(other.Id, "test: the owner stopped the other run");
-        await PassAt(gw, clock, At.AddMinutes(2).AddSeconds(5));
-        var flattens = Flattens(gw, owed.Id);
-        var after = gw.DeploymentReadings().Single(d => d.Id == owed.Id);
+        var others = Flattens(gw, other.Id);
 
-        log.WriteLine($"owed run's flattens while the other is live: {whileOtherLive}");
-        log.WriteLine($"line                 : {line}");
         foreach (var f in flattens)
-            log.WriteLine($"owed flatten         : {f.RequestId} {f.State} — {f.Answer}");
-        log.WriteLine($"closes at the wire   : {conn.Places - placesBefore}; position {Held(conn)}");
-        log.WriteLine($"after                : {after.Line}");
+            log.WriteLine($"owed flatten         : {f.RequestId} {f.State} — {f.Answer} "
+                          + $"({gw.GetRequest(f.RequestId)?.ParametersJson ?? "no row"})");
+        log.WriteLine($"line                 : {line}");
+        log.WriteLine($"position             : {bothHeld} with both, {heldAfterTheOwedClose} after the owed close, {Held(conn)} at the end");
+        log.WriteLine($"closes at the wire   : {conn.Places - placesBefore}");
 
-        Assert.Equal(1, whileOtherLive);
-        Assert.Contains("NOT closed", line, StringComparison.Ordinal);
-        Assert.Contains($"held while run {StrategyDeploymentRow.Short(other.Id)}", line, StringComparison.Ordinal);
+        Assert.Equal(2m, bothHeld);
 
-        Assert.Equal(1, conn.Places - placesBefore);
-        Assert.Equal(0m, Held(conn));
+        // EXACTLY ONE NEW FLATTEN OF THE OWED RUN, ON THE NEXT MINUTE, FILLED — A SELL OF ITS OWN 1, NOTHING OF THE OTHER'S.
         Assert.Equal(2, flattens.Count);
+        Assert.Equal(At.AddMinutes(1), flattens[1].BarOpenTime);
         Assert.Equal(DeploymentOpState.Resolved, flattens[1].State);
-        Assert.Contains("nothing to close", flattens[1].Answer);
-        Assert.Null(after.CloseOwed);
+        var sold = gw.GetRequest(flattens[1].RequestId)!;
+        Assert.Equal(ExecutionState.FILLED, sold.State);
+        Assert.Equal(1m, Json.Read<PlaceIntent>(sold.ParametersJson)!.Quantity);
+        Assert.Equal(1m, heldAfterTheOwedClose);
+        Assert.DoesNotContain("NOT closed", line, StringComparison.Ordinal);
+        Assert.Null(gw.DeploymentReadings().Single(d => d.Id == owed.Id).CloseOwed);
+
+        // AND THE OTHER RUN'S END CLOSED THE OTHER RUN'S 1: two closes at the wire in all, and the account flat.
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest(Assert.Single(others).RequestId)!.State);
+        Assert.Equal(2, conn.Places - placesBefore);
+        Assert.Equal(0m, Held(conn));
         await gw.DisposeAsync();
     }
 
@@ -336,7 +346,7 @@ public partial class PaperDeploymentTests
         await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
 
         gw.Update(s => s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]);
         await gw.EndPaperDeploymentAsync(deployment.Id, "test: the owner stopped it");

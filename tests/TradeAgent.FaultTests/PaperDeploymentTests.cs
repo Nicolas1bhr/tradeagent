@@ -132,11 +132,19 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         return (granted.Envelope!, version);
     }
 
-    /// <summary>A filled long the deployment's end has to flatten. Placed by the OWNER, in process.</summary>
-    static async Task SeedAPosition(TradingGateway gw, RecordingConnector conn, string id = "seed-1")
+    /// <summary>
+    /// THE RUN'S OWN ENTRY, FILLED: a buy of 1 written down and dispatched under the run's own identity, through
+    /// <see cref="TradingGateway.RunDeploymentIntentAsync"/> and every gate a run's opener meets — the long its END has to
+    /// flatten. A run's END closes the run's OWN book (<c>U-paper-books</c>), so a long the owner placed by hand, which this
+    /// was until that unit, is no longer one for it to close.
+    /// </summary>
+    static async Task SeedAPosition(TradingGateway gw, RecordingConnector conn, StrategyDeploymentRow deployment)
     {
-        await gw.PlaceAsync(AgentContext.Operator, id, new PlaceIntent(
-            "BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, "seed"));
+        var id = Deployments.RequestIdFor(deployment.Id, At, 0);
+        Assert.True(await gw.RunDeploymentIntentAsync(deployment, id, DeploymentOpKind.Entry, At,
+            new PlaceIntent("BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day,
+                $"deployment:{deployment.Id} seed") { StrategyVersionId = deployment.VersionId }));
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest(id)!.State);
         Assert.Contains(conn.Broker.Positions, p => p.Symbol == "BTCUSDT" && p.Quantity != 0m);
     }
 
@@ -175,7 +183,7 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
 
         // END IT, LEAVING THE FLATTEN WITH NO ANSWER — the one outcome that is neither a fill nor a
         // refusal, and the one a replacement must wait on.
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, open[0]);
         conn.Faults.DropBeforeBrokerAccept = 1;
         await gw.EndPaperDeploymentAsync(open[0].Id, "test: the owner stopped it");
 
@@ -224,7 +232,7 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
 
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
         var placesBefore = conn.Places;
 
         // THE KILL. The process stops INSIDE the connector call, between the write-ahead row and the
@@ -365,7 +373,7 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var started = gw.Deployments.Open().Single();
 
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, started);
         var ended = await gw.EndPaperDeploymentAsync(started.Id, "test: the owner stopped it");
 
         var flatten = gw.Deployments.OpsOf(started.Id).Single(o => o.Kind == DeploymentOpKind.Flatten);
