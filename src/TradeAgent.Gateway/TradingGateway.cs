@@ -312,10 +312,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// count and the date — and <see cref="Allocations.RecordPaper"/> re-asks every one of those inside
     /// the write.</para>
     ///
-    /// <para><b>The ceiling is the ENVELOPE'S and is never derived.</b> There is no fraction of a
-    /// balance and no number computed from a verdict's figures anywhere in here: the owner declared a
-    /// size, and that is the size, which is the same choice <c>docs/CONTRACTS.md</c> records for
-    /// capital.</para>
+    /// <para><b>The ceiling is the ENVELOPE'S and is never derived from anything else.</b> There is no fraction of a
+    /// balance and no number computed from a verdict's figures anywhere in here: the owner declared a size, and each
+    /// version gets its SHARE of it — the envelope's ceilings divided by its <c>max_deployments</c>, rounded down
+    /// (<see cref="PaperEnvelopeRow.ShareOf"/>; <c>U-paper-books</c>) — so the runs together never hold more than the
+    /// owner granted. A grant of one run gives that run the whole ceiling, as it always has.</para>
     ///
     /// <para><b>The instrument must be the envelope's.</b> A version that trades something else is
     /// skipped rather than squeezed in — the grant names an instrument and means it. The program is
@@ -358,10 +359,13 @@ public sealed class TradingGateway : IAsyncDisposable
                 || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
                 continue;
 
+            // EACH VERSION'S SHARE OF THE GRANT, never the whole of it twice (U-paper-books): the envelope's ceilings
+            // are the TOTAL the owner agreed to, and `RecordPaper` refuses an allocation that would sum past them.
             var result = _allocations.RecordPaper(new AllocationRow(
                 "", versionId, promotion.Id, AllocationPolicy.V1,
-                envelope.MaxQuantity, envelope.MaxNotional, envelope.Currency, now, null,
-                $"app policy: {promotion.Verdict}", now)
+                envelope.ShareOf(envelope.MaxQuantity),
+                envelope.MaxNotional is { } notional ? envelope.ShareOf(notional) : null,
+                envelope.Currency, now, null, $"app policy: {promotion.Verdict}", now)
             {
                 Scope = AllocationScope.Paper,
                 ConnectorId = Connector.Id,
@@ -377,7 +381,7 @@ public sealed class TradingGateway : IAsyncDisposable
             written++;
             TellResearch(allocation, envelope, now);
             _log.Activity($"TradeAgent allocated strategy version {Short(versionId)} to PAPER on account "
-                          + $"{account}, up to {AllocationRow.Num(envelope.MaxQuantity)} at a time, "
+                          + $"{account}, up to {AllocationRow.Num(allocation.MaxQuantity)} at a time, "
                           + "inside the paper envelope you granted. No capital and no live authority "
                           + "came with it.");
         }
@@ -645,14 +649,6 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// AN END THAT HAS NOT CLOSED, IN THE OWNER'S WORDS — on the deployment's line and in the status — with
-    /// what is holding the close or what refused it last (<see cref="CloseOwedBecause"/>).
-    /// </summary>
-    static string OwedSentence(string why) =>
-        $"NOT closed: the close this end owes has not gone out ({why}). TradeAgent sends it again at most "
-        + "once each minute while nothing refuses it, and no replacement run starts until it has closed.";
-
-    /// <summary>
     /// The answer of an ended run's latest flatten when that END found its run's book long over a flat account and sent
     /// nothing (<see cref="ClosedOutsideTheRun"/>), or null because that is not how it ended.
     /// </summary>
@@ -684,6 +680,14 @@ public sealed class TradingGateway : IAsyncDisposable
         return $" Its own book: {held}, realised {AllocationRow.Num(book.RealisedAfterCosts)} after "
                + $"{AllocationRow.Num(book.Fees)} in costs, over {book.Fills} fill{(book.Fills == 1 ? "" : "s")}.{unknown}";
     }
+
+    /// <summary>
+    /// AN END THAT HAS NOT CLOSED, IN THE OWNER'S WORDS — on the deployment's line and in the status — with
+    /// what is holding the close or what refused it last (<see cref="CloseOwedBecause"/>).
+    /// </summary>
+    static string OwedSentence(string why) =>
+        $"NOT closed: the close this end owes has not gone out ({why}). TradeAgent sends it again at most "
+        + "once each minute while nothing refuses it, and no replacement run starts until it has closed.";
 
     /// <summary>
     /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every standing paper allocation
@@ -3715,6 +3719,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// conservative in the one direction that is safe — it can only refuse — and it is a choice
     /// `docs/CONTRACTS.md` states rather than a fact the code discovered.</para>
     ///
+    /// <para><b>Except for a paper RUN, whose position IS attributable</b> (<c>U-paper-books</c>): its own book —
+    /// its operations joined to their fills — says what it holds, so a run's opener is charged that, plus its version's
+    /// open openers, plus the order, and never another run's holding or the owner's. Without it two runs on one symbol
+    /// each paid for the other. A book that is not the whole of it refuses the opener (<see cref="RunHoldingOrThrow"/>);
+    /// and the runs' sum is bounded where it is granted: the envelope's standing paper allocations never sum past its
+    /// ceilings (<c>Allocations.RecordPaper</c>). <paramref name="run"/> is the deployment placing, or null for every
+    /// other caller, which keeps the account's reading exactly as it was.</para>
+    ///
     /// <para><b>A close and a reduce always pass</b>, for the loss budget's reason
     /// (<see cref="LossBudgetOrThrow"/>): a ceiling that stopped an account being flattened would be a
     /// trap, and the day it fired is the day the owner most needs out. They are still ATTRIBUTED — the
@@ -3730,7 +3742,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     async Task<AllocationRow?> AllocationCeilingOrThrow(PlaceIntent intent,
         IReadOnlyList<PositionInfo> positions, decimal reference, string requestId,
-        AccountInfo account, bool byOperator, CancellationToken ct)
+        AccountInfo account, bool byOperator, string? run, CancellationToken ct)
     {
         if (intent.StrategyVersionId is not { Length: > 0 } version)
         {
@@ -3762,8 +3774,11 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // A CLOSE OR A REDUCE IS ATTRIBUTED AND NEVER REFUSED, whether or not anything stands — and
         // whatever the licence of the evidence under it says: nothing about evidence may stop a position
-        // being flattened.
-        if (!CanIncreaseExposure(intent, positions)) return allocation;
+        // being flattened. A RUN's reduce is judged on the run's own book: the account's figure is everyone's.
+        if (intent.Intent is OrderIntent.Close) return allocation;
+        decimal? runHolds = run is { Length: > 0 } ? RunHoldingOrThrow(run, intent.Symbol) : null;
+        if (!(runHolds is { } own ? CanIncreaseExposure(intent, own) : CanIncreaseExposure(intent, positions)))
+            return allocation;
 
         // REFUSED FOR LIVE (`U-data-licence`): the allocation is in force and its promotion stands, and the
         // bars that promotion was computed over confer no live eligibility. The same code — no capital
@@ -3781,8 +3796,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 + "Safety page; there is no command that asks for it, and an allocation whose promotion "
                 + "has been withdrawn stops standing the moment it is withdrawn.");
 
-        var exposure = Math.Abs(positions.FirstOrDefault(p =>
-                           string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m)
+        // WHAT IT WOULD BE HOLDING: a run's own book, or the account's position for every other caller; plus the
+        // version's open openers, plus this order.
+        var exposure = (runHolds ?? Math.Abs(positions.FirstOrDefault(p =>
+                           string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m))
                        + OpeningQuantityOf(version, requestId)
                        + intent.Quantity;
 
@@ -5979,12 +5996,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// It errs towards checking: a symbol with no position is new exposure by definition, and an
     /// order in the direction of what is held adds to it whatever the caller called it.
     /// </summary>
-    static bool CanIncreaseExposure(PlaceIntent intent, IReadOnlyList<PositionInfo> positions)
+    static bool CanIncreaseExposure(PlaceIntent intent, IReadOnlyList<PositionInfo> positions) =>
+        CanIncreaseExposure(intent, positions.FirstOrDefault(p =>
+            string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m);
+
+    /// <summary>The same question against one signed holding — the account's, or a paper run's own book.</summary>
+    static bool CanIncreaseExposure(PlaceIntent intent, decimal held)
     {
         if (intent.Intent is OrderIntent.Close) return false;
-
-        var held = positions.FirstOrDefault(p =>
-            string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m;
         if (held == 0m) return true;
 
         var signed = intent.Side == OrderSide.Buy ? intent.Quantity : -intent.Quantity;
@@ -6142,7 +6161,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// same question and an awaited round trip in the one place that must stay short.</para>
     /// </summary>
     async Task<AllocationRow?> PositionGatesOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions,
-        AccountInfo account, string requestId, OrderPricing priced, bool byOperator, CancellationToken ct)
+        AccountInfo account, string requestId, OrderPricing priced, bool byOperator, string? run, CancellationToken ct)
     {
         // See OpenPositionCapOrThrow: the cap is the one risk limit whose answer depends on what the
         // OTHER callers are doing, so it is the one that cannot be decided out there with the reads.
@@ -6167,7 +6186,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // rather than out there with the reads, where two callers arriving together would each see the
         // same empty account and both pass one allocation.
         return await AllocationCeilingOrThrow(intent, positions, priced.Reference, requestId,
-            account, byOperator, ct);
+            account, byOperator, run, ct);
     }
 
     public async Task<ExecutionRequest> PlaceAsync(AgentContext ctx, string requestId, PlaceIntent intent, CancellationToken ct = default)
@@ -6228,7 +6247,7 @@ public sealed class TradingGateway : IAsyncDisposable
             var positions = await Connector.GetPositionsAsync(account.Id, ct);
             record.AllocationId =
                 (await PositionGatesOrThrow(intent, positions, account, requestId, priced,
-                    ctx.IsOperator, ct))?.Id;
+                    ctx.IsOperator, ctx.DeploymentId, ct))?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
@@ -7546,7 +7565,7 @@ public sealed class TradingGateway : IAsyncDisposable
                     // (see the CREATED/AWAITING_APPROVAL choice at placement), so what is being
                     // approved here is an agent's proposal whoever pressed the button.
                     var allocation = await PositionGatesOrThrow(intent, positions, account, requestId,
-                        priced, byOperator: false, ct);
+                        priced, byOperator: false, run: null, ct);
                     stored = _requests.Attribute(requestId, allocation?.Id);
                 }
                 else

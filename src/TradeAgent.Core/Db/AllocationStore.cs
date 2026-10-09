@@ -404,16 +404,17 @@ public sealed class Allocations(Database db)
     /// there alone. The app's own policy is the only caller (<c>TradingGateway.AllocatePaperDue</c>);
     /// there is no press, no <c>trade</c> verb and no pipe op behind it.
     ///
-    /// <para><b>Four questions, and the check and the write are ONE transaction</b> so nothing can move
+    /// <para><b>Five questions, and the check and the write are ONE transaction</b> so nothing can move
     /// between them. THE VERDICT must stand as <c>promoted</c> or <c>paper_eligible</c> at this instant
     /// — <c>Promotions.Standing</c> and never "a promotion row exists", the same reading
     /// <see cref="Record"/> takes, so a version whose dataset has since been rejected is not observed
     /// forward on evidence TradeAgent has withdrawn. THE ENVELOPE must stand at this instant, read from
     /// its own ledger rather than from anything stored here. THE CEILING must be inside the envelope's,
-    /// both figures, because the envelope is the whole of what the owner agreed to. And NO OTHER
-    /// VERSION may already hold a standing paper allocation in it, up to <c>max_deployments</c>: an
-    /// envelope is one experiment at a time, so what the owner granted cannot be spent twice over by
-    /// the app noticing two eligible versions.</para>
+    /// both figures, because the envelope is the whole of what the owner agreed to. NO MORE OTHER VERSIONS
+    /// may already hold a standing paper allocation in it than <c>max_deployments</c> leaves room for. And
+    /// THE SUM of the envelope's standing paper allocations, this one among them, must be inside the envelope's
+    /// ceilings, both figures (<c>U-paper-books</c>): each run is charged only its own book at the gateway, so
+    /// the grant is the TOTAL bound, summed here — without it N runs could hold N times what the owner granted.</para>
     ///
     /// <para><b>None of this allocates capital and none of it authorises a live order.</b> The row is
     /// scoped <c>paper</c> and named to one platform, one mode and one account;
@@ -488,6 +489,36 @@ public sealed class Allocations(Database db)
                 + $"({string.Join(", ", occupants.Select(Short))}) and allows "
                 + $"{envelope.MaxDeployments} at a time, so version "
                 + $"{Short(allocation.VersionId)} was not put on paper.", null);
+
+        // THE GRANT IS THE TOTAL, SUMMED (`U-paper-books`). Each OTHER version's allocation in force in this envelope —
+        // its newest standing row, the one `StandingForPaper` answers with — plus this one, against both ceilings. This
+        // version's own earlier row is not summed: the row written here supersedes it.
+        var others = InEnvelope(envelopeId, now)
+            .Where(a => !string.Equals(a.VersionId, allocation.VersionId, StringComparison.Ordinal))
+            .GroupBy(a => a.VersionId, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
+        if (others.Sum(a => a.MaxQuantity) + allocation.MaxQuantity > envelope.MaxQuantity)
+            return new AllocationResult(false,
+                $"the paper envelope on account {envelope.AccountId} allows {AllocationRow.Num(envelope.MaxQuantity)} "
+                + $"at a time in all, the other version{(others.Count == 1 ? "" : "s")} in it "
+                + $"({string.Join(", ", others.Select(a => Short(a.VersionId)))}) "
+                + $"{(others.Count == 1 ? "is" : "are")} allocated {AllocationRow.Num(others.Sum(a => a.MaxQuantity))} "
+                + $"of it, and this allocation asks for {AllocationRow.Num(allocation.MaxQuantity)}, so nothing was "
+                + "written.", null);
+
+        // A ROW IN THIS ENVELOPE WITH NO VALUE CEILING could only predate the check above that requires one wherever the
+        // envelope has one; it is counted as the whole of the envelope's, the reading that can only refuse.
+        if (envelope.MaxNotional is { } total
+            && others.Sum(a => a.MaxNotional ?? total) + (allocation.MaxNotional ?? total) > total)
+            return new AllocationResult(false,
+                $"the paper envelope on account {envelope.AccountId} allows {AllocationRow.Num(total)} "
+                + $"{envelope.Currency} at a time in all, the other version{(others.Count == 1 ? "" : "s")} in it "
+                + $"({string.Join(", ", others.Select(a => Short(a.VersionId)))}) "
+                + $"{(others.Count == 1 ? "is" : "are")} allocated "
+                + $"{AllocationRow.Num(others.Sum(a => a.MaxNotional ?? total))} of it, and this allocation asks for "
+                + $"{AllocationRow.Num(allocation.MaxNotional ?? total)}, so nothing was written.", null);
 
         var row = allocation with { Id = allocation.ComputedId };
         Insert(row);

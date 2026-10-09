@@ -78,6 +78,15 @@ public sealed record PaperEnvelopeRow(
     /// </summary>
     public bool StandsAt(DateTimeOffset now) =>
         WithdrawnAt is null && GrantedAt <= now && now < ExpiresAt;
+
+    /// <summary>
+    /// ONE RUN'S SHARE OF ONE OF THIS GRANT'S CEILINGS (<c>U-paper-books</c>): the ceiling divided by
+    /// <see cref="MaxDeployments"/>, rounded DOWN at the eighth decimal place, so that the shares the app's own policy
+    /// writes into this grant never sum past it — a share rounded up, three times over, would. A grant of one run gives
+    /// it the whole ceiling, as it always has.
+    /// </summary>
+    public decimal ShareOf(decimal ceiling) =>
+        MaxDeployments <= 1 ? ceiling : decimal.Round(ceiling / MaxDeployments, 8, MidpointRounding.ToZero);
 }
 
 /// <summary>
