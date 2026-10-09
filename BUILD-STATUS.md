@@ -9556,3 +9556,40 @@ Names vs `main`: 2434 → 2442, removed 1 (the replacement above, JUDGED), added
 **Tests box:** NOT RUN — `ready` exit 1 at 10:47 UTC, "the machine does not answer".
 **NOT done, NOT verified:** more than one run per grant in the shipped app (`PaperDeploymentsPerEnvelope` stays 1 — `U-incubator`'s); a close outside the run entering the run's record and per-run loss budgets
 (`U-forward-standing`); live books; the runner still DECIDES over an incomplete book (only the gateway refuses what it sends); the app was not run, so the run's line was not seen on screen.
+
+## 2026-10-09 — U-linux-host landed: the app can run unattended on a Linux host — its AI runtime installed and signed in without a browser, a stop signal that quits cleanly, a linux-x64 build, a host kit whose window only the owner's private network reaches, and a CI job that kills it and proves the restart; deployed on his word only
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-linux-host.md` — briefed from seat A's read-only survey (`fleet/tmp/s-linux-host-survey/NOTES.md`: the app had never run on Linux;
+the switch-on's blocker, R21 § 3.1); dispatched `6f3bc7e6`. The builder rebased onto `786c0e5e`; the manager's prep rebased it onto `689da1e9` (U-decision-port and U-paper-books included); src+tests
+patch-id identical (`e79a19fb451f`). Merge `c41f4596` (ff-only): 10 commits, 22 files, +1,752/−73. On main: item 3 `50af20b9`, item 4 `f14fa300`, item 5 `680ffb17` (+ its CI fixes `03aa6c29`, `e6e0712f`),
+item 1 `be2db278`, item 2 `a0d3ef44`, the setup-screen stop `269b02c2`, the test's own register `0fe82747`, the report `c41f4596`. **No schema change** (main 30). Owner authority over updates stays in-process.
+
+- **The device-auth measurement, under the orchestrator's ruling:** this Mac's installed codex-cli 0.160.1, a fresh empty scratch `CODEX_HOME`, one `codex login --device-auth` at 2026-10-09T09:07Z stopped by an
+  alarm at 12 s at the code, NEVER authorised, nothing downloaded, the owner's `~/.codex/auth.json` untouched (mtime Sep 30): link `https://auth.openai.com/codex/device`, code shaped `AAA9-AA99A` (4+5 — the
+  app's old pattern wanted 4+4 and would have found no code). Release listings re-read through the GitHub API (no asset name moved); archive layouts from the vendors' packaging source at the tags,
+  confirmed by a streamed `tar -tv` listing — nothing written, nothing executed (the brief allowed it; JUDGED within the ruling's "download nothing", which bound the codex binary).
+- **Item 1, runtimes (`be2db278`):** per-platform built-in install plans with Linux x64/arm64 archives; the code pattern as manifest data; on Linux codex signs in with `login --device-auth` and the setup screen shows
+  link and code and opens no browser; off Windows no refusal asks the owner to install anything (Node's included) and no download page is offered.
+- **Item 2, lifecycle (`a0d3ef44`):** SIGTERM cancels its default ending and runs the same held quit as the OS's quit, "TradeAgent stopped" written last; off Windows the updater asks GitHub nothing, offers and
+  downloads nothing, and says versions arrive by deploy on the owner's word. **Defect found and fixed (`269b02c2`):** a stop on the setup screen looped a throwing refresh until systemd killed the app at 30 s,
+  a core busy — now it ends in 0.08–0.41 s, exit 0, and CI asserts it.
+- **Items 3–5:** `packaging/build-linux.sh` (self-contained linux-x64; arm64 on demand; CI `package-linux`); the kit `packaging/linux/` (an account of its own, root-owned `/opt/tradeagent/<version>-<sha12>`,
+  Xvnc on the given address only with VNC authentication and an X cookie, systemd units `Restart=always`, `KillMode=mixed`); CI `linux-host` on ubuntu-24.04.
+- **Deviations, JUDGED (seat A), accepted:** the release folder carries the build's sha (every build is 0.1.2 while we build); the display gets an X cookie (`xauth` + `tigervnc-tools` in the kit) — without it any
+  local account could open the window and press its buttons; `package-linux` runs beside the tests; `x11-apps`/`netpbm` in CI only (the screenshot); **macOS gets no runtime install plan** (it got the Windows
+  one, which could never run there) — the Mac is the UI dev loop, where the app's AI is not run; the setup screen's words there NOT seen.
+**Verified by running (the builder, quoted; then the manager's gate).** Builder: Release `--no-incremental` 0 warnings, 0 errors at `eae80adf`; Unit 1581 / Fault 485, 0 failed at `8e66485c`; at `eae80adf`
+LinuxHostRuntimeTests 4/4 and MaterialLedgerTests 13/13 ×3. RED first: (a) asked `/download/opencode-windows-x64.zip` and ended in "install Node.js yourself"; (b) AuthArgs `["login"]`; (c) "…install Node.js
+yourself…"; (d) "SIGTERM's default ending was left in place…"; (e) an offered `TradeAgent-Setup-x64.exe`; (f) run 37913253398 over main's product: "the stop recorded no 'TradeAgent stopped'". **Mutants watched
+RED:** without `context.Cancel = true` ⇒ (d); without the updater's off-Windows guard ⇒ (e) (the installer offered again); restored.
+**The CI proof (linux-host, 20 min):** first start stopped on its setup screen in 119 ms, exit 0, quit recorded; a loopback tape row 1 s after the seeded start; `kill -9` → systemd restarted it, a row again 11.2 s
+later; Xvnc the account's only listener, VNC auth only, another account refused by the display; `systemctl stop` 56 ms, exit 0, quit recorded; 215 built-in fetches all refused (no venue asked); peak RSS ~284 MB;
+tape 0.5 → 2.8 MB; the screenshot shows the paper dashboard.
+Manager's gate at `c41f4596` (the merge), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1590/1590 (11 m 22 s), Fault 485/485 (2 m), Integration 764/765, 1 skipped (11 m 14 s) → 0 failed.
+Names vs `main`: 2442 → 2447, removed 0, added 5. Scan: 20 hits read one by one — the word for the VNC password in the kit's comments and refusals, the tools `vncpasswd`/`getent passwd`, Xvnc's
+`-PasswordFile @HOME@/…` placeholder, `_loop.Token` (a CancellationTokenSource), the tests box's `ready` line — no literal password, key, host or address; excluded by name. `rev-list` 0 both ways.
+**CI:** run 37940567632 at `eae80adf` (the code of the merge before the prep's rebase): test ubuntu 14 m, macos 16 m, windows 61 m, package 4 m, package-linux 1 m, linux-host 20 m — all success. FIRST SIGHTING,
+the builder's own and fixed: 37921982682 at `8e66485c` red on all three test jobs in `MaterialLedgerTests` — test (b) left its login in the process-wide, sticky `AgentPresence`, so later inbox scans read the
+owner's files as the agent's; reproduced locally, fixed by the test's own register (`0fe82747`); no product code was wrong. **Tests box:** NOT RUN — `ready` twice, "the machine does not answer".
+**NOT done, NOT verified:** the kit on the owner's host (by rule — on his word only); a completed device-code sign-in; Codex or OpenCode actually running on Linux; Screen Sharing against Xvnc; an arm64 build or
+host; a reboot; seven days; his distro; any venue's answer from his host; U-tape-gaps' report line (not on main). The nine owner questions: `fleet/handoff/ORCHESTRATOR.md`.
