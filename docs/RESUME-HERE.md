@@ -85,14 +85,14 @@ When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-
 `U-org-watcher` scopes its detectors per unit (§ 5.2).
 
 **Checkpoint 2026-10-09 16:55 CEST — the third session under the orchestration standard (the owner, 2026-10-09 00:00: "assume my orchestrator
-position for the night as usual now"; wound down at weekly 93 % — the owner was told the line was ~92 %).** Fresh seats A (edge & evidence) and B
+position for the night as usual now"; wound down at weekly 94 % — the owner was told the line was ~92 %).** Fresh seats A (edge & evidence) and B
 (agents & truth); P closed (neither Windows box answered all session), M closed. **The fleet was down ~8 h overnight:** the 5-hour limit cut the
 orchestrator off mid-turn at ~01:15 and a session in that state is BLOCKED, not idle — the one-shot heartbeat cron and the 2-hourly backstop never fired,
 their prompts queued until a user turn (proved at the second stop: the 13:23 and 15:23 backstops arrived with the owner's "continue" at 15:51); nothing was
 lost (every branch pushed; all four branch CIs finished green meanwhile). `docs/FLEET.md` *The heartbeat* now says so and adds the external wake (an app
 scheduled task that sends a message into the session) — it fired on time at 15:54 but waits on the owner's one approval of its send tool: NOT VERIFIED.
 LANDED (record shas, in order): `U-tape-chain` `e493578c` · `U-quiet-review` `8184265f` · `U-memory-kept` `550301df` · `U-holdout-campaign` `786c0e5e` ·
-`U-decision-port` `7a8f6043` (tape.db rung 2) · `U-paper-books` `278d502f`. Every landing gate 0 warnings / 0 failed; branch CI green on all three platforms
+`U-decision-port` `7a8f6043` (tape.db rung 2) · `U-paper-books` `278d502f` · `U-linux-host` `167e373c` (the app unattended on a Linux host — device-code sign-in, SIGTERM's held quit, the host kit, CI's `linux-host` job proving a `kill -9` restart; deployed only on the owner's word). Every landing gate 0 warnings / 0 failed; branch CI green on all three platforms
 + package; one disclosed test replacement (`U-paper-books`, the brief's); the tests box NOT RUN in every record (it never answered). **M0 attempt 4's two
 prerequisites are on main** (8184265f, 550301df): it runs on the owner's word, in a fresh home, at a GO sha pinned to the newest green main, with his two
 clicks, and with the operations AGENTS.md render WITH the simulator paragraph measured ≤ 32,768 B in its home (codex 0.160.1's `project_doc_max_bytes`;
@@ -102,7 +102,7 @@ button rewriting a judging campaign's class (`U-holdout-campaign`); a paper run'
 all (`U-paper-books`); AGENTS.md at codex's read limit, false for some runtimes and with no canon identity on attempts (net-negative trims in every unit,
 `U-canon`). A windows red on main (cd7d9f38) was judged RIG, the money property held (`U-closeall-latch` owed). **PARKED:** `U-canon` — items 1–3 committed
 in its worktree (`b78775bc`, `4493c21c`, `804ee65a`), item 4 = 8 staged files on base `2802a79b`, nothing pushed — a fresh builder continues from the
-worktree (conflicts expected in TurnMeter.cs and near ApiConversation); `U-linux-host` — its fix of a MaterialLedgerTests red on all three test jobs at `8e66485c` (its new `linux-host` and `package-linux` jobs green) is on CI at `eae80adf`; seat A lands it only on green, else a fresh fixer from that evidence. **NEXT** is ORGANISATION § 15's current order: seat A `U-linux-host` (land) → `U-tape-gaps` (the daily report's crash-safe write folded in) → `U-runner-features` (its survey first) → `U-trial-returns` …, lights `U-holdout-card` → `U-holdout-served`, `U-backtest-parent`, `U-verdict-stopped`;
+worktree (conflicts expected in TurnMeter.cs and near ApiConversation). **NEXT** is ORGANISATION § 15's current order: seat A `U-tape-gaps` (the daily report's crash-safe write folded in) → `U-runner-features` (its survey first) → `U-trial-returns` …, lights `U-holdout-card` → `U-holdout-served`, `U-backtest-parent`, `U-verdict-stopped`;
 seat B `U-canon` (resume) → `U-research-ledger` (main rung 31, its draft judged good) → `U-reconcile-wakes`, `U-decision-card` in its second slot (it
 enforces the vendors' rate limits before anything calls the port), lights `U-red-says-why`, `U-closeall-latch`. **For the owner:** nine questions that gate
 the switch-on's deploy (which machine, its facts, desktop, the private network, user account, his day's time zone, Codex's device-code sign-in or an API key, updates,

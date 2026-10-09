@@ -84,8 +84,8 @@ so this orchestration position becomes the standard."
   four Mac builders; every usage stop bridged by the heartbeat (the weekly ran out once and the owner reset it); twenty-one units landed and M0 recorded.
   Read-only surveys found protection defects nobody had briefed — the agent's process tree outliving Pause, two holdout leaks, two credential files
   written readable — and each was fixed and landed within the session (the resume block's checkpoint lists them).
-- **The third, 2026-10-09 00:00 → ~17:00:** fresh seats A and B (P and M closed); ~8 h lost overnight to the blocked heartbeat (above); six units
-  landed by the wind-down at 93 % of the week, among them an evidence leak in holdout campaigns and a paper run's book read against the account.
+- **The third, 2026-10-09 00:00 → ~17:00:** fresh seats A and B (P and M closed); ~8 h lost overnight to the blocked heartbeat (above); seven units
+  landed by the wind-down at 94 % of the week, among them an evidence leak in holdout campaigns and a paper run's book read against the account.
 
 ## Grounding — read before acting, verify before trusting
 
