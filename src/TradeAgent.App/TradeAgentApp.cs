@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
@@ -9,6 +10,9 @@ namespace TradeAgent.App;
 public sealed class TradeAgentApp : Application
 {
     AppHost? _host;
+
+    /// <summary>The SIGTERM registration, held for the app's life: a registration nobody holds can be collected.</summary>
+    PosixSignalRegistration? _stopSignal;
 
     /// <summary>
     /// Fluent supplies the control templates; <see cref="Tokens"/> supplies every colour, size and
@@ -44,6 +48,18 @@ public sealed class TradeAgentApp : Application
                 if (quit.Hold(() => Dispatcher.UIThread.Post(() => desktop.Shutdown()))) e.Cancel = true;
             };
             desktop.Exit += (_, _) => quit.Finish();
+            // AND THE SYSTEM'S STOP IS THE SAME QUIT (U-linux-host item 2). systemd stops the app with SIGTERM, and
+            // the runtime's default for it is to exit — past the held quit above. Off Windows only: a Windows app
+            // is ended through its window and the OS's quit, which ShutdownRequested already holds.
+            if (!OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    _stopSignal = PosixSignalRegistration.Create(PosixSignal.SIGTERM,
+                        context => quit.Signal(context, () => Dispatcher.UIThread.Post(() => desktop.Shutdown())));
+                }
+                catch (PlatformNotSupportedException) { /* a platform with no such signal has nobody sending it */ }
+            }
             // Last line of defence. Anything that escapes a handler would otherwise end the process
             // with no window and no message, which for this audience is indistinguishable from the
             // computer having eaten their trading software.
@@ -95,6 +111,19 @@ internal sealed class Quit(Func<Task> stop, TimeSpan bound)
             then();
         }, TaskScheduler.Default);
         return true;
+    }
+
+    /// <summary>
+    /// THE SYSTEM'S REQUEST TO STOP — SIGTERM, which is how systemd stops a unit (<c>U-linux-host</c> item 2). Its
+    /// default ending is the runtime's own exit, and that skipped this quit: the AI's tree, the ledgers' close and
+    /// the stop line all went with it. So the default is cancelled, every time, and the quit is held exactly as
+    /// the OS's quit is: the stop run once, bounded, then <paramref name="then"/>. A second signal while the first
+    /// is being honoured is cancelled too, and starts nothing.
+    /// </summary>
+    public void Signal(PosixSignalContext context, Action then)
+    {
+        context.Cancel = true;
+        Hold(then);
     }
 
     /// <summary>The way out that cannot be held: runs the stop if nothing has, and waits for it, bounded.</summary>

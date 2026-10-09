@@ -1271,6 +1271,7 @@ sealed class SettingsPage
             // directly below this row, so this only has to stop contradicting it.
             UpdateStage.Failed when info is null && updates.Refused => "found, and not offered — see below",
             UpdateStage.Failed when info is null => "could not be checked",
+            UpdateStage.ByDeploy => "installed by deploy on this computer",
             _ => info?.Version ?? "not checked yet"
         };
 
@@ -1289,14 +1290,16 @@ sealed class SettingsPage
         if (string.IsNullOrWhiteSpace(message) && info is not null && !updates.CanBeVerified)
             message = $"TradeAgent {info.Version} was published without the checksum file that proves what it is. " +
                       "It cannot be installed.";
-        _updateNote.Text = string.IsNullOrWhiteSpace(message) ? checkedAt : $"{message} {checkedAt}";
+        _updateNote.Text = updates.ByDeploy ? UpdateService.DeployedHere
+            : string.IsNullOrWhiteSpace(message) ? checkedAt : $"{message} {checkedAt}";
         _updateNote.Foreground =
             updates.Stage == UpdateStage.Failed || (info is not null && !updates.CanBeVerified)
                 ? Theme.Caution
                 : Theme.TextMuted;
 
         var busy = updates.Stage is UpdateStage.Checking or UpdateStage.Downloading or UpdateStage.Installing;
-        _checkNow.IsEnabled = !busy;
+        // Nothing to check where versions arrive by deploy; the note beside it says so.
+        _checkNow.IsEnabled = !busy && !updates.ByDeploy;
         _whatsNew.IsVisible = info is not null;
         _installUpdate.IsVisible = info is not null;
 
