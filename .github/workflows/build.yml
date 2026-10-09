@@ -171,7 +171,9 @@ jobs:
           dotnet --version
 
       - name: Lint the Linux scripts
-        run: shellcheck --version && shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare
+        run: |
+          shellcheck --version
+          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/ci/prove.sh
 
       - name: Build the Linux artifact
         run: packaging/build-linux.sh --runtime linux-x64
@@ -183,3 +185,71 @@ jobs:
           path: |
             artifacts/linux/TradeAgent-*-linux-x64.tar.gz
             artifacts/linux/SHA256SUMS
+
+  # THE APP UNATTENDED ON A LINUX HOST (U-linux-host item 5) — the one place it is ever run on Linux before the
+  # owner's own host. package-linux's artifact goes through the real kit (packaging/linux/install.sh) on a
+  # runner pinned to ubuntu-24.04 (ubuntu-latest becomes 26.04 in November 2026), and packaging/linux/ci/prove.sh
+  # runs it for twenty minutes against the unit's observable result: a seeded paper home records a loopback
+  # tape row, records again within 30 s of kill -9, stops within 15 s of `systemctl stop` with its quit recorded,
+  # listens on no network, and its window's screenshot, peak RSS and the tape's growth are uploaded.
+  #
+  # DETERMINISTIC ON PURPOSE, because every branch in the fleet runs it: every package it installs is pinned
+  # to its version in noble's release pocket (which never changes), and every host of a venue the app knows is
+  # mapped to 127.0.0.1 before the app starts — no exchange is ever asked from a US runner, and the one source
+  # that answers is the job's own loopback server. It reads the app's home with sqlite3 -readonly, never the pipe.
+  linux-host:
+    needs: package-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: TradeAgent-linux-x64
+          path: linux-artifact
+
+      - name: Map every venue the app knows to 127.0.0.1
+        run: |
+          venues="fapi.binance.com eea.okx.com www.okx.com data.gdeltproject.org data-api.binance.vision data.binance.vision api.hyperliquid.xyz"
+          for h in $venues; do echo "127.0.0.1 $h"; done | sudo tee -a /etc/hosts
+          for h in $venues; do
+            resolved="$(getent ahosts "$h" | awk '{ print $1 }' | sort -u | tr '\n' ' ')"
+            [ "$resolved" = "127.0.0.1 " ] || { echo "$h resolves to '$resolved', not 127.0.0.1 alone"; exit 1; }
+          done
+
+      - name: Install the host's packages, each one pinned
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            libx11-6=2:1.8.7-1build1 libxext6=2:1.3.4-1build2 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 \
+            libxcursor1=1:1.2.1-1build1 libice6=2:1.0.10-1build3 libsm6=2:1.2.3-1build3 \
+            libfontconfig1=2.15.0-1.1ubuntu2 fonts-dejavu-core=2.37-8 \
+            tigervnc-standalone-server=1.13.1+dfsg-2build2 tigervnc-common=1.13.1+dfsg-2build2 \
+            tigervnc-tools=1.13.1+dfsg-2build2 xauth=1:1.1.2-1build1 \
+            x11-apps=7.7+11build3 netpbm=2:11.05.02-1.1build1
+          sqlite3 --version
+
+      - name: Install TradeAgent with the kit, twice
+        run: |
+          address="$(ip -4 -o addr show scope global | awk '{ print $4 }' | cut -d/ -f1 | head -n 1)"
+          echo "ADDRESS=$address" >> "$GITHUB_ENV"
+          (umask 077 && head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 8 > "$RUNNER_TEMP/vnc-pass")
+          sudo packaging/linux/install.sh --tarball linux-artifact/TradeAgent-*-linux-x64.tar.gz \
+            --address "$address" --zone Europe/Brussels --vnc-pass-file "$RUNNER_TEMP/vnc-pass"
+          # IDEMPOTENT: the same arguments again change nothing and restart nothing.
+          pid="$(systemctl show -p MainPID --value tradeagent.service)"
+          sudo packaging/linux/install.sh --tarball linux-artifact/TradeAgent-*-linux-x64.tar.gz \
+            --address "$address" --zone Europe/Brussels --vnc-pass-file "$RUNNER_TEMP/vnc-pass"
+          [ "$(systemctl show -p MainPID --value tradeagent.service)" = "$pid" ] || { echo "the second run restarted the app"; exit 1; }
+          rm -f "$RUNNER_TEMP/vnc-pass"
+
+      - name: Twenty minutes unattended
+        run: |
+          sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" ADDRESS="$ADDRESS" RUN_MINUTES=20 \
+            GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" packaging/linux/ci/prove.sh
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: linux-host-evidence
+          path: linux-host-evidence/
