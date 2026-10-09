@@ -1,5 +1,5 @@
 # TradeAgent, unattended: the app on its own display, under an account of its own, started again after a
-# crash or a stop. A template: packaging/linux/install.sh fills the @NAMES@ in and installs it root-owned
+# crash or a stop. A template: packaging/linux/install.sh fills its placeholders in and installs it root-owned
 # in /etc/systemd/system, beside the app's root-owned files under /opt/tradeagent — so the app's own
 # account, which is also the agent's, cannot change what systemd starts or what it runs.
 #
