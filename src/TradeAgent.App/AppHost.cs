@@ -463,8 +463,11 @@ public sealed class AppHost : IAsyncDisposable
     /// It lives here, beside the gateway and the kill switch, because installing a new build of the
     /// program that holds the user's open orders is operator authority. Nothing on the agent-facing
     /// pipe can reach it: the AI cannot check, cannot download, and cannot replace its own supervisor.
+    ///
+    /// Off Windows its versions arrive by deploy, on the owner's word (<c>U-linux-host</c>): the one file a release
+    /// offers is the Windows installer, so there it asks nothing and offers nothing.
     /// </summary>
-    public UpdateService Updates { get; } = new(Versions.App);
+    public UpdateService Updates { get; } = new(Versions.App, byDeploy: !OperatingSystem.IsWindows());
 
     /// <summary>
     /// The market-data collector. IN-PROCESS ONLY, like every other control on this object: it is
@@ -1965,6 +1968,11 @@ public sealed class AppHost : IAsyncDisposable
         if (Gdelt is not null) { await Gdelt.DisposeAsync(); Gdelt = null; }
         _tape?.Dispose();
         _tape = null;
+        // THE STOP, WRITTEN DOWN (U-linux-host item 2): the counterpart of "TradeAgent started", the last line before
+        // the ledgers close, so an orderly quit — the window's, the OS's or the system's SIGTERM — is told apart from
+        // a death in the record itself. A crash writes nothing here, and that absence is the evidence.
+        try { Gateway?.Log.Activity("TradeAgent stopped"); }
+        catch (Exception) { /* the quit goes on whether or not it could be written down */ }
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();

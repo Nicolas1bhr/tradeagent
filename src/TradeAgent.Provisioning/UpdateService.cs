@@ -91,7 +91,13 @@ public enum UpdateStage
     Installing,
 
     /// <summary>The check or the download failed. <see cref="UpdateService.Message"/> says how.</summary>
-    Failed
+    Failed,
+
+    /// <summary>
+    /// This computer's versions arrive by deploy, on the owner's word, and this updater has nothing it could
+    /// install here (<see cref="UpdateService.ByDeploy"/>).
+    /// </summary>
+    ByDeploy
 }
 
 /// <summary>
@@ -214,14 +220,32 @@ public sealed class UpdateService
     bool _launched;
     string? _lastRefusalReason;
 
-    public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null)
+    public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null,
+        bool byDeploy = false)
     {
         UpdateVersion.TryParse(currentVersion, out _current);
         CurrentVersion = _current.ToString();
         Repository = Resolve(repository);
         _assetPattern = assetPattern ?? Environment.GetEnvironmentVariable("TRADEAGENT_UPDATE_ASSET") ?? DefaultAssetPattern;
         _sources = sources ?? UpdateSources.GitHub(Repository);
+        ByDeploy = byDeploy;
+        if (ByDeploy) { Stage = UpdateStage.ByDeploy; Message = DeployedHere; }
     }
+
+    /// <summary>
+    /// TRUE WHERE THIS COMPUTER'S VERSIONS ARRIVE BY DEPLOY, ON THE OWNER'S WORD — a Linux host (<c>U-linux-host</c>
+    /// item 2). The only file a release offers that this updater can install is the Windows installer, which a Linux
+    /// host cannot run: it downloaded 90 MB of it and then refused. So there a check asks GitHub nothing, offers
+    /// nothing and says why, and an install downloads and starts nothing. The fleet deploys a new version there when
+    /// the owner says so, through the kit, root-owned — never through anything the agent can reach. The app passes
+    /// it; false is the Windows updater every other test drives.
+    /// </summary>
+    public bool ByDeploy { get; }
+
+    /// <summary>What both update surfaces say on a computer whose versions arrive by deploy.</summary>
+    public const string DeployedHere =
+        "On this computer new versions of TradeAgent are installed by deploy, when you say so — TradeAgent does not " +
+        "download or install them itself.";
 
     /// <summary>
     /// The repository asked about. <c>TRADEAGENT_UPDATE_REPO</c> overrides it and is validated to be
@@ -332,6 +356,9 @@ public sealed class UpdateService
     /// </summary>
     public async Task CheckAsync(CancellationToken ct = default)
     {
+        // OFF WINDOWS, NOTHING TO ASK AND NOTHING TO OFFER — the six-hourly check included (see ByDeploy).
+        if (ByDeploy) { Set(UpdateStage.ByDeploy, DeployedHere); return; }
+
         // Setup is running and this process is closing. A background check that answered now would
         // repaint the strip as an ordinary offer over the top of "TradeAgent will close and reopen
         // itself", which is an invitation to press something during the seconds when pressing
@@ -419,6 +446,9 @@ public sealed class UpdateService
     /// </summary>
     public async Task<bool> InstallAsync(CancellationToken ct = default)
     {
+        // AND NOTHING DOWNLOADED, whatever is on offer: the check above is not the only way an offer could arrive.
+        if (ByDeploy) { Set(UpdateStage.ByDeploy, DeployedHere); return false; }
+
         var info = Available;
         if (info is null) return false;
 
