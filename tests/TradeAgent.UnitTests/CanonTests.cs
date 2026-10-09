@@ -253,6 +253,86 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         "**Execution can be switched off underneath you** at any moment, by the account owner or"
     ];
 
+    // ---- (d) the canon changes only with its version ---------------------------------------------------
+
+    /// <summary>
+    /// THE LEDGER: the SHA-256 of each seat's canon template, slots unfilled and line endings LF, for every version this
+    /// repository has shipped. APPEND-ONLY — a new version adds its lines and leaves the old ones, which are the record of
+    /// what each earlier build told its seats. A change to the canon's words is a new <see cref="Canon.Version"/> and a
+    /// new pair of lines here, in the same commit, named in its report; a generated change (a limit, a verb, a cap, a
+    /// path the app moved) changes no template and needs neither.
+    /// </summary>
+    static readonly (int Version, string Seat, string Sha256)[] Ledger =
+    [
+        (1, CouncilRoles.Operations, "8970424cc948c5b5480e9939b97569ba58efce435133826c6530de2dac38d841"),
+        (1, CouncilRoles.Research, "3fed62bfa68b1066de8e16487140f75227ff55d61ee7c782f6043361ff94bc50")
+    ];
+
+    /// <summary>
+    /// (d) A CANON CHANGE WITHOUT A NEW VERSION IS REFUSED. Every seat's template at this build's version must hash to
+    /// its ledger entry; the build's version must be the newest the ledger holds, and versions only grow. Edit one word
+    /// of the canon and leave the version alone, and this is red with both hashes in the message.
+    ///
+    /// <para>Not red at base: there was no version and no template to hash (it would not compile). The watched mutant —
+    /// the template edited with its version unchanged — is quoted in the unit's report.</para>
+    /// </summary>
+    [Fact]
+    public void A_canon_change_without_a_new_version_is_refused()
+    {
+        // VERSIONS ONLY GROW: the ledger runs oldest to newest, one line per seat per version, and ends at this build.
+        Assert.Equal(Ledger.OrderBy(l => l.Version).Select(l => l.Version), Ledger.Select(l => l.Version));
+        Assert.Equal(Ledger.Length, Ledger.Select(l => (l.Version, l.Seat)).Distinct().Count());
+        Assert.Equal(Canon.Version, Ledger.Max(l => l.Version));
+        Assert.Equal(Enumerable.Range(1, Canon.Version), Ledger.Select(l => l.Version).Distinct());
+
+        foreach (var seat in CouncilRoles.All)
+        {
+            var entry = Assert.Single(Ledger, l => l.Version == Canon.Version && l.Seat == seat);
+            var now = Sha256Hex.Of(Canon.Template(seat));
+            log.WriteLine($"v{Canon.Version} {seat}: {now}");
+            Assert.True(entry.Sha256 == now,
+                $"the {CouncilRoles.Title(seat)}'s canon changed without a new version: v{Canon.Version} is {entry.Sha256} "
+                + $"in the ledger and the template hashes to {now}. Raise Canon.Version and add its lines to the ledger.");
+        }
+    }
+
+    // ---- (e) the canon fits in half the vendor's read limit --------------------------------------------
+
+    /// <summary>
+    /// (e) THE CANON FITS IN HALF WHAT A VENDOR CLI READS. codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>,
+    /// and the old mission file sat 11 bytes under it with the role section — what makes a seat a seat — at its tail.
+    /// Every pair, on the simulator and off it, at the app's default settings and at heavier ones, is held to
+    /// <see cref="Canon.MaxBytes"/>.
+    ///
+    /// <para>RED at base (2802a79b), as the mission file every pair was sent: "operations·CLI is 32,745 bytes, over
+    /// 16,384"; research·CLI and research·harness 32,661.</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Pairs))]
+    public void The_canon_fits_in_half_the_vendors_read_limit(string role, RuntimeClass runtime, bool simulator)
+    {
+        Assert.Equal(32 * 1024, Canon.VendorReadLimitBytes);
+        Assert.Equal(Canon.VendorReadLimitBytes / 2, Canon.MaxBytes);
+
+        var heavy = new RiskPolicy
+        {
+            MaxOrderQuantity = 25m, MaxNotionalPerOrder = 250_000m, MaxOpenPositions = 10, MaxOrdersPerMinute = 60,
+            MaxLossPerTrade = 12_500m, MaxDailyLoss = 50_000m,
+            InstrumentAllowlist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ES", "NQ", "MES", "MNQ"]
+        };
+        foreach (var (settings, ctx) in new[]
+                 {
+                     ("default settings", Ctx(role, simulator)),
+                     ("heavier settings", Ctx(role, simulator) with { Risk = heavy, AccountId = "SIM-ACCOUNT-000001" })
+                 })
+        {
+            var bytes = Encoding.UTF8.GetByteCount(Canon.Render(ctx, runtime));
+            log.WriteLine($"{role}·{runtime}{(simulator ? "·simulator" : "")}, {settings}: {bytes:N0} bytes");
+            Assert.True(bytes <= Canon.MaxBytes,
+                $"{role}·{runtime}{(simulator ? "·simulator" : "")} at {settings} is {bytes:N0} bytes, over {Canon.MaxBytes:N0}");
+        }
+    }
+
     // ---- (c) the reach is read from what enforces it --------------------------------------------------
 
     /// <summary>
