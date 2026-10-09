@@ -34,7 +34,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     static readonly DateTimeOffset Cutoff = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
 
     /// <summary>A clock this suite owns and MOVES, one bar at a time.</summary>
-    sealed class TestClock(DateTimeOffset at) : TimeProvider
+    internal sealed class TestClock(DateTimeOffset at) : TimeProvider
     {
         public DateTimeOffset At { get; set; } = at;
         public override DateTimeOffset GetUtcNow() => At;
@@ -77,7 +77,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     /// app's own allocation and the app's own deployment — every one of them written by the call the
     /// product uses, never by a row.
     /// </summary>
-    sealed class Rig : IAsyncDisposable
+    internal sealed class Rig : IAsyncDisposable
     {
         public required Database Db { get; init; }
         public required PaperConnector Conn { get; init; }
@@ -165,10 +165,12 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     /// <summary>
     /// <paramref name="envelopeQuantity"/> and <paramref name="envelopeNotional"/> are the owner's grant — and so the
     /// allocation's ceilings, which the app's own policy copies from it — 5 and 5,000,000 unless a test is about them.
+    /// <paramref name="seed"/> false leaves the installation with no grant, no version and no run, for a test that
+    /// writes its own (<c>PaperBooksTests</c>: two runs on one symbol).
     /// </summary>
-    static async Task<Rig> ReadyAsync(string program, string? bookFile = null, Database? db = null,
+    internal static async Task<Rig> ReadyAsync(string program, string? bookFile = null, Database? db = null,
         DateTimeOffset? origin = null, Func<PaperConnector, ITradingConnector>? through = null,
-        decimal envelopeQuantity = 5m, decimal? envelopeNotional = 5_000_000m)
+        decimal envelopeQuantity = 5m, decimal? envelopeNotional = 5_000_000m, bool seed = true)
     {
         db ??= TestEnv.NewDb();
 
@@ -221,7 +223,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
             Runner = new ForwardRuns(gw, db, () => clock.At)
         };
 
-        if (db.GetKv("rig-seeded") is null)
+        if (seed && db.GetKv("rig-seeded") is null)
         {
             var granted = await gw.GrantPaperEnvelopeAsync(
                 "BTCUSDT", envelopeQuantity, envelopeNotional, start.AddDays(30), start);
@@ -241,15 +243,17 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     /// campaign, the version, the holdout run and the promotion row. A faked id would be refused by
     /// the ledger a step earlier and would prove nothing about anything above it.
     /// </summary>
-    static string Judged(Database db, string text, DateTimeOffset at)
+    internal static string Judged(Database db, string text, DateTimeOffset at)
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"forward-runner-{Guid.NewGuid():n}.csv");
         Directory.CreateDirectory(Paths.Data);
         File.WriteAllText(file, KlineNormaliser.Header + "\n");
 
+        // THE NEXT LABEL IN THIS LEDGER: a test may judge two versions over one ledger, and the ledger refuses a
+        // second row under a (pair, interval, version) it holds. The first is `v1`, as it always was.
         var id = datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, at, DatasetState.ACCEPTED, null, []));
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
@@ -290,10 +294,10 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         return program.StrategyId;
     }
 
-    static async Task<IReadOnlyList<OrderInfo>> Wire(Rig rig) =>
+    internal static async Task<IReadOnlyList<OrderInfo>> Wire(Rig rig) =>
         await rig.Conn.GetOrdersAsync(PaperConnector.TheAccount, includeInactive: true, since: null);
 
-    static async Task<decimal> Position(Rig rig) =>
+    internal static async Task<decimal> Position(Rig rig) =>
         (await rig.Conn.GetPositionsAsync(PaperConnector.TheAccount))
         .FirstOrDefault(p => p.Symbol == "BTCUSDT")?.Quantity ?? 0m;
 

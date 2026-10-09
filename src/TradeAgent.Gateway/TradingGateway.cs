@@ -549,8 +549,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// surfaces, and a reader shown only the live ones would be told the book is accounted for when it
     /// is not.</para>
     /// </summary>
-    public IReadOnlyList<DeploymentReading> DeploymentReadings(int limit = DeploymentsLookedAt) =>
-        [.. _deployments.All(limit).Select(d =>
+    public IReadOnlyList<DeploymentReading> DeploymentReadings(int limit = DeploymentsLookedAt)
+    {
+        var runs = _deployments.All(limit);
+
+        // THE FILL LEDGER READ ONCE FOR EVERY RUN LISTED, from the earliest of their starts, rather than once a run: this
+        // serves the status every few seconds, and each run's book is that read filtered to its own ids.
+        IReadOnlyList<Fill> ledger = runs.Count == 0 ? [] : _fills.Since(runs.Min(d => d.StartedAt));
+
+        return [.. runs.Select(d =>
         {
             var ops = _deployments.OpsOf(d.Id);
             var unresolved = ops.Count(o => !o.IsSettled);
@@ -558,8 +565,10 @@ public sealed class TradingGateway : IAsyncDisposable
             return new DeploymentReading(
                 d.Id, d.VersionId, d.AllocationId, d.EnvelopeId, d.ConnectorId, d.AccountId, d.Symbol,
                 d.Mode, d.State, d.StartedAt, d.CursorOpenTime, d.SuspendedReason, d.EndedAt,
-                d.EndReason, ops.Count, unresolved, owed, DeploymentLine(d, ops.Count, unresolved, owed));
+                d.EndReason, ops.Count, unresolved, owed,
+                DeploymentLine(d, ops.Count, unresolved, owed, _deployments.BookOf(d, ops, ledger)));
         })];
+    }
 
     /// <summary>
     /// The deployments the STATUS lists: everything that is not over, plus every ended run that still
@@ -594,8 +603,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// authority on every line, exactly as a paper allocation's does: "your money is behind this" and
     /// "this is being watched on a practice account" are the two facts this product most needs never
     /// to blur.
+    ///
+    /// <para><b>And what the run ITSELF holds</b> (<c>U-paper-books</c>): its own book — held, average cost, realised
+    /// after the costs the platform reported, over how many fills — and never the account's figure, which on a shared
+    /// account is the sum of everyone on it (<see cref="BookSentence"/>).</para>
     /// </summary>
-    static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved, string? closeOwed)
+    static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved, string? closeOwed,
+        RunBook book)
     {
         var line = $"{Short(d.VersionId)} in {d.Symbol} on account {d.AccountId} at {d.ConnectorId}, "
                    + $"{d.State} since {d.StartedAt:yyyy-MM-dd HH:mm:ssK}, {operations} operation"
@@ -603,13 +617,14 @@ public sealed class TradingGateway : IAsyncDisposable
                    + (d.CursorOpenTime is { } cursor
                        ? $", finished up to the bar opening {cursor:yyyy-MM-dd HH:mm:ssK}"
                        : ", no bar finished yet")
-                   + " — PAPER — no live authority";
+                   + " — PAPER — no live authority."
+                   + BookSentence(book);
 
         if (d.IsSuspended)
-            line += $". SUSPENDED and nothing is being sent: {d.SuspendedReason ?? "no reason recorded"}.";
+            line += $" SUSPENDED and nothing is being sent: {d.SuspendedReason ?? "no reason recorded"}.";
 
         if (d.IsEnded)
-            line += $". ENDED at {d.EndedAt:yyyy-MM-dd HH:mm:ssK}: {d.EndReason ?? "no reason recorded"}.";
+            line += $" ENDED at {d.EndedAt:yyyy-MM-dd HH:mm:ssK}: {d.EndReason ?? "no reason recorded"}.";
 
         if (closeOwed is not null)
             line += $" {OwedSentence(closeOwed)}";
@@ -630,6 +645,29 @@ public sealed class TradingGateway : IAsyncDisposable
     static string OwedSentence(string why) =>
         $"NOT closed: the close this end owes has not gone out ({why}). TradeAgent sends it again at most "
         + "once each minute while nothing refuses it, and no replacement run starts until it has closed.";
+
+    /// <summary>
+    /// WHAT THE RUN ITSELF HOLDS, IN ONE SENTENCE (<c>U-paper-books</c>): its own book, or that it has no fill yet, or —
+    /// when an order record of the run reports a fill the ledger does not hold, or the other way about — that the book is
+    /// INCOMPLETE and sizes nothing, and why. A fill the platform reported no fee for is said beside the figure rather
+    /// than counted as free.
+    /// </summary>
+    static string BookSentence(RunBook book)
+    {
+        if (book.Incomplete is { } why)
+            return $" Its own book is INCOMPLETE: {why}. Nothing is sized from it until the fill ledger holds every fill "
+                   + "its orders report.";
+        if (book.Fills == 0) return " Its own book: no fill yet.";
+
+        var held = book.Held > 0m
+            ? $"holds {AllocationRow.Num(book.Held)} at an average of {AllocationRow.Num(book.Average)}"
+            : "holds nothing";
+        var unknown = book.FillsWithNoFee == 0
+            ? ""
+            : $" The platform reported no fee for {book.FillsWithNoFee} of them, so the real figure is a little worse.";
+        return $" Its own book: {held}, realised {AllocationRow.Num(book.RealisedAfterCosts)} after "
+               + $"{AllocationRow.Num(book.Fees)} in costs, over {book.Fills} fill{(book.Fills == 1 ? "" : "s")}.{unknown}";
+    }
 
     /// <summary>
     /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every standing paper allocation

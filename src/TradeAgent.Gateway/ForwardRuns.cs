@@ -948,12 +948,16 @@ public sealed class ForwardRuns
     /// hold the owner's own position; a runner that sized against the account's total would be
     /// charging one run for another's exposure. Every figure here comes off this deployment's
     /// <c>deployment_op</c> rows joined to <c>execution_request</c> and <c>fill</c> by request id.</para>
+    ///
+    /// <para><b>The gateway's book of the run, placed on bars</b> (<c>U-paper-books</c>): the fills are
+    /// <see cref="Deployments.FillsOf"/>'s and they are walked by <see cref="RunBookWalk"/>, the reading and the
+    /// arithmetic <see cref="Deployments.BookOf"/> makes when the gateway checks the run's close against what the run
+    /// holds. What is this runner's own is the placement of each fill on a bar, and what is in flight.</para>
     /// </summary>
     RunBooks Books(StrategyDeploymentRow deployment, IReadOnlyList<ForwardBar> bars, BarGrid grid)
     {
         var ops = _deployments.OpsOf(deployment.Id);
-        var fills = _gateway.Fills.Since(deployment.StartedAt)
-            .Where(f => f.RequestId is { Length: > 0 })
+        var fills = _deployments.FillsOf(deployment, ops)
             .ToLookup(f => f.RequestId!, StringComparer.Ordinal);
 
         var settled = new List<RunFill>();
@@ -967,7 +971,9 @@ public sealed class ForwardRuns
             foreach (var fill in fills[op.RequestId])
             {
                 var at = FillBar(bars, op.BarOpenTime, fill.At);
-                settled.Add(new RunFill(at, op.Kind, fill.Quantity, fill.Price));
+                settled.Add(new RunFill(at, op.Kind,
+                    string.Equals(fill.Side, nameof(OrderSide.Buy), StringComparison.OrdinalIgnoreCase),
+                    fill.Quantity, fill.Price, fill.Fee));
                 if (filled is null || at < filled) filled = at;
             }
 
@@ -1035,8 +1041,8 @@ public sealed class ForwardRuns
             ? allocation.MaxNotional ?? 0m
             : 0m;
 
-    /// <summary>One of this run's own executions, placed on the bar it landed on.</summary>
-    readonly record struct RunFill(DateTimeOffset Bar, string Kind, decimal Quantity, decimal Price);
+    /// <summary>One of this run's own executions, placed on the bar it landed on: the operation it answers, its side, size, price and fee.</summary>
+    readonly record struct RunFill(DateTimeOffset Bar, string Kind, bool Buy, decimal Quantity, decimal Price, decimal? Fee);
 
     /// <summary>
     /// ONE ORDER OF THIS RUN THAT COULD STILL MOVE THE POSITION: the bar it was sent on, and the bar
@@ -1047,8 +1053,9 @@ public sealed class ForwardRuns
     readonly record struct RunOp(DateTimeOffset Bar, DateTimeOffset? Filled);
 
     /// <summary>
-    /// THE RUN'S POSITION AS OF ANY BAR, walked forward from its own executions. Long or flat: the
-    /// language cannot spell a third value and neither can this.
+    /// THE RUN'S POSITION AS OF ANY BAR, walked forward from its own executions by <see cref="RunBookWalk"/> — the walk
+    /// the gateway's <see cref="Deployments.BookOf"/> makes over the same fills. Long or flat: the language cannot spell
+    /// a third value and neither can this.
     /// </summary>
     sealed class RunBooks(IReadOnlyList<RunFill> fills, IReadOnlyList<RunOp> inFlight, decimal capital, BarGrid grid)
     {
@@ -1060,35 +1067,28 @@ public sealed class ForwardRuns
         /// THE RUN'S ACCOUNT AT THE CLOSE OF ONE MINUTE, from its own executions up to that minute, with the
         /// bars held counted on the program's grid through the bar that opens at or contains
         /// <paramref name="through"/>.
+        ///
+        /// <para>The equity handed to the evaluator is the capital plus what the walk realised and the open position
+        /// marked at the close — before costs, as it has always been: the costs are on the run's line
+        /// (<see cref="RunBook.RealisedAfterCosts"/>), and a program's decisions are not moved by this unit.</para>
         /// </summary>
         public AccountReading At(KlineBar bar, DateTimeOffset through)
         {
-            var quantity = 0m;
-            var average = 0m;
-            var realised = 0m;
+            var walk = new RunBookWalk();
             DateTimeOffset? since = null;
 
             foreach (var fill in fills)
             {
                 if (fill.Bar > bar.OpenTime) break;
 
-                if (string.Equals(fill.Kind, DeploymentOpKind.Entry, StringComparison.Ordinal))
-                {
-                    average = quantity + fill.Quantity <= 0m
-                        ? fill.Price
-                        : (average * quantity + fill.Price * fill.Quantity) / (quantity + fill.Quantity);
-                    quantity += fill.Quantity;
-                    since ??= fill.Bar;
-                }
-                else
-                {
-                    var closed = Math.Min(quantity, fill.Quantity);
-                    realised += (fill.Price - average) * closed;
-                    quantity -= closed;
-                    if (quantity <= 0m) { quantity = 0m; average = 0m; since = null; }
-                }
+                walk.Apply(fill.Buy, fill.Quantity, fill.Price, fill.Fee);
+                if (walk.Held <= 0m) since = null;
+                else if (fill.Buy) since ??= fill.Bar;
             }
 
+            var quantity = walk.Held;
+            var average = walk.Average;
+            var realised = walk.Realised;
             var held = since is { } entry ? BarsSince(entry, through) : 0;
             var equity = capital + realised + (quantity > 0m ? (bar.Close - average) * quantity : 0m);
 
