@@ -147,3 +147,39 @@ jobs:
           path: |
             artifacts/*.exe
             artifacts/SHA256SUMS.txt
+
+  # THE LINUX HOST'S BUILD (U-linux-host item 3): packaging/build-linux.sh, self-contained linux-x64 with
+  # `trade` and `tradeagent-gateway` single-file beside the app, its stage verified before it is packaged,
+  # uploaded as TradeAgent-linux-x64 with the SHA256SUMS that names the tarball.
+  #
+  # NOT BEHIND `test`, deliberately: it is the input of `linux-host` below, and run beside the suites it
+  # adds nothing to how long a branch's CI takes. A release is still cut by hand from a green run.
+  # PINNED: the runner image and the SDK both, so what this job proves is the same thing on every branch.
+  package-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.400'
+
+      # THE SDK, PINNED HERE AND NOWHERE ELSE: a global.json written in the job, not committed — the
+      # rest of the build floats on 10.0.x — so this publish uses exactly the SDK above or fails saying so.
+      - name: Pin the SDK
+        run: |
+          printf '{ "sdk": { "version": "10.0.400", "rollForward": "disable" } }\n' > global.json
+          dotnet --version
+
+      - name: Lint the Linux scripts
+        run: shellcheck --version && shellcheck packaging/build-linux.sh
+
+      - name: Build the Linux artifact
+        run: packaging/build-linux.sh --runtime linux-x64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: TradeAgent-linux-x64
+          if-no-files-found: error
+          path: |
+            artifacts/linux/TradeAgent-*-linux-x64.tar.gz
+            artifacts/linux/SHA256SUMS
