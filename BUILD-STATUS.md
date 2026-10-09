@@ -9520,3 +9520,39 @@ scheme with a variable key, and the tests box's own "off Tailscale" message (alr
 superseded). Tests box: NOT RUN — "the machine does not answer" (11:16, 12:48, 15:53 CEST, the builder; 14:22:34Z, seat B). Landing CI on `main`: a waiter is armed.
 **NOT verified:** no request was ever sent to TypeSafe or OpenRouter (none allowed: the wire's shapes are their documentation, not a measurement); rate limits recorded, not
 enforced (nothing calls the port yet); no owner surface or key paste (`U-decision-card`); which agreement binds Jev output used through OpenRouter stays UNKNOWN (R02 § 2).
+
+## 2026-10-09 — U-paper-books landed: each paper run holds, closes and is charged its own book — two versions on one symbol never net, and a run's END sells only what it bought
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-paper-books.md` — briefed from seat A's read-only survey (`fleet/tmp/s-paper-books-survey/NOTES.md`, main `138d0d0c`): no
+netting TODAY (`PaperDeploymentsPerEnvelope` = 1) but a one-run evidence risk — beside a holding it did not open, or after a loss flatten or the owner's Close all, a run's closes were refused `POSITION_MOVED`
+and its END sold the ACCOUNT's whole position under the run's id; moved ahead of `U-runner-features` for it (ORGANISATION § 15, 2026-10-09); dispatched `e541b3a6`. The builder rebased onto `786c0e5e`; the
+manager's prep rebased it onto `7a8f6043` (U-decision-port's record, code included); src+tests patch-id identical (`1a3b8b95b4a8`). Merge `17ff99f2` (ff-only): 5 commits (3 items, the words, the report),
+15 files, +1,398/−213. On main: item 1 `7a0d7276`, item 2 `b6fd7823`, item 3 `4661c9d4`, the words `0df6e137`, the report `17ff99f2`.
+**No schema change** (main 30; `Database.cs` untouched; the book reads existing columns). MONEY PATH on paper (the gateway's close, END and allocation checks) and EVIDENCE (a run's own record, PRINCIPLES
+"attribute results … to the strategy version").
+
+- **Item 1 (`7a0d7276`), the book:** `Deployments.FillsOf`/`BookOf` walk a run's own operations joined to their fills once — held, average, realised after reported costs, fills with no fee — COMPLETE only when
+  each request's `filled_quantity` equals its ledger fills; the runner's `RunBooks` reads the same fills with the same walk, its decisions unchanged (the pinned one-minute transcript green 3×); `DeploymentLine`
+  states the book, or INCOMPLETE and why.
+- **Item 2 (`b6fd7823`), a run closes its own book:** `RefuseAStaleCloseOrThrow` branches on the deployment identity — a run's close equals its own holding and the account must hold at least that; the END
+  places a `Close` of the book after a settling position read: flat → "nothing to close"; long over a flat account with no run order open → resolved "closed outside the run", nothing sent; account short
+  of the book or book incomplete → refused before the wire, owed in words. `AnotherRunOnItsPosition` and both uses removed; `CloseAsync`'s dead version parameter removed.
+- **Item 3 (`4661c9d4`), its own exposure inside the envelope's sum:** a run's opener is charged its own book + its version's open openers + the order (an incomplete book → `RISK_CHECK_UNAVAILABLE`);
+  `RecordPaper` refuses a sum past either ceiling; `AllocatePaperDue` gives each version the ceilings ÷ `max_deployments`, rounded down. **Words (`0df6e137`):** CONTRACTS, USER-GUIDE, `deployment-stop`.
+- **LIVE UNCHANGED (verified by test, not by a live run):** the run branch keys only on the deployment identity, refused in both live modes (that test green); no connector change; every non-run caller —
+  agent close, Close all, the loss flatten, the kill switch, the allocation gates — keeps the account reading (the full Fault suite green; `ClosePositionMovedTests` green on CI).
+- **Deviations, JUDGED (seat A), accepted:** a line test (h) added as item 1's red-first test; (e) committed with item 3 (its refusal is item 3's); an incomplete book refuses with the existing
+  `RISK_CHECK_UNAVAILABLE`; `ForwardRunnerTests`' rig helpers made internal (`seed: false`, a fresh dataset label per judged version); an ended run's line says when its END found it closed outside the run.
+- **Rewritten under this protection, JUDGED (seat A), per the brief:** `SeedAPosition` is the run's own entry through `RunDeploymentIntentAsync` at its 9 call sites; the test
+  `An_owed_close_holds_its_instrument_across_a_new_grant_and_waits_while_another_run_trades_it` is REPLACED by `…_goes_out_beside_another_run_selling_its_own` — the old name pinned the netting this unit removes
+  (`names.sh` counts it as 1 removed, accepted on the brief's terms); `An_end_whose_close_a_gate_refused…` now asserts the operations are exactly [entry, flatten].
+**Verified by running (the builder, quoted; then the manager's gate).** Builder at `9aa68fd1`: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed 1575 Failed 0`; Fault `Passed 485 Failed 0`; 3×:
+PaperBooksTests 8/8, PaperDeploymentTests 14/14, ForwardRunnerTests 26/26. RED on the base (`e541b3a6`'s src): (a),(c) "stop refused … POSITION_MOVED — BTCUSDT was 1.000 when this close was sized and is 2.000 now";
+(b) A's END sent (Sell, Market, 2.000); (d) "there was nothing to close"; (e) the second entry dispatched; (f) (5, 5000000) not (2.5, 2500000); (g) "ALLOCATION_EXCEEDED — … would be holding 4 … allocated is 2".
+**Mutants watched RED, reverted:** the run's branch reading the account's position ⇒ (a),(c); the END through `CloseAsync` ⇒ (b),(c) ("flatten refused … POSITION_MOVED — BTCUSDT was 2.000 … is 1.000 now").
+Manager's gate at `17ff99f2`, Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1584/1584 (10 m 52 s), Fault 485/485 (1 m 59 s), Integration 764/765, 1 skipped (11 m 14 s) → 0 failed.
+Names vs `main`: 2434 → 2442, removed 1 (the replacement above, JUDGED), added 9. Scan clean (the tests box's `ready` line and test grant reads excluded by name); `rev-list` 0 both ways.
+**CI:** run 37919716604 at `9aa68fd1` (the code of the merge before the rebase onto U-decision-port): test ubuntu-latest success, macos-latest success, windows-latest success 62 m, package success.
+**Tests box:** NOT RUN — `ready` exit 1 at 10:47 UTC, "the machine does not answer".
+**NOT done, NOT verified:** more than one run per grant in the shipped app (`PaperDeploymentsPerEnvelope` stays 1 — `U-incubator`'s); a close outside the run entering the run's record and per-run loss budgets
+(`U-forward-standing`); live books; the runner still DECIDES over an incomplete book (only the gateway refuses what it sends); the app was not run, so the run's line was not seen on screen.
