@@ -9411,3 +9411,39 @@ red); no decay ⇒ all five red. Builder: Release 0 warnings; Unit 1,556, Fault 
 (22:24Z, 22:49Z, 23:08Z, 09:01Z, the builder; 09:53:59Z, seat B). Landing CI on `main`: a waiter is armed.
 **NOT done / NOT verified:** the Safety page's "how often it is woken to look around anyway" still states only the fastest pace — owed, a one-line follow-up (seat B carries it); codex's
 cut at 32,768; no app run; Windows beyond hosted CI.
+
+## 2026-10-09 — U-memory-kept landed: a plan or journal the app refuses for size is kept in `trading/archive/` before the last accepted revision is put back, and is never destroyed
+
+One fresh Opus builder under seat B built it from `docs/briefs/U-memory-kept.md` (R20 § 1, an outside audit's claim found worse than it said; queued with R20 `c317606a`; pointers
+re-checked by seat B at `d1f4cfa4`, dispatched `eb906b17`). Merge `3b5b08d3` (ff-only), 6 commits (item 1 `21504ff1`, item 2 `f7156ed5`, item 3 `e16d80a8`, seat B's correction
+`532181df`, docs `7dce9323`, report `3b5b08d3`), rebased cleanly by seat B's prep from `3aa70b38` onto `8184265f` (`U-quiet-review`'s record), src+tests patch-id identical (`40a9139bdb70`). No rung, setting or pipe op; not the money path; it protects the role's own memory (PRINCIPLES: "explicit refusal and
+recoverable output over silent truncation or destruction"). The second of M0 attempt 4's two prerequisites (ORGANISATION § 15).
+
+- **Item 1:** `Snapshot` reads the bytes once; a refused file that has an earlier accepted revision is first written, inside the transaction, as a NEW
+  `trading/archive/<PLAN|JOURNAL>-refused-<attempt id, or the UTC instant yyyyMMddTHHmmssfffZ>.md` (no `:`, valid on Windows; `CreateNew`, fsynced; a taken name goes to `-2`, `-3`…,
+  never overwritten; an attempt id outside `[A-Za-z0-9_-]{1,64}` falls back to the instant) — and only then is the `Restore` returned. No copy ⇒ no `Restore`: the file stays as the
+  agent left it and the notice says it "could not be kept … was not put back". The first-ever over-cap case is unchanged.
+- **Item 2:** the notice and the `Rejected` activity line name the kept path and the cap ("… what you wrote is kept at `trading/archive/PLAN-refused-turn-b.md`. Move what still
+  matters into the plan under 60 lines.").
+- **Item 3 + seat B's correction (from survey S-canon, ordered 00:45):** AGENTS.md says it before it happens — `:276-280` "A file over its limit is not kept…" (false once item 1
+  lands) now reads "Over its limit, a file moves to `trading/archive/<PLAN|JOURNAL>-refused-….md` and the last accepted one returns; your next `## Situation` says so."; the
+  `trading/archive/` line names refused files. Pin changed, declared: `MissionInstructionsTests.The_mission_names_both_memory_caps_and_what_happens_over_them` (both phrases red at base).
+- **Declared deviation, ACCEPTED by seat B:** an UNREADABLE file has no bytes to keep, so — by the brief's "never restore over a file whose kept copy is not on disk" — it is no longer
+  written over (`An_unreadable_plan_has_nothing_to_keep_and_is_not_put_back_over`, red first). **Declared docs, ACCEPTED:** `CONTRACTS.md` (the revision paragraph, the commit's disk
+  work) and `USER-GUIDE.md` ("Where its memory lives") now say a refused file is kept first and nothing is put back over a file that could not be kept.
+- **AGENTS.md bytes** (seat B's net ≤ 0 rule): real render at `TradeAgentSettings` defaults (PAPER, connector "Simulator (built in)"; a throwaway test, never committed), base
+  `eb906b17` operations 31,566 / 32,780 with the simulator paragraph, research 31,482 / 32,696 → tip `2f772018` 31,560 / 32,774 and 31,476 / 32,690 (net −6 per role). With
+  `U-quiet-review`'s −17 the landed tree computes to operations 31,543 / 32,757, research 31,459 / 32,673 — computed from the two measured deltas, NOT measured after the rebase.
+
+**Verified by running (the builder, quoted).** RED at base `eb906b17`: 8 red in `WorkspaceRevisionTests` + `TurnCommitTests` — (a) "Expected: ["PLAN-refused-turn-b.md"] Actual: []",
+(b) the journal's, (c) "Assert.Empty() Failure: Collection was not empty [Restore { … }]", (d) "Expected: 2 Actual: 0", (e) both files; `MissionInstructionsTests` "Failed: 2". Mutant:
+`Snapshot` returning the `Restore` without writing the copy ⇒ "Failed: 8, Passed: 13", (a) and (c) among them; reverted, green. Builder: Release 0 warnings (19 projects); at `ecdaa1dc`
+Unit 1,556, Fault 485, 0 failed; at `2f772018` (after the text edit) seat B's 38 classes 293/293 ×3, Fault `EmptyAllowlistTests` 4/4 ×3, `SweepRequestIdTests` 44/44 ×3.
+**Gate judgement (seat B):** after the text-only correction the builder re-ran the AGENTS.md-reading classes 3× and CI, not the full local suites; this landing's gate runs them in full.
+**Manager's gate** at `3b5b08d3`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1573/1573 (10 m 2 s); Fault 485/485 (2 m 2 s); Integration 752/753,
+1 skipped (11 m 20 s) → 0 failed.
+**Names** vs `main`: 2414 → 2420, 0 removed, 6 added ([Fact]/[Theory] 2365 → 2371). **Scan:** clean.
+**CI:** branch runs 37853720523 at `ecdaa1dc` (✓×3 + package) and 37857456059 at `2f772018`: windows ✓ 60 m, ubuntu ✓ 13 m, macOS ✓ 15 m, package ✓. Tests box: NOT RUN — "the
+machine does not answer" (00:28:57 and 11:01:24 CEST, the builder; 10:19:13Z, seat B). Landing CI on `main`: a waiter is armed.
+**NOT verified / owed:** "nothing reads the archive back" holds by construction, not by a test; the scanner records a kept copy as the agent's material (its bytes are the agent's); the
+Situation header "put the version before it back" now also heads the not-kept lines (wording, owed with `U-canon`); codex's cut at 32,768; no app run; Windows beyond hosted CI.
