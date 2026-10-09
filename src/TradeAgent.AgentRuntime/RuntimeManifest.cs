@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
 
@@ -293,6 +294,15 @@ public sealed class RuntimeManifest
     /// </summary>
     public string? AuthUrlPattern { get; set; }
 
+    /// <summary>
+    /// Regex with one capture group, applied to the same output to pull out the ONE-TIME CODE the owner types
+    /// on another device, or null for a sign-in that shows none. A sign-in with a code is finished away from
+    /// this computer — on the owner's phone, say, because a host with no browser has nowhere to open one — so
+    /// TradeAgent shows the address and the code and opens nothing. Data, because the shape of the code is the
+    /// vendor's: a code that changes shape is a one-line fix in <c>runtimes.json</c>.
+    /// </summary>
+    public string? AuthCodePattern { get; set; }
+
     /// <summary>How this runtime takes a pasted key, or null if it signs in another way.</summary>
     public ApiKeyPlan? ApiKey { get; set; }
 
@@ -391,7 +401,11 @@ public static class RuntimeCatalog
     /// </summary>
     const string AnyUrl = @"(https?://[^\s""'<>\)\]]+)";
 
-    public static List<RuntimeManifest> BuiltIn() =>
+    /// <summary>The built-ins for THIS computer.</summary>
+    public static List<RuntimeManifest> BuiltIn() => BuiltIn(HostPlatform.Current);
+
+    /// <summary>The built-ins for the computer <paramref name="on"/> describes.</summary>
+    public static List<RuntimeManifest> BuiltIn(HostPlatform on) =>
     [
         new RuntimeManifest
         {
@@ -432,25 +446,13 @@ public static class RuntimeCatalog
                 // "OpenAI" and "api" are OpenCode reading the provider key and the type field back
                 // out of the record, which is what makes this a proof of the JSON shape and not only
                 // of the path. The Windows spelling of the same path has still never been exercised.
-                File = OperatingSystem.IsWindows()
+                File = on.IsWindows
                     ? @"%USERPROFILE%\.local\share\opencode\auth.json"
                     : "~/.local/share/opencode/auth.json",
                 FileTemplate = "{\"openai\":{\"type\":\"api\",\"key\":\"{key}\"}}"
             },
-            Executable = OperatingSystem.IsWindows() ? "opencode.exe" : "opencode",
-            Install = new InstallPlan
-            {
-                Kind = InstallKind.Download,
-                GitHubRepo = "anomalyco/opencode",
-                AssetPattern = @"^opencode-windows-x64\.zip$",
-                // The zip holds exactly one file, opencode.exe, at its root. Read out of the live
-                // asset's own central directory on 2026-08-27 with a ranged GET, rather than assumed:
-                // 1 entry, "opencode.exe", 179,550,760 bytes uncompressed.
-                ExecutableInArchive = "opencode.exe",
-                Url = "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
-                NpmPackage = "opencode-ai",
-                ManualUrl = "https://opencode.ai/docs/"
-            },
+            Executable = on.IsWindows ? "opencode.exe" : "opencode",
+            Install = OpenCodeInstall(on),
             VersionArgs = ["--version"],
             // Deliberately empty. OpenCode's `auth login` reads the key from an interactive terminal
             // prompt — there is no URL to open and no headless equivalent — so declaring it here
@@ -499,7 +501,11 @@ public static class RuntimeCatalog
             // working once the agent's environment became a whitelist.
             KeepEnvironment = ["CODEX_HOME"],
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
-            SignInDescription = "A browser window will open so you can sign in with your ChatGPT account.",
+            SignInDescription = on.Os == HostOs.Linux
+                ? "Codex signs in with your ChatGPT account on another device: open the address below on your phone " +
+                  "or another computer, sign in there and type the one-time code shown here. Device code login has " +
+                  "to be switched on in ChatGPT's security settings first."
+                : "A browser window will open so you can sign in with your ChatGPT account.",
             Recommended = true,
             ApiKey = new ApiKeyPlan
             {
@@ -519,18 +525,8 @@ public static class RuntimeCatalog
                 // same is true of OpenCode. AuthState.Authenticated means "a credential is on disk".
                 StdinArgs = ["login", "--with-api-key"]
             },
-            Executable = OperatingSystem.IsWindows() ? "codex.exe" : "codex",
-            Install = new InstallPlan
-            {
-                Kind = InstallKind.Download,
-                GitHubRepo = "openai/codex",
-                AssetPattern = @"^codex-package-x86_64-pc-windows-msvc\.tar\.gz$",
-                // OpenAI's own installer asserts this layout after unpacking the same archive.
-                ExecutableInArchive = "bin/codex.exe",
-                Url = "https://github.com/openai/codex/releases/latest/download/codex-package-x86_64-pc-windows-msvc.tar.gz",
-                NpmPackage = "@openai/codex",
-                ManualUrl = "https://developers.openai.com/codex/cli/"
-            },
+            Executable = on.IsWindows ? "codex.exe" : "codex",
+            Install = CodexInstall(on),
             VersionArgs = ["--version"],
             // On macOS at 0.150.0, `codex login` does NOT short-circuit when a credential is already
             // stored: with an API key on disk it still started the browser flow and printed a fresh
@@ -538,7 +534,27 @@ public static class RuntimeCatalog
             // is not reached by an already-signed-in Codex on this version, and a user who presses
             // Sign in twice gets a second sign-in, not a message saying they are done. Check the
             // state with AuthStateArgs before offering the button; do not infer it from this command.
-            AuthArgs = ["login"],
+            //
+            // ON LINUX, THE DEVICE CODE (U-linux-host). A host with no browser cannot complete `login`'s
+            // localhost:1455 callback, and the vendor's route for one is `codex login --device-auth`
+            // (learn.chatgpt.com/docs/auth, read 2026-10-08: "Enable device code login in your ChatGPT security
+            // settings (personal account)"), which prints a link and a one-time code to type on another device.
+            // Run ONCE on 2026-10-09T09:07Z — codex-cli 0.160.1 on macOS, a fresh empty CODEX_HOME, stopped by an
+            // alarm after 12 s at the code and never authorised, the owner's own sign-in untouched, nothing
+            // downloaded. stdout, colour kept, the code masked to its shape (A a letter, 9 a digit):
+            //     Welcome to Codex [v^[[90m0.160.1^[[0m]
+            //     ...
+            //     1. Open this link in your browser and sign in to your account
+            //        ^[[94mhttps://auth.openai.com/codex/device^[[0m
+            //
+            //     2. Enter this one-time code ^[[90m(expires in 15 minutes)^[[0m
+            //        ^[[94mAAA9-AA99A^[[0m
+            // — device_code_prompt of codex-rs/login/src/device_code_auth.rs, the same at rust-v0.160.1 and
+            // rust-v0.162.0. Four characters and FIVE, so the generic XXXX-XXXX this app used to look for found
+            // no code at all. The code is the server's; its shape beyond this one run is NOT claimed, and a new
+            // shape is a one-line fix in runtimes.json. AuthUrlPattern below takes the link as it is.
+            AuthArgs = on.Os == HostOs.Linux ? ["login", "--device-auth"] : ["login"],
+            AuthCodePattern = on.Os == HostOs.Linux ? @"\b([A-Z0-9]{4}-[A-Z0-9]{5})\b" : null,
             // `codex login status` prints to stderr and exits 0 when signed in, 1 when not. The exit
             // code is the reliable signal, so no success pattern is set here.
             //
@@ -722,6 +738,88 @@ public static class RuntimeCatalog
     ];
 
     /// <summary>
+    /// OPENCODE'S DOWNLOAD FOR THE COMPUTER <paramref name="on"/> DESCRIBES.
+    ///
+    /// <para><b>Windows</b>, as it always was: the zip holds exactly one file, opencode.exe, at its root — read
+    /// out of the live asset's own central directory on 2026-08-27 with a ranged GET, rather than assumed:
+    /// 1 entry, "opencode.exe", 179,550,760 bytes uncompressed.</para>
+    ///
+    /// <para><b>Linux</b>: <c>opencode-linux-{x64|arm64}.tar.gz</c>, the glibc build — 60,669,097 B for x64 at
+    /// v1.18.35, read through GitHub's API on 2026-10-08 and again on 2026-10-09. OpenCode's own release script
+    /// packs it as <c>tar -czf … *</c> inside the build's <c>bin/</c> folder (<c>packages/opencode/script/build.ts</c>
+    /// at v1.18.35), so the program is at the root and named <c>opencode</c>.</para>
+    ///
+    /// <para><b>Anywhere else</b> — macOS, which no owner runs TradeAgent on — there is no plan, and the install
+    /// says so rather than unpacking a Windows program onto it.</para>
+    /// </summary>
+    static InstallPlan OpenCodeInstall(HostPlatform on) => on switch
+    {
+        { IsWindows: true } => new InstallPlan
+        {
+            Kind = InstallKind.Download,
+            GitHubRepo = "anomalyco/opencode",
+            AssetPattern = @"^opencode-windows-x64\.zip$",
+            ExecutableInArchive = "opencode.exe",
+            Url = "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
+            NpmPackage = "opencode-ai",
+            ManualUrl = "https://opencode.ai/docs/"
+        },
+        { Os: HostOs.Linux, Arch: Architecture.X64 or Architecture.Arm64 } => new InstallPlan
+        {
+            Kind = InstallKind.Download,
+            GitHubRepo = "anomalyco/opencode",
+            AssetPattern = $@"^opencode-linux-{LinuxCpu(on, "x64", "arm64")}\.tar\.gz$",
+            ExecutableInArchive = "opencode",
+            Url = $"https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-{LinuxCpu(on, "x64", "arm64")}.tar.gz",
+            NpmPackage = "opencode-ai",
+            ManualUrl = "https://opencode.ai/docs/"
+        },
+        _ => new InstallPlan { Kind = InstallKind.None }
+    };
+
+    /// <summary>
+    /// CODEX'S DOWNLOAD FOR THE COMPUTER <paramref name="on"/> DESCRIBES.
+    ///
+    /// <para><b>Windows</b>, as it always was: OpenAI's own installer asserts <c>bin/codex.exe</c> after
+    /// unpacking the same archive.</para>
+    ///
+    /// <para><b>Linux</b>: <c>codex-package-{x86_64|aarch64}-unknown-linux-musl.tar.gz</c> — statically linked, so
+    /// it runs on any distribution; 162,956,804 B for x86_64 at rust-v0.162.0, read through GitHub's API on
+    /// 2026-10-08 and again on 2026-10-09. Its layout is the vendor's <c>scripts/codex_package/layout.py</c> at
+    /// that tag — the entry point at <c>bin/codex</c>, beside <c>codex-resources/</c> and <c>codex-path/</c> — and
+    /// its <c>scripts/install/install.sh</c> runs <c>bin/codex</c> from the unpacked release.</para>
+    ///
+    /// <para><b>Anywhere else</b> there is no plan, and the install says so.</para>
+    /// </summary>
+    static InstallPlan CodexInstall(HostPlatform on) => on switch
+    {
+        { IsWindows: true } => new InstallPlan
+        {
+            Kind = InstallKind.Download,
+            GitHubRepo = "openai/codex",
+            AssetPattern = @"^codex-package-x86_64-pc-windows-msvc\.tar\.gz$",
+            ExecutableInArchive = "bin/codex.exe",
+            Url = "https://github.com/openai/codex/releases/latest/download/codex-package-x86_64-pc-windows-msvc.tar.gz",
+            NpmPackage = "@openai/codex",
+            ManualUrl = "https://developers.openai.com/codex/cli/"
+        },
+        { Os: HostOs.Linux, Arch: Architecture.X64 or Architecture.Arm64 } => new InstallPlan
+        {
+            Kind = InstallKind.Download,
+            GitHubRepo = "openai/codex",
+            AssetPattern = $@"^codex-package-{LinuxCpu(on, "x86_64", "aarch64")}-unknown-linux-musl\.tar\.gz$",
+            ExecutableInArchive = "bin/codex",
+            Url = $"https://github.com/openai/codex/releases/latest/download/codex-package-{LinuxCpu(on, "x86_64", "aarch64")}-unknown-linux-musl.tar.gz",
+            NpmPackage = "@openai/codex",
+            ManualUrl = "https://developers.openai.com/codex/cli/"
+        },
+        _ => new InstallPlan { Kind = InstallKind.None }
+    };
+
+    /// <summary>The vendor's own word for a Linux computer's processor.</summary>
+    static string LinuxCpu(HostPlatform on, string x64, string arm64) => on.Arch == Architecture.Arm64 ? arm64 : x64;
+
+    /// <summary>
     /// The runtimes this build will start, or the reason there are none.
     ///
     /// AN UNREADABLE OVERRIDE FILE YIELDS NO RUNTIMES AT ALL, and that is the point of this method
@@ -791,6 +889,30 @@ public static class RuntimeCatalog
         return read.Runtimes.FirstOrDefault(m => m.Id == id)
                ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"no manifest for '{id}'");
     }
+}
+
+/// <summary>The operating systems a built-in manifest can describe.</summary>
+public enum HostOs { Windows, Linux, MacOS, Other }
+
+/// <summary>
+/// THE COMPUTER A BUILT-IN MANIFEST DESCRIBES: its operating system and its processor. The product asks for
+/// <see cref="Current"/>; a test names another, so the Linux plans are proven on every runner and the Windows
+/// plans stay exactly what they were.
+/// </summary>
+public sealed record HostPlatform(HostOs Os, Architecture Arch)
+{
+    public static HostPlatform Current { get; } = new(
+        OperatingSystem.IsWindows() ? HostOs.Windows
+        : OperatingSystem.IsLinux() ? HostOs.Linux
+        : OperatingSystem.IsMacOS() ? HostOs.MacOS
+        : HostOs.Other,
+        RuntimeInformation.OSArchitecture);
+
+    public static HostPlatform WindowsX64 { get; } = new(HostOs.Windows, Architecture.X64);
+    public static HostPlatform LinuxX64 { get; } = new(HostOs.Linux, Architecture.X64);
+    public static HostPlatform LinuxArm64 { get; } = new(HostOs.Linux, Architecture.Arm64);
+
+    public bool IsWindows => Os == HostOs.Windows;
 }
 
 /// <summary>

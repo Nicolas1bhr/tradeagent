@@ -422,9 +422,14 @@ public static class Downloader
     /// moved or no asset matches, because every caller has a pinned URL to fall back to and a failure
     /// to look up the newest version must not become a failure to install at all.
     /// </summary>
-    public static async Task<string?> ResolveGitHubAssetAsync(string ownerRepo, string assetNameRegex, CancellationToken ct = default)
+    /// <param name="api">
+    /// The release API's base address. Null is GitHub's own, which is what the product passes; a test passes
+    /// its loopback stand-in, so an install is proven end to end without a request leaving the machine.
+    /// </param>
+    public static async Task<string?> ResolveGitHubAssetAsync(string ownerRepo, string assetNameRegex, CancellationToken ct = default,
+        string? api = null)
     {
-        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct);
+        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct, api);
         if (release is null) return null;
         try
         {
@@ -442,20 +447,24 @@ public static class Downloader
     }
 
     /// <summary>The newest release's tag, or null when it cannot be looked up.</summary>
-    public static async Task<string?> ResolveGitHubTagAsync(string ownerRepo, CancellationToken ct = default)
+    /// <param name="api">See <see cref="ResolveGitHubAssetAsync"/>.</param>
+    public static async Task<string?> ResolveGitHubTagAsync(string ownerRepo, CancellationToken ct = default, string? api = null)
     {
-        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct);
+        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct, api);
         if (release is null) return null;
         try { return release.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() : null; }
         catch (Exception) { return null; }
     }
 
-    static async Task<JsonDocument?> GitHubLatestReleaseAsync(string ownerRepo, CancellationToken ct)
+    /// <summary>GitHub's release API, where every release lookup goes unless a test says otherwise.</summary>
+    public const string GitHubApi = "https://api.github.com";
+
+    static async Task<JsonDocument?> GitHubLatestReleaseAsync(string ownerRepo, CancellationToken ct, string? api)
     {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                $"https://api.github.com/repos/{ownerRepo}/releases/latest");
+                $"{(api ?? GitHubApi).TrimEnd('/')}/repos/{ownerRepo}/releases/latest");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return null;

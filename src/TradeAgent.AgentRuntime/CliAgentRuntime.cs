@@ -242,6 +242,13 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         return (await ProbeVersionAsync(exe, ct)).Version;
     }
 
+    /// <summary>
+    /// WHERE THIS RUNTIME ASKS WHICH RELEASE IS NEWEST. The product never sets it, and it is GitHub's API; a test
+    /// points it at a loopback stand-in so an install plan is proven against the vendor's own asset names without
+    /// a request leaving the machine.
+    /// </summary>
+    internal string ReleaseApi { get; init; } = Downloader.GitHubApi;
+
     /// <summary>How long the version probe waits for the program's answer — what the product uses.</summary>
     internal static readonly TimeSpan DefaultVersionDeadline = TimeSpan.FromSeconds(20);
 
@@ -333,10 +340,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                     throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED, $"winget failed: {wg.StdErr}");
                 break;
 
+            // NO DOWNLOAD PAGE IN THE REFUSAL. "See <address>" is the owner being sent to install it himself,
+            // which is the terminal in other words (CLAUDE.md); what TradeAgent cannot install here, it says so.
             case InstallKind.Manual:
             case InstallKind.None:
                 throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
-                    $"{manifest.DisplayName} cannot be installed automatically yet. See {manifest.Install.ManualUrl ?? manifest.DocsUrl}");
+                    $"{manifest.DisplayName} is not something TradeAgent can install on this computer.");
         }
 
         progress?.Report($"Checking {manifest.DisplayName} runs");
@@ -361,20 +370,20 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         if (plan.GitHubRepo is { Length: > 0 } repo && plan.AssetPattern is { Length: > 0 } pattern)
         {
             progress?.Report($"Looking up the newest version of {manifest.DisplayName}");
-            url = await Downloader.ResolveGitHubAssetAsync(repo, pattern, ct);
+            url = await Downloader.ResolveGitHubAssetAsync(repo, pattern, ct, ReleaseApi);
             if (url is null)
                 progress?.Report("Could not reach the release list — using the version TradeAgent shipped with");
         }
 
         if (url is null && plan.Url is { Length: > 0 } pinned)
         {
-            var tag = plan.GitHubRepo is { Length: > 0 } r ? await Downloader.ResolveGitHubTagAsync(r, ct) : null;
+            var tag = plan.GitHubRepo is { Length: > 0 } r ? await Downloader.ResolveGitHubTagAsync(r, ct, ReleaseApi) : null;
             url = pinned.Replace("{version}", tag ?? "");
         }
 
         if (url is null)
         {
-            if (plan.NpmPackage is { Length: > 0 })
+            if (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide)
             {
                 progress?.Report($"No download is available for {manifest.DisplayName} — installing it as a package instead");
                 await InstallByNpmAsync(target, progress, relay, ct);
@@ -393,12 +402,21 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 relay, ct);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 })
+        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide)
         {
             // Declared fallback: the vendor also publishes this as an npm package, and TradeAgent
             // has its own Node, so a broken or moved archive is not the end of the road.
             progress?.Report($"The download did not work ({ex.Message}). Trying the package version instead.");
             await InstallByNpmAsync(target, progress, relay, ct);
+        }
+        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 })
+        {
+            // OFF WINDOWS THERE IS NO SECOND ROAD, and the refusal is the ARCHIVE'S. TradeAgent's private Node is
+            // a Windows zip, so the package fallback could only end in Node's own refusal — which used to tell the
+            // owner to install Node.js himself. What failed is the download, and that is what is said.
+            throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
+                $"{manifest.DisplayName} could not be downloaded: {ex.Message.TrimEnd('.')}. TradeAgent has no other " +
+                "way to install it on this computer.", ex);
         }
     }
 
@@ -462,14 +480,19 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         var transcript = new StringBuilder();
         var urlFound = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var codeFound = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var pattern = manifest.AuthUrlPattern is { Length: > 0 } p ? new Regex(p) : null;
+        var codePattern = CodePattern();
 
-        _ = PumpAsync(process.StandardOutput, transcript, pattern, urlFound);
-        _ = PumpAsync(process.StandardError, transcript, pattern, urlFound);
+        _ = PumpAsync(process.StandardOutput, transcript, pattern, urlFound, codePattern, codeFound);
+        _ = PumpAsync(process.StandardError, transcript, pattern, urlFound, codePattern, codeFound);
 
+        // A SIGN-IN WITH A CODE IS READY WHEN BOTH ARE: the link comes a line before the code, and returning at
+        // the link handed the screen a challenge whose code had not been read yet.
+        Task ready = codePattern is null ? urlFound.Task : Task.WhenAll(urlFound.Task, codeFound.Task);
         var exited = process.WaitForExitAsync(ct);
         var timeout = Task.Delay(TimeSpan.FromSeconds(30), ct);
-        await Task.WhenAny(urlFound.Task, exited, timeout);
+        await Task.WhenAny(ready, exited, timeout);
 
         string text;
         lock (transcript) text = transcript.ToString();
@@ -480,7 +503,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             var message = string.IsNullOrWhiteSpace(manifest.SignInDescription)
                 ? "Finish signing in in the browser window that just opened, then come back here."
                 : manifest.SignInDescription;
-            return new AuthChallenge(url, ExtractCode(text), message);
+            return new AuthChallenge(url, codeFound.Task.IsCompletedSuccessfully ? codeFound.Task.Result : ExtractCode(text), message);
         }
 
         if (exited.IsCompleted)
@@ -497,7 +520,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             "If a browser window does not appear shortly, press Sign in again.");
     }
 
-    static async Task PumpAsync(StreamReader reader, StringBuilder transcript, Regex? pattern, TaskCompletionSource<string> found)
+    static async Task PumpAsync(StreamReader reader, StringBuilder transcript, Regex? pattern, TaskCompletionSource<string> found,
+        Regex? codePattern, TaskCompletionSource<string> codeFound)
     {
         try
         {
@@ -508,9 +532,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 // so they have to come off before anything is matched.
                 var line = Ansi.Strip(raw);
                 lock (transcript) transcript.AppendLine(line);
-                if (pattern is null || found.Task.IsCompleted) continue;
-                var m = pattern.Match(line);
-                if (m.Success) found.TrySetResult(TrimUrl(m.Groups.Count > 1 ? m.Groups[1].Value : m.Value));
+                if (pattern is not null && !found.Task.IsCompleted && pattern.Match(line) is { Success: true } m)
+                    found.TrySetResult(TrimUrl(m.Groups.Count > 1 ? m.Groups[1].Value : m.Value));
+                if (codePattern is not null && !codeFound.Task.IsCompleted && codePattern.Match(line) is { Success: true } c)
+                    codeFound.TrySetResult(c.Groups.Count > 1 ? c.Groups[1].Value : c.Value);
             }
         }
         catch (Exception) { /* the stream closing is how this ends */ }
@@ -519,11 +544,23 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// <summary>Drops sentence punctuation that a printed URL picked up from the sentence around it.</summary>
     static string TrimUrl(string url) => url.TrimEnd('.', ',', ';', ':', ')', ']', '"', '\'');
 
-    /// <summary>A device code, when the runtime uses one. Shape is the near-universal XXXX-XXXX.</summary>
-    static string? ExtractCode(string text)
+    /// <summary>The manifest's code pattern, or null for a sign-in that shows no code — or names one that does not compile.</summary>
+    Regex? CodePattern()
     {
-        var m = Regex.Match(text, @"\b([A-Z0-9]{4}-[A-Z0-9]{4})\b");
-        return m.Success ? m.Groups[1].Value : null;
+        try { return manifest.AuthCodePattern is { Length: > 0 } p ? new Regex(p) : null; }
+        catch (ArgumentException) { return null; }
+    }
+
+    /// <summary>
+    /// The one-time code in what the sign-in printed, by the MANIFEST'S pattern — the vendor's shape, measured
+    /// (<see cref="RuntimeManifest.AuthCodePattern"/>) — or null where it declares none. A generic
+    /// <c>XXXX-XXXX</c> used to stand in for every vendor, and found nothing in Codex's four-and-five.
+    /// </summary>
+    string? ExtractCode(string text)
+    {
+        if (CodePattern() is not { } pattern) return null;
+        var m = pattern.Match(text);
+        return !m.Success ? null : m.Groups.Count > 1 ? m.Groups[1].Value : m.Value;
     }
 
     static string? FirstMeaningfulLine(string text)
