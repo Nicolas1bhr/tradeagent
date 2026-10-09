@@ -497,7 +497,11 @@ public sealed class CouncilRelay
         try { a = _attempts.Get(id); }
         catch (Exception) { return Verdict.Quarantine; }   // an unreadable ledger attributes nothing
 
-        if (a is null || CouncilRoles.Or(a.Role) != role) return Verdict.Quarantine;
+        // EXACTLY THIS ROLE'S. A NULL role is the chair's history (CouncilRoles.Default); any other role is compared as
+        // it is written, so an app principal — a decision model's call, `perception` (U-decision-port) — is no council
+        // role's launch in any pass. Folding an unknown role into the chair's, as `CouncilRoles.Or` does, published a file
+        // naming a perception call as the Operations Director's work and left one naming a flying call in place.
+        if (a is null || (a.Role ?? CouncilRoles.Default) != role) return Verdict.Quarantine;
         if (a.State != AiAttemptState.LAUNCHED || id == passAttempt) return Verdict.Publish;
         return _live.Holds(id) ? Verdict.Leave : Verdict.Quarantine;
     }

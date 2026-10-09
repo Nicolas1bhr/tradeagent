@@ -584,10 +584,12 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Currency = whole?.Currency ?? "",
             Runtime = i.Runtime,
             HarnessKey = i.HarnessKeyHeld is { } held ? Labels.HarnessKeyLine(held) : null,
-            // RULE 4, SAID EVERY DAY. Three figures, never one — and this build has only the third.
+            // RULE 4, SAID EVERY DAY. Three figures, never one — this build has the third, and since U-decision-port
+            // one source of the second: a perception call whose host reported what it billed is charged that figure.
             Basis = "every AI figure here is a LIST-PRICE EQUIVALENT TradeAgent calculated from token "
-                    + "counts. It is not an invoice, it is not a subscription charge, and it is not an "
-                    + "API charge your provider has billed.",
+                    + "counts — except the cost of a perception call whose host reported what it billed (its usage.cost), "
+                    + "which is counted at that billed charge. None of it is an invoice or a subscription charge, and no "
+                    + "other figure here is an API charge your provider has billed.",
             Missing = gaps
         };
     }
@@ -936,7 +938,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             foreach (var a in _attempts.Between(from, to)
                          .Where(a => a.State is AiAttemptState.LAUNCHED or AiAttemptState.LOST
                                      || a.UnpricedReason == AiAttemptStore.UnreportedReason))
-                interrupted.Add($"{CouncilRoles.Title(CouncilRoles.Or(a.Role))} attempt {a.Id[..Math.Min(a.Id.Length, 20)]} "
+                interrupted.Add($"{Whose(a)} {a.Id[..Math.Min(a.Id.Length, 20)]} "
                                 + $"is {a.State} — its reservation stands as its cost");
         }
         catch (Exception ex) { gaps.Add(new ReportGap("interrupted attempts", $"the launch ledger could not be read ({ex.Message})")); }
@@ -964,6 +966,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     }
 
     // ---------------------------------------------------------------- small readers
+
+    /// <summary>
+    /// WHOSE LAUNCH A LEDGER ROW IS, in the owner's words: a decision model's call is a perception call (<c>U-decision-port</c>),
+    /// never a council role's attempt — folding its role into the chair's called it an Operations Director attempt.
+    /// </summary>
+    static string Whose(AiAttempt a) => a.Role == AppPrincipals.Perception
+        ? "Perception call"
+        : $"{CouncilRoles.Title(CouncilRoles.Or(a.Role))} attempt";
 
     static ReportRole RoleOf(AiSpendToday s) => new(
         CouncilRoles.Title(s.Role!), s.Model, s.Turns,

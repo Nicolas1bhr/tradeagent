@@ -277,6 +277,16 @@ public static class Labels
         + "Nothing was sent to the AI tool. The split is on the Safety page.";
 
     /// <summary>
+    /// THE SAME REFUSAL FROM PERCEPTION'S OWN BUDGET (<c>U-decision-port</c>): a decision model's call refused because
+    /// perception's daily budget has no room for it. Its own sentence because it is no council role's share — the split on
+    /// the Safety page does not hold it — and nothing was charged, because a refused call reserves nothing.
+    /// </summary>
+    public const string PerceptionBudgetReached =
+        "Perception has used today's perception budget, so this question was not sent to the decision model and "
+        + "nothing was charged. Its budget is its own, inside your daily AI limit and apart from the council's shares, "
+        + "and it starts again after midnight.";
+
+    /// <summary>
     /// THE NEXT TURN HELD BECAUSE THE LAST ONE COULD NOT BE ENDED (<c>U-agent-tree</c>). TradeAgent stopped a
     /// turn and could not prove every process of it gone; a process the launch ledger has already closed over
     /// is one that may still be using the owner's AI account where no ceiling sees it, so no turn starts while

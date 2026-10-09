@@ -296,7 +296,11 @@ public sealed class AiAttemptStore(Database db)
         {
             Refusal = global
                 ? Labels.DailySpendingLimitReached
-                : Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Or(rule.Role))),
+                // PERCEPTION'S OWN BUDGET, IN ITS OWN WORDS (U-decision-port): it is no council role's share, and the
+                // sentence that names one would send the owner to a split that does not hold it.
+                : rule.Role == AppPrincipals.Perception
+                    ? Labels.PerceptionBudgetReached
+                    : Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Or(rule.Role))),
             Ceiling = global ? AiAdmission.Day : rule.Role,
             Over = over > 0m ? over : 0m,
             ResumesAt = rule.ResumesAt
@@ -421,26 +425,38 @@ public sealed class AiAttemptStore(Database db)
     /// either through <see cref="Database.Read"/> above or through <see cref="Database.Write"/> —
     /// and that is the point: an admission decided outside that gate is decided on a number another
     /// launch is free to change before the row lands.
+    ///
+    /// <para><b>The day's MONEY is every row's; the day's COUNTS are the AI's turns.</b> With no role named,
+    /// spent and reserved sum every row — the app's own principals' too, so a decision model's calls
+    /// (<see cref="AppPrincipals.Perception"/>, <c>U-decision-port</c>) are inside the owner's one cap — while
+    /// the five counts (turns, unpriced, estimated, open, unreported) skip the app's own principals: a
+    /// perception call is not a turn of the AI's, and the card, <c>ai_turns_today</c>, the Situation and the
+    /// report that read these counts were each reading one as a turn. A role named is that role's rows,
+    /// counts and all — perception's own reading is whole, because its budget is compared against it.</para>
     /// </summary>
     AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role)
     {
-        using var c = db.Cmd("""
+        var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
+        using var c = db.Cmd($"""
             SELECT
               COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE CAST(cost AS REAL) END), 0),
               COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN CAST(reserved_cost AS REAL) ELSE 0 END), 0),
-              SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE 1 END),
-              SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
-              SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NOT NULL AND effective_model IS NULL
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND effective_model IS NULL
                             AND COALESCE(pricing_basis,'') <> 'owner' THEN 1 ELSE 0 END),
-              SUM(CASE WHEN state='LAUNCHED' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state='LAUNCHED' THEN 1 ELSE 0 END),
               -- Charged a RESERVATION rather than a bill: a cost with a reason it could not be
               -- priced is exactly that, and it is what keeps `Spent` from reading as an invoice.
-              SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
                        THEN 1 ELSE 0 END)
-            FROM ai_attempt WHERE started_at >= $from AND started_at < $to
-              AND ($role IS NULL OR COALESCE(role,$chair) = $role)
-            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role),
-            ("$chair", CouncilRoles.Default));
+            FROM (SELECT *,
+                         CASE WHEN $role IS NULL AND role IN ({string.Join(",", principals.Select(p => p.Item1))})
+                              THEN 0 ELSE 1 END AS counted
+                    FROM ai_attempt WHERE started_at >= $from AND started_at < $to
+                     AND ($role IS NULL OR COALESCE(role,$chair) = $role))
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role),
+            ("$chair", CouncilRoles.Default), .. principals]);
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
 

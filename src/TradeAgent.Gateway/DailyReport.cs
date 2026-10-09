@@ -305,10 +305,11 @@ public sealed record ReportExecution
 /// WHAT THE AI COST, WITH THE THREE FIGURES <c>docs/COUNCIL.md</c> RULE 4 KEEPS APART.
 ///
 /// <para>"subscription charges, API charges and list-price equivalents are three figures, never one".
-/// This build has only the third: every number here is a list-price equivalent computed by TradeAgent
-/// from token counts, which is a calculation and not an invoice. <see cref="Basis"/> says so, in the
-/// owner's words, on every report — so an advisory number can never be read as a cap that was
-/// enforced by somebody's billing.</para>
+/// This build has the third — every number here is a list-price equivalent computed by TradeAgent from
+/// token counts, a calculation and not an invoice — and one source of the second: a perception call whose
+/// host reported what it billed (<c>U-decision-port</c>) is counted at that billed charge. <see cref="Basis"/>
+/// says so, in the owner's words, on every report — so an advisory number can never be read as a cap that
+/// was enforced by somebody's billing.</para>
 /// </summary>
 public sealed record ReportSpending
 {

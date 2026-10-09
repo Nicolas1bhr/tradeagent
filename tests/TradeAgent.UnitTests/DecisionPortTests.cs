@@ -421,6 +421,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
             var refused = await tight.DecideAsync(Ask());
             log.WriteLine($"budget: {refused.Refusal}");
             Assert.Equal(DecisionStatus.REFUSED, refused.Status);
+            Assert.Equal(Labels.PerceptionBudgetReached, refused.Refusal);
             Assert.Empty(host.Requests);
         }
 
@@ -449,6 +450,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         foreach (var a in answers) log.WriteLine($"race: {a.Status} {a.Refusal}");
         Assert.Equal(1, answers.Count(a => a.Status == DecisionStatus.ANSWERED));
         Assert.Equal(5, answers.Count(a => a.Status == DecisionStatus.REFUSED));
+        Assert.All(answers.Where(a => a.Status == DecisionStatus.REFUSED), a => Assert.Equal(Labels.PerceptionBudgetReached, a.Refusal));
         Assert.Single(host.Requests);
 
         // AND NO COUNCIL SHARE MOVED: the chair's own reading is its turn and its slice, perception's money is in the day.

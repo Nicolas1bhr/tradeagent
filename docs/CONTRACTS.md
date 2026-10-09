@@ -2239,6 +2239,11 @@ enforces arrives with the harness (`U-api-worker`); until then the allowance is 
 commitment and the daily ceiling is enforced between turns, never inside one. **That limitation now has
 an exception, and only one:** a role on the app-owned harness is bounded inside its turn — see below.
 
+**A decision model's call is a row too** (`U-decision-port`): role `perception`, runtime the instrument's id, reserved by
+`AiAttemptStore.Begin` under its own rule — the day's cap and perception's own budget, in the same transaction — and never
+by `TurnMeter`. The day's spent and reserved money counts it; the role-less counts (turns, unpriced, estimated, open,
+unreported) do not, because it is no turn of the AI's. **The decision port**, below, has the whole of it.
+
 ## The app-owned harness — `src/TradeAgent.AgentRuntime/ApiAgentRuntime.cs`, `ApiConversation.cs`
 
 One `IAgentRuntime` (`openai-api`) whose turns are HTTP requests this app composes rather than a vendor
@@ -3278,6 +3283,14 @@ call that named no model is UNPINNED too. (5) SETTLED: the answered id, and the 
 reports one (`pricing_basis` = `TypeSafeWire.BilledBasis`), else the tokens at the dated price (`pricing_basis` = the
 instrument's dated basis); no usage keeps the reservation as the cost, and so does an answer the tape could not take,
 which is not served. A crash after (4) leaves a record and a LAUNCHED row the next start charges its reservation.
+
+**The ledger's readers.** `perception` is an app principal, never a position and never a council role: the
+relay's fence compares a launch's role exactly (NULL is still the chair's), so a file naming a perception call is
+quarantined in every pass; the share refusal names perception's budget (`Labels.PerceptionBudgetReached`); the report's
+recovery list says "Perception call"; `AiAttemptStore.Totals`' role-less counts — turns, unpriced, estimated, open,
+unreported — skip app principals while spent and reserved keep them, so the card, `ai_turns_today`, the Situation and the
+report count no perception call as an AI turn and the owner's cap still holds its money; the report's basis line names
+perception's billed charge as the one API charge among its figures.
 
 **`decision-models.json`** may change a built-in instrument's price — with the day and the page it was read from — and
 its limits; never an address, a request id or a pin, and it cannot add an instrument. A row naming anything else stops
