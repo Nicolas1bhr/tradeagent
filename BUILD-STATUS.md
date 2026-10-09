@@ -9482,3 +9482,41 @@ Manager's gate at `80519e2d` (carried to `7e8a8d72`: build tree identical), Rele
 **NOT done, NOT verified:** the Settings card's note was not seen on screen (the app was not run). SEEN, NOT VERIFIED (→ seat A's light `U-verdict-stopped`): `Referee.Verdict` passes the stop token to the holdout
 run, so a verdict the app stops scores did-not-complete AFTER its judgement was charged — an over-charge. OWED: `RefereeFeedback.Text` ("counted across every renewal") is true but incomplete, left because it is
 a hashed publication text — its change is a semantics change for its own unit. Next on the same card: `U-holdout-card` → `U-holdout-served` (drafts in `fleet/tmp/A-queue/`).
+
+## 2026-10-09 — U-decision-port landed: bounded decision models (Jev) sit behind one port — every call refused before sending when it breaks a limit, reserved under the owner's daily AI cap and a perception budget, recorded on tape.db rung 2 with its pin, and never read as a council turn
+
+One fresh Opus builder under seat B built it from `docs/briefs/U-decision-port.md` (EDGE § 4.2, phase 4; RE-BRIEFED by seat B from survey S-port at `eb906b17` and committed `67e1d97f`,
+landing BEFORE `U-org-principals` and `U-org-envelopes` on today's role keys, R22; dispatched `a0de1392`). Merge `5ae975c0` (ff-only), 5 commits (item 1 `a72beb95`, item 2 `0a653a8e`,
+item 4 `1df440df`, item 3 `44be77f5` — item 3 last so test (e) ran red on the base readers — report `5ae975c0`), the builder's rebase on `786c0e5e`; no rebase at landing. **`tape.db` rung 2** (`decision_call`, `Schema` 2); main schema stays 30.
+Money-adjacent (spend reserved before a send; a key sent only to its built-in origin): red-first and three mutants. Depends on `U-tape-store` and `U-key-host-pin`, both landed.
+
+- **Item 1 — the port:** `IDecisionModel` and its types in `Core/Decisions` (no HTTP); `DecisionRequests.Refusal` refuses a structural limit before the key is read or anything is
+  reserved; built-in instruments `typesafe-direct` (`jev-1.13.0`) and `openrouter-jev` (asks `typesafe/jev-1.13`, pins the answered `typesafe/jev-1.13-20260917`, OpenRouter's
+  documented answer id), prices dated 2026-10-09; `TypeSafeWire` in AgentRuntime beside `ApiConversation`, with its own `HarnessKey` (`.Shared` refused), `ReadFor` at the send,
+  one POST, no retry, no redirect followed.
+- **Item 2 — spend:** `AiAttemptStore.Begin` with `{perception, Cap = AppHost.AiCap (the meter's own delegate), RoleCap = PerceptionDailyBudget 1 USD (0 in Unreadable),
+  Reservation = 65,536 tokens × the dated price}`, never through `TurnMeter`; one `OwnerDay` helper for TurnMeter and DailyReports; held in `LiveAttempts.Shared` until settled;
+  the billed `usage.cost` when the host reports it, else the estimate, `pricing_basis` saying which; a call with no usage keeps its reservation.
+- **Item 3 — readers:** `Fence` compares `a.Role ?? Default` exactly (a perception id is quarantined, never published as Operations' work); `Refuse` names the perception budget
+  (`Labels.PerceptionBudgetReached`); recovery says "Perception call"; `Totals`' role-less counts skip `AppPrincipals`, spent and reserved keep them; the report's basis line names
+  perception's billed charge.
+- **Item 4 — record:** `decision_call` keyed by the attempt, one transaction, written BEFORE the attempt settles; origin and `UNPINNED` computed by the store from this build's own
+  pin; the state kept as its sha and source refs (EDGE § 4.2); `CONTRACTS.md` "The decision port"; the vendor scan adds both hosts and a rule that a test using `TypeSafeWire` sets
+  an `Endpoint`.
+- **Declared deviations, ACCEPTED by seat B:** `RESEARCH-REQUIRED.md` § D2 written as § D5 (D1–D4 taken); the built-in instruments live in Core (the tape store reads the pin);
+  64K reserved as 65,536 tokens; token budgets refused in BYTES before sending, never recorded as tokens; a price in another currency than `costs.json`'s refused; a
+  `decision-models.json` row naming an address, request id or pin STOPS that instrument (refuse, never guess); `AppHost.DecisionModel` composes the port and nothing calls it.
+
+**Verified by running (the builder, quoted).** RED before item 3 (base readers): (e) "12 reader(s) read a perception call as the council's: fence: the chair's pass PUBLISHED …
+refusal: "The Operations Director has used its share…" … status: ai_turns_today 5"; (d) Expected "Perception has used today's perception bu"… Actual "The Operations Director
+has used its shar"…; (a)(b)(c)(f)(g) use the new API, red by mutant only. Mutants (reverted): (i) `unpinned = AnsweredModel is null` ⇒ (a) red on both instruments; (ii) the
+reservation after the send ⇒ (c) "Assert.Single() Failure: The collection was empty"; (iii) `Fence` back on `CouncilRoles.Or` ⇒ (e) "3 reader(s) …". Builder: Release 0 warnings
+(19 projects); Unit 1584, Fault 485, 0 failed; PerceptionReadersTests, DecisionPortTests, TapeStoreTests, TapeReadTests, SuiteReachesNoVendorTests 32/32 ×3; TapeOverPipeTests 8/8 ×3.
+**Manager's gate** at `5ae975c0`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1584/1584 (10 m 53 s); Fault 485/485 (1 m 59 s); Integration 756/757,
+1 skipped (11 m 15 s) → 0 failed.
+**Names** vs `main`: 2426 → 2434, 0 removed, 8 added ([Fact]/[Theory] 2377 → 2385). **Scan:** 88 hits, each read — the vendor's usage words (`input_tokens`, token budgets, `InputTokens`…), the `Bearer`
+scheme with a variable key, and the tests box's own "off Tailscale" message (already in `tools/win-test.sh`): no key, host or literal value; excluded by name in that one call.
+**CI:** branch run 37919806027 at `44be77f5` (the code tip; the report docs only): ubuntu ✓, macOS ✓, windows ✓, package ✓ (37919689876 at the pre-rebase tip cancelled,
+superseded). Tests box: NOT RUN — "the machine does not answer" (11:16, 12:48, 15:53 CEST, the builder; 14:22:34Z, seat B). Landing CI on `main`: a waiter is armed.
+**NOT verified:** no request was ever sent to TypeSafe or OpenRouter (none allowed: the wire's shapes are their documentation, not a measurement); rate limits recorded, not
+enforced (nothing calls the port yet); no owner surface or key paste (`U-decision-card`); which agreement binds Jev output used through OpenRouter stays UNKNOWN (R02 § 2).
