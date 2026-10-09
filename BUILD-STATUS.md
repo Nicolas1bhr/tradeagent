@@ -9447,3 +9447,38 @@ Unit 1,556, Fault 485, 0 failed; at `2f772018` (after the text edit) seat B's 38
 machine does not answer" (00:28:57 and 11:01:24 CEST, the builder; 10:19:13Z, seat B). Landing CI on `main`: a waiter is armed.
 **NOT verified / owed:** "nothing reads the archive back" holds by construction, not by a test; the scanner records a kept copy as the agent's material (its bytes are the agent's); the
 Situation header "put the version before it back" now also heads the not-kept lines (wording, owed with `U-canon`); codex's cut at 32,768; no app run; Windows beyond hosted CI.
+
+## 2026-10-09 — U-holdout-campaign landed: research over a campaign's months is charged to it through any dataset of any pair, a second press over held months buys no fresh judgement of them, no press rewrites the class a campaign judges under, and a run the app stops returns nothing
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-holdout-campaign.md` — the leak MEASURED red by seat A's survey probe at `ea88e72b` (a run over a second dataset of the
+same months SERVED past campaign 1's spent budget; a second press opening campaign 2 at 0 judgements, one version judged twice, "1 of 3" each), the brief re-checked hard against `U-holdout-later` on
+2026-10-09 (`fleet/tmp/s-holdout-campaign-survey/RECHECK-2026-10-09.md`), the class rewrite and the stopped run folded in by seat A; dispatched `138d0d0c`. The builder's tip was on `138d0d0c`; the manager's
+prep rebased it onto `550301df` and — docs only, the gate carried — onto `2802a79b`; src+tests patch-id identical (`22d68156e431`). Merge `7e8a8d72` (ff-only): 5 commits (4 items, the report), 13 files,
++1,167/−98. On main: item 1 `55cdce5e`, item 2 `383b6d23`, item 3 `dbc9956f`, item 4 `c648e7dc`, the report `7e8a8d72`.
+**No schema change** (main 30): the trial key `(campaign, version, run)` takes one row per campaign. EVIDENCE: the precommitted `CampaignPolicy.V1` budgets (policy texts NOT edited; their shas stay on every campaign row).
+
+- **Item 1 (`55cdce5e`), the trial charge:** `CampaignStore.ChargedBy` — the run's own campaign first, then by id every OPEN campaign whose development months `[first_bar, holdout_from)` the run's bars overlap,
+  through any dataset of any pair; a fixture run, and a campaign over fixture or REJECTED bars, charge through their own dataset only. `Run` asks `TrialRefusal` of each before the run; `Record` registers each
+  inside the run's write; a refusal through another dataset names that campaign's months and the dataset read; `TrialsCharged` counts `DISTINCT run_id`. A run the app stops is refused `IPC_UNAVAILABLE`:
+  nothing recorded, charged or returned (both callers read — the pipe and `GrantedWorkerTools` map the refusal to an answer; none needed the halted figures).
+- **Item 2 (`383b6d23`), the judgement count:** `JudgementsSpent` — every verdict, of any campaign and pair, whose `[row cutoff, dataset close)` overlaps the campaign's — replaces `VerdictsInLineage` in `ChargeVerdict`,
+  the referee's four refusals and `verdicts_spent`; only the legacy cost-model pin keeps the lineage count. `OverTheSameMonths` names the other campaigns in the spent words (offering a holdout over OTHER months)
+  and in `CampaignStore.PressNote`, the static the card's note prints.
+- **Item 3 (`dbc9956f`), the class held:** `DatasetStore.SetHoldout` refuses a class change while the dataset has an open campaign, after the later-cutoff check (a later press keeps its words), writing nothing.
+- **Item 4 (`c648e7dc`):** CONTRACTS (both NOT-covered notes closed; rules 1–4; a feature's reach into held months stated as NOT counted), the `backtest`/`verdict` schema texts, USER-GUIDE.
+- **Deviations, JUDGED (seat A), accepted:** the trial gate leaves the run being registered out of its own counts — one run is one trial, and its second campaign row must not be refused for the trial its
+  first row took; also made true, declared: the `Elsewhere` refusal clause and three comments that said a peek costs a trial for any parentless version. **Process, JUDGED:** item 4's one scan hit ("stop
+  token fired", prose) was judged after its commit and re-scanned clean by name — disclosed, nothing secret, accepted; the branch was rewritten once before CI (a comment folded into item 1).
+**Verified by running (the builder, quoted; then the manager's gate).** Builder at `2094929f`: Release `--no-incremental` 0 warnings, 0 errors; Unit `Passed: 1551, Failed: 0`; Fault `Passed: 485, Failed: 0`;
+Integration (the (g) classes + the new one) 35/35; 3× `CampaignLedgerTests` 22/22, `HoldoutCampaignOverPipeTests` 4/4. RED before (base `138d0d0c` + a skeleton of item 2's members so (d) compiles): (a) "a run over
+dataset 3 inside campaign 1's development months was charged to it 0 time(s), not once"; (c) "one run registered under campaigns 1 and 2 counts 2 trial(s) in its home"; (d) "campaign 2, opened over months
+campaign 1 already judged once, starts with 0 of its 2 judgements spent"; (e) "the press rewrote dataset 1's class to fixture while campaign 1 judges it as real history"; (f) "a run the app stopped was answered
+with its halted figures: outcome FAULTED"; (b) green on the base, not claimed red. **Mutants watched RED:** `Record` registering the run's own campaign alone ⇒ (a); the class comparison dropped ⇒ (e); restored.
+Manager's gate at `80519e2d` (carried to `7e8a8d72`: build tree identical), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1575/1575 (9 m 59 s), Fault 485/485 (2 m), Integration 756/757,
+1 skipped (11 m 18 s) → 0 failed. Names vs `main`: 2420 → 2426, removed 0, added 6. Scan: four hits read one by one and excluded by name — the tests box's own `ready` line (it names the private network),
+`stop.Token);` (a CancellationTokenSource), the test grant read `Grants.Issue(role, "attempt-holdout-campaign").Token`, the prose "stop token fired"; no secret. `rev-list` 0 both ways.
+**CI:** run 37859848050 at `2094929f` (the code of the merge): test ubuntu-latest success 13 m, macos-latest 24 m, windows-latest 53 m, package 4 m (37859571785, the pre-rewrite tip, cancelled).
+**Tests box:** NOT RUN — `ready` exit 1 at ~01:3x, 11:01 and 11:04 CEST, "the machine does not answer".
+**NOT done, NOT verified:** the Settings card's note was not seen on screen (the app was not run). SEEN, NOT VERIFIED (→ seat A's light `U-verdict-stopped`): `Referee.Verdict` passes the stop token to the holdout
+run, so a verdict the app stops scores did-not-complete AFTER its judgement was charged — an over-charge. OWED: `RefereeFeedback.Text` ("counted across every renewal") is true but incomplete, left because it is
+a hashed publication text — its change is a semantics change for its own unit. Next on the same card: `U-holdout-card` → `U-holdout-served` (drafts in `fleet/tmp/A-queue/`).
