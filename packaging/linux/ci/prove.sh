@@ -207,6 +207,7 @@ pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, st
 # ---- 5. the window, as the owner would see it --------------------------------------------------------
 until [ $(( $(now) - t_start )) -ge $(( minutes * 60 - 90 )) ]; do sleep 5; done
 note "phase 5: the window's screenshot"
+# shellcheck disable=SC2024 # the file is root's on purpose: only xwd runs as the account, with its cookie
 sudo -u "$account" env DISPLAY=":$display" XAUTHORITY="$home/.Xauthority" xwd -root -silent > "$out/window.xwd" \
     || fail "xwd could not read display :$display with the account's cookie"
 xwdtopnm "$out/window.xwd" 2> /dev/null > "$out/window.ppm"
