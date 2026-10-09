@@ -33,3 +33,24 @@ no decay ⇒ (a) and (e) red.
 Gate and report per `docs/HOW-WE-BUILD.md` and `docs/FLEET.md` "The builder pass": rebase on `main` first; `--no-incremental` Release 0 warnings; three suites 0 failed; `MissionLoopTests`,
 `MissionEventTests`, `CouncilLoopTests` 3×; branch CI on all three platforms; tests box or NOT RUN with `ready`'s answer; names vs `main` 0 removed (both set sizes printed);
 `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
+
+## Report
+**Tip:** this commit (docs only) on code tip `380c93c3` (item 1 `81d1595f`, item 2 `380c93c3`) over `main` `138d0d0c`; `-c Release --no-incremental`: 0 Warning(s), 0 Error(s).
+**Local (suite.sh):** Unit 1,556 passed, 0 failed; Fault 485 passed, 0 failed; 3× every class of seat B's named files (33, incl. MissionLoopTests, MissionEventTests, CouncilLoopTests,
+MissionInstructionsTests): 245/245 three times; Fault EmptyAllowlistTests 4/4 three times. **Names vs main:** base 2,397, tip 2,404 — removed 0, added 7.
+**CI** 37855848570 at `380c93c3`: ubuntu-latest success, macos-latest success, windows-latest success (61 min), package success. **Tests box:** NOT RUN — `ready` at 22:24Z, 22:49Z,
+23:08Z and 09:01Z: "NO - the machine does not answer (…)".
+**Item 1 — done** as briefed: a turn woken only by payload-less reviews raises the role's next look at 2× that row's `due_at − created_at` (floor ReviewEvery, cap 8×), any other
+wake at ReviewEvery, read from the consumed rows in `NextWait`, no new state. **Declared deviation:** one look is pending per role, so a real event between looks raised nothing and
+the decayed look fired and doubled ((a)–(c) red that way); that role's own pending payload-less look due after now+ReviewEvery is now superseded in one write by one at
+now+ReviewEvery (`MissionEventStore.BringLookForward`: consumed by no launch, `superseded`, detail = new id; it refuses every other wake and the other role's look —
+`Only_a_roles_own_pending_scheduled_look_is_ever_brought_forward`). Failed and vendor-held turns skip `NextWait` and keep the base interval, as before.
+**Item 2 — done** under seat B's byte rule: the false clause is now "On a resumed session it costs your owner about what a working one does. With work in progress, ask for your next
+wake in `next.json`: the scheduled look slows while nothing happens, until a real event." Pin `MissionInstructionsTests:101-103` unchanged (both sentences kept); the new text is pinned
+by `An_idle_turn_is_not_called_cheap_…`. **Declared fix:** next.json's example was a hole in the `$"""` literal (a replica printed "```json|after_seconds|```"), now `{NextJsonExample}`.
+**Bytes**, real render (default settings; throwaway probe, never committed): operations 31,566 → 31,549, with the simulator paragraph 32,780 → 32,763; research 31,482 → 31,465, with
+it 32,696 → 32,679 — net −17 each; operations with the simulator paragraph was 12 bytes over 32,768 and is now 5 under.
+**Red at base:** (a) Expected "30 60 120 240 240" Actual "30 30 30 30 30"; (b), (c), (d) Expected "30 60 120" Actual "30 30 30"; (e) "16 paid looks in four quiet hours; attempt 3
+paid for 16"; item 2 "Sub-string found" (almost nothing), then with the paragraph alone Not found "{"after_seconds": 900}". **Mutants** (reverted): no reset ⇒ (a) Expected "30 60 120
+240 240 30 60" Actual "30 60 120 240 240 240" (b, c red; d, e green); no decay ⇒ (a) Actual "30 30 30 30 30" and (e) "16 paid looks…" (all five red). Not the money path.
+**Not done / not verified:** the Safety page's "how often it is woken to look around anyway" now states the fastest pace (untouched; a one-line follow-up); codex's cut at 32,768; Windows hardware.
