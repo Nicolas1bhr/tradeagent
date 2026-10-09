@@ -3543,9 +3543,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             d.Line))]);
 
     /// <summary>
-    /// ENDS ONE PAPER DEPLOYMENT. Cancels what it has working, closes what is open through the
-    /// gateway's own close, records the reason — and leaves the allocation and the grant exactly
-    /// where they were.
+    /// ENDS ONE PAPER DEPLOYMENT. Cancels what it has working, closes what the RUN holds — its own book,
+    /// never another run's or the owner's (<c>U-paper-books</c>) — records the reason, and leaves the
+    /// allocation and the grant exactly where they were.
     ///
     /// <para>It is reachable from here, when starting one is not, because it only ever REMOVES
     /// exposure. A caller that has to have a role that may place orders (it IS in

@@ -467,8 +467,9 @@ public static class GatewaySchema
             []),
 
         new(Core.Ops.DeploymentStop, "trade deployment stop --id <deployment>", true,
-            "ENDS ONE PAPER DEPLOYMENT: its working orders are cancelled, whatever it has open is "
-            + "closed through the same path 'close' takes, and the reason is recorded against the run. "
+            "ENDS ONE PAPER DEPLOYMENT: its working orders are cancelled, what the RUN itself holds — "
+            + "its own fills, never another run's or the account owner's on the same account — is closed "
+            + "with an ordinary market order, and the reason is recorded against the run. "
             + "It only ever REMOVES exposure, which is why it is here at all when starting one is not "
             + "— the same exception this channel already makes for 'close' and 'cancel'. WHAT IT DOES "
             + "NOT DO: it does not withdraw the paper allocation or the account owner's envelope, both "
