@@ -1,3 +1,6 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
@@ -31,6 +34,224 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         { CouncilRoles.Research, RuntimeClass.Harness },
         { CouncilRoles.Operations, RuntimeClass.Harness }
     };
+
+    /// <summary>The three pairs that run, each on the built-in simulator and off it.</summary>
+    public static TheoryData<string, RuntimeClass, bool> Pairs => new()
+    {
+        { CouncilRoles.Operations, RuntimeClass.Cli, true },
+        { CouncilRoles.Research, RuntimeClass.Cli, true },
+        { CouncilRoles.Research, RuntimeClass.Harness, true },
+        { CouncilRoles.Operations, RuntimeClass.Cli, false },
+        { CouncilRoles.Research, RuntimeClass.Cli, false },
+        { CouncilRoles.Research, RuntimeClass.Harness, false }
+    };
+
+    /// <summary>The app's default settings, on the built-in simulator unless told otherwise.</summary>
+    static WorkspaceContext Ctx(string role, bool simulator = true) => new(
+        "Simulator (built in)", ConnectorIsPaper: true, null, TradingMode.PAPER, true, null, new RiskPolicy(),
+        ConnectorIsBuiltInSimulator: simulator, Role: role);
+
+    /// <summary>A role's home exactly as a start builds it, recorded on a manifest of the test's own.</summary>
+    (string Home, AppFileManifest Files) Built(string role, bool simulator = true)
+    {
+        var files = new AppFileManifest(Path.Combine(_root, $"app-files-{role}-{simulator}.tsv"));
+        var root = Path.Combine(_root, $"{role}-{simulator}");
+        return (WorkspaceBuilder.Build(Ctx(role, simulator), root, files), files);
+    }
+
+    static string Read(string home, string relPath) =>
+        File.ReadAllText(Path.Combine(home, relPath.Replace('/', Path.DirectorySeparatorChar)));
+
+    // ---- (a) the harness is never told of a shell, a wake file or the inbox ---------------------------
+
+    /// <summary>
+    /// (a) WHAT THE HARNESS IS ACTUALLY SENT, read off the wire. A Research home is built as a start builds it, one
+    /// harness turn runs against a loopback provider, and the system message that arrived — and the guide it names, which
+    /// the harness can read — say nothing of a shell, packages, the internet, a wake file or the inbox: the harness runs
+    /// no program of its own, writes only <c>out/</c> and <c>trading/</c>, and refuses any path outside its folder.
+    ///
+    /// <para>RED at base (2802a79b), where the system text was the CLI's AGENTS.md: "the harness was told of a shell:
+    /// 'create files, write and run code, install packages, use the shell and use the internet. Work here rather than
+    /// asking the person you work for'".</para>
+    /// </summary>
+    [Fact]
+    public async Task The_harness_is_never_told_of_a_shell_a_wake_file_or_the_inbox()
+    {
+        var (home, _) = Built(CouncilRoles.Research);
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("nothing to do.", input: 10, output: 2));
+        var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        manifest.BaseUrl = provider.BaseUrl;
+        using var runtime = new ApiAgentRuntime(manifest, provider.Holding(Pretend), null,
+            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10));
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => home,
+            () => new Dictionary<string, string>(), () => null);
+
+        await conversation.SendMissionAsync("## Situation\nnothing has happened.");
+
+        using var body = JsonDocument.Parse(Assert.Single(provider.Requests));
+        var system = body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!;
+        log.WriteLine($"system text: {Encoding.UTF8.GetByteCount(system):N0} bytes");
+
+        Assert.Equal(Read(home, Canon.HarnessFile), system);
+        Assert.Contains($"`{Canon.HarnessGuideFile}`", system);
+        foreach (var (name, text) in new[] { ("system text", system), ("guide", Read(home, Canon.HarnessGuideFile)) })
+            foreach (var (what, pattern) in Forbidden)
+            {
+                var hit = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
+                Assert.False(hit.Success, $"the harness's {name} told it of {what}: '{Around(text, hit.Index)}'");
+            }
+    }
+
+    const string Pretend = "not-a-real-credential";
+
+    static readonly (string What, string Pattern)[] Forbidden =
+    [
+        ("a shell", @"\bshell\b"), ("packages it cannot install", @"install packages"), ("the internet", @"\binternet\b"),
+        ("a wake file", @"next\.json"), ("the inbox", @"\binbox\b")
+    ];
+
+    static string Around(string text, int at) =>
+        text.Substring(Math.Max(0, at - 60), Math.Min(140, text.Length - Math.Max(0, at - 60))).ReplaceLineEndings(" ");
+
+    // ---- (b) every verb, tool and path the canon names is reachable ------------------------------------
+
+    /// <summary>
+    /// (b) THE CANON AND THE GUIDE A PAIR IS HANDED NAME ONLY WHAT THAT PAIR CAN REACH. Read from the files a start
+    /// writes — the CLI's <c>AGENTS.md</c> and <c>GUIDE.md</c>, the harness's own two — every backticked span and every
+    /// line of a code block is held to the pair's reach: a <c>trade</c> command line must be one of its verbs (and is
+    /// never right on the harness), a tool call one of its tools carrying one of its ops (and is never right on a CLI),
+    /// an op's name one of its verbs, a tool's name one of its tools, a path inside what it reads; and every capability a
+    /// slot rendered — verbs, paths read, paths written — must be one the pair has.
+    ///
+    /// <para>RED at base (2802a79b): "research·CLI: 4 unreachable — first: an op it may not use: `close-all`"; and
+    /// "research·harness: 58 unreachable — first: a command line on the harness: `trade pnl --json`".</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Pairs))]
+    public void Every_verb_tool_and_path_the_canon_names_is_reachable_by_its_role_and_runtime(string role,
+        RuntimeClass runtime, bool simulator)
+    {
+        var reach = AgentReach.For(role, runtime);
+        var (home, _) = Built(role, simulator);
+        var problems = new List<string>();
+
+        foreach (var (name, file, rendered) in new[]
+                 {
+                     ("canon", Canon.FileFor(runtime), Canon.Render(Ctx(role, simulator), reach)),
+                     ("guide", Canon.GuideFor(runtime), Canon.Guide(Ctx(role, simulator), reach))
+                 })
+        {
+            var text = Read(home, file);
+            problems.AddRange(Unreachable(text, reach).Select(p => $"{name}: {p}"));
+
+            // WHAT THE SLOTS RENDERED, held to the same reach — the file must BE that render for these to mean anything.
+            Assert.Equal(rendered.Text, text);
+            problems.AddRange(rendered.Verbs.Where(v => reach.Verb(v) is null).Select(v => $"{name}: a verb slot it cannot use: {v}"));
+            problems.AddRange(rendered.Reads.Where(p => !CanonRules.Readable(p, reach)).Select(p => $"{name}: a read slot outside what it reads: {p}"));
+            problems.AddRange(rendered.Writes.Where(p => !reach.WritesInto(p)).Select(p => $"{name}: a write slot outside what it writes: {p}"));
+            log.WriteLine($"{role}·{runtime}{(simulator ? "·simulator" : "")} {name}: {Encoding.UTF8.GetByteCount(text):N0} bytes, "
+                          + $"{rendered.Verbs.Count} verb slots, {rendered.Reads.Count} reads, {rendered.Writes.Count} writes");
+        }
+
+        foreach (var p in problems) log.WriteLine(p);
+        Assert.True(problems.Count == 0, $"{role}·{runtime}: {problems.Count} unreachable — first: {problems.FirstOrDefault()}");
+    }
+
+    /// <summary>
+    /// Every span of a rendered text the pair cannot reach, in words. The rules are the canon's own: what a slot would
+    /// have thrown on, found in the text itself — so text that bypassed a slot is held to the reach as well.
+    /// </summary>
+    static IEnumerable<string> Unreachable(string text, AgentReach reach)
+    {
+        var allOps = GatewaySchema.Ops().Select(o => o.Op)
+            .Concat(GrantedWorkerTools.Granted.SelectMany(t => GrantedWorkerTools.OpsOf(t.Name)))
+            .ToHashSet(StringComparer.Ordinal);
+        var allTools = GrantedWorkerTools.Granted.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        var harness = reach.Runtime == RuntimeClass.Harness;
+
+        foreach (var span in Spans(text))
+        {
+            if (span.StartsWith("trade ", StringComparison.Ordinal))
+            {
+                if (harness) { yield return $"a command line on the harness: `{span}`"; continue; }
+                var words = span.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (!reach.Verbs.Any(v => Prefix(CanonRules.CommandWords(v.Invocation), words)))
+                    yield return $"a command it cannot run: `{span}`";
+            }
+            else if (Regex.Match(span, @"^([a-z_]+)\((.*)\)$") is { Success: true } call)
+            {
+                if (!harness) { yield return $"a tool call on a command line: `{span}`"; continue; }
+                var tool = call.Groups[1].Value;
+                if (!reach.Tools.Contains(tool)) { yield return $"a tool it does not have: `{span}`"; continue; }
+                var op = Regex.Match(call.Groups[2].Value, @"\bop: ([a-z-]+)").Groups[1].Value;
+                if (op.Length == 0) op = GrantedWorkerTools.OpsOf(tool).Count == 1 ? GrantedWorkerTools.OpsOf(tool)[0] : "";
+                if (reach.Verb(op) is not { } verb || verb.Invocation != tool)
+                    yield return $"an op its tool does not carry for it: `{span}`";
+            }
+            else if (allOps.Contains(span) && reach.Verb(span) is null) yield return $"an op it may not use: `{span}`";
+            else if (allTools.Contains(span) && !reach.Tools.Contains(span)) yield return $"a tool it does not have: `{span}`";
+            else if (harness && span.StartsWith("--", StringComparison.Ordinal)) yield return $"a command-line flag on the harness: `{span}`";
+            else if (IsPath(span) && !CanonRules.Readable(span, reach)) yield return $"a path outside what it reads: `{span}`";
+        }
+    }
+
+    static bool Prefix(string[] form, string[] words) =>
+        words.Length >= form.Length && form.Select((w, i) => words[i] == w).All(x => x);
+
+    static bool IsPath(string s) =>
+        !s.Contains(' ') && !s.StartsWith("--", StringComparison.Ordinal)
+        && (s.Contains('/') || Regex.IsMatch(s, @"\.(md|json|strategy|tsv|csv)$"));
+
+    /// <summary>Each line of a fenced code block, then every inline backticked span outside them.</summary>
+    static IEnumerable<string> Spans(string text)
+    {
+        var normal = text.ReplaceLineEndings("\n");
+        foreach (Match fence in Regex.Matches(normal, @"```[^\n]*\n(.*?)\n```", RegexOptions.Singleline))
+            foreach (var line in fence.Groups[1].Value.Split('\n'))
+                if (line.Trim().Length > 0) yield return Regex.Replace(line.Trim(), @"\s+#.*$", "");
+        var inline = Regex.Replace(normal, @"```[^\n]*\n.*?\n```", "", RegexOptions.Singleline);
+        foreach (Match m in Regex.Matches(inline, @"`([^`\n]+)`")) yield return m.Groups[1].Value.Trim();
+    }
+
+    // ---- (g) the Research Director is told it may not place orders --------------------------------------
+
+    /// <summary>
+    /// (g) THE ROLE THE GATEWAY REFUSES EVERY ORDER IS TOLD SO, AND IS NOT TAUGHT TO PLACE ONE. The pipe refuses a
+    /// Research launch every mutating op with <c>ROLE_MAY_NOT_TRADE</c> (<c>GatewayPipeServer</c>, <c>CouncilRoles.MayPlaceOrders</c>);
+    /// its old mission carried the chair's order rules word for word and never said so. The chair's canon keeps every one
+    /// of those rules verbatim.
+    ///
+    /// <para>RED at base (2802a79b), on both runtimes: <c>Not found: "**You do not place orders.**"</c>.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(RuntimeClass.Cli)]
+    [InlineData(RuntimeClass.Harness)]
+    public void The_research_director_is_told_it_may_not_place_orders(RuntimeClass runtime)
+    {
+        var research = Canon.Render(Ctx(CouncilRoles.Research), runtime);
+        Assert.Contains("**You do not place orders.**", research);
+        Assert.Contains("`ROLE_MAY_NOT_TRADE`", research);
+        Assert.DoesNotContain("Every order command carries a request id", research);
+        Assert.DoesNotContain("request-id", research);
+
+        var chair = Canon.Render(Ctx(CouncilRoles.Operations), RuntimeClass.Cli);
+        Assert.DoesNotContain("**You do not place orders.**", chair);
+        foreach (var rule in OrderRules) Assert.Contains(rule, chair);
+    }
+
+    /// <summary>The first sentence of each of the chair's order rules, as the mission file carried them.</summary>
+    static readonly string[] OrderRules =
+    [
+        "**Every order command carries a request id.** Reusing the *same* `--request-id` is always safe:",
+        "**A request id names ONE operation, and it stays that operation.**",
+        "**If an order command dies without printing a reply, the order may still have been placed.**",
+        "**Spell an argument's value exactly, because nothing is guessed for you.** `--tif` is one of",
+        "**`trade order <id>` answers about YOUR requests.**",
+        "**If a command fails, do not retry it blindly.** Read the error. `ORDER_STATE_UNKNOWN` means",
+        "**Execution can be switched off underneath you** at any moment, by the account owner or"
+    ];
 
     // ---- (c) the reach is read from what enforces it --------------------------------------------------
 

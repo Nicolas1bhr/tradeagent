@@ -181,10 +181,11 @@ public class DailyReportTests
     [Fact]
     public void The_guide_names_the_report_and_says_the_agent_cannot_write_it()
     {
-        var guide = WorkspaceBuilder.Instructions(new WorkspaceContext(
+        // The canon's mission (U-canon), where the report and the rule that it cannot be written now live.
+        var guide = Canon.Render(new WorkspaceContext(
             "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
             ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["ES"] },
-            ConnectorIsBuiltInSimulator: true));
+            ConnectorIsBuiltInSimulator: true), RuntimeClass.Cli);
 
         Assert.Contains("trade report", guide);
         Assert.Contains("You cannot write it", guide);

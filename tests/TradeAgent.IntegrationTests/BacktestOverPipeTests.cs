@@ -514,7 +514,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     ///
     /// <para>This is the whole claim of <c>U-language-in-home</c> end to end: <c>WorkspaceBuilder</c>
     /// writes the three worked programs into the role's own <c>strategies/examples/</c>, the path
-    /// <c>AGENTS.md</c> prints is the path the gateway resolves, the bytes parse, and what comes back is
+    /// <c>GUIDE.md</c> prints (<c>AGENTS.md</c> until <c>U-canon</c>) is the path the gateway resolves, the bytes parse, and what comes back is
     /// a run id and a version id the app computed. A role's first backtest therefore needs nothing
     /// written by the role — which is the difference between a language a model can use on its first
     /// turn and one it has to reconstruct from refusals.</para>

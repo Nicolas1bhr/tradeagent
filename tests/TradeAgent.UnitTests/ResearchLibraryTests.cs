@@ -161,7 +161,8 @@ public class ResearchLibraryTests
     [Fact]
     public void The_mission_and_the_schema_name_the_reference_the_examples_and_the_first_backtest()
     {
-        var mission = WorkspaceBuilder.Instructions(Context());
+        // The guide (U-canon), which carries the research procedures word for word.
+        var mission = Canon.Guide(Context(), RuntimeClass.Cli);
 
         Assert.Contains($"`{ResearchLibrary.ReferencePath}`", mission);
         Assert.Contains($"`{ResearchLibrary.ExamplesDir}/`", mission);

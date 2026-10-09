@@ -61,6 +61,15 @@ public sealed class ApiAgentRuntime(
     public const string RuntimeId = "openai-api";
 
     /// <summary>
+    /// WHETHER A ROLE CAN RUN ON THE HARNESS AT ALL. The chair stays on the vendor CLI in this slice, whatever is chosen
+    /// for it: its conversation IS the Chat page's — one object the window draws and the owner types into — and the chair
+    /// on the harness is its own unit (<c>docs/briefs/U-api-worker.md</c>, "Not this unit"). One rule, read by the app when
+    /// it picks a role's runtime and by <see cref="WorkspaceBuilder"/> when it writes a harness canon, so no role is
+    /// written a canon for a runtime it cannot be on.
+    /// </summary>
+    public static bool Serves(string role) => role != CouncilRoles.Operations;
+
+    /// <summary>
     /// The default per-request timeout. A never-answering endpoint has to fail in SECONDS rather than
     /// hang a turn: a conversation that never returns looks exactly like an AI that is thinking, which
     /// <see cref="AgentSession"/> already paid for once on Windows.

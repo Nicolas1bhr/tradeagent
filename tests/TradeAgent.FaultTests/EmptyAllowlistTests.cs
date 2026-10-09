@@ -85,8 +85,9 @@ public class EmptyAllowlistTests(ITestOutputHelper log)
     [Fact]
     public void The_agents_own_briefing_says_none_rather_than_any()
     {
-        var empty = WorkspaceBuilder.Instructions(Brief(new RiskPolicy()));
-        var named = WorkspaceBuilder.Instructions(Brief(new RiskPolicy { InstrumentAllowlist = ["ES"] }));
+        // The canon (U-canon): the owner's limits are its authority section.
+        var empty = Canon.Render(Brief(new RiskPolicy()), RuntimeClass.Cli);
+        var named = Canon.Render(Brief(new RiskPolicy { InstrumentAllowlist = ["ES"] }), RuntimeClass.Cli);
 
         var emptyLine = empty.Split('\n').Single(l => l.Contains("- instruments:"));
         var namedLine = named.Split('\n').Single(l => l.Contains("- instruments:"));

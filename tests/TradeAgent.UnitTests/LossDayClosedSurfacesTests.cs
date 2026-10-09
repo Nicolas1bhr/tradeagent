@@ -253,7 +253,8 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
             Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root.Dir);
-        var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
+        // GUIDE.md since U-canon: the closure's mechanics moved there word for word, beside the canon's limits.
+        var agents = File.ReadAllText(Path.Combine(home, Canon.GuideFile));
         Assert.Contains("loss_day_closed_at", agents, StringComparison.Ordinal);
         Assert.Contains("closes your open positions for you", agents, StringComparison.Ordinal);
     }

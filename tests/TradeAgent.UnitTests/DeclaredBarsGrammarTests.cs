@@ -161,10 +161,11 @@ public class DeclaredBarsGrammarTests(ITestOutputHelper log)
     [Fact]
     public void The_role_that_writes_programs_is_told_bars_exists_and_why_minute_turnover_dies_on_fees()
     {
-        var mission = TradeAgent.AgentRuntime.WorkspaceBuilder.Instructions(new TradeAgent.AgentRuntime.WorkspaceContext(
+        // The guide (U-canon), which carries the research procedures word for word.
+        var mission = TradeAgent.AgentRuntime.Canon.Guide(new TradeAgent.AgentRuntime.WorkspaceContext(
             "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
             ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["ES"] },
-            ConnectorIsBuiltInSimulator: false, Role: CouncilRoles.Research));
+            ConnectorIsBuiltInSimulator: false, Role: CouncilRoles.Research), TradeAgent.AgentRuntime.RuntimeClass.Cli);
 
         Assert.Contains("`bars 1h` makes a program decide once an hour instead of every minute", mission,
             StringComparison.Ordinal);

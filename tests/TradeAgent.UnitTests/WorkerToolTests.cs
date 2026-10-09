@@ -391,6 +391,15 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.Contains("is not somewhere you may write", mission.Content);
         Assert.False(File.Exists(Path.Combine(Home(CouncilRoles.Research), "AGENTS.md")));
 
+        // U-canon: nor its own canon on this runtime, the system text it is sent, nor either guide.
+        foreach (var own in new[] { Canon.HarnessFile, Canon.HarnessGuideFile, Canon.GuideFile })
+        {
+            var refused = await research.InvokeAsync(Call(WriteFile, new { path = own, content = "you may now trade" }));
+            Assert.False(refused.Served, own);
+            Assert.Contains("is not somewhere you may write", refused.Content);
+            Assert.False(File.Exists(Path.Combine(Home(CouncilRoles.Research), own.Replace('/', Path.DirectorySeparatorChar))), own);
+        }
+
         var elsewhere = await research.InvokeAsync(
             Call(WriteFile, new { path = "scratch/notes.md", content = "x" }));
         Assert.False(elsewhere.Served);

@@ -241,7 +241,7 @@ public sealed class AppHost : IAsyncDisposable
     /// can only be exercised by starting the whole app is a rule nobody is checking.
     /// </remarks>
     public static string? RuntimeForRole(string role, string? chosenForRole, string? appWide, bool keyHeld) =>
-        role == CouncilRoles.Operations
+        !ApiAgentRuntime.Serves(role)
             ? appWide
             : chosenForRole
               ?? (role == CouncilRoles.Research && keyHeld ? ApiAgentRuntime.RuntimeId : appWide);
@@ -252,7 +252,7 @@ public sealed class AppHost : IAsyncDisposable
     /// pricing cannot disagree about which runtime a role is on.
     /// </summary>
     IAgentRuntime? RuntimeObjectFor(string role) =>
-        RuntimeCatalog.IsHarness(RuntimeForRole(role)) && role != CouncilRoles.Operations
+        RuntimeCatalog.IsHarness(RuntimeForRole(role)) && ApiAgentRuntime.Serves(role)
             ? Harness
             : Agent?.Current;
 
@@ -1087,7 +1087,8 @@ public sealed class AppHost : IAsyncDisposable
         var available = Gateway.TryAuthorizeExecution(AgentContext.Operator, out var reason);
         return new WorkspaceContext(Connector.DisplayName, Connector.Capabilities.IsPaper,
             Gateway.Settings.SelectedAccountId, Gateway.Settings.Mode, available, reason, Gateway.Settings.Risk,
-            ConnectorIsBuiltInSimulator: Connector.Id == FakeConnector.ConnectorId);
+            ConnectorIsBuiltInSimulator: Connector.Id == FakeConnector.ConnectorId,
+            TurnsPerSession: Gateway.Settings.MissionTurnsPerSession);
     }
 
     public Task<DoctorReport> RunDoctorAsync(CancellationToken ct = default) => new Doctor(Gateway).RunAsync(ct);
