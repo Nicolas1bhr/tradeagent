@@ -465,12 +465,17 @@ public sealed class ApiConversation(
         return answer with { Content = cut + $"\n[cut: this turn has {left:N0} bytes of reading left]" };
     }
 
-    /// <summary>The role's mission file, bounded. The app wrote it; the worker cannot change it.</summary>
+    /// <summary>
+    /// THE ROLE'S CANON RENDERED FOR THE HARNESS, bounded — written by the app at the same start as the CLI's
+    /// <c>AGENTS.md</c> and never that file, which promises a command line, a shell and a wake file this runtime does
+    /// not have (<c>U-canon</c>). The app wrote it; the worker cannot change it, because <c>write_file</c> reaches only
+    /// <c>out/</c> and <c>trading/</c>.
+    /// </summary>
     string Mission()
     {
         try
         {
-            var file = Path.Combine(workspace(), "AGENTS.md");
+            var file = Path.Combine(workspace(), Canon.HarnessFile.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(file)) return $"You are the {CouncilRoles.Title(role)}.";
             var text = File.ReadAllText(file);
             return text.Length <= MaxMissionChars ? text : text[..MaxMissionChars];

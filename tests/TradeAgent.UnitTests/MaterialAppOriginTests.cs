@@ -227,7 +227,8 @@ public class MaterialAppOriginTests
 
         // And the mission file names the three words, so a role knows which of its files are its own
         // before it goes looking for them.
-        var mission = WorkspaceBuilder.Instructions(Context(CouncilRoles.Research));
+        // The guide (U-canon), whose record-keeping section names the three words.
+        var mission = Canon.Guide(Context(CouncilRoles.Research), RuntimeClass.Cli);
         Assert.Contains("written by TradeAgent", mission);
         Assert.Contains($"`{ResearchLibrary.ReferencePath}`", mission);
         Assert.Contains("never counted as your work", mission);

@@ -248,7 +248,8 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
             ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
             Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
             Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root.Dir);
-        var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
+        // GUIDE.md since U-canon: the closure's mechanics moved there word for word, beside the canon's limits.
+        var agents = File.ReadAllText(Path.Combine(home, Canon.GuideFile));
         Assert.Contains("loss_reopens_at", agents, StringComparison.Ordinal);
         // RE-PINNED with the schema above, and for the same reason.
         Assert.Contains("closure length the account owner had set when the breach was",

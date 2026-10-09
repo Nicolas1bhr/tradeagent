@@ -67,7 +67,13 @@ public class ApiWorkerTests : IDisposable
         using var provider = new FakeProvider();
         provider.Answer(FakeProvider.Message("I read the plan.", input: 1234, output: 56, cached: 34));
 
-        File.WriteAllText(Path.Combine(_home, "AGENTS.md"), "You are the Research Director. Do research.");
+        // RE-POINTED BY U-canon: the harness's system text is the canon rendered for the harness, which the app writes at
+        // Canon.HarnessFile — never the CLI's AGENTS.md, which promises a command line, a shell and a wake file this
+        // runtime does not have. A hand-written AGENTS.md beside it reaches the provider not at all.
+        var canon = Path.Combine(_home, Canon.HarnessFile.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(canon)!);
+        File.WriteAllText(canon, "You are the Research Director. Do research.");
+        File.WriteAllText(Path.Combine(_home, Canon.CliFile), "You may use the shell.");
 
         using var runtime = Runtime(provider);
         var conversation = Research(runtime);
@@ -91,6 +97,7 @@ public class ApiWorkerTests : IDisposable
         var messages = body.RootElement.GetProperty("messages");
         Assert.Equal("system", messages[0].GetProperty("role").GetString());
         Assert.Contains("Research Director", messages[0].GetProperty("content").GetString());
+        Assert.DoesNotContain("shell", messages[0].GetProperty("content").GetString());
         Assert.Equal("user", messages[1].GetProperty("role").GetString());
         Assert.Contains("nothing has happened", messages[1].GetProperty("content").GetString());
         // The provider's own max-output parameter, by the name the manifest gives it.

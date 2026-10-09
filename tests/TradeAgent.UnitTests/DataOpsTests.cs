@@ -113,10 +113,11 @@ public class DataOpsTests
     [Fact]
     public void The_missions_data_folder_sentences_name_the_command_that_serves_the_data()
     {
-        var mission = WorkspaceBuilder.Instructions(new WorkspaceContext(
+        // The canon (U-canon): the simulator paragraph and the evidence rules both name the data commands.
+        var mission = Canon.Render(new WorkspaceContext(
             "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
             ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["ES"] },
-            ConnectorIsBuiltInSimulator: true));
+            ConnectorIsBuiltInSimulator: true), RuntimeClass.Cli);
 
         Assert.Contains("trade data list", mission);
         Assert.Contains("trade data bars", mission);
