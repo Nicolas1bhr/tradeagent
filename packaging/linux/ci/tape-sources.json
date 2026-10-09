@@ -1,0 +1,7 @@
+[
+  { "id": "ci-loopback", "display_name": "CI loopback quote", "base_url": "http://127.0.0.1:8765",
+    "cadence_seconds": 60, "per_symbol": false, "parser": "binance-um-json",
+    "terms": "A fixture served from the CI runner's own loopback, for the linux-host job only.",
+    "measured": "the linux-host job's own loopback server; never a venue",
+    "series": [ { "id": "quote", "url_shape": "{base}/quote.json", "time_field": "time", "symbol_field": "symbol" } ] }
+]
