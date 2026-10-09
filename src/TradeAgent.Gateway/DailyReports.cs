@@ -88,14 +88,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// <summary>Where a day's report is kept. App-owned: no verb and no pipe op writes in here.</summary>
     public static string FileFor(string day) => Path.Combine(Paths.Reports, $"{day}.md");
 
-    /// <summary>The owner's local day <paramref name="at"/> falls in, as a half-open instant window.</summary>
-    public static (DateTimeOffset From, DateTimeOffset To) LocalDay(DateTimeOffset at)
-    {
-        var start = at.ToLocalTime().Date;
-        var next = start.AddDays(1);
-        return (new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
-                new DateTimeOffset(next, TimeZoneInfo.Local.GetUtcOffset(next)));
-    }
+    /// <summary>The owner's local day <paramref name="at"/> falls in, as a half-open instant window — <see cref="OwnerDay"/>'s.</summary>
+    public static (DateTimeOffset From, DateTimeOffset To) LocalDay(DateTimeOffset at) => OwnerDay.Window(at);
 
     public static string DayName(DateTimeOffset at) =>
         at.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

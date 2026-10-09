@@ -873,7 +873,7 @@ public sealed class TurnMeter
     AiAdmissionRule RuleFor(string? role, TurnPrice reservation)
     {
         var now = _now();
-        var (from, to) = LocalDay(now);
+        var (from, to) = OwnerDay.Window(now);
         var cap = Cap();
         return new AiAdmissionRule
         {
@@ -883,7 +883,7 @@ public sealed class TurnMeter
             Cap = cap,
             RoleCap = role is null ? cap : cap * Share(role),
             Reservation = reservation.Cost ?? 0m,
-            ResumesAt = Midnight(now)
+            ResumesAt = OwnerDay.Midnight(now)
         };
     }
 
@@ -1106,7 +1106,7 @@ public sealed class TurnMeter
                 PricedByOwner = probe.ByOwner,
                 CanPrice = canPrice,
                 WhyNoPrice = canPrice ? null : probe.Unpriced,
-                ResumesAt = Midnight(now)
+                ResumesAt = OwnerDay.Midnight(now)
             };
         }
     }
@@ -1120,24 +1120,6 @@ public sealed class TurnMeter
     // started and the window below is the owner's own local day.
 
     /// <summary>
-    /// The local day <paramref name="now"/> falls in, as the half-open instant window a row's
-    /// <c>started_at</c> is tested against. Local because the reset belongs at the owner's midnight:
-    /// an owner in Ljubljana whose day rolled over at 01:00 would be reading a today that is not
-    /// theirs. Each boundary takes the offset in force AT that boundary, so the day either side of a
-    /// daylight-saving change is twenty-three or twenty-five hours long rather than silently wrong.
-    /// </summary>
-    static (DateTimeOffset From, DateTimeOffset To) LocalDay(DateTimeOffset now)
-    {
-        var start = now.ToLocalTime().Date;
-        var end = start.AddDays(1);
-        return (new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
-                new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)));
-    }
-
-    /// <summary>The next LOCAL midnight — when today's totals stop being today's.</summary>
-    static DateTimeOffset Midnight(DateTimeOffset now) => LocalDay(now).To;
-
-    /// <summary>
     /// Today's rows, or zeroes when none of them can be read. A read that throws answers zero rather
     /// than throwing into a card repaint, and a zero here is visibly the same as a day with no turns
     /// — which is why the card keys its wording on <see cref="AiSpendToday.CanPrice"/> instead.
@@ -1146,7 +1128,7 @@ public sealed class TurnMeter
     {
         try
         {
-            var (from, to) = LocalDay(now);
+            var (from, to) = OwnerDay.Window(now);
             return _attempts.TotalsBetween(from, to, role);
         }
         catch (Exception) { return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0); }

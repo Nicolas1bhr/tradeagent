@@ -529,6 +529,22 @@ public sealed class TradeAgentSettings
     public decimal AiDailyCostCap { get; set; } = 5m;
 
     /// <summary>
+    /// THE MOST PERCEPTION MAY SPEND IN ONE LOCAL DAY — the decision models' own budget (<c>U-decision-port</c>), in
+    /// the same currency as <see cref="AiDailyCostCap"/>, which a decision model's dated price must match or it is not
+    /// called.
+    ///
+    /// <para>It is a second ceiling INSIDE the owner's one daily cap, never beside it: every call is reserved against
+    /// both in one transaction, so perception spending narrows the day the council has left by at most this much, and
+    /// no council share is read or moved by it. One dollar is about three hundred and sixty calls at their worst case
+    /// (a whole request's budget at Jev's list price), which is a day of trying it out and not a day of annotating
+    /// everything; the owner's Perception card is where it is raised (<c>U-decision-card</c>).</para>
+    ///
+    /// <para><b>Zero means no perception at all</b>, exactly as the cap's zero means no spending, and it is what
+    /// <see cref="Unreadable"/> falls to.</para>
+    /// </summary>
+    public decimal PerceptionDailyBudget { get; set; } = 1m;
+
+    /// <summary>
     /// HOW MANY REGISTERED RESEARCH RUNS ONE CAMPAIGN ALLOWS (<c>docs/COUNCIL.md</c>:131, "a
     /// campaign-wide trial budget that survives team replacement").
     ///
@@ -675,6 +691,7 @@ public sealed class TradeAgentSettings
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
+    ///   PerceptionDailyBudget = 0 no decision model is called either
     ///   Campaign*Budget = 0       a campaign opened from an unreadable row allows no attempt at all
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
     ///
@@ -702,6 +719,8 @@ public sealed class TradeAgentSettings
         // Zero is the smallest this field has and it means no spending, so a row nobody could read
         // is not the event that lifts the ceiling. The loop is not running on this row anyway.
         AiDailyCostCap = 0m,
+        // And perception's own budget inside it: no decision model is called on a row nobody could read.
+        PerceptionDailyBudget = 0m,
         // The same reading, for the same reason: a campaign opened while the settings cannot be read
         // gets no attempts, rather than the shipped allowance from a row nobody can vouch for. A
         // campaign is only ever opened by the owner pressing a button, so this costs nothing until

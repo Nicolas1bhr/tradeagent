@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Security;
 
@@ -25,6 +26,14 @@ namespace TradeAgent.AgentRuntime;
 ///
 /// <para><b>Never a retry.</b> The host's 429 and 529 ask for a retry with back-off; a retry is another request, and
 /// another request is another reservation, so this answers the call FAILED and the caller decides.</para>
+///
+/// <para><b>Reserved before it is sent, in the main database, by its own rule.</b> Every call is a row of the launch
+/// ledger under <see cref="AppPrincipals.Perception"/>, admitted by <see cref="AiAttemptStore.Begin"/> against the
+/// owner's one daily AI cap AND perception's own budget in the transaction that writes the reservation — never through
+/// <see cref="TurnMeter"/>, which keys its slots by council role and would hand perception the chair's slot and half the
+/// day. The row is held in <see cref="LiveAttempts"/> while the call flies, so a meter built meanwhile does not declare
+/// it lost, and it settles on the answered id and the host's billed cost, else the input tokens at the dated price —
+/// <c>pricing_basis</c> says which. A call that brings back no usage keeps its reservation as its cost.</para>
 /// </summary>
 public sealed class TypeSafeWire : IDecisionModel, IDisposable
 {
@@ -35,6 +44,11 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     public const int MaxAnswerBytes = 4 * 1024 * 1024;
 
     readonly HarnessKey _key;
+    readonly AiAttemptStore _attempts;
+    readonly Func<decimal> _cap;
+    readonly Func<decimal> _budget;
+    readonly Func<string?> _currency;
+    readonly LiveAttempts _live;
     readonly Func<DateTimeOffset> _now;
     readonly HttpClient _http;
 
@@ -43,19 +57,39 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     /// The decision model's OWN key holder — never <see cref="HarnessKey.Shared"/>, which is the worker's — asked at
     /// every call, for the instrument's origin, and nothing else.
     /// </param>
+    /// <param name="db">The main database, whose launch ledger every call is reserved and settled in.</param>
+    /// <param name="cap">
+    /// The owner's daily AI cap, read at every call through the SAME delegate the meter reads, so the two can never be
+    /// two ceilings. A throw reads as zero: no call.
+    /// </param>
+    /// <param name="budget">Perception's own daily budget inside that cap. A throw reads as zero: no call.</param>
+    /// <param name="live">The process's register of launches in flight. <see cref="LiveAttempts.Shared"/> when null.</param>
+    /// <param name="currency">
+    /// The currency the AI's spending is kept in (<c>costs.json</c>'s). A call whose price is in another one is refused,
+    /// because adding its dollars to a total kept in euros would be a wrong bill. Null or unreadable refuses too.
+    /// </param>
     /// <param name="requestTimeout">How long one request may take. <see cref="DefaultRequestTimeout"/> when null.</param>
     /// <param name="transport">The handler requests go through. A test's loopback; null in the product.</param>
-    /// <param name="now">The wall clock the record's instants are read from.</param>
-    public TypeSafeWire(DecisionInstrument instrument, HarnessKey key, TimeSpan? requestTimeout = null,
+    /// <param name="now">The wall clock the ledger's and the record's instants are read from.</param>
+    public TypeSafeWire(DecisionInstrument instrument, HarnessKey key, Database db, Func<decimal> cap, Func<decimal> budget,
+        LiveAttempts? live = null, Func<string?>? currency = null, TimeSpan? requestTimeout = null,
         HttpMessageHandler? transport = null, Func<DateTimeOffset>? now = null)
     {
         ArgumentNullException.ThrowIfNull(instrument);
         ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(db);
+        ArgumentNullException.ThrowIfNull(cap);
+        ArgumentNullException.ThrowIfNull(budget);
         if (ReferenceEquals(key, HarnessKey.Shared))
             throw new ArgumentException("a decision model holds its own key, never the worker's", nameof(key));
 
         Instrument = instrument;
         _key = key;
+        _attempts = new AiAttemptStore(db);
+        _cap = cap;
+        _budget = budget;
+        _live = live ?? LiveAttempts.Shared;
+        _currency = currency ?? (() => CostCatalog.Read().Costs?.Currency);
         _now = now ?? (() => DateTimeOffset.UtcNow);
         _http = new HttpClient(transport ?? new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true)
         {
@@ -73,16 +107,142 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
         // EVERY STRUCTURAL LIMIT, BEFORE ANYTHING ELSE. Nothing is asked of the key holder for a call that will not go.
         if (DecisionRequests.Refusal(request, Instrument) is { } no) return Refused(no);
+        if (CurrencyRefusal() is { } money) return Refused(money);
 
-        // WHERE THIS CALL GOES, READ ONCE, and the key released for that origin and no other.
+        // WHERE THIS CALL GOES, READ ONCE, and the key released for that origin and no other. Before the reservation:
+        // a call that cannot be sent is not a call anybody is charged for.
         var endpoint = Instrument.Endpoint;
         var release = _key.ReadFor(UrlOrigin.Of(endpoint));
         if (release.Refusal is { } withheld)
             return Refused(Labels.DecisionKeyPastedForAnotherOrigin(withheld.PastedFor, withheld.PointsAt));
         if (release.Key is not { Length: > 0 } key) return Refused(Labels.DecisionKeyNotHeld);
 
-        var sent = await SendAsync(endpoint, key, Body(request), request.Questions, ct);
-        return sent.Answer;
+        // RESERVED IN THE MAIN DATABASE BEFORE A BYTE LEAVES — admitted against the day and perception's budget in the
+        // one transaction that writes the reservation. Refused: nothing written, nothing sent.
+        var body = Body(request);
+        var (id, refusal) = Reserve(body);
+        if (id is null) return Refused(refusal ?? "the call could not be reserved, so nothing was sent");
+
+        _live.Enter(id);
+        try
+        {
+            // ONE REQUEST ON THIS RESERVATION, and never a second.
+            var sent = await SendAsync(endpoint, key, body, request.Questions, ct);
+            Settle(id, sent);
+            return sent.Answer with { AttemptId = id };
+        }
+        finally
+        {
+            // SETTLED, OR LEFT LAUNCHED BY A SETTLE THAT FAILED — which the next meter to open the database turns LOST,
+            // keeping the reservation as the cost. Either way nothing in this process is waiting for it any more.
+            _live.Leave(id);
+        }
+    }
+
+    /// <summary>
+    /// WHAT <c>pricing_basis</c> SAYS when a call is settled on the host's own billed figure rather than on the list
+    /// price — the one AI figure in this product that is an API charge somebody reported rather than an equivalent this
+    /// build calculated (<c>docs/COUNCIL.md</c> rule 4: three figures, never one).
+    /// </summary>
+    public const string BilledBasis = "billed: the host's own usage.cost on the answer";
+
+    /// <summary>Why the call's price cannot be added to the AI's day, or null because it can.</summary>
+    string? CurrencyRefusal()
+    {
+        string? kept;
+        try { kept = _currency(); }
+        catch (Exception) { kept = null; }
+
+        return string.Equals(kept, Instrument.Currency, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"{Instrument.DisplayName} is priced in {Instrument.Currency} and TradeAgent's AI spending is kept in "
+              + $"{(string.IsNullOrEmpty(kept) ? "a currency it cannot read" : kept)}, so the call could not be counted against "
+              + "the daily limit. Nothing was sent.";
+    }
+
+    /// <summary>
+    /// THE ROW, ADMITTED OR NOT, IN ONE TRANSACTION (<see cref="AiAttemptStore.Begin"/>). The rule carries everything but
+    /// the day's totals, which the store reads under its own lock — the comparison two racing calls cannot both pass.
+    /// </summary>
+    (string? Id, string? Refusal) Reserve(string body)
+    {
+        var now = _now();
+        var (from, to) = OwnerDay.Window(now);
+        var attempt = new AiAttempt
+        {
+            Id = $"decision-{now.UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
+            StartedAt = now,
+            Runtime = Instrument.Id,
+            RequestedModel = Instrument.RequestModel,
+            PricingBasis = Instrument.PriceBasis,
+            ReservedCost = Instrument.Reservation,
+            // WHAT ENTERED THE REQUEST, AS A HASH: the canonical body, never the body.
+            InputHash = Sha256Hex.Of(body),
+            Role = AppPrincipals.Perception
+        };
+        var rule = new AiAdmissionRule
+        {
+            From = from,
+            To = to,
+            Role = AppPrincipals.Perception,
+            Cap = ReadOrZero(_cap),
+            RoleCap = ReadOrZero(_budget),
+            Reservation = attempt.ReservedCost,
+            ResumesAt = OwnerDay.Midnight(now)
+        };
+
+        try
+        {
+            var admission = _attempts.Begin(attempt, admit: rule);
+            return admission.Admitted ? (admission.Id, null) : (null, admission.Refusal);
+        }
+        catch (Exception ex)
+        {
+            // UNLIKE A TURN, A CALL THE LEDGER WILL NOT TAKE IS NOT MADE. A turn the app failed to write down still runs
+            // because stopping the mission on a database hiccup is a new way to lose it; nothing is lost by not asking a
+            // decision model a question, and a call nobody reserved is spending no ceiling sees.
+            return (null, $"the launch ledger could not be written ({ex.Message}), so nothing was sent");
+        }
+    }
+
+    static decimal ReadOrZero(Func<decimal> read)
+    {
+        try { return read(); }
+        catch (Exception) { return 0m; }
+    }
+
+    /// <summary>
+    /// SETTLES THE ROW ON WHAT CAME BACK: the answered id, and the host's billed cost where it reported one, else the input
+    /// and output tokens at the dated price. With no usage the tokens and the cost are left unknown, and
+    /// <see cref="AiAttemptStore.End"/> keeps the reservation as the cost — unknown is never zero. A settle that throws
+    /// leaves the row LAUNCHED, which the next restart turns LOST at its reservation: the conservative direction.
+    /// </summary>
+    void Settle(string id, Sent sent)
+    {
+        var a = sent.Answer;
+        var input = a.InputTokens;
+        long? output = input is null ? null : a.OutputTokens ?? 0;
+        var cost = a.BilledCost ?? (input is { } i ? Instrument.Estimate(i, output ?? 0) : null);
+        var basis = a.BilledCost is not null ? BilledBasis : input is not null ? Instrument.PriceBasis : null;
+
+        var context = Json.Write(new
+        {
+            decision = new
+            {
+                instrument = Instrument.Id,
+                status = a.Status.ToString(),
+                error_class = a.ErrorClass,
+                http_status = a.HttpStatus,
+                latency_ms = a.Latency is { } l ? (long?)Math.Round(l.TotalMilliseconds) : null
+            }
+        });
+
+        try
+        {
+            _attempts.End(id, a.Status == DecisionStatus.ANSWERED ? 0 : 2, sent.EndedAt, input, null, null, output, null,
+                a.AnsweredModel, cost, null, context, basis);
+        }
+        catch (Exception) { /* left LAUNCHED: see above */ }
     }
 
     /// <summary>

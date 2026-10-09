@@ -1,6 +1,8 @@
+using System.Net;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Security;
 using Xunit;
@@ -68,8 +70,23 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         };
     }
 
-    static TypeSafeWire Wire(DecisionInstrument instrument, HarnessKey key) =>
-        new(instrument, key, requestTimeout: TimeSpan.FromSeconds(10));
+    /// <summary>
+    /// A wire over its own ledger, with the owner's cap and perception's budget as given — the same delegates the app
+    /// hands it — and a live register of its own, as a restart would have.
+    /// </summary>
+    static TypeSafeWire Wire(DecisionInstrument instrument, HarnessKey key, Database db, decimal cap = 5m,
+        decimal budget = 1m, LiveAttempts? live = null, TimeSpan? timeout = null) =>
+        new(instrument, key, db, () => cap, () => budget, live ?? new LiveAttempts(), () => "USD",
+            requestTimeout: timeout ?? TimeSpan.FromSeconds(10));
+
+    static List<AiAttempt> Today(Database db)
+    {
+        var (from, to) = OwnerDay.Window(DateTimeOffset.Now);
+        return new AiAttemptStore(db).Between(from, to);
+    }
+
+    /// <summary>What one call reserves: TypeSafe's "64k tokens" a request, read as 65,536, at 0.042 USD a million.</summary>
+    const decimal Reservation = 65_536m * 0.042m / 1_000_000m;
 
     // ---- (b) ------------------------------------------------------------------------------------------------------
 
@@ -82,11 +99,14 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     [Fact]
     public async Task Limits_are_refused_before_sending()
     {
+        using var db = TestEnv.NewDb();
         using var host = new FakeProvider();
         host.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers));
         var holder = host.Holding(_pasted);
         var instrument = PointedAt(host);
-        using var wire = Wire(instrument, holder);
+        using var wire = Wire(instrument, holder, db);
+        using var alias = Wire(instrument with { RequestModel = "jev-latest" }, holder, db);
+        using var openRouterAlias = Wire(instrument with { RequestModel = "~typesafe/jev-latest" }, holder, db);
 
         Dictionary<string, DecisionQuestion> One(DecisionQuestion q) => new() { ["only"] = q };
         var options = Enumerable.Range(0, 256).Select(i => new DecisionOption($"o{i}")).ToArray();
@@ -107,8 +127,8 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
             ("a state and question larger in bytes than their budget", wire, Ask(state: JsonSerializer.Serialize(new string('x', 32_001)))),
             ("too many source references", wire, Ask() with { Sources = [.. Enumerable.Range(0, 65).Select(i => $"tape_obs:{i}")] }),
             ("a call for another instrument", wire, Ask(DecisionInstruments.OpenRouterJev)),
-            ("an alias", Wire(instrument with { RequestModel = "jev-latest" }, holder), Ask()),
-            ("OpenRouter's alias", Wire(instrument with { RequestModel = "~typesafe/jev-latest" }, holder), Ask())
+            ("an alias", alias, Ask()),
+            ("OpenRouter's alias", openRouterAlias, Ask())
         };
 
         foreach (var (what, through, request) in cases)
@@ -121,12 +141,158 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         }
 
         Assert.Empty(host.Requests);
+        Assert.Empty(Today(db));
         Assert.True(holder.Held, "a refused call asked for the key");
 
         // THE CONTROL: the same wire and host, a call within every limit, reaches the host — once.
         var answered = await wire.DecideAsync(Ask());
         Assert.Equal(DecisionStatus.ANSWERED, answered.Status);
         Assert.Single(host.Requests);
+    }
+
+    // ---- (c) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c) A CALL IS RESERVED IN THE MAIN DATABASE BEFORE IT IS SENT, AND A LOST ANSWER KEEPS IT. The host's own hook
+    /// reads the launch ledger as the request arrives: the row is already there, LAUNCHED, perception's, carrying the
+    /// whole reservation and held as flying. Answered, it settles on the answered id at the dated price; never answered,
+    /// it keeps the reservation as its cost; refused with a 429, it is asked once and keeps it too.
+    ///
+    /// <para>Move the reservation after the send in <c>TypeSafeWire.DecideAsync</c> and the hook finds no row.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_call_is_reserved_in_the_main_database_before_it_is_sent_and_a_lost_answer_keeps_it()
+    {
+        using var db = TestEnv.NewDb();
+        var live = new LiveAttempts();
+        using var host = new FakeProvider();
+        host.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers, input: 300, output: 20));
+
+        var atArrival = new List<(AiAttempt Row, bool Flying)>();
+        host.Arriving = () => atArrival.AddRange(Today(db).Select(r => (r, live.Holds(r.Id))));
+
+        var instrument = PointedAt(host);
+        Assert.Equal(Reservation, instrument.Reservation);
+        using var wire = Wire(instrument, host.Holding(_pasted), db, live: live);
+        var answered = await wire.DecideAsync(Ask());
+        log.WriteLine($"answered: {answered.Status} on {answered.AttemptId}");
+
+        var (row, flying) = Assert.Single(atArrival);
+        Assert.Equal(answered.AttemptId, row.Id);
+        Assert.Equal(AiAttemptState.LAUNCHED, row.State);
+        Assert.Equal(AppPrincipals.Perception, row.Role);
+        Assert.Equal(DecisionInstruments.TypeSafeDirect, row.Runtime);
+        Assert.Equal("jev-1.13.0", row.RequestedModel);
+        Assert.Equal(Reservation, row.ReservedCost);
+        Assert.Equal(Sha256Hex.Of(host.Requests[0]), row.InputHash);
+        Assert.True(flying, "the call was not held as flying while it was sent");
+
+        var settled = new AiAttemptStore(db).Get(answered.AttemptId!)!;
+        Assert.Equal(AiAttemptState.ENDED, settled.State);
+        Assert.Equal("jev-1.13.0", settled.EffectiveModel);
+        Assert.Equal(300L, settled.InputTokens);
+        Assert.Equal(300m * 0.042m / 1_000_000m, settled.Cost);
+        Assert.Equal(instrument.PriceBasis, settled.PricingBasis);
+        Assert.False(live.Holds(answered.AttemptId));
+
+        // NEVER ANSWERED: the request went, the host kept it, the call timed out. The reservation is the cost.
+        using var silent = new FakeProvider(answers: false);
+        using var lostWire = Wire(PointedAt(silent), silent.Holding(_pasted), db, live: live, timeout: TimeSpan.FromSeconds(2));
+        var lost = await lostWire.DecideAsync(Ask());
+        log.WriteLine($"lost: {lost.Status} {lost.ErrorClass}");
+        Assert.Equal(DecisionStatus.UNANSWERED, lost.Status);
+        Assert.Equal("timeout", lost.ErrorClass);
+        Assert.Single(silent.Requests);
+        var kept = new AiAttemptStore(db).Get(lost.AttemptId!)!;
+        Assert.Equal(AiAttemptState.ENDED, kept.State);
+        Assert.Equal(Reservation, kept.Cost);
+        Assert.Equal(AiAttemptStore.UnreportedReason, kept.UnpricedReason);
+        Assert.Null(kept.InputTokens);
+        Assert.False(live.Holds(lost.AttemptId));
+
+        // A HOST THAT SAYS "TOO MANY": asked once on the reservation, never twice, and the reservation stands.
+        using var busy = new FakeProvider { AlwaysAnswer = HttpStatusCode.TooManyRequests };
+        using var busyWire = Wire(PointedAt(busy), busy.Holding(_pasted), db, live: live);
+        var failed = await busyWire.DecideAsync(Ask());
+        Assert.Equal(DecisionStatus.FAILED, failed.Status);
+        Assert.Equal("http-429", failed.ErrorClass);
+        Assert.Single(busy.Requests);
+        Assert.Equal(Reservation, new AiAttemptStore(db).Get(failed.AttemptId!)!.Cost);
+
+        var (from, to) = OwnerDay.Window(DateTimeOffset.Now);
+        Assert.Equal(300m * 0.042m / 1_000_000m + Reservation + Reservation,
+            new AiAttemptStore(db).TotalsBetween(from, to, AppPrincipals.Perception).Spent);
+    }
+
+    // ---- (d) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (d) PERCEPTION'S BUDGET AND THE OWNER'S DAILY CAP BIND IN ONE TRANSACTION, and no council share moves. The budget
+    /// refuses a call it has no room for and the day refuses one IT has no room for, each naming its own ceiling with
+    /// nothing sent; six calls racing for the room of one admit exactly one; and the chair's share and spending read the
+    /// same with perception's money in the day as without it — perception narrows the day the council has left and
+    /// nothing else.
+    /// </summary>
+    [Fact]
+    public async Task The_perception_budget_and_the_daily_cap_bind_in_one_transaction()
+    {
+        using var db = TestEnv.NewDb();
+        var live = new LiveAttempts();
+        using var host = new FakeProvider();
+        host.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers, input: 300, output: 20));
+        var key = host.Holding(_pasted);
+        var instrument = PointedAt(host);
+
+        // A council turn already spent today.
+        var store = new AiAttemptStore(db);
+        var now = DateTimeOffset.Now;
+        store.Begin(new AiAttempt { Id = $"turn-chair-{Guid.NewGuid():n}"[..44], StartedAt = now, ReservedCost = 0.5m, Role = CouncilRoles.Operations });
+        var chair = Today(db).Single().Id;
+        Assert.True(store.End(chair, 0, now, 1000, 0, 0, 100, 0, "gpt-5.6-luna", 0.25m, null, null));
+
+        // THE BUDGET: room for less than one reservation.
+        using (var tight = Wire(instrument, key, db, cap: 5m, budget: Reservation / 2m, live: live))
+        {
+            var refused = await tight.DecideAsync(Ask());
+            log.WriteLine($"budget: {refused.Refusal}");
+            Assert.Equal(DecisionStatus.REFUSED, refused.Status);
+            Assert.Empty(host.Requests);
+        }
+
+        // THE DAY: the council has spent all but less than one reservation of the owner's cap.
+        using (var spent = Wire(instrument, key, db, cap: 0.25m + Reservation / 2m, budget: 1m, live: live))
+        {
+            var refused = await spent.DecideAsync(Ask());
+            log.WriteLine($"day: {refused.Refusal}");
+            Assert.Equal(DecisionStatus.REFUSED, refused.Status);
+            Assert.Equal(Labels.DailySpendingLimitReached, refused.Refusal);
+            Assert.Empty(host.Requests);
+        }
+
+        Assert.Single(Today(db));
+
+        // SIX CALLS RACING FOR ROOM FOR ONE. The host holds the one it receives until every other call has been answered,
+        // so the first call's reservation is open the whole time the others are deciding: exactly one goes.
+        using var gate = new ManualResetEventSlim();
+        host.Arriving = () => gate.Wait(TimeSpan.FromSeconds(60));
+        using var race = Wire(instrument, key, db, cap: 5m, budget: Reservation * 1.5m, live: live);
+        var calls = Enumerable.Range(0, 6).Select(_ => Task.Run(() => race.DecideAsync(Ask()))).ToList();
+        for (var i = 0; i < 600 && calls.Count(c => c.IsCompleted) < 5; i++) await Task.Delay(50);
+        gate.Set();
+        var answers = await Task.WhenAll(calls);
+
+        foreach (var a in answers) log.WriteLine($"race: {a.Status} {a.Refusal}");
+        Assert.Equal(1, answers.Count(a => a.Status == DecisionStatus.ANSWERED));
+        Assert.Equal(5, answers.Count(a => a.Status == DecisionStatus.REFUSED));
+        Assert.Single(host.Requests);
+
+        // AND NO COUNCIL SHARE MOVED: the chair's own reading is its turn and its slice, perception's money is in the day.
+        var meter = new TurnMeter(db, cap: () => 5m, live: live, recordPath: Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl"));
+        var chairToday = meter.TodayFor(CouncilRoles.Operations);
+        Assert.Equal(0.25m, chairToday.RoleSpent);
+        Assert.Equal(0m, chairToday.RoleReserved);
+        Assert.Equal(5m * 0.5m, chairToday.RoleCap);
+        Assert.Equal(0.25m + 300m * 0.042m / 1_000_000m, meter.Today.Spent);
     }
 
     // ---- (f) ------------------------------------------------------------------------------------------------------
@@ -144,8 +310,9 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         pastedFor.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers));
         elsewhere.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers));
 
+        using var db = TestEnv.NewDb();
         var holder = pastedFor.Holding(_pasted);
-        using (var wrong = Wire(PointedAt(elsewhere), holder))
+        using (var wrong = Wire(PointedAt(elsewhere), holder, db))
         {
             var refused = await wrong.DecideAsync(Ask());
             log.WriteLine(refused.Refusal);
@@ -155,10 +322,11 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         }
 
         Assert.Empty(elsewhere.Requests);
+        Assert.Empty(Today(db));
         Assert.False(holder.Held, "a key something tried to send elsewhere is forgotten");
 
         var again = pastedFor.Holding(_pasted);
-        using var wire = Wire(PointedAt(pastedFor), again);
+        using var wire = Wire(PointedAt(pastedFor), again, db);
         Assert.Equal(DecisionStatus.ANSWERED, (await wire.DecideAsync(Ask())).Status);
         Assert.Equal(DecisionStatus.ANSWERED, (await wire.DecideAsync(Ask())).Status);
         Assert.Equal([$"Bearer {_pasted}", $"Bearer {_pasted}"], pastedFor.Keys);
@@ -172,6 +340,6 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         Assert.Equal("A venue lists a new perpetual", sent.RootElement.GetProperty("state").GetProperty("headline").GetString());
 
         // AND NO DECISION MODEL CAN BE GIVEN THE WORKER'S HOLDER.
-        Assert.Throws<ArgumentException>(() => new TypeSafeWire(PointedAt(pastedFor), HarnessKey.Shared));
+        Assert.Throws<ArgumentException>(() => new TypeSafeWire(PointedAt(pastedFor), HarnessKey.Shared, db, () => 5m, () => 1m));
     }
 }

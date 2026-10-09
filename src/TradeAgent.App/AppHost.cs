@@ -5,6 +5,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Decisions;
 using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
 using TradeAgent.Platforms;
@@ -110,6 +111,42 @@ public sealed class AppHost : IAsyncDisposable
     /// another is a worker that will not start. <see cref="DisposeAsync"/> clears it.
     /// </summary>
     public HarnessKey HarnessKey { get; } = Security.HarnessKey.Shared;
+
+    /// <summary>
+    /// THE DECISION MODELS' OWN KEY (<c>U-decision-port</c>) — a SECOND holder, never <see cref="HarnessKey"/>'s: the
+    /// worker's key goes to the worker's provider and this one to the one decision model the owner pasted it for, each
+    /// released only for its own origin. In memory only, like the worker's, and cleared in <see cref="DisposeAsync"/>.
+    /// Nothing pastes into it yet: the owner's Perception card is <c>U-decision-card</c>'s.
+    /// </summary>
+    public HarnessKey PerceptionKey { get; } = new();
+
+    /// <summary>
+    /// THE OWNER'S DAILY AI CAP, AS ONE DELEGATE — the meter admits turns and the decision port admits calls against
+    /// exactly this, so the two can never be two ceilings. Read through <see cref="Gateway"/> at every call, because a
+    /// connector switch replaces the gateway and the owner changes the cap while the AI works.
+    /// </summary>
+    decimal AiCap() => Gateway.Settings.AiDailyCostCap;
+
+    /// <summary>The decision models built so far, one per instrument, disposed with the app.</summary>
+    readonly Dictionary<string, TypeSafeWire> _decisionModels = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE DECISION MODEL FOR ONE INSTRUMENT, or null where it may not be called: an id this build does not ship, or an
+    /// instrument <c>decision-models.json</c> stopped. Built over the app's own ledger, <see cref="PerceptionKey"/>, the
+    /// cap delegate the meter reads and the owner's perception budget; nothing reaches it from the agent-facing pipe —
+    /// the gateway's assembly does not even reference the one this lives in.
+    /// </summary>
+    public IDecisionModel? DecisionModel(string instrumentId)
+    {
+        if (_db is null || DecisionInstruments.Find(instrumentId) is not { } instrument) return null;
+        lock (_decisionModels)
+        {
+            if (_decisionModels.TryGetValue(instrumentId, out var held) && held.Instrument == instrument) return held;
+            held?.Dispose();
+            return _decisionModels[instrumentId] = new TypeSafeWire(instrument, PerceptionKey, _db, AiCap,
+                () => Gateway.Settings.PerceptionDailyBudget);
+        }
+    }
 
     /// <summary>
     /// THE APP-OWNED HARNESS, made once and kept — see <see cref="ApiAgentRuntime"/>.
@@ -747,7 +784,7 @@ public sealed class AppHost : IAsyncDisposable
                 Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
             presence: _presence);
         Meter = new TurnMeter(db,
-            cap: () => Gateway.Settings.AiDailyCostCap,
+            cap: AiCap,
             session: () => (Conversation as AgentSession)?.ThreadId,
             runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
             owner: () => OwnerPrice.From(Gateway.Settings),
@@ -1954,6 +1991,12 @@ public sealed class AppHost : IAsyncDisposable
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":
         // it is never written, so there is nothing to delete, and it does not outlive this process.
         HarnessKey.Clear();
+        PerceptionKey.Clear();
+        lock (_decisionModels)
+        {
+            foreach (var wire in _decisionModels.Values) wire.Dispose();
+            _decisionModels.Clear();
+        }
         _harness?.Dispose();
         // STOPPED WITH THE APP, AND BEFORE THE DATABASE CLOSES: a look in flight holds a write
         // transaction, and disposing the store underneath it is how a clean exit becomes a corrupt
