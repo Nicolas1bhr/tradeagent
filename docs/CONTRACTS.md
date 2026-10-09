@@ -3920,7 +3920,11 @@ flattened would be a trap. They are still attributed. **An order naming no versi
 **A position is not attributable to a version, and the ceiling counts it anyway — a choice, stated.** The
 platform reports one number per instrument and says nothing about who opened it, so a position the owner
 opened by hand counts against a strategy trading the same instrument. It is conservative in the one
-direction that is safe: it can only refuse.
+direction that is safe: it can only refuse. **A paper RUN is the exception, because its position IS
+attributable** (`U-paper-books`, "The paper deployment"): its opener is charged its own book — its own
+operations joined to their fills — plus its version's open openers and the order, and never another run's
+holding or the owner's, and the runs' sum is bounded where it is granted: the envelope's allocations never
+sum past its ceilings. Every order that is not a run's keeps the account's reading.
 
 **What an order was placed under is two columns, never the parameters blob.**
 `execution_request.strategy_version_id` and `allocation_id` are written by the INSERT that creates the
@@ -3999,11 +4003,16 @@ answers "not reserved" rather than locking the account.
 
 **`TradingGateway.AllocatePaperDue` is the app's own policy, run on a clock and not on a press.** Every
 version whose verdict stands as `promoted` or `paper_eligible`, with no paper allocation yet and whose
-frozen program trades the envelope's instrument, is written into the grant at the **envelope's own
-ceiling** — nothing here is derived from a balance or from a verdict's figures — with a reason of
+frozen program trades the envelope's instrument, is written into the grant at **its share of the envelope's
+ceilings** — each ceiling divided by `max_deployments`, rounded down at the eighth decimal place
+(`PaperEnvelopeRow.ShareOf`, `U-paper-books`), so a grant of one run gives it the whole ceiling as before —
+and nothing here is derived from a balance or from a verdict's figures — with a reason of
 `app policy: <verdict>`. `Allocations.RecordPaper` re-asks every bound inside the write: the verdict at
-that instant, the grant standing, both ceilings, and `max_deployments`, which counts OTHER versions so
-that re-recording the one already in the envelope is not a second deployment. It is called from
+that instant, the grant standing, both ceilings, `max_deployments`, which counts OTHER versions so
+that re-recording the one already in the envelope is not a second deployment, and **the SUM**: the
+envelope's standing paper allocations — each other version's newest, and this one — may not pass either
+ceiling, because a run is charged only its own book at the gateway and the grant is the total the owner
+agreed to (`U-paper-books`). It is called from
 `MissionLoop`'s `ApplyBoundaryDeadlines` seam — `docs/COUNCIL.md`:62, a policy on an agent's clock is a
 policy an idle agent can hold — and again straight after a verdict is delivered, where it returns
 nothing to the caller. **One wake and one sanitised note to Research, keyed by the ALLOCATION**
@@ -4076,9 +4085,44 @@ answer or whose END still owes its close, whichever grant it ran under, because 
 flat, reconciled end**. `ReconcilePaperDeploymentsAsync` runs in the app's own background loop and in the
 gateway host's, at start-up and on every pass: it settles operations from their order rows, suspends,
 resumes, ends and dispatches. `EndPaperDeploymentAsync` cancels the run's working orders first — an end
-that closes the position and leaves an opener on the book has flattened nothing — then closes through
-`CloseAsync`, then records the reason. **Ending leaves the allocation and the grant exactly as they
+that closes the position and leaves an opener on the book has flattened nothing — then closes the RUN's own
+book (below), then records the reason. **Ending leaves the allocation and the grant exactly as they
 were**: a run is not a decision, and ending it must not quietly withdraw what the owner granted.
+
+**EACH RUN HOLDS, CLOSES AND IS CHARGED ITS OWN BOOK** (`U-paper-books`). The paper account keeps one position
+per symbol (`PaperBook`) on its one account, so two runs on one symbol — or a run beside the owner's own long —
+hold one position there: their sum. Everything a run's orders passed through read that sum, and two runs netted:
+each one's stop and exit refused `POSITION_MOVED` while the other held, its END selling the other's holding as its
+own, its opener charged the other's exposure. **A run's BOOK** is its own `deployment_op` rows joined to the
+`fill` rows under their request ids (`Deployments.BookOf`): held, average cost, realised, the fees the platform
+reported and the fills it reported none for — computed at read time from rows only the gateway writes (`fill` is
+never updated or deleted) and stored nowhere, so nothing can be backfilled. It is COMPLETE only when every order
+record of the run reports exactly the quantity the ledger holds fills for under its id
+(`execution_request.filled_quantity`); **an incomplete book sizes nothing**. The runner's per-bar books read the
+same fills (`Deployments.FillsOf`) and walk them with the same arithmetic (`RunBookWalk`), keeping only their own
+placement on bars and what is in flight. **A run's CLOSE** — stop, target, exit, maximum hold, END — must equal
+its own holding, and the account must hold at least that much: the stale-close read's run branch, after the
+position read that settles the paper book; otherwise `POSITION_MOVED` before the wire, or `RISK_CHECK_UNAVAILABLE`
+over an incomplete book. **The END closes exactly the run's holding** (`CloseItsOwnBookAsync`), sized from the
+book read after a settling read of the position — never through `CloseAsync`, which is the agent's and the
+owner's close of the account's whole position: a flat, complete book is "nothing to close"; a long, complete book
+over a FLAT account with no order of the run's still open is RESOLVED, "closed outside the run", nothing is sent,
+and that close is not the run's fill; the account short of the book, or an incomplete book, is refused before the
+wire and OWED, in words, and the owed close goes out once it is not. **A run's OPENER is charged its own
+holding**, its version's open openers and the order — never another run's or the owner's — and an incomplete book
+refuses it. **The envelope's ceilings stay the TOTAL**, summed at allocation (U-paper-envelope, above). Every
+order that is not a run's keeps the account's readings; the deployment identity is refused in both live modes,
+so all of this is paper's; the kill switch, the loss flatten and Close all still close the whole account; and no
+connector changed. **Each run's line** — the Dashboard, section 4 of the owner's report, `deployment-list` —
+says what IT holds, at what average, and what it has realised after the costs reported, or that its book is
+INCOMPLETE and why, and an ended run's line says when its END found it closed outside the run. **NOT claimed**:
+more than one run per grant in the shipped app — `PaperDeploymentsPerEnvelope` stays 1, and raising it, the
+weekly allocation, per-instrument caps and the stop press that takes the first open run are `U-incubator`'s; a
+close the run did not send entering its record, daily marks and standing (`U-forward-standing`) — after one, the
+runner still asks again each minute and is refused `POSITION_MOVED`; `CLOSE_IN_FLIGHT` and `CLOSE_UNRESOLVED`
+stay account-wide, so one run's market close in flight holds another's for a minute; the loss budgets stay scoped
+to account and symbol; live books (`U-live-tiers`); shorts, perps and funding (`U-paper-perps`); and a fill a
+platform stamps before the run's start reads as an incomplete book, refused rather than guessed.
 
 **Who may ask.** Starting, suspending and resuming are the app's alone: no `trade` verb, no pipe op, and
 an agent that wanted a deployment has nowhere to ask — the rule `Allocations` and `Envelopes` keep.
@@ -4255,19 +4299,19 @@ Once a connector declares it, exit-first is open there.
 
 **AN END THAT COULD NOT CLOSE IS OWED, AND CLOSES ONCE THE GATE LIFTS** (`U-runner-exit-hygiene-a`). An ended run whose
 latest flatten was refused before the wire, or that has none, OWES its close: each reconcile pass finishes it as the END
-does — what of the run still works is cancelled, then `CloseAsync` under a new operation with its own `dp-` and `TA-`
-ids — at most once a minute (a minute that already carries one of its flattens gets no other), and writes nothing while
-`TryAuthorizeExecution` refuses the run's identity (the update window, the mode, the kill switch, unconfirmed work,
-health), on a platform, mode or account that is not the run's, or while another run on the same account and instrument
-is not over or has an operation with no answer — a close is of the account's whole position, and sent later than the
-END it could close that run's position under it. A gate inside the order path is met by each attempt and recorded on
-it. `CloseAsync`'s "nothing to close" now RESOLVES the flatten, so a flat book owes nothing. Until it has closed the run
+does — what of the run still works is cancelled, then the run's own book is closed under a new operation with its own
+`dp-` and `TA-` ids (The paper deployment, `U-paper-books`) — at most once a minute (a minute that already carries one
+of its flattens gets no other), and writes nothing while `TryAuthorizeExecution` refuses the run's identity (the update
+window, the mode, the kill switch, unconfirmed work, health), or on a platform, mode or account that is not the run's.
+It no longer waits while another run on the same account and instrument is live (`U-paper-books`): the close is of this
+run's own book, so there is nothing of the other run's for it to sell. A gate inside the order path is met by each
+attempt and recorded on it. The END's own close RESOLVES the flatten when there is nothing to send — a flat book, or an
+account a close outside the run flattened — so neither owes anything. Until it has closed the run
 holds its slot — counted on its platform, account and instrument, so a new grant there does not start a run over it —
 and its line and `status.deployments` say ENDED, NOT closed, what holds the close or what refused it last (code first),
 sent again each minute, no replacement until it has closed. **Still NOT claimed**: a close that MAY have reached the
 wire — `dispatched`, UNKNOWN, or answered without a fill — is never sent again here (confirming one from order history
-is `U-flatten-confirm`); the close is of the ACCOUNT's whole position in the instrument, not the run's books, so a
-position of the owner's own there goes with it, as it does at the END; and an ended run written before this unit whose
+is `U-flatten-confirm`); and an ended run written before this unit whose
 END found the book flat (`refused`, "there was nothing to send") now reads as owed, so its first pass sends that close
 once — a flat book resolves it. Two END callers at once are below.
 
