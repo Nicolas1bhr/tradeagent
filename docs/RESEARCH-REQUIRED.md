@@ -402,3 +402,25 @@ screen beside the number and a stale date beside a fresh price is the one readin
 row carries the standard price; a promotional price is named in a comment with its end date, and
 where the page prints only the promotional figure — `gpt-5.6-sol` today — the re-read is due before
 that date.
+
+---
+
+## D5 — Decision models: Jev at TypeSafe and through OpenRouter (read 2026-10-09 from the vendors' own pages; re-read before every release)
+
+**File:** `src/TradeAgent.Core/Decisions/DecisionInstruments.cs`, `BuiltIn()` — two instruments in CODE, because a
+key's address and a pin are not something a file may move (`decision-models.json` may change a price, dated and
+sourced, and the limits; `docs/CONTRACTS.md` "The decision port"). Every figure below was re-read by `U-decision-port`
+with curl on 2026-10-09 at 09:47Z (each page HTTP 200) and agrees with the survey's read of 00:19–00:22 CEST the same
+day; nothing here sent a request to `api.typesafe.ai` or to OpenRouter's API, and no account was opened. The figures are
+the vendors' claims, not measurements: no call has ever been made.
+
+| # | Source read | What was taken from it | Still open |
+|---|---|---|---|
+| D5a | <https://docs.typesafe.ai/api.md> | `POST https://api.typesafe.ai/v1/systemone`, Bearer key; request `{state, model, questions}`, each question `{type, instructions, criteria}`; response `{model, answers, usage{input_tokens, output_tokens}}`; Choice: "a maximum of 255 options per Choice"; Score: "at least two levels; the API accepts up to 10"; errors 401, 422, 429 ("back off and retry"), 529. The OpenAPI document (3.1.0, "TypeSafe" v0.2.0, the survey's copy of 00:19 — it lives on the API host, which this unit did not ask) enforces neither limit, so the app does. | TypeSafe returns no request id, seed or server timing: latency is the app's own, on a monotonic clock. Whether a refused or over-budget request is billed is not documented — it keeps its reservation. |
+| D5b | <https://docs.typesafe.ai/models.md> | `jev-1.13.0`, the only model; `jev-latest` and `jev-preview` both alias it and "the response's `model` field reports the versioned ID that answered" — so it is asked and pinned by that id; $42 per billion / $0.042 per million input tokens, output free; "64k tokens per request; 32k tokens for `state` plus the longest question"; 100K tokens and 80 requests a second, a 429 over either, `retry-after` honoured "when the response carries one"; limits "can change without notice". | "64k" is read as 65,536 for the reservation (the larger reading) and as 64,000 for what is sent. Determinism is not promised (R02 § 1; not re-read today). Whether a new account is admitted without the launch post's "early access" wait is NOT VERIFIED: no sign-up was tried. |
+| D5c | <https://openrouter.ai/docs/guides/community/typesafe-sdk.md> | `https://openrouter.ai/api/v1/systemone` implements TypeSafe's shapes and adds `id`, `provider` and `usage.cost`; "the `model` field in the response contains the OpenRouter model ID of the System One model that served the request" — `typesafe/jev-1.13-20260917` in its example, asked as `jev-1.13`. Asked here as `typesafe/jev-1.13`, used as-is; pinned on the dated id. | Its example bills 275 input tokens as `cost` 0.00003, which is not 275 × the list price (0.00001155): the billed figure and the estimate are recorded apart and the billed one is what the day is charged. The alpha Decisions API (`/api/alpha/decisions`, its own shape) is never used. |
+| D5d | <https://openrouter.ai/docs/guides/community/jev.md>, <https://openrouter.ai/typesafe/jev-1.13> | No waitlist; "Context length is 32,000 tokens" (the guide) against "64K" (the model page): 32,000 is kept for what is sent; $0.042 per million input tokens, $0 output. | No rate limit is documented for OpenRouter's route: recorded as zero, not enforced. Which agreement binds an OpenRouter user's Jev output is UNKNOWN (survey Q5 (6)); TypeSafe's MCA § 2.3(b) — never distil or imitate — is kept as though it does. |
+
+**The rule for whoever re-reads these** is D's: the page, not this table; change `DecisionInstruments.ReadOn` and each
+instrument's `PricedOn` on the same commit as any figure; a model the page does not name gets no instrument; and a new
+release is a new instrument with its own pin, never the old pin moved.

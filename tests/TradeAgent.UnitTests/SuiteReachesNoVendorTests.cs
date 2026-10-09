@@ -3,6 +3,7 @@ using TradeAgent.Core;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Decisions;
 using TradeAgent.Provisioning;
 using Xunit;
 
@@ -104,6 +105,15 @@ public class SuiteReachesNoVendorTests
     /// </summary>
     const string HyperliquidHost = "hyperliquid" + ".xyz";
 
+    /// <summary>
+    /// THE DECISION MODELS' HOSTS (<c>U-decision-port</c>), spelled the same way: TypeSafe's API host and OpenRouter's name.
+    /// The built-in instruments ship pointing at both, and a request to either carries a key and costs money — so no test
+    /// may name either, and a test that builds a <see cref="TypeSafeWire"/> has to point its instrument somewhere itself.
+    /// </summary>
+    const string TypeSafeHost = "api" + ".typesafe" + ".ai";
+
+    const string OpenRouterHost = "openrouter" + ".ai";
+
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
     {
@@ -176,6 +186,12 @@ public class SuiteReachesNoVendorTests
                 if (code.Contains(HyperliquidHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names a Hyperliquid host, which the tape's positioning row reaches");
 
+                if (code.Contains(TypeSafeHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names TypeSafe's API host, which a decision model's call reaches");
+
+                if (code.Contains(OpenRouterHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names an OpenRouter host, which a decision model's call reaches");
+
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
                 if (Regex.IsMatch(code, @"new\s+BinanceArchiveClient\s*\(\s*\)"))
@@ -222,6 +238,14 @@ public class SuiteReachesNoVendorTests
                 && !body.Contains("baseUrl:", StringComparison.Ordinal))
                 offenders.Add($"{name} builds a GdeltRecorder and never names a baseUrl, so it would ask GDELT's data "
                               + "host for its files");
+
+            // AND THE DECISION MODELS' WIRE, THE SAME TRAP A SEVENTH TIME (U-decision-port): it is built from an instrument,
+            // and the shipped instruments point at TypeSafe and OpenRouter — so a test source that uses the type has to set an
+            // instrument's `Endpoint` somewhere in the same file. The same lookahead lets static access through.
+            if (Regex.IsMatch(body, @"\bTypeSafeWire\b(?!\s*\.)")
+                && !body.Contains("Endpoint =", StringComparison.Ordinal))
+                offenders.Add($"{name} uses TypeSafeWire and never sets an instrument's Endpoint, so it would send a "
+                              + "request to a decision model's host");
 
             // AND THE INSTRUMENT VERIFIER, THE SAME TRAP A FIFTH TIME (U-venue-verify): its built-in
             // definition address defaults to the one compiled into this build — the vendor's market-data
@@ -404,6 +428,27 @@ public class SuiteReachesNoVendorTests
         // Unverified against the real provider by design: the brief forbids a real call, and nothing in
         // this repository has ever made one.
         Assert.False(manifest.Verified);
+    }
+
+    /// <summary>
+    /// AND THE SHIPPED DECISION MODELS REALLY POINT AT THEIR VENDORS (<c>U-decision-port</c>), which is why a test that builds
+    /// a wire has to repoint its instrument — asserted through the hosts spelled in this file, over https, and never an alias.
+    /// </summary>
+    [Fact]
+    public void The_shipped_decision_models_really_point_at_their_vendors()
+    {
+        var shipped = DecisionInstruments.BuiltIn();
+
+        Assert.Contains(TypeSafeHost, Assert.Single(shipped, i => i.Id == DecisionInstruments.TypeSafeDirect).Endpoint,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(OpenRouterHost, Assert.Single(shipped, i => i.Id == DecisionInstruments.OpenRouterJev).Endpoint,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.All(shipped, i =>
+        {
+            Assert.StartsWith("https://", i.Endpoint);
+            Assert.False(DecisionInstruments.IsAlias(i.RequestModel));
+            Assert.False(DecisionInstruments.IsAlias(i.Pin));
+        });
     }
 
     /// <summary>

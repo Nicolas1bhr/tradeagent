@@ -359,7 +359,7 @@ public class TapeOverPipeTests(ITestOutputHelper log)
         c.Open();
 
         var text = new StringBuilder();
-        foreach (var table in new[] { "tape_meta", "tape_fetch", "tape_obs" })
+        foreach (var table in new[] { "tape_meta", "tape_fetch", "tape_obs", "decision_call" })
         {
             using var cmd = c.CreateCommand();
             cmd.CommandText = $"SELECT * FROM {table} ORDER BY 1";

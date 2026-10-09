@@ -375,3 +375,48 @@ public static class DecisionRequests
     static bool IsName(string? s) =>
         s is { Length: >= 1 and <= 64 } && s.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
 }
+
+/// <summary>
+/// ONE CALL THAT WAS SENT, AS THE PORT HANDS IT TO THE TAPE — everything about it except the two facts the tape's store
+/// decides for itself: the ORIGIN, read off <see cref="Url"/>, and whether the answer is UNPINNED, read off this build's
+/// own pin for <see cref="Instrument"/>. Keyed by the launch-ledger row it was reserved on, so one reservation is one
+/// record and never two. The state is here as its hash and its sources only — its text is kept nowhere.
+/// </summary>
+public sealed record DecisionCall
+{
+    public required string AttemptId { get; init; }
+    public required string Instrument { get; init; }
+    public required string Url { get; init; }
+    public required string RequestedModel { get; init; }
+    public string? AnsweredModel { get; init; }
+    public string? HostResponseId { get; init; }
+    public required SchemaRef Schema { get; init; }
+    public required string StateSha256 { get; init; }
+    public IReadOnlyList<string> Sources { get; init; } = [];
+    public required DateTimeOffset RequestedAt { get; init; }
+    public required DateTimeOffset EndedAt { get; init; }
+    public long? LatencyMs { get; init; }
+    public int? HttpStatus { get; init; }
+
+    /// <summary>ANSWERED, FAILED or UNANSWERED: a REFUSED call was never sent and is never recorded.</summary>
+    public required DecisionStatus Status { get; init; }
+
+    public string? ErrorClass { get; init; }
+    public long? InputTokens { get; init; }
+    public long? OutputTokens { get; init; }
+
+    /// <summary>The tokens at the dated list price. Apart from <see cref="BilledCost"/>, never in its place.</summary>
+    public decimal? EstimatedCost { get; init; }
+
+    public decimal? BilledCost { get; init; }
+    public string? PriceBasis { get; init; }
+
+    /// <summary>The answers object exactly as the host served it, canonical: every probability unrounded.</summary>
+    public string? Answers { get; init; }
+}
+
+/// <summary>
+/// A RECORDED CALL, AS THE TAPE HOLDS IT: the call, the origin its URL has, the pin this build held for its instrument
+/// when it was written, and the verdict — <see cref="Unpinned"/> true means it is not evidence, whatever it says.
+/// </summary>
+public sealed record DecisionCallRecord(DecisionCall Call, string? Origin, string? Pin, bool Unpinned);

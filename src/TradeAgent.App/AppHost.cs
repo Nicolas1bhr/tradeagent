@@ -132,9 +132,10 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>
     /// THE DECISION MODEL FOR ONE INSTRUMENT, or null where it may not be called: an id this build does not ship, or an
-    /// instrument <c>decision-models.json</c> stopped. Built over the app's own ledger, <see cref="PerceptionKey"/>, the
-    /// cap delegate the meter reads and the owner's perception budget; nothing reaches it from the agent-facing pipe —
-    /// the gateway's assembly does not even reference the one this lives in.
+    /// instrument <c>decision-models.json</c> stopped. Built over the app's own ledger and its one tape (a call is refused
+    /// while none is open), <see cref="PerceptionKey"/>, the cap delegate the meter reads and the owner's perception
+    /// budget; nothing reaches it from the agent-facing pipe — the gateway's assembly does not even reference the one this
+    /// lives in.
     /// </summary>
     public IDecisionModel? DecisionModel(string instrumentId)
     {
@@ -143,7 +144,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (_decisionModels.TryGetValue(instrumentId, out var held) && held.Instrument == instrument) return held;
             held?.Dispose();
-            return _decisionModels[instrumentId] = new TypeSafeWire(instrument, PerceptionKey, _db, AiCap,
+            return _decisionModels[instrumentId] = new TypeSafeWire(instrument, PerceptionKey, _db, () => _tape, AiCap,
                 () => Gateway.Settings.PerceptionDailyBudget);
         }
     }

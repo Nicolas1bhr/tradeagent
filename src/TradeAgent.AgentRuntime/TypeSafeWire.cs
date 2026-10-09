@@ -34,6 +34,11 @@ namespace TradeAgent.AgentRuntime;
 /// day. The row is held in <see cref="LiveAttempts"/> while the call flies, so a meter built meanwhile does not declare
 /// it lost, and it settles on the answered id and the host's billed cost, else the input tokens at the dated price —
 /// <c>pricing_basis</c> says which. A call that brings back no usage keeps its reservation as its cost.</para>
+///
+/// <para><b>Recorded on the tape before it settles.</b> Every call that was sent is a <c>decision_call</c> row
+/// (<see cref="TapeStore.RecordDecision"/>), written before the ledger row is closed, so a crash between the two leaves a
+/// record and a LAUNCHED row that the next start charges its reservation — never a settled call with no record. No tape
+/// open, no call. An answer the tape could not take is not served and is charged as if it never came.</para>
 /// </summary>
 public sealed class TypeSafeWire : IDecisionModel, IDisposable
 {
@@ -45,6 +50,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
     readonly HarnessKey _key;
     readonly AiAttemptStore _attempts;
+    readonly Func<TapeStore?> _tape;
     readonly Func<decimal> _cap;
     readonly Func<decimal> _budget;
     readonly Func<string?> _currency;
@@ -58,6 +64,10 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     /// every call, for the instrument's origin, and nothing else.
     /// </param>
     /// <param name="db">The main database, whose launch ledger every call is reserved and settled in.</param>
+    /// <param name="tape">
+    /// The tape every call that was sent is recorded on, asked at every call: the app's one store, or null while none is
+    /// open — and then nothing is reserved or sent.
+    /// </param>
     /// <param name="cap">
     /// The owner's daily AI cap, read at every call through the SAME delegate the meter reads, so the two can never be
     /// two ceilings. A throw reads as zero: no call.
@@ -71,13 +81,14 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     /// <param name="requestTimeout">How long one request may take. <see cref="DefaultRequestTimeout"/> when null.</param>
     /// <param name="transport">The handler requests go through. A test's loopback; null in the product.</param>
     /// <param name="now">The wall clock the ledger's and the record's instants are read from.</param>
-    public TypeSafeWire(DecisionInstrument instrument, HarnessKey key, Database db, Func<decimal> cap, Func<decimal> budget,
-        LiveAttempts? live = null, Func<string?>? currency = null, TimeSpan? requestTimeout = null,
+    public TypeSafeWire(DecisionInstrument instrument, HarnessKey key, Database db, Func<TapeStore?> tape, Func<decimal> cap,
+        Func<decimal> budget, LiveAttempts? live = null, Func<string?>? currency = null, TimeSpan? requestTimeout = null,
         HttpMessageHandler? transport = null, Func<DateTimeOffset>? now = null)
     {
         ArgumentNullException.ThrowIfNull(instrument);
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(db);
+        ArgumentNullException.ThrowIfNull(tape);
         ArgumentNullException.ThrowIfNull(cap);
         ArgumentNullException.ThrowIfNull(budget);
         if (ReferenceEquals(key, HarnessKey.Shared))
@@ -86,6 +97,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         Instrument = instrument;
         _key = key;
         _attempts = new AiAttemptStore(db);
+        _tape = tape;
         _cap = cap;
         _budget = budget;
         _live = live ?? LiveAttempts.Shared;
@@ -109,6 +121,10 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         if (DecisionRequests.Refusal(request, Instrument) is { } no) return Refused(no);
         if (CurrencyRefusal() is { } money) return Refused(money);
 
+        // NO TAPE, NO CALL: an answer nobody can record is a measurement nobody can use, and its money would be spent on
+        // nothing.
+        if (_tape() is null) return Refused(NoTape);
+
         // WHERE THIS CALL GOES, READ ONCE, and the key released for that origin and no other. Before the reservation:
         // a call that cannot be sent is not a call anybody is charged for.
         var endpoint = Instrument.Endpoint;
@@ -128,8 +144,26 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         {
             // ONE REQUEST ON THIS RESERVATION, and never a second.
             var sent = await SendAsync(endpoint, key, body, request.Questions, ct);
-            Settle(id, sent);
-            return sent.Answer with { AttemptId = id };
+
+            // RECORDED BEFORE IT SETTLES, with the verdict the store reached: the pin is compared there and nowhere else.
+            var answer = sent.Answer with { AttemptId = id };
+            try
+            {
+                var record = (_tape() ?? throw new InvalidOperationException("the tape was closed while the call was in flight"))
+                    .RecordDecision(Record(id, endpoint, request, sent));
+                answer = answer with { Unpinned = record.Unpinned };
+            }
+            catch (Exception)
+            {
+                // NOT RECORDED, SO NOT SERVED, AND CHARGED AS IF IT NEVER CAME: the reservation stands as its cost.
+                answer = Answer(DecisionStatus.UNANSWERED) with
+                {
+                    AttemptId = id, ErrorClass = "not-recorded", HttpStatus = sent.Answer.HttpStatus, Latency = sent.Answer.Latency
+                };
+            }
+
+            Settle(id, answer, sent.EndedAt);
+            return answer;
         }
         finally
         {
@@ -137,6 +171,43 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             // keeping the reservation as the cost. Either way nothing in this process is waiting for it any more.
             _live.Leave(id);
         }
+    }
+
+    /// <summary>The refusal when no tape is open to record the call on.</summary>
+    public const string NoTape =
+        "TradeAgent is not recording market context, so a decision model's answer could not be recorded; nothing was sent.";
+
+    /// <summary>
+    /// THE RECORD OF ONE SENT CALL: who was asked and who answered, the schema's and the state's hashes and the state's
+    /// sources — never its text — the instants and the latency, the tokens, both costs apart, and the answers as served.
+    /// </summary>
+    DecisionCall Record(string id, string endpoint, DecisionRequest request, Sent sent)
+    {
+        var a = sent.Answer;
+        return new DecisionCall
+        {
+            AttemptId = id,
+            Instrument = Instrument.Id,
+            Url = endpoint,
+            RequestedModel = Instrument.RequestModel,
+            AnsweredModel = a.AnsweredModel,
+            HostResponseId = a.HostResponseId,
+            Schema = request.Schema,
+            StateSha256 = TapeJson.Sha256(DecisionRequests.CanonicalState(request.State)),
+            Sources = request.Sources,
+            RequestedAt = sent.RequestedAt,
+            EndedAt = sent.EndedAt,
+            LatencyMs = a.Latency is { } l ? (long)Math.Round(l.TotalMilliseconds) : null,
+            HttpStatus = a.HttpStatus,
+            Status = a.Status,
+            ErrorClass = a.ErrorClass,
+            InputTokens = a.InputTokens,
+            OutputTokens = a.OutputTokens,
+            EstimatedCost = a.EstimatedCost,
+            BilledCost = a.BilledCost,
+            PriceBasis = a.BilledCost is not null ? BilledBasis : a.InputTokens is not null ? Instrument.PriceBasis : null,
+            Answers = sent.AnswersJson
+        };
     }
 
     /// <summary>
@@ -217,9 +288,8 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     /// <see cref="AiAttemptStore.End"/> keeps the reservation as the cost — unknown is never zero. A settle that throws
     /// leaves the row LAUNCHED, which the next restart turns LOST at its reservation: the conservative direction.
     /// </summary>
-    void Settle(string id, Sent sent)
+    void Settle(string id, DecisionAnswer a, DateTimeOffset endedAt)
     {
-        var a = sent.Answer;
         var input = a.InputTokens;
         long? output = input is null ? null : a.OutputTokens ?? 0;
         var cost = a.BilledCost ?? (input is { } i ? Instrument.Estimate(i, output ?? 0) : null);
@@ -239,7 +309,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
         try
         {
-            _attempts.End(id, a.Status == DecisionStatus.ANSWERED ? 0 : 2, sent.EndedAt, input, null, null, output, null,
+            _attempts.End(id, a.Status == DecisionStatus.ANSWERED ? 0 : 2, endedAt, input, null, null, output, null,
                 a.AnsweredModel, cost, null, context, basis);
         }
         catch (Exception) { /* left LAUNCHED: see above */ }
@@ -305,6 +375,12 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         {
             return Lost("transport", null);
         }
+        catch (Exception)
+        {
+            // ANYTHING ELSE THE SEND THREW — a disposed client, a request the handler would not take — is still a call
+            // that was reserved and may have gone: it is answered, settled and recorded like any other lost answer.
+            return Lost("send-failed", null);
+        }
 
         var latency = clock.Elapsed;
         var endedAt = _now();
@@ -323,7 +399,6 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             HttpStatus = status,
             Latency = latency,
             AnsweredModel = read.Model,
-            Unpinned = !DecisionInstruments.IsPinned(Instrument.Id, read.Model),
             HostResponseId = read.Id,
             InputTokens = read.Input,
             OutputTokens = read.Output,
@@ -387,7 +462,10 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             if (!root.TryGetProperty("answers", out var answers) || answers.ValueKind != JsonValueKind.Object)
                 return new(model, id, input, output, billed, null, null, "no-answers");
 
-            var json = TapeJson.Canonical(answers.GetRawText());
+            string json;
+            try { json = TapeJson.Canonical(answers.GetRawText()); }
+            catch (JsonException) { return new(model, id, input, output, billed, null, null, "malformed-answer"); }
+
             var read = new Dictionary<string, DecisionDistribution>(StringComparer.Ordinal);
             foreach (var a in answers.EnumerateObject())
             {

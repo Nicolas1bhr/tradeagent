@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Decisions;
 
 namespace TradeAgent.Core.Db;
 
@@ -57,11 +58,20 @@ public sealed record TapeAsOf(TapeObservation? Row, string? Refusal);
 /// app's own process is the only caller of <see cref="Append"/>. Until containment an agent running
 /// unconfined could still edit the FILE — <c>docs/CONTRACTS.md</c> "The tape" says so and does not
 /// claim otherwise.</para>
+///
+/// <para><b>Rung 2 adds the decision models' answers</b> (<c>U-decision-port</c>; <c>docs/EDGE-FACTORY.md</c> § 4.2:
+/// "every answer is a recorded measurement"). <c>decision_call</c> holds one row per call that was SENT, keyed by
+/// the launch-ledger row it was reserved on, written by <see cref="RecordDecision"/> before that row is settled —
+/// who was asked and who answered, the schema's and the state's hashes (never the state), the instants, the latency,
+/// the tokens, the estimated and the billed cost apart, the status and the full answers. Two of its fields are
+/// computed HERE and taken from no caller, as the evidence class is: the ORIGIN, off the URL, and UNPINNED, off this
+/// build's own pin for the instrument (<see cref="DecisionInstruments.IsPinned"/>). One insert, never an update: a
+/// second record for one reservation is refused by its key.</para>
 /// </summary>
 public sealed class TapeStore : IDisposable
 {
     /// <summary>The version of the layout below, written into the file it describes.</summary>
-    public const int Schema = 1;
+    public const int Schema = 2;
 
     /// <summary>The most one observation's canonical payload may hold, in UTF-8 bytes.</summary>
     public const int MaxPayloadBytes = 64 * 1024;
@@ -165,9 +175,10 @@ public sealed class TapeStore : IDisposable
     }
 
     /// <summary>
-    /// THE LADDER. One rung today; every later one is an <c>if (have &lt; N)</c> below it, written by the
-    /// unit that needs it and committed in one transaction with its own version row, so a crash
-    /// mid-rung re-runs the rung rather than leaving a file that claims a layout it does not have.
+    /// THE LADDER. Two rungs today — the tape itself, and the decision models' answers (<c>U-decision-port</c>); every
+    /// later one is an <c>if (have &lt; N)</c> below them, written by the unit that needs it and committed in one
+    /// transaction with its own version row, so a crash mid-rung re-runs the rung rather than leaving a file that claims
+    /// a layout it does not have.
     /// </summary>
     void Migrate(int have)
     {
@@ -208,6 +219,42 @@ public sealed class TapeStore : IDisposable
 
                 INSERT INTO tape_meta(key, value) VALUES('schema', '1')
                   ON CONFLICT(key) DO UPDATE SET value='1';
+                """);
+
+        if (have < 2)
+            Rung("""
+                CREATE TABLE IF NOT EXISTS decision_call(
+                  attempt_id       TEXT PRIMARY KEY,
+                  instrument       TEXT NOT NULL,
+                  url              TEXT NOT NULL,
+                  origin           TEXT NULL,
+                  requested_model  TEXT NOT NULL,
+                  answered_model   TEXT NULL,
+                  pin              TEXT NULL,
+                  unpinned         INTEGER NOT NULL CHECK (unpinned IN (0, 1)),
+                  host_response_id TEXT NULL,
+                  schema_id        TEXT NOT NULL,
+                  schema_version   INTEGER NOT NULL CHECK (schema_version >= 1),
+                  schema_sha256    TEXT NOT NULL,
+                  state_sha256     TEXT NOT NULL,
+                  sources          TEXT NOT NULL,
+                  requested_at     TEXT NOT NULL,
+                  ended_at         TEXT NOT NULL,
+                  latency_ms       INTEGER NULL,
+                  http_status      INTEGER NULL,
+                  status           TEXT NOT NULL CHECK (status IN ('ANSWERED','FAILED','UNANSWERED')),
+                  error_class      TEXT NULL,
+                  input_tokens     INTEGER NULL,
+                  output_tokens    INTEGER NULL,
+                  cost_estimated   TEXT NULL,
+                  cost_billed      TEXT NULL,
+                  price_basis      TEXT NULL,
+                  answers          TEXT NULL,
+                  CHECK (status <> 'ANSWERED' OR answers IS NOT NULL));
+                CREATE INDEX IF NOT EXISTS ix_decision_call_instrument ON decision_call(instrument, requested_at);
+
+                INSERT INTO tape_meta(key, value) VALUES('schema', '2')
+                  ON CONFLICT(key) DO UPDATE SET value='2';
                 """);
     }
 
@@ -542,6 +589,102 @@ public sealed class TapeStore : IDisposable
         using var r = c.ExecuteReader();
         return r.Read() ? (r.GetInt32(0), r.GetString(1), r.GetString(2)) : null;
     }
+
+    // ------------------------------------------------------------------------- the decision models
+
+    const string DecisionCols = """
+        attempt_id, instrument, url, origin, requested_model, answered_model, pin, unpinned, host_response_id,
+        schema_id, schema_version, schema_sha256, state_sha256, sources, requested_at, ended_at, latency_ms,
+        http_status, status, error_class, input_tokens, output_tokens, cost_estimated, cost_billed, price_basis, answers
+        """;
+
+    /// <summary>
+    /// RECORDS ONE CALL THAT WAS SENT, in one transaction, and answers what was written — with the two facts decided
+    /// here: the origin, read off the call's own URL, and whether the answer is UNPINNED, read off this build's pin for
+    /// its instrument and from no caller. A REFUSED call is refused here too: it was never sent, so there is nothing to
+    /// record. A second record for one attempt is refused by the table's key.
+    /// </summary>
+    public DecisionCallRecord RecordDecision(DecisionCall call)
+    {
+        ArgumentNullException.ThrowIfNull(call);
+        if (call.Status == DecisionStatus.REFUSED)
+            throw new ArgumentException("a refused call was never sent and is not recorded", nameof(call));
+        if (string.IsNullOrWhiteSpace(call.AttemptId) || string.IsNullOrWhiteSpace(call.Instrument)
+            || string.IsNullOrWhiteSpace(call.Url) || string.IsNullOrWhiteSpace(call.RequestedModel))
+            throw new ArgumentException("a decision call names its attempt, its instrument, its URL and the model it asked for", nameof(call));
+        if (call.Status == DecisionStatus.ANSWERED && call.Answers is null)
+            throw new ArgumentException("an answered call carries its answers", nameof(call));
+
+        var answers = call.Answers is null ? null : TapeJson.Canonical(call.Answers);
+        var sources = JsonSerializer.Serialize(call.Sources);
+        var origin = UrlOrigin.Of(call.Url);
+        var pin = DecisionInstruments.BuiltInPin(call.Instrument);
+        var unpinned = !DecisionInstruments.IsPinned(call.Instrument, call.AnsweredModel);
+
+        Write(() =>
+        {
+            using var c = Cmd($"""
+                INSERT INTO decision_call({DecisionCols})
+                VALUES($attempt,$instrument,$url,$origin,$requested,$answered,$pin,$unpinned,$host,$schema,$version,$schemaSha,
+                       $stateSha,$sources,$requestedAt,$endedAt,$latency,$http,$status,$error,$in,$out,$estimated,$billed,$basis,$answers)
+                """,
+                ("$attempt", call.AttemptId), ("$instrument", call.Instrument), ("$url", call.Url), ("$origin", origin),
+                ("$requested", call.RequestedModel), ("$answered", call.AnsweredModel), ("$pin", pin), ("$unpinned", unpinned ? 1 : 0),
+                ("$host", call.HostResponseId), ("$schema", call.Schema.Id), ("$version", call.Schema.Version),
+                ("$schemaSha", call.Schema.Sha), ("$stateSha", call.StateSha256), ("$sources", sources),
+                ("$requestedAt", Sql.T(call.RequestedAt)), ("$endedAt", Sql.T(call.EndedAt)), ("$latency", call.LatencyMs),
+                ("$http", call.HttpStatus), ("$status", call.Status.ToString()), ("$error", call.ErrorClass),
+                ("$in", call.InputTokens), ("$out", call.OutputTokens),
+                ("$estimated", call.EstimatedCost is { } e ? Sql.D(e) : null), ("$billed", call.BilledCost is { } b ? Sql.D(b) : null),
+                ("$basis", call.PriceBasis), ("$answers", answers));
+            return c.ExecuteNonQuery();
+        });
+
+        return new DecisionCallRecord(call with { Answers = answers }, origin, pin, unpinned);
+    }
+
+    /// <summary>One recorded call by its attempt id, or null. In-process only, like every read of this store.</summary>
+    public DecisionCallRecord? RecordedCall(string attemptId) => Read(() =>
+    {
+        using var c = Cmd($"SELECT {DecisionCols} FROM decision_call WHERE attempt_id=$id", ("$id", attemptId));
+        using var r = c.ExecuteReader();
+        return r.Read() ? Decision(r) : null;
+    });
+
+    /// <summary>The recorded calls, newest first.</summary>
+    public IReadOnlyList<DecisionCallRecord> RecordedCalls(int limit = 100) => Read(() =>
+    {
+        using var c = Cmd($"SELECT {DecisionCols} FROM decision_call ORDER BY requested_at DESC, rowid DESC LIMIT $n",
+            ("$n", Math.Max(0, limit)));
+        return (IReadOnlyList<DecisionCallRecord>)ReadAll(c, Decision);
+    });
+
+    static DecisionCallRecord Decision(SqliteDataReader r) => new(
+        new DecisionCall
+        {
+            AttemptId = r.GetString(0),
+            Instrument = r.GetString(1),
+            Url = r.GetString(2),
+            RequestedModel = r.GetString(4),
+            AnsweredModel = Sql.S(r.GetValue(5)),
+            HostResponseId = Sql.S(r.GetValue(8)),
+            Schema = new SchemaRef(r.GetString(9), r.GetInt32(10), r.GetString(11)),
+            StateSha256 = r.GetString(12),
+            Sources = JsonSerializer.Deserialize<List<string>>(r.GetString(13)) ?? [],
+            RequestedAt = Sql.Time(r.GetString(14)),
+            EndedAt = Sql.Time(r.GetString(15)),
+            LatencyMs = r.IsDBNull(16) ? null : r.GetInt64(16),
+            HttpStatus = r.IsDBNull(17) ? null : r.GetInt32(17),
+            Status = Enum.Parse<DecisionStatus>(r.GetString(18)),
+            ErrorClass = Sql.S(r.GetValue(19)),
+            InputTokens = r.IsDBNull(20) ? null : r.GetInt64(20),
+            OutputTokens = r.IsDBNull(21) ? null : r.GetInt64(21),
+            EstimatedCost = Sql.DecN(r.GetValue(22)),
+            BilledCost = Sql.DecN(r.GetValue(23)),
+            PriceBasis = Sql.S(r.GetValue(24)),
+            Answers = Sql.S(r.GetValue(25))
+        },
+        Sql.S(r.GetValue(3)), Sql.S(r.GetValue(6)), r.GetInt64(7) == 1);
 
     // ---------------------------------------------------------------------------------- the reads
 

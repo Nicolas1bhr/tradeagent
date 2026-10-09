@@ -67,17 +67,18 @@ public class TapeReadTests(ITestOutputHelper log)
         var file = NewFile();
         using (new TapeStore(file)) { }
 
+        var next = (TapeStore.Schema + 1).ToString(CultureInfo.InvariantCulture);
         using (var c = new SqliteConnection($"Data Source={file};Pooling=False"))
         {
             c.Open();
             using var cmd = c.CreateCommand();
-            cmd.CommandText = "UPDATE tape_meta SET value='2' WHERE key='schema'";
+            cmd.CommandText = $"UPDATE tape_meta SET value='{next}' WHERE key='schema'";
             Assert.Equal(1, cmd.ExecuteNonQuery());
         }
 
         var newer = Assert.Throws<InvalidOperationException>(() => new TapeReader(file));
         log.WriteLine(newer.Message);
-        Assert.Contains("layout version 2", newer.Message, StringComparison.Ordinal);
+        Assert.Contains($"layout version {next}", newer.Message, StringComparison.Ordinal);
         Assert.Contains($"version {TapeStore.Schema}", newer.Message, StringComparison.Ordinal);
 
         var missing = Assert.Throws<InvalidOperationException>(() => new TapeReader(NewFile()));

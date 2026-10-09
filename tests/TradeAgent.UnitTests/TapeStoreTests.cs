@@ -339,21 +339,21 @@ public class TapeStoreTests(ITestOutputHelper log)
         using (var store = new TapeStore(file))
         {
             Assert.Equal(TapeStore.Schema, store.Version);
-            Assert.Equal(1, store.Version);
             store.Append(Fetch(Noon.AddSeconds(2)), [Point(Noon, "1.0")]);
         }
 
-        Assert.Equal(["tape_fetch", "tape_meta", "tape_obs"], Tables(file));
+        // THE TAPE'S OWN TABLES, AND RUNG 2'S: the decision models' answers (U-decision-port).
+        Assert.Equal(["decision_call", "tape_fetch", "tape_meta", "tape_obs"], Tables(file));
         using (var raw = Raw(file))
         {
             Assert.Equal("wal", Scalar(raw, "PRAGMA journal_mode"));
-            Assert.Equal("1", Scalar(raw, "SELECT value FROM tape_meta WHERE key='schema'"));
+            Assert.Equal(TapeStore.Schema.ToString(CultureInfo.InvariantCulture), Scalar(raw, "SELECT value FROM tape_meta WHERE key='schema'"));
         }
 
         // REOPENING IS NOT A MIGRATION: what was written is still there and the version did not move.
         using (var again = new TapeStore(file))
         {
-            Assert.Equal(1, again.Version);
+            Assert.Equal(TapeStore.Schema, again.Version);
             Assert.Single(again.Fetches());
         }
 
@@ -368,16 +368,17 @@ public class TapeStoreTests(ITestOutputHelper log)
             Assert.Equal(0, tapeTables);
         }
 
-        // A TAPE WRITTEN BY A NEWER BUILD: version 2, a table this build has never heard of, and the
-        // default rollback journal.
+        // A TAPE WRITTEN BY A NEWER BUILD: the version after this build's, a table this build has never
+        // heard of, and the default rollback journal.
         var newer = NewFile();
+        var next = (TapeStore.Schema + 1).ToString(CultureInfo.InvariantCulture);
         using (var raw = Raw(newer))
         using (var cmd = raw.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 CREATE TABLE tape_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                INSERT INTO tape_meta(key, value) VALUES('schema', '2');
-                CREATE TABLE tape_rung_two(x INTEGER);
+                INSERT INTO tape_meta(key, value) VALUES('schema', '{next}');
+                CREATE TABLE tape_rung_next(x INTEGER);
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -385,14 +386,15 @@ public class TapeStoreTests(ITestOutputHelper log)
         var refused = Assert.Throws<InvalidOperationException>(() => new TapeStore(newer));
         log.WriteLine(refused.Message);
         Assert.Contains("newer TradeAgent", refused.Message, StringComparison.Ordinal);
-        Assert.Contains("version 2", refused.Message, StringComparison.Ordinal);
+        Assert.Contains($"version {next}", refused.Message, StringComparison.Ordinal);
+        Assert.Contains($"this build understands {TapeStore.Schema}", refused.Message, StringComparison.Ordinal);
 
         // NOTHING WAS MIGRATED BEFORE THE REFUSAL: no table of this build's was added, the version row
-        // still says 2, and the journal mode was never switched.
-        Assert.Equal(["tape_meta", "tape_rung_two"], Tables(newer));
+        // still says the newer version, and the journal mode was never switched.
+        Assert.Equal(["tape_meta", "tape_rung_next"], Tables(newer));
         using (var raw = Raw(newer))
         {
-            Assert.Equal("2", Scalar(raw, "SELECT value FROM tape_meta WHERE key='schema'"));
+            Assert.Equal(next, Scalar(raw, "SELECT value FROM tape_meta WHERE key='schema'"));
             Assert.Equal("delete", Scalar(raw, "PRAGMA journal_mode"));
         }
 
@@ -406,7 +408,7 @@ public class TapeStoreTests(ITestOutputHelper log)
         log.WriteLine($"{line.Level}: {line.Text}");
         Assert.Equal("warn", line.Level);
         Assert.Contains("newer TradeAgent", line.Text, StringComparison.Ordinal);
-        Assert.Equal(["tape_meta", "tape_rung_two"], Tables(newer));
+        Assert.Equal(["tape_meta", "tape_rung_next"], Tables(newer));
     }
 
     /// <summary>

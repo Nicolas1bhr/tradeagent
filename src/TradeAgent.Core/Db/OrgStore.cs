@@ -118,8 +118,9 @@ public static class AppPrincipals
     public const string Allocator = "allocator";
 
     /// <summary>
-    /// RESERVED for the perception principal <c>U-decision-port</c> queues. Nothing writes it yet; it is named now
-    /// so that it is never a position before that unit lands.
+    /// The decision port (<c>U-decision-port</c>): every call to a decision model is a launch-ledger row under this name,
+    /// admitted against the owner's daily cap and perception's own budget. A meter role, never a position and never a
+    /// council role — the ledger's readers count it apart and the relay's fence attributes nothing to it.
     /// </summary>
     public const string Perception = "perception";
 
