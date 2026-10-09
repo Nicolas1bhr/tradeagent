@@ -566,7 +566,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 d.Id, d.VersionId, d.AllocationId, d.EnvelopeId, d.ConnectorId, d.AccountId, d.Symbol,
                 d.Mode, d.State, d.StartedAt, d.CursorOpenTime, d.SuspendedReason, d.EndedAt,
                 d.EndReason, ops.Count, unresolved, owed,
-                DeploymentLine(d, ops.Count, unresolved, owed, _deployments.BookOf(d, ops, ledger)));
+                DeploymentLine(d, ops.Count, unresolved, owed, _deployments.BookOf(d, ops, ledger),
+                    ClosedOutsideBy(d, ops)));
         })];
     }
 
@@ -609,7 +610,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// account is the sum of everyone on it (<see cref="BookSentence"/>).</para>
     /// </summary>
     static string DeploymentLine(StrategyDeploymentRow d, int operations, int unresolved, string? closeOwed,
-        RunBook book)
+        RunBook book, string? closedOutside)
     {
         var line = $"{Short(d.VersionId)} in {d.Symbol} on account {d.AccountId} at {d.ConnectorId}, "
                    + $"{d.State} since {d.StartedAt:yyyy-MM-dd HH:mm:ssK}, {operations} operation"
@@ -625,6 +626,11 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (d.IsEnded)
             line += $" ENDED at {d.EndedAt:yyyy-MM-dd HH:mm:ssK}: {d.EndReason ?? "no reason recorded"}.";
+
+        // WHY AN ENDED RUN'S BOOK STILL HOLDS WHAT IT BOUGHT, when that is why: its END found the account flat — a close
+        // it did not send had taken it — and sent nothing. That close is not the run's fill (U-paper-books).
+        if (closedOutside is not null)
+            line += $" Its END sent nothing: {closedOutside}.";
 
         if (closeOwed is not null)
             line += $" {OwedSentence(closeOwed)}";
@@ -645,6 +651,16 @@ public sealed class TradingGateway : IAsyncDisposable
     static string OwedSentence(string why) =>
         $"NOT closed: the close this end owes has not gone out ({why}). TradeAgent sends it again at most "
         + "once each minute while nothing refuses it, and no replacement run starts until it has closed.";
+
+    /// <summary>
+    /// The answer of an ended run's latest flatten when that END found its run's book long over a flat account and sent
+    /// nothing (<see cref="ClosedOutsideTheRun"/>), or null because that is not how it ended.
+    /// </summary>
+    static string? ClosedOutsideBy(StrategyDeploymentRow d, IReadOnlyList<DeploymentOpRow> ops) =>
+        d.IsEnded && LatestFlatten(ops) is { State: DeploymentOpState.Resolved, Answer: { } answer }
+                  && answer.StartsWith(ClosedOutsideTheRun, StringComparison.Ordinal)
+            ? answer
+            : null;
 
     /// <summary>
     /// WHAT THE RUN ITSELF HOLDS, IN ONE SENTENCE (<c>U-paper-books</c>): its own book, or that it has no fill yet, or —
@@ -782,8 +798,9 @@ public sealed class TradingGateway : IAsyncDisposable
     ///
     /// <para>Only what provably never left is owed, so it is the one thing that may be sent again. A flatten
     /// with an answer is over whatever the answer was; one still <c>dispatched</c> — UNKNOWN among them — may be
-    /// live at the platform, holds the slot as an unresolved operation, and is never sent again here; and
-    /// <see cref="CloseAsync"/>'s "nothing to close" resolves the flatten, so a flat book owes nothing.</para>
+    /// live at the platform, holds the slot as an unresolved operation, and is never sent again here; and the END's
+    /// own close resolves the flatten when there is nothing to send (<see cref="CloseItsOwnBookAsync"/>) — a flat book,
+    /// or an account a close outside the run already flattened — so neither owes anything.</para>
     /// </summary>
     bool OwesItsClose(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow> ops)
     {
@@ -797,22 +814,6 @@ public sealed class TradingGateway : IAsyncDisposable
         ops.LastOrDefault(o => string.Equals(o.Kind, DeploymentOpKind.Flatten, StringComparison.Ordinal));
 
     /// <summary>
-    /// ANOTHER RUN ON THE SAME POSITION, or null: a run on this one's platform, account and instrument that is not
-    /// over, or is over with an operation that has no answer.
-    ///
-    /// <para>An END's close is a close of the ACCOUNT'S whole position in the instrument (<see cref="CloseAsync"/>),
-    /// and at the END that position is the run's own, because a replacement waits for a flat end. An owed close
-    /// goes out LATER, and by then another run may be trading the same position — one a larger grant carries
-    /// beside it, or one started over this run before its close was owed — or may have a close of its own on the
-    /// wire. Sent then, it would close that run's position under it, or close the position twice; so it waits,
-    /// and the deployment's line says for whom.</para>
-    /// </summary>
-    StrategyDeploymentRow? AnotherRunOnItsPosition(StrategyDeploymentRow deployment) =>
-        _deployments.OnInstrument(deployment.ConnectorId, deployment.AccountId, deployment.Symbol)
-            .FirstOrDefault(d => !string.Equals(d.Id, deployment.Id, StringComparison.Ordinal)
-                                 && (!d.IsEnded || _deployments.OpsOf(d.Id).Any(o => !o.IsSettled)));
-
-    /// <summary>
     /// WHY AN OWED CLOSE HAS NOT GONE OUT, or null because nothing is owed: what holds it NOW — a platform, mode
     /// or account that is not the run's, or a gate that refuses its identity, either of which keeps the
     /// reconcile pass from writing anything — and otherwise what refused the last attempt, in that operation's
@@ -822,10 +823,6 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         if (!OwesItsClose(deployment, ops)) return null;
         if (DeploymentMovedFrom(deployment) is { Length: > 0 } moved) return moved;
-        if (AnotherRunOnItsPosition(deployment) is { } other)
-            return $"held while run {Short(other.Id)} on the same account and instrument "
-                   + (other.IsEnded ? "has an order with no answer" : "is not over")
-                   + $": a close is of the account's whole position in {deployment.Symbol}";
         if (!TryAuthorizeExecution(AgentContext.Deployment(deployment.Id), out var reason, out var code))
             return $"{code} — {reason}";
         return LatestFlatten(ops)?.Answer ?? "no close has been written for it yet";
@@ -1157,7 +1154,7 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             await RunDeploymentOpAsync(deployment, op.RequestId,
-                rid => PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct)!, ct);
+                async rid => await PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct), ct);
             sent++;
         }
 
@@ -1193,19 +1190,21 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// ENDS ONE PAPER DEPLOYMENT: cancels what is working, flattens what is open through this
-    /// gateway's own close mechanics under the deployment's own identity, and records the reason.
+    /// ENDS ONE PAPER DEPLOYMENT: cancels what is working, closes what the RUN holds under the deployment's own
+    /// identity, and records the reason.
     ///
     /// <para><b>Cancelling comes first and it is not tidiness.</b> An end that closes the position and
     /// leaves a working opener on the book has flattened nothing, because the opener fills a moment
     /// later into a run that is over — the order <see cref="FlattenForBreachAsync"/> takes, for the
     /// same reason.</para>
     ///
-    /// <para><b>The close is an ordinary order.</b> It goes through <see cref="CloseAsync"/> and
-    /// therefore through <see cref="PlaceAsync"/> and every gate this gateway has: freshness, the
-    /// open-position cap, the unresolved-reducer refusal, the loss budgets, the owner's per-order
-    /// limits, the allocation ceiling and the kill switch. Nothing is skipped for being the app's own
-    /// caller, and a close and a reduce pass the ceiling exactly as they always have.</para>
+    /// <para><b>The close is of the run's own book, and it is an ordinary order</b> (<c>U-paper-books</c>). A paper
+    /// account keeps one position per symbol, the sum of every holder on it, so the END sells exactly what the run's
+    /// own fills say it holds (<see cref="CloseItsOwnBookAsync"/>) and leaves everyone else's — another run's, the
+    /// owner's own — where it is. It goes through <see cref="PlaceAsync"/> and every gate this gateway has: freshness,
+    /// the open-position cap, the unresolved-reducer refusal, the loss budgets, the owner's per-order limits, the
+    /// allocation ceiling, the kill switch, and the stale-close read of the run's own book. Nothing is skipped for being
+    /// the app's own caller, and a close and a reduce pass the ceiling exactly as they always have.</para>
     ///
     /// <para><b>It refuses on a platform, a mode or an account that is not the deployment's</b>, and
     /// suspends instead. A flatten sent where the run was not started is an order on somebody else's
@@ -1311,29 +1310,158 @@ public sealed class TradingGateway : IAsyncDisposable
             if (working.ConnectorOrderId is not { Length: > 0 } order) continue;
 
             await RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
-                rid => CancelAsync(ctx, rid, order, ct)!, ct,
+                async rid => await CancelAsync(ctx, rid, order, ct), ct,
                 DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = order }));
         }
     }
 
     /// <summary>
-    /// The one close an end sends, written down before it goes. <see cref="CloseAsync"/> answers null
-    /// on a book that is already flat, and the operation records that rather than inventing an order:
-    /// "there was nothing to close" is an outcome, it RESOLVES the flatten (<see cref="RunDeploymentOpAsync"/>)
-    /// and it settles the bar — and an END whose latest flatten resolved owes nothing.
+    /// The one close an end sends, written down before it goes: the run's own book (<see cref="CloseItsOwnBookAsync"/>).
+    /// When there is nothing to send — the book is flat, or a close outside the run already flattened the account — the
+    /// operation records that outcome in words rather than inventing an order: it RESOLVES the flatten
+    /// (<see cref="RunDeploymentOpAsync"/>) and settles the bar, and an END whose latest flatten resolved owes nothing.
     /// </summary>
     Task<bool> FlattenDeploymentAsync(StrategyDeploymentRow deployment, DateTimeOffset bar,
         CancellationToken ct) =>
         RunDeploymentOpAsync(deployment, NextDeploymentOpId(deployment, bar),
-            rid => CloseAsync(AgentContext.Deployment(deployment.Id), rid, deployment.Symbol, ct,
-                deployment.VersionId),
+            rid => CloseItsOwnBookAsync(deployment, rid, ct),
             ct, DeploymentOpKind.Flatten, bar, Json.Write(new { close = deployment.Symbol }));
 
     /// <summary>
+    /// The first words of an END's answer when its run's book holds a long and the account it was on is flat with no
+    /// order of the run's still open: something the run did not send closed it (<see cref="CloseItsOwnBookAsync"/>).
+    /// </summary>
+    public const string ClosedOutsideTheRun = "closed outside the run";
+
+    /// <summary>
+    /// AN END'S CLOSE: EXACTLY WHAT THE RUN HOLDS, sized from the run's own book and nothing else
+    /// (<c>U-paper-books</c>) — or the outcome in words when there is nothing to send, or a refusal in words that
+    /// leaves the close owed.
+    ///
+    /// <para><b>The platform's position is read FIRST, and the book after it.</b> That read is the settling read: a
+    /// platform that settles on a read, as the paper book does, brings every fill it owes into the ledger on it, so the
+    /// book is not a moment older than the account it is held against. Then, in this order:</para>
+    /// <list type="bullet">
+    /// <item>a book that is not the whole of it — an order record of the run reporting a fill the ledger does not
+    /// hold, or the other way about — sizes nothing: refused <c>RISK_CHECK_UNAVAILABLE</c> before the wire, and owed;</item>
+    /// <item>a flat book has nothing to close: resolved, "there was nothing to close";</item>
+    /// <item>a long book over a FLAT account, with no order of the run's still open, was closed by something the run did
+    /// not send — the owner's Close all, the loss flatten: resolved, <see cref="ClosedOutsideTheRun"/>, and nothing is
+    /// sent. That close is not the run's fill and is not entered in its book; its record is <c>U-forward-standing</c>'s;</item>
+    /// <item>an account that holds less than the book — short of it, or flat with an order of the run's still open that
+    /// may yet explain it — is refused <c>POSITION_MOVED</c> before the wire, and owed;</item>
+    /// <item>otherwise a market SELL of the book's holding, <see cref="OrderIntent.Close"/>, under the run's version
+    /// and identity, through <see cref="PlaceAsync"/> and every gate — the stale-close read of the run's own book among
+    /// them, which asks all of this again at the wire.</item>
+    /// </list>
+    /// <para>The authorisation comes first, as <see cref="CloseAsync"/>'s does: under the kill switch, the update window,
+    /// the mode or unconfirmed work, nothing is read and the close is owed. The unresolved-reducer refusal is asked here
+    /// before <see cref="PlaceAsync"/>'s reads, as <see cref="CloseAsync"/> asks it, and again inside the dispatch gate.</para>
+    /// </summary>
+    async Task<OpAnswer> CloseItsOwnBookAsync(StrategyDeploymentRow deployment, string requestId, CancellationToken ct)
+    {
+        var ctx = AgentContext.Deployment(deployment.Id);
+        AuthorizeOrThrow(ctx);
+
+        var live = (await Connector.GetPositionsAsync(deployment.AccountId, ct))
+            .FirstOrDefault(p => p.Symbol == deployment.Symbol)?.Quantity ?? 0m;
+        var ops = _deployments.OpsOf(deployment.Id);
+        var book = _deployments.BookOf(deployment, ops);
+
+        if (book.Incomplete is { } incomplete)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE, IncompleteSentence(deployment, incomplete));
+
+        if (book.Held <= 0m)
+            return new OpAnswer(null, "there was nothing to close: the run's own book is flat");
+
+        var open = AnOrderOfTheRunStillOpen(ops, requestId);
+        if (live == 0m && open is null)
+            return new OpAnswer(null,
+                $"{ClosedOutsideTheRun}: its own book holds {AllocationRow.Num(book.Held)} {deployment.Symbol} at an "
+                + $"average of {AllocationRow.Num(book.Average)} and the account holds none, with no order of the run's "
+                + "still open — a close the run did not send took it, so nothing was sent, and that close is not the "
+                + "run's fill");
+
+        if (live < book.Held)
+            throw new GatewayDeniedException(ErrorCode.POSITION_MOVED,
+                $"the account holds {AllocationRow.Num(live)} {deployment.Symbol} and this run's own book holds "
+                + $"{AllocationRow.Num(book.Held)}"
+                + (open is { } o ? $", with order {o.RequestId} of the run still {o.State}" : "")
+                + ", so a close of the run's book would sell what the account does not hold for it; nothing was sent");
+
+        // BEFORE ANY OF PlaceAsync's READS, as CloseAsync asks it: the record that refuses this is in our own store.
+        RefuseAnUnresolvedReducerOrThrow(requestId, deployment.AccountId, deployment.Symbol, OrderSide.Sell);
+
+        return await PlaceAsync(ctx, requestId, new PlaceIntent(deployment.Symbol, OrderSide.Sell, OrderType.Market,
+            book.Held, null, null, TimeInForce.Day, $"deployment:{deployment.Id} end")
+        {
+            Intent = OrderIntent.Close,
+            StrategyVersionId = deployment.VersionId
+        }, ct);
+    }
+
+    /// <summary>
+    /// An order of the run that may still move its position, other than <paramref name="except"/>: an entry, exit, stop,
+    /// target or flatten whose order record is not final and that did not end before the wire
+    /// (<see cref="Deployments.RefusedBeforeTheWire"/>), or one with no record yet that has no answer — a dispatcher
+    /// still on its way. Answers its request id and its state in words, or null because there is none.
+    /// </summary>
+    (string RequestId, string State)? AnOrderOfTheRunStillOpen(IReadOnlyList<DeploymentOpRow> ops, string except)
+    {
+        foreach (var op in ops)
+        {
+            if (op.Kind == DeploymentOpKind.Cancel) continue;
+            if (string.Equals(op.RequestId, except, StringComparison.Ordinal)) continue;
+
+            var row = _requests.Get(op.RequestId);
+            if (row is null)
+            {
+                if (!op.IsSettled) return (op.RequestId, $"{op.State} with no order record yet");
+                continue;
+            }
+
+            if (!OrderStateMachine.IsTerminal(row.State) && !Deployments.RefusedBeforeTheWire(op, row))
+                return (op.RequestId, row.State.ToString());
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// WHAT ONE PAPER RUN HOLDS, OFF ITS OWN BOOK (<c>U-paper-books</c>) — or a refusal in words when that cannot be
+    /// said: no such run on this installation, an instrument that is not the run's, or a book that is not the whole of
+    /// it. The stale-close read sizes a run's close against it and the allocation ceiling charges a run's opener with
+    /// it, and neither guesses. Read after the caller's position read, which is the settling one.
+    /// </summary>
+    decimal RunHoldingOrThrow(string deploymentId, string symbol)
+    {
+        if (_deployments.ById(deploymentId) is not { } run)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"there is no paper run {Short(deploymentId)} on this installation, so what it holds cannot be read; "
+                + "nothing was sent");
+
+        if (!string.Equals(run.Symbol, symbol, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"paper run {Short(run.Id)} trades {run.Symbol} and this order is for {symbol}, so its book says nothing "
+                + "about it; nothing was sent");
+
+        var book = _deployments.BookOf(run);
+        if (book.Incomplete is { } incomplete)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE, IncompleteSentence(run, incomplete));
+
+        return book.Held;
+    }
+
+    /// <summary>A run's book that is not the whole of it, in the words every refusal over one carries.</summary>
+    static string IncompleteSentence(StrategyDeploymentRow run, string why) =>
+        $"paper run {Short(run.Id)}'s own book is not the whole of it — {why} — so what it holds cannot be worked out "
+        + "and nothing was sent; it is asked again once the fill ledger holds every fill the run's orders report";
+
+    /// <summary>
     /// AN END THAT STILL OWES ITS CLOSE IS FINISHED AS THE END DOES IT — what of the run still works is
-    /// cancelled, then <see cref="CloseAsync"/> under a NEW operation, its own <c>dp-</c> id and its own
-    /// <c>TA-</c> client order id — at most once a minute, and nothing at all while a gate refuses the run's
-    /// identity. Answers whether it wrote anything.
+    /// cancelled, then the run's own book is closed (<see cref="CloseItsOwnBookAsync"/>) under a NEW operation, its own
+    /// <c>dp-</c> id and its own <c>TA-</c> client order id — at most once a minute, and nothing at all while a gate
+    /// refuses the run's identity. Answers whether it wrote anything.
     ///
     /// <para><b>Owed means provably never sent</b> (<see cref="OwesItsClose"/>): the latest flatten refused before
     /// the wire, or none written. A flatten that may have reached the wire is never sent again here — the
@@ -1349,9 +1477,10 @@ public sealed class TradingGateway : IAsyncDisposable
     /// moved position) is met by the attempt itself and recorded on it.</para>
     ///
     /// <para><b>Not on a platform, a mode or an account that is not the run's</b>, as the END itself refuses: a
-    /// close sent where the run was not started is an order on somebody else's book. <b>And not while another run
-    /// trades the same position</b> (<see cref="AnotherRunOnItsPosition"/>): the close is of the account's whole
-    /// position in the instrument, and sent later than the END it could close that run's position under it.</para>
+    /// close sent where the run was not started is an order on somebody else's book. <b>Beside another run on the same
+    /// position it goes out as it would alone</b> (<c>U-paper-books</c>): the close is of this run's own book, so there
+    /// is nothing of the other run's for it to sell — the market close in flight of one still holds the other's for a
+    /// minute, account-wide (<c>CLOSE_IN_FLIGHT</c>).</para>
     ///
     /// <para><b>And not while an END or another owed close of this run is in progress</b> (<c>U-close-once</c>):
     /// it takes the run's gate (<see cref="EndGateOf"/>) only if it is free, so this pass writes nothing and
@@ -1380,7 +1509,6 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!OwesItsClose(deployment, ops)) return false;
 
         if (DeploymentMovedFrom(deployment) is { Length: > 0 }) return false;
-        if (AnotherRunOnItsPosition(deployment) is not null) return false;
 
         var bar = DeploymentBar(now);
         if (LatestFlatten(ops) is { } latest && latest.BarOpenTime >= bar) return false;
@@ -1410,7 +1538,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// remembers to check.</para>
     /// </summary>
     async Task<bool> RunDeploymentOpAsync(StrategyDeploymentRow deployment, string requestId,
-        Func<string, Task<ExecutionRequest?>> dispatch, CancellationToken ct,
+        Func<string, Task<OpAnswer>> dispatch, CancellationToken ct,
         string? kind = null, DateTimeOffset? bar = null, string? intentJson = null)
     {
         var existing = _deployments.OpById(requestId);
@@ -1428,14 +1556,15 @@ public sealed class TradingGateway : IAsyncDisposable
 
         try
         {
-            var request = await dispatch(requestId);
+            var answer = await dispatch(requestId);
 
-            // NULL IS CLOSEASYNC'S "NOTHING TO CLOSE" — the one dispatch here that can answer null, on a book
-            // its own read found flat. An OUTCOME, not a refusal: it resolves the flatten, and an END whose
-            // latest flatten resolved owes nothing (OwesItsClose). Refused, it read as a close still owed.
-            if (request is null)
+            // NO ORDER IS AN END'S "NOTHING TO SEND" — the one dispatch here that can answer with none: a flat book, or
+            // a close outside the run (CloseItsOwnBookAsync). An OUTCOME, not a refusal: it resolves the flatten in its
+            // own words, and an END whose latest flatten resolved owes nothing (OwesItsClose). Refused, it read as a
+            // close still owed.
+            if (answer.Order is not { } request)
             {
-                _deployments.Resolve(requestId, "there was nothing to close: the position was already flat", Now);
+                _deployments.Resolve(requestId, answer.NothingToSend ?? "nothing needed sending", Now);
                 return true;
             }
 
@@ -1488,6 +1617,16 @@ public sealed class TradingGateway : IAsyncDisposable
 
             return true;
         }
+    }
+
+    /// <summary>
+    /// WHAT ONE DISPATCH OF A RUN'S OPERATION CAME BACK WITH: the order record it became — or, when the whole outcome was
+    /// that nothing needed sending, that outcome in words (an END's close over a flat book, or over an account a close
+    /// outside the run already flattened: <see cref="CloseItsOwnBookAsync"/>). Never both.
+    /// </summary>
+    readonly record struct OpAnswer(ExecutionRequest? Order, string? NothingToSend = null)
+    {
+        public static implicit operator OpAnswer(ExecutionRequest order) => new(order);
     }
 
     /// <summary>
@@ -1583,7 +1722,7 @@ public sealed class TradingGateway : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(intent);
 
         return RunDeploymentOpAsync(deployment, requestId,
-            rid => PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct)!,
+            async rid => await PlaceAsync(AgentContext.Deployment(deployment.Id), rid, intent, ct),
             ct, kind, bar, Json.Write(intent));
     }
 
@@ -1598,7 +1737,7 @@ public sealed class TradingGateway : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(deployment);
 
         return RunDeploymentOpAsync(deployment, requestId,
-            rid => CancelAsync(AgentContext.Deployment(deployment.Id), rid, connectorOrderId, ct)!,
+            async rid => await CancelAsync(AgentContext.Deployment(deployment.Id), rid, connectorOrderId, ct),
             ct, DeploymentOpKind.Cancel, bar, Json.Write(new { cancel = connectorOrderId }));
     }
 
@@ -6547,19 +6686,38 @@ public sealed class TradingGateway : IAsyncDisposable
     /// news, and nothing was sent under a record that never left CREATED.
     ///
     /// Only closes. An opening order asserts nothing about a position and pays no extra read.
+    ///
+    /// <para><b>A PAPER RUN'S CLOSE IS A CLAIM ABOUT ITS OWN BOOK</b> (<c>U-paper-books</c>). A paper account keeps one
+    /// position per symbol — the sum of every holder on it: another run, the owner's own long — so a run's stop,
+    /// target, exit, maximum hold and END are each sized from what the RUN holds, and are checked against that: the
+    /// close must equal the run's own holding (<see cref="RunHoldingOrThrow"/>, a book that is not the whole of it
+    /// refusing first), AND the account must hold at least that much, or the close would sell what is not there for
+    /// the run. The position read stays first: it is the settling read the book is read after. Every other caller keeps
+    /// the account's reading exactly as it was; the deployment identity is refused outright in both live modes, so
+    /// this branch is paper's alone.</para>
     /// </summary>
-    async Task RefuseAStaleCloseOrThrow(ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
+    async Task RefuseAStaleCloseOrThrow(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent,
+        CancellationToken ct)
     {
         if (intent.Intent is not OrderIntent.Close) return;
 
         var sizedFrom = intent.Side == OrderSide.Sell ? intent.Quantity : -intent.Quantity;
         var live = (await Connector.GetPositionsAsync(stored.AccountId, ct))
             .FirstOrDefault(p => p.Symbol == intent.Symbol)?.Quantity ?? 0m;
-        if (live == sizedFrom) return;
+        var held = ctx.DeploymentId is { Length: > 0 } run ? RunHoldingOrThrow(run, intent.Symbol) : live;
 
-        throw new GatewayDeniedException(ErrorCode.POSITION_MOVED,
-            $"{intent.Symbol} was {sizedFrom} when this close was sized and is {live} now, so " +
-            $"{intent.Side} {intent.Quantity} would not flatten it; nothing was sent. Ask again with a new request id.");
+        if (held != sizedFrom)
+            throw new GatewayDeniedException(ErrorCode.POSITION_MOVED,
+                $"{intent.Symbol} was {sizedFrom} when this close was sized and is {held} now, so " +
+                $"{intent.Side} {intent.Quantity} would not flatten it; nothing was sent. Ask again with a new request id.");
+
+        // A RUN'S BOOK THE ACCOUNT NO LONGER HOLDS: something the run did not send — the owner's Close all, the loss
+        // flatten, a hand-placed sell — took some or all of it, and a sell of the run's book would sell what is not
+        // there for the run. For every other caller `held` IS the account's reading and this cannot be true.
+        if (live < held)
+            throw new GatewayDeniedException(ErrorCode.POSITION_MOVED,
+                $"the account holds {live} {intent.Symbol} and this paper run's own book holds {held}, so " +
+                $"{intent.Side} {intent.Quantity} would sell what the account does not hold for it; nothing was sent.");
     }
 
     // ------------------------------------------- an order this gateway cannot account for, on this
@@ -7078,7 +7236,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // A CLOSE IS SIZED HERE, not where it was decided. See RefuseAStaleCloseOrThrow: an
         // offsetting order is the one placement whose size and side are a statement about something
         // that moves, and everything above this line was an awaited read.
-        await RefuseAStaleCloseOrThrow(stored, intent, ct);
+        await RefuseAStaleCloseOrThrow(ctx, stored, intent, ct);
 
         // EVERY GATE IS EVALUATED HERE, at the last point where refusing still means nothing was
         // sent. See ReauthorizeAtDispatchOrThrow and ReserveDispatchOrThrow: the first closes the
@@ -7811,16 +7969,13 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception) { /* judged without a grid; PriceVerdict says Unknowable rather than guessing */ }
     }
 
-    /// <param name="strategyVersionId">
-    /// WHICH VERSION IS CLOSING, or null because no strategy is — the default, and what every caller
-    /// before <c>U-deployment</c> means. It is the same claim <see cref="PlaceIntent.StrategyVersionId"/>
-    /// carries and it grants nothing: the gateway still asks the ledgers what that version stands on.
-    /// A paper deployment names its own version here because its account is under a standing envelope,
-    /// where an order naming none is refused <see cref="ErrorCode.ENVELOPE_ACCOUNT_RESERVED"/> — and
-    /// that refusal is right: on that account, what may trade is what the grant allows.
-    /// </param>
+    /// <summary>
+    /// THE AGENT'S AND THE OWNER'S CLOSE: the ACCOUNT's whole position in one instrument, at market, sized from a read
+    /// of it — or null because there is nothing to close. A paper run's END does not come through here: it closes the
+    /// run's own book and nothing else (<see cref="CloseItsOwnBookAsync"/>, <c>U-paper-books</c>).
+    /// </summary>
     public async Task<ExecutionRequest?> CloseAsync(AgentContext ctx, string requestId, string symbol,
-        CancellationToken ct = default, string? strategyVersionId = null)
+        CancellationToken ct = default)
     {
         AuthorizeOrThrow(ctx);
         var accountId = await RequireAccountId(ct);
@@ -7840,7 +7995,7 @@ public sealed class TradingGateway : IAsyncDisposable
         return await PlaceAsync(ctx, requestId, new PlaceIntent(symbol,
             side, OrderType.Market, Math.Abs(pos.Quantity),
             null, null, TimeInForce.Day, "close position")
-            { Intent = OrderIntent.Close, StrategyVersionId = strategyVersionId }, ct);
+            { Intent = OrderIntent.Close }, ct);
     }
 
     async Task<string> ResolveConnectorOrderId(string reference, CancellationToken ct)

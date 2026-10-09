@@ -11,8 +11,8 @@ namespace TradeAgent.Tests.Fault;
 /// A RUN IS ENDED ONCE (<c>U-close-once</c>): two END requests for one paper run at the same moment put one close on
 /// the wire, and the second writes nothing.
 ///
-/// <para>Same harness as the rest of this class — the owner's grant, the app's own allocation and deployment, a filled
-/// long the owner placed by hand, every order through <see cref="TradingGateway.PlaceAsync"/> over
+/// <para>Same harness as the rest of this class — the owner's grant, the app's own allocation and deployment, the
+/// run's own filled entry, every order through <see cref="TradingGateway.PlaceAsync"/> over
 /// <see cref="RecordingConnector"/> and the built-in simulator. No venue is reached and no real money is involved.</para>
 /// </summary>
 public partial class PaperDeploymentTests
@@ -44,7 +44,7 @@ public partial class PaperDeploymentTests
         await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
         var placesBefore = conn.Places;
         conn.Faults.Fill = venue == "fills" ? FillBehaviour.FillImmediately : FillBehaviour.LeaveWorking;
 
@@ -138,7 +138,7 @@ public partial class PaperDeploymentTests
         await Allocated(gw, db);
         Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
         var deployment = gw.Deployments.Open().Single();
-        await SeedAPosition(gw, conn);
+        await SeedAPosition(gw, conn, deployment);
 
         // THE OWNER'S MARKET SELL RESTS, AND ITS CANCEL IS NEVER REPORTED.
         conn.Faults.Fill = FillBehaviour.LeaveWorking;

@@ -471,8 +471,8 @@ public sealed class Deployments(Database db)
 
     /// <summary>
     /// Every deployment ever written on one platform, account and instrument, newest first, whichever grant it
-    /// ran under — the runs that share one position at the venue, because a close is a close of the account's
-    /// whole position in the instrument.
+    /// ran under — the runs that share one position at the venue, and the slots a grant on that instrument counts:
+    /// a run not over, or over and not yet accounted for, holds one whichever grant it was started under.
     /// </summary>
     public IReadOnlyList<StrategyDeploymentRow> OnInstrument(string connectorId, string accountId, string symbol) =>
         db.Read(_ =>

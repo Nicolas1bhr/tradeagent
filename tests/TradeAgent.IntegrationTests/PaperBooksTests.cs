@@ -114,6 +114,245 @@ public class PaperBooksTests(ITestOutputHelper log)
         }
     }
 
+    // ---------------------------------------------------------------- (a)
+
+    /// <summary>
+    /// (a) TWO RUNS ON ONE SYMBOL EACH REST THEIR PROTECTION AND EXIT THEIR OWN, AND THE ACCOUNT HOLDS THEIR SUM.
+    ///
+    /// <para>A and B enter on the same minute and both fill at 100: the account holds 2. Each run's stop goes to the
+    /// venue sized from its own book, 1; A's exit then takes its stop off and sells its own 1 at 97, and B goes on
+    /// holding, its stop still resting.</para>
+    ///
+    /// <para><b>RED on the base</b>: both stops are refused <c>POSITION_MOVED</c> — the close of 1 read against the
+    /// account's 2 — so neither run rests any protection, and A's exit is refused the same way while B holds.
+    /// <b>Mutant</b> — the run's branch of the stale-close read reading the account's position — goes red the same
+    /// way.</para>
+    /// </summary>
+    [Fact]
+    public async Task Two_runs_on_one_symbol_each_rest_protection_and_exit_their_own()
+    {
+        var (rig, a, b) = await TwoRunsAsync(
+            Program("1", "stop percent 5\n", exit: "98", entry: "99"),
+            Program("1", "stop percent 10\n", exit: "50", entry: "99"));
+        await using var _ = rig;
+
+        await TickAsync(rig, 1, 99m, 100m, 98m, 100m);          // both signal from a close of 100
+        await TickAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);     // the minute already in progress
+        await TickAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);   // both fill at this open, 100, and protection goes on
+        var bothIn = await Position(rig);
+        Show(rig, a, b);
+
+        var stopA = Assert.Single(OpsOf(rig, a, DeploymentOpKind.Stop));
+        var stopB = Assert.Single(OpsOf(rig, b, DeploymentOpKind.Stop));
+        Assert.Equal(2m, bothIn);
+        Assert.Equal(DeploymentOpState.Resolved, stopA.State);
+        Assert.Equal(DeploymentOpState.Resolved, stopB.State);
+
+        await TickAsync(rig, 4, 100m, 100.2m, 96.5m, 97m);      // A: exit when close < 98 — its stop off, its exit out
+        await TickAsync(rig, 5, 97m, 97.5m, 96.5m, 97m);        // the minute already in progress
+        await TickAsync(rig, 6, 97m, 97.5m, 96.5m, 97m);        // A's exit fills at this open, 97
+        Show(rig, a, b);
+
+        // EACH RUN'S STOP RESTED AT THE VENUE AT ITS OWN SIZE: A's taken off by its exit, B's still working.
+        var restedA = await OrderOf(rig, stopA);
+        var restedB = await OrderOf(rig, stopB);
+        Assert.Equal((OrderType.Stop, 1m, (decimal?)95m, ExecutionState.CANCELLED),
+            (restedA.Type, restedA.Quantity, restedA.StopPrice, restedA.State));
+        Assert.Equal((OrderType.Stop, 1m, (decimal?)90m, ExecutionState.WORKING),
+            (restedB.Type, restedB.Quantity, restedB.StopPrice, restedB.State));
+
+        // A'S EXIT SOLD ITS OWN 1, AND IS ITS OWN ROUND TRIP IN THE LEDGER.
+        var exit = Assert.Single(OpsOf(rig, a, DeploymentOpKind.Exit));
+        Assert.Equal(DeploymentOpState.Resolved, exit.State);
+        var sold = await OrderOf(rig, exit);
+        Assert.Equal((OrderSide.Sell, 1m, ExecutionState.FILLED), (sold.Side, sold.Quantity, sold.State));
+        Assert.Equal(new[] { (nameof(OrderSide.Buy), 100m), (nameof(OrderSide.Sell), 97m) },
+            FillsOf(rig, a).Select(f => (f.Side, f.Price)));
+
+        // AND THE ACCOUNT HOLDS THE SUM OF THE TWO BOOKS.
+        Assert.Equal(0m, Holds(rig, a));
+        Assert.Equal(1m, Holds(rig, b));
+        Assert.Equal(1m, await Position(rig));
+
+        // EACH RUN'S LINE SAYS WHAT IT HOLDS, AT WHAT AVERAGE, AND WHAT IT HAS REALISED AFTER COSTS.
+        Assert.Contains("Its own book: holds nothing, realised -3 after 0 in costs, over 2 fills.", LineOf(rig, a),
+            StringComparison.Ordinal);
+        Assert.Contains("Its own book: holds 1 at an average of 100, realised 0 after 0 in costs, over 1 fill.",
+            LineOf(rig, b), StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- (b)
+
+    /// <summary>
+    /// (b) AN END SELLS ONLY ITS OWN RUN'S HOLDING.
+    ///
+    /// <para>A and B both hold 1; the owner stops A. Its END closes exactly A's book — a market sell of 1 — and once that
+    /// fills the account holds B's 1, B's book says so, and B is still running.</para>
+    ///
+    /// <para><b>RED on the base</b>: A's END goes through <c>CloseAsync</c>, which sizes the ACCOUNT's position, and
+    /// sells 2 under A's request id — B's holding sold as A's, B's book left long with no exit. <b>Mutant</b> — the END
+    /// through <c>CloseAsync</c> again — goes red here: the run's stale-close read refuses that close of 2 against A's
+    /// book of 1, and A's END closes nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_end_sells_only_its_own_runs_holding()
+    {
+        var (rig, a, b) = await TwoRunsAsync(
+            Program("1", "", exit: "50", entry: "99"),
+            Program("1", "", exit: "40", entry: "99"));
+        await using var _ = rig;
+
+        await TickAsync(rig, 1, 99m, 100m, 98m, 100m);          // both signal from a close of 100
+        await TickAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);     // the minute already in progress
+        await TickAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);   // both fill at this open, 100
+        Assert.Equal(2m, await Position(rig));
+
+        await rig.Gw.EndPaperDeploymentAsync(a.Id, "test: the owner stopped run A");
+        Show(rig, a, b);
+        var flatten = Assert.Single(OpsOf(rig, a, DeploymentOpKind.Flatten));
+        var close = await OrderOf(rig, flatten);
+        log.WriteLine($"A's END sent: {close.Side} {close.Type} {close.Quantity} {close.State}");
+
+        // THE END'S CLOSE IS A'S OWN BOOK, AND NOTHING OF B'S.
+        Assert.Equal((OrderSide.Sell, OrderType.Market, 1m), (close.Side, close.Type, close.Quantity));
+
+        await TickAsync(rig, 4, 100.2m, 100.4m, 100m, 100.3m);  // the minute already in progress
+        await TickAsync(rig, 5, 100.2m, 100.4m, 100m, 100.3m);  // A's close fills at this open, 100.2
+        Show(rig, a, b);
+
+        Assert.Equal(ExecutionState.FILLED, (await OrderOf(rig, flatten)).State);
+        Assert.Equal(0m, Holds(rig, a));
+        Assert.Equal(1m, Holds(rig, b));
+        Assert.Equal(1m, await Position(rig));
+        Assert.True(rig.Gw.Deployments.ById(b.Id)!.IsActive);
+        Assert.Contains("ENDED", LineOf(rig, a), StringComparison.Ordinal);
+        Assert.Contains("Its own book: holds nothing, realised 0.2 after 0 in costs, over 2 fills.", LineOf(rig, a),
+            StringComparison.Ordinal);
+        Assert.Contains("Its own book: holds 1 at an average of 100", LineOf(rig, b), StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- (c)
+
+    /// <summary>
+    /// (c) A RUN BESIDE A HOLDING IT DID NOT OPEN RESTS ITS PROTECTION, EXITS AND ENDS WITH ITS OWN.
+    ///
+    /// <para>One run, as shipped, and the owner's own long of 1 bought by hand beside it on the same account and symbol:
+    /// the account holds 2 while the run holds 1. The run's stop rests at 1, its exit sells its 1 and leaves the owner's;
+    /// it enters again, and its END sells its own 1 and leaves the owner's.</para>
+    ///
+    /// <para><b>RED on the base</b>: the run's stop is refused <c>POSITION_MOVED</c> (1 against the account's 2), its exit
+    /// the same, and its END sells the owner's 1 with its own. <b>Mutants</b>: the run's branch reading the account
+    /// refuses the stop; the END through <c>CloseAsync</c> sizes 2 and is refused against the run's book.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_run_beside_a_holding_it_did_not_open_exits_and_ends_with_its_own()
+    {
+        await using var rig = await ReadyAsync(Program("1", "stop percent 5\n", exit: "98", entry: "99"));
+        var run = rig.Deployment;
+
+        await TickAsync(rig, 1, 99m, 100m, 98m, 100m);          // the run signals from a close of 100
+
+        // AND THE OWNER BUYS ONE OF THEIR OWN, BY HAND, IN PROCESS: a holding the run did not open.
+        var owners = await rig.Gw.PlaceAsync(AgentContext.Operator, "owner-own-1", new PlaceIntent(
+            "BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, "the owner's own"));
+        log.WriteLine($"the owner's buy: {owners.State}");
+
+        await TickAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);     // the minute already in progress
+        await TickAsync(rig, 3, 100m, 100.6m, 99.6m, 100.2m);   // both fill at this open, 100: the account holds 2
+        Show(rig, run);
+
+        var stop = Assert.Single(OpsOf(rig, run, DeploymentOpKind.Stop));
+        Assert.Equal(2m, await Position(rig));
+        Assert.Equal(DeploymentOpState.Resolved, stop.State);
+        var rested = await OrderOf(rig, stop);
+        Assert.Equal((1m, ExecutionState.WORKING), (rested.Quantity, rested.State));
+
+        await TickAsync(rig, 4, 100m, 100.2m, 96.5m, 97m);      // exit when close < 98: its stop off, its exit out
+        await TickAsync(rig, 5, 97m, 97.5m, 96.5m, 97m);        // the minute already in progress
+        await TickAsync(rig, 6, 97m, 97.5m, 96.5m, 97m);        // the exit fills at this open, 97
+        Show(rig, run);
+
+        var exit = Assert.Single(OpsOf(rig, run, DeploymentOpKind.Exit));
+        var sold = await OrderOf(rig, exit);
+        Assert.Equal((1m, ExecutionState.FILLED), (sold.Quantity, sold.State));
+        Assert.Equal(0m, Holds(rig, run));
+        Assert.Equal(1m, await Position(rig));                  // the owner's, untouched
+
+        await TickAsync(rig, 7, 99m, 100m, 98.5m, 100m);        // a second entry, from a close of 100
+        await TickAsync(rig, 8, 100m, 100.5m, 99.5m, 100m);     // the minute already in progress
+        await TickAsync(rig, 9, 100m, 100.6m, 99.6m, 100.2m);   // it fills at this open: the account holds 2 again
+        Assert.Equal(2m, await Position(rig));
+
+        await rig.Gw.EndPaperDeploymentAsync(run.Id, "test: the owner stopped it");
+        var flatten = Assert.Single(OpsOf(rig, run, DeploymentOpKind.Flatten));
+        var close = await OrderOf(rig, flatten);
+        Assert.Equal((OrderSide.Sell, 1m), (close.Side, close.Quantity));
+
+        await TickAsync(rig, 10, 100.2m, 100.4m, 100m, 100.3m); // the minute already in progress
+        await TickAsync(rig, 11, 100.2m, 100.4m, 100m, 100.3m); // the END's close fills at this open
+        Show(rig, run);
+
+        Assert.Equal(ExecutionState.FILLED, (await OrderOf(rig, flatten)).State);
+        Assert.Equal(0m, Holds(rig, run));
+        Assert.Equal(1m, await Position(rig));                  // the owner's, still untouched
+    }
+
+    // ---------------------------------------------------------------- (d)
+
+    /// <summary>
+    /// (d) A CLOSE OUTSIDE THE RUN RESOLVES ITS END, AND IS NEVER ITS FILL.
+    ///
+    /// <para>The run holds 1, and the owner presses Close all: the account is flat by a close the run did not send.
+    /// The run's own book still holds its 1 — the press's fill is the press's, under the press's own request id — and
+    /// its END finds the account flat under a complete book with no order of its own open: it sends nothing and is
+    /// RESOLVED, "closed outside the run", in those words on the operation and on the run's line. Nothing is owed and
+    /// nothing is attributed to the run that it did not do.</para>
+    ///
+    /// <para><b>RED on the base</b>: the END reads the account, finds it flat and says only "there was nothing to close",
+    /// so the words this test pins are not there.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_close_outside_the_run_resolves_its_end_and_is_never_its_fill()
+    {
+        await using var rig = await ReadyAsync(Program("1", "", exit: "90", entry: "100"));
+        var run = rig.Deployment;
+
+        await TickAsync(rig, 1, 99m, 101m, 98m, 101m);          // the entry signals
+        await TickAsync(rig, 2, 102m, 103m, 101m, 102m);        // the minute already in progress
+        await TickAsync(rig, 3, 104m, 105m, 103m, 104m);        // it fills at this open, 104
+        Assert.Equal(1m, await Position(rig));
+
+        // THE OWNER PRESSES CLOSE ALL, ITS CLOSE FILLS AT THE NEXT OPEN, AND THE OWNER CONFIRMS THE PRESS.
+        var press = await rig.Gw.OperatorCloseAllAsync();
+        log.WriteLine($"the press: {press.Summary}");
+        await TickAsync(rig, 4, 104m, 104.5m, 103.5m, 104m);    // the minute already in progress
+        await TickAsync(rig, 5, 104m, 104.5m, 103.5m, 104m);    // the press's close fills at this open
+        foreach (var row in rig.Gw.Unreconciled().Where(r => r.RequestId.StartsWith(TradingGateway.ClosePress, StringComparison.Ordinal)))
+            rig.Gw.ForceResolve(row.RequestId, row.State, "the owner checked: it filled");
+        await rig.Gw.RefreshHealthAsync();
+        Assert.Equal(0m, await Position(rig));
+
+        await rig.Gw.EndPaperDeploymentAsync(run.Id, "test: the owner stopped it");
+        Show(rig, run);
+
+        var flatten = Assert.Single(OpsOf(rig, run, DeploymentOpKind.Flatten));
+        var reading = rig.Gw.DeploymentReadings().Single(d => d.Id == run.Id);
+
+        // RESOLVED, IN WORDS, AND NOTHING SENT.
+        Assert.Equal(DeploymentOpState.Resolved, flatten.State);
+        Assert.StartsWith("closed outside the run", flatten.Answer, StringComparison.Ordinal);
+        Assert.Null(rig.Gw.Requests.Get(flatten.RequestId));
+        Assert.Null(reading.CloseOwed);
+        Assert.Contains("closed outside the run", reading.Line, StringComparison.Ordinal);
+
+        // AND THE PRESS'S FILL IS NOT THE RUN'S: its one fill is its entry.
+        var own = Assert.Single(FillsOf(rig, run));
+        Assert.Equal((nameof(OrderSide.Buy), 1m), (own.Side, own.Quantity));
+        var pressFill = Assert.Single(rig.Gw.Fills.Since(null), f => f.Side == nameof(OrderSide.Sell));
+        Assert.StartsWith(TradingGateway.ClosePress, pressFill.RequestId, StringComparison.Ordinal);
+        Assert.Equal(0m, await Position(rig));
+    }
+
     // ---------------------------------------------------------------- the line (item 1)
 
     /// <summary>
