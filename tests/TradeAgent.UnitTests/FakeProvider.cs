@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 using TradeAgent.Core;
 using TradeAgent.Security;
 
@@ -73,6 +74,11 @@ public sealed class FakeProvider : IDisposable
 
                 _keys.Enqueue(ctx.Request.Headers["Authorization"] ?? "");
 
+                // THE HOOK, RUN AS THE REQUEST ARRIVES and before anything is answered: what the app had already
+                // written by the moment its request reached the host is a fact only the host's side can witness.
+                try { Arriving?.Invoke(); }
+                catch (Exception ex) { Mark($"the arrival hook THREW {ex.GetType().Name}: {One(ex.Message)}"); }
+
                 if (!Answers) { Mark("answering nothing, on purpose"); continue; }
 
                 try
@@ -128,6 +134,13 @@ public sealed class FakeProvider : IDisposable
 
     /// <summary>When set, every request is answered with this status and no body.</summary>
     public HttpStatusCode? AlwaysAnswer { get; set; }
+
+    /// <summary>
+    /// RUN AS EACH REQUEST ARRIVES, after its body and headers are kept and before it is answered (<c>U-decision-port</c>):
+    /// a test reads the app's ledger here to see what was written BEFORE the request left — which no assertion made
+    /// after the call returns could tell apart from what was written after.
+    /// </summary>
+    public Action? Arriving { get; set; }
 
     /// <summary>Every request body this server received, oldest first.</summary>
     public IReadOnlyList<string> Requests => [.. _bodies];
@@ -213,6 +226,26 @@ public sealed class FakeProvider : IDisposable
             model = "gpt-5.6-luna",
             choices = new[] { new { finish_reason = "stop", message = new { role = "assistant", content = text } } }
         });
+
+    /// <summary>
+    /// A SYSTEM ONE ANSWER in TypeSafe's published shape (<c>docs.typesafe.ai/api</c>, read 2026-10-09):
+    /// <c>{model, answers, usage{input_tokens, output_tokens}}</c> — plus, where given, what OpenRouter adds to the same
+    /// shape: <c>id</c>, <c>provider</c> and <c>usage.cost</c>. <paramref name="answers"/> is raw JSON written as given, so
+    /// a test states the exact numbers the host served, spelled the way it served them.
+    /// </summary>
+    public static string SystemOne(string model, string answers, long input = 300, long output = 20,
+        string? id = null, string? provider = null, decimal? cost = null)
+    {
+        var body = new JsonObject();
+        if (id is not null) body["id"] = id;
+        body["model"] = model;
+        if (provider is not null) body["provider"] = provider;
+        body["answers"] = JsonNode.Parse(answers);
+        var usage = new JsonObject { ["input_tokens"] = input, ["output_tokens"] = output };
+        if (cost is { } billed) usage["cost"] = JsonValue.Create(billed);
+        body["usage"] = usage;
+        return body.ToJsonString();
+    }
 
     /// <summary>
     /// The usage object, with the cached count NESTED where the OpenAI-compatible body puts it

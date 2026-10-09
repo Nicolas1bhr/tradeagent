@@ -326,6 +326,22 @@ public static class Labels
         + $"{pointsAt ?? "an address TradeAgent cannot read"}. Nothing was sent, the key has been forgotten "
         + "and this turn costs nothing — paste it again on the Safety page if you meant that.";
 
+    /// <summary>
+    /// WHAT A DECISION-MODEL CALL SAYS WHEN NO KEY IS HELD FOR IT (<c>U-decision-port</c>). Its key is held apart from
+    /// the worker's, in memory only, and nothing is reserved or sent without one.
+    /// </summary>
+    public const string DecisionKeyNotHeld =
+        "No key is held for this decision model, so nothing was sent and the call cost nothing.";
+
+    /// <summary>
+    /// THE SAME REFUSAL AS <see cref="HarnessKeyPastedForAnotherOrigin"/>, for a decision model: the key was pasted for
+    /// another origin than the one this instrument's calls go to, so it was withheld, forgotten, and nothing was sent.
+    /// </summary>
+    public static string DecisionKeyPastedForAnotherOrigin(string pastedFor, string? pointsAt) =>
+        $"The key was pasted for {pastedFor}; this decision model is at "
+        + $"{pointsAt ?? "an address TradeAgent cannot read"}. Nothing was sent, the key has been forgotten "
+        + "and this call cost nothing.";
+
     /// <summary>The box the key is pasted into. Masked, and the sentence beside it says why.</summary>
     public const string HarnessKey = "API key for TradeAgent's own worker";
 
