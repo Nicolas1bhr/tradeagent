@@ -132,7 +132,10 @@ public class LinuxHostRuntimeTests(ITestOutputHelper output)
         Assert.Equal(new[] { "login", "--device-auth" }, codex.AuthArgs);
 
         codex.Executable = DeviceAuthStub(VendorPrompt("https://auth.openai.com/codex/device", "QRM4-KX27P"));
-        var rt = new CliAgentRuntime(codex);
+        // ITS OWN PRESENCE REGISTER, never the process-wide one: the login it starts is an agent process, the shared
+        // register is sticky, and every later scan in this test process would read an owner's file as the agent's
+        // (CI run 37921982682: MaterialLedgerTests red on all three runners).
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence());
         try
         {
             var challenge = await rt.BeginAuthenticationAsync();
