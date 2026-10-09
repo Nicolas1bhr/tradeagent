@@ -34,6 +34,9 @@ public sealed class AppHost : IAsyncDisposable
     GatewayPipeServer? _server;
     CancellationTokenSource? _loop;
 
+    /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
+    Task? _background;
+
     /// <summary>
     /// The register the AI's processes report to. The process-wide one, always, in the product; only
     /// <see cref="Composed"/> — a test's host — is handed another.
@@ -743,7 +746,7 @@ public sealed class AppHost : IAsyncDisposable
             ReportAtasHealth();
 
             _loop = new CancellationTokenSource();
-            _ = Task.Run(() => BackgroundAsync(_loop.Token));
+            _background = Task.Run(() => BackgroundAsync(_loop.Token));
 
             Gateway.Log.Activity("TradeAgent started");
 
@@ -1965,6 +1968,16 @@ public sealed class AppHost : IAsyncDisposable
     int _disposed;
 
     /// <summary>
+    /// TRUE FROM THE MOMENT THE QUIT BEGINS TO DISPOSE THIS HOST. The window reads it before it reads anything of the
+    /// host's: a refresh after the ledgers have closed throws, and on the setup screen the problem it shows re-renders
+    /// the screen, which refreshes again — measured with SIGTERM on the first start's setup screen (U-linux-host,
+    /// CI's linux-host job and this Mac): the UI thread re-posted the same throwing refresh forever, the dispatcher
+    /// never emptied, the lifetime's Shutdown returned into a loop that could not end, and systemd killed the app
+    /// 30 s later having burnt a core the whole time.
+    /// </summary>
+    public bool Stopped => Volatile.Read(ref _disposed) == 1;
+
+    /// <summary>
     /// THE AI STOPPED, FIRST, ON EVERY WAY OUT OF THE APP (<c>U-agent-tree</c> item 4): the loop paused —
     /// <see cref="MissionLoop.PauseAsync"/>, never <see cref="PauseTheAiAsync"/>, because the owner's choice
     /// that the AI works on its own, and that a restart resumes it, is theirs and a quit is not a decision
@@ -1989,7 +2002,21 @@ public sealed class AppHost : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
         await StopTheAiForQuitAsync();
-        if (_loop is not null) { await _loop.CancelAsync(); _loop.Dispose(); }
+        if (_loop is not null)
+        {
+            await _loop.CancelAsync();
+            // THE PASS IN FLIGHT FINISHES FIRST (U-linux-host): cancelled, the loop stops at its next await, but a pass
+            // already writing — the owed daily reports, a reconcile — went on writing while the ledgers closed under it,
+            // and on a stop that ends the process at once (systemd's) a report file half-written is one nothing
+            // rewrites. Measured on the first start's stop on this Mac: a report written after the stop line. Five
+            // seconds, because a pass is short and a quit is bounded.
+            if (_background is not null)
+            {
+                try { await _background.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* over the bound or faulted: the quit goes on */ }
+            }
+            _loop.Dispose();
+        }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":

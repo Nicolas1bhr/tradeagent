@@ -6,6 +6,7 @@
 #
 # It reads the app's home and nothing else of the app — sqlite3 -readonly as the app's own account, never
 # the pipe — and asserts the observable result of the unit:
+#   - the kit's first start, stopped on its setup screen, ends within 15 s with its quit recorded;
 #   - a seeded paper home (onboarding done, paper, GDELT off) records a loopback tape row;
 #   - after kill -9 the app records again within 30 s: systemd restarted it and the new process took the
 #     single-instance lock the dead one held;
@@ -86,7 +87,16 @@ trap collect EXIT
 note "phase 0: the kit's first start, which makes the home"
 wait_until 180 first_start_done || fail "no database with 'TradeAgent started' in it within 180 s of the kit's start"
 pass "first start: $db made, its start recorded"
+# THE FIRST START'S STOP, ON THE SETUP SCREEN, seconds after the start. Before U-linux-host's fix a refresh of the
+# closed host looped on that screen and systemd killed the app 30 s later (run 37917137298).
+t_first_stop_ms="$(now_ms)"
 systemctl stop tradeagent.service
+first_stop_ms=$(( $(now_ms) - t_first_stop_ms ))
+note "the first start's stop took $first_stop_ms ms; Result=$(systemctl show -p Result --value tradeagent.service)," \
+     "ExecMainStatus=$(systemctl show -p ExecMainStatus --value tradeagent.service)"
+[ "$first_stop_ms" -le 15000 ] || fail "systemctl stop on the setup screen took $first_stop_ms ms, more than 15 s"
+[ "$(activity_count 'TradeAgent stopped')" -ge 1 ] || fail "the first start's stop recorded no 'TradeAgent stopped'"
+pass "the first start, stopped on its setup screen, ended in $first_stop_ms ms with its quit recorded"
 
 # ---- 1. the seeded paper home, and the one source that answers ---------------------------------------
 note "phase 1: seeding the home (onboarding done, paper, GDELT off) and the loopback source"
