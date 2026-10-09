@@ -177,6 +177,9 @@ public sealed class MainWindow : Window
 
     async Task RefreshAsync()
     {
+        // NOTHING OF A HOST THE QUIT IS CLOSING (AppHost.Stopped): reading it throws, and a refresh that throws on the
+        // setup screen re-renders and refreshes again, which no shutdown can get past.
+        if (_host.Stopped) return;
         if (_updating) return;
         _updating = true;
         try
