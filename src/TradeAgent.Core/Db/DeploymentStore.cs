@@ -171,6 +171,90 @@ public sealed record DeploymentOpRow(
 public sealed record DeploymentResult(bool Ok, string Why, StrategyDeploymentRow? Deployment);
 
 /// <summary>
+/// ONE PAPER RUN'S OWN BOOK (<c>U-paper-books</c>): what the run holds, at what average cost, what it has realised, what
+/// its fills cost where the platform said, and how many fills the platform said nothing about — computed at read time
+/// from rows only the gateway writes, and stored nowhere, so there is nothing to backfill or rewrite.
+///
+/// <para><b>Its own, and nobody else's.</b> A paper account keeps ONE position per symbol, and two runs on one symbol —
+/// or a run beside the owner's own holding — hold one position there: their sum. A run's book is the part of it the
+/// run's own orders bought and sold: its <c>deployment_op</c> rows joined to the <c>fill</c> rows under their request
+/// ids, the lineage <c>docs/PRINCIPLES.md</c> asks results to be attributed by.</para>
+///
+/// <para><b>Complete, or it sizes nothing.</b> <see cref="Incomplete"/> is null only when every order record of the run
+/// reports exactly the quantity the ledger holds fills for under its id — <c>execution_request.filled_quantity</c>
+/// against the fills. A record that says FILLED while the platform's report of the fill has not reached the ledger, or
+/// the other way about, is a book that is not the whole of it; read as complete it would size a close or charge an
+/// opener on a guess, so every caller refuses instead and says why in these words.</para>
+///
+/// <para><see cref="Realised"/> is before costs, and <see cref="Fees"/> is what the platform reported: a fill with no
+/// fee is UNKNOWN, never zero (<see cref="Fill.Fee"/>), and is counted in <see cref="FillsWithNoFee"/> beside the
+/// figure rather than netted into it.</para>
+/// </summary>
+public sealed record RunBook(
+    decimal Held,
+    decimal Average,
+    decimal Realised,
+    decimal Fees,
+    int Fills,
+    int FillsWithNoFee,
+    string? Incomplete)
+{
+    /// <summary>Whether every order record of the run reports exactly what the ledger holds fills for.</summary>
+    public bool Complete => Incomplete is null;
+
+    /// <summary>What the run has realised after the costs the platform reported.</summary>
+    public decimal RealisedAfterCosts => Realised - Fees;
+}
+
+/// <summary>
+/// THE ONE WALK OF A RUN'S FILLS, applied in the order they happened: a buy adds at its price to the average cost, a
+/// sell takes off at most what is held and realises against that average. Long or flat — the strategy language
+/// cannot spell a third value and neither can this.
+///
+/// <para><b>One walk for both readers</b> (<c>U-paper-books</c>): <see cref="Deployments.BookOf"/> walks every fill of
+/// the run for the gateway and the run's line, and the runner walks the fills it has placed on its bars up to each one
+/// (<c>ForwardRuns.RunBooks</c>), so the size a run decides from and the size the gateway checks it against are one
+/// arithmetic, not two copies of it.</para>
+/// </summary>
+public sealed class RunBookWalk
+{
+    public decimal Held { get; private set; }
+    public decimal Average { get; private set; }
+    public decimal Realised { get; private set; }
+    public decimal Fees { get; private set; }
+    public int Fills { get; private set; }
+    public int FillsWithNoFee { get; private set; }
+
+    /// <summary>One fill. <paramref name="fee"/> null is a fill the platform reported no fee for.</summary>
+    public void Apply(bool buy, decimal quantity, decimal price, decimal? fee)
+    {
+        Fills++;
+        if (fee is { } paid) Fees += paid;
+        else FillsWithNoFee++;
+
+        if (buy)
+        {
+            Average = Held + quantity <= 0m ? price : (Average * Held + price * quantity) / (Held + quantity);
+            Held += quantity;
+            return;
+        }
+
+        var closed = Math.Min(Held, quantity);
+        Realised += (price - Average) * closed;
+        Held -= closed;
+        if (Held <= 0m)
+        {
+            Held = 0m;
+            Average = 0m;
+        }
+    }
+
+    /// <summary>The book this walk has reached, with why it is not the whole of it — or null because it is.</summary>
+    public RunBook Book(string? incomplete = null) =>
+        new(Held, Held > 0m ? Average : 0m, Realised, Fees, Fills, FillsWithNoFee, incomplete);
+}
+
+/// <summary>
 /// THE DEPLOYMENT LEDGER: WHAT IS BEING RUN FORWARD, AND EVERY OPERATION IT HAS WRITTEN DOWN.
 ///
 /// <para><b>State is written by <see cref="Start"/>, <see cref="Suspend"/>, <see cref="Resume"/> and
@@ -485,6 +569,102 @@ public sealed class Deployments(Database db)
     {
         using var c = db.Cmd($"SELECT {OpCols} FROM deployment_op WHERE request_id=$r", ("$r", requestId));
         return ReadOps(c).FirstOrDefault();
+    });
+
+    // ---------------------------------------------------------------- the run's own book
+
+    /// <summary>
+    /// THE RUN'S OWN FILLS, oldest first: every fill since it started under a request id one of its operations was
+    /// written under — the range read the runner has always made (<c>ForwardRuns</c>), filtered to the run's ids, so the
+    /// runner and the gateway read the same rows. A fill stamped before the run started is not in it, and the book that
+    /// its order record still reports filled then says it is not the whole of it (<see cref="BookOf"/>).
+    ///
+    /// <para><paramref name="ledger"/> is that read made ONCE for many runs — the fills since the earliest of their
+    /// starts, in the ledger's own order — by a surface that lists them all; it is filtered here exactly as the read
+    /// would be.</para>
+    /// </summary>
+    public IReadOnlyList<Fill> FillsOf(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow>? ops = null,
+        IReadOnlyList<Fill>? ledger = null)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+        var ids = (ops ?? OpsOf(deployment.Id)).Select(o => o.RequestId).ToHashSet(StringComparer.Ordinal);
+        return
+        [
+            .. (ledger ?? new FillStore(db).Since(deployment.StartedAt))
+                .Where(f => f.At >= deployment.StartedAt && f.RequestId is { } r && ids.Contains(r))
+        ];
+    }
+
+    /// <summary>
+    /// THE RUN'S OWN BOOK, NOW (<see cref="RunBook"/>): its fills walked once (<see cref="RunBookWalk"/>), and whether
+    /// every order record of the run reports exactly what the ledger holds fills for under its id.
+    ///
+    /// <para>A read and nothing else: it writes no row, asks no platform and holds no state. A caller about to size
+    /// anything from it reads the platform's position FIRST — a platform that settles on a read, as the paper book does,
+    /// brings every fill it owes into the ledger on that read — and this second (<c>TradingGateway</c>).</para>
+    /// </summary>
+    public RunBook BookOf(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow>? ops = null,
+        IReadOnlyList<Fill>? ledger = null)
+    {
+        ArgumentNullException.ThrowIfNull(deployment);
+        ops ??= OpsOf(deployment.Id);
+        var fills = FillsOf(deployment, ops, ledger);
+
+        var walk = new RunBookWalk();
+        string? unknownSide = null;
+        foreach (var fill in fills)
+        {
+            var buy = string.Equals(fill.Side, "Buy", StringComparison.OrdinalIgnoreCase);
+            if (!buy && !string.Equals(fill.Side, "Sell", StringComparison.OrdinalIgnoreCase))
+                unknownSide ??= $"fill {fill.ExecutionId} under {fill.RequestId} is on a side this build does not "
+                                + $"know ('{fill.Side}')";
+            walk.Apply(buy, fill.Quantity, fill.Price, fill.Fee);
+        }
+
+        return walk.Book(unknownSide ?? Unaccounted(deployment.Id, fills));
+    }
+
+    /// <summary>
+    /// Why the run's fills are not the whole of its book, or null because they are: the first order record of the run
+    /// whose reported fill differs from what the ledger holds under its id, in words, and how many more there are.
+    /// </summary>
+    string? Unaccounted(string deploymentId, IReadOnlyList<Fill> fills)
+    {
+        var inLedger = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var fill in fills)
+            inLedger[fill.RequestId!] = inLedger.GetValueOrDefault(fill.RequestId!) + fill.Quantity;
+
+        string? first = null;
+        var more = 0;
+        foreach (var (request, filled) in Reported(deploymentId))
+        {
+            var held = inLedger.GetValueOrDefault(request);
+            if (filled == held) continue;
+            if (first is null)
+                first = $"order {request} reports {AllocationRow.Num(filled)} filled and the fill ledger holds "
+                        + $"{AllocationRow.Num(held)} under it";
+            else more++;
+        }
+
+        return first is null ? null : more == 0 ? first : $"{first}, and {more} more order{(more == 1 ? "" : "s")} of the run likewise";
+    }
+
+    /// <summary>
+    /// What every order record of one run reports filled, by request id, oldest operation first — one read, the
+    /// operation ledger joined to <c>execution_request</c> on the key the two share. An operation with no record has
+    /// sent nothing and is not in it.
+    /// </summary>
+    List<(string Request, decimal Filled)> Reported(string deploymentId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT o.request_id, r.filled_quantity FROM deployment_op o "
+            + "JOIN execution_request r ON r.request_id = o.request_id WHERE o.deployment_id=$d "
+            + "ORDER BY o.bar_open_time ASC, o.created_at ASC, o.request_id ASC",
+            ("$d", deploymentId));
+        var rows = new List<(string, decimal)>();
+        using var r = c.ExecuteReader();
+        while (r.Read()) rows.Add((r.GetString(0), Sql.Dec(r.GetValue(1))));
+        return rows;
     });
 
     /// <summary>
