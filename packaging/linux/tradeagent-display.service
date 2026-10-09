@@ -3,7 +3,7 @@
 # other account on this host can open the window. The owner looks at the app from his Mac's Screen
 # Sharing; nothing in the app listens on a network, and every control stays the window's.
 #
-# A template: packaging/linux/install.sh fills the @NAMES@ in and installs it root-owned in
+# A template: packaging/linux/install.sh fills its placeholders in and installs it root-owned in
 # /etc/systemd/system, so the app's own account — which is the agent's — cannot change it.
 [Unit]
 Description=TradeAgent's display (Xvnc :@DISPLAY@ on @ADDRESS@ only)

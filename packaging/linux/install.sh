@@ -99,8 +99,8 @@ case "$(uname -m)" in
     aarch64) rid=linux-arm64 ;;
     *) refuse "TradeAgent is built for x86_64 and aarch64 Linux, not $(uname -m)" ;;
 esac
-# pipefail off for this one line: head stops reading after the first entry, and tar then dies of SIGPIPE.
-top="$(set +o pipefail; tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)"
+# The first entry's folder. sed reads the whole listing, so tar is never cut off mid-write.
+top="$(tar -tzf "$tarball" | sed -n '1s:/.*::p')"
 case "$top" in
     TradeAgent-*-"$rid") version="${top#TradeAgent-}"; version="${version%-"$rid"}" ;;
     TradeAgent-*-linux-*) refuse "$tarball_name is built for ${top##*-}, and this host is $rid" ;;
