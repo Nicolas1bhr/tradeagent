@@ -117,6 +117,13 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
             }
         }
 
+        /// <summary>Waits for the Test press in flight and runs what it handed back, on this thread.</summary>
+        public void Settle()
+        {
+            Assert.True(Card.Pressing?.Wait(TimeSpan.FromSeconds(60)) ?? true, "the Test press never finished");
+            while (_posted.TryDequeue(out var work)) work();
+        }
+
         /// <summary>Every word the card shows: each text, button, placeholder and box on it.</summary>
         public List<string> Words()
         {
@@ -269,6 +276,149 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
                      + "it is left today, for everything the AI spends.", card.Shown.Spent);
     }
 
+    // ---- (g) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) THE TEST PRESS ASKS THE KEY'S OWN INSTRUMENT ONCE AND SHOWS WHAT IT COST. With the key pasted for OpenRouter's
+    /// address, one press sends exactly one request — to OpenRouter's host and never TypeSafe's, whose address would make the
+    /// holder forget the key — disabled while it flies, a second press sending nothing; the call is a <c>decision_call</c>
+    /// row labelled <c>owner-test</c>, and the card shows who answered and that it is pinned, the probability as served, the
+    /// latency and tokens, and the BILLED cost — never as an estimate. Pasted for TypeSafe, the same press asks TypeSafe and
+    /// shows the ESTIMATE with its basis — never as a bill; a host error says the reservation stands; and an instrument the
+    /// file stopped says why in the file's own words, asking no one. The key is still held throughout.
+    ///
+    /// <para>Make the press ask the first instrument instead of the key's and OpenRouter's host sees nothing — and the key is
+    /// gone.</para>
+    /// </summary>
+    [Fact]
+    public void The_test_press_asks_the_keys_own_instrument_once_and_shows_what_it_cost()
+    {
+        using var typeSafeHost = new FakeProvider();
+        using var openRouterHost = new FakeProvider();
+        typeSafeHost.Answer(FakeProvider.SystemOne("jev-1.13.0", TestAnswers, 300, 20));
+        openRouterHost.Answer(FakeProvider.SystemOne("typesafe/jev-1.13-20260917", TestAnswers, 300, 20,
+            id: "gen-owner-test", provider: "TypeSafe", cost: 0.0000311m));
+        using var rig = new CardRig(typeSafeHost, openRouterHost);
+        var card = rig.Card;
+
+        // THE KEY, FOR OPENROUTER'S LOOPBACK ADDRESS: not TradeAgent's built-in one, so the press asks twice, naming it.
+        Press(card.Choices[1]);
+        var openRouterOrigin = UrlOrigin.Of($"http://127.0.0.1:{openRouterHost.Port}")!;
+        Assert.False(card.Shown!.KeyBuiltIn);
+        card.KeyBox.Text = _pasted;
+        Press(card.SaveKey);
+        Assert.Equal(Labels.SendHarnessKeyArmed(openRouterOrigin), card.SaveKey.Content);
+        Press(card.SaveKey);
+        Assert.Equal(openRouterOrigin, rig.Key.Origin);
+
+        // ITS WORST CASE, NAMED BESIDE IT: one reservation.
+        Assert.Equal($"Asks {OpenRouter.DisplayName} one fixed question, once. The most it can cost is "
+                     + $"{PerceptionCard.Exact(OpenRouter.Reservation)} USD — 65,536 tokens at the price above — taken from the "
+                     + "perception budget.", card.Shown.Worst);
+        Assert.Contains(card.Shown.Worst, rig.Words());
+
+        // ONE PRESS, ONE REQUEST, DISABLED WHILE IT FLIES.
+        using var hold = new ManualResetEventSlim();
+        openRouterHost.Arriving = () => hold.Wait(TimeSpan.FromSeconds(30));
+        Press(card.TestButton);
+        for (var i = 0; i < 1500 && openRouterHost.Requests.Count < 1; i++) Thread.Sleep(20);
+        Assert.False(card.TestButton.IsEnabled);
+        Press(card.TestButton);
+        hold.Set();
+        rig.Settle();
+        log.WriteLine(card.ResultText);
+
+        Assert.True(card.TestButton.IsEnabled);
+        Assert.Single(openRouterHost.Requests);
+        Assert.Empty(typeSafeHost.Requests);
+        Assert.Equal([$"Bearer {_pasted}"], openRouterHost.Keys);
+        Assert.True(rig.Key.Held);
+        Assert.Equal(openRouterOrigin, rig.Key.Origin);
+
+        var record = Assert.Single(rig.Store.Tape.RecordedCalls());
+        Assert.Equal(PerceptionCard.TestSchema, record.Call.Schema.Id);
+        Assert.Equal(1, record.Call.Schema.Version);
+        Assert.Equal([PerceptionCard.TestSource], record.Call.Sources);
+        Assert.Equal(DecisionInstruments.OpenRouterJev, record.Call.Instrument);
+        Assert.False(record.Unpinned);
+
+        var result = card.ResultText;
+        Assert.StartsWith("ANSWERED by typesafe/jev-1.13-20260917 — PINNED.", result, StringComparison.Ordinal);
+        Assert.Contains("The probability it gave that this is a test message: 0.96875.", result, StringComparison.Ordinal);
+        Assert.Matches(@"Latency: \d+ ms, measured by TradeAgent\.", result);
+        Assert.Contains("Tokens: 300 in, 20 out, as the host reported them.", result, StringComparison.Ordinal);
+        Assert.Contains("Billed by the host: 0.0000311 USD.", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("Estimated", result, StringComparison.Ordinal);
+        Assert.Equal($"The Perception card's test question to {OpenRouter.DisplayName}: ANSWERED", rig.Activity[^1]);
+        Assert.Equal(0.0000311m, new AiAttemptStore(rig.Store.Db).Get(record.Call.AttemptId)!.Cost);
+
+        // PASTED FOR TYPESAFE: the same press asks TypeSafe, and its figure is an ESTIMATE with its basis.
+        Press(card.Choices[0]);
+        card.KeyBox.Text = _pasted;
+        Press(card.SaveKey);
+        Press(card.SaveKey);
+        Assert.Equal(UrlOrigin.Of(typeSafeHost.BaseUrl), rig.Key.Origin);
+        Press(card.TestButton);
+        rig.Settle();
+        log.WriteLine(card.ResultText);
+        Assert.Single(typeSafeHost.Requests);
+        Assert.Single(openRouterHost.Requests);
+        Assert.StartsWith("ANSWERED by jev-1.13.0 — PINNED.", card.ResultText, StringComparison.Ordinal);
+        Assert.Contains($"Estimated, not billed — the host reports no bill: {PerceptionCard.Exact(300m * 0.042m / 1_000_000m)} USD, "
+                        + $"at the {TypeSafe.PriceBasis}.", card.ResultText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Billed", card.ResultText, StringComparison.Ordinal);
+
+        // A HOST ERROR: asked once, and the reservation stands as its cost.
+        typeSafeHost.AlwaysAnswer = HttpStatusCode.InternalServerError;
+        Press(card.TestButton);
+        rig.Settle();
+        log.WriteLine(card.ResultText);
+        Assert.Equal(2, typeSafeHost.Requests.Count);
+        Assert.StartsWith("FAILED — the host answered HTTP 500 (http-500).\n", card.ResultText, StringComparison.Ordinal);
+        Assert.EndsWith($"\nIt was asked once, and its reservation of {PerceptionCard.Exact(TypeSafe.Reservation)} USD stands as "
+                        + "its cost, because nothing says what it used.", card.ResultText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Billed", card.ResultText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Estimated", card.ResultText, StringComparison.Ordinal);
+
+        // A REFUSAL IS SHOWN IN THE PORT'S OWN WORDS: perception's budget is too small for one reservation. A second on, so
+        // the failed call's tokens — counted at its bound, since it reported none — have left the rate gate's window.
+        typeSafeHost.AlwaysAnswer = null;
+        rig.Budget = TypeSafe.Reservation / 2m;
+        rig.Clock += DecisionRateGate.Window;
+        Press(card.TestButton);
+        rig.Settle();
+        Assert.Equal($"REFUSED — nothing was sent and nothing was charged.\n{Labels.PerceptionBudgetReached}", card.ResultText);
+        Assert.Equal(2, typeSafeHost.Requests.Count);
+        rig.Budget = 1m;
+
+        // AN INSTRUMENT THE FILE STOPPED: the card binds the key to its built-in address, and the press asks no one and says
+        // why in the file's own words.
+        File.WriteAllText(DecisionInstruments.OverridePath, """
+            [{"id":"typesafe-direct","pin":"jev-9.9.9"}]
+            """);
+        card.Update();
+        Assert.NotNull(card.Shown!.Stopped);
+        Assert.True(card.Shown.KeyBuiltIn);
+        card.KeyBox.Text = _pasted;
+        Press(card.SaveKey);
+        Assert.Equal(UrlOrigin.Of(TypeSafe.Endpoint), rig.Key.Origin);
+        Press(card.TestButton);
+        rig.Settle();
+        log.WriteLine(card.ResultText);
+        Assert.Equal(PerceptionCard.Stopped(DecisionInstruments.Read(), DecisionInstruments.TypeSafeDirect), card.ResultText);
+        Assert.StartsWith("'typesafe-direct' in decision-models.json names 'pin'", card.ResultText, StringComparison.Ordinal);
+        Assert.Equal(2, typeSafeHost.Requests.Count);
+        Assert.True(rig.Key.Held);
+
+        // AND NO KEY, NO ONE ASKED.
+        Press(card.ForgetKey);
+        Press(card.TestButton);
+        rig.Settle();
+        Assert.Equal(Labels.PerceptionTestNoKey, card.ResultText);
+        Assert.Equal(2, typeSafeHost.Requests.Count);
+        Assert.Single(openRouterHost.Requests);
+    }
+
     // ---- (h) ------------------------------------------------------------------------------------------------------
 
     /// <summary>What no word on the card may say: an instruction to run, export or install anything — or a terminal.</summary>
@@ -336,6 +486,9 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         Assert.Contains(PerceptionCard.OpenRouterTerms, PerceptionCard.Terms, StringComparison.Ordinal);
         Assert.Contains("UNKNOWN", PerceptionCard.Terms, StringComparison.Ordinal);
 
+        Press(card.TestButton);
+        rig.Settle();
+        Assert.Equal(Labels.PerceptionTestNoKey, card.ResultText);
         var words = rig.Words();
         var told = words.Where(t => Terminal.IsMatch(t)).ToList();
         foreach (var t in told) log.WriteLine($"tells the owner to: {t}");
