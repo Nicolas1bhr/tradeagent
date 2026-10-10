@@ -267,7 +267,9 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
     static readonly (int Version, string Seat, string Sha256)[] Ledger =
     [
         (1, CouncilRoles.Operations, "8970424cc948c5b5480e9939b97569ba58efce435133826c6530de2dac38d841"),
-        (1, CouncilRoles.Research, "3fed62bfa68b1066de8e16487140f75227ff55d61ee7c782f6043361ff94bc50")
+        (1, CouncilRoles.Research, "3fed62bfa68b1066de8e16487140f75227ff55d61ee7c782f6043361ff94bc50"),
+        (2, CouncilRoles.Operations, "605d04f7399cb4c2d63315c2ed9451537f71cc8cc496fb5ae38f44a6722eab63"),
+        (2, CouncilRoles.Research, "1070e7c2c75d461d3377ed3269e922d3de7bd29953305b7869a590a87dcc9da1")
     ];
 
     /// <summary>

@@ -3947,6 +3947,42 @@ when a run or a verdict exists. **The holdout run is listed in that report witho
 `trade report` serves the same document to the agent — naming it is the record, valuing it would hand
 back through the report exactly what `data-bars` and `backtest` refuse.
 
+## The research ledger — `src/TradeAgent.Core/Db/ResearchLedger.cs`, `Gateway/GatewayPipeServer.cs`
+
+**Each role's beliefs are its own versioned claims, kept beside what the app measured and never over it** (schema 31,
+`U-research-ledger`; VISION § 6.7, the believed world). `ledger_entry` is what an entry is about and who wrote it, fixed
+when it is added — its kind (hypothesis, experiment, finding, kill, lesson), the entry it is `about`, its `source`, and
+the council role and attempt the launch grant proved; `ledger_revision` is what the author said, one row per revision,
+keyed (entry, revision), the first 1 and each the last + 1, with its text, its mark, its confidence, its status and,
+after the first, why. **Two writes and both only insert**: `ResearchLedger.Add` and `Revise`, over `trade ledger add`
+and `trade ledger revise`; nothing in `src` updates or deletes a `ledger_` row, and a revision of another role's entry
+is refused in words naming the way to disagree — an entry of one's own `about` it.
+
+**Claimed.** An entry is its author's claim: marked claim, assumption or hypothesis — three words, held by the store in
+words and by a CHECK on the column, so no row says an entry was measured — under the role and attempt the grant proved,
+never an app principal and never a name the frame carried, and append-only. A confidence is the author's own number from
+0 to 1 as stated, or NULL — recorded and read as `unknown`, never refused, defaulted or carried forward from the revision
+before; one outside 0 to 1 is refused, never clamped. Confidence and status are fields and gate nothing. An argument a
+ledger verb does not declare is **refused, not ignored**, with nothing written, so no frame can carry a `link`, a `run`
+or a `promotion` beside a claim. A read — `trade ledger list`, `trade ledger show`, every role's and a roleless caller's
+— is at most 100 entries or revisions and 64 KiB, never splits a row, and an answer either bound stopped says which and
+hands back the `next_before` that continues it exactly. **A link says the app answered a request asked under that entry
+with that record**: `ledger_link` (entry, the revision it stood at when asked, record kind and id, attempt, instant) is
+written by `LedgerLinks.Link` alone, from the two record paths alone — `Backtests.Record` in the run's own write after
+its trials, and `Referee.Verdict`'s promotion write through its one callback, or alone when a verdict already recorded is
+answered — with a `LedgerAsk` only the entry check mints, before anything is run or charged. A `backtest` or `verdict`
+asked under an entry that is not there or is another role's is refused before anything runs or is charged; a request
+refused, stopped (`IPC_UNAVAILABLE`, both the run's and the verdict's), refused `CAMPAIGN_BUDGET_REACHED` or not judged
+links nothing; a `refused` verdict is linked like any other; the same run asked again is one run and one link. A link
+names its record by kind and id and copies none of its fields, no app table gained a column, and `ledger-show` derives
+the linked runs' versions and those versions' promotion and deployment ids at read, storing none.
+
+**NOT claimed.** That an entry is true; that a link supports, refutes or bears on the entry it is linked to — it says
+only under which entry a request was asked; that every record relevant to an entry is linked — a run asked under no
+entry is linked to none; that a confidence is calibrated, or that two roles' confidences are comparable; that a status
+means anything to the app — nothing reads it; or that `PLAN.md` and `JOURNAL.md` agree with the ledger — they are the
+role's scratch, and the canon (v2) says so.
+
 ## The capital allocation — `src/TradeAgent.Core/Db/AllocationStore.cs`, `Gateway/TradingGateway.cs`
 
 **An allocation is one immutable row whose id is the SHA-256 of the seven facts it binds**: version id,

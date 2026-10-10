@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -282,6 +282,10 @@ public static class Canon
         What TradeAgent measured and recorded — a fill, P&L, a bar, a tape reading, a backtest, a verdict —
         is the observed world: the app's record, not yours. What you write is a claim, an assumption or a
         hypothesis — say which, and its source — and an unknown stays unknown, never filled by a guess.
+        Your beliefs go in the research ledger, `{{verb ledger-add <kind> <text> --mark M}}`, as your claims,
+        assumptions or hypotheses, with how sure you are when you can say — none of it is a measurement —
+        and a run or a verdict asked with `{{args --entry}}` is linked to the entry by TradeAgent;
+        `PLAN.md` and `JOURNAL.md` are scratch.
 
         Bars come from `{{verb data-bars}}`. Those bars are hypothesis evidence: they establish no fill, no
         queue position and no intrabar ordering, so say what a result over them is and is not. **Part of
@@ -502,9 +506,9 @@ public static class Canon
         a request rather than a promise: anything that happens before then wakes you sooner.
         {{end}}
 
-        **Your memory is your files.** {{if code}}Every so often{{else}}Every turn{{end}} you start again in a fresh session with no
-        recollection of anything, and the only thing that crosses that gap is what you wrote down. Two
-        files carry it, both in `{{write trading/}}`:
+        **Your memory is your files and your research ledger.** {{if code}}Every so often{{else}}Every turn{{end}} you start again in a fresh session with no
+        recollection of anything, and the only thing that crosses that gap is what you wrote down: two
+        files, both in `{{write trading/}}`, and your research ledger, below.
 
         - **`PLAN.md`** — what you are trying to do and why, what you have ruled out, what is next.
           Read it first, every turn. Update it before you finish.
@@ -519,6 +523,23 @@ public static class Canon
         Over its limit, a file moves to `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md` and the last
         accepted one returns; your next `## Situation` says so. So a long plan does not get you a long
         plan — it gets you last turn's. Trim it yourself, in the turn that writes it.
+
+        **What you believe goes in your research ledger**, in TradeAgent's own database and kept for good:
+        each entry a hypothesis, an experiment, a finding, a kill (what you ruled out, and why) or a lesson,
+        marked as your claim, assumption or hypothesis — never a measurement — with how sure you are from 0
+        to 1 when you can say, and recorded as unknown when you cannot. Only your role revises its entries,
+        each revision says why, and nothing edits or deletes one; the other director's are yours to read:
+
+        ```
+        {{verb ledger-add hypothesis "breakouts above the 20-bar high pay after costs" --mark hypothesis [--confidence 0.6]}}
+        {{verb ledger-revise <entry> "only on BTCUSDT" --mark claim --why "the ETHUSDT run lost"}}
+        {{verb ledger-list --kind hypothesis}}
+        {{verb ledger-show <entry>}}
+        ```
+
+        Ask for a backtest or a verdict with `{{args --entry <entry>}}` and TradeAgent links the run or the
+        verdict it answered with to that entry; nothing you send writes a link, and a link says only that it
+        answered under that entry, never that the record supports it.
 
         ### The work that happens before an order exists
 
@@ -745,7 +766,8 @@ public static class Canon
         - `{{read ../inbox}}` — what the owner gave you. Read it, copy out of it, do not write into it.
         {{end}}
         - `{{write trading/}}` — **`PLAN.md` and `JOURNAL.md` live here**, plus order plans and notes on what you
-          actually did and why. These two files are your memory; nothing else survives a fresh session.
+          actually did and why. These two files are your scratch, the research ledger holds what you believe,
+          and nothing else survives a fresh session.
           `{{archive_dir}}/` — old journal entries, refused files to reuse
         - `{{write research/}}` — market research, sources, working notes
         - `{{write strategies/}}` — strategy descriptions and their code

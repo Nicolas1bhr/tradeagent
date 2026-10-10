@@ -309,6 +309,13 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
 
     // ---- (h) every ledger verb reaches every live pair ---------------------------------------------------------------
 
+    /// <summary>The pairs that run: both directors on a command line, the Research Director on the harness.</summary>
+    static readonly (string Role, RuntimeClass Runtime)[] LivePairs =
+    [
+        (CouncilRoles.Operations, RuntimeClass.Cli), (CouncilRoles.Research, RuntimeClass.Cli),
+        (CouncilRoles.Research, RuntimeClass.Harness)
+    ];
+
     /// <summary>
     /// (h) EVERY LEDGER VERB REACHES EVERY LIVE PAIR. The four ops are reads and writes of claims and none of them is in
     /// <see cref="Ops.Mutating"/>; each is in the schema under its own form — so <see cref="CanonRules.CommandWords"/>
@@ -346,13 +353,25 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
                 Assert.Contains(op, GrantedWorkerTools.TradeOps);
                 Assert.Equal(TimeSpan.Zero, rig.Server.HandlerPaths.Single(h => h.Handler == op).Path);
 
-                foreach (var (role, runtime) in new[]
-                         {
-                             (CouncilRoles.Operations, RuntimeClass.Cli), (CouncilRoles.Research, RuntimeClass.Cli),
-                             (CouncilRoles.Research, RuntimeClass.Harness)
-                         })
+                foreach (var (role, runtime) in LivePairs)
                     Assert.True(AgentReach.For(role, runtime).Verb(op) is not null, $"{role}·{runtime} cannot reach {op}");
             }
+
+            // AND EVERY LIVE PAIR IS TOLD OF THEM (canon v2, item 4): its canon names the ledger's write, through a slot that
+            // renders for its runtime and throws for a verb it cannot reach, and its guide names all four.
+            Assert.Equal(2, Canon.Version);
+            foreach (var (role, runtime) in LivePairs)
+                foreach (var simulator in new[] { true, false })
+                {
+                    var ctx = new WorkspaceContext("Simulator (built in)", ConnectorIsPaper: true, null, TradingMode.PAPER, true,
+                        null, new RiskPolicy(), ConnectorIsBuiltInSimulator: simulator, Role: role);
+                    var reach = AgentReach.For(role, runtime);
+                    var canon = Canon.Render(ctx, reach);
+                    Assert.Contains(Ops.LedgerAdd, canon.Verbs);
+                    Assert.Contains("none of it is a measurement", canon.Text, StringComparison.Ordinal);
+                    Assert.Equal(forms.Keys.Order(StringComparer.Ordinal),
+                        Canon.Guide(ctx, reach).Verbs.Where(forms.ContainsKey).Distinct().Order(StringComparer.Ordinal));
+                }
             Assert.Contains("It is YOUR CLAIM and is stored as one", Spec(Ops.LedgerAdd).Description, StringComparison.Ordinal);
             Assert.Contains("THE LINK IS TRADEAGENT'S", Spec(Ops.LedgerAdd).Description, StringComparison.Ordinal);
             Assert.Contains("A LINK is TRADEAGENT'S", Spec(Ops.LedgerShow).Description, StringComparison.Ordinal);
