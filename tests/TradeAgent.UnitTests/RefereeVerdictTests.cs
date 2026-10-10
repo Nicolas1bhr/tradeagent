@@ -245,6 +245,47 @@ public class RefereeVerdictTests
     }
 
     /// <summary>
+    /// (g) THE REFEREE'S HOLDOUT RUN KEEPS NO STREAM (<c>U-trial-returns</c>). Over the venue fixture — BTC-priced bars on
+    /// Binance spot, so a stream has days — a research run of the version keeps its 1x and 2x daily net returns; the
+    /// referee's run of the same version over the held-back hour is recorded under its own mark and keeps none, at either
+    /// multiple: nothing of the holdout is stored as a series (<c>U-referee-v2</c> computes what it needs at verdict time),
+    /// and no stream is not a stream of no days — there is no row at all.
+    /// </summary>
+    [Fact]
+    public async Task The_referees_holdout_run_keeps_no_stream()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var (held, campaign) = w.Gw.SetHoldout(w.Set.Id, CostModelPinTests.Cutoff, EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        var version = CostModelPinTests.Version(w.Db, CostModelPinTests.BtcProgram, CostModelPinTests.Bar0);
+
+        var dir = Path.Combine(Paths.RoleHome(CouncilRoles.Research), "strategies");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "streamless.strategy"), CostModelPinTests.BtcProgram);
+        var research = w.Gw.Backtests.Run(AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1"),
+            new BacktestAsk("strategies/streamless.strategy", w.Set.Id, CostModelPinTests.Bar0,
+                CostModelPinTests.Bar0.AddMinutes(CostModelPinTests.HoldoutAtBar - 1)));
+        Assert.Equal(version, research.Result.VersionId);
+        var kept = w.Gw.Strategies.StreamsOf(research.Result.RunId);
+        Assert.Equal([1, 2], kept.Select(s => s.Multiple));
+        Assert.All(kept, s => Assert.NotEmpty(s.Days));
+
+        var verdict = CostModelPinTests.RefereeOf(w).Verdict(version, campaign!.Id);
+        Assert.True(verdict.Ok, verdict.Why);
+        var holdout = w.Gw.Strategies.RunById(verdict.Promotion!.HoldoutRunId)!;
+        Assert.Equal(Referee.RunRole, holdout.Role);
+        Assert.True(holdout.Bars > 0, "the referee's run evaluated nothing");
+
+        Assert.Empty(w.Gw.Strategies.StreamsOf(holdout.Id));
+        Assert.Equal(2L, w.Db.Read(_ =>
+        {
+            using var c = w.Db.Cmd("SELECT COUNT(*) FROM strategy_stream");
+            return (long)c.ExecuteScalar()!;
+        }));
+    }
+
+    /// <summary>
     /// A CAMPAIGN WHOSE FIXED POLICY IS NOT THE ONE THIS BUILD IMPLEMENTS IS NOT JUDGED AT ALL.
     ///
     /// <para>The clauses in <see cref="ScoringPolicyV1"/> are the text in <see cref="CampaignPolicy.V1"/>
