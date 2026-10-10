@@ -9631,3 +9631,34 @@ Builder: Release 0 warnings; Unit 1611, Fault 485, 0 failed; 15 Unit classes (15
 Tests box: NOT RUN — "the machine does not answer (asleep, off the private network, or the share was removed)" (10:50, 12:12 the builder; 12:17 seat B). Landing CI on `main`: a waiter is armed.
 **NOT verified:** no model has read the new canon (no AI run); what codex does past `project_doc_max_bytes` (moot at ≤ 15,835 B); an observed run must show first that each seat reads its canon,
 finds GUIDE.md, and that the harness's turn carries `CANON.md` as its system text; the ATAS box not used.
+
+## 2026-10-11 — U-verdict-stopped landed: a verdict the app stops records nothing and costs no judgement it has not already been charged — refused before its charge, or answered Stopped when its holdout run returns, the charge kept for that version
+
+Built by one fresh Opus builder under build-fleet seat A from `docs/briefs/U-verdict-stopped.md` — briefed from seat A's read-only survey S-verdict-stopped, which confirmed by reading that every app
+stop mid-verdict (Pause, Chat's Stop, a quit, SIGTERM on a Linux host) recorded the version's final `refused` verdict with a holdout judgement spent on it; moved ahead of `U-trial-returns` in ORGANISATION
+§ 15 (2026-10-10). The builder's code tip `dcf15fc4` (on `1d0bedf6`); the manager's preps rebased it onto `ec31b33a`, then onto `ef88e145` (docs only between); src+tests patch-id identical
+(`457a9724e4f8`) at both. Merge `2fd1338e` (ff-only): 4 commits (3 items, the report), 9 files, +284/−12. On main: item 1 `6e667878`, item 2 `6d7f024c`, the words `fe0cba3a`, the report `2fd1338e`.
+**No schema change** (main 30, `tape.db` 2). EVIDENCE path (the holdout's judgement charge, the verdict's record).
+
+- **Item 1 (`6e667878`), `Referee.Verdict`:** the stop is asked after `BoundsRefusal`, the last step before the tape read and the charge (`Referee.cs:330`), and again when the holdout run returns (`:393`),
+  after the open's own refusal — the order `Backtests.cs:202-217` keeps for a stopped backtest; `RefereeVerdict.Stopped` (private init, `Halted` its one writer); nothing written on either path, and a charge
+  already taken stays that version's, so the next ask is judged under it at no second cost.
+- **Item 2 (`6d7f024c`), `VerdictFor`:** a stopped verdict ⇒ `GatewayDeniedException(IPC_UNAVAILABLE, Backtests.VerdictStopped)` before `AllocatePaperDue` (`GatewayPipeServer.cs:2723`); both callers read
+  unchanged (the pipe logs no denial of a non-mutating op; `GrantedWorkerTools.cs:299-300` answers it as a refusal).
+- **Words (`fe0cba3a`):** the verdict's schema text, CONTRACTS "The verdict" (:3806-3821) and the holdout section's stopped-run line (:3564), USER-GUIDE :759-760.
+- **Unchanged:** `RefereeFeedback.Text` byte-identical; AGENTS.md unchanged; no test removed or renamed.
+**Verified by running (the builder, quoted; then the manager's gate).** Builder at `dcf15fc4`: Release `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1592/1592, Fault 485/485; 3×:
+`RefereeVerdictTests` 14/14, `VerdictOverPipeTests` 10/10. **RED on the base** (`Stopped` a never-set stub): (a) "a verdict the app stopped before its charge was answered as one: ok True, refused /
+the-holdout-run-did-not-complete, why "", judgements spent 1"; (b) the same words "during its holdout run"; (c) over the pipe `{…"verdict":"refused","reason":"the-holdout-run-did-not-complete",…
+"verdicts_spent":1,"verdicts_budget":3}`. **Mutant watched RED, restored:** the check when the run returns made `if (false)` ⇒ (b) red with the words above, (a) green; restored, 14/14.
+Manager's gate at `1b08eab6` (the rebase onto `ec31b33a`), Release: build `--no-incremental` `0 Warning(s)`, `0 Error(s)`; Unit 1613/1613 (11 m 31 s), Fault 485/485 (2 m), Integration 765/766, 1 skipped
+(11 m 16 s) → 0 failed. **GATE CARRIES** to `2fd1338e`: its build tree equals the gated `1b08eab6` (only docs moved, `5da0e850`, `ef88e145`). Names vs `main`: 2454 → 2457, removed 0, added 3
+(`A_verdict_the_app_stops_before_its_charge_is_refused_and_charges_nothing`, `…_during_its_run_records_nothing_and_its_charge_judges_it_later`, `…_over_the_pipe_is_refused_unavailable_and_the_next_ask_is_judged`).
+Scan clean with `stop.Token` (a CancellationTokenSource's) and the prose "whose token is the turn" excluded by name, read; `rev-list` 0 both ways.
+**CI:** run 38041473646 at `dcf15fc4` (the same src+tests patch): test ubuntu-latest success 12 min, macos-latest success 16 min, windows-latest success 67 min; package-linux success; linux-host success
+20 min; package success. Main CI on this record: `ci-wait.sh` detached → `fleet/ci-ledger.md`.
+**Tests box:** NOT RUN — `ready` exit 1 at 2026-10-10 11:26 CEST and again at 2026-10-11 00:55 CEST, "the machine does not answer".
+**Codex review (speed mode, 2026-10-11):** this unit was built before it; the independent review of `ef88e145..2fd1338e` was started at this landing and its triage goes in seat A's next record — NOT
+reviewed before the merge.
+**NOT done, NOT verified:** the app was not run, so Pause during a verdict was not watched on screen — (c) drives the harness's `CallAsync` with a cancelled stop; a stop AFTER the charge is proved at the
+referee ((b)), not over the pipe; NOT claimed, per the brief: a charge carried into a renewal, a later-turn notice to the asker, a kill mid-run, re-judging verdicts recorded before this unit.
