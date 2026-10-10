@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -688,32 +689,29 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         return new ReportOtherCosts { ForwardData = forward, Tape = TapeLine(from, to, gaps), Missing = gaps };
     }
 
+    /// <summary>The most gaps the tape's line lists for one source, its longest; the rest are counted (<c>U-tape-gaps</c>).</summary>
+    public const int TapeGapsShown = 3;
+
     /// <summary>
-    /// THE TAPE'S DAY IN ONE LINE (<c>U-tape-read</c>): rows, gaps and errors, read off the tape's own rows through the
-    /// gateway's read-only reader. Null when no tape is open; a read that fails is a gap in the owner's words, never a
-    /// zero — a zero here would read as a day on which the tape worked and recorded nothing.
+    /// THE TAPE'S DAY IN ONE LINE (<c>U-tape-read</c>; what it did not record, <c>U-tape-gaps</c>), read off the tape's own
+    /// rows through the gateway's read-only reader AT THE INSTANT THE REPORT IS COMPOSED — the gateway's clock, not the
+    /// snapshot instant a caller passes for a day already over — so a past day is read whole and today up to now.
+    ///
+    /// <para>Rows, requests and failures; the gaps, counted, with the longest named by its bounds; every catalogue source's
+    /// share of the day's elapsed part, when its recording began if that was on this day, and its gaps — at most
+    /// <see cref="TapeGapsShown"/> listed, the rest counted — each with its bounds, its length and what the tape holds
+    /// inside it; the newest failure; either switch that is off NOW; GDELT's credit. One line however many sources there
+    /// are, so the report's line bound is never what a busy tape spends.</para>
+    ///
+    /// <para>Null when no tape is open; a read that fails is a gap in the owner's words, never a zero — a zero here would
+    /// read as a day on which the tape worked and recorded nothing.</para>
     /// </summary>
     string? TapeLine(DateTimeOffset from, DateTimeOffset to, List<ReportGap> gaps)
     {
         if (gateway.Tape is not { } tape) return null;
         try
         {
-            var day = tape.Day(from, to, _now());
-            return $"{day.Rows:N0} rows recorded from {day.Requests:N0} requests, {day.Failed:N0} of them recorded a failure, "
-                   + $"{day.Gaps:N0} gaps (a source's deliveries further apart than twice its cadence plus 30 s)"
-                   + (day.Longest is { } longest
-                       ? $", the longest {longest.Gap.Length.TotalMinutes:N0} min on {longest.Source}"
-                       : "")
-                   + (gateway.Settings.RecordMarketContext ? "" : " — Record market context is switched OFF")
-                   + (gateway.Settings.RecordGdeltNews ? "" : " — Record GDELT news is switched OFF")
-                   + (day.LastError is { Length: > 0 } why ? $" — last failure: {why.ReplaceLineEndings(" ")}" : "")
-                   // THE CREDIT TRAVELS WITH THE FIGURE. GDELT's terms ask every use of its data to cite the project
-                   // and link to its site, and this document is shown to the owner and served to the AI.
-                   + (day.GdeltRows > 0
-                       ? $"; {day.GdeltRows:N0} of the rows are GDELT's news items and file records ({TapeSourceCatalog.GdeltCitation})"
-                       : "")
-                   + ". Research context, never evaluation evidence: O-LIVE rows only are first-hand, and nothing fills a gap. "
-                   + "No price: TradeAgent does not know what this installation's bandwidth costs.";
+            return TapeWords(tape.Day(from, to, _now()), gateway.Settings.RecordMarketContext, gateway.Settings.RecordGdeltNews);
         }
         catch (Exception ex)
         {
@@ -721,6 +719,102 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             return null;
         }
     }
+
+    /// <summary>The tape's day in the owner's words: see <see cref="TapeLine"/>.</summary>
+    static string TapeWords(TapeDay day, bool marketContext, bool gdeltNews)
+    {
+        var b = new StringBuilder();
+        b.Append($"{day.Rows:N0} rows recorded from {day.Requests:N0} requests, {day.Failed:N0} of them recorded a failure; ");
+
+        if (day.Elapsed <= TimeSpan.Zero)
+            b.Append("this day had not begun when the report was composed, so nothing of it can have been recorded yet");
+        else
+        {
+            b.Append(Count(day.Gaps, "gap"))
+             .Append(" — a stretch longer than twice a source's cadence plus 30 s with no delivery from it, counted across ")
+             .Append("midnights and restarts and clipped to this day");
+            if (day.Longest is { } longest) b.Append($"; the longest on {longest.Source}: {GapWords(day, longest.Gap)}");
+            b.Append("; per source: ").AppendJoin("; ", day.Sources.Select(s => SourceWords(day, s)));
+
+            // ONCE, NOT AT EVERY GAP: the tape keeps no record of its own runs or of the switches, so a stretch with no
+            // attempt in it cannot say which of the two it was — and saying so at each gap would spend the line on it.
+            b.Append("; \"nothing asked\" means the tape holds no attempt in that stretch — TradeAgent was not running or ")
+             .Append("the switch was off, and the tape cannot tell which");
+        }
+
+        if (!marketContext) b.Append(" — at this report's instant Record market context is switched OFF");
+        if (!gdeltNews) b.Append(" — at this report's instant Record GDELT news is switched OFF");
+        if (day.LastError is { Length: > 0 } why) b.Append(" — last failure: ").Append(why);
+
+        // THE CREDIT TRAVELS WITH THE FIGURE. GDELT's terms ask every use of its data to cite the project and link to its
+        // site, and this document is shown to the owner and served to the AI.
+        if (day.GdeltRows > 0)
+            b.Append($"; {day.GdeltRows:N0} of the rows are GDELT's news items and file records ({TapeSourceCatalog.GdeltCitation})");
+
+        b.Append(". Research context, never evaluation evidence: O-LIVE rows only are first-hand, and nothing fills a gap. ")
+         .Append("No price: TradeAgent does not know what this installation's bandwidth costs.");
+        return b.ToString().ReplaceLineEndings(" ");
+    }
+
+    /// <summary>
+    /// One source's part of the line: its share of the day's elapsed part, when its recording began if that was on this
+    /// day, and its longest gaps in the order they happened — or, before its recording began, that it recorded nothing and
+    /// what was asked.
+    /// </summary>
+    static string SourceWords(TapeDay day, TapeSourceDay s)
+    {
+        if (!s.Begun)
+            return $"{s.Source} recorded nothing — "
+                   + (s.Began is { } later ? $"its recording began after this day, at {Stamp(later)}" : "its recording has not begun")
+                   + (s.Attempts == 0 ? ", nothing asked" : "; " + Asked(s.Attempts, " this day", s.NewestFailure));
+
+        var b = new StringBuilder($"{s.Source} recorded {Span(s.Recorded)} of {Span(day.Elapsed)}{(day.Open ? " so far" : "")}");
+        if (s.Began is { } began && began >= day.From) b.Append($", its recording began at {Clock(day, began)}");
+        if (s.Gaps.Count == 0) return b.Append(", no gap").ToString();
+
+        var shown = s.Gaps.OrderByDescending(g => g.Length).Take(TapeGapsShown).OrderBy(g => g.ClippedFrom).ToList();
+        b.Append($", {Count(s.Gaps.Count, "gap")}: ").AppendJoin(", ", shown.Select(g => GapWords(day, g)));
+        if (s.Gaps.Count > shown.Count)
+        {
+            var rest = s.Gaps.Aggregate(TimeSpan.Zero, (sum, g) => sum + g.Length) - shown.Aggregate(TimeSpan.Zero, (sum, g) => sum + g.Length);
+            b.Append($" and {s.Gaps.Count - shown.Count:N0} more of {Span(rest)} in all");
+        }
+        return b.ToString();
+    }
+
+    /// <summary>
+    /// One gap: where it enters and leaves the day, its length on this day, where it began or ended on another day — or
+    /// that it began before the look back stopped, or is still open — and what the tape holds inside it.
+    /// </summary>
+    static string GapWords(TapeDay day, TapeGap g) =>
+        $"{Clock(day, g.ClippedFrom)}–{Clock(day, g.ClippedTo)} ({Span(g.Length)}"
+        + (g.From is not { } start ? $", no delivery since before {day.LookedBackTo.ToLocalTime():yyyy-MM-dd}"
+            : start < day.From ? $", since {Stamp(start)}"
+            : "")
+        + (g.To is not { } end ? ", still open" : end > g.ClippedTo ? $", until {Stamp(end)}" : "")
+        + "; " + (g.Attempts == 0 ? "nothing asked" : Asked(g.Attempts, "", g.NewestFailure)) + ")";
+
+    /// <summary>Attempts that all failed, and the newest failure in words.</summary>
+    static string Asked(int attempts, string when, string? newest) =>
+        attempts == 1 ? $"asked once{when}, which failed: {newest}" : $"asked {attempts:N0} times{when}, all failed: {newest}";
+
+    /// <summary>An instant inside its day: the owner's local hour and minute — the day's end as 24:00.</summary>
+    static string Clock(TapeDay day, DateTimeOffset at) =>
+        at == day.To ? "24:00" : at.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>An instant outside its day: the owner's local date, hour and minute.</summary>
+    static string Stamp(DateTimeOffset at) => at.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>A length in whole minutes — hours when there are sixty of them — and seconds under a minute.</summary>
+    static string Span(TimeSpan t)
+    {
+        if (t <= TimeSpan.Zero) return "0 min";
+        if (t < TimeSpan.FromMinutes(1)) return $"{(long)t.TotalSeconds} s";
+        var minutes = (long)t.TotalMinutes;
+        return minutes < 60 ? $"{minutes} min" : minutes % 60 == 0 ? $"{minutes / 60} h" : $"{minutes / 60} h {minutes % 60} min";
+    }
+
+    static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
     ReportResearch ComposeResearch(DateTimeOffset from, DateTimeOffset to)
     {

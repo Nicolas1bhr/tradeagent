@@ -3165,11 +3165,28 @@ since UTC midnight), `failures_last_hour` (attempts in the last hour that delive
 market context, 1,800 s for GDELT), its newest delivery, its failures in the last hour and what is failing now — with
 `daily_cap_reached_today` on GDELT's, read off an attempt at a file labelled today whose note begins
 `GdeltGkg.CapNotePrefix`, so a restart does not forget it; and `sources`, each with its switch, newest delivery, failures
-in the last hour and current failure. **The daily report** gains one line in section 7, "market context tape": the rows
-that arrived in the owner's local day, the requests and the failed ones, the gaps (a source's successive deliveries further
-apart than twice its cadence plus 30 s, between its first and last of the day), the longest, the newest failure, either
-switch that is off, GDELT's credit when any rows are GDELT's — a count, never a price; a read that fails is a gap in the
-owner's words, never a zero. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
+in the last hour and current failure. **The daily report** gains one line in section 7, "market context tape", read at
+the instant the report is composed (`TapeReader.Day(from, to, asOf)`, `U-tape-gaps`) — a day already over whole, today up
+to that instant, its ELAPSED part: the rows that arrived in the owner's local day, the requests and the failed ones; the
+gaps, counted, the longest named with its bounds; every catalogue source's recorded share of the elapsed part ("recorded
+16 h 48 min of 24 h"), when its recording began if that was on this day, and its gaps — the three longest listed in the
+order they happened, the rest counted — each with where it enters and leaves the day, its length there, where it began
+or ended on another day, and what the tape holds inside it; the newest failure; either switch that is off at the
+report's instant — the tape keeps no record of a switch's past; GDELT's credit when any rows are GDELT's — a count,
+never a price, and one line however many sources there are. **A gap** is a stretch longer than twice the source's cadence
+plus 30 s with no delivery from it (an attempt without a note), from its last delivery before to its first after, across
+midnights and restarts; one still open ends at the report's instant. The day counts every gap that overlaps it, clipped
+to its elapsed part — a night the app was down is a gap on both days it touches — and a source with no delivery that day
+is one gap of the whole day whenever the day is longer than its allowance, which every built-in source's always is.
+Before a source's first delivery ever nothing is a gap; a source that has not begun reads "recorded nothing" with what
+was asked. Each gap is named by what the tape holds inside its part of the day: "asked N times, all failed: <the newest
+note>", or "nothing asked" — TradeAgent was not running or the switch was off, and the tape cannot tell which, said once
+on the line. The deliveries just outside the day are found per (source, series) on `ix_tape_fetch_series`, because
+within one series the tape writes attempts in the order they arrived: the one before no further back than eight days
+(`TapeReader.GapLookBack`, then "no delivery since before <date>"), the one after and a source's first delivery ever by a
+walk over failed attempts only. A read that fails is a gap in the owner's words, never a zero. **NOT claimed:** why
+nothing was asked — that needs the recorder's durable record of its runs and switch flips, a `tape.db` rung; per-symbol
+completeness inside a delivery. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
 stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than ten minutes after a row that arrived later
 than it — every writer takes its arrival instant just before the store's one lock, which a write holds for milliseconds.
 A machine clock stepped back by more than that is the case it does not cover.
