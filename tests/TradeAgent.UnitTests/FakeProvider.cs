@@ -83,6 +83,14 @@ public sealed class FakeProvider : IDisposable
 
                 try
                 {
+                    // THE ONE RESPONSE HEADER A TEST MAY ASK FOR (U-decision-card): the host's own word on when to come
+                    // back, written exactly as the test spelled it — a number of seconds, a date, or something unreadable.
+                    if (RetryAfter is { } wait)
+                    {
+                        ctx.Response.AddHeader("Retry-After", wait);
+                        Mark($"Retry-After: {wait}");
+                    }
+
                     if (AlwaysAnswer is { } always)
                     {
                         ctx.Response.StatusCode = (int)always;
@@ -134,6 +142,13 @@ public sealed class FakeProvider : IDisposable
 
     /// <summary>When set, every request is answered with this status and no body.</summary>
     public HttpStatusCode? AlwaysAnswer { get; set; }
+
+    /// <summary>
+    /// When set, every response carries this as its <c>Retry-After</c> header, verbatim — the host asking the caller to
+    /// wait, in seconds or until a date (<c>U-decision-card</c>). A value no reader can parse is how a test sends an
+    /// unreadable one.
+    /// </summary>
+    public string? RetryAfter { get; set; }
 
     /// <summary>
     /// RUN AS EACH REQUEST ARRIVES, after its body and headers are kept and before it is answered (<c>U-decision-port</c>):

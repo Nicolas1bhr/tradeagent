@@ -33,7 +33,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         if (File.Exists(DecisionInstruments.OverridePath)) File.Delete(DecisionInstruments.OverridePath);
     }
 
-    static readonly IReadOnlyDictionary<string, DecisionQuestion> Triage = new Dictionary<string, DecisionQuestion>
+    internal static readonly IReadOnlyDictionary<string, DecisionQuestion> Triage = new Dictionary<string, DecisionQuestion>
     {
         ["event_type"] = DecisionQuestion.Choice("What kind of event does this item report?",
             new DecisionOption("listing", "A venue starts or stops trading an asset"),
@@ -44,7 +44,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     };
 
     /// <summary>The canned answers to <see cref="Triage"/>, numbers spelled the way a host serves them.</summary>
-    const string TriageAnswers = """
+    internal const string TriageAnswers = """
         {"event_type":{"type":"choice","choice":"listing","probabilities":{"listing":0.8125,"exploit":0.0625,"other":0.125},"confidence":0.71875},
          "names_btc":{"type":"noul","noul":0.0390625},
          "urgency":{"type":"score","score":1.15625,"legend":{"0":"Not within a day","1":"Within hours","2":"Within minutes"},
@@ -54,7 +54,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     const string Headline = "A venue lists a new perpetual";
     const string State = $$"""{"headline":"{{Headline}}","source":"tape","tier":2}""";
 
-    static DecisionRequest Ask(string instrument = DecisionInstruments.TypeSafeDirect,
+    internal static DecisionRequest Ask(string instrument = DecisionInstruments.TypeSafeDirect,
         IReadOnlyDictionary<string, DecisionQuestion>? questions = null, string state = State) => new()
     {
         Instrument = instrument,
@@ -65,7 +65,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     };
 
     /// <summary>A built-in instrument, every field as it ships but its address: a loopback listener.</summary>
-    static DecisionInstrument PointedAt(FakeProvider host, string instrument = DecisionInstruments.TypeSafeDirect)
+    internal static DecisionInstrument PointedAt(FakeProvider host, string instrument = DecisionInstruments.TypeSafeDirect)
     {
         var shipped = DecisionInstruments.BuiltIn().Single(i => i.Id == instrument);
         return shipped with
@@ -77,7 +77,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     }
 
     /// <summary>A main database and a tape of the test's own, on files it names, and a live register as a restart has.</summary>
-    sealed class Rig : IDisposable
+    internal sealed class Rig : IDisposable
     {
         bool _closed;
 
@@ -125,12 +125,13 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
 
     /// <summary>
     /// A wire over the rig's ledger and tape, with the owner's cap and perception's budget as given — delegates, as the
-    /// app hands them — and the rig's live register.
+    /// app hands them — the rig's live register, and a rate gate of its OWN (<c>U-decision-card</c>): the process's gate is
+    /// keyed by instrument, and two tests sharing it would hold each other's calls.
     /// </summary>
     static TypeSafeWire Wire(DecisionInstrument instrument, HarnessKey key, Rig rig, decimal cap = 5m, decimal budget = 1m,
-        TimeSpan? timeout = null, Func<TapeStore?>? tape = null) =>
+        TimeSpan? timeout = null, Func<TapeStore?>? tape = null, Func<DateTimeOffset>? now = null) =>
         new(instrument, key, rig.Db, tape ?? (() => rig.Tape), () => cap, () => budget, rig.Live, () => "USD",
-            requestTimeout: timeout ?? TimeSpan.FromSeconds(10));
+            requestTimeout: timeout ?? TimeSpan.FromSeconds(10), now: now, gate: new DecisionRateGate());
 
     static List<AiAttempt> Today(Database db)
     {
@@ -169,9 +170,13 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         var shipped = DecisionInstruments.BuiltIn().Single(i => i.Id == instrument);
         Assert.Equal(pin, shipped.Pin);
         Assert.False(DecisionInstruments.IsAlias(shipped.RequestModel));
-        using var wire = Wire(PointedAt(host, instrument), host.Holding(_pasted), rig);
+        // A SECOND APART: OpenRouter's route documents no rate, so TradeAgent's own bound — one call a second — applies to it
+        // (U-decision-card), and two calls in the same second would be one answer and one refusal.
+        var at = DateTimeOffset.Now;
+        using var wire = Wire(PointedAt(host, instrument), host.Holding(_pasted), rig, now: () => at);
 
         var pinned = await wire.DecideAsync(Ask(instrument));
+        at += DecisionRateGate.Window;
         var stray = await wire.DecideAsync(Ask(instrument));
         log.WriteLine($"{instrument}: {pinned.AnsweredModel} unpinned={pinned.Unpinned}; {stray.AnsweredModel} unpinned={stray.Unpinned}");
 
@@ -442,10 +447,15 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         Assert.Single(Today(rig.Db));
 
         // SIX CALLS RACING FOR ROOM FOR ONE. The host holds the one it receives until every other call has been answered,
-        // so the first call's reservation is open the whole time the others are deciding: exactly one goes.
+        // so the first call's reservation is open the whole time the others are deciding: exactly one goes. The race is the
+        // BUDGET's, so its instrument takes rates no six calls reach (U-decision-card): at TypeSafe's own, the rate gate
+        // would refuse the five before the budget was asked — DecisionRateGateTests is where that is shown.
         using var gate = new ManualResetEventSlim();
         host.Arriving = () => gate.Wait(TimeSpan.FromSeconds(60));
-        using var race = Wire(instrument, key, rig, cap: 5m, budget: Reservation * 1.5m);
+        using var race = Wire(instrument with
+        {
+            Limits = instrument.Limits with { TokensPerSecond = int.MaxValue, RequestsPerSecond = 1_000 }
+        }, key, rig, cap: 5m, budget: Reservation * 1.5m);
         var calls = Enumerable.Range(0, 6).Select(_ => Task.Run(() => race.DecideAsync(Ask()))).ToList();
         for (var i = 0; i < 600 && calls.Count(c => c.IsCompleted) < 5; i++) await Task.Delay(50);
         gate.Set();

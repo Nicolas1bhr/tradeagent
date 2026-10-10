@@ -27,6 +27,12 @@ namespace TradeAgent.AgentRuntime;
 /// <para><b>Never a retry.</b> The host's 429 and 529 ask for a retry with back-off; a retry is another request, and
 /// another request is another reservation, so this answers the call FAILED and the caller decides.</para>
 ///
+/// <para><b>The host's rates, before anything else is touched</b> (<c>U-decision-card</c>). Every call is admitted by
+/// <see cref="DecisionRateGate"/> — the instrument's requests and tokens a second, TradeAgent's own bound where none is
+/// documented, and the hold a 429, 529 or 402 put on it — after the structural refusals and BEFORE the key is read or
+/// anything reserved. A refusal there is REFUSED in words and waits for nothing. The one response header read is
+/// <c>Retry-After</c>, handed to the gate.</para>
+///
 /// <para><b>Reserved before it is sent, in the main database, by its own rule.</b> Every call is a row of the launch
 /// ledger under <see cref="AppPrincipals.Perception"/>, admitted by <see cref="AiAttemptStore.Begin"/> against the
 /// owner's one daily AI cap AND perception's own budget in the transaction that writes the reservation — never through
@@ -56,6 +62,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     readonly Func<string?> _currency;
     readonly LiveAttempts _live;
     readonly Func<DateTimeOffset> _now;
+    readonly DecisionRateGate _gate;
     readonly HttpClient _http;
 
     /// <param name="instrument">What is called: its address, its model ids, its price and limits.</param>
@@ -80,10 +87,11 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
     /// </param>
     /// <param name="requestTimeout">How long one request may take. <see cref="DefaultRequestTimeout"/> when null.</param>
     /// <param name="transport">The handler requests go through. A test's loopback; null in the product.</param>
-    /// <param name="now">The wall clock the ledger's and the record's instants are read from.</param>
+    /// <param name="now">The wall clock the ledger's and the record's instants are read from, and the rate gate's.</param>
+    /// <param name="gate">The process's rate gate. <see cref="DecisionRateGate.Shared"/> when null; a test brings its own.</param>
     public TypeSafeWire(DecisionInstrument instrument, HarnessKey key, Database db, Func<TapeStore?> tape, Func<decimal> cap,
         Func<decimal> budget, LiveAttempts? live = null, Func<string?>? currency = null, TimeSpan? requestTimeout = null,
-        HttpMessageHandler? transport = null, Func<DateTimeOffset>? now = null)
+        HttpMessageHandler? transport = null, Func<DateTimeOffset>? now = null, DecisionRateGate? gate = null)
     {
         ArgumentNullException.ThrowIfNull(instrument);
         ArgumentNullException.ThrowIfNull(key);
@@ -103,6 +111,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         _live = live ?? LiveAttempts.Shared;
         _currency = currency ?? (() => CostCatalog.Read().Costs?.Currency);
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        _gate = gate ?? DecisionRateGate.Shared;
         _http = new HttpClient(transport ?? new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true)
         {
             Timeout = requestTimeout ?? DefaultRequestTimeout,
@@ -125,51 +134,75 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         // nothing.
         if (_tape() is null) return Refused(NoTape);
 
-        // WHERE THIS CALL GOES, READ ONCE, and the key released for that origin and no other. Before the reservation:
-        // a call that cannot be sent is not a call anybody is charged for.
-        var endpoint = Instrument.Endpoint;
-        var release = _key.ReadFor(UrlOrigin.Of(endpoint));
-        if (release.Refusal is { } withheld)
-            return Refused(Labels.DecisionKeyPastedForAnotherOrigin(withheld.PastedFor, withheld.PointsAt));
-        if (release.Key is not { Length: > 0 } key) return Refused(Labels.DecisionKeyNotHeld);
+        // THE HOST'S RATE, BEFORE THE KEY IS READ OR ANYTHING RESERVED (U-decision-card): a call the rate refuses asks the
+        // holder for nothing and writes no row. Admitted, it is counted at its bound until it settles below — or withdrawn,
+        // if something after this refuses it, because then the host saw nothing.
+        var admitted = _gate.Admit(Instrument, _now());
+        if (admitted.Ticket is not { } ticket)
+            return Refused(admitted.Refusal ?? "the call was refused by the decision models' rate gate, so nothing was sent");
 
-        // RESERVED IN THE MAIN DATABASE BEFORE A BYTE LEAVES — admitted against the day and perception's budget in the
-        // one transaction that writes the reservation. Refused: nothing written, nothing sent.
-        var body = Body(request);
-        var (id, refusal) = Reserve(body);
-        if (id is null) return Refused(refusal ?? "the call could not be reserved, so nothing was sent");
-
-        _live.Enter(id);
+        var mayHaveGone = false;
         try
         {
-            // ONE REQUEST ON THIS RESERVATION, and never a second.
-            var sent = await SendAsync(endpoint, key, body, request.Questions, ct);
+            // WHERE THIS CALL GOES, READ ONCE, and the key released for that origin and no other. Before the reservation:
+            // a call that cannot be sent is not a call anybody is charged for.
+            var endpoint = Instrument.Endpoint;
+            var release = _key.ReadFor(UrlOrigin.Of(endpoint));
+            if (release.Refusal is { } withheld)
+                return Refused(Labels.DecisionKeyPastedForAnotherOrigin(withheld.PastedFor, withheld.PointsAt));
+            if (release.Key is not { Length: > 0 } key) return Refused(Labels.DecisionKeyNotHeld);
 
-            // RECORDED BEFORE IT SETTLES, with the verdict the store reached: the pin is compared there and nowhere else.
-            var answer = sent.Answer with { AttemptId = id };
+            // RESERVED IN THE MAIN DATABASE BEFORE A BYTE LEAVES — admitted against the day and perception's budget in the
+            // one transaction that writes the reservation. Refused: nothing written, nothing sent.
+            var body = Body(request);
+            var (id, refusal) = Reserve(body);
+            if (id is null) return Refused(refusal ?? "the call could not be reserved, so nothing was sent");
+
+            _live.Enter(id);
             try
             {
-                var record = (_tape() ?? throw new InvalidOperationException("the tape was closed while the call was in flight"))
-                    .RecordDecision(Record(id, endpoint, request, sent));
-                answer = answer with { Unpinned = record.Unpinned };
-            }
-            catch (Exception)
-            {
-                // NOT RECORDED, SO NOT SERVED, AND CHARGED AS IF IT NEVER CAME: the reservation stands as its cost.
-                answer = Answer(DecisionStatus.UNANSWERED) with
-                {
-                    AttemptId = id, ErrorClass = "not-recorded", HttpStatus = sent.Answer.HttpStatus, Latency = sent.Answer.Latency
-                };
-            }
+                // ONE REQUEST ON THIS RESERVATION, and never a second.
+                mayHaveGone = true;
+                var sent = await SendAsync(endpoint, key, body, request.Questions, ct);
 
-            Settle(id, answer, sent.EndedAt);
-            return answer;
+                // COUNTED AT WHAT THE HOST SAID IT USED, OR STILL AT ITS BOUND — and held, if the host said "not now".
+                var a = sent.Answer;
+                ticket.Settle(sent.EndedAt, a.InputTokens is { } used ? used + (a.OutputTokens ?? 0) : null, a.HttpStatus,
+                    sent.RetryAfter);
+
+                // RECORDED BEFORE IT SETTLES, with the verdict the store reached: the pin is compared there and nowhere else.
+                var answer = sent.Answer with { AttemptId = id };
+                try
+                {
+                    var record = (_tape() ?? throw new InvalidOperationException("the tape was closed while the call was in flight"))
+                        .RecordDecision(Record(id, endpoint, request, sent));
+                    answer = answer with { Unpinned = record.Unpinned };
+                }
+                catch (Exception)
+                {
+                    // NOT RECORDED, SO NOT SERVED, AND CHARGED AS IF IT NEVER CAME: the reservation stands as its cost.
+                    answer = Answer(DecisionStatus.UNANSWERED) with
+                    {
+                        AttemptId = id, ErrorClass = "not-recorded", HttpStatus = sent.Answer.HttpStatus, Latency = sent.Answer.Latency
+                    };
+                }
+
+                Settle(id, answer, sent.EndedAt);
+                return answer;
+            }
+            finally
+            {
+                // SETTLED, OR LEFT LAUNCHED BY A SETTLE THAT FAILED — which the next meter to open the database turns LOST,
+                // keeping the reservation as the cost. Either way nothing in this process is waiting for it any more.
+                _live.Leave(id);
+            }
         }
         finally
         {
-            // SETTLED, OR LEFT LAUNCHED BY A SETTLE THAT FAILED — which the next meter to open the database turns LOST,
-            // keeping the reservation as the cost. Either way nothing in this process is waiting for it any more.
-            _live.Leave(id);
+            // A CALL THAT NEVER LEFT GIVES ITS PLACE BACK; one that may have left and settled nothing above stays counted
+            // at its bound for its second. Settle and withdraw each act once, so after a settle this does nothing.
+            if (mayHaveGone) ticket.Settle(_now(), null, null, null);
+            else ticket.Withdraw();
         }
     }
 
@@ -335,8 +368,13 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         return TapeJson.Canonical(Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
 
-    /// <summary>What one send came to: the answer, and the two instants either side of it.</summary>
-    internal sealed record Sent(DecisionAnswer Answer, DateTimeOffset RequestedAt, DateTimeOffset EndedAt, string? AnswersJson);
+    /// <summary>
+    /// What one send came to: the answer, the two instants either side of it, and the instant the host asked to be left
+    /// until (its <c>Retry-After</c>, as seconds after <see cref="EndedAt"/> or as a date), or null where it named none or
+    /// named it unreadably.
+    /// </summary>
+    internal sealed record Sent(DecisionAnswer Answer, DateTimeOffset RequestedAt, DateTimeOffset EndedAt, string? AnswersJson,
+        DateTimeOffset? RetryAfter = null);
 
     /// <summary>
     /// ONE POST, AND WHAT CAME BACK — never a throw for a host's error, a timeout or a body this cannot read: each is a
@@ -356,10 +394,14 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
         int status;
         string text;
+        RetryConditionHeaderValue? retry;
         try
         {
             using var response = await _http.SendAsync(message, ct);
             status = (int)response.StatusCode;
+            // THE ONE HEADER READ (U-decision-card): the host's word on when to come back. Parsed by the platform's own
+            // reader; a value it cannot read comes back null, which is the same as none.
+            retry = response.Headers.RetryAfter;
             text = await response.Content.ReadAsStringAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -387,7 +429,7 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
         if (status is < 200 or > 299)
             return new Sent(Answer(DecisionStatus.FAILED) with { ErrorClass = $"http-{status}", HttpStatus = status, Latency = latency },
-                requestedAt, endedAt, null);
+                requestedAt, endedAt, null, retry?.Delta is { } wait ? endedAt + wait : retry?.Date);
 
         var read = Read(text);
         if (read.Answers is { } answers && !Matches(asked, answers))
