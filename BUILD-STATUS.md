@@ -9593,3 +9593,41 @@ the builder's own and fixed: 37921982682 at `8e66485c` red on all three test job
 owner's files as the agent's; reproduced locally, fixed by the test's own register (`0fe82747`); no product code was wrong. **Tests box:** NOT RUN — `ready` twice, "the machine does not answer".
 **NOT done, NOT verified:** the kit on the owner's host (by rule — on his word only); a completed device-code sign-in; Codex or OpenCode actually running on Linux; Screen Sharing against Xvnc; an arm64 build or
 host; a reboot; seven days; his distro; any venue's answer from his host; U-tape-gaps' report line (not on main). The nine owner questions: `fleet/handoff/ORCHESTRATOR.md`.
+
+## 2026-10-10 — U-canon landed: each role's AGENTS.md is a short deliberate canon — identity, mission, authority, evidence, the boundary — with what it can reach generated per role and runtime from what enforces it, a test that refuses a verb, tool or path the pair cannot reach, the canon changed only with its version, and every attempt recording the canon its turn received
+
+Two fresh Opus builders under seat B built it from `docs/briefs/U-canon.md` (VISION § 6.7; R21 § 3.2; R20 § 1; survey S-canon at `eb906b17`, re-pointed after both lights, committed `2802a79b`).
+The first committed items 1–3 and died at the 2026-10-09 12:50 usage stop with item 4 staged and no note; a fresh builder resumed the parked worktree on 2026-10-10, judged and
+finished item 4, rebased on `76739cbf`. Landing rebase onto `a5f17ec0` (docs-only moves; src+tests patch-id `4a3bd99e3bd7` identical). Merge `d946ef07` (ff-only), 6 commits: item 1
+`faba05c0`, item 2 `8c68573d`, item 3 `06a7eab1`, item 4 `99fc1881`, red-first tests sharpened `8f685e0d`, report `d946ef07`. **No rung** (main schema 30, `tape.db` 2). Honesty and the canon, not the money path.
+**The old canon's build, for the two-build comparison (no toggle): `a5f17ec0`** — main just before this merge, src identical to the builder's base `76739cbf`.
+
+- **Item 1 — the reach:** `AgentReach.For(role, Cli|Harness)` reads host, reads and writes with their wall, wake and cap, hand-backs, verbs or tools and session length from `GatewaySchema.Ops`,
+  `Ops.Mutating` × `MayPlaceOrders`, `GrantedWorkerTools`, `Containment.Sandbox`, `SubDirs`, `CouncilRelay` and the loop; `MissionLoop.WakeFile` is the one `next.json` path. No grant, op, tool,
+  path rule, wake, cap or relay rule changed.
+- **Item 2 — canon and guide:** AGENTS.md is the canon (identity, mission, authority, evidence with § 6.7's two sentences, the boundary, the role part, `## What you can reach`, one line naming
+  GUIDE.md); GUIDE.md takes every other paragraph verbatim, app-owned; both render per pair through slots that throw on a capability the pair lacks; the harness's system text is
+  `.tradeagent/harness/CANON.md`, written at the same start. Directed changes only: the laptop claims; the inbox and `in/` lines become the reach; "thirty minutes" becomes the loop's cap
+  rendered; "this laptop" → "this computer"; Research's order rules and the simulator's order rehearsal → "**You do not place orders.**"; the relay and assessment line caps rendered from code.
+  Seat B checked it independently at the landing: every sentence of main's mission text, slots normalised, is in the canon or the guide but for those directed changes, two headings and three connectives.
+- **Item 3 — version and size:** `Canon.Version` = 1; a test-held SHA-256 ledger per (version, seat) over the templates (operations `8970424cc948c5b5…`, research `3fed62bfa68b1066…`); versions only grow;
+  every pair ≤ 16,384 B at default and heavier settings.
+- **Item 4 — each attempt records its canon:** the attempt's `context` gains `canon_version` (only for the app's own canon with no override beside it), `canon_sha256`, `canon_app_own` and, on a CLI,
+  `canon_override`.
+- **Sizes** (UTF-8 B, default settings, Simulator (built in); canon / GUIDE.md): O·CLI 15,693 with the simulator paragraph, 14,479 without / 20,783; R·CLI 12,883 / 12,039 / 20,783; R·harness
+  11,763 / 10,953 / 14,749 (no O·harness pair is rendered). **Operations' AGENTS.md with the simulator paragraph: 15,693 B** (M0 attempt 4's ≤ 32,768 B check, measured in its home at the run).
+  Heaviest pair at heavier settings 15,835 B — **549 B under the 16 KiB cap**: `U-research-ledger`'s canon v2 must fit or make room.
+- **Declared deviations, ACCEPTED by seat B:** the CLI's AGENTS.md hashed as its bytes (`Sha256Hex.OfFile`, as the manifest and the scanner do), not its decoded text; a perception call runs
+  under no canon — its context is `{"decision":…}` alone, held by one assertion added to `DecisionPortTests`; `CanonTests` (a) reordered and (f) naming the missing field; red notes re-measured.
+
+**Verified by running (the builder, quoted).** RED at base: (a) "told of a shell: 'create files, write and run code, install packages, use the shell and use the internet…'"; (b) "research·CLI: 4
+unreachable — first: an op it may not use: `close-all`", research·harness 58; (e) O·CLI 32,754 B, R·CLI and R·harness 32,670 B; (f) "the attempt's context carries no canon_version"; (g) "**You do
+not place orders.**" absent on both runtimes; (c), (d) cannot compile at base. Mutants (reverted): canon and guide rendered with the CLI reach ⇒ (a) and (b) "research·Harness: 78 unreachable";
+one canon word edited with v1 kept ⇒ (d) "the Operations Director's canon changed without a new version: v1 is 8970424c… in the ledger and the template hashes to f7b85673…".
+Builder: Release 0 warnings; Unit 1611, Fault 485, 0 failed; 15 Unit classes (158 tests), Fault `EmptyAllowlistTests` (4), Integration `BacktestOverPipeTests` (11) ×3 green.
+**Manager's gate** at `d946ef07`, Release: build `--no-incremental` 0 Warning(s), 0 Error(s); Unit 1611/1611 (11 m 33 s); Fault 485/485 (1 m 58 s); Integration 764/765, 1 skipped (11 m 16 s) → 0 failed.
+**Names** vs `main`: 2447 → 2454, 0 removed, 7 added (the seven `CanonTests`; [Fact]/[Theory] 2398 → 2405); re-pointed, none deleted or renamed. **Scan:** 2 hits read — the boundary's "a password, a payment, or an account signup" (moved verbatim) and a fixture's
+`input_tokens` — excluded by name. **CI:** branch run 38039729389 at `4164286f` (the same src+tests patch): windows ✓ 68 m, ubuntu ✓, macOS ✓, linux-host ✓, package-linux ✓, package ✓.
+Tests box: NOT RUN — "the machine does not answer (asleep, off the private network, or the share was removed)" (10:50, 12:12 the builder; 12:17 seat B). Landing CI on `main`: a waiter is armed.
+**NOT verified:** no model has read the new canon (no AI run); what codex does past `project_doc_max_bytes` (moot at ≤ 15,835 B); an observed run must show first that each seat reads its canon,
+finds GUIDE.md, and that the harness's turn carries `CANON.md` as its system text; the ATAS box not used.
