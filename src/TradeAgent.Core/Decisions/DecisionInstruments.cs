@@ -6,9 +6,10 @@ using System.Text.Json.Serialization;
 namespace TradeAgent.Core.Decisions;
 
 /// <summary>
-/// WHAT ONE INSTRUMENT MAY BE ASKED, AT WHAT SIZE — the host's documented figures, kept as data on the instrument.
-/// <see cref="TokensPerSecond"/> and <see cref="RequestsPerSecond"/> are recorded and not enforced: nothing calls an
-/// instrument at volume yet, and a rate limiter is the annotator's to build when something does. Zero is "not documented".
+/// WHAT ONE INSTRUMENT MAY BE ASKED, AT WHAT SIZE AND HOW FAST — the host's documented figures, kept as data on the
+/// instrument. <see cref="TokensPerSecond"/> and <see cref="RequestsPerSecond"/> are ENFORCED by
+/// <see cref="DecisionRateGate"/> before a call reads its key or reserves anything (<c>U-decision-card</c>). Zero is "not
+/// documented", and the gate reads it as TradeAgent's own bound — one call in flight, one a second — never as no bound.
 /// </summary>
 public sealed record DecisionLimits
 {
@@ -55,6 +56,15 @@ public sealed record DecisionInstrument
     public required DecisionLimits Limits { get; init; }
     public required string DocUrl { get; init; }
 
+    /// <summary>
+    /// The day the RATES were read, <c>yyyy-MM-dd</c>, and the page they were read from — the page that documents them, or
+    /// the one that says the host documents none. This build's own figures only: a rate <c>decision-models.json</c> moved
+    /// carries no date, and the card and the gate say so (<c>U-decision-card</c>).
+    /// </summary>
+    public required string RatesReadOn { get; init; }
+
+    public required string RatesSource { get; init; }
+
     /// <summary>Whether the host reports what it billed on every answer (<c>usage.cost</c>).</summary>
     public bool ReportsBilledCost { get; init; }
 
@@ -70,12 +80,17 @@ public sealed record DecisionInstrument
     public string? Origin => UrlOrigin.Of(Endpoint);
 
     /// <summary>
-    /// WHAT ONE CALL COMMITS BEFORE IT IS SENT: the billable bound — or the request budget, where an override raised
-    /// that past it — at the dated price, input and output alike. Output is free at both hosts today; an override that
-    /// prices it is still covered.
+    /// THE MOST TOKENS ONE CALL IS COUNTED AT BEFORE ITS ANSWER SAYS OTHERWISE: the billable bound — or the request budget,
+    /// where an override raised that past it. What a call reserves in money (<see cref="Reservation"/>) and what it is
+    /// charged against a host's tokens a second while it flies (<see cref="DecisionRateGate"/>) are the same figure.
     /// </summary>
-    public decimal Reservation =>
-        Math.Max(BillableTokensBound, Limits.MaxRequestTokens) * (InputPerMillion + OutputPerMillion) / 1_000_000m;
+    public long ReservedTokens => Math.Max(BillableTokensBound, Limits.MaxRequestTokens);
+
+    /// <summary>
+    /// WHAT ONE CALL COMMITS BEFORE IT IS SENT: <see cref="ReservedTokens"/> at the dated price, input and output alike.
+    /// Output is free at both hosts today; an override that prices it is still covered.
+    /// </summary>
+    public decimal Reservation => ReservedTokens * (InputPerMillion + OutputPerMillion) / 1_000_000m;
 
     /// <summary>What <paramref name="input"/> and <paramref name="output"/> tokens come to at the dated price.</summary>
     public decimal Estimate(long input, long output) =>
@@ -172,6 +187,10 @@ public static class DecisionInstruments
                 RequestsPerSecond = 80
             },
             DocUrl = "https://docs.typesafe.ai/api",
+            // docs.typesafe.ai/models: "100K tokens per second / 80 requests per second", a 429 over either; "can change
+            // without notice". Re-read 2026-10-10 (U-decision-card), unchanged.
+            RatesReadOn = ReadOn,
+            RatesSource = "https://docs.typesafe.ai/models",
             ReportsBilledCost = false
         },
         new DecisionInstrument
@@ -194,7 +213,7 @@ public static class DecisionInstruments
             PricedOn = ReadOn,
             PriceSource = "https://openrouter.ai/typesafe/jev-1.13",
             // The model page says "64K" and the Jev guide "32,000 tokens"; the smaller is kept for what is sent. No rate
-            // limit is documented for it: zero.
+            // limit is documented for it: zero, which the gate reads as TradeAgent's own bound.
             Limits = new DecisionLimits
             {
                 MaxRequestTokens = 32_000,
@@ -204,6 +223,11 @@ public static class DecisionInstruments
                 MaxScoreLevels = 10
             },
             DocUrl = "https://openrouter.ai/docs/guides/community/typesafe-sdk",
+            // openrouter.ai/docs/api-reference/limits, read 2026-10-10: capacity is "governed globally", per model and not
+            // per key; a paid model has "no platform-level request cap"; a 429 carries Retry-After only sometimes, a credit
+            // limit answers 402. No figure a call could be held to: the rates stay zero.
+            RatesReadOn = "2026-10-10",
+            RatesSource = "https://openrouter.ai/docs/api-reference/limits",
             ReportsBilledCost = true
         }
     ];
@@ -211,6 +235,17 @@ public static class DecisionInstruments
     /// <summary>The pin of each built-in instrument, read from this build's rows once and from nothing a file says.</summary>
     static readonly FrozenDictionary<string, string> Pins =
         BuiltIn().ToFrozenDictionary(i => i.Id, i => i.Pin, StringComparer.Ordinal);
+
+    /// <summary>The limits each built-in instrument ships with, read from this build's rows once and from nothing a file says.</summary>
+    static readonly FrozenDictionary<string, DecisionLimits> ShippedLimits =
+        BuiltIn().ToFrozenDictionary(i => i.Id, i => i.Limits, StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE LIMITS <paramref name="instrumentId"/> SHIPS WITH, or null because it is no built-in instrument. What the card and
+    /// the gate compare a limit against to say whether it is the host's dated figure or one <c>decision-models.json</c> moved.
+    /// </summary>
+    public static DecisionLimits? BuiltInLimits(string? instrumentId) =>
+        instrumentId is not null && ShippedLimits.TryGetValue(instrumentId, out var limits) ? limits : null;
 
     /// <summary>
     /// THE ANSWERED ID THAT MAKES A CALL TO <paramref name="instrumentId"/> EVIDENCE, or null because it is no built-in
@@ -267,7 +302,7 @@ public static class DecisionInstruments
                 continue;
             }
 
-            if (Refusal(row) is { } no)
+            if (Refusal(row, result[id]) is { } no)
             {
                 refused.Add($"'{id}' in decision-models.json {no}. It is not called until the row is fixed.");
                 stopped.Add(id);
@@ -297,8 +332,8 @@ public static class DecisionInstruments
         return new([.. builtIn.Select(b => result[b.Id]).Where(i => !stopped.Contains(i.Id))], null, refused);
     }
 
-    /// <summary>Why a file row may not be applied, as the end of a sentence, or null because it may.</summary>
-    static string? Refusal(DecisionInstrumentOverride row)
+    /// <summary>Why a file row may not be applied to <paramref name="shipped"/>, as the end of a sentence, or null because it may.</summary>
+    static string? Refusal(DecisionInstrumentOverride row, DecisionInstrument shipped)
     {
         if (row.Other is { Count: > 0 } other)
             return $"names {string.Join(", ", other.Keys.Order(StringComparer.Ordinal).Select(k => $"'{k}'"))}, and a row there "
@@ -318,6 +353,14 @@ public static class DecisionInstruments
         int?[] limits = [row.MaxRequestTokens, row.MaxStateAndQuestionTokens, row.MaxChoiceOptions, row.MinScoreLevels, row.MaxScoreLevels];
         if (limits.Any(l => l is <= 0)) return "sets a limit to zero or less";
         if (row.TokensPerSecond is < 0 || row.RequestsPerSecond is < 0) return "sets a rate below zero";
+
+        // NO FILE LIFTS THE APP'S OWN BOUND (U-decision-card). Where the host documents no rate, TradeAgent applies its own —
+        // one call in flight, one a second — and a figure in a file an agent can write is not documentation. Zero is no
+        // lift: it is the same bound.
+        if ((row.TokensPerSecond is > 0 && shipped.Limits.TokensPerSecond == 0)
+            || (row.RequestsPerSecond is > 0 && shipped.Limits.RequestsPerSecond == 0))
+            return "sets a rate its host does not document; TradeAgent applies its own bound there — one call in flight and "
+                   + "one a second — and a file cannot lift it";
         return null;
     }
 }
