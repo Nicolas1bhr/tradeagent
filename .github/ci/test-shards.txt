@@ -1,0 +1,106 @@
+# THE WINDOWS TEST SHARDS (U-ci-shards) — the partition, here and nowhere else. Read only by
+# .github/ci/shard-filter.sh: the workflow makes one windows test job per shard, and each runs the whole
+# solution outside the Timing category under that shard's filter.
+#
+# "shards N" says how many. Every other line is "<shard> <fully qualified test class>", for shards 1 to N-1;
+# shard N, the LAST, lists nothing and runs every test of a class listed nowhere — so a new class, or one
+# renamed, runs there by construction and no test is ever left out. A class on two lines (in any case) is
+# refused; a listed class that ran no test in its shard is a ::warning on the run, meaning a stale line.
+#
+# BALANCED ON WINDOWS ALONE, from the summed test durations of run 38046993760 (the three assemblies on one
+# runner, so the figures are inflated, and their sum is what was balanced). Fault and Integration run their
+# tests one at a time, so a shard lasts about as long as the larger of its Fault and Integration sums; Unit runs
+# its classes in parallel. Shard 1 is kept light because it also runs the whole Timing category, about ten
+# minutes. Rebalance by moving lines; the comment above each shard is that run's sums, not a check.
+
+shards 5
+
+# shard 1: Fault 71 s, Integration 0 s, Unit 0 s — then the Timing category, every test of it
+1 TradeAgent.Tests.Fault.AllocationGateTests
+1 TradeAgent.Tests.Fault.PaperAllocationGateTests
+
+# shard 2: Fault 688 s, Integration 747 s, Unit 1498 s
+2 TradeAgent.Tests.Fault.ApprovalReauthorizationTests
+2 TradeAgent.Tests.Fault.ConservativeTargetEvidenceTests
+2 TradeAgent.Tests.Fault.DecisionFreshnessTests
+2 TradeAgent.Tests.Fault.LossMidnightConfirmTests
+2 TradeAgent.Tests.Fault.LossWatchTests
+2 TradeAgent.Tests.Fault.OperatorEmergencyRecordTests
+2 TradeAgent.Tests.Fault.PressSettlesAnUnknownCloseTests
+2 TradeAgent.Tests.Fault.QuoteClockTests
+2 TradeAgent.Tests.Fault.RiskGateTests
+2 TradeAgent.Tests.Integration.DataOverPipeTests
+2 TradeAgent.Tests.Integration.ForwardRunnerTests
+2 TradeAgent.Tests.Integration.LaunchGrantTests
+2 TradeAgent.Tests.Unit.CandleSourceTests
+2 TradeAgent.Tests.Unit.CostModelPinTests
+2 TradeAgent.Tests.Unit.CouncilLoopTests
+2 TradeAgent.Tests.Unit.DataLicenceTests
+2 TradeAgent.Tests.Unit.DatasetLedgerTests
+2 TradeAgent.Tests.Unit.FeatureProgramBacktestTests
+2 TradeAgent.Tests.Unit.FeatureSeriesTests
+2 TradeAgent.Tests.Unit.FillLedgerTests
+2 TradeAgent.Tests.Unit.MaterialOriginAttestationTests
+2 TradeAgent.Tests.Unit.MaterialUnreadableTests
+2 TradeAgent.Tests.Unit.ResumeOnStartTests
+2 TradeAgent.Tests.Unit.TapeHoldoutTests
+2 TradeAgent.Tests.Unit.VendorLimitReadTests
+2 TradeAgent.Tests.Unit.VenueIncrementTests
+
+# shard 3: Fault 688 s, Integration 735 s, Unit 1498 s
+3 TradeAgent.Tests.Fault.CloseGenerationConfirmTests
+3 TradeAgent.Tests.Fault.ConnectorAnswerMappingTests
+3 TradeAgent.Tests.Fault.DispatchExceptionTaxonomyTests
+3 TradeAgent.Tests.Fault.InFlightSettleTests
+3 TradeAgent.Tests.Fault.LossClockMonotoneTests
+3 TradeAgent.Tests.Fault.ModifyVerdictTests
+3 TradeAgent.Tests.Fault.PaperDeploymentTests
+3 TradeAgent.Tests.Fault.PolicyGateTests
+3 TradeAgent.Tests.Fault.TargetedReconciliationTests
+3 TradeAgent.Tests.Integration.HoldoutOverPipeTests
+3 TradeAgent.Tests.Integration.PaperGatewayTests
+3 TradeAgent.Tests.Integration.SchemaMatchesReconcilerTests
+3 TradeAgent.Tests.Unit.AllocationLedgerTests
+3 TradeAgent.Tests.Unit.BoundaryLedgerTests
+3 TradeAgent.Tests.Unit.BudgetReservationTests
+3 TradeAgent.Tests.Unit.CouncilRelayTests
+3 TradeAgent.Tests.Unit.HoldoutLedgerTests
+3 TradeAgent.Tests.Unit.InstrumentCheckTests
+3 TradeAgent.Tests.Unit.InvariantTraceTests
+3 TradeAgent.Tests.Unit.MaterialLedgerTests
+3 TradeAgent.Tests.Unit.MissionLoopTests
+3 TradeAgent.Tests.Unit.PaperEligibleVerdictTests
+3 TradeAgent.Tests.Unit.PaperEnvelopeTests
+3 TradeAgent.Tests.Unit.RefereeVerdictTests
+3 TradeAgent.Tests.Unit.UpdateTrustTests
+3 TradeAgent.Tests.Unit.VenueCatalogTests
+
+# shard 4: Fault 720 s, Integration 729 s, Unit 1434 s
+4 TradeAgent.Tests.Fault.AgedDispatchTests
+4 TradeAgent.Tests.Fault.EvidenceIdentityTests
+4 TradeAgent.Tests.Fault.LossFlattenConfirmTests
+4 TradeAgent.Tests.Fault.LossFlattenOwedTests
+4 TradeAgent.Tests.Fault.LossFlattenTests
+4 TradeAgent.Tests.Fault.LossScopeIdentityTests
+4 TradeAgent.Tests.Fault.PressCloseOnceTests
+4 TradeAgent.Tests.Fault.PressRowAnswerTests
+4 TradeAgent.Tests.Fault.UnconfirmedLatchTests
+4 TradeAgent.Tests.Fault.UnreadableSettingsTests
+4 TradeAgent.Tests.Integration.CoidWitnessTests
+4 TradeAgent.Tests.Integration.PipeContractTests
+4 TradeAgent.Tests.Integration.SweepRequestIdTests
+4 TradeAgent.Tests.Unit.BacktestRequestTests
+4 TradeAgent.Tests.Unit.CampaignLedgerTests
+4 TradeAgent.Tests.Unit.DailyReportTests
+4 TradeAgent.Tests.Unit.FeatureProgramGoldenVectorTests
+4 TradeAgent.Tests.Unit.HarnessBudgetTests
+4 TradeAgent.Tests.Unit.MissionEventTests
+4 TradeAgent.Tests.Unit.OrgLedgerTests
+4 TradeAgent.Tests.Unit.OwnerDispositionTests
+4 TradeAgent.Tests.Unit.PromotionLedgerTests
+4 TradeAgent.Tests.Unit.TapeHyperliquidTests
+4 TradeAgent.Tests.Unit.TurnRecordTests
+4 TradeAgent.Tests.Unit.UpdateInterlockTests
+4 TradeAgent.Tests.Unit.WorkspaceRevisionTests
+
+# shard 5, the complement: every other class (241 on that run): Fault 740 s, Integration 716 s, Unit 2226 s
