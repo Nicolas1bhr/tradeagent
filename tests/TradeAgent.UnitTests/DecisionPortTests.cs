@@ -552,6 +552,10 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     /// implementation lives in and holds nothing of its kind; no gateway source names the budget, the key holder or the
     /// catalogue; and a file an agent can write cannot move a pin — the row is refused and the instrument stopped — while
     /// it may change a price, dated and sourced, and nothing else.
+    ///
+    /// <para><b>And the card and the gate</b> (<c>U-decision-card</c>): no argument is named for the card's Test press;
+    /// the pipe's assembly references neither the app's, where the owner's Perception card lives, nor holds the rate gate
+    /// or a ticket of it; and no gateway source names either.</para>
     /// </summary>
     [Fact]
     public void No_pipe_op_reaches_the_decision_port()
@@ -566,7 +570,7 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
             }
 
             foreach (var arg in op.Args)
-                foreach (var word in words.Concat(["budget", "pin", "instrument", "key", "model", "question"]))
+                foreach (var word in words.Concat(["budget", "pin", "instrument", "key", "model", "question", "test"]))
                     Assert.DoesNotContain(word, arg.Name, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -574,8 +578,13 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         var references = pipe.GetReferencedAssemblies().Select(a => a.Name!).ToList();
         log.WriteLine(string.Join(", ", references.Where(n => n.StartsWith("TradeAgent.", StringComparison.Ordinal))));
         Assert.DoesNotContain("TradeAgent.AgentRuntime", references);
+        Assert.DoesNotContain("TradeAgent.App", references);
 
-        Type[] port = [typeof(IDecisionModel), typeof(DecisionInstrument), typeof(HarnessKey), typeof(DecisionRequest)];
+        Type[] port =
+        [
+            typeof(IDecisionModel), typeof(DecisionInstrument), typeof(HarnessKey), typeof(DecisionRequest),
+            typeof(DecisionRateGate), typeof(DecisionRateGate.Ticket)
+        ];
         const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
         var holders = pipe.GetTypes()
             .SelectMany(t => t.GetFields(all).Where(f => port.Contains(f.FieldType)).Select(f => $"{t.Name}.{f.Name}")
@@ -590,10 +599,12 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
             .Where(f => File.ReadAllText(f) is var text
                         && (text.Contains(nameof(TradeAgentSettings.PerceptionDailyBudget), StringComparison.Ordinal)
                             || text.Contains("PerceptionKey", StringComparison.Ordinal)
-                            || text.Contains(nameof(DecisionInstruments), StringComparison.Ordinal)))
+                            || text.Contains(nameof(DecisionInstruments), StringComparison.Ordinal)
+                            || text.Contains(nameof(DecisionRateGate), StringComparison.Ordinal)
+                            || text.Contains("PerceptionCard", StringComparison.Ordinal)))
             .Select(f => Path.GetRelativePath(root, f))
             .ToList();
-        Assert.True(named.Count == 0, "a gateway source names the port's budget, key or catalogue: " + string.Join(", ", named));
+        Assert.True(named.Count == 0, "a gateway source names the port's budget, key, catalogue, gate or card: " + string.Join(", ", named));
 
         // THE PIN IS THIS BUILD'S: a row that names one is refused, and the instrument it names is not called at all.
         File.WriteAllText(DecisionInstruments.OverridePath, """

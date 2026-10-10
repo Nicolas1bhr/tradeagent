@@ -83,6 +83,15 @@ sealed record PerceptionWords(
 /// </summary>
 sealed class PerceptionCard
 {
+    /// <summary>The test call's schema id: its <c>decision_call</c> row says it was the owner's test, never a lens's evidence.</summary>
+    public const string TestSchema = "owner-test";
+
+    /// <summary>The test call's one source reference.</summary>
+    public const string TestSource = "owner-test-press";
+
+    /// <summary>The test's one question's name.</summary>
+    public const string TestQuestion = "is_a_test";
+
     /// <summary>The two agreements, by address: stated on the card, linked, never copied.</summary>
     public const string TypeSafeTerms = "https://typesafe.ai/legal/mca";
 
@@ -100,6 +109,24 @@ sealed class PerceptionCard
         + ", last updated 2026-08-31, read 2026-10-10), which agreement covers Jev's answers is UNKNOWN, and TradeAgent keeps "
         + "TypeSafe's rule either way.";
 
+    static readonly IReadOnlyDictionary<string, DecisionQuestion> TestQuestions = new Dictionary<string, DecisionQuestion>
+    {
+        [TestQuestion] = DecisionQuestion.Noul("Is this a short test message?", "It is a short test message", "It is something else")
+    };
+
+    /// <summary>
+    /// THE ONE FIXED CALL THE TEST PRESS MAKES: a neutral sentence as the state — no owner text, no market data, nothing
+    /// that reveals anything — one Noul, the <see cref="TestSchema"/> schema and the <see cref="TestSource"/> source.
+    /// </summary>
+    public static DecisionRequest TestRequest(string instrument) => new()
+    {
+        Instrument = instrument,
+        Schema = SchemaRef.Of(TestSchema, 1, TestQuestions),
+        State = "\"TradeAgent is checking that this decision model answers.\"",
+        Questions = TestQuestions,
+        Sources = [TestSource]
+    };
+
     readonly PerceptionSources _src;
     string _chosen;
 
@@ -113,6 +140,8 @@ sealed class PerceptionCard
     readonly TextBlock _keyNote = Ui.Micro("");
     readonly TextBlock _budgetNote = Ui.Micro("");
     readonly TextBlock _spent = Ui.Micro("");
+    readonly TextBlock _worst = Ui.Micro("");
+    readonly TextBlock _result = Ui.With(Ui.Body(""), t => t.IsVisible = false);
 
     /// <summary>The address the key box last showed; a change disarms a half-made press.</summary>
     string? _destinationShown;
@@ -120,17 +149,25 @@ sealed class PerceptionCard
     /// <summary>Why the last press did not take the key, until the next press.</summary>
     string? _keyNotTaken;
 
+    Task? _pressing;
+
     internal TextBox KeyBox { get; }
     internal Button SaveKey { get; }
     internal Button ForgetKey { get; }
     internal NumericUpDown BudgetBox { get; }
     internal Button SaveBudget { get; }
+    internal Button TestButton { get; }
+
+    /// <summary>The Test press in flight, or the last one; a test waits on it.</summary>
+    internal Task? Pressing => _pressing;
 
     /// <summary>The choice buttons, in <see cref="DecisionInstruments.BuiltIn"/>'s order.</summary>
     internal IReadOnlyList<Button> Choices => [.. _choiceRow.Children.OfType<Button>()];
 
     /// <summary>What the last pass and the last press put on the card, for a test to read.</summary>
     internal PerceptionWords? Shown { get; private set; }
+
+    internal string ResultText => _result.Text ?? "";
 
     public Control Root { get; }
 
@@ -178,6 +215,9 @@ sealed class PerceptionCard
         BudgetBox = Ui.NumberField(ReadOr(_src.Budget, 0m), 0m, 0.5m);
         SaveBudget = BuildSaveBudget(() => ReadOr(_src.Budget, 0m), PendingBudget, () => ReadOr(_src.Currency, ""), Save);
 
+        TestButton = Ui.Primary(Labels.PerceptionTest, Test);
+        TestButton.HorizontalAlignment = HorizontalAlignment.Left;
+
         Root = Ui.Section("Perception", Ui.Col(Theme.S2,
             Ui.Muted("Perception is a decision model asked short, typed questions — Jev, a model that answers each one with a "
                      + "probability. Nothing in TradeAgent asks it anything yet except the test at the bottom of this card. Its "
@@ -204,7 +244,11 @@ sealed class PerceptionCard
             Ui.Spacer(Theme.S2),
             SaveBudget,
             _budgetNote,
-            _spent));
+            _spent,
+            Ui.Divider(),
+            TestButton,
+            _worst,
+            _result));
 
         Refresh();
     }
@@ -359,6 +403,7 @@ sealed class PerceptionCard
         _tokens.Text = w.Tokens;
         _requests.Text = w.Requests;
         _ownBound.Text = w.OwnBound;
+        _worst.Text = w.Worst;
 
         // WHERE A PASTE WOULD GO. A press half-made against one address is disarmed the moment the card shows another.
         var destination = Destination();
@@ -439,5 +484,127 @@ sealed class PerceptionCard
         _src.Activity($"Perception may now spend up to {money} a day");
         _budgetNote.Text = $"Saved. Perception may spend up to {money} a day.";
         Refresh();
+    }
+
+    // ---- the Test press -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE INSTRUMENT THE TEST PRESS ASKS: the one whose address the key was pasted for, and never the other — asking the
+    /// other would make the holder forget the owner's key. Null, with the reason, when there is none to ask.
+    /// </summary>
+    DecisionInstrument? Target(DecisionInstrumentsRead read, out string why)
+    {
+        why = "";
+        if (!_src.Key.Held || _src.Key.Origin is not { } origin)
+        {
+            why = Labels.PerceptionTestNoKey;
+            return null;
+        }
+
+        if (read.Instruments.FirstOrDefault(i => UrlOrigin.Of(i.Endpoint) == origin) is { } live) return live;
+
+        var shipped = DecisionInstruments.BuiltIn().FirstOrDefault(i => UrlOrigin.Of(i.Endpoint) == origin);
+        why = shipped is null
+            ? $"The key is held for {origin}, which is not the address of a decision model TradeAgent can call, so the test asked "
+              + "no one and nothing was sent or charged."
+            : Stopped(read, shipped.Id) ?? Labels.PerceptionTestNoKey;
+        return null;
+    }
+
+    /// <summary>
+    /// ONE PRESS, ONE CALL: refused in words or reserved, sent once, recorded and settled by the port like any other. The
+    /// press is disabled while the call flies, and a press that lands anyway sends nothing — never a second request.
+    /// </summary>
+    void Test()
+    {
+        if (_pressing is { IsCompleted: false }) return;
+
+        var read = Read();
+        if (Target(read, out var why) is not { } target)
+        {
+            Show([why]);
+            return;
+        }
+
+        IDecisionModel? model;
+        try { model = _src.Model(target.Id); }
+        catch (Exception ex) { model = null; why = $"TradeAgent could not open {target.DisplayName}: {ex.Message}"; }
+        if (model is null)
+        {
+            Show([why.Length > 0 ? why : Stopped(read, target.Id) ?? $"{target.DisplayName} cannot be called."]);
+            return;
+        }
+
+        TestButton.IsEnabled = false;
+        Show([$"Asking {target.DisplayName}…"]);
+        var post = _src.Ui;
+        _pressing = Task.Run(async () =>
+        {
+            IReadOnlyList<string> lines;
+            string status;
+            try
+            {
+                var answer = await model.DecideAsync(TestRequest(target.Id)).ConfigureAwait(false);
+                lines = Result(answer, target);
+                status = answer.Status.ToString();
+            }
+            catch (Exception ex)
+            {
+                lines = [$"The test press failed inside TradeAgent: {ex.Message}"];
+                status = "an error inside TradeAgent";
+            }
+
+            post(() =>
+            {
+                Show(lines);
+                TestButton.IsEnabled = true;
+                _src.Activity($"The Perception card's test question to {target.DisplayName}: {status}");
+                Refresh();
+            });
+        });
+    }
+
+    void Show(IReadOnlyList<string> lines)
+    {
+        _result.Text = string.Join("\n", lines);
+        _result.IsVisible = true;
+    }
+
+    /// <summary>
+    /// WHAT ONE TEST CALL CAME TO, as the port returned it: the status; a refusal's words exactly; who answered and whether
+    /// that is the pin; the probability as served; the latency TradeAgent measured; the tokens; and the billed cost when
+    /// the host reported one, else the estimate WITH its basis — never one shown as the other. A call that failed or got no
+    /// answer says so and that its reservation stands as its cost.
+    /// </summary>
+    internal static IReadOnlyList<string> Result(DecisionAnswer a, DecisionInstrument i)
+    {
+        if (a.Status == DecisionStatus.REFUSED)
+            return ["REFUSED — nothing was sent and nothing was charged.", a.Refusal ?? ""];
+
+        var lines = new List<string>();
+        lines.Add(a.Status switch
+        {
+            DecisionStatus.ANSWERED => $"ANSWERED by {a.AnsweredModel} — "
+                                       + (a.Unpinned ? $"UNPINNED: not {i.Pin}, so not evidence." : "PINNED."),
+            DecisionStatus.FAILED => $"FAILED — the host answered HTTP {a.HttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "?"} "
+                                     + $"({a.ErrorClass}).",
+            _ => $"UNANSWERED — {a.ErrorClass}."
+        });
+
+        if (a.Answers.TryGetValue(TestQuestion, out var d) && d.Noul is { } p)
+            lines.Add($"The probability it gave that this is a test message: {p.ToString("R", CultureInfo.InvariantCulture)}.");
+        if (a.Latency is { } latency)
+            lines.Add($"Latency: {Math.Round(latency.TotalMilliseconds):0} ms, measured by TradeAgent.");
+        if (a.InputTokens is { } input)
+            lines.Add($"Tokens: {input:N0} in, {a.OutputTokens ?? 0:N0} out, as the host reported them.");
+
+        if (a.BilledCost is { } billed)
+            lines.Add($"Billed by the host: {Exact(billed)} {i.Currency}.");
+        else if (a.EstimatedCost is { } estimate)
+            lines.Add($"Estimated, not billed — the host reports no bill: {Exact(estimate)} {i.Currency}, at the {i.PriceBasis}.");
+        else
+            lines.Add($"It was asked once, and its reservation of {Exact(i.Reservation)} {i.Currency} stands as its cost, "
+                      + "because nothing says what it used.");
+        return lines;
     }
 }
