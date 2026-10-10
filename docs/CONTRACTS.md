@@ -2373,7 +2373,15 @@ the app and by nothing else — the rule `material`, `fill`, `ai_attempt`, `miss
 `publication` already keep. `trade report [--day yyyy-MM-dd]` serves it; there is no op and no verb
 that writes, rewrites or deletes one, because it is the record the AI's own work is judged by. The
 account owner presses **Write it now** on the Daily report page; the background loop writes any day
-that has passed with no file, so a laptop asleep at midnight still gets one.
+that has passed with no file, so a laptop asleep at midnight still gets one. **A file on disk is a whole
+report** (`U-tape-gaps`), because a file is what `Owed` skips and the page serves: `Write` puts the whole
+text in a temp of its own beside the day's file (`<day>.md.<32 hex>.tmp`, which `Days()` never lists and
+`Owed` never counts), flushes it to the disk and renames it over the day's file through
+`OwnerOnlyFile.Publish` — the rename a Windows reader of the old file does not refuse. A crash, a
+`kill -9` (systemd's restart on the Linux host) or a full disk mid-write leaves the earlier report whole,
+or no file and the day still owed, and the failure is thrown to the caller as before; a temp a failed
+write can delete is deleted, and one a killed process left is removed by the next write, one write at a
+time in the process. NOT claimed: a partial report written before this build stays as it is.
 
 **Composed from ONE snapshot, and nothing in it is inferred.** Ten sections
 (`docs/COUNCIL.md` rule 10): identity · mission state · trading readiness · capital and performance ·
