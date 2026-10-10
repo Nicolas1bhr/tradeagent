@@ -434,6 +434,64 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         Assert.Single(openRouterHost.Requests);
     }
 
+    /// <summary>
+    /// (g2) THE TEST PRESS'S WORST CASE IS THE INSTRUMENT IT WILL ASK. The press asks the instrument the key was pasted
+    /// for, whichever the card shows: with the key held for OpenRouter and TypeSafe chosen, the line beside the press names
+    /// OpenRouter, says it is not the one shown above, and names OpenRouter's reservation at OpenRouter's price — priced here
+    /// above TypeSafe's by a file — and the press then reserves exactly that, at OpenRouter's host and nowhere else.
+    ///
+    /// <para>Name the chosen instrument's reservation instead and the line promises less than the press commits.</para>
+    /// </summary>
+    [Fact]
+    public void The_test_press_names_the_worst_case_of_the_instrument_it_will_ask()
+    {
+        File.WriteAllText(DecisionInstruments.OverridePath, """
+            [{"id":"openrouter-jev","input_per_million":0.5,"priced_on":"2026-10-10","price_source":"https://prices.example/openrouter"}]
+            """);
+        var pricier = DecisionInstruments.Find(DecisionInstruments.OpenRouterJev)!;
+        Assert.True(pricier.Reservation > TypeSafe.Reservation);
+
+        using var typeSafeHost = new FakeProvider();
+        using var openRouterHost = new FakeProvider();
+        typeSafeHost.Answer(FakeProvider.SystemOne("jev-1.13.0", TestAnswers, 300, 20));
+        openRouterHost.Answer(FakeProvider.SystemOne("typesafe/jev-1.13-20260917", TestAnswers, 300, 20,
+            id: "gen-owner-test", provider: "TypeSafe", cost: 0.00015m));
+        using var rig = new CardRig(typeSafeHost, openRouterHost);
+        var card = rig.Card;
+
+        // THE KEY FOR OPENROUTER'S ADDRESS, THEN TYPESAFE CHOSEN ON THE CARD.
+        Press(card.Choices[1]);
+        card.KeyBox.Text = _pasted;
+        Press(card.SaveKey);
+        Press(card.SaveKey);
+        Assert.Equal(UrlOrigin.Of($"http://127.0.0.1:{openRouterHost.Port}"), rig.Key.Origin);
+        Press(card.Choices[0]);
+        Assert.Equal(TypeSafe.DisplayName, card.Shown!.Model);
+
+        log.WriteLine(card.Shown.Worst);
+        Assert.Equal($"The key is held for {OpenRouter.DisplayName}, not {TypeSafe.DisplayName} shown above, so the test asks "
+                     + $"{OpenRouter.DisplayName} one fixed question, once. The most it can cost is "
+                     + $"{PerceptionCard.Exact(pricier.Reservation)} USD — 65,536 tokens at {OpenRouter.DisplayName}'s price of 0.5 "
+                     + "USD per million input tokens and 0 per million output — taken from the perception budget.", card.Shown.Worst);
+        Assert.Contains(card.Shown.Worst, rig.Words());
+
+        // AND THE PRESS COMMITS EXACTLY THAT, AT THE KEY'S INSTRUMENT.
+        Press(card.TestButton);
+        rig.Settle();
+        log.WriteLine(card.ResultText);
+        Assert.Single(openRouterHost.Requests);
+        Assert.Empty(typeSafeHost.Requests);
+        var record = Assert.Single(rig.Store.Tape.RecordedCalls());
+        Assert.Equal(DecisionInstruments.OpenRouterJev, record.Call.Instrument);
+        Assert.Equal(pricier.Reservation, new AiAttemptStore(rig.Store.Db).Get(record.Call.AttemptId)!.ReservedCost);
+
+        // THE KEY'S OWN INSTRUMENT CHOSEN, THE LINE IS THE PLAIN ONE.
+        Press(card.Choices[1]);
+        Assert.Equal($"Asks {OpenRouter.DisplayName} one fixed question, once. The most it can cost is "
+                     + $"{PerceptionCard.Exact(pricier.Reservation)} USD — 65,536 tokens at the price above — taken from the "
+                     + "perception budget.", card.Shown!.Worst);
+    }
+
     // ---- (h) ------------------------------------------------------------------------------------------------------
 
     /// <summary>What no word on the card may say: an instruction to run, export or install anything — or a terminal.</summary>
