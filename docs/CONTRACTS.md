@@ -2704,6 +2704,34 @@ the run actually fed on is copied onto the run row, so a rejection discovered la
 run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused rather than queued, and
 a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
 
+**Every recorded run keeps its daily net returns at 1× and 2× the venue cost model** (`U-trial-returns`, schema 32;
+`docs/EDGE-FACTORY.md` § 4.5, E1). Every run `Backtests.Record` records — charged, a fixture or under no campaign — keeps
+two streams in `strategy_stream`, keyed `(run, multiple)`: TradeAgent's venue cost model for the DATASET's venue
+(`VenueFriction.Of`), its fee and its slippage × 1 and × 2, at the run's own increment and capital. At 1× a stream is the
+run's own trace when the run's model is exactly that one; otherwise, and at 2×, it is an evaluation of the app's own
+through `Backtest.Over` with the run's audience (`BarAudience.Pipe`), dataset and window — its request the run's but for the
+model, which is checked when it answers — started beside the run on threads of its own, so a `backtest` takes about one
+evaluation's wall time and not two or three. An extra evaluation is the app's, served to no one: no
+`strategy_run` row, no trial, nothing in the answer. Bars that record no venue, a venue whose fee TradeAgent never read, a
+model the cost model cannot declare at that step and capital, an evaluation refused or failed: that stream is recorded
+**missing**, saying why, with no day, and the run is recorded and answered exactly as it would have been. Each stream names
+its execution model, the friction's sha, its evaluation's trace sha, its outcome and the rule's version
+(`DailyReturns.Version`, 1). **A day** is a UTC date (`strategy_stream_day`, keyed `(stream, day)`, every decimal TEXT): its
+mark is the `Equity` of the last `Bar` line closing in it — a bar closes where its grid ends it, and a 00:00Z close ends the
+day before; the open position is marked at that close and no exit fee is charged on it — and its net return is that mark
+over the previous mark, less one, the first from the declared capital. `DailyReturns.Of(trace, grid, capital)` takes those
+three inputs and nothing else, for `BacktestMetrics.Of`'s reason. A date between the first bar's and the last's with no
+closed bar is 0 bars, no mark, no return — **unknown, never 0** — and the next return runs from the last mark and names its
+day (`since`); a flat day is a measured 0. **Written once and never rewritten:** in `RecordRun`'s own insert after the
+trades, behind its first-writer return, so a re-run over the same bytes writes nothing and starts no evaluation; a stop, a
+refused `RegisterTrial` and any rollback leave none; the referee's holdout run keeps none; nothing in `src` updates or
+deletes a row of either table. **Read in-process only** (`StrategyStore.StreamsOf`, beside `TradesOf`): no op, verb or answer
+field serves a stream, and a read for agents is `U-experiments-op`'s, holding a stream back as `StrategyStore.ReadTrades`
+holds a run's trades back. No stream — a run recorded before schema 32, the referee's — is not a stream of no days.
+**Not claimed:** E1's depth gates (≥ 30 trades, net > 0 at 1×, ≥ 0 at 2×), E2–E4, effective trials and the deflated
+Sharpe (`U-referee-v2`, at verdict time — nothing held back is stored); forward daily returns from fills
+(`U-forward-standing`); streams for runs before the rung (no backfill); impact beyond the cost model's slippage.
+
 **Pinned by golden vectors, beside the semantics they were computed under** (`U-evidence-identity`).
 `EvaluationGoldenVectorTests` runs seventeen programs — every indicator, both crossings (each decided once from
 an exact equality the bar before), history references, every sizing, stop and target kind, sessions in two
@@ -3766,7 +3794,9 @@ column list — because a trial keyed by the attempt would make a restart a fres
 the role would let a replacement team start again (`docs/COUNCIL.md`:131, "survives team replacement"). All
 three parts are content hashes or the app's own id, so the same program over the same bytes under the same
 execution model is ONE trial however often it is asked for, and a different window or fee is a different
-trial because it is a different peek. `kind` is the dataset's `evaluation_class` **as it stood at
+trial because it is a different peek. A run's daily return streams at 1× and 2× the venue cost model (The backtest)
+are written with it and charge nothing more: the evaluations that make them are the app's own measurement of what the
+run was already shown, and a run refused here keeps none. `kind` is the dataset's `evaluation_class` **as it stood at
 registration**, copied rather than joined; a `fixture` run is charged nothing and is never evidence. `CampaignStore.TrialRefusal` is asked **before** the run
 (`Backtests.Run`, `CAMPAIGN_BUDGET_REACHED`) and is a LOOK, not the gate: it reads the count in its own
 transaction and the run takes minutes, so two roles asking for the last trial both pass it honestly. **The
