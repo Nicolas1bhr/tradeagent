@@ -403,8 +403,11 @@ public class DecisionRateGateTests(ITestOutputHelper log) : IDisposable
         // requests a second — is held to one call in flight AND one a second, never to eighty a second.
         using var typeSafeHost = new FakeProvider();
         typeSafeHost.Answer(FakeProvider.SystemOne("jev-1.13.0", DecisionPortTests.TriageAnswers, 300, 20));
-        var pointed = DecisionPortTests.PointedAt(typeSafeHost);
-        var half = pointed with { Limits = pointed.Limits with { TokensPerSecond = 0 } };
+        var half = TypeSafe with
+        {
+            Endpoint = $"{typeSafeHost.BaseUrl}/systemone",
+            Limits = TypeSafe.Limits with { TokensPerSecond = 0 }
+        };
         Assert.Equal(80, half.Limits.RequestsPerSecond);
         using var halfWire = Wire(half, typeSafeHost.Holding(_pasted), rig, new DecisionRateGate(), () => Second);
         var halfAnswers = new List<DecisionAnswer>();
