@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -209,6 +210,20 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 
         try
         {
+            // THE STREAMS' OWN EVALUATIONS (U-trial-returns), STARTED BESIDE THE RUN AND NOT AFTER IT, so a `backtest` takes
+            // about one evaluation's wall time and not two or three; disposed — stopped and waited for — before this role
+            // may ask again. Not for a run this installation has already recorded, where the id can be known before the run
+            // (a program that reads no feature): its record writes nothing, so they would be work for no one. A feature
+            // program's id is known only after it, and then they are stopped (`Streams.Abandon`).
+            var predicted = set is not null && program.Features.Count == 0
+                ? new BacktestRequest(set.Id, set.NormalisedSha256, model, ask.From, ask.To).RunIdFor(program.StrategyId)
+                : null;
+            using var streams = Streams.Start(
+                set, model, BarGrid.For(program), predicted is not null && _strategies.RunById(predicted) is not null, stop,
+                (extra, token) => Backtest.Over(
+                    gateway.Datasets, ask.Dataset, program, extra, BarAudience.Pipe(role),
+                    ask.From, ask.To, stop: token, tape: tape));
+
             // THE AUDIENCE IS THE CALLER'S, AND IT IS A PIPE CALLER WHATEVER ROLE IT PROVED. Both
             // directors and a connection that proved nothing get the same one: `BarAudience.Pipe` can
             // never read a holdout bar, and the role on it is only for the wording of the refusal.
@@ -220,6 +235,13 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 throw new GatewayDeniedException(
                     run.IsHoldout ? ErrorCode.HOLDOUT_WITHHELD : ErrorCode.MARKET_DATA_UNAVAILABLE,
                     run.Why + ".");
+
+            // THE RUN'S STREAMS, once every evaluation of them has answered — and BEFORE the stop is asked, so a stop that
+            // came while they ran is refused like any other. None for a run already recorded: its record writes nothing.
+            var trace = result.Trace.Sha256;
+            var kept = _strategies.RunById(result.RunId) is not null
+                ? streams.Abandon()
+                : streams.Of(result, trace);
 
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
@@ -233,7 +255,8 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             if (stop.IsCancellationRequested)
                 throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Stopped);
 
-            Record(result, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent, under);
+            Record(result, trace, kept, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent,
+                under);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source)
             {
@@ -561,9 +584,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     static string Plain(decimal value) =>
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
-    void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource, string? frictionSource, string? parent,
-        LedgerAsk? under)
+    void Record(BacktestResult result, string trace, IReadOnlyList<StrategyStreamRow> streams, StrategyProgram program,
+        string role, string? attempt, IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource,
+        string? frictionSource, string? parent, LedgerAsk? under)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -600,14 +623,17 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 metrics.Bars, metrics.Trades, metrics.Wins, metrics.Signals, metrics.Fills,
                 metrics.ExposureBars, metrics.MissingMinutes, metrics.Faults,
                 metrics.GrossPnl, metrics.Fees, metrics.NetPnl, metrics.MaxDrawdown,
-                result.Trace.Sha256, at, role, attempt)
+                trace, at, role, attempt)
                 {
                     IncrementSource = incrementSource,
                     FrictionSource = frictionSource
                 },
                 [.. result.Trades.Select(t => new StrategyTradeRow(
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
-                    t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
+                    t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))],
+                // ITS DAILY NET RETURN STREAMS, in the run's own insert (U-trial-returns): rolled back with it and with
+                // its trials below, and written nothing again for a run already there.
+                streams);
 
             // THE TRIAL, IN THE SAME TRANSACTION AS THE RUN IT IS THE COST OF, AND IT IS THE GATE.
             //
@@ -641,6 +667,192 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 
             return 0;
         });
+    }
+}
+
+/// <summary>
+/// A RUN'S DAILY NET RETURN STREAMS, AND THE EVALUATIONS THAT MAKE THEM (<c>U-trial-returns</c>;
+/// <c>docs/EDGE-FACTORY.md</c> § 4.5, E1: "backtest under the app's venue cost model at 1× and 2×; daily net returns stored").
+///
+/// <para><b>Every run <see cref="Backtests"/> records keeps one at each of <see cref="Multiples"/></b> — charged, a fixture
+/// or under no campaign: the venue cost model for the DATASET's venue (<see cref="VenueFriction.Of"/>), its fee and its
+/// slippage times the multiple, at the run's own quantity step and capital. At 1× it is the run's own trace when the run's
+/// model is exactly that one; otherwise, and at 2×, it is an evaluation of the app's own through <see cref="Backtest.Over"/>
+/// with the run's audience, dataset and window — its request the run's but for the model, which is checked when it
+/// answers. Bars that record no venue, a venue whose fee TradeAgent never read, a model the cost model cannot declare at
+/// that step and capital, an evaluation refused or failed: that stream is recorded MISSING, saying why, with no day, and
+/// the run is recorded and answered exactly as it would have been.</para>
+///
+/// <para><b>An evaluation here is the app's, served to no one.</b> It is no <c>strategy_run</c> row and charges no trial —
+/// a trial is a peek the research process asked for, and this is the app measuring what it was already shown — and
+/// nothing of it reaches the answer. It reads exactly what the run reads, as the run's own <see cref="BarAudience.Pipe"/>,
+/// so it can never see a bar or a feature value the run could not.</para>
+///
+/// <para><b>Beside the run, not after it.</b> They start with the run on threads of their own, so a <c>backtest</c> costs
+/// about one evaluation's wall time; they stop with it — the app stopping, the run refused, a run already recorded — and
+/// <see cref="Dispose"/> waits for every one, so none outlives the request that started it.</para>
+/// </summary>
+sealed class Streams : IDisposable
+{
+    /// <summary>The cost multiples every recorded run keeps a stream at: the venue cost model as published, and twice it.</summary>
+    public static readonly IReadOnlyList<int> Multiples = [1, 2];
+
+    /// <summary>One multiple's plan: the model and friction it is a stream of, or why there is none, and its evaluation when it has one.</summary>
+    sealed record Planned(int Multiple, ExecutionModel? Model, string? FrictionSha256, string? Missing, Task<Measured>? Evaluation);
+
+    /// <summary>What one evaluation came to, or why it did not: small, so the trace it was computed from is dropped at once.</summary>
+    sealed record Measured(
+        BacktestRequest? Request, string? TraceSha256, string? Outcome, IReadOnlyList<DailyReturn> Days, string? Why);
+
+    readonly IReadOnlyList<Planned> _plan;
+    readonly BarGrid _grid;
+    readonly CancellationTokenSource _cancel;
+
+    Streams(IReadOnlyList<Planned> plan, BarGrid grid, CancellationTokenSource cancel)
+    {
+        _plan = plan;
+        _grid = grid;
+        _cancel = cancel;
+    }
+
+    /// <summary>
+    /// THE PLAN FOR ONE RUN, AND ITS EVALUATIONS STARTED: <paramref name="evaluate"/> is the run's own <see cref="Backtest.Over"/>
+    /// with only the model changed, and <paramref name="grid"/> the grid the program's bars are cut on. None is started where
+    /// <paramref name="recorded"/> says the run is already in the ledger.
+    /// </summary>
+    public static Streams Start(DatasetRecord? set, ExecutionModel model, BarGrid grid, bool recorded, CancellationToken stop,
+        Func<ExecutionModel, CancellationToken, BacktestOpened> evaluate)
+    {
+        var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var venue = set?.VenueId is { Length: > 0 } id ? VenueFriction.Of(id) : null;
+        var plan = new List<Planned>();
+
+        foreach (var multiple in Multiples)
+        {
+            if (set is null)
+            {
+                plan.Add(new Planned(multiple, null, null, "the run's dataset is not one this installation holds", null));
+                continue;
+            }
+
+            if (set.VenueId is not { Length: > 0 } venueId)
+            {
+                plan.Add(new Planned(multiple, null, null, string.Create(CultureInfo.InvariantCulture,
+                    $"dataset {set.Id} records no venue, so TradeAgent's venue cost model has nothing to charge these bars (its "
+                    + $"judge for them is labelled \"no venue recorded\") and there is no {multiple}x stream of them"), null));
+                continue;
+            }
+
+            if (venue is null)
+            {
+                plan.Add(new Planned(multiple, null, null, string.Create(CultureInfo.InvariantCulture,
+                    $"dataset {set.Id} records its bars as {venueId}'s, and {venueId}'s standard fee is not one TradeAgent has "
+                    + $"read from the venue's own published schedule, so its venue cost model has nothing to charge them at "
+                    + $"{multiple}x"), null));
+                continue;
+            }
+
+            var declared = ExecutionModel.Declare(
+                venue.FeeRate * multiple, venue.SlippageRate * multiple, model.QuantityIncrement, model.InitialCapital);
+            if (declared.Model is not { } extra)
+            {
+                plan.Add(new Planned(multiple, null, venue.Sha256, string.Create(CultureInfo.InvariantCulture,
+                    $"{venue.Named} at {multiple}x cannot be run at this run's step and capital: {declared.Why}"), null));
+                continue;
+            }
+
+            // THE RUN'S OWN TRACE where its model IS this one — the same four numbers, so the same evaluation.
+            var own = string.Equals(extra.Canonical, model.Canonical, StringComparison.Ordinal);
+            plan.Add(new Planned(multiple, extra, venue.Sha256, null,
+                own || recorded ? null : Task.Factory.StartNew(
+                    () => Evaluate(multiple, extra, grid, cancel.Token, evaluate), CancellationToken.None,
+                    TaskCreationOptions.LongRunning, TaskScheduler.Default)));
+        }
+
+        return new Streams(plan, grid, cancel);
+    }
+
+    static Measured Evaluate(int multiple, ExecutionModel model, BarGrid grid, CancellationToken token,
+        Func<ExecutionModel, CancellationToken, BacktestOpened> evaluate)
+    {
+        try
+        {
+            var open = evaluate(model, token);
+            if (open.Result is not { } run)
+                return new Measured(null, null, null, [],
+                    string.Create(CultureInfo.InvariantCulture, $"the evaluation at {multiple}x was refused: {open.Why}"));
+
+            // THE DAYS AND THE HASH HERE, where the trace is, so it is let go as soon as this returns.
+            return new Measured(run.Request, run.Trace.Sha256, run.Outcome.ToString(),
+                DailyReturns.Of(run.Trace, grid, model.InitialCapital), null);
+        }
+        catch (Exception ex)
+        {
+            // AN EVALUATION SERVED TO NO ONE NEVER TAKES THE RUN DOWN WITH IT: the stream is missing, saying what happened.
+            return new Measured(null, null, null, [],
+                string.Create(CultureInfo.InvariantCulture, $"the evaluation at {multiple}x failed: {ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// THE STREAMS OF <paramref name="run"/>, once every evaluation has answered. <paramref name="trace"/> is the run's own
+    /// trace hash.
+    /// </summary>
+    public IReadOnlyList<StrategyStreamRow> Of(BacktestResult run, string trace)
+    {
+        var rows = new List<StrategyStreamRow>(_plan.Count);
+        foreach (var p in _plan)
+        {
+            if (p.Model is not { } model)
+            {
+                rows.Add(new StrategyStreamRow(run.RunId, p.Multiple, null, p.FrictionSha256, null, null,
+                    DailyReturns.Version, p.Missing, []));
+                continue;
+            }
+
+            if (p.Evaluation is not { } evaluation)
+            {
+                rows.Add(new StrategyStreamRow(run.RunId, p.Multiple, model.Canonical, p.FrictionSha256, trace,
+                    run.Outcome.ToString(), DailyReturns.Version, null, DailyReturns.Of(run.Trace, _grid, model.InitialCapital)));
+                continue;
+            }
+
+            var measured = evaluation.GetAwaiter().GetResult();
+            var lost = measured.Why ?? Unlike(p.Multiple, run.Request, measured.Request!);
+            rows.Add(lost is not null
+                ? new StrategyStreamRow(run.RunId, p.Multiple, model.Canonical, p.FrictionSha256, null, null,
+                    DailyReturns.Version, lost, [])
+                : new StrategyStreamRow(run.RunId, p.Multiple, model.Canonical, p.FrictionSha256, measured.TraceSha256,
+                    measured.Outcome, DailyReturns.Version, null, measured.Days));
+        }
+
+        return rows;
+    }
+
+    /// <summary>WHY AN EVALUATION IS NOT A STREAM OF THIS RUN — it read other bars, another window or other feature values — or null when it read what the run read.</summary>
+    static string? Unlike(int multiple, BacktestRequest run, BacktestRequest evaluated) =>
+        evaluated with { Model = run.Model } == run
+            ? null
+            : string.Create(CultureInfo.InvariantCulture,
+                $"the evaluation at {multiple}x did not read what the run read (dataset {evaluated.DatasetId} sha "
+                + $"{evaluated.DatasetSha256}, window {evaluated.Window}, features {evaluated.FeaturesSha256 ?? "none"}; the run: "
+                + $"dataset {run.DatasetId} sha {run.DatasetSha256}, window {run.Window}, features {run.FeaturesSha256 ?? "none"}), "
+                + $"so it is not a stream of this run");
+
+    /// <summary>NO STREAM: the run is already recorded, so its record writes nothing. Every evaluation is stopped.</summary>
+    public IReadOnlyList<StrategyStreamRow> Abandon()
+    {
+        _cancel.Cancel();
+        return [];
+    }
+
+    /// <summary>Stops every evaluation still running and waits for each, so none outlives the request.</summary>
+    public void Dispose()
+    {
+        _cancel.Cancel();
+        foreach (var p in _plan)
+            p.Evaluation?.Wait();
+        _cancel.Dispose();
     }
 }
 
