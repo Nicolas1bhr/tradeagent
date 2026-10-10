@@ -416,6 +416,44 @@ public static class Labels
           + " TradeAgent has not written it down; it is gone when the app closes."
         : "No key is held, so TradeAgent's own worker will not start a turn.";
 
+    // ---- the owner's Perception card (U-decision-card) ------------------------------------------------------------
+
+    /// <summary>The row that chooses which decision model the card shows, binds a key to and prices. One press: it grants nothing.</summary>
+    public const string PerceptionInstrument = "Which decision model";
+
+    /// <summary>The box a decision model's key is pasted into — masked, emptied by the press that takes it, and never saved.</summary>
+    public const string PerceptionKey = "API key for the decision model";
+
+    /// <summary>Perception's own daily budget, inside the daily AI limit, and the press that writes it.</summary>
+    public const string PerceptionDailyBudget = "The most perception may spend in a day";
+
+    public const string SavePerceptionBudget = "Save the perception budget";
+
+    /// <summary>
+    /// What the second press of <see cref="SavePerceptionBudget"/> will do. RAISING the budget gives perception more of the
+    /// owner's money, so it asks twice and names the figure; LOWERING it, or zero, is one press — the cap's rule
+    /// (<see cref="RaiseDailyCapArmed"/>).
+    /// </summary>
+    public static string RaisePerceptionBudgetArmed(string amount) =>
+        $"Confirm: let perception spend up to {amount} a day";
+
+    /// <summary>The one press that asks the decision model one fixed question, to see that it answers and what it costs.</summary>
+    public const string PerceptionTest = "Ask a test question";
+
+    /// <summary>What the Test press says when no key is held: it sends nothing and asks no one.</summary>
+    public const string PerceptionTestNoKey =
+        "No key is held for a decision model, so the test asked no one and nothing was sent or charged. Paste a key above first.";
+
+    /// <summary>
+    /// WHICH MODEL MAY BE ASKED. Two words for the two instruments' states; the Test press asks only the one whose address
+    /// the key was pasted for.
+    /// </summary>
+    public static string PerceptionKeyState(bool held, string? origin, string? model) => held
+        ? $"A key is held for this session, for {origin ?? "an address TradeAgent cannot read"} only"
+          + (model is null ? "" : $" — {model}")
+          + ". TradeAgent has not written it down; it is gone when the app closes."
+        : "No key is held for a decision model, so the test below asks no one.";
+
     /// <summary>
     /// WHICH AI TOOL A ROLE RUNS ON. Two words for the two kinds of thing, because they are not two
     /// brands: one is a program on this computer that TradeAgent starts, and the other is TradeAgent

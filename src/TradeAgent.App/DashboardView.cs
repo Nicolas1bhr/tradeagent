@@ -1195,6 +1195,9 @@ sealed class SafetyPage
     readonly TextBlock _releaseNoteResult = Ui.Micro("");
     readonly Button _release;
 
+    /// <summary>THE OWNER'S PERCEPTION CARD (<c>U-decision-card</c>): the decision model's key, budget, price, limits and Test press.</summary>
+    readonly PerceptionCard _perception;
+
     public Control Root { get; }
 
 
@@ -1926,9 +1929,12 @@ sealed class SafetyPage
                 Ui.Body(Labels.SettingsCouldNotBeReadNext, Theme.Caution))
         };
 
+        // AFTER WHAT THE AI COSTS, because perception's budget is a slice of that cap.
+        _perception = PerceptionCard.For(_host);
+
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, modeCard, limits, _releaseCard, allocation, envelope, spending)));
+            _unreadableCard, modeCard, limits, _releaseCard, allocation, envelope, spending, _perception.Root)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -2006,6 +2012,7 @@ sealed class SafetyPage
         // this page deciding what they meant.
         ShowAllocations();
         ShowEnvelopes();
+        _perception.Update();
 
         Refresh();
     }
