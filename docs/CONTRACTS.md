@@ -3192,11 +3192,12 @@ note>", or "nothing asked" — TradeAgent was not running or the switch was off,
 on the line. The deliveries just outside the day are, per (source, series), the latest that arrived before it and the
 earliest that arrived at or after its elapsed part's end: among the rows within `TapeReader.ArrivalSlack` of the day,
 taken by their arrival instants, never by the order the tape wrote them; beyond those, found on `ix_tape_fetch_series`,
-because within one series the tape writes attempts in the order they arrived: the one before no further back than eight days
-(`TapeReader.GapLookBack`, then "no delivery since before <date>"), the one after and a source's first delivery ever by a
-walk over failed attempts only. A read that fails is a gap in the owner's words, never a zero. **NOT claimed:** why
-nothing was asked — that needs the recorder's durable record of its runs and switch flips, a `tape.db` rung; per-symbol
-completeness inside a delivery. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
+because within one series the tape writes attempts in the order they arrived: the one before arriving no earlier than
+eight days before the day (`TapeReader.GapLookBack`, `TapeDay.LookedBackTo` — by its arrival instant, though the walk's
+id fence reaches the slack further; none there is "no delivery since before <date>"), the one after and a source's first
+delivery ever by a walk over failed attempts only. A read that fails is a gap in the owner's words, never a zero.
+**NOT claimed:** why nothing was asked — that needs the recorder's durable record of its runs and switch flips, a
+`tape.db` rung; per-symbol completeness inside a delivery. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
 stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than ten minutes after a row that arrived later
 than it — every writer takes its arrival instant just before the store's one lock, which a write holds for milliseconds.
 A machine clock stepped back by more than that is the case it does not cover.
