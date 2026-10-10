@@ -1326,6 +1326,19 @@ sealed class SafetyPage
     }
 
     /// <summary>
+    /// THE CEILING'S SAVE OVER ITS OWN BOX — the press the page shows, reading the figure it compares from the box it
+    /// sits under. A CONFIRMATION COMPLETES ONLY THE FIGURE IT NAMED: editing the box changes what the press meant, so a
+    /// raise armed against one figure is disarmed by the next one typed, and that one asks twice of its own — the
+    /// unconfirmed-orders card's rule, and the allocation and envelope boxes', for the same reason.
+    /// </summary>
+    internal static Button BuildSaveDailyCap(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    {
+        var b = BuildSaveDailyCap(current, () => box.Value ?? current(), currency, save);
+        box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
+        return b;
+    }
+
+    /// <summary>
     /// THE PRESS THAT WRITES HOW OFTEN THE AI IS WOKEN FOR NOTHING IN PARTICULAR.
     ///
     /// LOWERING the interval is what asks twice, which is the opposite direction from every risk
@@ -1667,7 +1680,7 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.DailyCostCap, _dailyCap,
                 "0 stops it working at all. Raising this lets the AI spend more of your money, so it asks again first."),
             Ui.Spacer(Theme.S2),
-            BuildSaveDailyCap(() => _host.Gateway.Settings.AiDailyCostCap, () => PendingCap(),
+            BuildSaveDailyCap(_dailyCap, () => _host.Gateway.Settings.AiDailyCostCap,
                 () => _host.SpendToday.Currency, SaveDailyCap),
             _capNote,
             Ui.Divider(),
