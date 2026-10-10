@@ -34,6 +34,11 @@ internal static class AgentRuntimeProbe
     /// every run, and the app used to put that line on the card as the reason a turn failed.
     /// </param>
     /// <param name="exitCode">The code the child exits with. A recorded failure exits as it did.</param>
+    /// <param name="workspace">
+    /// The folder the child is launched in, or null for the probe's own. A role's home as a start built it is what a test
+    /// of what the turn RECEIVED there needs (<c>U-canon</c>): the canon is read from the launch's working directory.
+    /// </param>
+    /// <param name="appFiles">The app's record of what it wrote into that home, or null for the install's own.</param>
     /// <param name="manifest">
     /// The manifest the session is driven with, built around the script's path — a vendor's SHIPPED
     /// manifest pointed at the canned stream, so what is under test is the vendor's own data rather
@@ -42,7 +47,7 @@ internal static class AgentRuntimeProbe
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
         int sleepSeconds = 0, Func<string?>? model = null, string? marker = null,
         string? stderr = null, int exitCode = 0, Func<string, RuntimeManifest>? manifest = null,
-        [CallerMemberName] string name = "")
+        string? workspace = null, AppFileManifest? appFiles = null, [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
         Directory.CreateDirectory(dir);
@@ -92,8 +97,8 @@ internal static class AgentRuntimeProbe
         // before it — so a child started here under the shared register would permanently downgrade
         // every inbox sighting in this assembly to InboxUnattested. Measured: it turned three of
         // MaterialLedgerTests red while both classes passed alone.
-        return new AgentSession(built, () => script, () => dir, () => new Dictionary<string, string>(),
-            presence: new AgentPresence(), model: model);
+        return new AgentSession(built, () => script, () => workspace ?? dir, () => new Dictionary<string, string>(),
+            presence: new AgentPresence(), model: model, appFiles: appFiles);
     }
 }
 

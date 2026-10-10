@@ -55,7 +55,8 @@ public sealed class ApiAgentRuntime(
     Func<string, string?>? attemptId = null,
     Func<TurnAllowance>? allowance = null,
     TimeSpan? requestTimeout = null,
-    HttpMessageHandler? transport = null) : IAgentRuntime, IDisposable
+    HttpMessageHandler? transport = null,
+    AppFileManifest? appFiles = null) : IAgentRuntime, IDisposable
 {
     /// <summary>The runtime id, spelled once. It is what the Safety page and the ledger both record.</summary>
     public const string RuntimeId = "openai-api";
@@ -189,7 +190,8 @@ public sealed class ApiAgentRuntime(
                 attempt: () => attemptId?.Invoke(role),
                 allowance: allowance,
                 requestTimeout: requestTimeout ?? DefaultRequestTimeout,
-                transport: transport);
+                transport: transport,
+                appFiles: appFiles);
             _conversations[role] = conversation;
             return conversation;
         }

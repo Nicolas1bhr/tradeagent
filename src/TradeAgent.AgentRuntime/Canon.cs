@@ -66,6 +66,39 @@ public static class Canon
     /// <inheritdoc cref="HarnessFile"/>
     public const string HarnessGuideFile = ".tradeagent/harness/GUIDE.md";
 
+    /// <summary>
+    /// WHAT A CLI TURN RECEIVED, read at its launch: the <see cref="CliFile"/> in the role's folder as it is on disk — its
+    /// bytes, hashed as they lie, the app's own only when <see cref="AppFileManifest.Wrote"/> says these exact bytes are
+    /// what the app put there — and whether an <see cref="OverrideFile"/> lay beside it, which a codex CLI reads in its
+    /// place. Null when there is no canon file or it could not be read: an unknown is said by saying nothing, never by a
+    /// guess. The version is this build's only for the app's own file with no override beside it: anything else ran
+    /// under a canon nobody versioned.
+    /// </summary>
+    public static CanonSeen? SeenByCli(string home, string role, AppFileManifest files)
+    {
+        try
+        {
+            var file = Path.Combine(home, CliFile);
+            if (!File.Exists(file) || Sha256Hex.OfFile(file) is not { } sha) return null;
+            var own = files.Wrote(AppFileManifest.Key(CouncilRoles.HomeDir(role), CliFile), sha);
+            var beside = File.Exists(Path.Combine(home, OverrideFile));
+            return new CanonSeen(own && !beside ? Version : null, sha, own, beside);
+        }
+        // A canon that could not be read is a turn whose canon is unknown, which the record says by saying nothing.
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WHAT A HARNESS TURN RECEIVED: the system text it sent, which is the app's own only when it is exactly what the app
+    /// wrote at <see cref="HarnessFile"/> — a text cut to the harness's bound is not.
+    /// </summary>
+    public static CanonSeen SeenByHarness(string systemText, string role, AppFileManifest files)
+    {
+        var sha = Sha256Hex.Of(systemText);
+        var own = files.Wrote(AppFileManifest.Key(CouncilRoles.HomeDir(role), HarnessFile), sha);
+        return new CanonSeen(own ? Version : null, sha, own, null);
+    }
+
     /// <summary>Where a pair's canon lives, relative to the role's folder.</summary>
     public static string FileFor(RuntimeClass runtime) => runtime == RuntimeClass.Harness ? HarnessFile : CliFile;
 
@@ -730,6 +763,15 @@ public static class Canon
         {{end}}
         """;
 }
+
+/// <summary>
+/// THE CANON ONE TURN RAN UNDER, as the app found it at the launch (<c>U-canon</c>, item 4): its version when it is the
+/// app's own canon of this build, the SHA-256 of the text the turn received, whether that text is the app's own
+/// (<see cref="AppFileManifest.Wrote"/>), and — on a CLI — whether an <c>AGENTS.override.md</c> lay beside it. Carried on
+/// <see cref="AgentTurnEnded.Canon"/> into the attempt's <c>context</c>, so two builds' observed runs can be told apart
+/// by what each turn read rather than by the date.
+/// </summary>
+public sealed record CanonSeen(int? Version, string Sha256, bool AppOwn, bool? OverrideBeside);
 
 /// <summary>
 /// One rendered text and every capability its slots named: the verbs, the paths read and the paths written. What the

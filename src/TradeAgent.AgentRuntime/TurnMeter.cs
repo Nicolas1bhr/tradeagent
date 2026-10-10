@@ -233,6 +233,23 @@ public sealed record TurnContext
     /// </summary>
     public string? Refused { get; init; }
 
+    /// <summary>
+    /// THE CANON THE TURN RAN UNDER (<c>U-canon</c>): its version, when it was this build's own canon and nothing stood
+    /// in for it; the SHA-256 of the text the turn received; whether that text is the app's own; and, on a CLI, whether an
+    /// <c>AGENTS.override.md</c> lay beside it. Absent on a turn that launched nothing. No rung and no setting: the old
+    /// canon against the new is two builds, and this is how each attempt says which one it was.
+    /// </summary>
+    public int? CanonVersion { get; init; }
+
+    /// <inheritdoc cref="CanonVersion"/>
+    public string? CanonSha256 { get; init; }
+
+    /// <inheritdoc cref="CanonVersion"/>
+    public bool? CanonAppOwn { get; init; }
+
+    /// <inheritdoc cref="CanonVersion"/>
+    public bool? CanonOverride { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -721,7 +738,14 @@ public sealed class TurnMeter
     static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars) =>
         TurnContext.Read(ended.Raw, promptChars, ended.Usage,
             ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
-        with { Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld };
+        with
+        {
+            Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld,
+            CanonVersion = ended.Canon?.Version,
+            CanonSha256 = ended.Canon?.Sha256,
+            CanonAppOwn = ended.Canon?.AppOwn,
+            CanonOverride = ended.Canon?.OverrideBeside
+        };
 
     /// <summary>
     /// COMMITS THE HELD CLOSE, inside whatever transaction is open on this thread. Returns whether
