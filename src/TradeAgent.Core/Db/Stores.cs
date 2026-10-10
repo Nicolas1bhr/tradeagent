@@ -9,6 +9,9 @@ static class Sql
     public static decimal Dec(object? o) => o is null or DBNull ? 0m : decimal.Parse(Convert.ToString(o, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture);
     public static decimal? DecN(object? o) => o is null or DBNull ? null : Dec(o);
     public static string T(DateTimeOffset d) => d.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+    /// <summary>A calendar date as it is stored: <c>yyyy-MM-dd</c>, which sorts as it reads.</summary>
+    public static string Day(DateOnly d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    public static DateOnly DayOf(string s) => DateOnly.ParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture);
     public static DateTimeOffset Time(object? o) => DateTimeOffset.Parse((string)o!, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
     public static DateTimeOffset? TimeN(object? o) => o is null or DBNull ? null : Time(o);
     public static string? S(object? o) => o is null or DBNull ? null : (string)o;

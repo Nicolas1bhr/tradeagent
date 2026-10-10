@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -21,7 +23,7 @@ namespace TradeAgent.Tests.Unit;
 /// from the program: every restart a new version, every run the first run of a brand-new strategy,
 /// and a trial budget that can never be spent because nothing is ever the same submission twice.</para>
 /// </summary>
-public class BacktestLedgerTests
+public class BacktestLedgerTests(Xunit.Abstractions.ITestOutputHelper log)
 {
     static readonly DateTimeOffset At = new(2026, 9, 13, 10, 0, 0, TimeSpan.Zero);
 
@@ -229,4 +231,158 @@ public class BacktestLedgerTests
         Assert.Empty(store.Runs());
         Assert.Equal(0, store.RunCount);
     }
+
+    // ---- U-trial-returns: a run's daily net return streams --------------------------------------------------------
+
+    /// <summary>The rung the two stream tables arrive at (the orchestrator's number, 2026-10-10).</summary>
+    const int StreamRung = 32;
+
+    static DailyReturn Day(int day, int bars, decimal? mark, decimal? net, int? since) => new(
+        new DateOnly(2026, 9, day), bars, mark, net, since is { } s ? new DateOnly(2026, 9, s) : null);
+
+    static StrategyStreamRow Kept(string run, int multiple, string model, string trace, params DailyReturn[] days) =>
+        new(run, multiple, model, "f00d", trace, "COMPLETED", DailyReturns.Version, null, days);
+
+    static StrategyStreamRow Lost(string run, int multiple, string why) =>
+        new(run, multiple, null, null, null, null, DailyReturns.Version, why, []);
+
+    static string Shown(IReadOnlyList<StrategyStreamRow> streams) => string.Join("\n", streams.Select(s =>
+        $"{s.Multiple}x model={s.ExecutionModel ?? "-"} friction={s.FrictionSha256 ?? "-"} trace={s.TraceSha256 ?? "-"} "
+        + $"outcome={s.Outcome ?? "-"} method={s.Method} missing={s.Missing ?? "-"} days=["
+        + string.Join("; ", s.Days.Select(d => $"{d.Day:MM-dd} {d.Bars} {d.Mark?.ToString() ?? "?"} {d.NetReturn?.ToString() ?? "?"} "
+            + $"{d.Since?.ToString("MM-dd") ?? "-"}")) + "]"));
+
+    /// <summary>
+    /// (e) A RUN'S STREAMS ARE WRITTEN ONCE, WITH THE RUN, AND NEVER REWRITTEN. The second account of a run — other days,
+    /// another reason — writes nothing, exactly as its trades are left alone; a run first recorded with no stream gains
+    /// none later; an unknown day comes back null and every decimal as it went in; and no statement in <c>src</c> updates,
+    /// replaces or deletes a row of either table.
+    /// </summary>
+    [Fact]
+    public void A_runs_streams_are_written_once_and_never_rewritten()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new StrategyStore(db);
+        var program = Parsed();
+        store.RecordVersion(Version(program));
+        var dataset = Dataset(db);
+
+        var first = new[]
+        {
+            Kept("run-1", 1, "fees=0.001;slippage=0.0002;increment=1;capital=10000", "beef",
+                Day(13, 60, 10_012.3456789m, 0.0012345678900000m, null), Day(14, 0, null, null, null),
+                Day(15, 1, 9_990m, -0.0022339830917000123m, 13)),
+            Lost("run-1", 2, "the evaluation at 2x was refused: these bars are not what they were")
+        };
+        store.RecordRun(Run("run-1", program.StrategyId, dataset), [Trade("run-1", 0)], first);
+
+        // THE SECOND ACCOUNT OF THE SAME RUN: other days, a 2x that is now kept. Nothing of it is written.
+        store.RecordRun(Run("run-1", program.StrategyId, dataset), [],
+        [
+            Kept("run-1", 1, "fees=0.001;slippage=0.0002;increment=1;capital=10000", "cafe", Day(13, 60, 1m, 0m, null)),
+            Kept("run-1", 2, "fees=0.002;slippage=0.0004;increment=1;capital=10000", "d00d", Day(13, 60, 1m, 0m, null))
+        ]);
+
+        var streams = store.StreamsOf("run-1");
+        log.WriteLine(Shown(streams));
+        Assert.Equal(Shown(first), Shown(streams));
+        var unknown = streams[0].Days[1];
+        Assert.Equal(0, unknown.Bars);
+        Assert.Null(unknown.Mark);
+        Assert.Null(unknown.NetReturn);
+        Assert.Equal(-0.0022339830917000123m, streams[0].Days[2].NetReturn);
+        Assert.Empty(streams[1].Days);
+
+        // A RUN RECORDED WITH NO STREAM HAS NONE, AND A LATER ACCOUNT OF IT WITH STREAMS GIVES IT NONE EITHER.
+        store.RecordRun(Run("run-2", program.StrategyId, dataset), []);
+        store.RecordRun(Run("run-2", program.StrategyId, dataset), [],
+            [Kept("run-2", 1, "fees=0;slippage=0;increment=1;capital=10000", "beef", Day(13, 1, 1m, 0m, null))]);
+        Assert.Empty(store.StreamsOf("run-2"));
+        Assert.Empty(store.StreamsOf("no-such-run"));
+
+        // A STREAM NAMES ITS OWN RUN, AND A MISSING ONE HAS NO DAY: anything else is the caller's defect, refused whole.
+        Assert.Throws<ArgumentException>(() => store.RecordRun(Run("run-3", program.StrategyId, dataset), [],
+            [Kept("run-1", 1, "fees=0;slippage=0;increment=1;capital=10000", "beef")]));
+        Assert.Throws<ArgumentException>(() => store.RecordRun(Run("run-4", program.StrategyId, dataset), [],
+            [Lost("run-4", 1, "no venue") with { Days = [Day(13, 1, 1m, 0m, null)] }]));
+        Assert.Null(store.RunById("run-3"));
+        Assert.Null(store.RunById("run-4"));
+
+        // NO WRITER BUT THE ONE INSERT: nothing in src updates, replaces or deletes a stream or a stream's day.
+        var rewrite = new Regex(
+            @"(UPDATE\s+strategy_stream(_day)?\b|DELETE\s+FROM\s+strategy_stream(_day)?\b|REPLACE\s+INTO\s+strategy_stream(_day)?\b"
+            + @"|INSERT\s+OR\s+\w+\s+INTO\s+strategy_stream(_day)?\b|DROP\s+TABLE\s+(IF\s+EXISTS\s+)?strategy_stream(_day)?\b)",
+            RegexOptions.IgnoreCase);
+        var writers = Directory.GetFiles(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (f, i, line)))
+            .Where(l => rewrite.IsMatch(l.line))
+            .Select(l => $"{Path.GetFileName(l.f)}:{l.i + 1}: {l.line.Trim()}")
+            .ToList();
+        Assert.True(writers.Count == 0, string.Join("\n", writers));
+        Assert.Contains(Directory.GetFiles(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories),
+            f => File.ReadAllText(f).Contains("INSERT INTO strategy_stream_day(", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// (h) THE TWO STREAM TABLES ARRIVE AT THEIR RUNG, AND A CRASH BEFORE ITS STAMP RUNS IT AGAIN OVER WHAT IS THERE. A new
+    /// database has both tables at this build's stamp; a stream written there survives the rung running a second time —
+    /// the tables and every row in place, the stamp one lower — and the keys hold: one stream per run and multiple, one day
+    /// per stream and date.
+    /// </summary>
+    [Fact]
+    public void Trial_returns_arrive_at_their_rung()
+    {
+        Assert.True(Versions.DatabaseSchemaVersion >= StreamRung,
+            $"the stream tables arrive at rung {StreamRung}; this build says {Versions.DatabaseSchemaVersion}");
+
+        var file = Path.Combine(TestEnv.Home, $"streams-rung-{Guid.NewGuid():n}.db");
+        var program = Parsed();
+        var kept = Kept("run-1", 1, "fees=0.001;slippage=0.0002;increment=1;capital=10000", "beef",
+            Day(13, 60, 10_000.5m, 0.00005m, null), Day(14, 0, null, null, null));
+        using (var db = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), Scalar(db, "SELECT value FROM meta WHERE key='schema_version'"));
+            foreach (var table in new[] { "strategy_stream", "strategy_stream_day" })
+                Assert.Equal("1", Scalar(db, $"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"));
+
+            var store = new StrategyStore(db);
+            store.RecordVersion(Version(program));
+            store.RecordRun(Run("run-1", program.StrategyId, Dataset(db)), [], [kept, Lost("run-1", 2, "no venue")]);
+        }
+
+        // A CRASH BETWEEN THE RUNG'S STATEMENTS AND ITS STAMP: every table and row in place, the stamp one lower.
+        using (var raw = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = $"UPDATE meta SET value='{StreamRung - 1}' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var rerun = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), Scalar(rerun, "SELECT value FROM meta WHERE key='schema_version'"));
+            var streams = new StrategyStore(rerun).StreamsOf("run-1");
+            Assert.Equal(Shown([kept, Lost("run-1", 2, "no venue")]), Shown(streams));
+
+            // THE KEYS: a second stream at one multiple, and a second row for one day, are refused by the database itself.
+            var id = Scalar(rerun, "SELECT id FROM strategy_stream WHERE run_id='run-1' AND multiple=1");
+            Assert.Throws<SqliteException>(() => Exec(rerun,
+                "INSERT INTO strategy_stream(run_id, multiple, method) VALUES('run-1', 1, 1)"));
+            Assert.Throws<SqliteException>(() => Exec(rerun,
+                $"INSERT INTO strategy_stream_day(stream_id, day, bars) VALUES({id}, '2026-09-13', 1)"));
+        }
+    }
+
+    static string? Scalar(Database db, string sql) => db.Read(_ =>
+    {
+        using var c = db.Cmd(sql);
+        return Convert.ToString(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    });
+
+    static void Exec(Database db, string sql) => db.Write(_ =>
+    {
+        using var c = db.Cmd(sql);
+        return c.ExecuteNonQuery();
+    });
 }

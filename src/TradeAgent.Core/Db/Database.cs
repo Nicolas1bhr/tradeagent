@@ -1950,6 +1950,52 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','31') ON CONFLICT(key) DO UPDATE SET value='31';");
         }
 
+        if (have < 32)
+        {
+            // A RUN'S DAILY NET RETURN STREAMS — `U-trial-returns` (docs/EDGE-FACTORY.md § 4.5, E1: "daily net returns
+            // stored"). It runs after 31, `U-research-ledger`'s rung, on the orchestrator's numbering of 2026-10-10: rungs land
+            // in ladder order, and the two share no table.
+            //
+            // A RUN ROW HOLDS NO SERIES, and E3 clusters every trial's stream across runs in SQL, so the days are rows of
+            // their own: `strategy_stream`, one per run and cost multiple (1x and 2x TradeAgent's venue cost model), naming
+            // the execution model it was evaluated under, the venue friction's sha, the evaluation's trace sha, its outcome
+            // and the rule's version (`DailyReturns.Version`) — or, with no day, why there is none (`missing`); and
+            // `strategy_stream_day`, one per stream and UTC day. Every decimal is TEXT, as a run's money is: a return
+            // that made a round trip through a double is a different return. An unknown day's mark, return and `since`
+            // are NULL, never 0.
+            //
+            // APPEND-ONLY, WRITTEN ONLY BY THE APP: `StrategyStore.RecordRun` inserts them in the run's own insert,
+            // behind its first-writer return, and nothing updates or deletes a row; no op and no verb reaches either. A run
+            // recorded before this rung has no stream and gains none — no backfill, the evaluations it would need are not
+            // the ones that ran. `IF NOT EXISTS` throughout and the stamp last, because the rungs run in autocommit and a
+            // crash before the stamp runs this again over what it already made.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_stream(
+              id              INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id          TEXT NOT NULL REFERENCES strategy_run(id),
+              multiple        INTEGER NOT NULL,
+              execution_model TEXT,
+              friction_sha256 TEXT,
+              trace_sha256    TEXT,
+              outcome         TEXT,
+              method          INTEGER NOT NULL,
+              missing         TEXT,
+              UNIQUE(run_id, multiple)
+            );
+            CREATE TABLE IF NOT EXISTS strategy_stream_day(
+              stream_id  INTEGER NOT NULL REFERENCES strategy_stream(id),
+              day        TEXT NOT NULL,
+              bars       INTEGER NOT NULL,
+              mark       TEXT,
+              net_return TEXT,
+              since      TEXT,
+              PRIMARY KEY(stream_id, day)
+            );
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','32') ON CONFLICT(key) DO UPDATE SET value='32';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

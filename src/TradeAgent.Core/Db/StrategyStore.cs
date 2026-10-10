@@ -198,6 +198,32 @@ public sealed record StrategyTradeRow(
     decimal Pnl);
 
 /// <summary>
+/// ONE OF A RUN'S DAILY NET RETURN STREAMS (<c>U-trial-returns</c>): the run's account day by day under TradeAgent's venue
+/// cost model at <see cref="Multiple"/> times its fee and slippage — or why there is none.
+///
+/// <para><b>Keyed by the run and the multiple</b>, and written with the run, in its own insert: a re-run over the same
+/// bytes writes nothing, and nothing updates or deletes one. It names what it is a stream OF — the execution model it was
+/// evaluated under (<see cref="ExecutionModel"/>, the four numbers as a run's id hashes them), the venue friction those
+/// numbers came from (<see cref="FrictionSha256"/>, <see cref="Strategy.VenueFriction.Sha256"/>), the trace its days were
+/// computed from (<see cref="TraceSha256"/> — the run's own where its model is exactly the venue's at 1×, an evaluation of
+/// the app's own otherwise) and the rule that computed them (<see cref="Method"/>, <see cref="DailyReturns.Version"/>).</para>
+///
+/// <para><b>A stream that could not be computed is still a row</b>, with <see cref="Missing"/> saying why and no day: bars
+/// that record no venue, a venue whose fee TradeAgent never read, an evaluation refused. A run with NO row here — one
+/// recorded before this build, or the referee's holdout run — is not a stream of no days; it is no stream.</para>
+/// </summary>
+public sealed record StrategyStreamRow(
+    string RunId,
+    int Multiple,
+    string? ExecutionModel,
+    string? FrictionSha256,
+    string? TraceSha256,
+    string? Outcome,
+    int Method,
+    string? Missing,
+    IReadOnlyList<DailyReturn> Days);
+
+/// <summary>
 /// ONE PAGE OF ONE RECORDED RUN'S CLOSED TRADES, OR WHY THERE IS NONE (<c>U-run-trace</c>) — what
 /// <see cref="StrategyStore.ReadTrades"/> answers.
 ///
@@ -345,8 +371,33 @@ public sealed class StrategyStore(Database db)
     /// Records one run and its closed trades in ONE transaction, or leaves the run that is already
     /// there alone — trades included, because a run's trades are part of the run and half of them is
     /// not a result. Returns the run id.
+    ///
+    /// <para><b>And its daily net return streams, after its trades and behind the same return</b>
+    /// (<c>U-trial-returns</c>): a run already recorded keeps the streams it was first recorded with, or none, and a
+    /// re-run over the same bytes writes nothing. A stream naming another run, or a missing one that carries a day, is
+    /// the caller's defect and is refused before anything is written. The referee's holdout run passes none.</para>
     /// </summary>
-    public string RecordRun(StrategyRunRow run, IReadOnlyList<StrategyTradeRow> trades) => db.Write(_ =>
+    public string RecordRun(StrategyRunRow run, IReadOnlyList<StrategyTradeRow> trades,
+        IReadOnlyList<StrategyStreamRow>? streams = null)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        foreach (var stream in streams ?? [])
+        {
+            if (!string.Equals(stream.RunId, run.Id, StringComparison.Ordinal))
+                throw new ArgumentException(
+                    $"a stream of run {stream.RunId} was handed in with run {run.Id}: a stream is recorded with its own run", nameof(streams));
+            if (stream.Multiple < 1)
+                throw new ArgumentException($"a stream's cost multiple is 1 or more, and this one is {stream.Multiple}", nameof(streams));
+            if (stream.Missing is not null && stream.Days.Count > 0)
+                throw new ArgumentException(
+                    $"the {stream.Multiple}x stream of run {run.Id} is missing ({stream.Missing}) and carries {stream.Days.Count} day(s): "
+                    + "a stream with no evaluation has no day", nameof(streams));
+        }
+
+        return Record(run, trades, streams ?? []);
+    }
+
+    string Record(StrategyRunRow run, IReadOnlyList<StrategyTradeRow> trades, IReadOnlyList<StrategyStreamRow> streams) => db.Write(_ =>
     {
         using var insert = db.Cmd($"""
             INSERT INTO strategy_run({RunCols})
@@ -383,6 +434,33 @@ public sealed class StrategyStore(Database db)
                 ("$xp", Sql.D(trade.ExitPrice)), ("$qty", Sql.D(trade.Quantity)),
                 ("$why", trade.ExitReason), ("$fees", Sql.D(trade.Fees)), ("$pnl", Sql.D(trade.Pnl)));
             c.ExecuteNonQuery();
+        }
+
+        // THE STREAMS, AFTER THE TRADES AND BEHIND THE SAME RETURN: written once, with the run, and never again.
+        foreach (var stream in streams)
+        {
+            long id;
+            using (var c = db.Cmd("""
+                INSERT INTO strategy_stream(run_id, multiple, execution_model, friction_sha256, trace_sha256, outcome, method, missing)
+                VALUES($run,$x,$model,$friction,$trace,$outcome,$method,$missing)
+                RETURNING id
+                """,
+                ("$run", run.Id), ("$x", stream.Multiple), ("$model", stream.ExecutionModel),
+                ("$friction", stream.FrictionSha256), ("$trace", stream.TraceSha256), ("$outcome", stream.Outcome),
+                ("$method", stream.Method), ("$missing", stream.Missing)))
+                id = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+            foreach (var day in stream.Days)
+            {
+                using var c = db.Cmd("""
+                    INSERT INTO strategy_stream_day(stream_id, day, bars, mark, net_return, since)
+                    VALUES($stream,$day,$bars,$mark,$net,$since)
+                    """,
+                    ("$stream", id), ("$day", Sql.Day(day.Day)), ("$bars", day.Bars),
+                    ("$mark", day.Mark is { } m ? Sql.D(m) : null), ("$net", day.NetReturn is { } r ? Sql.D(r) : null),
+                    ("$since", day.Since is { } since ? Sql.Day(since) : null));
+                c.ExecuteNonQuery();
+            }
         }
 
         return run.Id;
@@ -460,6 +538,42 @@ public sealed class StrategyStore(Database db)
     {
         using var c = db.Cmd($"SELECT {TradeCols} FROM strategy_trade WHERE run_id=$id ORDER BY ordinal", ("$id", runId));
         return (IReadOnlyList<StrategyTradeRow>)ReadTradeRows(c);
+    });
+
+    /// <summary>
+    /// ONE RUN'S DAILY NET RETURN STREAMS, by multiple, each with its days in date order — THE IN-PROCESS READER, beside
+    /// <see cref="TradesOf"/> and for the reason it is one: it takes no audience, so nothing on the agent-facing pipe calls
+    /// it. Empty for a run with no stream — one recorded before this build, the referee's holdout run, or a run that
+    /// does not exist — which is not a stream of no days: a missing stream is a row, with its reason and no day.
+    /// </summary>
+    public IReadOnlyList<StrategyStreamRow> StreamsOf(string runId) => db.Read(_ =>
+    {
+        var heads = new List<(long Id, StrategyStreamRow Row)>();
+        using (var c = db.Cmd("""
+            SELECT id, run_id, multiple, execution_model, friction_sha256, trace_sha256, outcome, method, missing
+              FROM strategy_stream WHERE run_id=$run ORDER BY multiple
+            """, ("$run", runId)))
+        using (var r = c.ExecuteReader())
+            while (r.Read())
+                heads.Add((r.GetInt64(0), new StrategyStreamRow(
+                    r.GetString(1), r.GetInt32(2), Sql.S(r.GetValue(3)), Sql.S(r.GetValue(4)), Sql.S(r.GetValue(5)),
+                    Sql.S(r.GetValue(6)), r.GetInt32(7), Sql.S(r.GetValue(8)), [])));
+
+        var streams = new List<StrategyStreamRow>(heads.Count);
+        foreach (var (id, head) in heads)
+        {
+            var days = new List<DailyReturn>();
+            using var c = db.Cmd(
+                "SELECT day, bars, mark, net_return, since FROM strategy_stream_day WHERE stream_id=$id ORDER BY day", ("$id", id));
+            using var r = c.ExecuteReader();
+            while (r.Read())
+                days.Add(new DailyReturn(
+                    Sql.DayOf(r.GetString(0)), r.GetInt32(1), Sql.DecN(r.GetValue(2)), Sql.DecN(r.GetValue(3)),
+                    r.IsDBNull(4) ? null : Sql.DayOf(r.GetString(4))));
+            streams.Add(head with { Days = days });
+        }
+
+        return (IReadOnlyList<StrategyStreamRow>)streams;
     });
 
     /// <summary>The most closed trades one page of <see cref="ReadTrades"/> serves. Named in every refusal of a larger limit.</summary>
