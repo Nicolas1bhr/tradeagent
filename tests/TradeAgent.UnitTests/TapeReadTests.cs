@@ -668,6 +668,45 @@ public class TapeReadTests(ITestOutputHelper log)
             TapeLineOf(gw, noon.AddDays(-1)), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (k) THE LOOK BACK STOPS WHERE THE DAY SAYS IT STOPPED, <see cref="TapeDay.LookedBackTo"/>, by arrival. Open interest's
+    /// only delivery before today arrived eight days and five minutes before it — older than the look back, though inside
+    /// the ids the seek walks, which reach <see cref="TapeReader.ArrivalSlack"/> further for the ids' sake — and the premium
+    /// index's eight days less five minutes before it. Open interest's gap began before the look back stopped, "no delivery
+    /// since before" its date; the premium index's at its delivery.
+    /// </summary>
+    [Fact]
+    public async Task A_delivery_older_than_the_look_back_is_no_delivery_before_the_day()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var older = from - TapeReader.GapLookBack - TimeSpan.FromMinutes(5);
+        var within = from - TapeReader.GapLookBack + TimeSpan.FromMinutes(5);
+        using var store = new TapeStore(NewFile());
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", older));
+        store.Append(Attempt(TapeSourceCatalog.Premium, "premium-index", within));
+        var instant = from.AddMinutes(30);
+
+        // THE TAPE'S OWN READING.
+        var day = new TapeReader(store.File).Day(from, to, instant);
+        var oi = Of(day, TapeSourceCatalog.OpenInterest);
+        Assert.Equal(older, oi.Began);
+        Assert.Equal((null, null, from, instant, 0), Shape(Assert.Single(oi.Gaps)));
+        Assert.Equal((within, null, from, instant, 0), Shape(Assert.Single(Of(day, TapeSourceCatalog.Premium).Gaps)));
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 0 min of 30 min so far, 1 gap: {Hm(from)}–{Hm(instant)} (30 min, "
+            + $"no delivery since before {(from - TapeReader.GapLookBack).ToLocalTime():yyyy-MM-dd}, still open; nothing asked)",
+            line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Premium} recorded 0 min of 30 min so far, 1 gap: {Hm(from)}–{Hm(instant)} (30 min, "
+            + $"since {Stamp(within)}, still open; nothing asked)", line, StringComparison.Ordinal);
+    }
+
     static string Counts(string file)
     {
         using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");
