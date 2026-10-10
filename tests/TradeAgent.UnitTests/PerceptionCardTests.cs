@@ -218,7 +218,8 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
     /// once. Then the card itself: its box and its press write the budget, the line beside it reads the day's spending
     /// against it, zero says perception is off, and the owner's daily AI limit is named when it binds first.
     ///
-    /// <para>Make the press save on its first press and the raise goes through unasked.</para>
+    /// <para>Make the press save on its first press and the raise goes through unasked. Let an edit of the box leave a
+    /// half-made press armed and a confirmation that named one figure saves another.</para>
     /// </summary>
     [Fact]
     public void Raising_the_perception_budget_asks_twice_and_lowering_does_not()
@@ -255,6 +256,20 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         Assert.Equal(4m, rig.Budget);
         Assert.Equal("Perception has spent or set aside 0 of 4 USD today.", card.Shown!.Spent);
         Assert.Equal("Perception may now spend up to 4 USD a day", rig.Activity[^1]);
+
+        // A CONFIRMATION COMPLETES ONLY THE AMOUNT IT NAMED: armed for 5, the box changed to 100, the armed press saves
+        // nothing — editing the box changed what the press meant — and 100 asks twice of its own, naming 100.
+        card.BudgetBox.Value = 5m;
+        Press(card.SaveBudget);
+        Assert.True(Ui.IsArmed(card.SaveBudget));
+        Assert.Equal(Labels.RaisePerceptionBudgetArmed(Labels.Money(5m, "USD")), card.SaveBudget.Content);
+        card.BudgetBox.Value = 100m;
+        Press(card.SaveBudget);
+        Assert.Equal(4m, rig.Budget);
+        Assert.True(Ui.IsArmed(card.SaveBudget));
+        Assert.Equal(Labels.RaisePerceptionBudgetArmed(Labels.Money(100m, "USD")), card.SaveBudget.Content);
+        Press(card.SaveBudget);
+        Assert.Equal(100m, rig.Budget);
 
         card.BudgetBox.Value = 0m;
         Press(card.SaveBudget);

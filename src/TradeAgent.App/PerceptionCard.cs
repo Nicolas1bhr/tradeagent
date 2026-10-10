@@ -214,6 +214,10 @@ sealed class PerceptionCard
 
         BudgetBox = Ui.NumberField(ReadOr(_src.Budget, 0m), 0m, 0.5m);
         SaveBudget = BuildSaveBudget(() => ReadOr(_src.Budget, 0m), PendingBudget, () => ReadOr(_src.Currency, ""), Save);
+        // A CONFIRMATION COMPLETES ONLY THE AMOUNT IT NAMED: editing the box changes what the press meant, so a raise armed
+        // against one figure is disarmed by the next one typed — the unconfirmed-orders card's rule, for the same reason.
+        var saveBudget = SaveBudget;
+        BudgetBox.ValueChanged += (_, _) => Ui.DisarmConfirm(saveBudget);
 
         TestButton = Ui.Primary(Labels.PerceptionTest, Test);
         TestButton.HorizontalAlignment = HorizontalAlignment.Left;
