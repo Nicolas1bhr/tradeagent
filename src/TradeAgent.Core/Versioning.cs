@@ -338,8 +338,16 @@ public static class Versions
     /// or promotion it answered a request asked under it with, by kind and id, never a copy of a field. Append-only:
     /// <c>ResearchLedger</c> writes entries and revisions, <c>LedgerLinks</c> writes links, and nothing updates or deletes
     /// a <c>ledger_</c> row. No app table gains a column.</para>
+    ///
+    /// <para><b>32 — a run's daily net return streams</b> (<c>U-trial-returns</c>, after 31 on the orchestrator's numbering of
+    /// 2026-10-10): <c>strategy_stream</c>, one row per run and cost multiple — the model it was
+    /// evaluated under, the venue friction's sha, the evaluation's trace sha, its outcome, the rule's version, or why there
+    /// is none — and <c>strategy_stream_day</c>, one row per stream and UTC day: the bars that closed in it, its mark, its net
+    /// return and the day that return runs from, an unknown day NULL and never 0. Written only by
+    /// <c>StrategyStore.RecordRun</c> in the run's own insert, never updated or deleted; a run before the rung has none and
+    /// gains none (no backfill).</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 31;
+    public const int DatabaseSchemaVersion = 32;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
