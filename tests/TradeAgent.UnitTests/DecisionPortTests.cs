@@ -335,6 +335,10 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
 
         var settled = new AiAttemptStore(rig.Db).Get(answered.AttemptId!)!;
         Assert.Equal(AiAttemptState.ENDED, settled.State);
+        // RUN UNDER NO CANON (U-canon): a perception call sends no AGENTS.md and no system text, so its context names
+        // none — the canon fields are absent, never a guess.
+        Assert.NotNull(settled.Context);
+        Assert.DoesNotContain("\"canon_", settled.Context);
         Assert.Equal("jev-1.13.0", settled.EffectiveModel);
         Assert.Equal(300L, settled.InputTokens);
         Assert.Equal(300m * 0.042m / 1_000_000m, settled.Cost);
