@@ -3273,7 +3273,10 @@ RoleCap = TradeAgentSettings.PerceptionDailyBudget (1; 0 in Unreadable()), Reser
 price }`, in the one transaction that writes the row — never through `TurnMeter`, whose slots are council roles. The day
 counts perception's money; no council share reads it. A ledger that will not take the row refuses the call.
 (3) SENT ONCE: one request per reservation, never a retry (a 429, 529 or 402 is FAILED, and holds the instrument at the
-gate), never a redirect followed; the one response header read is `Retry-After`, handed to the gate; the key
+gate), never a redirect followed; the one response header read is `Retry-After`, handed to the gate — read with the
+status before any body, so a 429 whose page is oversized or cut still holds the instrument; a non-2xx's body is never read,
+and an answer's is read up to `TypeSafeWire.MaxAnswerBytes` (4 MiB) under the request's own timeout, else UNANSWERED with
+its HTTP status kept; the key
 comes from the decision models' own holder (`AppHost.PerceptionKey`, never `HarnessKey.Shared`) for the endpoint's
 origin, read at the send. Held in `LiveAttempts.Shared` while it flies. (4) RECORDED on the tape before it settles: one
 `decision_call` row per sent call (tape.db rung 2, `TapeStore.Schema` 2), keyed by the attempt id — instrument, URL,

@@ -272,6 +272,63 @@ public class DecisionRateGateTests(ITestOutputHelper log) : IDisposable
         Assert.Equal(2, broken.Requests.Count);
     }
 
+    // ---- (c2) -----------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c2) THE HOLD SURVIVES A BODY THE WIRE CANNOT READ. A 429 asking for thirty seconds whose page is larger than the
+    /// wire ever reads (<see cref="TypeSafeWire.MaxAnswerBytes"/>) is still FAILED <c>http-429</c> — the status and its
+    /// <c>Retry-After</c> are taken from the headers before any body, and a non-2xx's body is never read — so the call a
+    /// second later is refused in words with no second request. A 2xx whose answer is over that bound is UNANSWERED with its
+    /// status kept, and nothing of it is served.
+    ///
+    /// <para>Send buffered — the whole body read before the status is looked at — and the 429 becomes a lost answer with
+    /// no status and no hold: the next call a second later is sent.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_hosts_hold_survives_a_body_the_wire_cannot_read()
+    {
+        using var rig = new DecisionPortTests.Rig();
+        using var host = new FakeProvider
+        {
+            AlwaysAnswer = HttpStatusCode.TooManyRequests, RetryAfter = "30", ErrorBody = new byte[TypeSafeWire.MaxAnswerBytes + 1]
+        };
+        var gate = new DecisionRateGate();
+        var at = Second;
+        using var wire = Wire(DecisionPortTests.PointedAt(host), host.Holding(_pasted), rig, gate, () => at);
+
+        var failed = await wire.DecideAsync(Ask());
+        log.WriteLine($"a 429 with a page over the bound: {failed.Status} {failed.ErrorClass} {failed.HttpStatus}");
+        foreach (var mark in host.Marks) log.WriteLine(mark);
+        Assert.Equal(DecisionStatus.FAILED, failed.Status);
+        Assert.Equal("http-429", failed.ErrorClass);
+        Assert.Equal(429, failed.HttpStatus);
+        Assert.Equal(TypeSafe.Reservation, new AiAttemptStore(rig.Db).Get(failed.AttemptId!)!.Cost);
+
+        at = Second.AddSeconds(1);
+        var held = await wire.DecideAsync(Ask());
+        log.WriteLine($"a second on: {held.Status} — {held.Refusal}");
+        Assert.Equal(DecisionStatus.REFUSED, held.Status);
+        Assert.Equal($"Jev 1.13 at TypeSafe answered 429 (too many requests) at {DecisionRateGate.When(Second, Second)} and asked "
+                     + $"to be left until {DecisionRateGate.When(Second.AddSeconds(30), Second)}. Nothing goes to Jev 1.13 at "
+                     + $"TypeSafe before {DecisionRateGate.When(Second.AddSeconds(30), at)}; this call was not sent, and nothing "
+                     + "was reserved or charged.", held.Refusal);
+        Assert.Single(host.Requests);
+        Assert.Equal(1, Rows(rig));
+
+        // A 2xx WHOSE ANSWER IS OVER THE BOUND: unanswered, its status kept, nothing of it served.
+        using var big = new FakeProvider();
+        big.Answer(new string(' ', TypeSafeWire.MaxAnswerBytes)
+                   + FakeProvider.SystemOne("jev-1.13.0", DecisionPortTests.TriageAnswers, 300, 20));
+        using var bigWire = Wire(DecisionPortTests.PointedAt(big), big.Holding(_pasted), rig, new DecisionRateGate(), () => Second);
+        var lost = await bigWire.DecideAsync(Ask());
+        log.WriteLine($"a 200 over the bound: {lost.Status} {lost.ErrorClass} {lost.HttpStatus}");
+        Assert.Equal(DecisionStatus.UNANSWERED, lost.Status);
+        Assert.Equal(200, lost.HttpStatus);
+        Assert.Empty(lost.Answers);
+        Assert.Null(lost.InputTokens);
+        Assert.Single(big.Requests);
+    }
+
     // ---- (d) ------------------------------------------------------------------------------------------------------
 
     /// <summary>

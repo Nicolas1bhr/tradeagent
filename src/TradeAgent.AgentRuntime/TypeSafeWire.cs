@@ -31,7 +31,9 @@ namespace TradeAgent.AgentRuntime;
 /// <see cref="DecisionRateGate"/> — the instrument's requests and tokens a second, TradeAgent's own bound where none is
 /// documented, and the hold a 429, 529 or 402 put on it — after the structural refusals and BEFORE the key is read or
 /// anything reserved. A refusal there is REFUSED in words and waits for nothing. The one response header read is
-/// <c>Retry-After</c>, handed to the gate.</para>
+/// <c>Retry-After</c>, handed to the gate — read with the status before any body, so a host's 429 holds the instrument
+/// whatever its page; a non-2xx's body is never read, and an answer's is read up to <see cref="MaxAnswerBytes"/> under
+/// the request's own timeout.</para>
 ///
 /// <para><b>Reserved before it is sent, in the main database, by its own rule.</b> Every call is a row of the launch
 /// ledger under <see cref="AppPrincipals.Perception"/>, admitted by <see cref="AiAttemptStore.Begin"/> against the
@@ -112,10 +114,11 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         _currency = currency ?? (() => CostCatalog.Read().Costs?.Currency);
         _now = now ?? (() => DateTimeOffset.UtcNow);
         _gate = gate ?? DecisionRateGate.Shared;
+        // The answer's bound is MaxAnswerBytes, applied where the body is read (SendAsync): the headers come first, so the
+        // client's own buffer limit would never be reached.
         _http = new HttpClient(transport ?? new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true)
         {
-            Timeout = requestTimeout ?? DefaultRequestTimeout,
-            MaxResponseContentBufferSize = MaxAnswerBytes
+            Timeout = requestTimeout ?? DefaultRequestTimeout
         };
     }
 
@@ -392,25 +395,24 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         };
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
 
-        int status;
-        string text;
-        RetryConditionHeaderValue? retry;
+        // ONE DEADLINE OVER THE WHOLE EXCHANGE, the wire's own figure: sent with the headers read first, HttpClient's
+        // timeout ends at the headers, so the body's read is bounded by this — the same figure, raised by nothing.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(_http.Timeout);
+
+        HttpResponseMessage response;
         try
         {
-            using var response = await _http.SendAsync(message, ct);
-            status = (int)response.StatusCode;
-            // THE ONE HEADER READ (U-decision-card): the host's word on when to come back. Parsed by the platform's own
-            // reader; a value it cannot read comes back null, which is the same as none.
-            retry = response.Headers.RetryAfter;
-            text = await response.Content.ReadAsStringAsync(ct);
+            // THE STATUS AND THE HEADERS FIRST, the body after: a host's "not now" is read even when its page is not.
+            response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return Lost("cancelled", null);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
-            // HttpClient's own timeout arrives as a cancellation nobody asked for.
+            // HttpClient's own timeout, or the exchange's deadline, arrives as a cancellation nobody asked for.
             return Lost("timeout", null);
         }
         catch (HttpRequestException)
@@ -424,12 +426,48 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             return Lost("send-failed", null);
         }
 
+        int status;
+        string text;
+        using (response)
+        {
+            status = (int)response.StatusCode;
+
+            // A HOST'S ERROR IS ITS STATUS: FAILED http-<status>, its Retry-After handed to the gate, and its body never read
+            // — a page larger than the wire reads, or cut short, cannot take the status or the hold away with it.
+            if (status is < 200 or > 299)
+            {
+                // THE ONE HEADER READ (U-decision-card): the host's word on when to come back. Parsed by the platform's own
+                // reader; a value it cannot read comes back null, which is the same as none.
+                var retry = response.Headers.RetryAfter;
+                var failedAt = _now();
+                return new Sent(Answer(DecisionStatus.FAILED) with { ErrorClass = $"http-{status}", HttpStatus = status, Latency = clock.Elapsed },
+                    requestedAt, failedAt, null, retry?.Delta is { } wait ? failedAt + wait : retry?.Date);
+            }
+
+            // AN ANSWER, READ UP TO THE BOUND AND UNDER THE SAME DEADLINE: one it cannot read whole is UNANSWERED, its status
+            // kept.
+            try
+            {
+                await response.Content.LoadIntoBufferAsync(MaxAnswerBytes, deadline.Token);
+                text = await response.Content.ReadAsStringAsync(deadline.Token);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return Lost("cancelled", status);
+            }
+            catch (OperationCanceledException)
+            {
+                return Lost("timeout", status);
+            }
+            catch (Exception)
+            {
+                // Over MaxAnswerBytes, or cut short by the host or the network.
+                return Lost("transport", status);
+            }
+        }
+
         var latency = clock.Elapsed;
         var endedAt = _now();
-
-        if (status is < 200 or > 299)
-            return new Sent(Answer(DecisionStatus.FAILED) with { ErrorClass = $"http-{status}", HttpStatus = status, Latency = latency },
-                requestedAt, endedAt, null, retry?.Delta is { } wait ? endedAt + wait : retry?.Date);
 
         var read = Read(text);
         if (read.Answers is { } answers && !Matches(asked, answers))
