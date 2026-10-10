@@ -794,6 +794,39 @@ Their folders sit side by side: **Open the AI's folder** on the Dashboard gives 
 Director's, and `research` beside it is the other one's. Each has an `in` folder — what TradeAgent
 delivered to it — and an `out` folder, which is the only way anything leaves.
 
+### Perception — Jev's key, its budget and a test question
+
+TradeAgent can ask a *decision model* — Jev, at TypeSafe or through OpenRouter — short typed questions,
+each answered with probabilities. Nothing asks it anything yet except the test on its card, and no AI
+can reach any of it. Everything about it is on the **Safety** page, in the **Perception** card under
+*What the AI costs*:
+
+- **Which decision model.** Two buttons, one press each. The one you choose is the one whose price and
+  limits the card shows and the one a key you paste is kept for.
+- **The key.** Paste it into the box and press **Use this key**. Like your worker's key it is kept in
+  memory only, for one address, and never written to disk — paste it again after a restart. The card
+  shows the address it is kept for, never the key; **Forget the key** takes one press.
+- **The budget.** The most perception may spend in a day, inside your daily AI limit and never on top
+  of it. Raising it asks a second time and names the figure; lowering it, or 0, saves at once. Beside
+  it the card says what perception has spent today, and says so when your daily limit is the one that
+  will stop it first.
+- **What it costs and how fast it may be asked**, each with the day and the page it was read from.
+  Where the host documents no rate — OpenRouter does not, for this model — TradeAgent applies its own
+  bound: one question in flight at a time and one a second. If the host answers "too many requests",
+  "overloaded" or "payment required", TradeAgent asks it nothing more until the time it named, or for a
+  short wait of its own that grows with each such answer. A question it holds back costs nothing and
+  the card says why, and until when; TradeAgent never retries or waits on its own.
+- **The terms**, in two sentences with both agreements' addresses. Through OpenRouter, which agreement
+  covers Jev's answers is not known, and the card says so.
+- **Ask a test question.** One press asks the model your key is kept for one fixed, neutral question —
+  nothing of yours and no market data — and the most it can cost, one question's worth, is written
+  beside it. The card then shows what happened: who answered and whether it was the exact model
+  TradeAgent asked for, the probability it gave, how long it took, and what it cost — the host's own
+  bill when it reports one, otherwise TradeAgent's estimate at the list price, and it says which. A
+  question that failed keeps the most it could have cost as its cost, because nobody said what it used.
+
+The first test question you ask is the first request TradeAgent has ever sent to either host.
+
 ### Where its memory lives
 
 Every so often the AI starts a fresh session and remembers nothing of the previous one. It keeps two
