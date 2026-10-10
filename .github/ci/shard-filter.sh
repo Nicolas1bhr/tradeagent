@@ -5,8 +5,9 @@
 #   shard-filter.sh filter <k>         shard k's test filter, to AND with the step's category filter: the classes
 #                                      listed for k, or for the LAST shard the COMPLEMENT — every test of a class
 #                                      listed nowhere, so a new class runs there by construction
-#   shard-filter.sh check <k> <names>  a ::warning for each class listed for k that no name in <names> belongs to
-#                                      (class or test names, one per line; '-' reads stdin): a stale line
+#   shard-filter.sh check <k> <names>  after shard k ran: <names> is the class names its tests ran under, one per
+#                                      line ('-' reads stdin). An ::error and exit 1 for a class that should not
+#                                      have run there; a ::warning for a class listed for k that ran nothing there
 #
 # EXACTLY ONCE. A listed class C is matched as FullyQualifiedName~C. or FullyQualifiedName~C+ — its own tests and
 # those of its nested types, never a class whose name merely starts with C — and the complement negates every
@@ -14,6 +15,14 @@
 # VSTest compares names ignoring case, so this script does too: a class listed twice in any spelling, or listed
 # inside another listed class (C+Inner beside C), would match two shards, and the file is REFUSED — exit 1,
 # nothing on stdout, every problem named — in every mode, before anything is printed.
+#
+# BUT ~ IS A SUBSTRING MATCH, so a class whose full name CONTAINS a listed one followed by "." or "+" — say
+# Other.TradeAgent.Tests.Unit.FooTests.TradeAgent.Tests.Unit.BarTests, with Foo and Bar in different shards —
+# is matched by both. No class here is named like that, and `check` makes one a red rather than a double run
+# nobody sees: in shard k every class that ran must BE a class listed for k or be nested in one, and in the last
+# shard no class that ran may be, or be nested in, any listed class. A violation names the class, the shard and
+# every line whose filter matches it. A listed class that ran nothing is only a stale line — its tests, under
+# their new name, run in the last shard — and stays a warning.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -76,11 +85,26 @@ awk -v mode="$mode" -v want="$k" -v list="$file" '
   }
   FILENAME != list && !validated { validate() }
 
-  # THE NAMES (check only): which listed classes of the wanted shard ran a test.
+  # THE NAMES (check only): each class that ran in the wanted shard, against the lines that put it there.
   {
-    sub(/\r$/, ""); n = tolower($0)
+    sub(/\r$/, ""); if ($0 == "") next
+    n = tolower($0); own = 0; inlist = 0
     for (i = 1; i <= m; i++)
-      if (shard[i] == want && (n == low[i] || index(n, low[i] ".") == 1 || index(n, low[i] "+") == 1)) hit[i] = 1
+      if (n == low[i] || index(n, low[i] "+") == 1) {
+        inlist = 1
+        if (shard[i] == want) { own = 1; hit[i] = 1 }
+      }
+    if (want < count ? own : !inlist) next
+    lines = ""
+    for (i = 1; i <= m; i++)
+      if (index(n ".", low[i] ".") || index(n, low[i] "+"))
+        lines = lines (lines == "" ? "" : ", ") "line " at[i] " (shard " shard[i] ", " cls[i] ")"
+    if (lines == "") lines = "no line; this script does not model the filter that ran it"
+    if (want < count)
+      printf "::error title=A class ran in a shard that does not list it::%s ran in shard %d, which neither lists it nor a class it is nested in, so it may run in more than one shard. Matched by: %s.\n", $0, want, lines
+    else
+      printf "::error title=A listed class ran in the complement::%s ran in shard %d, the complement, though it is listed or nested in a listed class, so it runs twice. Matched by: %s.\n", $0, want, lines
+    wrong++
   }
 
   END {
@@ -108,8 +132,9 @@ awk -v mode="$mode" -v want="$k" -v list="$file" '
           printf "::warning title=A class listed in .github/ci/test-shards.txt ran no test::%s is listed for shard %d on line %d and no test of it ran there. Rename or remove the line; a class listed nowhere runs in shard %d, the last.\n", cls[i], want, at[i], count
         }
       }
-      if (want == count) print "shard " want " is the complement and lists no class: nothing to check"
-      else print "shard " want ": " listed " listed classes, " listed - stale " ran a test, " stale " ran none"
+      if (want == count) print "shard " want ", the complement: " wrong + 0 " classes ran that a line lists"
+      else print "shard " want ": " listed " listed classes, " listed - stale " ran a test, " stale " ran none; " wrong + 0 " classes ran that it does not list"
+      if (wrong) exit 1
     }
   }
 ' "$@"

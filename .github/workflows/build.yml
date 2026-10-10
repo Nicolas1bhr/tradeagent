@@ -159,9 +159,12 @@ jobs:
           dotnet test TradeAgent.sln -c Release --no-build \
             --filter "Category=Timing" --logger "trx;LogFileName=results-timing-retry.trx"
 
-      # A LISTED CLASS THAT RAN NO TEST IS NAMED, as a warning: a class renamed or deleted leaves a stale line in
-      # test-shards.txt, while its tests, under their new name, run in the last shard. Read from this shard's trx.
-      - name: Name every listed class of this shard that ran no test
+      # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
+      # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
+      # filters match by substring, so a class whose name contains a listed one could run in two shards, and this
+      # is where that would show. A WARNING for a listed class that ran nothing here: a class renamed or deleted
+      # leaves a stale line, while its tests, under their new name, run in the last shard.
+      - name: Check that this shard ran exactly its classes
         if: ${{ !cancelled() && matrix.shard && steps.suite.outcome != 'skipped' }}
         shell: bash
         run: |
