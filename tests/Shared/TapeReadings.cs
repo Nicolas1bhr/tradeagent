@@ -5,6 +5,17 @@ using TradeAgent.Core.Db;
 namespace TradeAgent.Tests;
 
 /// <summary>
+/// THE FEATURE THE BACKTEST'S AND THE PAPER RUNNER'S TESTS READ (<c>U-runner-features</c>): BTCUSDT's funding off the
+/// premium index, five seconds of latency, and a reading of the last two hours — so an hourly program sees a reading of
+/// the hour before.
+/// </summary>
+public static class FeatureProgramSpec
+{
+    public const string Funding =
+        """{"kind":"latest","input":{"source":"binance-um-premium","series":"premium-index","subject":"BTCUSDT","field":"lastFundingRate"},"latency_s":5,"max_age_s":7200}""";
+}
+
+/// <summary>
 /// A TAPE OF THE TEST'S OWN, IN A TEMPORARY FILE, WRITTEN THROUGH <see cref="TapeStore"/> — the collector's one writer —
 /// with readings of BTCUSDT's premium index stamped and received when the test says (<c>U-language-v2a</c>'s helper,
 /// lifted here by <c>U-runner-features</c> so the paper runner's tests write the tape the backtest's tests do). No

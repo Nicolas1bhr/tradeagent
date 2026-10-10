@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Features;
 using TradeAgent.Core.Strategy;
 
 namespace TradeAgent.Gateway;
@@ -69,8 +71,34 @@ public sealed class ForwardRuns
     readonly ForwardBarStore _bars;
     readonly VenueStore _venues;
     readonly Func<DateTimeOffset> _now;
+    readonly TapeReader? _tape;
 
-    public ForwardRuns(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null)
+    /// <summary>
+    /// EACH RUN'S FEATURE VALUES ALREADY READ, BY CLOSE (<c>U-runner-features</c>) — served again by
+    /// <see cref="FeatureFeed.ForPaper"/> so a pass reads the tape only for the closes it has not read. No state a restart
+    /// loses: a value at a close that has passed is fixed, so a restart, which holds none, reads the same values again
+    /// and decides the same (<c>FeatureProgramRunnerTests</c> (h)). Replaced whole at the end of each pass that stepped
+    /// the run, and dropped when the run ends.
+    /// </summary>
+    readonly ConcurrentDictionary<string, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<FeatureValue>>> _values =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The absences already said on <c>forward_run_feature_absent</c>, by run, feature and close — so a live close a later
+    /// pass decides again says nothing twice. Engineering only; a restart may say the newest one once more.
+    /// </summary>
+    readonly ConcurrentDictionary<string, HashSet<(int Feature, DateTimeOffset Close)>> _said = new(StringComparer.Ordinal);
+
+    /// <param name="gateway">The gateway every intent is dispatched through.</param>
+    /// <param name="db">The installation's database.</param>
+    /// <param name="now">The runner's clock.</param>
+    /// <param name="tape">
+    /// THE MARKET-CONTEXT TAPE, READ-ONLY, AS THE COMPOSITION ROOT HOLDS IT (<c>U-runner-features</c>) — or null for a host
+    /// with no tape open, where a run of a program that reads a feature is ended in words. Handed here and never read
+    /// off <see cref="TradingGateway.Tape"/>, which a connector switch sets on a new gateway only after it exists while a
+    /// pass may already be running on it: a run must not end for a tape that is open.
+    /// </param>
+    public ForwardRuns(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null, TapeReader? tape = null)
     {
         ArgumentNullException.ThrowIfNull(gateway);
         ArgumentNullException.ThrowIfNull(db);
@@ -82,10 +110,14 @@ public sealed class ForwardRuns
         _now = now ?? (() => DateTimeOffset.UtcNow);
         // THE SERVED READ, ON THE RUNNER'S OWN CLOCK: a check's seven days are measured on it (U-venue-verify).
         _venues = new VenueStore(db, _now);
+        _tape = tape;
     }
 
     /// <summary>The gateway this runner dispatches through. A host that switched platforms builds a new one.</summary>
     public TradingGateway Gateway => _gateway;
+
+    /// <summary>The tape this runner reads features from, or null for none. A host that opened its tape builds a new one.</summary>
+    public TapeReader? Tape => _tape;
 
     /// <summary>How many deployments one pass looks at. The ledger is small; this is a bound.</summary>
     public const int RunsLookedAt = 200;
@@ -103,11 +135,13 @@ public sealed class ForwardRuns
     public async Task<IReadOnlyList<ForwardRunState>> AdvanceAsync(CancellationToken ct = default)
     {
         var states = new List<ForwardRunState>();
+        var active = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var head in _deployments.All(RunsLookedAt))
         {
             ct.ThrowIfCancellationRequested();
             if (_deployments.ById(head.Id) is not { IsActive: true } row) continue;
+            active.Add(row.Id);
 
             try { states.Add(await AdvanceOneAsync(row, ct)); }
             catch (OperationCanceledException) { throw; }
@@ -117,6 +151,10 @@ public sealed class ForwardRuns
                     metadataJson: Json.Write(new { deployment = row.Id }));
             }
         }
+
+        // WHAT IS KEPT OF A RUN THAT IS NO LONGER ACTIVE IS DROPPED: its values, and the absences it said.
+        foreach (var id in _values.Keys.Where(k => !active.Contains(k))) _values.TryRemove(id, out _);
+        foreach (var id in _said.Keys.Where(k => !active.Contains(k))) _said.TryRemove(id, out _);
 
         return states;
     }
@@ -143,6 +181,12 @@ public sealed class ForwardRuns
         if (Refuses(program) is { } refused)
             return await EndAsync(deployment, refused, ct);
 
+        // A PROGRAM THAT READS A FEATURE RUNS ON ITS VALUES OR NOT AT ALL (`U-runner-features`): on a host with no tape
+        // open it is ended here, in words, before anything is settled, replayed or sent — never stepped as though every
+        // value were absent.
+        if (program.Features.Count > 0 && _tape is null)
+            return await EndAsync(deployment, NoTape(program), ct);
+
         // WHAT HAS AN ANSWER, FIRST, AND THE CURSOR OVER THE BARS THAT ARE FINISHED. No wire call is
         // made here: it reads each operation's own order row. Doing it before the replay is what lets
         // this pass dispatch at all — the frontier below is the cursor's other half.
@@ -162,6 +206,23 @@ public sealed class ForwardRuns
         var grid = state.Grid;
         var resampler = program.Bars == StrategyBars.OneMinute ? null : new BarResampler(grid);
         var books = Books(deployment, bars, grid);
+
+        // THE FEATURES, READ AS THE BACKTEST READS THEM (`U-runner-features`): one feed for this pass, through
+        // `FeatureFeed.ForPaper` — the backtest's own path, under the paper runner's audience, which reads no holdout
+        // window — serving the closes this run has already read from what it read and reading the tape for the rest, up
+        // to this pass's last declared close and never past it. ASKED EVERY PASS, OF THE DATASET LEDGER ONLY: a run whose
+        // reads, from its first close less the longest reach to that last close, reach a holdout window is ENDED in the
+        // window's words — before its first bar on a first pass, and at the pass after a later cutoff, closing its book
+        // as any end does. The evidence rule outranks a paper run's continuity.
+        var known = program.Features.Count > 0 && _values.TryGetValue(deployment.Id, out var held) ? held : null;
+        using var feed = program.Features.Count > 0
+            ? FeatureFeed.ForPaper(_tape!, _gateway.Datasets, program, LastClose(grid, deployment.StartedAt, bars), known)
+            : null;
+        if (feed?.Refusal(FirstClose(grid, deployment.StartedAt)) is { } withheld)
+            return await EndAsync(deployment, Withheld(withheld), ct);
+        var kept = feed is null ? null : new Dictionary<DateTimeOffset, IReadOnlyList<FeatureValue>>();
+        var present = new bool[program.Features.Count];
+        Array.Fill(present, true);
 
         // THE FRONTIER, AND IT IS THE CURSOR'S OTHER HALF: THE EARLIEST BAR THIS RUN HAS AN OPERATION
         // ON THAT THE CURSOR HAS NOT REACHED. Nothing is planned past it, and that is the whole of
@@ -353,7 +414,24 @@ public sealed class ForwardRuns
                     ? account with { BarsSinceEntry = books.At(bar, closed.OpenTime).BarsSinceEntry }
                     : account;
 
-                var outcome = StrategyEvaluator.Step(state, closed, reading);
+                // EACH DECLARED FEATURE'S VALUE AT THIS BAR'S CLOSE, AS IT HAD ARRIVED BY THEN LESS ITS LATENCY — the
+                // instant its decision is taken (`BarGrid.EndOf`), exactly as `Backtest.Run` asks. A feed that halts —
+                // a day more than one read serves, or a cutoff set while this pass read — ends the run in its words.
+                IReadOnlyList<FeatureValue>? values = null;
+                if (feed is not null)
+                {
+                    var close = grid.EndOf(closed.OpenTime);
+                    var answer = feed.At(close);
+                    if (answer.Halt is { } halt)
+                        return await EndAsync(deployment, Halted(halt), ct, state, replayed, skipped, last, account);
+
+                    values = answer.Values!;
+                    kept![close] = values;
+                    if (live) SayAbsences(deployment, program, close, values, present);
+                    else for (var f = 0; f < values.Count; f++) present[f] = values[f].Present;
+                }
+
+                var outcome = StrategyEvaluator.Step(state, closed, reading, values);
                 replayed++;
 
                 // A FAULT IS STICKY AND ENDS THE RUN. `docs/COUNCIL.md`: an interpreter fault is a
@@ -411,6 +489,9 @@ public sealed class ForwardRuns
         // FINISHED. A refusal is an answer: an operation a gate said no to is over, nothing was sent,
         // and a run that stalled on one would never take another bar.
         _gateway.SettleAndAdvance(deployment, _now());
+
+        // AND THE VALUES THIS PASS READ, KEPT FOR THE NEXT: every close it decided, from the run's first.
+        if (kept is not null) _values[deployment.Id] = kept;
 
         return new ForwardRunState(deployment, state, replayed, skipped, last, null) { Account = account };
     }
@@ -833,17 +914,16 @@ public sealed class ForwardRuns
 
     /// <summary>
     /// THE DECLARATION KINDS THIS RUNNER IMPLEMENTS (<c>U-language-v2a</c> item 2; R05 row 10): every kind this build
-    /// parses but <c>feature</c>. It computes no feature value — <c>U-runner-features</c> values features at its decision
-    /// instant, absent meaning no decision, and lifts this — so a program that reads one is refused here rather than
-    /// stepped without its inputs.
+    /// parses. <c>feature</c> among them since <c>U-runner-features</c>: each declared feature is valued at every close the
+    /// runner decides, through the backtest's own <see cref="FeatureFeed"/> — its kinds are the evaluator's, so no kind is
+    /// refused here — and absent means no decision. <see cref="Refuses"/> stays for the next declaration a reader lacks.
     ///
     /// <para><b><c>max_capital_fraction</c> among them</b> (<c>U-size-cap</c>): an entry's size is the evaluator's
     /// (<c>StrategyEvaluator.Quantity</c>), which applies the cap to the capital this runner hands it — the allocation's
     /// own ceiling (<see cref="Capital"/>) — before <see cref="Sized"/> rounds it down, so what is sent is the capped size.
     /// The gateway's ceilings are untouched: they still refuse an order whole and nothing makes one smaller to fit.</para>
     /// </summary>
-    public static readonly IReadOnlyList<string> Implements =
-        [.. StrategyDeclarations.All.Where(k => k != StrategyDeclarations.Feature)];
+    public static readonly IReadOnlyList<string> Implements = [.. StrategyDeclarations.All];
 
     /// <summary>
     /// WHY THIS RUNNER WILL NOT STEP <paramref name="program"/>, IN WORDS — or null when it will: the program requires a
@@ -854,13 +934,112 @@ public sealed class ForwardRuns
     public static string? Refuses(StrategyProgram program)
     {
         ArgumentNullException.ThrowIfNull(program);
-        if (StrategyDeclarations.Refusal(program, Implements, "this build's paper runner") is not { } words) return null;
+        return StrategyDeclarations.Refusal(program, Implements, "this build's paper runner") is { } words
+            ? words + ". It was ended before a bar was stepped, and nothing was sent"
+            : null;
+    }
 
-        var reads = program.Features.Count == 0
-            ? ""
-            : $" It reads {string.Join(", ", program.Features.Select(f => $"`{f.Name}`"))}, and this runner computes no feature "
-              + "value yet: programs that read features run on paper after a later update.";
-        return words + "." + reads + " It was ended before a bar was stepped, and nothing was sent";
+    /// <summary>
+    /// WHAT THE RUNNER SAYS WHEN A PROGRAM READS FEATURES AND THIS HOST HAS NO TAPE OPEN (<c>U-runner-features</c>), on the
+    /// deployment's line, to Research and in <see cref="CannotRun"/> — the same sentence, so the sweep starts no
+    /// replacement until a tape is open.
+    /// </summary>
+    static string NoTape(StrategyProgram program) =>
+        $"this program reads {program.Features.Count.ToString(CultureInfo.InvariantCulture)} feature(s) — "
+        + string.Join(", ", program.Features.Select(f => $"`{f.Name}`"))
+        + " — and this host has no market-context tape open to read them from, so the paper runner cannot value them at "
+        + "its closes: a program that reads a feature runs on its values as they had arrived, or not at all — never as "
+        + "though every value were absent. TradeAgent opens the tape itself when it starts, and the account owner's "
+        + "activity log says why it is not open; a run of this version starts again by itself once one is";
+
+    /// <summary>A paper run's reads reaching a holdout window, in the feed's words, and what happens next.</summary>
+    static string Withheld(string words) =>
+        words + "; a run of this version starts again by itself once one starting then would read nothing held";
+
+    /// <summary>A feed that halted at a close, in its words — a day more than one read serves, or a cutoff set since.</summary>
+    static string Halted(string words) =>
+        "the program's features could not be read at a close this run decides: " + words;
+
+    /// <summary>
+    /// THE FIRST CLOSE A RUN STARTED AT <paramref name="start"/> CAN DECIDE: the close of the program's bar holding that
+    /// instant — the partial bar a run sees from its start (<c>docs/CONTRACTS.md</c> "The runner"), or the one before the
+    /// bar its first minute opens, which only makes the reads asked about longer, never shorter.
+    /// </summary>
+    static DateTimeOffset FirstClose(BarGrid grid, DateTimeOffset start) => grid.EndOf(grid.StartOf(start));
+
+    /// <summary>
+    /// THE LAST CLOSE THIS PASS CAN DECIDE: that of the last of the program's bars that has closed by the end of the newest
+    /// minute read (<see cref="ClosedThrough"/>) — and the first close while there is none, so a pass with no closed bar
+    /// still asks the holdout about the first one.
+    /// </summary>
+    static DateTimeOffset LastClose(BarGrid grid, DateTimeOffset start, IReadOnlyList<ForwardBar> bars)
+    {
+        var first = FirstClose(grid, start);
+        if (bars.Count == 0) return first;
+        var last = grid.EndOf(ClosedThrough(grid, bars[^1].OpenTime));
+        return last > first ? last : first;
+    }
+
+    /// <summary>
+    /// A LIVE VALUE TURNING ABSENT, SAID ONCE (<c>U-runner-features</c>): one engineering line,
+    /// <c>forward_run_feature_absent</c> — the run, the close, the feature, the evaluator's words and the source's last
+    /// delivery when that is older than twice its cadence plus 30 s (the tape's own gap rule, <c>TapeReader.Day</c>) —
+    /// on the first live close a feature has no value after a close it had one, and not again until it has one. No
+    /// decision was taken on it: the evaluator counts the event undefined, and protection acted on the minute as ever.
+    /// </summary>
+    void SayAbsences(StrategyDeploymentRow deployment, StrategyProgram program, DateTimeOffset close,
+        IReadOnlyList<FeatureValue> values, bool[] present)
+    {
+        for (var f = 0; f < values.Count; f++)
+        {
+            var was = present[f];
+            present[f] = values[f].Present;
+            if (values[f].Present || !was) continue;
+
+            var said = _said.GetOrAdd(deployment.Id, _ => []);
+            lock (said)
+                if (!said.Add((f, close))) continue;
+
+            var feature = program.Features[f];
+            var now = _now();
+            var sources = feature.Spec.Inputs.Select(i => i.Source).Distinct(StringComparer.Ordinal).ToList();
+            DateTimeOffset? delivered = null;
+            var stale = false;
+            try
+            {
+                var recording = _tape!.Recording(now);
+                foreach (var source in sources)
+                {
+                    var at = recording.Sources.FirstOrDefault(r => string.Equals(r.Source, source, StringComparison.Ordinal))
+                        ?.LastReceivedAt;
+                    var allowed = _tape.Row(source) is { Cadence: var cadence } && cadence > TimeSpan.Zero
+                        ? 2 * cadence + TapeSourceCatalog.LiveTolerance
+                        : TimeSpan.Zero;
+                    if (at is null || now - at.Value > allowed)
+                    {
+                        stale = true;
+                        if (at is { } t && (delivered is null || t < delivered)) delivered = t;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // The line is said without the delivery rather than not at all: the tape's recording read is a
+                // diagnostic beside it, and an unreadable one is the tape's own line to say.
+            }
+
+            _gateway.Log.TryEngineering("Gateway", "forward_run_feature_absent", "warn",
+                metadataJson: Json.Write(new
+                {
+                    deployment = deployment.Id,
+                    close,
+                    feature = feature.Name,
+                    why = values[f].Absent,
+                    source = string.Join(", ", sources),
+                    last_delivered = stale ? delivered : null,
+                    delivered_never = stale && delivered is null ? true : (bool?)null
+                }));
+        }
     }
 
     /// <summary>What the runner says when it cannot run a version, on the deployment's line and to Research.</summary>
@@ -896,6 +1075,8 @@ public sealed class ForwardRuns
         EvaluationState? state = null, int replayed = 0, int skipped = 0,
         DateTimeOffset? last = null, AccountReading? account = null)
     {
+        _values.TryRemove(deployment.Id, out _);
+        _said.TryRemove(deployment.Id, out _);
         await _gateway.EndPaperDeploymentAsync(deployment.Id, why, ct);
         _gateway.Log.TryEngineering("Gateway", "forward_run_ended", "warn",
             metadataJson: Json.Write(new { deployment = deployment.Id, why }));
