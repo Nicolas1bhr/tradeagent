@@ -251,4 +251,115 @@ public class BacktestMetricsTests(ITestOutputHelper log)
         Assert.Equal("every figure", only.Field);
         Assert.Contains("nothing was measured at all", only.Why);
     }
+
+    // ---- U-trial-returns: the daily net returns, from the trace, its grid and its capital ---------------------------
+
+    /// <summary>One evaluated bar's line, written by hand: what <see cref="DailyReturns"/> reads, opened at <paramref name="open"/>.</summary>
+    static BacktestEvent Closed(long ordinal, DateTimeOffset open, decimal equity, decimal position = 0m) => new()
+    {
+        Ordinal = ordinal, Bar = open, Kind = BacktestEventKind.Bar, Status = "Idle", Equity = equity,
+        Position = position, Exposed = position > 0m
+    };
+
+    static string Days(IReadOnlyList<DailyReturn> days) => string.Join("\n", days.Select(d =>
+        $"{d.Day:yyyy-MM-dd} bars={d.Bars} mark={Shown(d.Mark)} return={Shown(d.NetReturn)} "
+        + $"since={d.Since?.ToString("yyyy-MM-dd") ?? (d.Mark is null ? "none" : "capital")}"));
+
+    /// <summary>A figure as <see cref="BacktestMetrics.Show"/> prints it — trailing zeros gone — and an unknown as the word.</summary>
+    static string Shown(decimal? value) => value is null ? "unknown" : BacktestMetrics.Show(value);
+
+    /// <summary>
+    /// (a) A UTC DAY'S MARK IS THE ACCOUNT AT ITS LAST CLOSE, AND ITS RETURN RUNS FROM THE LAST MARK — the first from the
+    /// declared capital. Hourly bars over three days, by hand, from 10,000: the 23:00 bar of 5 January CLOSES at 00:00Z on
+    /// the 6th and is the 5th's mark (10,200, +2%); the 6th ends at 10,404 (+2% on 10,200); the 7th at 9,883.8 (−5% on
+    /// 10,404). A fill line between them is not a bar and moves nothing. And a New York program's daily bar opens at local
+    /// midnight — 05:00Z in January — so the bar opening on the 5th closes on the 6th and is the 6th's.
+    /// </summary>
+    [Fact]
+    public void A_utc_days_mark_is_its_last_close_and_its_return_runs_from_the_last_mark()
+    {
+        var hour = BarGrid.Uniform(TimeSpan.FromHours(1));
+        var trace = new BacktestTrace(
+        [
+            Closed(1, Start.AddHours(22), 10_050m),                              // 5 Jan 22:00 → closes 23:00Z, the 5th
+            new BacktestEvent { Ordinal = 2, Bar = Start.AddHours(23).AddMinutes(1), Kind = BacktestEventKind.Fill,
+                Quantity = 1m, Price = 100m, Fee = 0.1m, Cash = 9_000m, Exposed = true },
+            Closed(2, Start.AddHours(23), 10_200m, 1m),                           // 5 Jan 23:00 → closes 00:00Z on the 6th: the 5th's
+            Closed(3, Start.AddHours(24), 9_000m, 1m),                            // 6 Jan 00:00 → 01:00Z, the 6th
+            Closed(4, Start.AddHours(47), 10_404m, 1m),                           // 6 Jan 23:00 → 00:00Z on the 7th: the 6th's
+            Closed(5, Start.AddHours(48), 10_000m),                               // 7 Jan 00:00 → 01:00Z
+            Closed(6, Start.AddHours(49), 9_883.8m)                               // 7 Jan 01:00 → 02:00Z, the 7th's last
+        ]);
+
+        var days = DailyReturns.Of(trace, hour, 10_000m);
+        log.WriteLine(Days(days));
+
+        Assert.Equal(
+            """
+            2026-01-05 bars=2 mark=10200 return=0.02 since=capital
+            2026-01-06 bars=2 mark=10404 return=0.02 since=2026-01-05
+            2026-01-07 bars=2 mark=9883.8 return=-0.05 since=2026-01-06
+            """.ReplaceLineEndings("\n"), Days(days));
+
+        // A ZONED DAY: New York's daily bars open at its midnight, and each closes on the next UTC date.
+        var newYork = BarGrid.For(Program("""
+            instrument BTCUSDT
+            timezone America/New_York
+            bars 1d
+            size fixed 1
+            exit when close < 60
+            entry when close > 100
+            """));
+        var zoned = DailyReturns.Of(new BacktestTrace(
+        [
+            Closed(1, Start.AddHours(5), 10_100m),                                // 5 Jan 00:00 New York = 05:00Z → closes the 6th 05:00Z
+            Closed(2, Start.AddHours(29), 10_201m)                                // 6 Jan 00:00 New York → closes the 7th 05:00Z
+        ]), newYork, 10_000m);
+        log.WriteLine(Days(zoned));
+
+        Assert.Equal(
+            """
+            2026-01-06 bars=1 mark=10100 return=0.01 since=capital
+            2026-01-07 bars=1 mark=10201 return=0.01 since=2026-01-06
+            """.ReplaceLineEndings("\n"), Days(zoned));
+    }
+
+    /// <summary>
+    /// (b) A DAY WITH NO BAR IS UNKNOWN, NEVER 0 — AND A FLAT DAY IS A MEASURED 0. Minute bars from 10,000: the 5th closes
+    /// flat at 10,000 (a measured 0); the 6th has no bar at all (no mark, no return); the 7th ends at 10,500, +5% on the
+    /// 5th's mark and naming it; the 8th stays at 10,500, a measured 0 on the 7th.
+    /// </summary>
+    [Fact]
+    public void A_day_with_no_bar_is_unknown_never_zero_and_a_flat_day_a_measured_zero()
+    {
+        var days = DailyReturns.Of(new BacktestTrace(
+        [
+            Closed(1, Start.AddHours(10), 10_000m),
+            Closed(2, Start.AddHours(10).AddMinutes(1), 10_000m),
+            Closed(3, Start.AddDays(2).AddHours(3), 10_400m, 1m),
+            Closed(4, Start.AddDays(2).AddHours(23).AddMinutes(59), 10_500m),     // closes 00:00Z on the 8th: the 7th's
+            Closed(5, Start.AddDays(3).AddHours(12), 10_500m)
+        ]), BarGrid.OneMinute, 10_000m);
+        log.WriteLine(Days(days));
+
+        Assert.Equal(
+            """
+            2026-01-05 bars=2 mark=10000 return=0 since=capital
+            2026-01-06 bars=0 mark=unknown return=unknown since=none
+            2026-01-07 bars=2 mark=10500 return=0.05 since=2026-01-05
+            2026-01-08 bars=1 mark=10500 return=0 since=2026-01-07
+            """.ReplaceLineEndings("\n"), Days(days));
+
+        // NULL AND NOT 0, on the record itself — and a flat day's 0 is a number.
+        var unknown = days[1];
+        Assert.Equal(0, unknown.Bars);
+        Assert.Null(unknown.Mark);
+        Assert.Null(unknown.NetReturn);
+        Assert.Null(unknown.Since);
+        Assert.Equal(0m, days[0].NetReturn);
+        Assert.Equal(0m, days[3].NetReturn);
+
+        // A trace with no bar has no day at all.
+        Assert.Empty(DailyReturns.Of(new BacktestTrace([]), BarGrid.OneMinute, 10_000m));
+    }
 }
