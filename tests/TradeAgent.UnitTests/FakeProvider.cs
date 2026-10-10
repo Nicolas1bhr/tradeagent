@@ -94,7 +94,14 @@ public sealed class FakeProvider : IDisposable
                     if (AlwaysAnswer is { } always)
                     {
                         ctx.Response.StatusCode = (int)always;
-                        Mark($"answering {(int)always} to everything, on purpose");
+                        if (ErrorBody is { } page)
+                        {
+                            ctx.Response.ContentLength64 = page.Length;
+                            Mark($"answering {(int)always} with {page.Length} bytes, on purpose");
+                            await ctx.Response.OutputStream.WriteAsync(page);
+                            Mark("write returned");
+                        }
+                        else Mark($"answering {(int)always} to everything, on purpose");
                         continue;
                     }
 
@@ -140,8 +147,15 @@ public sealed class FakeProvider : IDisposable
     /// <inheritdoc cref="FakeProvider(bool)"/>
     public bool Answers { get; }
 
-    /// <summary>When set, every request is answered with this status and no body.</summary>
+    /// <summary>When set, every request is answered with this status, and with <see cref="ErrorBody"/> or no body.</summary>
     public HttpStatusCode? AlwaysAnswer { get; set; }
+
+    /// <summary>
+    /// The body served with <see cref="AlwaysAnswer"/>'s status, or none — a host's error page can be anything, larger than
+    /// a caller reads included (<c>U-decision-card</c>). Written whole with its length declared; a caller that stops
+    /// reading cuts it, and the write's failure is only marked.
+    /// </summary>
+    public byte[]? ErrorBody { get; set; }
 
     /// <summary>
     /// When set, every response carries this as its <c>Retry-After</c> header, verbatim — the host asking the caller to
