@@ -3242,7 +3242,7 @@ so a gap stays one; that the two lists are aligned beyond their lengths — the 
 names its coin, and only the prices of the answers measured on 2026-10-08 put each coin where its name is; and any
 licence for live use — the terms reading is research-only, on the day, and not legal advice.
 
-## The decision port — `src/TradeAgent.Core/Decisions/`, `AgentRuntime/TypeSafeWire.cs`, `Core/Db/TapeStore.cs` (`decision_call`)
+## The decision port — `src/TradeAgent.Core/Decisions/`, `AgentRuntime/TypeSafeWire.cs`, `Core/Db/TapeStore.cs` (`decision_call`), `App/PerceptionCard.cs`
 
 **What it is.** `IDecisionModel`: one call — a state (canonical JSON: a string, an object or an array) and typed questions
 (Choice, Noul, Score) under a `SchemaRef(id, version, sha)` whose sha this build computes over the questions' wire form —
@@ -3254,8 +3254,8 @@ unofficial package is used); two built-in instruments, `DecisionInstruments.Buil
 `typesafe/jev-1.13`, pinned `typesafe/jev-1.13-20260917` — the dated id OpenRouter names on its answers), each with its
 price (0.042 USD a million input tokens, output free), the day and page it was read on, its limits and its documentation
 page. **Nothing annotates with it and no agent can call it**: no op, no `trade` verb, no setting the pipe writes reaches
-the port, its budget, its pin or its key (`DecisionPortTests` (g)); `AppHost.DecisionModel(id)` builds it for the owner's
-Perception card, which is `U-decision-card`'s.
+the port, its budget, its pin, its key, its rate gate or the owner's card (`DecisionPortTests` (g)); `AppHost.DecisionModel(id)`
+builds it, and its one caller is the owner's Perception card's Test press (`U-decision-card`, below).
 
 **One call, in order.** (1) REFUSED before anything is reserved or sent, in words, costing nothing and recorded nowhere
 (`DecisionRequests.Refusal`): a Choice of 2–255 options and a Score of 2–10 levels (documented, and not enforced by the
@@ -3264,13 +3264,16 @@ JSON string, object or array, at most 64 source references, an alias (`jev-lates
 and questions larger IN BYTES than the instrument's token budgets (64,000 a request and 32,000 for the state and the
 longest question at TypeSafe; 32,000 through OpenRouter) — bytes are what this app measures, none is recorded as a
 token, and this is a filter, not the money's bound. Refused too: a price in another currency than the AI's spending is
-kept in (`costs.json`), no tape open, no key, and a key pasted for another origin — withheld and forgotten, exactly as
-the harness's (**The app-owned harness** above). (2) RESERVED in the main database: `AiAttemptStore.Begin` with
+kept in (`costs.json`), and no tape open. Then **the rate gate** (`DecisionRateGate`, below) — after those and BEFORE the key
+is read or anything reserved, so a call the host's rate would refuse asks the holder for nothing and writes no row — and
+only then no key, or a key pasted for another origin — withheld and forgotten, exactly as the harness's (**The app-owned
+harness** above). A call the gate admitted and something later refused is withdrawn from it. (2) RESERVED in the main database: `AiAttemptStore.Begin` with
 `AiAdmissionRule { Role = perception, Cap = the owner's daily AI cap — AppHost.AiCap, the meter's own delegate,
 RoleCap = TradeAgentSettings.PerceptionDailyBudget (1; 0 in Unreadable()), Reservation = 65,536 tokens × the dated
 price }`, in the one transaction that writes the row — never through `TurnMeter`, whose slots are council roles. The day
 counts perception's money; no council share reads it. A ledger that will not take the row refuses the call.
-(3) SENT ONCE: one request per reservation, never a retry (a 429 or 529 is FAILED), never a redirect followed; the key
+(3) SENT ONCE: one request per reservation, never a retry (a 429, 529 or 402 is FAILED, and holds the instrument at the
+gate), never a redirect followed; the one response header read is `Retry-After`, handed to the gate; the key
 comes from the decision models' own holder (`AppHost.PerceptionKey`, never `HarnessKey.Shared`) for the endpoint's
 origin, read at the send. Held in `LiveAttempts.Shared` while it flies. (4) RECORDED on the tape before it settles: one
 `decision_call` row per sent call (tape.db rung 2, `TapeStore.Schema` 2), keyed by the attempt id — instrument, URL,
@@ -3295,14 +3298,56 @@ perception's billed charge as the one API charge among its figures.
 **`decision-models.json`** may change a built-in instrument's price — with the day and the page it was read from — and
 its limits; never an address, a request id or a pin, and it cannot add an instrument. A row naming anything else stops
 that instrument, in words; an unreadable file stops every call; a price of zero is refused, because zero is no price.
+**No file lifts TradeAgent's own bound**: a rate of zero is that bound, never "no limit", and a row setting a rate its host
+does not document — OpenRouter's route documents none — is refused and stops that instrument, in words.
+
+**The rate gate** (`Core/Decisions/DecisionRateGate.cs`, `U-decision-card`). One process-wide gate (`Shared`; a test brings
+its own), per instrument id, in memory, on the wire's own clock. A call is ADMITTED only if (a) no hold stands on the
+instrument; (b) fewer than `RequestsPerSecond` calls were admitted in the rolling second; (c) the tokens of the rolling
+second plus this call's bound fit `TokensPerSecond` — a call in flight counted at `DecisionInstrument.ReservedTokens`
+(65,536 at both hosts, the figure its money is reserved at) because the host counts tokens with a tokenizer this app does
+not have, and a settled call at the input and output its answer reported, for the second after it ended; no usage keeps
+the bound. At TypeSafe's 100,000 tokens a second that is ONE call in flight — the app's conservative reading, not the
+host's figure. **Zero is TradeAgent's own bound**: where a rate is not documented (OpenRouter's route; a file's zero), one
+call in flight at a time and one a second, named on every refusal as TradeAgent's figure. A host's **429, 529 or 402 holds
+the instrument** until its `Retry-After` — seconds after the answer, or a date; an unreadable value counts as absent — else
+for TradeAgent's own back-off: 1 s, doubling with each such answer in a row to 60 s, the run ended by a 2xx. A refusal is
+REFUSED in words — the limit, whose it is (the host's, read on a named day from a named page; the file's, "not dated"; the
+app's own) and when the next call can go — costs nothing, is recorded nowhere, and nothing waits: the caller decides.
+The rates' provenance is the instrument's `RatesReadOn` and `RatesSource` (TypeSafe 2026-10-09, docs.typesafe.ai/models;
+OpenRouter 2026-10-10, openrouter.ai/docs/api-reference/limits).
+
+**The owner's Perception card** (`App/PerceptionCard.cs`, on the Safety page after "What the AI costs"; built once and
+updated in place). Which decision model — one press each, the card's choice and no setting. The key — a masked box, taken
+by `SafetyPage.BuildSaveHarnessKey` into `AppHost.PerceptionKey` (never `HarnessKey.Shared`) for the chosen instrument's
+address: one press for TradeAgent's built-in address, two naming any other; the box emptied; the card shows held / not held
+and the address, never a character of the key; the activity log says only that a key is or is not held; "Forget the key"
+is one press; memory only (`Labels.HarnessKeyHint`). The budget — `TradeAgentSettings.PerceptionDailyBudget`, written
+in-process: RAISING asks twice (`Labels.RaisePerceptionBudgetArmed`), lowering or zero is one press; beside it what
+perception spent or set aside today (`AiAttemptStore.TotalsBetween(…, perception)`) against it, and the owner's daily AI
+limit named when it binds first. The facts — price, rates and the app's own bound read off the instrument, each dated and
+paged; a rate the file moved reads "not dated", a price it moved carries the file's own date and page. The terms — two
+sentences naming typesafe.ai/legal/mca and openrouter.ai/terms (both re-read 2026-10-10), OpenRouter's agreement for Jev's
+answers stated UNKNOWN; never a click-through. **The Test press** — ONE press (it grants no room; its worst case, one
+reservation, is named beside it), disabled while it flies and a press that lands anyway sends nothing; ONE fixed call — a
+neutral sentence as the state, one Noul, schema `owner-test` v1, sources `["owner-test-press"]`, so its `decision_call` row
+says it was the owner's test and never a lens's evidence — to the instrument whose address the key was pasted for, never
+the other (asking the other would make the holder forget the key); then the status, a refusal's words verbatim, the
+answered id and PINNED or UNPINNED, the probability as served, the latency, the tokens, and the billed cost or the
+estimate with its basis — never one as the other; FAILED or UNANSWERED say the error and that the reservation stands; an
+instrument the file stopped says why in `DecisionInstrumentsRead`'s words, asking no one; no key, no one asked.
 
 **Claimed:** what was asked (the schema's and the state's hashes, the state's sources), who answered (the id the host
 named), through which instrument and origin, when and how long, what it used and what it cost — the list-price estimate
 and the host's billed figure never one in place of the other — and whether the answer is pinned. **NOT claimed:** that a
 call is repeatable (TypeSafe does not promise determinism); that a probability is calibrated (they are the host's, not
 yet fitted against our own outcomes); that an answer is right; that TypeSafe billed what its usage implies (it reports no
-cost: that figure is a list-price equivalent); the rate limits (recorded, not enforced); and, until containment, that an
-agent running unconfined cannot edit `state/tape.db` (§ 6.11). **Never:** distil or imitate Jev — TypeSafe's agreement,
+cost: that figure is a list-price equivalent); that a hold or a rate window survives a restart (the gate is memory only —
+a host that still means "not now" says so again); that a 429, 529 or 402 was not billed (whether it is, is not
+documented: it keeps its reservation); that the app's own bound or back-off is any host's figure; that TypeSafe counts its
+limits per key rather than per account, or what OpenRouter applies to this route; that any request has ever reached a vendor (none has:
+the first real Test press is the owner's); the card's look (proven by its tests, never by a capture); and, until
+containment, that an agent running unconfined cannot edit `state/tape.db` or `decision-models.json` (§ 6.11). **Never:** distil or imitate Jev — TypeSafe's agreement,
 § 2.3(b), forbids training a model on its outputs or to imitate them; the record exists to replay and judge answers
 against our own outcomes and for nothing else.
 
