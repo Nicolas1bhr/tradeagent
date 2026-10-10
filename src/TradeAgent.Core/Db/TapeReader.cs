@@ -574,13 +574,15 @@ public sealed class TapeReader
     /// was off, and the tape cannot tell which, because it keeps no record of its own runs.</para>
     ///
     /// <para><b>Where the deliveries just outside the day come from.</b> The day's band of attempts in arrival order
-    /// (<see cref="ArrivalSlack"/>) holds the ones a few minutes either side; the rest are found per (source, series) on
-    /// the attempts' own index — the newest before the band, at most <see cref="GapLookBack"/> back, and the first after
-    /// it — because within one series the tape writes attempts in the order they arrived: each source is written by one
-    /// loop, and GDELT's tasks each by their own. A source's first delivery ever is found the same way, walking forward
-    /// from its first attempt. Each of these walks passes over failed attempts only, so it is long only for a series that
-    /// has never delivered, or has failed ever since the day — as the status read's walk back to a series' newest
-    /// delivery is for one that has stopped.</para>
+    /// (<see cref="ArrivalSlack"/>) holds the ones a few minutes either side, and of those, per (source, series), the
+    /// latest that arrived before the day and the earliest that arrived at or after its elapsed part's end are taken by
+    /// their arrival instants — never by the order the tape wrote them, which follows arrival only to within the slack.
+    /// The rest are found per (source, series) on the attempts' own index — the newest before the band, at most
+    /// <see cref="GapLookBack"/> back, and the first after it — because within one series the tape writes attempts in
+    /// the order they arrived: each source is written by one loop, and GDELT's tasks each by their own. A source's first
+    /// delivery ever is found the same way, walking forward from its first attempt. Each of these walks passes over
+    /// failed attempts only, so it is long only for a series that has never delivered, or has failed ever since the day
+    /// — as the status read's walk back to a series' newest delivery is for one that has stopped.</para>
     /// </summary>
     public TapeDay Day(DateTimeOffset from, DateTimeOffset to, DateTimeOffset asOf)
     {
@@ -593,8 +595,9 @@ public sealed class TapeReader
         var low = FirstAtOrAfter(c, "tape_fetch", from - ArrivalSlack);
         var high = FirstAtOrAfter(c, "tape_fetch", until + ArrivalSlack);
 
-        // THE DAY'S BAND, IN THE ORDER THE TAPE WROTE IT: the attempts of the elapsed part, and the deliveries just either
-        // side of it — the newest before and the first after, per series, which is why the order matters.
+        // THE DAY'S BAND: the attempts of the elapsed part, and the deliveries just either side of it — per series the
+        // latest that arrived before it and the earliest that arrived at or after its end, by their arrival instants, since
+        // the order the tape wrote them follows arrival only to within ArrivalSlack.
         int requests = 0, failed = 0;
         string? lastError = null;
         var attempts = new Dictionary<string, List<(DateTimeOffset At, string? Note)>>(StringComparer.Ordinal);
@@ -613,7 +616,9 @@ public sealed class TapeReader
                     if (note is not null) continue;
                     var key = (source, r.GetString(1));
                     var edge = edges.GetValueOrDefault(key);
-                    edges[key] = at < from ? (at, edge.After) : (edge.Before, edge.After ?? at);
+                    edges[key] = at < from
+                        ? (edge.Before is { } b && b >= at ? b : at, edge.After)
+                        : (edge.Before, edge.After is { } a && a <= at ? a : at);
                     continue;
                 }
 
