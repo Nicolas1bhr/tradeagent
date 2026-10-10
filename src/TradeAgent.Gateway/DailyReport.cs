@@ -366,11 +366,12 @@ public sealed record ReportOtherCosts
     public string? ForwardData { get; init; }
 
     /// <summary>
-    /// WHAT THE MARKET-CONTEXT TAPE RECORDED TODAY, in one line (<c>U-tape-read</c>): the rows that arrived, the requests
-    /// and the failed ones, the gaps, the newest failure, either switch that is off, and GDELT's credit when any of the
-    /// rows are GDELT's — or null because this installation has no tape open. Here beside the live bars for the same
-    /// reason they are here: it runs continuously and is paid for in requests, and this is the part TradeAgent can count.
-    /// A COUNT, never a price.
+    /// WHAT THE MARKET-CONTEXT TAPE RECORDED TODAY, in one line (<c>U-tape-read</c>; what it did not, <c>U-tape-gaps</c>):
+    /// the rows that arrived, the requests and the failed ones, every source's share of the day with its gaps — across
+    /// midnights and restarts, each named by what the tape holds inside it — the newest failure, either switch that is
+    /// off, and GDELT's credit when any of the rows are GDELT's — or null because this installation has no tape open. Here
+    /// beside the live bars for the same reason they are here: it runs continuously and is paid for in requests, and this
+    /// is the part TradeAgent can count. A COUNT, never a price.
     /// </summary>
     public string? Tape { get; init; }
 

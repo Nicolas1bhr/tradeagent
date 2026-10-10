@@ -123,10 +123,15 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Equal(before, Counts(file));
     }
 
+    /// <summary>
+    /// A clock a test sets. <see cref="TimeProvider.GetUtcNow"/> answers in UTC whatever offset the instant was given in:
+    /// <see cref="TimeProvider.GetLocalNow"/> adds the local offset to the ticks it is handed, so a local instant handed
+    /// back as it is would move the gateway's "now" by that offset.
+    /// </summary>
     sealed class TestClock(DateTimeOffset at) : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = at;
-        public override DateTimeOffset GetUtcNow() => Now;
+        public override DateTimeOffset GetUtcNow() => Now.ToUniversalTime();
     }
 
     static TapeFetch Attempt(string source, string series, DateTimeOffset receivedAt, string? note = null, string? url = null) => new()
@@ -239,7 +244,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// rows arrived, as every writer of the tape writes them.</para>
     /// </summary>
     [Fact]
-    public void The_daily_report_says_in_one_line_what_the_tape_recorded()
+    public async Task The_daily_report_says_in_one_line_what_the_tape_recorded()
     {
         var noon = TestEnv.LocalNoon();
         var (from, to) = DailyReports.LocalDay(noon);
@@ -278,6 +283,32 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Equal(noon, gdelt.Began);
         Assert.Equal((noon, null, noon, instant, 0), Shape(Assert.Single(gdelt.Gaps)));
         Assert.Equal((TapeSourceCatalog.OpenInterest, from), day.Longest is { } longest ? (longest.Source, longest.Gap.ClippedFrom) : default);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, _, db) = await TestEnv.Ready(options: new GatewayOptions { Clock = new TestClock(instant) });
+        using var _1 = db;
+        Assert.Contains("market context tape: no tape open", DailyReportText.Render(gw.Reports.Compose(noon)), StringComparison.Ordinal);
+        gw.Tape = new TapeReader(store.File);
+        var line = TapeLineOf(gw, noon);
+
+        Assert.Contains("6 rows recorded from 5 requests, 1 of them recorded a failure; 4 gaps", line, StringComparison.Ordinal);
+        Assert.Contains($"the longest on {TapeSourceCatalog.OpenInterest}: 00:00–11:58 (", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 1 min of {Span(instant - from)} so far, 3 gaps: "
+            + $"00:00–11:58 ({Span(noon.AddMinutes(-2) - from)}, since {Stamp(noon.AddDays(-2))}; nothing asked), "
+            + "11:59–12:39 (40 min; nothing asked), "
+            + "12:39–12:50 (11 min, still open; asked once, which failed: the host answered 503 and nothing was read)",
+            line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{GdeltGkg.Source} recorded 0 min of {Span(instant - from)} so far, its recording began at 12:00, 1 gap: "
+            + "12:00–12:50 (50 min, still open; nothing asked)", line, StringComparison.Ordinal);
+        Assert.Contains($"{TapeSourceCatalog.Funding} recorded nothing — its recording has not begun, nothing asked", line, StringComparison.Ordinal);
+        Assert.Contains("\"nothing asked\" means the tape holds no attempt in that stretch — TradeAgent was not running or the switch was off, "
+                        + "and the tape cannot tell which", line, StringComparison.Ordinal);
+        Assert.Contains("last failure: the host answered 503 and nothing was read", line, StringComparison.Ordinal);
+        Assert.Contains("2 of the rows are GDELT's", line, StringComparison.Ordinal);
+        Assert.Contains(TapeSourceCatalog.GdeltCitation, line, StringComparison.Ordinal);
+        Assert.Contains("never evaluation evidence", line, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------------------ U-tape-gaps: what the tape did not record
@@ -337,7 +368,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// the delivery at 22:00 only by looking back past its own band of rows.
     /// </summary>
     [Fact]
-    public void A_night_the_app_was_down_is_a_gap_on_both_days_it_touches()
+    public async Task A_night_the_app_was_down_is_a_gap_on_both_days_it_touches()
     {
         var noon = TestEnv.LocalNoon();
         var (from, to) = DailyReports.LocalDay(noon);
@@ -355,6 +386,18 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Equal((yTo.AddHours(-2), from.AddHours(7), from, from.AddHours(7), 0), Shape(Assert.Single(today.Gaps)));
         Assert.Equal((TimeSpan.FromHours(1), TimeSpan.FromHours(1) + TimeSpan.FromMinutes(1)), (yesterday.Recorded, today.Recorded));
         Assert.Equal(yTo.AddHours(-3), yesterday.Began);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 1 h of {Span(yTo - yFrom)}, its recording began at {Hm(yTo.AddHours(-3))}, 1 gap: "
+            + $"{Hm(yTo.AddHours(-2))}–24:00 (2 h, until {Stamp(from.AddHours(7))}; nothing asked)", TapeLineOf(gw, noon.AddDays(-1)),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 1 h 1 min of {Span(instant - from)} so far, 1 gap: "
+            + $"00:00–{Hm(from.AddHours(7))} (7 h, since {Stamp(yTo.AddHours(-2))}; nothing asked)", TapeLineOf(gw, noon),
+            StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -365,7 +408,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// the look back stopped.
     /// </summary>
     [Fact]
-    public void A_day_with_no_delivery_reads_as_one_gap_never_as_zero()
+    public async Task A_day_with_no_delivery_reads_as_one_gap_never_as_zero()
     {
         var noon = TestEnv.LocalNoon();
         var (from, _) = DailyReports.LocalDay(noon);
@@ -383,6 +426,20 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Equal(TimeSpan.Zero, oi.Recorded);
         Assert.Equal((null, null, yFrom, yTo, 0), Shape(Assert.Single(Of(day, TapeSourceCatalog.Funding).Gaps)));
         Assert.Equal(2, day.Gaps);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon.AddDays(-1));
+        Assert.Contains("0 rows recorded from 0 requests, 0 of them recorded a failure; 2 gaps — ", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 0 min of {Span(yTo - yFrom)}, 1 gap: 00:00–24:00 ({Span(yTo - yFrom)}, "
+            + $"since {Stamp(yFrom.AddMinutes(-6))}, until {Stamp(from.AddMinutes(30))}; nothing asked)", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Funding} recorded 0 min of {Span(yTo - yFrom)}, 1 gap: 00:00–24:00 ({Span(yTo - yFrom)}, "
+            + $"no delivery since before {(yFrom - TapeReader.GapLookBack).ToLocalTime():yyyy-MM-dd}, still open; nothing asked)",
+            line, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 gaps", line, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -392,7 +449,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// by looking back, not in the band of rows its day read.
     /// </summary>
     [Fact]
-    public void A_restart_across_midnight_is_counted_once_in_each_day()
+    public async Task A_restart_across_midnight_is_counted_once_in_each_day()
     {
         var noon = TestEnv.LocalNoon();
         var (from, to) = DailyReports.LocalDay(noon);
@@ -409,34 +466,75 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Equal((yTo.AddMinutes(-16), from.AddMinutes(16), yTo.AddMinutes(-16), yTo, 0), Shape(yesterday));
         Assert.Equal((yTo.AddMinutes(-16), from.AddMinutes(16), from, from.AddMinutes(16), 0), Shape(today));
         Assert.Equal(TimeSpan.FromMinutes(32), yesterday.Length + today.Length);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 44 min of {Span(yTo - yFrom)}, its recording began at {Hm(yTo.AddHours(-1))}, 1 gap: "
+            + $"{Hm(yTo.AddMinutes(-16))}–24:00 (16 min, until {Stamp(from.AddMinutes(16))}; nothing asked)", TapeLineOf(gw, noon.AddDays(-1)),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 15 min of 31 min so far, 1 gap: "
+            + $"00:00–{Hm(from.AddMinutes(16))} (16 min, since {Stamp(yTo.AddMinutes(-16))}; nothing asked)", TapeLineOf(gw, noon),
+            StringComparison.Ordinal);
     }
 
     /// <summary>
     /// (d) A GAP WITH FAILED ATTEMPTS IS NAMED FAILING, AND ONE WITH NONE "NOTHING ASKED". Open interest delivered from
     /// 08:00, failed ten times from 08:32 to 08:50 — the newest because the host did not answer — delivered again from
     /// 08:52 to 09:20, was not asked at all until 11:00, and delivered to 11:10: two gaps, each named by what the tape holds
-    /// inside it.
+    /// inside it. And the premium index, first delivered at 09:00, went quiet five times that hour — for 5, 10, 3, 20 and 4
+    /// minutes — so its line lists its three longest, in the order they happened, and counts the other two.
     /// </summary>
     [Fact]
-    public void A_gap_with_failed_attempts_is_named_failing_and_one_with_none_not_asked()
+    public async Task A_gap_with_failed_attempts_is_named_failing_and_one_with_none_not_asked()
     {
         var noon = TestEnv.LocalNoon();
         var (from, to) = DailyReports.LocalDay(noon);
+        DateTimeOffset At(int hour, int minute) => from.AddHours(hour).AddMinutes(minute);
+
+        // EVERY ATTEMPT IN THE ORDER IT ARRIVED, as the tape's writers write them.
+        var attempts = new List<(DateTimeOffset At, string Source, string Series, string? Note)>();
+        void Every(string source, string series, DateTimeOffset first, DateTimeOffset last, string? note = null)
+        {
+            for (var at = first; at <= last; at += TwoMinutes) attempts.Add((at, source, series, note));
+        }
+        Every(TapeSourceCatalog.OpenInterest, "open-interest", At(8, 0), At(8, 30));
+        Every(TapeSourceCatalog.OpenInterest, "open-interest", At(8, 32), At(8, 48), "the host answered 503 and nothing was read");
+        attempts.Add((At(8, 50), TapeSourceCatalog.OpenInterest, "open-interest", "the host did not answer within 10 s"));
+        Every(TapeSourceCatalog.OpenInterest, "open-interest", At(8, 52), At(9, 20));
+        Every(TapeSourceCatalog.OpenInterest, "open-interest", At(11, 0), At(11, 10));
+        foreach (var minute in new[] { 0, 5, 6, 16, 17, 20, 21, 41, 42, 46 })
+            attempts.Add((At(9, minute), TapeSourceCatalog.Premium, "premium-index", null));
+        Every(TapeSourceCatalog.Premium, "premium-index", At(9, 48), At(11, 10));
+
         using var store = new TapeStore(NewFile());
-        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8), from.AddHours(8).AddMinutes(30), TwoMinutes);
-        for (var at = from.AddHours(8).AddMinutes(32); at < from.AddHours(8).AddMinutes(50); at += TwoMinutes)
-            store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", at, "the host answered 503 and nothing was read"));
-        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8).AddMinutes(50), "the host did not answer within 10 s"));
-        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8).AddMinutes(52), from.AddHours(9).AddMinutes(20), TwoMinutes);
-        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(11), from.AddHours(11).AddMinutes(10), TwoMinutes);
-        var instant = from.AddHours(11).AddMinutes(11);
+        foreach (var (at, source, series, note) in attempts.OrderBy(a => a.At)) store.Append(Attempt(source, series, at, note));
+        var instant = At(11, 11);
 
         // THE TAPE'S OWN READING: what is inside each gap.
-        var oi = Of(new TapeReader(store.File).Day(from, to, instant), TapeSourceCatalog.OpenInterest);
+        var day = new TapeReader(store.File).Day(from, to, instant);
+        var oi = Of(day, TapeSourceCatalog.OpenInterest);
         Assert.Equal(
-            [(from.AddHours(8).AddMinutes(30), 10, "the host did not answer within 10 s"), (from.AddHours(9).AddMinutes(20), 0, null)],
+            [(At(8, 30), 10, "the host did not answer within 10 s"), (At(9, 20), 0, null)],
             oi.Gaps.Select(g => (g.ClippedFrom, g.Attempts, g.NewestFailure)));
         Assert.Equal((47, 10), (oi.Attempts, oi.Failed));
+        var premium = Of(day, TapeSourceCatalog.Premium);
+        Assert.Equal([5, 10, 3, 20, 4], premium.Gaps.Select(g => (int)g.Length.TotalMinutes));
+        Assert.Equal(TimeSpan.FromMinutes(131 - 42), premium.Recorded);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon);
+        Assert.Contains(
+            $", 2 gaps: {Hm(At(8, 30))}–{Hm(At(8, 52))} (22 min; asked 10 times, all failed: the host did not answer within 10 s), "
+            + $"{Hm(At(9, 20))}–{Hm(At(11, 0))} (1 h 40 min; nothing asked)", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Premium} recorded 1 h 29 min of {Span(instant - from)} so far, its recording began at {Hm(At(9, 0))}, 5 gaps: "
+            + $"{Hm(At(9, 0))}–{Hm(At(9, 5))} (5 min; nothing asked), {Hm(At(9, 6))}–{Hm(At(9, 16))} (10 min; nothing asked), "
+            + $"{Hm(At(9, 21))}–{Hm(At(9, 41))} (20 min; nothing asked) and 2 more of 7 min in all", line, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -446,7 +544,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// Each share is of the ten and a half hours the day has had.
     /// </summary>
     [Fact]
-    public void A_day_still_open_counts_its_tail_to_the_reports_instant()
+    public async Task A_day_still_open_counts_its_tail_to_the_reports_instant()
     {
         var noon = TestEnv.LocalNoon();
         var (from, to) = DailyReports.LocalDay(noon);
@@ -467,6 +565,17 @@ public class TapeReadTests(ITestOutputHelper log)
         var premium = Of(day, TapeSourceCatalog.Premium);
         Assert.Empty(premium.Gaps);
         Assert.Equal(TimeSpan.FromMinutes(90), premium.Recorded);
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 1 h of {Span(instant - from)} so far, its recording began at {Hm(from.AddHours(9))}, "
+            + $"1 gap: {Hm(from.AddHours(10))}–{Hm(instant)} (30 min, still open; nothing asked)", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Premium} recorded 1 h 30 min of {Span(instant - from)} so far, its recording began at {Hm(from.AddHours(9))}, no gap",
+            line, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -476,7 +585,7 @@ public class TapeReadTests(ITestOutputHelper log)
     /// the others recorded nothing and say why, and none of them counts a gap.
     /// </summary>
     [Fact]
-    public void Before_a_sources_first_delivery_nothing_is_a_gap()
+    public async Task Before_a_sources_first_delivery_nothing_is_a_gap()
     {
         var noon = TestEnv.LocalNoon();
         var (from, _) = DailyReports.LocalDay(noon);
@@ -502,6 +611,23 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Empty(premium.Gaps);
         Assert.Equal((false, null, 0), (Of(day, TapeSourceCatalog.Funding).Begun, Of(day, TapeSourceCatalog.Funding).Began, Of(day, TapeSourceCatalog.Funding).Attempts));
         Assert.Equal((false, from.AddMinutes(10)), (Of(day, TapeSourceCatalog.OkxEeaAnnouncements).Begun, Of(day, TapeSourceCatalog.OkxEeaAnnouncements).Began));
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon.AddDays(-1));
+        Assert.Contains("; 1 gap — ", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OpenInterest} recorded 20 min of {Span(yTo - yFrom)}, its recording began at {Hm(yFrom.AddHours(10))}, 1 gap: "
+            + $"{Hm(yFrom.AddHours(10).AddMinutes(20))}–24:00 ({Span(yTo - yFrom.AddHours(10).AddMinutes(20))}, still open; nothing asked)",
+            line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Premium} recorded nothing — its recording has not begun; asked 3 times this day, all failed: "
+            + "the host answered 451 and nothing was read", line, StringComparison.Ordinal);
+        Assert.Contains($"{TapeSourceCatalog.Funding} recorded nothing — its recording has not begun, nothing asked", line, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.OkxEeaAnnouncements} recorded nothing — its recording began after this day, at {Stamp(from.AddMinutes(10))}, nothing asked",
+            line, StringComparison.Ordinal);
     }
 
     static string Counts(string file)
