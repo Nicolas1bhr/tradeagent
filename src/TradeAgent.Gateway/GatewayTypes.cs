@@ -336,7 +336,33 @@ public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, 
     /// dispatch, and refuses when the answer is nothing (<c>TradingGateway</c>'s allocation gate).</para>
     /// </summary>
     public string? StrategyVersionId { get; init; }
+
+    /// <summary>
+    /// THE FEATURE VALUES A PAPER RUN'S ORDER WAS DECIDED ON (<see cref="IntentFeatures"/>; <c>U-runner-features</c>), or
+    /// null because no program that reads a feature decided it.
+    ///
+    /// <para><b>A passive record, and only that.</b> Written only when set — the serializer drops a null, so no existing
+    /// intent's text, digest or client order id moves — and PERSISTED with the rest of the intent in
+    /// <c>ParametersJson</c> and <c>deployment_op.intent</c>. No gateway path reads it: not validation, sizing, routing,
+    /// approvals or the witness. The one reader is <c>ForwardRuns</c>, which compares what a replay reads at the order's
+    /// close with what the order recorded, and ends the run when they differ.</para>
+    /// </summary>
+    public IntentFeatures? Features { get; init; }
 }
+
+/// <summary>
+/// WHAT A FEATURE PROGRAM'S ORDER STOOD ON (<c>U-runner-features</c>; EDGE § 6.2): the close it was decided at, each
+/// declared feature's value or absence there in the program's order, and <paramref name="Sha256"/> — the SHA-256 of every
+/// value the run read through that close, the digest <c>FeatureFeed.ValuesSha256</c> keeps and a backtest's feed over the
+/// same closes arrives at, so the order names its inputs in the backtest's own terms.
+/// </summary>
+public sealed record IntentFeatures(DateTimeOffset Close, IReadOnlyList<IntentFeatureValue> Values, string Sha256);
+
+/// <summary>
+/// ONE FEATURE'S VALUE AT AN ORDER'S CLOSE: its declared name, its id (the spec's), the value or the evaluator's words
+/// for why there is none, and the digest of the tape rows it stands on.
+/// </summary>
+public sealed record IntentFeatureValue(string Name, string Id, decimal? Value, string? Absent, string RowsSha256);
 
 /// <summary>
 /// THE CLOSED BAR AN ORDER WAS DECIDED FROM, AND THE TWO BOUNDS ITS PROGRAM DECLARED.
