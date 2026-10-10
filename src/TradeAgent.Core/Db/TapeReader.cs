@@ -76,13 +76,87 @@ public sealed record TapeSourceRecording(
     DateTimeOffset? LastErrorAt);
 
 /// <summary>
-/// ONE DAY OF THE TAPE, for the owner's report: the rows that arrived, the attempts and the failed ones, the gaps and the
-/// longest of them, the newest failure in words, and how many of the rows are GDELT's — whose credit then travels with
-/// the line.
+/// ONE DAY OF THE TAPE, for the owner's report (<c>U-tape-read</c>; what it did not record, <c>U-tape-gaps</c>): the rows
+/// that arrived in the day's elapsed part, the attempts and the failed ones, the newest failure in words, how many of the
+/// rows are GDELT's — whose credit then travels with the line — and every catalogue source's share of the day with its
+/// gaps.
 /// </summary>
+/// <param name="From">The day's first instant.</param>
+/// <param name="To">The instant the day ends.</param>
+/// <param name="Until">
+/// Where the day's ELAPSED part ends: <paramref name="To"/> once the day is over, the report's instant while it is still
+/// open, and <paramref name="From"/> for a day that had not begun.
+/// </param>
 public sealed record TapeDay(
-    long Rows, int Requests, int Failed, int Gaps, TimeSpan? LongestGap, string? LongestGapSource, string? LastError,
-    long GdeltRows);
+    DateTimeOffset From, DateTimeOffset To, DateTimeOffset Until,
+    long Rows, int Requests, int Failed, string? LastError, long GdeltRows,
+    IReadOnlyList<TapeSourceDay> Sources)
+{
+    /// <summary>How much of the day had passed at the report's instant.</summary>
+    public TimeSpan Elapsed => Until - From;
+
+    /// <summary>Whether the day was still open at the report's instant.</summary>
+    public bool Open => Until < To;
+
+    /// <summary>Where the look back for each source's delivery before the day stopped: <see cref="TapeReader.GapLookBack"/> before it.</summary>
+    public DateTimeOffset LookedBackTo => From - TapeReader.GapLookBack;
+
+    /// <summary>Every source's gaps on this day, counted.</summary>
+    public int Gaps => Sources.Sum(s => s.Gaps.Count);
+
+    /// <summary>The day's longest gap, by the part of it on this day, and its source — or null on a day without one.</summary>
+    public (string Source, TapeGap Gap)? Longest
+    {
+        get
+        {
+            (string Source, TapeGap Gap)? longest = null;
+            foreach (var source in Sources)
+                foreach (var gap in source.Gaps)
+                    if (longest is not { } held || gap.Length > held.Gap.Length) longest = (source.Source, gap);
+            return longest;
+        }
+    }
+}
+
+/// <summary>
+/// ONE CATALOGUE SOURCE'S DAY (<c>U-tape-gaps</c>): its allowance, when its recording began, the part of the day it
+/// recorded, its gaps, and its attempts in the day with the newest failure among them.
+/// </summary>
+/// <param name="Allowed">The longest stretch without a delivery that is not a gap: twice the source's cadence plus 30 s.</param>
+/// <param name="Begun">Whether the source had delivered at all before the end of the day's elapsed part.</param>
+/// <param name="Began">
+/// When its recording began — its first delivery ever — or null when it has delivered nothing at the report's instant.
+/// Before it nothing is a gap.
+/// </param>
+/// <param name="Recorded">The day's elapsed part, less what came before its recording began and less its gaps.</param>
+/// <param name="Attempts">Its attempts that arrived in the day's elapsed part, delivered or not.</param>
+/// <param name="Failed">Of them, the ones that delivered nothing.</param>
+/// <param name="NewestFailure">The newest of those failures in words, or null.</param>
+public sealed record TapeSourceDay(
+    string Source, TimeSpan Allowed, bool Begun, DateTimeOffset? Began, TimeSpan Recorded, IReadOnlyList<TapeGap> Gaps,
+    int Attempts, int Failed, string? NewestFailure);
+
+/// <summary>
+/// ONE STRETCH LONGER THAN A SOURCE'S ALLOWANCE WITH NO DELIVERY FROM IT (<c>U-tape-gaps</c>), as one day sees it: the
+/// whole gap, from the delivery before it to the delivery after it, across midnights and restarts, and the part of it
+/// on this day — named by what the tape holds inside that part.
+/// </summary>
+/// <param name="From">The delivery the gap began after, or null: there was none since <see cref="TapeDay.LookedBackTo"/>.</param>
+/// <param name="To">The delivery that ended it, or null: none yet at the report's instant — the gap is still open.</param>
+/// <param name="ClippedFrom">Where the gap enters this day.</param>
+/// <param name="ClippedTo">Where it leaves the day's elapsed part.</param>
+/// <param name="Attempts">
+/// The source's attempts inside the part on this day. Every one of them failed — a delivery would have ended the gap — and
+/// none at all means nothing was asked: TradeAgent was not running or the switch was off, and the tape cannot tell which.
+/// </param>
+/// <param name="NewestFailure">The newest of those attempts' failures in words, or null when nothing was asked.</param>
+public sealed record TapeGap(
+    DateTimeOffset? From, DateTimeOffset? To, DateTimeOffset ClippedFrom, DateTimeOffset ClippedTo, int Attempts,
+    string? NewestFailure)
+{
+    /// <summary>The length of the part on this day.</summary>
+    public TimeSpan Length => ClippedTo - ClippedFrom;
+}
 
 /// <summary>
 /// THE TAPE, READ — AND ONLY READ (<c>U-tape-read</c>; <c>docs/EDGE-FACTORY.md</c> § 4.1): what the gateway serves to
@@ -475,44 +549,86 @@ public sealed class TapeReader
     }
 
     /// <summary>
-    /// ONE LOCAL DAY OF THE TAPE, for the owner's report: the rows that arrived in [<paramref name="from"/>,
-    /// <paramref name="to"/>), the attempts and the failed ones, GDELT's share of the rows, the newest failure in words,
-    /// and the GAPS — a source's successive attempts that delivered further apart than twice its cadence plus 30 s,
-    /// counted between its first and last delivery of the day, so a stretch the app was not running is one too.
+    /// HOW FAR BEFORE A DAY THE READER LOOKS FOR A SOURCE'S DELIVERY BEFORE IT (<c>U-tape-gaps</c>): eight days, the
+    /// background loop's seven days of owed reports and one more. A source that delivered nothing in them is "no delivery
+    /// since before" the date it stopped at — its gap is still counted, and a seek through months of failures is not made.
     /// </summary>
-    public TapeDay Day(DateTimeOffset from, DateTimeOffset to)
+    public static readonly TimeSpan GapLookBack = TimeSpan.FromDays(8);
+
+    /// <summary>
+    /// ONE LOCAL DAY OF THE TAPE, for the owner's report, AS IT STOOD AT <paramref name="asOf"/> — the report's instant.
+    /// The day's ELAPSED part is [<paramref name="from"/>, <paramref name="to"/>) once the day is over, and ends at
+    /// <paramref name="asOf"/> while it is still open. In that part: the rows that arrived, the attempts and the failed
+    /// ones, GDELT's share of the rows, the newest failure in words — and every catalogue source's share of it, with its
+    /// GAPS (<c>U-tape-gaps</c>).
+    ///
+    /// <para><b>A gap</b> is a stretch longer than twice the source's cadence plus 30 s with no delivery from it — an
+    /// attempt whose note is empty — from its last delivery before to its first after, across midnights and restarts;
+    /// one still open ends at <paramref name="asOf"/>. The day counts every gap that overlaps it, clipped to its elapsed
+    /// part, so a night the app was down is a gap on both days it touches, and a source with no delivery that day is one
+    /// gap of the whole day whenever the day is longer than its allowance — every built-in source's always is. Before a
+    /// source's first delivery ever nothing is a gap: the day says when its recording began.</para>
+    ///
+    /// <para><b>Each gap is named by what the tape holds inside its part of the day</b>: the attempts there, every one of
+    /// them failed, and the newest failure — or none, which is "nothing asked": TradeAgent was not running or the switch
+    /// was off, and the tape cannot tell which, because it keeps no record of its own runs.</para>
+    ///
+    /// <para><b>Where the deliveries just outside the day come from.</b> The day's band of attempts in arrival order
+    /// (<see cref="ArrivalSlack"/>) holds the ones a few minutes either side; the rest are found per (source, series) on
+    /// the attempts' own index — the newest before the band, at most <see cref="GapLookBack"/> back, and the first after
+    /// it — because within one series the tape writes attempts in the order they arrived: each source is written by one
+    /// loop, and GDELT's tasks each by their own. A source's first delivery ever is found the same way, walking forward
+    /// from its first attempt. Each of these walks passes over failed attempts only, so it is long only for a series that
+    /// has never delivered, or has failed ever since the day — as the status read's walk back to a series' newest
+    /// delivery is for one that has stopped.</para>
+    /// </summary>
+    public TapeDay Day(DateTimeOffset from, DateTimeOffset to, DateTimeOffset asOf)
     {
+        if (to <= from) throw new ArgumentOutOfRangeException(nameof(to), to, "a day ends after it begins");
+        var until = asOf <= from ? from : asOf < to ? asOf : to;
+
         using var c = Open();
         using var snapshot = c.BeginTransaction(deferred: true);
 
         var low = FirstAtOrAfter(c, "tape_fetch", from - ArrivalSlack);
-        var high = FirstAtOrAfter(c, "tape_fetch", to + ArrivalSlack);
+        var high = FirstAtOrAfter(c, "tape_fetch", until + ArrivalSlack);
 
+        // THE DAY'S BAND, IN THE ORDER THE TAPE WROTE IT: the attempts of the elapsed part, and the deliveries just either
+        // side of it — the newest before and the first after, per series, which is why the order matters.
         int requests = 0, failed = 0;
         string? lastError = null;
-        var delivered = new Dictionary<string, List<DateTimeOffset>>(StringComparer.Ordinal);
-        using (var cmd = Cmd(c, """
-                   SELECT source, received_at, note FROM tape_fetch
-                   WHERE id >= $low AND id < $high AND received_at >= $from AND received_at < $to
-                   ORDER BY id
-                   """,
-                   ("$low", low), ("$high", high), ("$from", Sql.T(from)), ("$to", Sql.T(to))))
+        var attempts = new Dictionary<string, List<(DateTimeOffset At, string? Note)>>(StringComparer.Ordinal);
+        var edges = new Dictionary<(string Source, string Series), (DateTimeOffset? Before, DateTimeOffset? After)>();
+        using (var cmd = Cmd(c, "SELECT source, series, received_at, note FROM tape_fetch WHERE id >= $low AND id < $high ORDER BY id",
+                   ("$low", low), ("$high", high)))
         using (var r = cmd.ExecuteReader())
             while (r.Read())
             {
-                requests++;
-                if (!r.IsDBNull(2)) { failed++; lastError = r.GetString(2); continue; }
                 var source = r.GetString(0);
-                if (!delivered.TryGetValue(source, out var times)) delivered[source] = times = [];
-                times.Add(Sql.Time(r.GetString(1)));
+                var at = Sql.Time(r.GetString(2));
+                var note = r.IsDBNull(3) ? null : r.GetString(3);
+
+                if (at < from || at >= until)
+                {
+                    if (note is not null) continue;
+                    var key = (source, r.GetString(1));
+                    var edge = edges.GetValueOrDefault(key);
+                    edges[key] = at < from ? (at, edge.After) : (edge.Before, edge.After ?? at);
+                    continue;
+                }
+
+                requests++;
+                if (note is not null) { failed++; lastError = note; }
+                if (!attempts.TryGetValue(source, out var mine)) attempts[source] = mine = [];
+                mine.Add((at, note));
             }
 
         long rows, gdelt;
         using (var cmd = Cmd(c, """
                    SELECT COUNT(*), COALESCE(SUM(f.source = $g), 0) FROM tape_obs o JOIN tape_fetch f ON f.id = o.fetch_id
-                   WHERE f.id >= $low AND f.id < $high AND f.received_at >= $from AND f.received_at < $to
+                   WHERE f.id >= $low AND f.id < $high AND f.received_at >= $from AND f.received_at < $until
                    """,
-                   ("$g", GdeltGkg.Source), ("$low", low), ("$high", high), ("$from", Sql.T(from)), ("$to", Sql.T(to))))
+                   ("$g", GdeltGkg.Source), ("$low", low), ("$high", high), ("$from", Sql.T(from)), ("$until", Sql.T(until))))
         using (var r = cmd.ExecuteReader())
         {
             r.Read();
@@ -520,25 +636,106 @@ public sealed class TapeReader
             gdelt = r.GetInt64(1);
         }
 
-        var gaps = 0;
-        TimeSpan? longest = null;
-        string? longestSource = null;
-        foreach (var (source, times) in delivered)
+        // PER (SOURCE, SERIES), ON THE ATTEMPTS' OWN INDEX: the first delivery ever, the newest before the band — no further
+        // back than GapLookBack — and the first after it. Rows below `low` all arrived before the day; rows from `high` on
+        // all arrived after its elapsed part.
+        var back = FirstAtOrAfter(c, "tape_fetch", from - GapLookBack - ArrivalSlack);
+        using var first = Cmd(c,
+            "SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series WHERE source=$src AND series=$ser AND note IS NULL ORDER BY id LIMIT 1",
+            ("$src", ""), ("$ser", ""));
+        using var before = Cmd(c, """
+            SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            WHERE source=$src AND series=$ser AND id >= $back AND id < $low AND note IS NULL ORDER BY id DESC LIMIT 1
+            """, ("$src", ""), ("$ser", ""), ("$back", back), ("$low", low));
+        using var after = Cmd(c, """
+            SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            WHERE source=$src AND series=$ser AND id >= $high AND note IS NULL ORDER BY id LIMIT 1
+            """, ("$src", ""), ("$ser", ""), ("$high", high));
+
+        DateTimeOffset? Seek(SqliteCommand cmd, string source, string series)
         {
-            if (Row(source) is not { } row || row.Cadence <= TimeSpan.Zero) continue;
-            var allowed = 2 * row.Cadence + TapeSourceCatalog.LiveTolerance;
-            times.Sort();
-            for (var i = 1; i < times.Count; i++)
-            {
-                var gap = times[i] - times[i - 1];
-                if (gap <= allowed) continue;
-                gaps++;
-                if (longest is null || gap > longest) { longest = gap; longestSource = source; }
-            }
+            cmd.Parameters["$src"].Value = source;
+            cmd.Parameters["$ser"].Value = series;
+            return cmd.ExecuteScalar() is string text ? Sql.Time(text) : null;
         }
 
-        return new TapeDay(rows, requests, failed, gaps, longest, longestSource, lastError, gdelt);
+        var pairs = DistinctPairs(c, "tape_fetch", "ix_tape_fetch_series");
+        var sources = new List<TapeSourceDay>();
+        foreach (var row in Catalogue)
+        {
+            if (row.Cadence <= TimeSpan.Zero) continue;
+            var series = pairs.Where(p => p.Source == row.Id).Select(p => p.Series).ToList();
+            var mine = attempts.GetValueOrDefault(row.Id) ?? [];
+            var began = Earliest(series.Select(s => Seek(first, row.Id, s)));
+
+            // THE DELIVERY BEFORE THE DAY, when the recording began before it: the band's, else the index's within the look
+            // back. None there means the gap began before the look back stopped. And the first after the day's elapsed
+            // part, which only a day already over can have.
+            DateTimeOffset? previous = began < from
+                ? Latest(series.Select(s => edges.GetValueOrDefault((row.Id, s)).Before ?? Seek(before, row.Id, s)))
+                : null;
+            DateTimeOffset? next = asOf > until && began < until
+                ? Earliest(series.Select(s => edges.GetValueOrDefault((row.Id, s)).After ?? Seek(after, row.Id, s)))
+                : null;
+
+            sources.Add(SourceDay(row, from, until, asOf, mine, began, previous, next));
+        }
+
+        return new TapeDay(from, to, until, rows, requests, failed, lastError, gdelt, sources);
     }
+
+    /// <summary>
+    /// ONE SOURCE'S DAY, from its attempts in the elapsed part, its first delivery ever, and the deliveries just either
+    /// side of the part (<see cref="Day"/>): walked from the delivery before — or from before the look back, when there
+    /// was none in it — through the day's deliveries to the one after, or to <paramref name="asOf"/> while none has come.
+    /// </summary>
+    static TapeSourceDay SourceDay(TapeSourceEntry row, DateTimeOffset from, DateTimeOffset until, DateTimeOffset asOf,
+        List<(DateTimeOffset At, string? Note)> attempts, DateTimeOffset? began, DateTimeOffset? previous, DateTimeOffset? next)
+    {
+        var allowed = 2 * row.Cadence + TapeSourceCatalog.LiveTolerance;
+        var failures = attempts.Where(a => a.Note is not null).ToList();
+        var newestFailure = failures.Count > 0 ? failures.MaxBy(a => a.At).Note : null;
+
+        // NOT BEGUN BY THE END OF THE ELAPSED PART: nothing recorded, and nothing a gap.
+        if (began is not { } start || start >= until)
+            return new TapeSourceDay(row.Id, allowed, false, began, TimeSpan.Zero, [], attempts.Count, failures.Count, newestFailure);
+
+        var gaps = new List<TapeGap>();
+        void Gap(DateTimeOffset? a, DateTimeOffset? b)
+        {
+            var clippedFrom = a is { } x && x > from ? x : from;
+            var clippedTo = b is { } y && y < until ? y : until;
+            if (clippedTo <= clippedFrom) return;
+
+            var inside = failures.Where(f => f.At > (a ?? DateTimeOffset.MinValue) && f.At < (b ?? DateTimeOffset.MaxValue)
+                                             && f.At >= clippedFrom && f.At < clippedTo).ToList();
+            gaps.Add(new TapeGap(a, b, clippedFrom, clippedTo, inside.Count, inside.Count > 0 ? inside.MaxBy(f => f.At).Note : null));
+        }
+
+        // A STRETCH STARTS AT THE DELIVERY BEFORE — null when there was none in the look back — or, when the recording began
+        // on this day, at its first delivery, before which nothing is a gap.
+        var stretchFrom = start < from ? previous : null;
+        var stretching = start < from;
+        foreach (var at in attempts.Where(a => a.Note is null).Select(a => a.At).Order())
+        {
+            if (stretching && (stretchFrom is not { } since || at - since > allowed)) Gap(stretchFrom, at);
+            stretchFrom = at;
+            stretching = true;
+        }
+
+        if (next is { } then)
+        {
+            if (stretchFrom is not { } since || then - since > allowed) Gap(stretchFrom, then);
+        }
+        else if (stretchFrom is not { } since || asOf - since > allowed) Gap(stretchFrom, null);
+
+        var recorded = until - (start > from ? start : from) - gaps.Aggregate(TimeSpan.Zero, (sum, g) => sum + g.Length);
+        return new TapeSourceDay(row.Id, allowed, true, began, recorded, gaps, attempts.Count, failures.Count, newestFailure);
+    }
+
+    static DateTimeOffset? Earliest(IEnumerable<DateTimeOffset?> times) => times.Where(t => t is not null).Min();
+
+    static DateTimeOffset? Latest(IEnumerable<DateTimeOffset?> times) => times.Where(t => t is not null).Max();
 
     /// <summary>
     /// The newest attempt of every (source, series) the tape holds attempts of, and the newest of them that delivered —
