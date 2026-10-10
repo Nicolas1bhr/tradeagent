@@ -909,20 +909,34 @@ public sealed class ForwardRuns
     }
 
     /// <summary>
-    /// WHY THIS BUILD'S RUNNER CANNOT RUN ANY DEPLOYMENT OF A VERSION, IN WORDS — or null when it can.
+    /// WHY THIS BUILD'S RUNNER CANNOT RUN A DEPLOYMENT OF A VERSION STARTED AT <paramref name="now"/>, IN WORDS — or null
+    /// when it can.
     ///
-    /// <para>Every reason is the version's own and none of them is about its bars: this installation has no
-    /// row for it, its recorded text no longer parses in this build, it parses to a different program with
-    /// a different id (<see cref="Frozen"/>), or it requires a declaration this runner does not implement
-    /// (<see cref="Refuses"/>). A run of such a version is ended before its first bar with this
-    /// sentence, and a replacement would be ended the same way at its first pass — another row, another
-    /// flatten, another paid wake for Research — so <c>TradingGateway.StartPaperDeploymentsDue</c> asks this
-    /// before it starts one, and once one run of an allocation exists starts none (<c>U-timeframe-b</c>).</para>
+    /// <para>Four reasons are the version's own: this installation has no row for it, its recorded text no longer parses
+    /// in this build, it parses to a different program with a different id (<see cref="Frozen"/>), or it requires a
+    /// declaration this runner does not implement (<see cref="Refuses"/>). Two are about where a program that reads a
+    /// feature would read it (<c>U-runner-features</c>): this host has no tape open (<paramref name="tape"/> null), or a
+    /// run starting now would read the tape inside a holdout window of <paramref name="datasets"/> — its first close less
+    /// the longest reach, to that close, asked of the dataset ledger exactly as the runner asks it on every pass. A run of
+    /// such a version is ended with this sentence, and a replacement would be ended the same way at its first pass —
+    /// another row, another flatten, another paid wake for Research — so <c>TradingGateway.StartPaperDeploymentsDue</c>
+    /// asks this before it starts one, and once one run of an allocation exists starts none (<c>U-timeframe-b</c>) — until
+    /// none of these is true, when it starts one by itself.</para>
     /// </summary>
-    public static string? CannotRun(StrategyStore strategies, string versionId)
+    public static string? CannotRun(StrategyStore strategies, string versionId, TapeReader? tape, DatasetStore datasets,
+        DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(strategies);
-        return Frozen(strategies, versionId) is not { } program ? NotFrozen : Refuses(program);
+        ArgumentNullException.ThrowIfNull(datasets);
+
+        if (Frozen(strategies, versionId) is not { } program) return NotFrozen;
+        if (Refuses(program) is { } refused) return refused;
+        if (program.Features.Count == 0) return null;
+        if (tape is null) return NoTape(program);
+
+        var first = FirstClose(BarGrid.For(program), now);
+        using var feed = FeatureFeed.ForPaper(tape, datasets, program, first);
+        return feed.Refusal(first) is { } withheld ? Withheld(withheld) : null;
     }
 
     /// <summary>

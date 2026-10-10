@@ -773,14 +773,15 @@ public sealed class TradingGateway : IAsyncDisposable
             var runs = _deployments.ForAllocation(allocation.Id);
             if (runs.Any(HoldsItsSlot)) continue;
 
-            // AND NO REPLACEMENT FOR A VERSION THIS BUILD'S RUNNER CANNOT RUN AT ALL — no row, a text that no
-            // longer parses, one that parses to another id, or one that requires a declaration the runner does not
-            // implement, a `feature` today (`ForwardRuns.CannotRun`). The first run is
-            // started and the runner ends it before its first bar, in words: on the deployment's own line for
-            // the owner and in one note to Research. A replacement would meet the same sentence at its first
+            // AND NO REPLACEMENT FOR A VERSION THIS BUILD'S RUNNER CANNOT RUN NOW — no row, a text that no
+            // longer parses, one that parses to another id, one that requires a declaration the runner does not
+            // implement, or a program that reads a feature on a host with no tape open or whose run starting now
+            // would read a holdout window (`ForwardRuns.CannotRun`, asked of this gateway's tape and dataset ledger at
+            // this instant). The first run is started and the runner ends it, in words: on the deployment's own line
+            // for the owner and in one note to Research. A replacement would meet the same sentence at its first
             // pass — another row, another flatten, another wake and a paid turn to be told it again, on every
-            // sweep — so once one run of this allocation exists, none is started for it.
-            if (runs.Count > 0 && ForwardRuns.CannotRun(Strategies, allocation.VersionId) is not null) continue;
+            // sweep — so once one run of this allocation exists, none is started for it until none would be.
+            if (runs.Count > 0 && ForwardRuns.CannotRun(Strategies, allocation.VersionId, Tape, Datasets, now) is not null) continue;
 
             var result = _deployments.Start(new StrategyDeploymentRow(
                 "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,

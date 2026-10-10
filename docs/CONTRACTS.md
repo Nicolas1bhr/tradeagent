@@ -2685,7 +2685,9 @@ line depends on the tape alone.
 refuses a feature program where no tape is open before the trial budget (`MARKET_DATA_UNAVAILABLE`, nothing recorded,
 nothing charged), `Backtest.Over` before a bar is read, `Backtest.Run` without a feed, and the evaluator stepped
 without its values faults — never a run as though every value were absent. A program that declares no feature is run,
-traced and identified exactly as before, byte for byte.
+traced and identified exactly as before, byte for byte. **The paper runner reads through the same feed**
+(`FeatureFeed.ForPaper`, `U-runner-features`; "The runner" below), so a paper run's values and their digest are the
+backtest's over the same tape and the same closes.
 
 **Metrics come from the trace and from nothing else.** `BacktestMetrics.Of(trace)` takes one argument on
 purpose: a figure read off the program's text would be a claim about the program rather than a
@@ -4308,13 +4310,39 @@ program that declares no `bars` is the case where the two clocks are one; its pa
 by a guard to what the runner at `3dff4294` produced. `U-timeframe-a`'s refusal of declared bars and the sweep guard it
 needed are gone.
 
+**A PROGRAM THAT READS FEATURES IS STEPPED ON THEM AS THEY HAD ARRIVED** (`U-runner-features`, lifting `U-language-v2a`'s
+refusal). At each declared close it decides, the runner asks `FeatureFeed.At(BarGrid.EndOf(open))` — the backtest's own
+path, through `FeatureFeed.ForPaper` — and hands the evaluator each value as it had arrived by the close less the spec's
+latency; stale is the spec's `max_age_s`, the backtest's one gate, and an ABSENT value decides nothing and is counted,
+protection on the minute untouched. The first live close a value turns absent is said once on the engineering line
+`forward_run_feature_absent` — the run, the close, the feature, the evaluator's words and the source's last delivery
+when older than twice its cadence plus 30 s — and not again until it is present. Bars before a clean-history start are
+evaluated, never trimmed; the first close reads back by the longest reach, and a tape begun later gives what its rows
+give, or absent. **The tape is the composition root's** — `AppHost` hands `ForwardRuns` its reader, and a runner built
+before the tape opened is built again once it has; `GatewayHost` has none — never `TradingGateway.Tape`, which a
+connector switch sets on a new gateway only after a pass may already run on it. **The holdout:** the feed reads under
+`BarAudience` "the paper runner", internal, which may read no window; on EVERY pass, of the dataset ledger only, a run whose
+reads — its first close less the longest reach, to the pass's last declared close — reach a dataset's holdout window is
+ENDED in the window's words: before its first bar, nothing sent, or at the pass after a later cutoff, its book closed as
+any END closes it; a held window with no recorded end reaches every run after its cutoff. The evidence rule outranks a
+paper run's continuity. A host with no tape ends the run before anything is settled or replayed, and a feed that halts
+ends it in its words. **Each order names its values:** an entry or exit carries `PlaceIntent.Features` — its close, each
+value or absence with its rows digest, and the SHA-256 of every value read through that close, the backtest feed's
+digest over the same closes — written only when set (no other intent's text, digest or client order id moves) and read
+by no gateway path; each pass compares the digest at every close an entry or exit names (an exit sent again keeps its
+own), and a difference ENDS the run in words naming the close and both digests. NOT claimed: live (every tape source is
+research-only, `PromotionStore`); an archive input's first-seen, which is its label; the bars' own holdout gap (below);
+and a row stamped as arrived by a close but committed after the pass that decided it — caught only where an order stood
+on it, by a replay that reads it.
+
 **THE SWEEP NEVER CHURNS A VERSION THE RUNNER CANNOT RUN** (`U-timeframe-b`, on the orchestrator's amendment).
 `ForwardRuns.CannotRun` answers, in the runner's own words, when this installation has no row for a version, its text
-no longer parses, it parses to another id, or it requires a declaration this runner does not implement — `feature`
-today (`ForwardRuns.Implements`; `U-language-v2a`): the runner values no feature until `U-runner-features` — and every
-run of it is ended before its first bar, nothing sent — and
-`TradingGateway.StartPaperDeploymentsDue` asks it: once one run of an allocation exists, no replacement is started for
-such a version, because each would be another row, another flatten and another paid wake for Research. The first run
+no longer parses, it parses to another id, it requires a declaration this runner does not implement (none today:
+`ForwardRuns.Implements` is every kind), or — for a program that reads a feature (`U-runner-features`) — the host has
+no tape open, or a run starting now would read a holdout window; and
+`TradingGateway.StartPaperDeploymentsDue` asks it of the gateway's tape, dataset ledger and instant: once one run of an
+allocation exists, no replacement is started for such a version, because each would be another row, another flatten
+and another paid wake for Research — and one starts by itself once none of it holds. The first run
 is still started, so the owner reads the reason on the deployment's own line. A program that declares no execution
 bounds is not in it: that run is ended at its first intent, not before its first bar, and a version promoted before
 `U-promote-bounds` can be replaced after each such end.
@@ -4326,7 +4354,11 @@ reads and converts and does nothing else: no fetch, no interpolation, no carry-f
 gap. The app wires the collector's `BarClosed` to `Announce`; the gateway host has no collector and settles by
 polling `SinceAsync`, because an event can be missed and a query cannot.
 
-**NOTHING IN THE RUNNER'S PROCESS SURVIVES A RESTART, BECAUSE NOTHING NEEDS TO.** The evaluator's windows are a
+**NOTHING IN THE RUNNER'S PROCESS SURVIVES A RESTART, BECAUSE NOTHING NEEDS TO.** The one thing kept in process is
+a feature program's values by close (`U-runner-features`), served to the next pass so only unread closes read the tape,
+and it is no state a restart loses: every input is a polled reading first seen at its arrival, on a tape that never
+updates or deletes a row, so a value at a close that has passed is fixed, and a restart that holds none reads the same
+values and decides the same (`FeatureProgramRunnerTests` (h)). The evaluator's windows are a
 function of the bars; the position, the average price, the bars held and the pending order are read back out of
 the run's own `deployment_op` rows joined to `execution_request` and `fill` by request id — the run's OWN
 executions and never the account's total, because the owner's own position on that account belongs to nobody
@@ -4345,8 +4377,13 @@ app's background loop runs a pass about every five seconds. Measured 2026-10-02 
 Pro), one pass over 50,000 bars (≈ 34.7 days): 98–281 ms across two programs (the shipped ma-crossover and
 an entry/exit on the close), 71–72.5 MiB allocated per pass, and the bars it holds 28.0–28.5 MiB (≈ 590
 bytes a bar) — on a machine that was swapping heavily that day, so an upper bound for this machine, not a
-property of the code. Nothing here is cached across passes on purpose; a cache would be the state a restart
-loses.
+property of the code. No bar is cached across passes, on purpose: the bars ARE the run's state. A feature program's
+values are (above), because a value at a passed close is fixed — measured 2026-10-11 on the same Mac (swapping ≈ 10.7 GB
+at load 7–9, so again an upper bound), a 30-day hourly run over 43,200 minutes and a 60 s input (43,200 tape rows): a
+pass that reads every close from the tape, as after a restart, 1,063–1,157 ms and 331 MiB allocated, against 412–555 ms
+and 124 MiB for the same program without its feature; a steady pass, one new close read, 335–516 ms and 124–126 MiB
+(the twin's 460–602 ms and 124 MiB); the values kept 0.83 MiB, ≈ 1.2 KB a close. The year benchmark, a backtest, reads
+8,760 closes over 525,600 tape rows in 10.4–11.8 s; the runner reads the tape through the same `ix_tape_obs_asof` seeks.
 
 **PROTECTION RUNS BY CODE, IN THE BACKTEST'S ORDER, BEFORE THE EVALUATOR IS ASKED.** The resting stop and target
 are the venue's business — real orders, placed the moment the entry fills, at the DISTANCES the program declared

@@ -128,18 +128,19 @@ absent. The tape is held back over every dataset's holdout window as the bars ar
 would read it there is REFUSED in words before a bar is read — and a feature is read at the LAST bar's close too, so
 a backtest's `to` must be more than one of the program's bars before a `holdout_from`. Where a holdout window lies
 before the run, the search for a feature's clean-history start reaches back no further than that window's close,
-and the backtest says so. **The paper runner does not run one yet**: a program uses only declarations every reader of it
-implements, so a deployment of a program that reads a feature is ended before its first bar, in words, until a
-later update values features on paper. And every tape source is research-only today, so no capital may stand on a
-version that reads a feature.
+and the backtest says so. **The paper runner reads them the same way** (`U-runner-features`): at each close it decides,
+through the backtest's own feed, absent meaning no decision, and each order names the values it stood on. A run is
+ended in words where no tape is open, where its reads would reach a holdout window — before its first bar, or at the
+pass after a later cutoff — and where a replay no longer reads what one of its orders stood on. And every tape source
+is research-only today, so no capital may stand on a version that reads a feature.
 
 ## Required declarations
 
 Every declaration a program uses constrains its orders, its risk or how it is evaluated, so every one is
 REQUIRED: a reader that does not implement one refuses the program in words rather than running the rest of it.
-The backtest and the verdict implement every declaration this page lists; the paper runner every one but
-`feature`. `max_capital_fraction` is one of them although it is written on the size line: a reader that applied a
-risk fraction without its cap would send an entry larger than the program says one may ever be. Comments are the
+The backtest, the verdict and the paper runner implement every declaration this page lists. `max_capital_fraction`
+is one of them although it is written on the size line: a reader that applied a risk fraction without its cap would
+send an entry larger than the program says one may ever be. Comments are the
 one optional part — kept byte for byte in the source, outside the id, and required by nobody. A declaration that
 states the default (`timezone UTC`, `bars 1m`, all seven weekdays) requires nothing.
 

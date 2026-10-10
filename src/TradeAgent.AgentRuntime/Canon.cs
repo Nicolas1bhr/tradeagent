@@ -584,9 +584,9 @@ public static class Canon
           did; a value it cannot state (nothing fresh, too few readings, a withheld one) is no decision at all, never
           a zero. `{{verb backtest}}` and the verdict read it; a backtest refuses where no tape is open, and refuses one
           whose features would read the tape inside a holdout window — held back as the bars are, and read at the LAST
-          bar's close too, so give `{{args --to}}` an instant more than one of the program's bars before `holdout_from`; and two
-          things are not yet possible, said now so you do not plan on them: the paper runner ends a run of a program that
-          reads a feature before its first bar, in words, until a later update, and every tape source is
+          bar's close too, so give `{{args --to}}` an instant more than one of the program's bars before `holdout_from`; on
+          paper the runner reads it the same way at each close, each order naming the values it stood on, and ends a
+          run in words where no tape is open or it would read a holdout window; every tape source is
           research-only, so no capital can stand on one. The spec's keys and kinds are in the language reference;
         - **three worked programs are in `{{examples_dir}}/`** — a moving-average crossover,
           an opening-range breakout and an RSI mean reversion, all of which parse today. Same ownership:
