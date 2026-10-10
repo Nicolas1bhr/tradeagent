@@ -441,7 +441,10 @@ public static class GatewaySchema
             + "re-judging it is not available yet. WHAT IT IS NOT: it reads no bar for you, it moves no "
             + "holdout cutoff, it opens, renews and re-budgets no campaign, it registers no trial, and it "
             + "grants no authority to trade anything. The execution model is the JUDGE'S and is not yours "
-            + "to pass. "
+            + "to pass. A verdict TradeAgent itself stops — it is closing, or your turn was ended — is REFUSED "
+            + "with IPC_UNAVAILABLE: nothing is recorded and no figure comes back, and a judgement already "
+            + "charged for it stays that version's, so asking again under the same campaign judges it and "
+            + "spends no second one. "
             + "One at a time per role.",
             [
                 new("version", "string", true, "The version's own hash, exactly as 'backtest' answered it. A version this installation never accepted, or one you have never completed a run of over this dataset, is refused."),

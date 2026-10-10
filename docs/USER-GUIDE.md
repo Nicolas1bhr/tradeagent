@@ -756,8 +756,10 @@ every single request is one it composed itself — and that changes three things
   no order and proves no fill. It can also **ask TradeAgent to judge a program it has already
   backtested** over the months you held back — it gets a verdict and a reason in words and never a
   figure from those months, and the campaign's small budget of judgements is what stops it asking over
-  and over. There is no shell, no way to install anything, and no
-  way to reach the internet. Anything else it asks for is refused and written down.
+  and over; a judgement you interrupt, with Pause or by closing TradeAgent, records nothing and is
+  taken when it asks again, at no second cost unless you renew its campaign first. There is no shell,
+  no way to install anything, and no way to reach the internet. Anything else it asks for is refused
+  and written down.
 - **Everything it asked for is recorded.** Every read, every write and every trading call it made —
   served or refused — is in TradeAgent's own records, which it cannot edit. That is not true of the
   AI tool on your computer: what that program reads, nothing outside it can see.
