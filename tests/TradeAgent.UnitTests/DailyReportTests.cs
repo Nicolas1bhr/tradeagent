@@ -255,4 +255,87 @@ public class DailyReportTests
         Assert.Contains("OVERDUE", text, StringComparison.Ordinal);
     }
 
+    // ---- U-tape-gaps, item 3: a day's report reaches the disk whole or not at all ---------------------
+
+    /// <summary>
+    /// A WRITE THAT FAILS PART-WAY THROUGH THE TEXT, as the test's own seam: it hands the file half the report's bytes,
+    /// pushes them to it, and throws — a full disk, or a process killed mid-write, as the file sees it.
+    /// </summary>
+    static void HalfThenTheDiskIsFull(Stream stream, byte[] bytes)
+    {
+        stream.Write(bytes, 0, bytes.Length / 2);
+        stream.Flush();
+        throw new IOException("the disk is full (the test's own failure, half-way through the report)");
+    }
+
+    /// <summary>
+    /// A DAY NO OTHER TEST WRITES A REPORT FOR. Every test in this process writes into one home, and the tests above write
+    /// today and the days just before it, which <see cref="A_day_that_has_no_file_is_owed_one_and_a_day_that_has_is_not"/>
+    /// counts — so these take days more than a year back, each its own.
+    /// </summary>
+    static DateTimeOffset LongAgo(int days) => Midday().AddDays(-days);
+
+    /// <summary>Whatever lies beside a day's report under its name: a write's temp, never listed as a day.</summary>
+    static List<string> Beside(string day) =>
+        Directory.Exists(Paths.Reports)
+            ? [.. Directory.EnumerateFiles(Paths.Reports).Where(f => Path.GetFileName(f).StartsWith(day + ".md.", StringComparison.Ordinal))]
+            : [];
+
+    /// <summary>
+    /// (h) RED FIRST — A REPORT WHOSE WRITE FAILS MIDWAY LEAVES NO FILE, AND ITS DAY STAYS OWED. The day's file used to be
+    /// written in place, so a crash, a <c>kill -9</c> (systemd's restart on the Linux host) or a full disk mid-write left
+    /// half a report, which <c>Owed</c> then skipped for good and the page served as that day's record. The text now
+    /// reaches a temp beside the file and is renamed over it only whole. And a temp a kill left behind — its write never
+    /// got to clean up after itself — is never listed as a day, never stands for the day's file, and the next write
+    /// removes it.
+    /// </summary>
+    [Fact]
+    public async Task A_report_whose_write_fails_midway_leaves_no_file_and_its_day_stays_owed()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var at = LongAgo(400);
+        var day = DailyReports.DayName(at);
+        var path = DailyReports.FileFor(day);
+
+        var thrown = Assert.Throws<IOException>(() => new DailyReports(gw, db, writeBytes: HalfThenTheDiskIsFull).Write(at));
+        Assert.Contains("the disk is full", thrown.Message, StringComparison.Ordinal);
+
+        Assert.False(File.Exists(path), $"a write that failed half-way left a file for {day}");
+        Assert.Null(gw.Reports.Read(day));
+        Assert.DoesNotContain(day, gw.Reports.Days());
+        Assert.Equal([day], gw.Reports.Owed(at.AddDays(1), lookBackDays: 1).Select(DailyReports.DayName));
+        Assert.Empty(Beside(day));
+
+        // A TEMP A KILL LEFT BEHIND: never a day, never the day's file — and gone at the next write, which is whole.
+        var stale = $"{path}.{Guid.NewGuid():n}.tmp";
+        File.WriteAllText(stale, "# TradeAgent — half a rep");
+        Assert.DoesNotContain(day, gw.Reports.Days());
+        Assert.Equal([day], gw.Reports.Owed(at.AddDays(1), lookBackDays: 1).Select(DailyReports.DayName));
+
+        var draft = gw.Reports.Write(at);
+        Assert.False(File.Exists(stale), "the next write left a dead write's temp where it was");
+        Assert.Equal(draft.Text, File.ReadAllText(path));
+        Assert.Empty(gw.Reports.Owed(at.AddDays(1), lookBackDays: 1));
+        Assert.Empty(Beside(day));
+    }
+
+    /// <summary>
+    /// (i) RED FIRST — A REWRITE THAT FAILS LEAVES THE EARLIER REPORT WHOLE. A day's file is written again whenever the owner
+    /// presses "Write it now" again; a rewrite used to truncate the file first, so one that failed half-way destroyed the
+    /// report that was there. Now the earlier report stands, byte for byte, until a whole one replaces it.
+    /// </summary>
+    [Fact]
+    public async Task A_rewrite_that_fails_leaves_the_earlier_report_whole()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var at = LongAgo(401);
+        var day = DailyReports.DayName(at);
+        var earlier = gw.Reports.Write(at).Text;
+
+        Assert.Throws<IOException>(() => new DailyReports(gw, db, writeBytes: HalfThenTheDiskIsFull).Write(at));
+
+        Assert.Equal(earlier, File.ReadAllText(DailyReports.FileFor(day)));
+        Assert.Equal(earlier, gw.Reports.Read(day));
+        Assert.Empty(Beside(day));
+    }
 }

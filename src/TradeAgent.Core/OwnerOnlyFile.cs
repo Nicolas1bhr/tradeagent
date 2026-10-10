@@ -72,8 +72,13 @@ public static class OwnerOnlyFile
     /// function", "not supported" or "invalid parameter", and there <c>MoveFileExW</c> is all there is: a
     /// reader still refuses that replace, and the next attempt is the caller's own — the accept loop's after
     /// its pause, the app's next start, the owner's next press.</para>
+    ///
+    /// <para><b>Public for the one other file the app must publish whole</b> (<c>U-tape-gaps</c>): the owner's daily
+    /// report, which <c>DailyReports</c> writes to a temp of its own — not owner-only, as the report never was — and
+    /// renames over the day's file here. Making it public changed nothing about the rename: every credential still
+    /// reaches the disk through <see cref="Write"/> alone.</para>
     /// </summary>
-    static void Publish(string temp, string path)
+    public static void Publish(string temp, string path)
     {
         if (OperatingSystem.IsWindows() && ReplaceWhileReadersRead(temp, path)) return;
         File.Move(temp, path, overwrite: true);

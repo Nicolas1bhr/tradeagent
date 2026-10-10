@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -70,7 +71,8 @@ public sealed record DailyReportInputs
 /// same choice <c>TurnMeter</c> makes about the spending day, for the same reason: the owner's
 /// midnight is the one that means anything to them.</para>
 /// </summary>
-public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null)
+public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null,
+    Action<Stream, byte[]>? writeBytes = null)
 {
     readonly MissionEventStore _events = new(db);
     readonly PublicationStore _publications = new(db);
@@ -134,6 +136,10 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// <see cref="DailyReportText.Draft"/> and the refusal is what lands on disk, so a day never has
     /// a file that quietly leaves things out — see <see cref="DailyReportDraft.Rejected"/>.
     ///
+    /// <para>And it lands WHOLE OR NOT AT ALL (<see cref="Publish"/>): a write that fails part-way leaves the day's
+    /// earlier report as it was, or no file and the day still owed — never half a report that <see cref="Owed"/> would
+    /// skip for good and the page would serve as that day's record. A failure is thrown, as it always was.</para>
+    ///
     /// It records one activity line and RAISES NOTHING. There is deliberately no mission event here:
     /// every row in that queue is a reason to spend the owner's money on a turn, and a report the app
     /// wrote by itself is not one.
@@ -142,10 +148,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     {
         var report = Compose(at, inputs);
         var draft = DailyReportText.Draft(report);
-        var path = FileFor(report.Identity.Day);
-
-        Directory.CreateDirectory(Paths.Reports);
-        File.WriteAllText(path, draft.Text);
+        Publish(FileFor(report.Identity.Day), Encoding.UTF8.GetBytes(draft.Text));
 
         gateway.Log.Activity(draft.Rejected is null
             ? $"Daily report for {report.Identity.Day} written"
@@ -154,6 +157,55 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         return draft;
     }
+
+    /// <summary>
+    /// One write of a report at a time in this process, so every temp a write finds beside the reports is one that an
+    /// earlier write left behind — never one still being written.
+    /// </summary>
+    static readonly Lock Publishing = new();
+
+    /// <summary>A write's temp beside a day's file: the day's name, <c>.md.</c>, 32 hex digits, <c>.tmp</c> — never <c>*.md</c>.</summary>
+    static readonly Regex Temp = new(@"^\d{4}-\d{2}-\d{2}\.md\.[0-9a-f]{32}\.tmp$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// THE DAY'S FILE, WHOLE OR NOT AT ALL (<c>U-tape-gaps</c>): this report is the record the AI's own work is judged by,
+    /// and a file on disk is taken as a whole one — <see cref="Owed"/> skips its day, <see cref="Read"/> and the page serve
+    /// it. So the text goes to a temp of this write's own beside the day's file — a name <see cref="Days"/> never lists and
+    /// <see cref="Owed"/> never counts — is flushed to the disk, and only then is renamed over the day's file, by
+    /// <see cref="OwnerOnlyFile.Publish"/>: the rename a Windows reader of the old file does not refuse. A crash, a kill or a
+    /// full disk before the rename leaves the earlier report whole, or no file and the day owed. A temp a failed write can
+    /// delete it deletes; one a killed process left is removed by the next write.
+    ///
+    /// <para>The bytes go into the temp through <c>writeBytes</c>, the test seam this type is made with, which the product
+    /// never passes: a test hands one that fails half-way through the text.</para>
+    /// </summary>
+    void Publish(string path, byte[] bytes)
+    {
+        lock (Publishing)
+        {
+            Directory.CreateDirectory(Paths.Reports);
+            foreach (var dead in Directory.EnumerateFiles(Paths.Reports, "*.tmp").Where(f => Temp.IsMatch(Path.GetFileName(f))))
+                try { File.Delete(dead); } catch (Exception) { /* still held: the next write tries again */ }
+
+            var temp = $"{path}.{Guid.NewGuid():n}.tmp";
+            try
+            {
+                using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    (writeBytes ?? WriteAll)(fs, bytes);
+                    fs.Flush(flushToDisk: true);
+                }
+                OwnerOnlyFile.Publish(temp, path);
+            }
+            finally
+            {
+                // Only after a failure is there anything here; the rename consumed it otherwise.
+                try { File.Delete(temp); } catch (Exception) { /* the next write removes it */ }
+            }
+        }
+    }
+
+    static void WriteAll(Stream stream, byte[] bytes) => stream.Write(bytes);
 
     /// <summary>Today's report, written now, whoever asked. The "Write it now" press and the op.</summary>
     public DailyReportDraft WriteNow(DailyReportInputs? inputs = null) => Write(_now(), inputs);
