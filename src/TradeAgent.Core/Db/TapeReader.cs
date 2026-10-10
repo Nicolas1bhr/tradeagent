@@ -577,12 +577,13 @@ public sealed class TapeReader
     /// (<see cref="ArrivalSlack"/>) holds the ones a few minutes either side, and of those, per (source, series), the
     /// latest that arrived before the day and the earliest that arrived at or after its elapsed part's end are taken by
     /// their arrival instants — never by the order the tape wrote them, which follows arrival only to within the slack.
-    /// The rest are found per (source, series) on the attempts' own index — the newest before the band, at most
-    /// <see cref="GapLookBack"/> back, and the first after it — because within one series the tape writes attempts in
-    /// the order they arrived: each source is written by one loop, and GDELT's tasks each by their own. A source's first
-    /// delivery ever is found the same way, walking forward from its first attempt. Each of these walks passes over
-    /// failed attempts only, so it is long only for a series that has never delivered, or has failed ever since the day
-    /// — as the status read's walk back to a series' newest delivery is for one that has stopped.</para>
+    /// The rest are found per (source, series) on the attempts' own index — the newest before the band that arrived no
+    /// earlier than <see cref="TapeDay.LookedBackTo"/>, <see cref="GapLookBack"/> before the day, by its arrival instant,
+    /// and the first after it — because within one series the tape writes attempts in the order they arrived: each
+    /// source is written by one loop, and GDELT's tasks each by their own. A source's first delivery ever is found the
+    /// same way, walking forward from its first attempt. Each of these walks passes over failed attempts only, so it is
+    /// long only for a series that has never delivered, or has failed ever since the day — as the status read's walk back
+    /// to a series' newest delivery is for one that has stopped.</para>
     /// </summary>
     public TapeDay Day(DateTimeOffset from, DateTimeOffset to, DateTimeOffset asOf)
     {
@@ -641,17 +642,20 @@ public sealed class TapeReader
             gdelt = r.GetInt64(1);
         }
 
-        // PER (SOURCE, SERIES), ON THE ATTEMPTS' OWN INDEX: the first delivery ever, the newest before the band — no further
-        // back than GapLookBack — and the first after it. Rows below `low` all arrived before the day; rows from `high` on
-        // all arrived after its elapsed part.
-        var back = FirstAtOrAfter(c, "tape_fetch", from - GapLookBack - ArrivalSlack);
+        // PER (SOURCE, SERIES), ON THE ATTEMPTS' OWN INDEX: the first delivery ever, the newest before the band — one that
+        // arrived no earlier than where the day says its look back stopped, TapeDay.LookedBackTo: the ids fence the walk
+        // with ArrivalSlack to spare, and the arrival instant bounds what it returns — and the first after it. Rows below
+        // `low` all arrived before the day; rows from `high` on all arrived after its elapsed part.
+        var lookedBack = from - GapLookBack;
+        var back = FirstAtOrAfter(c, "tape_fetch", lookedBack - ArrivalSlack);
         using var first = Cmd(c,
             "SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series WHERE source=$src AND series=$ser AND note IS NULL ORDER BY id LIMIT 1",
             ("$src", ""), ("$ser", ""));
         using var before = Cmd(c, """
             SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
-            WHERE source=$src AND series=$ser AND id >= $back AND id < $low AND note IS NULL ORDER BY id DESC LIMIT 1
-            """, ("$src", ""), ("$ser", ""), ("$back", back), ("$low", low));
+            WHERE source=$src AND series=$ser AND id >= $back AND id < $low AND received_at >= $since AND note IS NULL
+            ORDER BY id DESC LIMIT 1
+            """, ("$src", ""), ("$ser", ""), ("$back", back), ("$low", low), ("$since", Sql.T(lookedBack)));
         using var after = Cmd(c, """
             SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
             WHERE source=$src AND series=$ser AND id >= $high AND note IS NULL ORDER BY id LIMIT 1
