@@ -3299,7 +3299,9 @@ perception's billed charge as the one API charge among its figures.
 its limits; never an address, a request id or a pin, and it cannot add an instrument. A row naming anything else stops
 that instrument, in words; an unreadable file stops every call; a price of zero is refused, because zero is no price.
 **No file lifts TradeAgent's own bound**: a rate of zero is that bound, never "no limit", and a row setting a rate its host
-does not document — OpenRouter's route documents none — is refused and stops that instrument, in words.
+does not document — OpenRouter's route documents none — is refused and stops that instrument, in words; so is a row that
+zeroes a rate its host documents, naming the rate, because zero means "not documented" and a file cannot make a
+documented rate undocumented.
 
 **The rate gate** (`Core/Decisions/DecisionRateGate.cs`, `U-decision-card`). One process-wide gate (`Shared`; a test brings
 its own), per instrument id, in memory, on the wire's own clock. A call is ADMITTED only if (a) no hold stands on the
@@ -3308,8 +3310,9 @@ second plus this call's bound fit `TokensPerSecond` — a call in flight counted
 (65,536 at both hosts, the figure its money is reserved at) because the host counts tokens with a tokenizer this app does
 not have, and a settled call at the input and output its answer reported, for the second after it ended; no usage keeps
 the bound. At TypeSafe's 100,000 tokens a second that is ONE call in flight — the app's conservative reading, not the
-host's figure. **Zero is TradeAgent's own bound**: where a rate is not documented (OpenRouter's route; a file's zero), one
-call in flight at a time and one a second, named on every refusal as TradeAgent's figure. A host's **429, 529 or 402 holds
+host's figure. **Zero is TradeAgent's own bound, applied whole**: where EITHER rate is not documented (OpenRouter's route
+documents neither), at most one call in flight at a time AND at most one a second — the smaller of that and any documented
+figure — named on every refusal as TradeAgent's figure. A host's **429, 529 or 402 holds
 the instrument** until its `Retry-After` — seconds after the answer, or a date; an unreadable value counts as absent — else
 for TradeAgent's own back-off: 1 s, doubling with each such answer in a row to 60 s, the run ended by a 2xx. A refusal is
 REFUSED in words — the limit, whose it is (the host's, read on a named day from a named page; the file's, "not dated"; the

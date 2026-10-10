@@ -495,6 +495,14 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         Assert.Contains(w.Requests, rig.Words());
         Assert.Contains(w.Price, rig.Words());
 
+        // THE CARD'S IN-FLIGHT FIGURE IS THE GATE'S: with either rate undocumented the app's own bound applies whole, so a
+        // tokens figure that would hold three calls at their bound beside no requests figure still means one.
+        var oneRate = TypeSafe with { Limits = TypeSafe.Limits with { TokensPerSecond = 200_000, RequestsPerSecond = 0 } };
+        var alone = PerceptionCard.Words(TypeSafe.Id, new DecisionInstrumentsRead([oneRate], null, []), false, null, 1m, 5m, "USD",
+            null, null);
+        Assert.EndsWith("until its answer says what it used, so 1 call can be in flight at once here.", alone.OwnBound,
+            StringComparison.Ordinal);
+
         // THE TERMS, AND NOTHING THAT SENDS THE OWNER TO A COMMAND — after a pass and after a press.
         Assert.Contains(PerceptionCard.Terms, rig.Words());
         Assert.Contains(PerceptionCard.TypeSafeTerms, PerceptionCard.Terms, StringComparison.Ordinal);

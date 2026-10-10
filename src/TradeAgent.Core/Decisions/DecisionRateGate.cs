@@ -15,10 +15,11 @@ namespace TradeAgent.Core.Decisions;
 /// a second that leaves ONE call in flight at a time — the app's conservative reading, not the host's figure.</para>
 ///
 /// <para><b>Zero is TradeAgent's own bound, never "none".</b> A rate nobody documents — OpenRouter's route documents none —
-/// or one <c>decision-models.json</c> sets to zero is not a host with no limit: it is a host whose limit TradeAgent does not
-/// know, so the app applies its own, named as its own — <see cref="OwnCallsInFlight"/> call in flight and
-/// <see cref="OwnRequestsPerSecond"/> a second — and no file lifts it (<see cref="DecisionInstruments.Read"/> refuses a row
-/// that sets a rate its host does not document).</para>
+/// is not a host with no limit: it is a host whose limit TradeAgent does not know, so the app applies its own, named as its
+/// own and WHOLE — at most <see cref="OwnCallsInFlight"/> call in flight AND at most <see cref="OwnRequestsPerSecond"/> a
+/// second, the smaller of that and any documented figure — wherever EITHER rate is zero, whatever the other says. No file
+/// lifts it: <see cref="DecisionInstruments.Read"/> refuses a row that sets a rate its host does not document, and one
+/// that zeroes a rate its host does.</para>
 ///
 /// <para><b>A host that says "not now" holds the instrument.</b> A 429 (too many requests), a 529 (overloaded) or a 402
 /// (a credit limit) keeps every call to that instrument out until the instant its <c>Retry-After</c> named — seconds or a
@@ -106,19 +107,30 @@ public sealed class DecisionRateGate
             var limits = instrument.Limits;
             var bound = instrument.ReservedTokens;
 
+            // THE APP'S OWN BOUND APPLIES WHOLE where ANY rate is undocumented: one call in flight AND one a second — the
+            // smaller of that and a documented figure — because a host whose tokens nobody documents is not made safe at
+            // eighty requests a second by documenting its requests, nor the other way round.
+            var own = limits.TokensPerSecond <= 0 || limits.RequestsPerSecond <= 0;
+
             // ADMISSIONS IN ANY ROLLING SECOND.
-            var perSecond = limits.RequestsPerSecond > 0 ? limits.RequestsPerSecond : OwnRequestsPerSecond;
+            var perSecond = own
+                ? Math.Min(OwnRequestsPerSecond, limits.RequestsPerSecond > 0 ? limits.RequestsPerSecond : int.MaxValue)
+                : limits.RequestsPerSecond;
             var recent = lane.Calls.Where(c => c.AdmittedAt > now - Window).OrderBy(c => c.AdmittedAt).ToList();
             if (recent.Count >= perSecond)
             {
                 var next = recent[recent.Count - perSecond].AdmittedAt + Window;
-                return new(null, limits.RequestsPerSecond > 0
+                return new(null, limits.RequestsPerSecond > 0 && perSecond == limits.RequestsPerSecond
                     ? $"{instrument.DisplayName} takes at most {perSecond:N0} requests a second ({Whose(instrument, Rate.Requests)}), and "
                       + $"{recent.Count:N0} went in the last second, so this call was not sent; nothing was reserved or charged. "
                       + $"The next can go at {When(next, now)}."
-                    : $"{OwnBound(instrument, Rate.Requests)} One went in the last second, so this call was not sent; nothing was "
+                    : $"{OwnBound(instrument)} One went in the last second, so this call was not sent; nothing was "
                       + $"reserved or charged. The next can go at {When(next, now)}.");
             }
+
+            if (own && lane.Calls.Count(c => c.Flying) >= OwnCallsInFlight)
+                return new(null, $"{OwnBound(instrument)} A call is in flight, so this one was not sent; nothing was "
+                                 + "reserved or charged. The next can go once it is answered.");
 
             if (limits.TokensPerSecond > 0)
             {
@@ -136,11 +148,6 @@ public sealed class DecisionRateGate
                                      + $"use — {bound:N0} tokens — until its answer says what it used, and {used:N0} are counted in the "
                                      + "last second, so this call was not sent; nothing was reserved or charged. The next can go "
                                      + $"{NextForTokens(counted, limits.TokensPerSecond - bound, now)}.");
-            }
-            else if (lane.Calls.Count(c => c.Flying) >= OwnCallsInFlight)
-            {
-                return new(null, $"{OwnBound(instrument, Rate.Tokens)} A call is in flight, so this one was not sent; nothing was "
-                                 + "reserved or charged. The next can go once it is answered.");
             }
 
             var call = new Call(now, bound);
@@ -179,14 +186,20 @@ public sealed class DecisionRateGate
             : $"the host's documented limit, read {instrument.RatesReadOn} from {instrument.RatesSource}";
     }
 
-    /// <summary>The sentence that names TradeAgent's own bound as TradeAgent's, and why it applies.</summary>
-    static string OwnBound(DecisionInstrument instrument, Rate rate)
+    /// <summary>
+    /// The sentence that names TradeAgent's own bound as TradeAgent's, and why it applies: the rate the instrument has no
+    /// figure for — the requests rate when neither has one. "Not documented" where the host documents none; where this
+    /// build ships a figure the instrument does not carry, only that it carries none, since no file can zero one
+    /// (<see cref="DecisionInstruments.Read"/>).
+    /// </summary>
+    static string OwnBound(DecisionInstrument instrument)
     {
+        var rate = instrument.Limits.RequestsPerSecond <= 0 ? Rate.Requests : Rate.Tokens;
         var shipped = DecisionInstruments.BuiltInLimits(instrument.Id);
         var documented = shipped is not null && (rate == Rate.Tokens ? shipped.TokensPerSecond : shipped.RequestsPerSecond) > 0;
         var which = rate == Rate.Tokens ? "tokens-a-second" : "requests-a-second";
         var why = documented
-            ? $"decision-models.json sets no {which} rate for {instrument.DisplayName}"
+            ? $"{instrument.DisplayName} carries no {which} rate"
             : $"No {which} rate is documented for {instrument.DisplayName}";
         return $"{why}, so TradeAgent applies its own bound — not a vendor's figure: {OwnCallsInFlight} call in flight at a time "
                + $"and {OwnRequestsPerSecond} a second.";

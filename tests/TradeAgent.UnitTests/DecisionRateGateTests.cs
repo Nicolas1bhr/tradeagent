@@ -278,8 +278,13 @@ public class DecisionRateGateTests(ITestOutputHelper log) : IDisposable
     /// (d) AN UNDOCUMENTED RATE IS THE APP'S OWN BOUND, NEVER NONE. OpenRouter's route documents no rate, so zero is not "no
     /// limit": TradeAgent applies its own, named as its own — one call in flight, one a second — and ten calls in one second
     /// are one answer and nine refusals, nothing sent for them. A call while another flies is refused too. A
-    /// <c>decision-models.json</c> that sets TypeSafe's rates to zero lifts nothing — the same bound applies, named as the
-    /// file's doing — and a file that sets a rate OpenRouter does not document is refused and stops that instrument.
+    /// <c>decision-models.json</c> row that zeroes a rate TypeSafe documents is refused, naming the rate — a file cannot make
+    /// a documented rate undocumented — and so is one that sets a rate OpenRouter does not document. The bound applies
+    /// WHOLE: an instrument with either rate undocumented is held to one call in flight and one a second, whatever figure
+    /// it carries for the other.
+    ///
+    /// <para>Give the bound back per rate — the app's one a second only where requests are undocumented — and an
+    /// instrument with no tokens figure beside 80 requests a second answers ten calls in one second.</para>
     /// </summary>
     [Fact]
     public async Task An_undocumented_rate_is_the_apps_own_bound_never_none()
@@ -323,22 +328,37 @@ public class DecisionRateGateTests(ITestOutputHelper log) : IDisposable
                         + "is answered.", meanwhile.Refusal, StringComparison.Ordinal);
         Assert.Equal(2, host.Requests.Count);
 
-        // AN OVERRIDE'S ZERO LIFTS NOTHING: TypeSafe at zero is held to the same bound, and the words say whose doing it is.
-        File.WriteAllText(DecisionInstruments.OverridePath, """
-            [{"id":"typesafe-direct","tokens_per_second":0,"requests_per_second":0}]
-            """);
-        var zeroed = DecisionInstruments.Find(DecisionInstruments.TypeSafeDirect)!;
-        Assert.Equal(0, zeroed.Limits.RequestsPerSecond);
+        // A FILE CANNOT MAKE A DOCUMENTED RATE UNDOCUMENTED: a row zeroing either of TypeSafe's rates is refused in words
+        // naming the rate, and that instrument stopped — zero means "not documented", and TypeSafe documents both.
+        foreach (var (field, rate, figure) in new[] { ("tokens_per_second", "tokens-a-second", 100_000), ("requests_per_second", "requests-a-second", 80) })
+        {
+            File.WriteAllText(DecisionInstruments.OverridePath, $$"""[{"id":"typesafe-direct","{{field}}":0}]""");
+            var zeroing = DecisionInstruments.Read();
+            foreach (var r in zeroing.Refused) log.WriteLine(r);
+            Assert.Null(DecisionInstruments.Find(DecisionInstruments.TypeSafeDirect));
+            Assert.Contains(zeroing.Refused, r => r.StartsWith($"'typesafe-direct' in decision-models.json sets the {rate} rate its "
+                                                               + $"host documents ({figure:N0}) to zero", StringComparison.Ordinal));
+            Assert.NotNull(DecisionInstruments.Find(DecisionInstruments.OpenRouterJev));
+        }
+        File.Delete(DecisionInstruments.OverridePath);
+
+        // THE APP'S BOUND APPLIES WHOLE: an instrument with ANY rate undocumented — here its tokens, beside a documented 80
+        // requests a second — is held to one call in flight AND one a second, never to eighty a second.
         using var typeSafeHost = new FakeProvider();
         typeSafeHost.Answer(FakeProvider.SystemOne("jev-1.13.0", DecisionPortTests.TriageAnswers, 300, 20));
-        using var zeroWire = Wire(zeroed with { Endpoint = $"{typeSafeHost.BaseUrl}/systemone" }, typeSafeHost.Holding(_pasted), rig,
-            new DecisionRateGate(), () => Second);
-        var zeroAnswers = new List<DecisionAnswer>();
-        for (var i = 0; i < 10; i++) zeroAnswers.Add(await zeroWire.DecideAsync(Ask()));
-        Assert.Equal(1, zeroAnswers.Count(a => a.Status == DecisionStatus.ANSWERED));
+        var pointed = DecisionPortTests.PointedAt(typeSafeHost);
+        var half = pointed with { Limits = pointed.Limits with { TokensPerSecond = 0 } };
+        Assert.Equal(80, half.Limits.RequestsPerSecond);
+        using var halfWire = Wire(half, typeSafeHost.Holding(_pasted), rig, new DecisionRateGate(), () => Second);
+        var halfAnswers = new List<DecisionAnswer>();
+        for (var i = 0; i < 10; i++) halfAnswers.Add(await halfWire.DecideAsync(Ask()));
+        log.WriteLine($"the second call in that second: {halfAnswers[1].Status} — {halfAnswers[1].Refusal}");
+        Assert.Equal(1, halfAnswers.Count(a => a.Status == DecisionStatus.ANSWERED));
         Assert.Single(typeSafeHost.Requests);
-        Assert.StartsWith("decision-models.json sets no requests-a-second rate for Jev 1.13 at TypeSafe, so TradeAgent applies its "
-                          + "own bound", zeroAnswers[1].Refusal, StringComparison.Ordinal);
+        Assert.Equal("Jev 1.13 at TypeSafe carries no tokens-a-second rate, so TradeAgent applies its own bound — not a vendor's "
+                     + "figure: 1 call in flight at a time and 1 a second. One went in the last second, so this call was not "
+                     + $"sent; nothing was reserved or charged. The next can go at {DecisionRateGate.When(Second.AddSeconds(1), Second)}.",
+            halfAnswers[1].Refusal);
 
         // AND A FILE CANNOT LIFT IT WITH A FIGURE: a rate OpenRouter does not document is refused, and the instrument stopped.
         File.WriteAllText(DecisionInstruments.OverridePath, """

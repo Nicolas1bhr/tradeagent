@@ -304,15 +304,19 @@ sealed class PerceptionCard
               + (limits.TokensPerSecond == rates.TokensPerSecond ? $"the host's figure, {dated}." : "set in decision-models.json, not dated.")
             : "Tokens a second: " + (rates.TokensPerSecond == 0
                 ? $"not documented by the host ({dated})."
-                : "set to zero in decision-models.json, not dated.");
+                : "none carried, so TradeAgent's own bound below applies.");
         var requests = limits.RequestsPerSecond > 0
             ? $"Requests a second: {limits.RequestsPerSecond:N0} — "
               + (limits.RequestsPerSecond == rates.RequestsPerSecond ? $"the host's figure, {dated}." : "set in decision-models.json, not dated.")
             : "Requests a second: " + (rates.RequestsPerSecond == 0
                 ? $"not documented by the host ({dated})."
-                : "set to zero in decision-models.json, not dated.");
+                : "none carried, so TradeAgent's own bound below applies.");
 
-        var inFlight = limits.TokensPerSecond > 0 ? limits.TokensPerSecond / i.ReservedTokens : DecisionRateGate.OwnCallsInFlight;
+        // THE GATE'S ARITHMETIC: either rate undocumented and the app's own bound applies whole; both documented and the
+        // tokens a second hold as many calls at their bound as fit.
+        var inFlight = limits.TokensPerSecond > 0 && limits.RequestsPerSecond > 0
+            ? limits.TokensPerSecond / i.ReservedTokens
+            : DecisionRateGate.OwnCallsInFlight;
         var own = $"Where a rate is not documented TradeAgent applies its own bound — {DecisionRateGate.OwnCallsInFlight} call in "
                   + $"flight at a time and {DecisionRateGate.OwnRequestsPerSecond} a second; that is TradeAgent's figure, not the "
                   + $"host's. A call is counted at the most it could use — {i.ReservedTokens:N0} tokens — until its answer says "
