@@ -914,4 +914,67 @@ public class CampaignLedgerTests
         Assert.Single(gw.Strategies.Runs());
         Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
     }
+
+    /// <summary>
+    /// (f) A STOPPED OR ROLLED-BACK RUN KEEPS NO STREAM (<c>U-trial-returns</c>). Over the venue fixture's held-back dataset,
+    /// an ordinary run keeps its two daily return streams with its run and its trial. A run the app stops keeps neither run
+    /// nor stream; and a run whose trial is refused at the registration — the campaign's budget filled by another version
+    /// after the look and before the write, which is the by-one race <see cref="Two_roles_racing_for_the_last_trial_of_a_campaign_take_exactly_one"/>
+    /// holds, made here by the clock <c>Record</c> reads first — is rolled back whole: no run, no trial, no stream, no day.
+    /// </summary>
+    [Fact]
+    public async Task A_stopped_or_rolled_back_run_keeps_no_stream()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var (held, campaign) = w.Gw.SetHoldout(w.Set.Id, CostModelPinTests.Cutoff, EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        var path = GivenProgram(CouncilRoles.Research, "streams.strategy", CostModelPinTests.BtcProgram);
+        var caller = AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1");
+
+        // EVERY NUMBER DECLARED — the venue's own, so the run is the venue model at 1x — so nothing before the write reads
+        // the clock below: the increment and the friction are the caller's, and only `Record` asks the time.
+        BacktestAsk Ask(int lastBar) => new(path, w.Set.Id, CostModelPinTests.Bar0, CostModelPinTests.Bar0.AddMinutes(lastBar),
+            0.001m, 0.0002m, 0.00001m);
+
+        // AN ORDINARY RUN: its streams are kept with it.
+        var kept = w.Gw.Backtests.Run(caller, Ask(CostModelPinTests.HoldoutAtBar - 2));
+        Assert.Equal(CostModelPinTests.VenueModel, kept.Result.Request.Model.Canonical);
+        Assert.Equal([1, 2], w.Gw.Strategies.StreamsOf(kept.Result.RunId).Select(s => s.Multiple));
+        Assert.Equal((2L, 2L), Counts(w.Db));
+
+        // STOPPED: refused, and nothing of it is kept.
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+        var stopped = Assert.Throws<GatewayDeniedException>(() => w.Gw.Backtests.Run(caller, Ask(CostModelPinTests.HoldoutAtBar - 1), stop.Token));
+        Assert.Equal(ErrorCode.IPC_UNAVAILABLE, stopped.Code);
+        Assert.Single(w.Gw.Strategies.Runs());
+        Assert.Equal((2L, 2L), Counts(w.Db));
+
+        // ROLLED BACK: another version takes the campaign's last trials between the look and the registration.
+        var filler = Measured(w.Db, w.Set, runs: 10, version: "version-filler");
+        var fills = 0;
+        var racing = new Backtests(w.Gw, w.Db, () =>
+        {
+            if (fills++ == 0)
+                for (var n = 0; n < 10; n++)
+                    w.Gw.Campaigns.RegisterTrial(campaign!.Id, filler, $"run-{n}", EvaluationClass.Research, At);
+            return At;
+        });
+        var lost = Assert.Throws<GatewayDeniedException>(() => racing.Run(caller, Ask(CostModelPinTests.HoldoutAtBar - 1)));
+        Assert.Equal(ErrorCode.CAMPAIGN_BUDGET_REACHED, lost.Code);
+        Assert.Contains("this run is not recorded and its result is not served", lost.Message, StringComparison.Ordinal);
+        Assert.Equal(1, fills);
+
+        Assert.Equal([kept.Result.RunId], w.Gw.Strategies.Runs(200).Where(r => r.VersionId == kept.Result.VersionId).Select(r => r.Id));
+        Assert.Equal((2L, 2L), Counts(w.Db));
+    }
+
+    /// <summary>Every stream and every stream day in the database.</summary>
+    static (long Streams, long Days) Counts(Database db) => db.Read(_ =>
+    {
+        using var s = db.Cmd("SELECT COUNT(*) FROM strategy_stream");
+        using var d = db.Cmd("SELECT COUNT(*) FROM strategy_stream_day");
+        return ((long)s.ExecuteScalar()!, (long)d.ExecuteScalar()!);
+    });
 }

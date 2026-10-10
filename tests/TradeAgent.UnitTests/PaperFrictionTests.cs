@@ -4,6 +4,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using Xunit;
@@ -401,5 +402,163 @@ public class PaperFrictionTests(ITestOutputHelper log)
             new BacktestAsk(program, unread.Id, Fees: 0.0009m, Slippage: 0.0005m, Increment: 0.00001m));
         Assert.Equal("fees=0.0009;slippage=0.0005;increment=0.00001;capital=10000",
             declared.Result.Request.Model.Canonical);
+    }
+
+    // ---- U-trial-returns: every research run keeps its daily net returns at 1x and 2x the venue cost ------------------
+
+    /// <summary>Three UTC days of the fixture's minute bars, from 2026-08-01 00:00Z: 4,320 of them, the last closing at 00:00Z on the 4th.</summary>
+    const int ThreeDays = 3 * 1440;
+
+    /// <summary>The venue model at twice Binance spot's fee and slippage, by hand: 0.2% a fill, four basis points, the run's step and capital.</summary>
+    const string TwiceVenueModel = "fees=0.002;slippage=0.0004;increment=0.00001;capital=10000";
+
+    static ExecutionModel Model(string canonical)
+    {
+        var n = canonical.Split(';').Select(p => decimal.Parse(p[(p.IndexOf('=') + 1)..], System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+        return ExecutionModel.Declare(n[0], n[1], n[2], n[3]).Model!;
+    }
+
+    /// <summary>A run of the fixture's program over <paramref name="dataset"/> under <paramref name="model"/>, made here — what the app's own evaluation must equal.</summary>
+    static BacktestResult Direct(CostModelPinTests.World w, long dataset, string model) =>
+        Backtest.Over(w.Gw.Datasets, dataset, StrategyParser.Parse(CostModelPinTests.BtcProgram).Program!, Model(model),
+            BarAudience.Pipe(CouncilRoles.Research)).Result!;
+
+    static IReadOnlyList<DailyReturn> DaysOf(BacktestResult run) =>
+        DailyReturns.Of(run.Trace, BarGrid.For(StrategyParser.Parse(CostModelPinTests.BtcProgram).Program!), run.Request.Model.InitialCapital);
+
+    string Logged(IReadOnlyList<StrategyStreamRow> streams)
+    {
+        foreach (var s in streams)
+            log.WriteLine($"{s.Multiple}x {s.ExecutionModel ?? "-"} friction {s.FrictionSha256 ?? "-"} trace {s.TraceSha256 ?? "-"} "
+                + $"{s.Outcome ?? "-"} method {s.Method} missing: {s.Missing ?? "-"}; "
+                + string.Join(", ", s.Days.Select(d => $"{d.Day:MM-dd} {d.Bars} bars mark {d.Mark} return {d.NetReturn}")));
+        return string.Join(",", streams.Select(s => s.Multiple));
+    }
+
+    /// <summary>
+    /// (c) A RESEARCH RUN KEEPS ITS DAILY NET RETURNS AT 1x AND 2x TRADEAGENT'S VENUE COST MODEL. A run that declares
+    /// nothing over three UTC days answers exactly as before — its trace is the one a run under its model makes — and
+    /// leaves two streams: 1x, the venue model it ran under, computed from the run's OWN trace; and 2x, the venue's fee and
+    /// slippage doubled at the run's own step and capital, from an evaluation of the app's own whose trace is a direct run
+    /// at 2x. Three days each, named by the venue friction's sha and the rule's version, and the 2x account ends below the
+    /// 1x one. The extra evaluation is no run of anyone's: one run row, and the answer names no stream.
+    /// </summary>
+    [Fact]
+    public async Task A_research_run_keeps_daily_net_returns_at_1x_and_2x_the_venue_cost()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var three = CostModelPinTests.Dataset(w.Gw, VenueCatalog.BinanceSpot, "BTCUSDT", 84_000m, 250m, ThreeDays);
+        var program = GivenProgram(CostModelPinTests.BtcProgram);
+        var venue = VenueFriction.Of(VenueCatalog.BinanceSpot)!;
+
+        var ran = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, three.Id));
+        var run = w.Gw.Strategies.RunById(ran.Result.RunId)!;
+
+        // THE ANSWER IS TODAY'S: the run's model, its trace, its figures — those of a run made directly under that model.
+        var direct = Direct(w, three.Id, CostModelPinTests.VenueModel);
+        Assert.Equal(CostModelPinTests.VenueModel, ran.Result.Request.Model.Canonical);
+        Assert.Equal(direct.Trace.Sha256, ran.Result.Trace.Sha256);
+        Assert.Equal(direct.Metrics, ran.Result.Metrics with { Missing = direct.Metrics.Missing });
+        Assert.Equal(direct.Trace.Sha256, run.TraceSha256);
+        Assert.Single(w.Gw.Strategies.Runs());
+
+        var streams = w.Gw.Strategies.StreamsOf(run.Id);
+        Assert.Equal("1,2", Logged(streams));
+        var (one, two) = (streams[0], streams[1]);
+
+        // 1x: THE RUN'S OWN TRACE, because its model is exactly the venue's at 1x.
+        Assert.Equal(CostModelPinTests.VenueModel, one.ExecutionModel);
+        Assert.Equal(run.TraceSha256, one.TraceSha256);
+        Assert.Equal(DaysOf(ran.Result), one.Days);
+
+        // 2x: AN EVALUATION OF THE APP'S OWN at twice the venue's fee and slippage — a direct run at 2x, trace for trace.
+        var twice = Direct(w, three.Id, TwiceVenueModel);
+        Assert.Equal(TwiceVenueModel, two.ExecutionModel);
+        Assert.Equal(twice.Trace.Sha256, two.TraceSha256);
+        Assert.NotEqual(one.TraceSha256, two.TraceSha256);
+        Assert.Equal(DaysOf(twice), two.Days);
+
+        foreach (var stream in streams)
+        {
+            Assert.Equal(venue.Sha256, stream.FrictionSha256);
+            Assert.Equal(nameof(BacktestOutcome.COMPLETED), stream.Outcome);
+            Assert.Equal(DailyReturns.Version, stream.Method);
+            Assert.Null(stream.Missing);
+            Assert.Equal([new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 3)], stream.Days.Select(d => d.Day));
+            Assert.All(stream.Days, d => Assert.Equal(1440, d.Bars));
+            Assert.Null(stream.Days[0].Since);
+            Assert.Equal(new DateOnly(2026, 8, 2), stream.Days[2].Since);
+        }
+
+        // TWICE THE COST IS A LOWER ACCOUNT, every day.
+        Assert.All(one.Days.Zip(two.Days), d => Assert.True(d.Second.Mark < d.First.Mark, $"{d.First.Day}: {d.Second.Mark} at 2x, {d.First.Mark} at 1x"));
+
+        // THE SAME RUN ASKED FOR AGAIN WRITES NOTHING: the first account of it stands, streams included.
+        w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, three.Id));
+        Assert.Single(w.Gw.Strategies.Runs());
+        Assert.Equal(Logged(streams), Logged(w.Gw.Strategies.StreamsOf(run.Id)));
+        Assert.Equal(two.TraceSha256, w.Gw.Strategies.StreamsOf(run.Id)[1].TraceSha256);
+    }
+
+    /// <summary>
+    /// (d) A DECLARED FRICTION KEEPS THE VENUE'S STREAMS, AND BARS WITH NO VENUE MODEL KEEP THEM MISSING. A run declared
+    /// at no fee and no slippage is answered at no cost, as declared — and its 1x stream is still the VENUE's, from an
+    /// evaluation of the app's own, never the run's frictionless trace. Bars that record no venue, and a venue whose fee
+    /// TradeAgent never read, have no venue model at all: both streams are recorded missing, saying why, with no day.
+    /// </summary>
+    [Fact]
+    public async Task Declared_friction_keeps_venue_streams_and_no_venue_keeps_them_missing()
+    {
+        var w = await CostModelPinTests.Given();
+        using var _1 = w.Db;
+        var three = CostModelPinTests.Dataset(w.Gw, VenueCatalog.BinanceSpot, "BTCUSDT", 84_000m, 250m, ThreeDays);
+        var program = GivenProgram(CostModelPinTests.BtcProgram);
+
+        var free = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, three.Id, Fees: 0m, Slippage: 0m));
+        const string Declared = "fees=0;slippage=0;increment=0.00001;capital=10000";
+        Assert.Equal(Declared, free.Result.Request.Model.Canonical);
+        Assert.Equal(Direct(w, three.Id, Declared).Trace.Sha256, free.Result.Trace.Sha256);
+
+        var streams = w.Gw.Strategies.StreamsOf(free.Result.RunId);
+        Assert.Equal("1,2", Logged(streams));
+        var once = Direct(w, three.Id, CostModelPinTests.VenueModel);
+        Assert.Equal(CostModelPinTests.VenueModel, streams[0].ExecutionModel);
+        Assert.Equal(once.Trace.Sha256, streams[0].TraceSha256);
+        Assert.NotEqual(free.Result.Trace.Sha256, streams[0].TraceSha256);
+        Assert.Equal(DaysOf(once), streams[0].Days);
+        Assert.Equal(TwiceVenueModel, streams[1].ExecutionModel);
+        Assert.Equal(Direct(w, three.Id, TwiceVenueModel).Trace.Sha256, streams[1].TraceSha256);
+        Assert.All(streams, s => Assert.Equal(3, s.Days.Count));
+        Assert.Single(w.Gw.Strategies.Runs());
+
+        // NO VENUE RECORDED: nothing to charge the bars, so no stream of them — missing, saying so, with no day.
+        var bare = CostModelPinTests.Dataset(w.Gw, venue: null, symbol: null, 84_000m, 250m, ThreeDays);
+        var unpriced = w.Gw.Backtests.Run(Researcher(), new BacktestAsk(program, bare.Id, Increment: 0.00001m));
+        var none = w.Gw.Strategies.StreamsOf(unpriced.Result.RunId);
+        Assert.Equal("1,2", Logged(none));
+        Assert.All(none, s =>
+        {
+            Assert.Contains("records no venue", s.Missing, StringComparison.Ordinal);
+            Assert.Contains("no venue recorded", s.Missing, StringComparison.Ordinal);
+            Assert.Empty(s.Days);
+            Assert.Null(s.TraceSha256);
+            Assert.Null(s.FrictionSha256);
+            Assert.Null(s.Outcome);
+            Assert.Equal(DailyReturns.Version, s.Method);
+        });
+
+        // A VENUE WHOSE FEE TRADEAGENT NEVER READ: the run is the caller's, declared; the venue's streams cannot be.
+        var unread = CostModelPinTests.Dataset(w.Gw, VenueCatalog.RevolutX, "BTCUSDT", 84_000m, 250m, ThreeDays);
+        var declared = w.Gw.Backtests.Run(Researcher(),
+            new BacktestAsk(program, unread.Id, Fees: 0.0009m, Slippage: 0.0005m, Increment: 0.00001m));
+        var unpublished = w.Gw.Strategies.StreamsOf(declared.Result.RunId);
+        Assert.Equal("1,2", Logged(unpublished));
+        Assert.All(unpublished, s =>
+        {
+            Assert.Contains(VenueCatalog.RevolutX, s.Missing, StringComparison.Ordinal);
+            Assert.Contains("published", s.Missing, StringComparison.Ordinal);
+            Assert.Empty(s.Days);
+        });
     }
 }
