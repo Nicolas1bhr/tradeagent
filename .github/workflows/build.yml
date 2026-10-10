@@ -3,6 +3,25 @@ name: build
 on:
   push:
     branches: [main]
+    # A PUSH THAT TOUCHES ONLY BOOKKEEPING STARTS NO RUN (U-ci-shards): files that no test, build, package or
+    # tool reads, so a run of them would test the tree its parent already tested. Exactly the lines of the
+    # fleet's bookkeeping-paths.txt — land.sh compares the two and refuses every carry when they differ — and
+    # markdown only under the three directories, because ResearchLibraryTests reads *.strategy files anywhere
+    # in the repository. A test or tool that starts reading one of these removes it here and there.
+    paths-ignore:
+      - 'BUILD-STATUS.md'
+      - 'docs/RESUME-HERE.md'
+      - 'docs/ORGANISATION.md'
+      - 'docs/FLEET.md'
+      - 'docs/HOW-WE-BUILD.md'
+      - 'docs/EDGE-FACTORY.md'
+      - 'docs/VISION.md'
+      - 'docs/PRINCIPLES.md'
+      - 'CLAUDE.md'
+      - 'manager-prompt.md'
+      - 'docs/briefs/**/*.md'
+      - 'docs/queue/**/*.md'
+      - 'docs/research/**/*.md'
   pull_request:
   workflow_dispatch:
 
