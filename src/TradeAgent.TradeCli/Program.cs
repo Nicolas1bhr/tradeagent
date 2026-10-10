@@ -133,6 +133,16 @@ static Dictionary<string, string> ParseFlags(List<string> argv)
     return d;
 }
 
+// THE POSITIONALS FILL, IN ORDER, THE NAMED ARGUMENTS NO FLAG GAVE, and the last of them takes every word left — so
+// `trade ledger add lesson stop using minute bars --mark claim` is one text, and a word too many for an id is sent on
+// as part of it and refused by the gateway rather than dropped here.
+static void Fill(Dictionary<string, object> a, List<string> rest, params string[] names)
+{
+    var open = names.Where(n => !a.ContainsKey(n)).ToList();
+    for (var i = 0; i < open.Count && i < rest.Count; i++)
+        a[open[i]] = i == open.Count - 1 ? string.Join(' ', rest.Skip(i)) : rest[i];
+}
+
 static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string> pos, Dictionary<string, string> flags, bool all)
 {
     var a = new Dictionary<string, object>();
@@ -311,6 +321,37 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             return (Ops.MaterialNote, a);
         }
 
+        // `trade ledger add <kind> <text> --mark M …`, `revise <entry> <text> --mark M --why W …`, `list …` and
+        // `show <entry> …`: the research ledger (U-research-ledger), the role's own claims. EVERY FLAG IS SENT ON, under its
+        // own name, and the gateway refuses one the verb does not take: a flag dropped here would be a claim written
+        // without words its author added — a link, a run — and nobody told. The positionals fill, in the form's order,
+        // what no flag named; the text takes every word left.
+        case "ledger":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+            if (all) a["all"] = "true";
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "add":
+                    Fill(a, rest, "kind", "text");
+                    return (Ops.LedgerAdd, a);
+                case "revise":
+                    Fill(a, rest, "entry", "text");
+                    return (Ops.LedgerRevise, a);
+                case "list" or "ls":
+                    return (Ops.LedgerList, a);
+                case "show":
+                    Fill(a, rest, "entry");
+                    return (Ops.LedgerShow, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         case "cancel-all": return (Ops.CancelAll, a);
         case "close":
             a["symbol"] = pos.ElementAtOrDefault(0) ?? "";
@@ -374,6 +415,16 @@ static void Usage()
       trade material used <sha> <how you used it>    you read or worked from it
       trade material derived <sha> --from <sha> <how>  this file came from that one
       trade material note [<sha>] <anything>         anything else worth recording
+
+      trade ledger add <kind> <text> --mark M [--confidence P] [--about E] [--source S]
+                     write down what you believe — a hypothesis, experiment, finding, kill or lesson —
+                     marked claim, assumption or hypothesis: your claim, never a measurement. Leave
+                     --confidence out when you cannot say; it is recorded as unknown
+      trade ledger revise <entry> <text> --mark M --why W [--confidence P] [--status S]
+                     a new revision of one of your own entries; the earlier ones are kept
+      trade ledger list [--author R] [--kind K] [--status S] [--limit N] [--before E]
+      trade ledger show <entry> [--before R]         its revisions, and the runs and verdicts
+                     TradeAgent linked to it — ask for them with --entry on backtest or verdict
 
     --tif is one of Day, GoodTillCancel, ImmediateOrCancel, FillOrKill. Spell it exactly; case does
     not matter, and anything else is refused rather than treated as Day, because a misspelled

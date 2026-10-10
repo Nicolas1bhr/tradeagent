@@ -496,6 +496,77 @@ public static class GatewaySchema
                 new("text", "string", true, "What you did, briefly.")
             ]),
 
+        // THE RESEARCH LEDGER (U-research-ledger): the role's own claims, and the app's links beside them. Positionals first,
+        // in each form's order, so the harness fills the required ones the way the command line does.
+        new(Core.Ops.LedgerAdd, "trade ledger add <kind> <text> --mark M [--confidence P] [--about E] [--source S]", false,
+            "WRITE DOWN WHAT YOU BELIEVE, AS YOUR OWN CLAIM: one entry in your research ledger — a hypothesis, an experiment, "
+            + "a finding, a kill (what you ruled out and why) or a lesson — marked 'claim', 'assumption' or 'hypothesis'. It is "
+            + "YOUR CLAIM and is stored as one, beside what TradeAgent measured and never over it: nothing you write here is a "
+            + "measurement, and there is no mark that says one. 'confidence' is how sure you are, a number from 0 to 1; leave it "
+            + "out when you cannot say and it is recorded as UNKNOWN — never refused and never filled in. 'about' names another "
+            + "entry this one is about, yours or the other director's; 'source' is where it came from, in your words. TradeAgent "
+            + "records it under YOUR launch's role and attempt, so a connection that presented no launch grant is refused. "
+            + "THE LINK IS TRADEAGENT'S: ask for a run with 'backtest' or a verdict with 'verdict' under an entry ('--entry') and "
+            + "TradeAgent links the record it answered with; there is no argument here that writes, edits or deletes a link, "
+            + $"and any argument this does not take is REFUSED with nothing written. 'text' holds at most {Core.Db.ResearchLedger.MaxTextChars:N0} "
+            + $"characters and 'source' {Core.Db.ResearchLedger.MaxNoteChars:N0}: longer is refused, never cut. Append-only: "
+            + "'ledger-revise' adds a revision and nothing edits or deletes an entry. It grants nothing, decides nothing and "
+            + "places no order.",
+            [
+                new("kind", "string", true, "hypothesis | experiment | finding | kill | lesson"),
+                new("text", "string", true, $"What you believe, in your words: at most {Core.Db.ResearchLedger.MaxTextChars:N0} characters."),
+                new("mark", "string", true, "claim | assumption | hypothesis — how you hold it. Nothing here is a measurement."),
+                new("confidence", "number", false, "How sure you are, from 0 to 1. Leave it out when you cannot say: it is recorded as unknown."),
+                new("about", "number", false, "Another entry's id this one is about, yours or the other director's. One that is not there is refused."),
+                new("source", "string", false, $"Where it came from, in your words: at most {Core.Db.ResearchLedger.MaxNoteChars:N0} characters.")
+            ]),
+        new(Core.Ops.LedgerRevise, "trade ledger revise <entry> <text> --mark M --why W [--confidence P] [--status S]", false,
+            "REVISE ONE OF YOUR OWN ENTRIES: a new revision, numbered after the last, saying what you hold now, how, and WHY "
+            + "it changed. The revisions before it stay exactly as they were — what you believed then, and when — and a "
+            + "revision of the other director's entry is refused: add one of your own about it instead. 'confidence' left out "
+            + "is UNKNOWN on this revision, never carried forward from the last; 'status' left out stays what it was, and is "
+            + "'open', 'held' or 'dropped' — your own bookkeeping, which decides nothing. YOUR CLAIM, never a measurement; any "
+            + $"argument this does not take is REFUSED with nothing written; 'text' at most {Core.Db.ResearchLedger.MaxTextChars:N0} "
+            + $"characters and 'why' {Core.Db.ResearchLedger.MaxNoteChars:N0}, refused beyond, never cut.",
+            [
+                new("entry", "number", true, "The id of an entry your role wrote."),
+                new("text", "string", true, $"What you hold now: at most {Core.Db.ResearchLedger.MaxTextChars:N0} characters."),
+                new("mark", "string", true, "claim | assumption | hypothesis"),
+                new("why", "string", true, $"Why it changed: at most {Core.Db.ResearchLedger.MaxNoteChars:N0} characters."),
+                new("confidence", "number", false, "How sure you are now, from 0 to 1. Left out, it is unknown on this revision."),
+                new("status", "string", false, "open | held | dropped. Left out, it stays what it was.")
+            ]),
+        new(Core.Ops.LedgerList, "trade ledger list [--author R] [--kind K] [--status S] [--limit N] [--before E]", false,
+            "EVERY ROLE'S LEDGER ENTRIES, NEWEST FIRST — a READ, for every role and for a caller that presented no launch "
+            + "grant: each entry with its newest revision, how many revisions it has and how many records TradeAgent linked "
+            + "to it, filtered by 'author', 'kind' and the newest revision's 'status'. Every entry is its author's claim and "
+            + "never a measurement, and a confidence its author did not state reads 'unknown'. At most "
+            + $"{Core.Db.ResearchLedger.MaxEntries} entries and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call: when 'more' "
+            + "is true the answer stopped there — 'capped_by' says which bound — and 'before' set to its 'next_before' "
+            + $"continues exactly. A limit outside 1 to {Core.Db.ResearchLedger.MaxEntries} is REFUSED, never clamped.",
+            [
+                new("author", "string", false, "operations | research"),
+                new("kind", "string", false, "hypothesis | experiment | finding | kill | lesson"),
+                new("status", "string", false, "open | held | dropped — the newest revision's"),
+                new("limit", "number", false, $"How many entries, a whole number from 1 to {Core.Db.ResearchLedger.MaxEntries}; {Core.Db.ResearchLedger.MaxEntries} when omitted."),
+                new("before", "number", false, "An entry id: serve only entries before it. Pass an answer's 'next_before' to continue it.")
+            ]),
+        new(Core.Ops.LedgerShow, "trade ledger show <entry> [--before R]", false,
+            "ONE LEDGER ENTRY IN FULL — a READ, for every role: its revisions newest first, its links, the entries about it, "
+            + "and — read now, never stored — the promotion and deployment ids of the versions its linked runs ran. A LINK is "
+            + "TRADEAGENT'S: it says TradeAgent answered a request asked under this entry with that record — 'run', a "
+            + "backtest's run id, or 'promotion', a verdict's — at the revision it was asked under, for the attempt that "
+            + "asked; it does not say the record supports the entry, and not every record that bears on it is linked. Ids "
+            + "only, never a figure: 'trade run trades' reads a run, and 'trade verdict' answers a judged version again and "
+            + "charges nothing. A confidence its author did not state reads 'unknown'. At most "
+            + $"{Core.Db.ResearchLedger.MaxRevisions} revisions and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call: when "
+            + "'more' is true 'before' set to its 'next_before' continues the revisions exactly; the links and the entries "
+            + $"about it are the newest {Core.Db.ResearchLedger.MaxLinks} of each, with how many there are in all.",
+            [
+                new("entry", "number", true, "The entry's id."),
+                new("before", "number", false, "A revision number: serve only revisions before it. Pass an answer's 'next_before' to continue it.")
+            ]),
+
         new(Core.Ops.Buy,  "trade buy <symbol> <qty>",  true, "Buy. Market unless you pass --limit or --stop.",
         [
             new("symbol", "string", true, "Instrument symbol"),

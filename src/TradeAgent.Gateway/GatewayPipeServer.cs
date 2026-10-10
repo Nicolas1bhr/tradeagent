@@ -337,6 +337,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.RunTrades, TimeSpan.Zero, "the strategy ledger's run row and its trades, in process"),
         new(Core.Ops.Verdict, TimeSpan.Zero, "the campaign and this role's own runs of the version, then the referee's holdout run over the same bars, in process"),
         new(Core.Ops.DeploymentList, TimeSpan.Zero, "the deployment ledger and its operations, in process"),
+        new(Core.Ops.LedgerAdd, TimeSpan.Zero, "the research ledger: one entry and its first revision, in process"),
+        new(Core.Ops.LedgerRevise, TimeSpan.Zero, "the research ledger: one revision of the caller's own entry, in process"),
+        new(Core.Ops.LedgerList, TimeSpan.Zero, "the research ledger's entries, newest first, in process"),
+        new(Core.Ops.LedgerShow, TimeSpan.Zero, "the research ledger: one entry, its revisions, its links and the ids derived from them, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1241,6 +1245,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.RunTrades    => RunTrades(ctx, req),
                 Core.Ops.Verdict      => VerdictFor(ctx, req, ct),
                 Core.Ops.DeploymentList => DeploymentList(),
+                Core.Ops.LedgerAdd    => LedgerAdd(ctx, req),
+                Core.Ops.LedgerRevise => LedgerRevise(ctx, req),
+                Core.Ops.LedgerList   => LedgerList(req),
+                Core.Ops.LedgerShow   => LedgerShow(req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -3775,6 +3783,322 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 "A file only gets a hash once TradeAgent has read it, which can lag a large drop by a pass.");
         return found.Sha256;
     }
+
+    // ---- the research ledger (U-research-ledger) -------------------------------------------------------------------
+
+    /// <summary>
+    /// ONE ENTRY IN THE RESEARCH LEDGER, WRITTEN AS ITS AUTHOR'S CLAIM, under the role and the attempt the launch grant
+    /// proved — never a name the frame carries.
+    ///
+    /// <para>What it can write is what <see cref="ResearchLedger.Add"/> takes and nothing else: an argument the op does not
+    /// declare is refused first (<see cref="OnlyDeclared"/>), so a <c>run</c>, a <c>link</c> or a <c>promotion</c> sent
+    /// beside the claim is never quietly dropped while the claim is written as though it had been read. The mark is one of
+    /// the three and never "measured"; a confidence left out is recorded as unknown.</para>
+    /// </summary>
+    object LedgerAdd(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req);
+        var author = LedgerAuthor(ctx);
+        var entry = gateway.Ledger.Add(author, ctx.AttemptId, Require(req, "kind"), Require(req, "text"),
+            Require(req, "mark"), Confidence(req), LedgerId(req, "about"), req.Str("source"));
+        return Written(entry, gateway.Ledger.Latest(entry.Id)!);
+    }
+
+    /// <summary>
+    /// THE NEXT REVISION OF AN ENTRY THE CALLER'S OWN ROLE WROTE. Another role's is refused by the store, in words naming
+    /// the way to disagree — an entry of one's own about it. The revisions before it are never touched.
+    /// </summary>
+    object LedgerRevise(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req);
+        var author = LedgerAuthor(ctx);
+        var entry = LedgerId(req, "entry")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'entry' is required: the id of the entry to revise, as 'ledger-add' or 'ledger-list' answered it.");
+        var revision = gateway.Ledger.Revise(author, ctx.AttemptId, entry, Require(req, "text"), Require(req, "mark"),
+            Require(req, "why"), Confidence(req), req.Str("status"));
+        return Written(gateway.Ledger.Entry(entry)!, revision);
+    }
+
+    /// <summary>
+    /// EVERY ROLE'S ENTRIES, NEWEST FIRST, BOUNDED TWICE AND NEVER SILENTLY: at most the limit asked for and
+    /// <see cref="ResearchLedger.MaxReadBytes"/> of them as the wire writes them, an entry never split — the first is served
+    /// whatever it costs — and an answer either bound stopped says which, with the <c>before</c> that continues it.
+    /// </summary>
+    object LedgerList(IpcRequest req)
+    {
+        OnlyDeclared(req);
+        var limit = LedgerLimit(req);
+        var author = req.Str("author");
+        var kind = req.Str("kind");
+        var status = req.Str("status");
+        var before = LedgerId(req, "before");
+
+        var rows = gateway.Ledger.List(author, kind, status, before, limit);
+        var entries = new List<LedgerListReplyEntry>();
+        long spent = 0;
+        string? cappedBy = null;
+        foreach (var row in rows)
+        {
+            if (entries.Count == limit) { cappedBy = TapeReader.CappedByLimit; break; }
+            var shaped = ListEntry(row);
+            var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped));
+            if (entries.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = TapeReader.CappedByBytes; break; }
+            entries.Add(shaped);
+            spent += cost;
+        }
+
+        var more = cappedBy is not null;
+        return new LedgerListReply(author, kind, status, before, limit, entries.Count, more, cappedBy,
+            more ? entries[^1].Entry : null, LedgerListNote, entries);
+    }
+
+    /// <summary>
+    /// ONE ENTRY IN FULL: its revisions newest first from before <c>before</c> — bounded by
+    /// <see cref="ResearchLedger.MaxRevisions"/> and by what is left of <see cref="ResearchLedger.MaxReadBytes"/> once the
+    /// rest of the answer is written, a revision never split — its links, the entries about it, and the promotion and
+    /// deployment ids of the versions its linked runs ran, read now and never stored. Ids, never a figure.
+    /// </summary>
+    object LedgerShow(IpcRequest req)
+    {
+        OnlyDeclared(req);
+        var entry = LedgerId(req, "entry")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'entry' is required: the id of the entry to show, as 'ledger-add' or 'ledger-list' answered it.");
+        var before = LedgerId(req, "before");
+        if (before is > int.MaxValue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'before' is a revision number, and no entry has {before.Value.ToString(CultureInfo.InvariantCulture)} revisions.");
+
+        var shown = gateway.Ledger.Show(entry, (int?)before)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"there is no entry {entry.ToString(CultureInfo.InvariantCulture)} in the research ledger — 'ledger-list' names them.");
+
+        var e = shown.Entry;
+        var links = shown.Links.Select(l => new LedgerReplyLink(l.RecordKind, l.RecordId, l.Revision, l.Attempt, l.At)).ToList();
+        var about = shown.About.Select(a => new LedgerReplyAbout(a.Id, a.Kind, a.Author, a.Revision, a.Mark, a.Status, a.CreatedAt)).ToList();
+        var derived = new LedgerReplyDerived(shown.Versions, shown.Promotions, shown.Deployments);
+
+        // THE REST OF THE ANSWER FIRST, so the revisions are bounded by what is left of the budget.
+        var frame = new LedgerShowReply(e.Id, e.Kind, e.Author, e.About, e.Source, e.CreatedAt, e.Attempt,
+            shown.RevisionCount, before, 0, false, null, null, shown.LinkCount, links, shown.AboutCount, about, derived,
+            LedgerShowNote, []);
+        long spent = Encoding.UTF8.GetByteCount(Json.Write(frame));
+
+        var revisions = new List<LedgerReplyRevision>();
+        string? cappedBy = null;
+        foreach (var r in shown.Revisions)
+        {
+            if (revisions.Count == ResearchLedger.MaxRevisions) { cappedBy = TapeReader.CappedByLimit; break; }
+            var shaped = Revision(r);
+            var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped));
+            if (revisions.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = TapeReader.CappedByBytes; break; }
+            revisions.Add(shaped);
+            spent += cost;
+        }
+
+        var more = cappedBy is not null;
+        return frame with
+        {
+            Count = revisions.Count, More = more, CappedBy = cappedBy, NextBefore = more ? revisions[^1].Revision : null,
+            Revisions = revisions
+        };
+    }
+
+    /// <summary>
+    /// EVERY ARGUMENT THE OP DOES NOT DECLARE IS REFUSED, and nothing is written or read.
+    ///
+    /// <para><see cref="GatewaySchema.ArgSpec"/> is read nowhere but the schema, so every other handler ignores a name it
+    /// does not read. For the ledger that would be the defect itself: a <c>run</c> or a <c>link</c> sent beside a claim and
+    /// silently dropped is a link the agent believes it wrote and no table holds — and a link is the app's to write. So the
+    /// four ledger ops refuse what they do not take, in words naming what they do take and where a link comes from.</para>
+    /// </summary>
+    static void OnlyDeclared(IpcRequest req)
+    {
+        if (req.Args is not { Count: > 0 } args) return;
+        var spec = GatewaySchema.Ops().Single(o => o.Op == req.Op);
+        var undeclared = args.Keys.Where(k => spec.Args.All(a => a.Name != k)).Order(StringComparer.Ordinal).ToList();
+        if (undeclared.Count == 0) return;
+
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            $"{string.Join(", ", undeclared.Select(k => $"'{k}'"))} {(undeclared.Count == 1 ? "is not an argument" : "are not arguments")} "
+            + $"of '{req.Op}', which takes {string.Join(", ", spec.Args.Select(a => a.Name))} — TradeAgent refuses an argument "
+            + "rather than act as though it had read it. A link between an entry and a run or a verdict is TradeAgent's "
+            + "alone to write: ask for the run with 'backtest' or the verdict with 'verdict' under the entry ('entry'), and "
+            + "TradeAgent links the record it answered with. Nothing was written.");
+    }
+
+    /// <summary>
+    /// THE ROLE AN ENTRY IS WRITTEN UNDER: the council role the caller's launch grant proved, or a refusal — the rule
+    /// <see cref="Backtests.RoleOf"/> applies to a run (<see cref="CouncilRoles.IsKnown"/>), in the ledger's own words. A
+    /// connection that proved no role is nobody, and an in-process operator is not a council role.
+    /// </summary>
+    static string LedgerAuthor(AgentContext ctx) =>
+        CouncilRoles.IsKnown(ctx.Role)
+            ? ctx.Role!
+            : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "an entry is written under the role whose launch wrote it, and this connection presented no launch grant — "
+                + "so there is no role to write it under. TradeAgent puts the grant in the environment of the process it "
+                + "starts; a caller holding only the machine token is authenticated and is nobody. Nothing was written.");
+
+    /// <summary>
+    /// A CONFIDENCE AS STATED, OR AN UNKNOWN. Absent, JSON <c>null</c> or the word <c>unknown</c> — what a read prints for
+    /// one — is not stated, and that is recorded as unknown and never refused; anything else must be a number the strict
+    /// reader takes, and the store refuses one outside 0 to 1.
+    /// </summary>
+    static decimal? Confidence(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.TryGetValue("confidence", out var raw)) return null;
+        if (raw.ValueKind == JsonValueKind.Null) return null;
+        if (raw.ValueKind == JsonValueKind.String && string.Equals(raw.GetString()?.Trim(), Unknown, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return req.Dec("confidence");
+    }
+
+    /// <summary>What a read says for a confidence its author did not state.</summary>
+    const string Unknown = "unknown";
+
+    /// <summary>A confidence as a read says it: the author's own number as stated, or <see cref="Unknown"/>.</summary>
+    static string Said(decimal? confidence) =>
+        confidence is { } p ? p.ToString(CultureInfo.InvariantCulture) : Unknown;
+
+    /// <summary>
+    /// AN ENTRY'S ID OR A CURSOR, a whole number above 0, or null because the frame did not name it. Present and unreadable
+    /// is refused — the rule every other number on this wire follows.
+    /// </summary>
+    static long? LedgerId(IpcRequest req, string key)
+    {
+        if (req.Args is null || !req.Args.ContainsKey(key)) return null;
+        var raw = req.Dec(key)!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 1m || raw > long.MaxValue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{key}' is an id — a whole number above 0 — and '{raw.ToString(CultureInfo.InvariantCulture)}' is not one. "
+                + "'ledger-list' names the entries.");
+        return (long)raw;
+    }
+
+    /// <summary>How many entries a list may hold: absent is the most; present, 1 to it, and anything else is refused.</summary>
+    static int LedgerLimit(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("limit")) return ResearchLedger.MaxEntries;
+        var raw = req.Dec("limit")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 1m || raw > ResearchLedger.MaxEntries)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'limit' is how many entries one answer may hold — a whole number from 1 to {ResearchLedger.MaxEntries} — "
+                + $"and '{raw.ToString(CultureInfo.InvariantCulture)}' is not one. Ask for fewer and continue with 'before', "
+                + "which every answer that stopped early hands back; TradeAgent does not clamp it for you.");
+        return (int)raw;
+    }
+
+    static LedgerWriteReply Written(LedgerEntryRow entry, LedgerRevisionRow revision) =>
+        new(entry.Id, revision.Revision, entry.Kind, entry.Author, revision.Attempt, entry.About, revision.Mark,
+            Said(revision.Confidence), revision.Status, LedgerWrittenNote);
+
+    static LedgerListReplyEntry ListEntry(LedgerListed row) =>
+        new(row.Entry.Id, row.Entry.Kind, row.Entry.Author, row.Entry.About, row.Entry.Source, row.Entry.CreatedAt,
+            row.Entry.Attempt, row.Latest.Revision, row.Latest.At, row.Latest.Text, row.Latest.Mark,
+            Said(row.Latest.Confidence), row.Latest.Status, row.Latest.Why, row.Revisions, row.Links);
+
+    static LedgerReplyRevision Revision(LedgerRevisionRow r) =>
+        new(r.Revision, r.At, r.Attempt, r.Text, r.Mark, Said(r.Confidence), r.Status, r.Why);
+
+    /// <summary>What a written entry or revision says about itself, once.</summary>
+    const string LedgerWrittenNote =
+        "Recorded as YOUR CLAIM, under your role and this attempt — never a measurement. A confidence you did not state "
+        + "reads 'unknown'. Revisions are kept: 'ledger-revise' adds the next, and nothing edits or deletes one. Ask for a "
+        + "run or a verdict under this entry ('entry') and TradeAgent links the record it answered with.";
+
+    /// <summary>What a list says about itself, once.</summary>
+    static readonly string LedgerListNote =
+        "ENTRIES — every role's, newest first, each with its newest revision. An entry is its author's claim, assumption or "
+        + "hypothesis and never a measurement; 'confidence' is the author's own number as stated, or 'unknown' where none "
+        + "was stated. 'links' counts the records TradeAgent linked to it — runs and verdicts it answered requests asked "
+        + $"under it with; 'ledger-show' names them. At most {ResearchLedger.MaxEntries} entries and "
+        + $"{ResearchLedger.MaxReadBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of them a call: when 'more' is "
+        + "true the answer stopped there — 'capped_by' says which bound — and asking again with 'before' set to "
+        + "'next_before' continues exactly.";
+
+    /// <summary>What a show says about itself, once.</summary>
+    static readonly string LedgerShowNote =
+        "ONE ENTRY — its author's claim, never a measurement — with its revisions newest first, each as its author said it "
+        + "then. A LINK is TradeAgent's: it says TradeAgent answered a request asked under this entry, at that revision, for "
+        + "that attempt, with that record — a 'run' or a 'promotion', by id — and not that the record supports the entry or "
+        + "that every record bearing on it is linked. 'derived' is read now from the linked runs and never stored: the "
+        + "versions they ran, and those versions' promotion and deployment ids. Ids only, never a figure. At most "
+        + $"{ResearchLedger.MaxRevisions} revisions and {ResearchLedger.MaxReadBytes.ToString("N0", CultureInfo.InvariantCulture)} "
+        + "bytes a call: when 'more' is true, asking again with 'before' set to 'next_before' continues the revisions "
+        + $"exactly; 'links' and 'about_it' are the newest {ResearchLedger.MaxLinks} of each, beside how many there are.";
+
+    /// <summary>
+    /// <inheritdoc cref="LedgerAdd"/>
+    ///
+    /// <para>DECLARED TYPES AND NEVER AN ANONYMOUS OBJECT, so a test asserts the whole of what crosses and a field cannot
+    /// arrive under a new name unseen. A null is kept, never dropped: an entry about nothing says so.</para>
+    /// </summary>
+    sealed record LedgerWriteReply(
+        long Entry, int Revision, string Kind, string Author,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? About,
+        string Mark, string Confidence, string Status, string Note);
+
+    /// <inheritdoc cref="LedgerList"/>
+    sealed record LedgerListReply(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Author,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Kind,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Status,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Before,
+        int Limit, int Count, bool More,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? NextBefore,
+        string Note, IReadOnlyList<LedgerListReplyEntry> Entries);
+
+    /// <inheritdoc cref="LedgerList"/>
+    sealed record LedgerListReplyEntry(
+        long Entry, string Kind, string Author,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? About,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Source,
+        DateTimeOffset CreatedAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        int Revision, DateTimeOffset At, string Text, string Mark, string Confidence, string Status,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Why,
+        int Revisions, int Links);
+
+    /// <inheritdoc cref="LedgerShow"/>
+    sealed record LedgerShowReply(
+        long Entry, string Kind, string Author,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? About,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Source,
+        DateTimeOffset CreatedAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        int RevisionCount,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Before,
+        int Count, bool More,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? NextBefore,
+        int LinkCount, IReadOnlyList<LedgerReplyLink> Links,
+        int AboutCount, IReadOnlyList<LedgerReplyAbout> AboutIt,
+        LedgerReplyDerived Derived, string Note, IReadOnlyList<LedgerReplyRevision> Revisions);
+
+    /// <inheritdoc cref="LedgerShow"/>
+    sealed record LedgerReplyRevision(
+        int Revision, DateTimeOffset At,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        string Text, string Mark, string Confidence, string Status,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Why);
+
+    /// <inheritdoc cref="LedgerShow"/>
+    sealed record LedgerReplyLink(
+        string Kind, string Id, int Revision,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        DateTimeOffset At);
+
+    /// <inheritdoc cref="LedgerShow"/>
+    sealed record LedgerReplyAbout(long Entry, string Kind, string Author, int Revision, string Mark, string Status,
+        DateTimeOffset CreatedAt);
+
+    /// <inheritdoc cref="LedgerShow"/>
+    sealed record LedgerReplyDerived(IReadOnlyList<string> Versions, IReadOnlyList<string> Promotions,
+        IReadOnlyList<string> Deployments);
 
     /// <summary>
     /// Whether a frame this build could not read is one that never named its version. Asked only on

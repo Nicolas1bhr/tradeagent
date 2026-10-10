@@ -32,6 +32,8 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly Envelopes _envelopes;
     readonly Deployments _deployments;
     readonly Core.Strategy.Referee _referee;
+    readonly ResearchLedger _ledger;
+    readonly LedgerLinks _links;
     readonly CouncilBoundaries _boundaries;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
@@ -142,6 +144,21 @@ public sealed class TradingGateway : IAsyncDisposable
 
     /// <summary>Every verdict this installation has recorded. Read-only: the referee is the one writer.</summary>
     public Promotions Promotions => _referee.Promotions;
+
+    /// <summary>
+    /// THE RESEARCH LEDGER — each role's own beliefs as its own versioned claims (<c>U-research-ledger</c>). Written over
+    /// <c>ledger-add</c> and <c>ledger-revise</c> under the role and attempt the launch grant proved, and read over
+    /// <c>ledger-list</c> and <c>ledger-show</c> by every role. Nothing on it reaches a broker, the mode, the kill switch, an
+    /// approval or an update, and nothing it holds is a measurement.
+    /// </summary>
+    public ResearchLedger Ledger => _ledger;
+
+    /// <summary>
+    /// THE APP'S LINKS FROM AN ENTRY TO THE RECORDS IT ANSWERED REQUESTS ASKED UNDER IT WITH — this assembly's alone, so the
+    /// two record paths reach it (<see cref="Backtests"/>' run, the verdict's promotion) and no other assembly holds it
+    /// through the gateway. No op writes it.
+    /// </summary>
+    internal LedgerLinks Links => _links;
 
     /// <summary>
     /// WHEN A VERDICT TAKEN UNDER THESE SEMANTICS WAS WITHDRAWN BY OTHER ONES, or null because this
@@ -2145,6 +2162,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // constructor — so a version that reads features is judged on them, or refused before anything is charged.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow(),
             judgeCapital: () => Settings.JudgeCapital, tape: () => Tape);
+        // THE RESEARCH LEDGER AND THE APP'S LINKS, on this gateway's clock in UTC like the runner and the referee: an
+        // entry's instant and a link's are records of when the app wrote them.
+        _ledger = new ResearchLedger(db, () => _opt.Clock.GetUtcNow());
+        _links = new LedgerLinks(db, () => _opt.Clock.GetUtcNow());
         // After the settings, because the report reads them; on this gateway's own clock, so a test
         // that moves time gets the day it asked for rather than the machine's.
         _reports = new DailyReports(this, db, () => _opt.Clock.GetLocalNow());

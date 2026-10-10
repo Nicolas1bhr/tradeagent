@@ -169,6 +169,24 @@ public static class Ops
     /// </summary>
     public const string DeploymentStop = "deployment-stop";
 
+    /// <summary>
+    /// THE RESEARCH LEDGER — each role's own beliefs, as its own versioned claims (<c>U-research-ledger</c>; VISION § 6.7).
+    /// <c>LedgerAdd</c> writes an entry — a hypothesis, an experiment, a finding, a kill or a lesson — marked claim,
+    /// assumption or hypothesis, with how sure its author is or an unknown; <c>LedgerRevise</c> writes the next revision of
+    /// an entry the caller's own role wrote; <c>LedgerList</c> and <c>LedgerShow</c> read every role's.
+    ///
+    /// <para><b>What it writes is a CLAIM and is stored as one</b>, beside what the app measured and never over it — the rule
+    /// <see cref="MaterialNote"/> keeps. No op writes, edits or deletes a link between an entry and an app record: the app
+    /// writes one when it answers a <see cref="Backtest"/> or a <see cref="Verdict"/> asked under an entry, and an argument
+    /// these ops do not declare is refused rather than ignored, so none can carry one.</para>
+    ///
+    /// <para>NOT in <see cref="Mutating"/>: nothing here reaches a broker, the mode, the kill switch, an approval or an
+    /// update. The two writes need a launch grant, because an entry is recorded under the role that proved it is
+    /// one.</para>
+    /// </summary>
+    public const string LedgerAdd = "ledger-add", LedgerRevise = "ledger-revise", LedgerList = "ledger-list",
+        LedgerShow = "ledger-show";
+
     public static readonly string[] Mutating =
         [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll, DeploymentStop];
     public static bool IsMutating(string op) => Mutating.Contains(op);

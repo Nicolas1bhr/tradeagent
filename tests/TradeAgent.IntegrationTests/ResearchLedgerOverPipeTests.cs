@@ -1,0 +1,482 @@
+using System.Globalization;
+using System.IO.Pipes;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using TradeAgent.AgentRuntime;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using TradeAgent.Security;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace TradeAgent.Tests.Integration;
+
+/// <summary>
+/// THE RESEARCH LEDGER'S FOUR VERBS, OVER THE WIRE (<c>U-research-ledger</c>, item 2): <c>ledger-add</c>,
+/// <c>ledger-revise</c>, <c>ledger-list</c> and <c>ledger-show</c> — a role's beliefs written as its own claims under the
+/// role and attempt its launch grant proved, read by every role, and never a measurement.
+///
+/// <para><b>What these hold.</b> The agent channel cannot write a measurement or a link: a "measured" mark and every
+/// argument a verb does not declare — <c>link</c>, <c>run</c>, <c>version</c>, <c>promotion</c> — are refused in words with
+/// nothing written, and the one writer of <c>ledger_link</c> is the app's. A confidence the author did not state is
+/// recorded and read back as unknown, never refused, never defaulted and never carried forward. Every verb reaches
+/// every live pair — the command line, the harness's <c>trade</c> tool — and every read is bounded and says where it
+/// stopped. These tests speak the wire by hand, as <c>HoldoutOverPipeTests</c> does.</para>
+/// </summary>
+public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
+{
+    // ---- the rig -----------------------------------------------------------------------------------------------------
+
+    /// <summary>The wire by hand: the machine's key on every frame, the grant on the hello.</summary>
+    sealed class Raw : IAsyncDisposable
+    {
+        NamedPipeClientStream _pipe = null!;
+        StreamReader _r = null!;
+        StreamWriter _w = null!;
+
+        public static async Task<Raw> ConnectAsync(string pipeName)
+        {
+            var c = new Raw { _pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous) };
+            await c._pipe.ConnectAsync(5000);
+            c._r = new StreamReader(c._pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            c._w = new StreamWriter(c._pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            return c;
+        }
+
+        public async Task<IpcResponse> SendAsync(IpcRequest req)
+        {
+            req.Token ??= IpcToken.Ensure();
+            await _w.WriteLineAsync(Json.Write(req));
+            var line = await _r.ReadLineAsync() ?? throw new IOException("the gateway closed the connection");
+            return Json.Read<IpcResponse>(line) ?? throw new IOException("unreadable reply");
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _r.Dispose();
+            _w.Dispose();
+            return _pipe.DisposeAsync();
+        }
+    }
+
+    sealed record Rig(TradingGateway Gw, Database Db, GatewayPipeServer Server, AgentGrants Grants, string Pipe) : IAsyncDisposable
+    {
+        public async Task<Raw> Dial(string? role, string attempt = "attempt-ledger")
+        {
+            var client = await Raw.ConnectAsync(Pipe);
+            var grant = role is null ? null : Grants.Issue(role, attempt).Token;
+            var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
+            Assert.True(hello.Ok, Json.Write(hello.Error));
+            return client;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Server.DisposeAsync();
+            Db.Dispose();
+        }
+    }
+
+    static async Task<Rig> Ready()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var pipe = "ta-ledger-" + Guid.NewGuid().ToString("n")[..12];
+        var grants = new AgentGrants();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+        return new Rig(gw, db, server, grants, pipe);
+    }
+
+    static Dictionary<string, JsonElement> Args(params (string Key, object? Value)[] pairs)
+    {
+        var args = new Dictionary<string, JsonElement>();
+        foreach (var (key, value) in pairs)
+            if (value is not null) args[key] = JsonSerializer.SerializeToElement(value);
+        return args;
+    }
+
+    static IpcRequest Frame(string op, params (string Key, object? Value)[] args) => new()
+    {
+        Op = op, Session = "ledger", RequestId = "ledger-" + Guid.NewGuid().ToString("n")[..12], Args = Args(args)
+    };
+
+    static JsonElement Data(IpcResponse r) => JsonSerializer.SerializeToElement(r.Data, Json.Options);
+
+    static long EntryOf(IpcResponse r)
+    {
+        Assert.True(r.Ok, Json.Write(r.Error));
+        return Data(r).GetProperty("entry").GetInt64();
+    }
+
+    static void Refused(IpcResponse r, params string[] words)
+    {
+        Assert.False(r.Ok, "answered: " + Json.Write(r.Data));
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), r.Error!.Code);
+        foreach (var w in words) Assert.Contains(w, r.Error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>How many rows each ledger table holds, in one line.</summary>
+    static string Counts(Database db) => string.Join(" ", new[] { "ledger_entry", "ledger_revision", "ledger_link" }
+        .Select(t => $"{t}={Scalar(db, $"SELECT COUNT(*) FROM {t}")}"));
+
+    static string? Scalar(Database db, string sql, params (string, object?)[] ps) => db.Read(_ =>
+    {
+        using var c = db.Cmd(sql, ps);
+        var v = c.ExecuteScalar();
+        return v is null or DBNull ? null : Convert.ToString(v, CultureInfo.InvariantCulture);
+    });
+
+    static string RepoRoot() => Build.RepoRoot;
+
+    // ---- (a) a measured mark or a link the agent wrote itself is refused ---------------------------------------------
+
+    /// <summary>
+    /// (a) A MEASURED MARK OR A LINK THE AGENT WROTE ITSELF IS REFUSED (R22 § 6). <c>--mark measured</c> is refused in
+    /// words saying nothing written here is a measurement; <c>link</c>, <c>run</c>, <c>version</c>, <c>promotion</c> and the
+    /// link's own column names as arguments of <c>ledger-add</c> or <c>ledger-revise</c> are refused naming what the verb
+    /// takes and whose a link is — with nothing written, on the pipe and on the harness's door alike. No ledger verb takes
+    /// an argument that names a record, no op is named for a link, and the writer scan finds every ledger table written by
+    /// the store alone, <c>ledger_link</c> by <c>LedgerLinks</c> alone, and that type built by the gateway alone.
+    /// </summary>
+    [Fact]
+    public async Task A_measured_mark_or_a_link_the_agent_wrote_itself_is_refused()
+    {
+        await using var rig = await Ready();
+        await using var wire = await rig.Dial(CouncilRoles.Research);
+
+        var entry = EntryOf(await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "hypothesis"),
+            ("text", "breakouts above the 20-bar high pay after costs"), ("mark", "hypothesis"))));
+        var before = Counts(rig.Db);
+        Assert.Equal("ledger_entry=1 ledger_revision=1 ledger_link=0", before);
+
+        // THE MARK THAT WOULD MAKE A CLAIM A MEASUREMENT, ON BOTH WRITES.
+        foreach (var mark in new[] { "measured", "observed", "Measured" })
+        {
+            Refused(await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "finding"), ("text", "it paid"), ("mark", mark))),
+                $"'{mark}' is not a mark", "nothing you write in the ledger is a measurement");
+            Refused(await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "it paid"), ("mark", mark),
+                ("why", "the run said so"))), $"'{mark}' is not a mark");
+        }
+
+        // AND A LINK, UNDER ANY NAME, ON BOTH WRITES AND BOTH DOORS.
+        foreach (var name in new[] { "link", "run", "version", "promotion", "record_kind", "record_id", "links" })
+        {
+            Refused(await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "finding"), ("text", "it paid"), ("mark", "claim"),
+                (name, "0123456789abcdef"))), $"'{name}' is not an argument of 'ledger-add'",
+                "A link between an entry and a run or a verdict is TradeAgent's alone to write", "Nothing was written.");
+            Refused(await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "it paid"), ("mark", "claim"),
+                ("why", "the run said so"), (name, "0123456789abcdef"))), $"'{name}' is not an argument of 'ledger-revise'");
+            Refused(await rig.Server.CallAsync(Frame(Ops.LedgerAdd, ("kind", "finding"), ("text", "it paid"),
+                ("mark", "claim"), (name, "0123456789abcdef")), CouncilRoles.Research, "attempt-harness"),
+                $"'{name}' is not an argument of 'ledger-add'");
+        }
+        Assert.Equal(before, Counts(rig.Db));
+
+        // NO LEDGER VERB TAKES AN ARGUMENT THAT NAMES A RECORD, AND NO OP IS NAMED FOR A LINK.
+        var ledgerOps = new[] { Ops.LedgerAdd, Ops.LedgerRevise, Ops.LedgerList, Ops.LedgerShow };
+        foreach (var spec in GatewaySchema.Ops().Where(o => ledgerOps.Contains(o.Op)))
+            Assert.DoesNotContain(spec.Args, a => Regex.IsMatch(a.Name, "link|run|version|promotion|record|deployment|measure"));
+        Assert.DoesNotContain(GatewaySchema.Ops(), o => o.Op.Contains("link", StringComparison.OrdinalIgnoreCase));
+
+        // THE WRITER SCAN: each ledger table is written in one file, and `ledger_link` by one type built in one place.
+        var root = RepoRoot();
+        var sources = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToDictionary(f => Path.GetRelativePath(root, f).Replace('\\', '/'), File.ReadAllText);
+        foreach (var table in new[] { "ledger_entry", "ledger_revision", "ledger_link" })
+            Assert.Equal(["src/TradeAgent.Core/Db/ResearchLedger.cs"], sources
+                .Where(s => Regex.IsMatch(s.Value, $@"\b(INSERT|REPLACE)\s+(OR\s+\w+\s+)?INTO\s+{table}\b", RegexOptions.IgnoreCase))
+                .Select(s => s.Key).Order(StringComparer.Ordinal));
+        var store = sources["src/TradeAgent.Core/Db/ResearchLedger.cs"];
+        var links = store.IndexOf("public sealed class LedgerLinks", StringComparison.Ordinal);
+        Assert.True(links > 0, "LedgerLinks is not in the store's file");
+        var insert = Assert.Single(Regex.Matches(store, @"INSERT\s+INTO\s+ledger_link\b"));
+        Assert.True(insert.Index > links, "ledger_link is inserted outside LedgerLinks");
+        Assert.Equal(["src/TradeAgent.Gateway/TradingGateway.cs"], sources
+            .Where(s => s.Value.Contains("new LedgerLinks(", StringComparison.Ordinal)).Select(s => s.Key));
+    }
+
+    // ---- (b) a confidence the agent did not state is recorded as unknown ---------------------------------------------
+
+    /// <summary>
+    /// (b) A CONFIDENCE THE AGENT DID NOT STATE IS RECORDED AS UNKNOWN, NEVER REFUSED (R22 § 6). An add and a revise
+    /// without one are NULL on disk and read back <c>unknown</c> — on the write's answer, on <c>ledger-show</c>'s
+    /// revisions and on <c>ledger-list</c> — and a revise after a stated 0.3 does not carry it forward. 0.3 is kept as
+    /// stated, the word <c>unknown</c> a read prints is taken as unstated, and 1.7 and -0.2 are refused with nothing
+    /// written: a number outside 0 to 1 is not clamped into a certainty nobody stated.
+    /// </summary>
+    [Fact]
+    public async Task A_confidence_the_agent_did_not_state_is_recorded_as_unknown_never_refused()
+    {
+        await using var rig = await Ready();
+        await using var wire = await rig.Dial(CouncilRoles.Operations);
+
+        var added = await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "lesson"), ("text", "fills are the app's record"),
+            ("mark", "claim")));
+        var entry = EntryOf(added);
+        Assert.Equal("unknown", Data(added).GetProperty("confidence").GetString());
+
+        var stated = await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "fills are the app's record"),
+            ("mark", "claim"), ("why", "I can say now"), ("confidence", 0.3m)));
+        Assert.True(stated.Ok, Json.Write(stated.Error));
+        Assert.Equal("0.3", Data(stated).GetProperty("confidence").GetString());
+
+        var unstated = await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "fills are the app's record"),
+            ("mark", "assumption"), ("why", "I am less sure")));
+        Assert.True(unstated.Ok, Json.Write(unstated.Error));
+        Assert.Equal("unknown", Data(unstated).GetProperty("confidence").GetString());
+
+        var word = await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "fills are the app's record"),
+            ("mark", "assumption"), ("why", "as the read said"), ("confidence", "unknown")));
+        Assert.True(word.Ok, Json.Write(word.Error));
+        Assert.Equal("unknown", Data(word).GetProperty("confidence").GetString());
+
+        Assert.Equal("NULL 0.3 NULL NULL", string.Join(" ", rig.Db.Read(_ =>
+        {
+            using var c = rig.Db.Cmd("SELECT confidence FROM ledger_revision WHERE entry_id=$e ORDER BY revision", ("$e", entry));
+            using var rd = c.ExecuteReader();
+            var all = new List<string>();
+            while (rd.Read()) all.Add(rd.IsDBNull(0) ? "NULL" : rd.GetString(0));
+            return all;
+        })));
+
+        var shown = await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", entry)));
+        Assert.True(shown.Ok, Json.Write(shown.Error));
+        Assert.Equal(["unknown", "unknown", "0.3", "unknown"],
+            Data(shown).GetProperty("revisions").EnumerateArray().Select(r => r.GetProperty("confidence").GetString()));
+
+        var listed = await wire.SendAsync(Frame(Ops.LedgerList));
+        Assert.True(listed.Ok, Json.Write(listed.Error));
+        Assert.Equal("unknown", Data(listed).GetProperty("entries")[0].GetProperty("confidence").GetString());
+
+        // STATED, AS STATED; OUT OF RANGE, REFUSED WITH NOTHING WRITTEN.
+        var kept = await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "hypothesis"), ("text", "a second idea"),
+            ("mark", "hypothesis"), ("confidence", "0.3")));
+        Assert.Equal("0.3", Data(kept).GetProperty("confidence").GetString());
+        var counts = Counts(rig.Db);
+        foreach (var bad in new object[] { 1.7m, "1.7", -0.2m })
+        {
+            Refused(await wire.SendAsync(Frame(Ops.LedgerAdd, ("kind", "hypothesis"), ("text", "sure"), ("mark", "claim"),
+                ("confidence", bad))), "is not a confidence: it is a number from 0 to 1", "recorded as unknown");
+            Refused(await wire.SendAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "sure"), ("mark", "claim"),
+                ("why", "certain now"), ("confidence", bad))), "is not a confidence");
+        }
+        Assert.Equal(counts, Counts(rig.Db));
+    }
+
+    // ---- (h) every ledger verb reaches every live pair ---------------------------------------------------------------
+
+    /// <summary>
+    /// (h) EVERY LEDGER VERB REACHES EVERY LIVE PAIR. The four ops are reads and writes of claims and none of them is in
+    /// <see cref="Ops.Mutating"/>; each is in the schema under its own form — so <see cref="CanonRules.CommandWords"/>
+    /// gives each its own words — with its positionals first in the form's order, in the drain table at zero, on the
+    /// harness's <c>trade</c> tool, and in the reach of every pair that runs: both directors on a command line, the
+    /// Research Director on the harness. The real CLI on the default pipe adds, revises, lists and shows, sends a flag the
+    /// verb does not take on to be refused rather than dropping it, and the harness's <c>trade</c> tool does the same; a
+    /// connection with no launch grant reads and is refused a write.
+    /// </summary>
+    [Fact]
+    public async Task Every_ledger_verb_reaches_every_live_pair()
+    {
+        var forms = new Dictionary<string, (string Cli, string[] Args)>
+        {
+            [Ops.LedgerAdd] = ("trade ledger add <kind> <text> --mark M [--confidence P] [--about E] [--source S]",
+                ["kind", "text", "mark", "confidence", "about", "source"]),
+            [Ops.LedgerRevise] = ("trade ledger revise <entry> <text> --mark M --why W [--confidence P] [--status S]",
+                ["entry", "text", "mark", "why", "confidence", "status"]),
+            [Ops.LedgerList] = ("trade ledger list [--author R] [--kind K] [--status S] [--limit N] [--before E]",
+                ["author", "kind", "status", "limit", "before"]),
+            [Ops.LedgerShow] = ("trade ledger show <entry> [--before R]", ["entry", "before"])
+        };
+        Assert.Equal(["ledger-add", "ledger-revise", "ledger-list", "ledger-show"], forms.Keys);
+
+        await using (var rig = await Ready())
+        {
+            foreach (var (op, (cli, args)) in forms)
+            {
+                Assert.False(Ops.IsMutating(op));
+                var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == op);
+                Assert.False(spec.Mutating);
+                Assert.Equal(cli, spec.Cli);
+                Assert.Equal(args, spec.Args.Select(a => a.Name));
+                Assert.Equal(["trade", "ledger", op["ledger-".Length..]], CanonRules.CommandWords(spec.Cli));
+                Assert.Contains(op, GrantedWorkerTools.TradeOps);
+                Assert.Equal(TimeSpan.Zero, rig.Server.HandlerPaths.Single(h => h.Handler == op).Path);
+
+                foreach (var (role, runtime) in new[]
+                         {
+                             (CouncilRoles.Operations, RuntimeClass.Cli), (CouncilRoles.Research, RuntimeClass.Cli),
+                             (CouncilRoles.Research, RuntimeClass.Harness)
+                         })
+                    Assert.True(AgentReach.For(role, runtime).Verb(op) is not null, $"{role}·{runtime} cannot reach {op}");
+            }
+            Assert.Contains("It is YOUR CLAIM and is stored as one", Spec(Ops.LedgerAdd).Description, StringComparison.Ordinal);
+            Assert.Contains("THE LINK IS TRADEAGENT'S", Spec(Ops.LedgerAdd).Description, StringComparison.Ordinal);
+            Assert.Contains("A LINK is TRADEAGENT'S", Spec(Ops.LedgerShow).Description, StringComparison.Ordinal);
+
+            // A CONNECTION THAT PROVED NO ROLE READS, AND IS REFUSED A WRITE.
+            await using var nobody = await rig.Dial(null);
+            Assert.True((await nobody.SendAsync(Frame(Ops.LedgerList))).Ok);
+            Refused(await nobody.SendAsync(Frame(Ops.LedgerAdd, ("kind", "lesson"), ("text", "x"), ("mark", "claim"))),
+                "this connection presented no launch grant");
+
+            // THE HARNESS'S `trade` TOOL, AS THE RESEARCH DIRECTOR.
+            var tools = new GrantedWorkerTools(CouncilRoles.Research, () => Paths.RoleHome(CouncilRoles.Research),
+                () => "attempt-harness", () => rig.Server);
+            var wrote = await tools.InvokeAsync(new ToolRequest("t1", GrantedWorkerTools.Trade,
+                """{"op":"ledger-add","kind":"experiment","text":"run the breakout over August","mark":"hypothesis","confidence":0.6}"""));
+            Assert.True(wrote.Served, wrote.Content);
+            var harnessEntry = JsonDocument.Parse(wrote.Content).RootElement.GetProperty("entry").GetInt64();
+            Assert.Equal("research|attempt-harness", Scalar(rig.Db,
+                "SELECT author || '|' || attempt FROM ledger_entry WHERE id=$e", ("$e", harnessEntry)));
+            foreach (var call in new[]
+                     {
+                         $$"""{"op":"ledger-revise","entry":{{harnessEntry}},"text":"over July too","mark":"hypothesis","why":"one month is thin"}""",
+                         """{"op":"ledger-list","author":"research"}""", $$"""{"op":"ledger-show","entry":{{harnessEntry}}}"""
+                     })
+            {
+                var answer = await tools.InvokeAsync(new ToolRequest("t2", GrantedWorkerTools.Trade, call));
+                Assert.True(answer.Served, answer.Content);
+            }
+            var linked = await tools.InvokeAsync(new ToolRequest("t3", GrantedWorkerTools.Trade,
+                """{"op":"ledger-add","kind":"finding","text":"it paid","mark":"claim","run":"0123456789ab"}"""));
+            Assert.False(linked.Served);
+            Assert.Contains("'run' is not an argument of 'ledger-add'", linked.Content, StringComparison.Ordinal);
+        }
+
+        // THE REAL CLI, ON THE DEFAULT PIPE, AS THE ASSEMBLY'S OWN LAUNCH OF THE OPERATIONS DIRECTOR.
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var cliServer = new GatewayPipeServer(gw, IpcToken.Ensure());
+        cliServer.Start();
+
+        var add = await Build.RunTradeAsync("ledger", "add", "lesson", "a", "fill", "is", "the", "app's", "record",
+            "--mark", "claim", "--source", "attempt 3", "--json");
+        Assert.True(add.Code == 0, add.Err + add.Out);
+        long cliEntry;
+        using (var doc = JsonDocument.Parse(add.Out))
+        {
+            var data = doc.RootElement.GetProperty("data");
+            cliEntry = data.GetProperty("entry").GetInt64();
+            Assert.Equal("operations", data.GetProperty("author").GetString());
+            Assert.Equal("unknown", data.GetProperty("confidence").GetString());
+        }
+        Assert.Equal("a fill is the app's record", Scalar(db, "SELECT text FROM ledger_revision WHERE entry_id=$e", ("$e", cliEntry)));
+
+        var id = cliEntry.ToString(CultureInfo.InvariantCulture);
+        foreach (var argv in new[]
+                 {
+                     new[] { "ledger", "revise", id, "a", "fill", "is", "only", "the", "app's", "--mark", "claim", "--why", "said better", "--confidence", "0.9", "--json" },
+                     ["ledger", "list", "--author", "operations", "--json"],
+                     ["ledger", "show", id, "--json"]
+                 })
+        {
+            var ran = await Build.RunTradeAsync(argv);
+            Assert.True(ran.Code == 0, string.Join(' ', argv) + ": " + ran.Err + ran.Out);
+        }
+        Assert.Equal("2|a fill is only the app's|0.9", Scalar(db,
+            "SELECT revision || '|' || text || '|' || confidence FROM ledger_revision WHERE entry_id=$e AND revision=2", ("$e", cliEntry)));
+
+        var smuggled = await Build.RunTradeAsync("ledger", "add", "finding", "it", "paid", "--mark", "claim", "--run", "0123", "--json");
+        Assert.Equal(1, smuggled.Code);
+        using (var doc = JsonDocument.Parse(smuggled.Out))
+            Assert.Contains("'run' is not an argument of 'ledger-add'",
+                doc.RootElement.GetProperty("error").GetProperty("message").GetString()!, StringComparison.Ordinal);
+        Assert.Equal("1", Scalar(db, "SELECT COUNT(*) FROM ledger_entry"));
+
+        static GatewaySchema.OpSpec Spec(string op) => GatewaySchema.Ops().Single(o => o.Op == op);
+    }
+
+    // ---- (i) a ledger read is bounded and says where it stopped -----------------------------------------------------
+
+    /// <summary>
+    /// (i) A LEDGER READ IS BOUNDED AND SAYS WHERE IT STOPPED. A list serves at most 100 entries newest first and at most
+    /// 64 KiB of them, never splitting one; an answer either bound stopped says which in <c>capped_by</c> and hands back
+    /// the <c>next_before</c> that continues it exactly, so the pages put together are every entry once, in order. A show
+    /// does the same for revisions. A limit outside 1 to 100 is refused, never clamped; a filter outside its vocabulary is
+    /// refused rather than answered with nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_ledger_read_is_bounded_and_says_where_it_stopped()
+    {
+        await using var rig = await Ready();
+        await using var wire = await rig.Dial(CouncilRoles.Research);
+
+        var ids = new List<long>();
+        for (var i = 0; i < 105; i++)
+            ids.Add(rig.Gw.Ledger.Add(CouncilRoles.Research, "attempt-i", LedgerKind.Lesson, $"lesson {i}", LedgerMark.Claim,
+                null, null, null).Id);
+        ids.Reverse();
+
+        // THE ENTRY BOUND.
+        var first = Data(await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "lesson"))));
+        Assert.Equal((100, true, "limit"), (first.GetProperty("count").GetInt32(), first.GetProperty("more").GetBoolean(),
+            first.GetProperty("capped_by").GetString()));
+        Assert.Equal(ids[99], first.GetProperty("next_before").GetInt64());
+        Assert.Contains("'before' set to 'next_before' continues exactly", first.GetProperty("note").GetString()!, StringComparison.Ordinal);
+        var rest = Data(await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "lesson"), ("before", ids[99]))));
+        Assert.Equal((5, false), (rest.GetProperty("count").GetInt32(), rest.GetProperty("more").GetBoolean()));
+        Assert.Equal(JsonValueKind.Null, rest.GetProperty("capped_by").ValueKind);
+        Assert.Equal(JsonValueKind.Null, rest.GetProperty("next_before").ValueKind);
+        Assert.Equal(ids, first.GetProperty("entries").EnumerateArray().Concat(rest.GetProperty("entries").EnumerateArray())
+            .Select(e => e.GetProperty("entry").GetInt64()));
+
+        var seven = Data(await wire.SendAsync(Frame(Ops.LedgerList, ("limit", 7))));
+        Assert.Equal((7, "limit"), (seven.GetProperty("count").GetInt32(), seven.GetProperty("capped_by").GetString()));
+
+        foreach (var limit in new object[] { 0, 101, 2.5m, 1000 })
+            Refused(await wire.SendAsync(Frame(Ops.LedgerList, ("limit", limit))), "TradeAgent does not clamp it for you");
+        foreach (var (name, value) in new[] { ("author", "referee"), ("kind", "decision"), ("status", "closed") })
+            Refused(await wire.SendAsync(Frame(Ops.LedgerList, (name, value))), $"'{value}' is not");
+
+        // THE BYTE BOUND: entries of 2,000 characters, which fit about thirty to 64 KiB.
+        var big = new List<long>();
+        for (var i = 0; i < 40; i++)
+            big.Add(rig.Gw.Ledger.Add(CouncilRoles.Research, "attempt-i", LedgerKind.Experiment, new string((char)('a' + i % 26), 2_000),
+                LedgerMark.Hypothesis, null, null, null).Id);
+        big.Reverse();
+        var served = new List<long>();
+        long? cursor = null;
+        var pages = 0;
+        while (true)
+        {
+            var page = await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "experiment"), ("before", cursor)));
+            var d = Data(page);
+            var entries = d.GetProperty("entries").EnumerateArray().ToList();
+            var bytes = entries.Sum(e => Encoding.UTF8.GetByteCount(e.GetRawText()));
+            log.WriteLine($"page {++pages}: {entries.Count} entries, {bytes:N0} bytes of them, capped by {d.GetProperty("capped_by")}");
+            Assert.True(bytes <= ResearchLedger.MaxReadBytes, $"{bytes:N0} bytes is over {ResearchLedger.MaxReadBytes:N0}");
+            served.AddRange(entries.Select(e => e.GetProperty("entry").GetInt64()));
+            if (!d.GetProperty("more").GetBoolean()) break;
+            Assert.Equal("bytes", d.GetProperty("capped_by").GetString());
+            cursor = d.GetProperty("next_before").GetInt64();
+        }
+        Assert.True(pages >= 2, "the byte bound never stopped a page");
+        Assert.Equal(big, served);
+
+        // A SHOW'S REVISIONS: the count bound, then the byte bound.
+        var many = ids[0];
+        for (var r = 2; r <= 105; r++)
+            rig.Gw.Ledger.Revise(CouncilRoles.Research, "attempt-i", many, $"revision {r}", LedgerMark.Claim, "again", null, null);
+        var shown = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", many))));
+        Assert.Equal((105, 100, true, "limit", 6), (shown.GetProperty("revision_count").GetInt32(),
+            shown.GetProperty("count").GetInt32(), shown.GetProperty("more").GetBoolean(),
+            shown.GetProperty("capped_by").GetString(), shown.GetProperty("next_before").GetInt32()));
+        Assert.Contains("'before' set to 'next_before' continues the revisions exactly", shown.GetProperty("note").GetString()!,
+            StringComparison.Ordinal);
+        var older = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", many), ("before", 6))));
+        Assert.Equal([5, 4, 3, 2, 1], older.GetProperty("revisions").EnumerateArray().Select(r => r.GetProperty("revision").GetInt32()));
+        Assert.False(older.GetProperty("more").GetBoolean());
+
+        var heavy = big[0];
+        for (var r = 2; r <= 40; r++)
+            rig.Gw.Ledger.Revise(CouncilRoles.Research, "attempt-i", heavy, new string('z', 2_000), LedgerMark.Claim, "again", null, null);
+        var capped = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", heavy))));
+        Assert.True(capped.GetProperty("more").GetBoolean());
+        Assert.Equal("bytes", capped.GetProperty("capped_by").GetString());
+        Assert.True(Encoding.UTF8.GetByteCount(capped.GetRawText()) <= ResearchLedger.MaxReadBytes + 1_024,
+            $"a show of {Encoding.UTF8.GetByteCount(capped.GetRawText()):N0} bytes");
+    }
+}

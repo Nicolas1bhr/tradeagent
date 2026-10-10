@@ -112,12 +112,21 @@ public sealed class GrantedWorkerTools(
     /// recorded run, in pages — the other half of <see cref="Ops.Backtest"/>, whose answer lists its first twenty. It is a
     /// READ, not in <see cref="Ops.Mutating"/>, runs nothing again and charges nothing, and the gateway's reader holds the
     /// referee's holdout run and every run a holdout window reaches back from every caller.</para>
+    ///
+    /// <para><b>The research ledger's four are on it, for every role</b> (<c>U-research-ledger</c>): <see cref="Ops.LedgerAdd"/>,
+    /// <see cref="Ops.LedgerRevise"/>, <see cref="Ops.LedgerList"/> and <see cref="Ops.LedgerShow"/>. A seat that keeps its
+    /// beliefs in files alone keeps them where a turn's end can lose them and nothing can link the runs it asked for; the
+    /// canon tells every seat to write them here, so the harness seat has to reach it. They are not in
+    /// <see cref="Ops.Mutating"/> — nothing reaches a broker, the mode, the kill switch, an approval or an update — and the
+    /// gateway decides the rest: a write is recorded under the role and attempt this surface was given, refused without one,
+    /// an argument the op does not take is refused, and no op writes a link.</para>
     /// </summary>
     public static readonly string[] TradeOps =
     [
         Ops.Status, Ops.Connectors, Ops.Accounts, Ops.Account, Ops.Instruments, Ops.Quote,
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
         Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.RunTrades, Ops.Verdict, Ops.VenueList,
+        Ops.LedgerAdd, Ops.LedgerRevise, Ops.LedgerList, Ops.LedgerShow,
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 
