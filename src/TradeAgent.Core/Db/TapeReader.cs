@@ -489,7 +489,8 @@ public sealed class TapeReader
     /// recorder looking happily at a vendor that answers nothing is exactly what this must not report as recording.
     ///
     /// <para>Cheap at any size of tape: a few seeks per series, a binary search for where the hour and the day begin in
-    /// arrival order (<see cref="ArrivalSlack"/>), the last hour's attempts, and a count over the row-to-attempt index.</para>
+    /// arrival order (<see cref="ArrivalSlack"/>), the last hour's attempts and today's read by their ids, and a count over
+    /// the row-to-attempt index — every statement an index search, none a scan of the tape.</para>
     /// </summary>
     public TapeRecording Recording(DateTimeOffset now)
     {
@@ -499,9 +500,11 @@ public sealed class TapeReader
         var hourAgo = now - TimeSpan.FromHours(1);
         var today = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
 
+        // NOT INDEXED: by the ids from where the hour begins. Left to choose, SQLite reads the whole of the attempts' index
+        // for the order GROUP BY source wants; the rowid is still searched with NOT INDEXED, and the hour is a few rows.
         var failures = new Dictionary<string, int>(StringComparer.Ordinal);
         using (var cmd = Cmd(c, """
-                   SELECT source, COUNT(*) FROM tape_fetch
+                   SELECT source, COUNT(*) FROM tape_fetch NOT INDEXED
                    WHERE id >= $from AND received_at >= $hour AND note IS NOT NULL
                    GROUP BY source
                    """,
@@ -523,11 +526,12 @@ public sealed class TapeReader
                         + Convert.ToInt64(band.ExecuteScalar(), CultureInfo.InvariantCulture);
 
         // THE DAY'S CAP, AS THE RECORDER WROTE IT DOWN: an attempt at a file labelled today whose note says its rows were
-        // not stored because they would pass the cap. Off the record, so a restart does not forget it.
+        // not stored because they would pass the cap. Off the record, so a restart does not forget it. Read by the ids from
+        // where the day begins — on the attempts' index, `source` alone would walk every attempt GDELT ever made.
         var capped = false;
         using (var cmd = Cmd(c, """
-                   SELECT url FROM tape_fetch INDEXED BY ix_tape_fetch_series
-                   WHERE source=$g AND id >= $low AND substr(note, 1, length($prefix)) = $prefix
+                   SELECT url FROM tape_fetch NOT INDEXED
+                   WHERE id >= $low AND source=$g AND substr(note, 1, length($prefix)) = $prefix
                    """,
                    ("$g", GdeltGkg.Source), ("$low", dayLow), ("$prefix", GdeltGkg.CapNotePrefix)))
         using (var r = cmd.ExecuteReader())
@@ -851,11 +855,14 @@ public sealed class TapeReader
     /// wherever the search lands over instants that are in order only to within the slack: it ends where the row just
     /// below its answer arrived before its target and the row at its answer at or after it, and the slack carries each to
     /// every row on its side.</para>
+    ///
+    /// <para>The search's bounds are two scalar subqueries: SQLite takes the MIN or the MAX of the rowid from the edge of
+    /// its b-tree only when it is asked for one alone, and asked for both in one query it reads every row.</para>
     /// </summary>
     static long FirstAtOrAfter(SqliteConnection c, string table, DateTimeOffset t)
     {
         long lo, hi;
-        using (var bounds = Cmd(c, $"SELECT MIN(id), MAX(id) FROM {table}"))
+        using (var bounds = Cmd(c, $"SELECT (SELECT MIN(id) FROM {table}), (SELECT MAX(id) FROM {table})"))
         using (var r = bounds.ExecuteReader())
         {
             r.Read();
@@ -953,11 +960,20 @@ public sealed class TapeReader
         }
     }
 
+    /// <summary>
+    /// EVERY STATEMENT THIS READER PREPARES ON THE CALLING FLOW, handed over as it is prepared — its text and its parameters
+    /// as first bound — so a test can ask SQLite how it answers each one (<c>U-tape-gaps</c>): a statement that reads the
+    /// whole tape costs more every day the tape grows, and no result it returns shows that. Null in the product; an
+    /// <see cref="AsyncLocal{T}"/>, so a test sees its own reads and nothing beside them.
+    /// </summary>
+    internal static readonly AsyncLocal<Action<SqliteCommand>?> Preparing = new();
+
     static SqliteCommand Cmd(SqliteConnection c, string sql, params (string, object?)[] ps)
     {
         var cmd = c.CreateCommand();
         cmd.CommandText = sql;
         foreach (var (k, v) in ps) cmd.Parameters.AddWithValue(k, v ?? DBNull.Value);
+        Preparing.Value?.Invoke(cmd);
         return cmd;
     }
 }

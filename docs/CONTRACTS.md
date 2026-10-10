@@ -3202,7 +3202,9 @@ around what the seek found — bounded by time, not by the tape's length. A read
 `tape.db` rung; per-symbol completeness inside a delivery. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
 stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than ten minutes after a row that arrived later
 than it — every writer takes its arrival instant just before the store's one lock, which a write holds for milliseconds.
-A machine clock stepped back by more than that is the case it does not cover.
+A machine clock stepped back by more than that is the case it does not cover. Every statement the day's line and
+`status.tape` ask of the tape is an index search — none scans `tape_fetch` or `tape_obs`, and none walks every series a
+source ever recorded — so what they cost grows with the day's rows and the number of series, never with the tape's length.
 
 **CLAIMED — THE HOLDOUT (`U-tape-holdout`, `Data/TapeHoldout.cs`; the orchestrator's ruling of 2026-10-07).** Every
 dataset holding a cutoff — the rows `Holdout.Refusal` protects, whatever its state, class or campaign, because the bars'

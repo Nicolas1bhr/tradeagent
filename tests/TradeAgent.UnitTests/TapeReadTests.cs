@@ -764,6 +764,72 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Empty(oi.Gaps);
     }
 
+    /// <summary>
+    /// (o) A DAY'S REPORT AND THE STATUS READ THE TAPE BY ITS INDEXES ALONE: every statement <see cref="TapeReader.Day"/> and
+    /// <see cref="TapeReader.Recording"/> prepare is answered by a SEARCH — none SCANs <c>tape_fetch</c> or <c>tape_obs</c>,
+    /// and none walks every series a source ever recorded (a search on <c>source</c> alone) — so what they cost grows with
+    /// the day's rows and the number of series, never with the tape's length, which no result of theirs shows. Each
+    /// statement is the reader's own, handed over as it is prepared, and SQLite's <c>EXPLAIN QUERY PLAN</c> says how it is
+    /// answered. Over a tape that takes every path: a night down and a delivery below the day's band, a delivery after
+    /// yesterday's end, failures, rows, and GDELT's listing and a file refused for the daily cap.
+    /// </summary>
+    [Fact]
+    public void A_days_report_and_the_status_read_the_tape_by_its_indexes_alone()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var (yesterday, _) = DailyReports.LocalDay(noon.AddDays(-1));
+        var instant = from.AddHours(8.5);
+        using var store = new TapeStore(NewFile());
+        store.Append(Attempt(TapeSourceCatalog.Premium, "premium-index", from.AddDays(-2)));
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", yesterday.AddHours(21), yesterday.AddHours(22), TwoMinutes);
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(3), "the host answered 503 and nothing was read"));
+        for (var at = from.AddHours(7); at <= from.AddHours(8); at += TwoMinutes)
+            store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", at), [Oi(at), Oi(at, "ETHUSDT")]);
+        store.Append(Attempt(GdeltGkg.Source, "lastupdate", from.AddHours(8), url: GdeltGkg.ListingUrl("http://127.0.0.1:9")));
+        store.Append(Attempt(GdeltGkg.Source, "gkg-live", from.AddHours(8),
+            GdeltGkg.CapNotePrefix + "its kept rows pass the 12 bytes left under the daily cap", GdeltGkg.BatchUrl("http://127.0.0.1:9", from)));
+
+        // THE READER'S OWN STATEMENTS, as it prepares them: yesterday whole, today still open, and the status now.
+        var reader = new TapeReader(store.File);
+        var prepared = new List<(string Sql, (string Name, object Value)[] Parameters)>();
+        TapeReader.Preparing.Value = cmd =>
+            prepared.Add((cmd.CommandText, [.. cmd.Parameters.Cast<SqliteParameter>().Select(p => (p.ParameterName, p.Value!))]));
+        try
+        {
+            reader.Day(yesterday, from, instant);
+            reader.Day(from, to, instant);
+            reader.Recording(instant);
+        }
+        finally
+        {
+            TapeReader.Preparing.Value = null;
+        }
+
+        Assert.NotEmpty(prepared);
+        using var c = new SqliteConnection($"Data Source={store.File};Mode=ReadOnly;Pooling=False");
+        c.Open();
+        var wrong = new List<string>();
+        foreach (var (sql, parameters) in prepared.DistinctBy(s => s.Sql))
+        {
+            using var explain = c.CreateCommand();
+            explain.CommandText = "EXPLAIN QUERY PLAN " + sql;
+            foreach (var (name, value) in parameters) explain.Parameters.AddWithValue(name, value);
+            var statement = string.Join(' ', sql.Split(['\r', '\n', ' '], StringSplitOptions.RemoveEmptyEntries));
+            using var r = explain.ExecuteReader();
+            while (r.Read())
+            {
+                var step = r.GetString(3);
+                log.WriteLine($"{step,-90} <- {statement}");
+                if (step.StartsWith("SCAN ", StringComparison.Ordinal) && step != "SCAN CONSTANT ROW"
+                    || step.EndsWith("(source=?)", StringComparison.Ordinal))
+                    wrong.Add($"{step} <- {statement}");
+            }
+        }
+
+        Assert.True(wrong.Count == 0, "statements that read past the day's rows and series:\n" + string.Join('\n', wrong));
+    }
+
     static string Counts(string file)
     {
         using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");

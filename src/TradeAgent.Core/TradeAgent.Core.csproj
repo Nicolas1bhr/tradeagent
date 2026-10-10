@@ -5,4 +5,7 @@
          GHSA-2m69-gcr7-jv3q (high). Same major, so the provider API is unchanged. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+  </ItemGroup>
 </Project>
