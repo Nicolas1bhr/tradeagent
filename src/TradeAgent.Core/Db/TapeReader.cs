@@ -573,22 +573,30 @@ public sealed class TapeReader
     /// them failed, and the newest failure — or none, which is "nothing asked": TradeAgent was not running or the switch
     /// was off, and the tape cannot tell which, because it keeps no record of its own runs.</para>
     ///
-    /// <para><b>Where the deliveries just outside the day come from.</b> The day's band of attempts in arrival order
-    /// (<see cref="ArrivalSlack"/>) holds the ones a few minutes either side, and of those, per (source, series), the
-    /// latest that arrived before the day and the earliest that arrived at or after its elapsed part's end are taken by
-    /// their arrival instants — never by the order the tape wrote them, which follows arrival only to within the slack.
-    /// The rest are found per (source, series) on the attempts' own index — the newest before the band that arrived no
-    /// earlier than <see cref="TapeDay.LookedBackTo"/>, <see cref="GapLookBack"/> before the day, by its arrival instant,
-    /// and the first after it — because within one series the tape writes attempts in the order they arrived: each
-    /// source is written by one loop, and GDELT's tasks each by their own. A source's first delivery ever is found the
-    /// same way, walking forward from its first attempt. Each of these walks passes over failed attempts only, so it is
-    /// long only for a series that has never delivered, or has failed ever since the day — as the status read's walk back
-    /// to a series' newest delivery is for one that has stopped.</para>
+    /// <para><b>The deliveries just outside the day, by arrival instant alone.</b> Per (source, series), the delivery before
+    /// the day is the LATEST arrival among all its deliveries that arrived in [<see cref="TapeDay.LookedBackTo"/>,
+    /// <paramref name="from"/>), and the one after it the EARLIEST among all that arrived at or after its elapsed part's
+    /// end; a source's recording began at the earliest of all its deliveries. Never the last or the first the tape wrote:
+    /// the ids follow arrival only to within <see cref="ArrivalSlack"/>, in any series. The day's band of attempts holds
+    /// some of the candidates and the attempts' own index the rest, and the two are compared, never one taken instead of
+    /// the other. The ids only narrow where the index is read, by <see cref="FirstAtOrAfter"/>'s two guarantees, which
+    /// hold wherever its search lands: below the band every row arrived before the day, from its end every row arrived
+    /// at or after it.</para>
+    ///
+    /// <para><b>Beyond the band each one is two reads.</b> A seek finds the newest delivery the tape wrote below the band —
+    /// or the first it wrote from the band's end, or ever — passing over failed attempts only: back no further than the
+    /// look back's own fence, forward as far as a series has failed since. Then, because under the slack a delivery that
+    /// arrived later than the newest written (earlier than the first) can only have been written after the row fenced
+    /// at <see cref="ArrivalSlack"/> before its instant (before the row fenced at the slack after it), one read over those
+    /// ids takes the extreme. That read is bounded by time, not by the tape's length: it passes over the series' attempts
+    /// that arrived in a window three slacks wide around the one the seek found — from two slacks before it to one after,
+    /// for the latest, and from one before to two after, for the earliest.</para>
     /// </summary>
     public TapeDay Day(DateTimeOffset from, DateTimeOffset to, DateTimeOffset asOf)
     {
         if (to <= from) throw new ArgumentOutOfRangeException(nameof(to), to, "a day ends after it begins");
         var until = asOf <= from ? from : asOf < to ? asOf : to;
+        var lookedBack = from - GapLookBack;
 
         using var c = Open();
         using var snapshot = c.BeginTransaction(deferred: true);
@@ -596,9 +604,9 @@ public sealed class TapeReader
         var low = FirstAtOrAfter(c, "tape_fetch", from - ArrivalSlack);
         var high = FirstAtOrAfter(c, "tape_fetch", until + ArrivalSlack);
 
-        // THE DAY'S BAND: the attempts of the elapsed part, and the deliveries just either side of it — per series the
-        // latest that arrived before it and the earliest that arrived at or after its end, by their arrival instants, since
-        // the order the tape wrote them follows arrival only to within ArrivalSlack.
+        // THE DAY'S BAND: the attempts of the elapsed part, and the band's candidates for the deliveries either side of it —
+        // per series the latest that arrived in [LookedBackTo, from) and the earliest at or after its end, by their arrival
+        // instants. They are compared with the candidates beyond the band below, never taken instead of them.
         int requests = 0, failed = 0;
         string? lastError = null;
         var attempts = new Dictionary<string, List<(DateTimeOffset At, string? Note)>>(StringComparer.Ordinal);
@@ -614,7 +622,7 @@ public sealed class TapeReader
 
                 if (at < from || at >= until)
                 {
-                    if (note is not null) continue;
+                    if (note is not null || at < lookedBack) continue;
                     var key = (source, r.GetString(1));
                     var edge = edges.GetValueOrDefault(key);
                     edges[key] = at < from
@@ -642,30 +650,68 @@ public sealed class TapeReader
             gdelt = r.GetInt64(1);
         }
 
-        // PER (SOURCE, SERIES), ON THE ATTEMPTS' OWN INDEX: the first delivery ever, the newest before the band — one that
-        // arrived no earlier than where the day says its look back stopped, TapeDay.LookedBackTo: the ids fence the walk
-        // with ArrivalSlack to spare, and the arrival instant bounds what it returns — and the first after it. Rows below
-        // `low` all arrived before the day; rows from `high` on all arrived after its elapsed part.
-        var lookedBack = from - GapLookBack;
+        // BEYOND THE BAND, PER (SOURCE, SERIES), ON THE ATTEMPTS' OWN INDEX. Rows below `low` all arrived before the day,
+        // rows from `high` on all at or after its elapsed part's end, and rows below `back` before TapeDay.LookedBackTo —
+        // FirstAtOrAfter's guarantees, with ArrivalSlack to spare — so those fences lose no candidate. A seek finds the
+        // newest delivery written below the band, the first written from its end, or the first ever; a second read takes
+        // the extreme arrival over the ids where, under the slack, one that arrived beyond the found one can be.
         var back = FirstAtOrAfter(c, "tape_fetch", lookedBack - ArrivalSlack);
-        using var first = Cmd(c,
-            "SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series WHERE source=$src AND series=$ser AND note IS NULL ORDER BY id LIMIT 1",
-            ("$src", ""), ("$ser", ""));
-        using var before = Cmd(c, """
-            SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
+        var since = ("$since", (object?)Sql.T(lookedBack));
+        using var firstEver = Cmd(c, """
+            SELECT id, received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            WHERE source=$src AND series=$ser AND note IS NULL ORDER BY id LIMIT 1
+            """, ("$src", ""), ("$ser", ""));
+        using var newestBelow = Cmd(c, """
+            SELECT id, received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
             WHERE source=$src AND series=$ser AND id >= $back AND id < $low AND received_at >= $since AND note IS NULL
             ORDER BY id DESC LIMIT 1
-            """, ("$src", ""), ("$ser", ""), ("$back", back), ("$low", low), ("$since", Sql.T(lookedBack)));
-        using var after = Cmd(c, """
-            SELECT received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            """, ("$src", ""), ("$ser", ""), ("$back", back), ("$low", low), since);
+        using var firstFromEnd = Cmd(c, """
+            SELECT id, received_at FROM tape_fetch INDEXED BY ix_tape_fetch_series
             WHERE source=$src AND series=$ser AND id >= $high AND note IS NULL ORDER BY id LIMIT 1
             """, ("$src", ""), ("$ser", ""), ("$high", high));
+        using var latestBetween = Cmd(c, """
+            SELECT MAX(received_at) FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            WHERE source=$src AND series=$ser AND id >= $lo AND id < $hi AND received_at >= $since AND note IS NULL
+            """, ("$src", ""), ("$ser", ""), ("$lo", 0L), ("$hi", 0L), since);
+        using var earliestBetween = Cmd(c, """
+            SELECT MIN(received_at) FROM tape_fetch INDEXED BY ix_tape_fetch_series
+            WHERE source=$src AND series=$ser AND id > $lo AND id < $hi AND note IS NULL
+            """, ("$src", ""), ("$ser", ""), ("$lo", 0L), ("$hi", 0L));
 
-        DateTimeOffset? Seek(SqliteCommand cmd, string source, string series)
+        (long Id, DateTimeOffset At)? Seek(SqliteCommand cmd, string source, string series)
         {
             cmd.Parameters["$src"].Value = source;
             cmd.Parameters["$ser"].Value = series;
+            using var r = cmd.ExecuteReader();
+            return r.Read() ? (r.GetInt64(0), Sql.Time(r.GetString(1))) : null;
+        }
+
+        DateTimeOffset? Between(SqliteCommand cmd, string source, string series, long lo, long hi)
+        {
+            cmd.Parameters["$src"].Value = source;
+            cmd.Parameters["$ser"].Value = series;
+            cmd.Parameters["$lo"].Value = lo;
+            cmd.Parameters["$hi"].Value = hi;
             return cmd.ExecuteScalar() is string text ? Sql.Time(text) : null;
+        }
+
+        // THE LATEST BELOW THE BAND: one that arrived later than the newest written there was written after the row
+        // fenced at ArrivalSlack before the newest's instant, since every row below that fence arrived before it.
+        DateTimeOffset? LatestBelow(string source, string series)
+        {
+            if (Seek(newestBelow, source, series) is not { } found) return null;
+            var fence = Math.Max(back, FirstAtOrAfter(c, "tape_fetch", found.At - ArrivalSlack));
+            return Latest([found.At, Between(latestBetween, source, series, fence, found.Id)]);
+        }
+
+        // THE EARLIEST FROM A SEEK FORWARD: one that arrived earlier than the first written was written before the row
+        // fenced at ArrivalSlack after the first's instant, since every row from that fence on arrived at or after it.
+        DateTimeOffset? EarliestFrom(SqliteCommand seek, string source, string series)
+        {
+            if (Seek(seek, source, series) is not { } found) return null;
+            var fence = FirstAtOrAfter(c, "tape_fetch", found.At + ArrivalSlack);
+            return Earliest([found.At, Between(earliestBetween, source, series, found.Id, fence)]);
         }
 
         var pairs = DistinctPairs(c, "tape_fetch", "ix_tape_fetch_series");
@@ -675,16 +721,16 @@ public sealed class TapeReader
             if (row.Cadence <= TimeSpan.Zero) continue;
             var series = pairs.Where(p => p.Source == row.Id).Select(p => p.Series).ToList();
             var mine = attempts.GetValueOrDefault(row.Id) ?? [];
-            var began = Earliest(series.Select(s => Seek(first, row.Id, s)));
+            var began = Earliest(series.Select(s => EarliestFrom(firstEver, row.Id, s)));
 
-            // THE DELIVERY BEFORE THE DAY, when the recording began before it: the band's, else the index's within the look
-            // back. None there means the gap began before the look back stopped. And the first after the day's elapsed
-            // part, which only a day already over can have.
+            // THE DELIVERY BEFORE THE DAY, when the recording began before it: the latest of the band's and the one below
+            // it, back to the look back. None there means the gap began before the look back stopped. And the earliest
+            // after the day's elapsed part, of the band's and the one from its end, which only a day already over can have.
             DateTimeOffset? previous = began < from
-                ? Latest(series.Select(s => edges.GetValueOrDefault((row.Id, s)).Before ?? Seek(before, row.Id, s)))
+                ? Latest(series.SelectMany(s => new[] { edges.GetValueOrDefault((row.Id, s)).Before, LatestBelow(row.Id, s) }))
                 : null;
             DateTimeOffset? next = asOf > until && began < until
-                ? Earliest(series.Select(s => edges.GetValueOrDefault((row.Id, s)).After ?? Seek(after, row.Id, s)))
+                ? Earliest(series.SelectMany(s => new[] { edges.GetValueOrDefault((row.Id, s)).After, EarliestFrom(firstFromEnd, row.Id, s) }))
                 : null;
 
             sources.Add(SourceDay(row, from, until, asOf, mine, began, previous, next));
@@ -801,7 +847,10 @@ public sealed class TapeReader
     ///
     /// <para>The ids are in arrival order only to within <see cref="ArrivalSlack"/>, so a caller asks for
     /// <c>t - slack</c> to get an id before which every row surely arrived before <c>t</c>, and for <c>t + slack</c> to
-    /// get one from which every row surely arrived at or after it — and checks the rows between exactly.</para>
+    /// get one from which every row surely arrived at or after it — and checks the rows between exactly. Both hold
+    /// wherever the search lands over instants that are in order only to within the slack: it ends where the row just
+    /// below its answer arrived before its target and the row at its answer at or after it, and the slack carries each to
+    /// every row on its side.</para>
     /// </summary>
     static long FirstAtOrAfter(SqliteConnection c, string table, DateTimeOffset t)
     {

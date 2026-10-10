@@ -3189,13 +3189,15 @@ is one gap of the whole day whenever the day is longer than its allowance, which
 Before a source's first delivery ever nothing is a gap; a source that has not begun reads "recorded nothing" with what
 was asked. Each gap is named by what the tape holds inside its part of the day: "asked N times, all failed: <the newest
 note>", or "nothing asked" — TradeAgent was not running or the switch was off, and the tape cannot tell which, said once
-on the line. The deliveries just outside the day are, per (source, series), the latest that arrived before it and the
-earliest that arrived at or after its elapsed part's end: among the rows within `TapeReader.ArrivalSlack` of the day,
-taken by their arrival instants, never by the order the tape wrote them; beyond those, found on `ix_tape_fetch_series`,
-because within one series the tape writes attempts in the order they arrived: the one before arriving no earlier than
-eight days before the day (`TapeReader.GapLookBack`, `TapeDay.LookedBackTo` — by its arrival instant, though the walk's
-id fence reaches the slack further; none there is "no delivery since before <date>"), the one after and a source's first
-delivery ever by a walk over failed attempts only. A read that fails is a gap in the owner's words, never a zero.
+on the line. The deliveries just outside the day are, per (source, series), found by arrival instant alone: the one
+before is the latest arrival among ALL its deliveries that arrived in [`TapeDay.LookedBackTo`, the day's start) — eight
+days back, `TapeReader.GapLookBack`; none there is "no delivery since before <date>" — the one after is the earliest among
+all that arrived at or after its elapsed part's end, and a source's recording began at the earliest of all its
+deliveries. Never the last or the first the tape wrote, which follow arrival only to within `TapeReader.ArrivalSlack`, in
+any series: the day's band and the rows beyond it on `ix_tape_fetch_series` are compared, never one taken instead of the
+other, and the ids only narrow the read, with the slack to spare, wherever their binary search lands. Beyond the band each
+is a seek over failed attempts only and one read over the series' attempts that arrived within a window three slacks wide
+around what the seek found — bounded by time, not by the tape's length. A read that fails is a gap in the owner's words, never a zero.
 **NOT claimed:** why nothing was asked — that needs the recorder's durable record of its runs and switch flips, a
 `tape.db` rung; per-symbol completeness inside a delivery. The day, the hour and UTC midnight are found by binary search over the attempts' ids, which
 stand on one assumption, `TapeReader.ArrivalSlack`: no row is written more than ten minutes after a row that arrived later

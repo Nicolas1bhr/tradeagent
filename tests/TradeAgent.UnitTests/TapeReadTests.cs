@@ -707,6 +707,63 @@ public class TapeReadTests(ITestOutputHelper log)
             + $"since {Stamp(within)}, still open; nothing asked)", line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (l) THE DELIVERY BEFORE A DAY IS THE LATEST THAT ARRIVED BEFORE IT, WHEREVER THE TAPE WROTE IT: of every delivery back
+    /// to <see cref="TapeDay.LookedBackTo"/>, the day's band and the rows below it compared — never the newest the tape wrote
+    /// below the band, nor the band's own instead of the rows below it. Open interest delivered at these minutes from today's
+    /// midnight, in this order of writing — out of arrival order by less than <see cref="TapeReader.ArrivalSlack"/>, as the
+    /// tape may write — and at 00:01. Today's one gap begins at the latest of them: the newest written below the band said
+    /// −17, and in the second row the band's own edge said −9, the binary search for its start having split the rows there.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { -60, -16, -17, 1 }, -16)]
+    [InlineData(new[] { -60, -8, -11, -9, 1 }, -8)]
+    public void The_delivery_before_a_day_is_the_latest_that_arrived_before_it_wherever_the_tape_wrote_it(int[] minutes, int latest)
+    {
+        var (from, to) = DailyReports.LocalDay(TestEnv.LocalNoon());
+        using var store = new TapeStore(NewFile());
+        foreach (var m in minutes) store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", from.AddMinutes(m)));
+
+        var oi = Of(new TapeReader(store.File).Day(from, to, from.AddMinutes(2)), TapeSourceCatalog.OpenInterest);
+        Assert.Equal((from.AddMinutes(latest), from.AddMinutes(1), from, from.AddMinutes(1), 0), Shape(Assert.Single(oi.Gaps)));
+    }
+
+    /// <summary>
+    /// (m) THE DELIVERY AFTER A DAY IS THE EARLIEST THAT ARRIVED AFTER IT, WHEREVER THE TAPE WROTE IT — (l) mirrored beyond the
+    /// end of yesterday: open interest delivered at 23:59 and then at these minutes from midnight, in this order of writing.
+    /// Yesterday's one gap ends at the earliest of them: the first written from the band's end said +17, and in the second
+    /// row the band's own edge said +9.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { -1, 17, 16, 60 }, 16)]
+    [InlineData(new[] { -1, 9, 11, 8, 60 }, 8)]
+    public void The_delivery_after_a_day_is_the_earliest_that_arrived_after_it_wherever_the_tape_wrote_it(int[] minutes, int earliest)
+    {
+        var (from, to) = DailyReports.LocalDay(TestEnv.LocalNoon().AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        foreach (var m in minutes) store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", to.AddMinutes(m)));
+
+        var oi = Of(new TapeReader(store.File).Day(from, to, to.AddMinutes(61)), TapeSourceCatalog.OpenInterest);
+        Assert.Equal((to.AddMinutes(-1), to.AddMinutes(earliest), to.AddMinutes(-1), to, 0), Shape(Assert.Single(oi.Gaps)));
+    }
+
+    /// <summary>
+    /// (n) A SOURCE'S RECORDING BEGAN AT THE EARLIEST DELIVERY IT EVER MADE, WHEREVER THE TAPE WROTE IT. Open interest first
+    /// delivered at 00:02, then — written after it — at 00:01, and at 00:03: its recording began at 00:01, and the day so far
+    /// recorded three minutes of four, where the first the tape wrote said 00:02 and two.
+    /// </summary>
+    [Fact]
+    public void A_sources_recording_began_at_its_earliest_delivery_wherever_the_tape_wrote_it()
+    {
+        var (from, to) = DailyReports.LocalDay(TestEnv.LocalNoon());
+        using var store = new TapeStore(NewFile());
+        foreach (var m in new[] { 2, 1, 3 }) store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", from.AddMinutes(m)));
+
+        var oi = Of(new TapeReader(store.File).Day(from, to, from.AddMinutes(4)), TapeSourceCatalog.OpenInterest);
+        Assert.Equal((true, from.AddMinutes(1), TimeSpan.FromMinutes(3)), (oi.Begun, oi.Began, oi.Recorded));
+        Assert.Empty(oi.Gaps);
+    }
+
     static string Counts(string file)
     {
         using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");
