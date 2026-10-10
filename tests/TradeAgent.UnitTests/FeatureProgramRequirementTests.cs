@@ -90,7 +90,7 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
         var from = new DateTimeOffset(2026, 8, 3, 4, 0, 0, TimeSpan.Zero);
         using (var store = new TapeStore(file))
             for (var h = 0; h < 24; h++)
-                FeatureProgramBacktestTests.Reading(store, from.AddHours(h).AddMinutes(10), h % 3 == 0 ? "-0.00050000" : "0.00010000");
+                TapeReadings.Reading(store, from.AddHours(h).AddMinutes(10), h % 3 == 0 ? "-0.00050000" : "0.00010000");
         var bars = FeatureProgramBacktestTests.Minutes(from, 24 * 60);
         var grid = BarGrid.For(every);
         using var ledger = TestEnv.NewDb();

@@ -16,6 +16,7 @@
     <Compile Include="../Shared/TestTime.cs" Link="TestTime.cs" />
     <Compile Include="../Shared/RecordingConnector.cs" Link="RecordingConnector.cs" />
     <Compile Include="../Shared/DayOnePrograms.cs" Link="DayOnePrograms.cs" />
+    <Compile Include="../Shared/TapeReadings.cs" Link="TapeReadings.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Where each assembly's test home is deleted at the end of its run: see Shared/TestHomeFramework.cs. -->

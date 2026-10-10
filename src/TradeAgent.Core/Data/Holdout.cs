@@ -77,6 +77,15 @@ public sealed class BarAudience
     /// see <c>Strategy.Referee.RequestVerdict</c>. There is no pipe op and no CLI verb behind it.
     /// </summary>
     internal static BarAudience Referee { get; } = new(true, "the referee");
+
+    /// <summary>
+    /// THE PAPER RUNNER (<c>U-runner-features</c>): the frozen program run forward on paper, reading its features from
+    /// the tape at each close it decides. It NEVER reads the holdout — a run whose reads would reach a window is ended in
+    /// words instead — and it is internal for the reason <see cref="Referee"/> is: the only public way to it is
+    /// <c>Strategy.FeatureFeed.ForPaper</c>, which hands out a feed and never the audience, so <see cref="Pipe"/> stays
+    /// the one public door onto a <see cref="BarAudience"/>.
+    /// </summary>
+    internal static BarAudience PaperRunner { get; } = new(false, "the paper runner");
 }
 
 /// <summary>
