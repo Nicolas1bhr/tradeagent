@@ -9,7 +9,9 @@ namespace TradeAgent.Core.Decisions;
 /// WHAT ONE INSTRUMENT MAY BE ASKED, AT WHAT SIZE AND HOW FAST — the host's documented figures, kept as data on the
 /// instrument. <see cref="TokensPerSecond"/> and <see cref="RequestsPerSecond"/> are ENFORCED by
 /// <see cref="DecisionRateGate"/> before a call reads its key or reserves anything (<c>U-decision-card</c>). Zero is "not
-/// documented", and the gate reads it as TradeAgent's own bound — one call in flight, one a second — never as no bound.
+/// documented", and the gate reads either one at zero as TradeAgent's own bound, applied whole — one call in flight and
+/// one a second, never more whatever the other rate says — never as no bound. A file can make neither rate zero where the
+/// host documents it (<see cref="DecisionInstruments.Read"/>).
 /// </summary>
 public sealed record DecisionLimits
 {
@@ -355,12 +357,23 @@ public static class DecisionInstruments
         if (row.TokensPerSecond is < 0 || row.RequestsPerSecond is < 0) return "sets a rate below zero";
 
         // NO FILE LIFTS THE APP'S OWN BOUND (U-decision-card). Where the host documents no rate, TradeAgent applies its own —
-        // one call in flight, one a second — and a figure in a file an agent can write is not documentation. Zero is no
-        // lift: it is the same bound.
+        // one call in flight, one a second — and a figure in a file an agent can write is not documentation.
         if ((row.TokensPerSecond is > 0 && shipped.Limits.TokensPerSecond == 0)
             || (row.RequestsPerSecond is > 0 && shipped.Limits.RequestsPerSecond == 0))
             return "sets a rate its host does not document; TradeAgent applies its own bound there — one call in flight and "
                    + "one a second — and a file cannot lift it";
+
+        // NOR DOES IT UNDOCUMENT A DOCUMENTED ONE. Zero means "not documented": a row zeroing a rate the host documents would
+        // trade that figure for a bound the gate keeps on the OTHER rate, and drop the documented one — TypeSafe's tokens a
+        // second set to zero would count no tokens at all.
+        if (row.TokensPerSecond is 0 && shipped.Limits.TokensPerSecond > 0)
+            return Undocumenting("tokens-a-second", shipped.Limits.TokensPerSecond);
+        if (row.RequestsPerSecond is 0 && shipped.Limits.RequestsPerSecond > 0)
+            return Undocumenting("requests-a-second", shipped.Limits.RequestsPerSecond);
         return null;
+
+        static string Undocumenting(string rate, int documented) =>
+            $"sets the {rate} rate its host documents ({documented.ToString("N0", CultureInfo.InvariantCulture)}) to zero, "
+            + "which TradeAgent reads as not documented; a file may move a documented rate but cannot make it undocumented";
     }
 }
