@@ -698,11 +698,11 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         if (gateway.Tape is not { } tape) return null;
         try
         {
-            var day = tape.Day(from, to);
+            var day = tape.Day(from, to, _now());
             return $"{day.Rows:N0} rows recorded from {day.Requests:N0} requests, {day.Failed:N0} of them recorded a failure, "
                    + $"{day.Gaps:N0} gaps (a source's deliveries further apart than twice its cadence plus 30 s)"
-                   + (day.LongestGap is { } longest
-                       ? $", the longest {longest.TotalMinutes:N0} min on {day.LongestGapSource}"
+                   + (day.Longest is { } longest
+                       ? $", the longest {longest.Gap.Length.TotalMinutes:N0} min on {longest.Source}"
                        : "")
                    + (gateway.Settings.RecordMarketContext ? "" : " — Record market context is switched OFF")
                    + (gateway.Settings.RecordGdeltNews ? "" : " — Record GDELT news is switched OFF")

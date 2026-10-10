@@ -229,25 +229,28 @@ public class TapeReadTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE DAILY REPORT SAYS WHAT THE TAPE RECORDED, IN ONE LINE: the rows that arrived that day, the requests and the
-    /// failed ones, the gaps, the newest failure — and GDELT's credit, because some of the rows are GDELT's. With no tape
-    /// open the line says so, and a day the tape recorded nothing reads as zero rows from zero requests, never as absent.
+    /// (g) THE DAILY REPORT SAYS WHAT THE TAPE RECORDED, IN ONE LINE: the rows that arrived that day, the requests and the
+    /// failed ones, every source's share of the day with its gaps, the longest named with its bounds, the newest failure —
+    /// and GDELT's credit, because some of the rows are GDELT's. With no tape open the line says so.
+    ///
+    /// <para>REWRITTEN TO <c>U-tape-gaps</c>' RULE: the open-interest row two days earlier, which the line used to leave out,
+    /// now opens the day's first gap — a source's gap runs from its last delivery before to its first after, across
+    /// midnights — and the day is still open at the report's instant, so its tails end there. Written in the order the
+    /// rows arrived, as every writer of the tape writes them.</para>
     /// </summary>
     [Fact]
-    public async Task The_daily_report_says_in_one_line_what_the_tape_recorded()
+    public void The_daily_report_says_in_one_line_what_the_tape_recorded()
     {
-        var (gw, _, db) = await TestEnv.Ready();
-        using var _1 = db;
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var instant = noon.AddMinutes(50);
         using var store = new TapeStore(NewFile());
 
-        var noon = TestEnv.LocalNoon();
-        Assert.Contains("market context tape: no tape open", DailyReportText.Render(gw.Reports.Compose(noon)), StringComparison.Ordinal);
-
-        // THREE DELIVERIES OF OPEN INTEREST, THE THIRD FORTY MINUTES AFTER THE SECOND: a gap of a 60 s source.
+        // A ROW TWO DAYS EARLIER, THEN THREE DELIVERIES OF OPEN INTEREST, THE THIRD FORTY MINUTES AFTER THE SECOND, AND A
+        // FAILURE: three gaps of a 60 s source — from two days ago to 11:58, 11:59 to 12:39, and 12:39 to the report's instant.
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddDays(-2)), [Oi(noon.AddDays(-2))]);
         store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(-2)), [Oi(noon.AddMinutes(-3))]);
         store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(-1)), [Oi(noon.AddMinutes(-2))]);
-        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(39)), [Oi(noon.AddMinutes(38)), Oi(noon.AddMinutes(38), "ETHUSDT")]);
-        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(40), "the host answered 503 and nothing was read"));
         store.AppendArchive(
             Attempt(GdeltGkg.Source, "gkg-live", noon, url: GdeltGkg.BatchUrl("http://127.0.0.1:9", GdeltGkg.LabelAtOrBefore(noon))),
             new TapeArchiveBatch
@@ -257,21 +260,248 @@ public class TapeReadTests(ITestOutputHelper log)
                 Sha256 = new string('2', 64), Rows = 5, Filter = GdeltGkg.Filter
             },
             [new TapeItem($"{GdeltGkg.LabelText(GdeltGkg.LabelAtOrBefore(noon))}-1", GdeltGkg.LabelAtOrBefore(noon), """{"GKGRECORDID":"x"}""")]);
-        // AND A ROW ON ANOTHER DAY, which this day's line does not count.
-        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddDays(-2)), [Oi(noon.AddDays(-2))]);
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(39)), [Oi(noon.AddMinutes(38)), Oi(noon.AddMinutes(38), "ETHUSDT")]);
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", noon.AddMinutes(40), "the host answered 503 and nothing was read"));
 
-        gw.Tape = new TapeReader(store.File);
-        var text = DailyReportText.Render(gw.Reports.Compose(noon));
-        var line = text.Split('\n').Single(l => l.Contains("market context tape", StringComparison.Ordinal));
+        // THE TAPE'S OWN READING: the day's counts, open interest's three gaps with what is inside each, GDELT's recording
+        // beginning at noon with nothing before it a gap, and the longest gap of the day.
+        var day = new TapeReader(store.File).Day(from, to, instant);
+        Assert.Equal((6L, 5, 1, "the host answered 503 and nothing was read", 2L), (day.Rows, day.Requests, day.Failed, day.LastError, day.GdeltRows));
+        Assert.Equal((instant, true, 4), (day.Until, day.Open, day.Gaps));
+        var oi = day.Sources.Single(s => s.Source == TapeSourceCatalog.OpenInterest);
+        Assert.Equal(
+            [(noon.AddDays(-2), noon.AddMinutes(-2), from, 0), (noon.AddMinutes(-1), noon.AddMinutes(39), noon.AddMinutes(-1), 0),
+             (noon.AddMinutes(39), (DateTimeOffset?)null, noon.AddMinutes(39), 1)],
+            oi.Gaps.Select(g => (g.From, g.To, g.ClippedFrom, g.Attempts)));
+        Assert.Equal(TimeSpan.FromMinutes(1), oi.Recorded);
+        var gdelt = day.Sources.Single(s => s.Source == GdeltGkg.Source);
+        Assert.Equal(noon, gdelt.Began);
+        Assert.Equal((noon, null, noon, instant, 0), Shape(Assert.Single(gdelt.Gaps)));
+        Assert.Equal((TapeSourceCatalog.OpenInterest, from), day.Longest is { } longest ? (longest.Source, longest.Gap.ClippedFrom) : default);
+    }
+
+    // ------------------------------------------------------------------------------ U-tape-gaps: what the tape did not record
+
+    /// <summary>The deliveries of one series every <paramref name="every"/> from <paramref name="first"/> to <paramref name="last"/>, both included.</summary>
+    static void Deliver(TapeStore store, string source, string series, DateTimeOffset first, DateTimeOffset last, TimeSpan every)
+    {
+        for (var at = first; at <= last; at += every) store.Append(Attempt(source, series, at));
+    }
+
+    static readonly TimeSpan TwoMinutes = TimeSpan.FromMinutes(2);
+
+    /// <summary>One source's day as the reader reads it.</summary>
+    static TapeSourceDay Of(TapeDay day, string source) => day.Sources.Single(s => s.Source == source);
+
+    /// <summary>A gap's whole bounds, where it enters and leaves the day, and the attempts inside that part.</summary>
+    static (DateTimeOffset? From, DateTimeOffset? To, DateTimeOffset ClippedFrom, DateTimeOffset ClippedTo, int Attempts) Shape(TapeGap g) =>
+        (g.From, g.To, g.ClippedFrom, g.ClippedTo, g.Attempts);
+
+    /// <summary>An instant as the line names one inside its day: the owner's local hour and minute.</summary>
+    static string Hm(DateTimeOffset t) => t.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>An instant as the line names one outside its day: the owner's local date, hour and minute.</summary>
+    static string Stamp(DateTimeOffset t) => t.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    /// <summary>A length as the line words one: whole minutes, hours when there are sixty of them.</summary>
+    static string Span(TimeSpan t)
+    {
+        if (t <= TimeSpan.Zero) return "0 min";
+        if (t < TimeSpan.FromMinutes(1)) return $"{(long)t.TotalSeconds} s";
+        var minutes = (long)t.TotalMinutes;
+        return minutes < 60 ? $"{minutes} min" : minutes % 60 == 0 ? $"{minutes / 60} h" : $"{minutes / 60} h {minutes % 60} min";
+    }
+
+    /// <summary>The report's tape line for the day <paramref name="at"/> falls in, composed at the gateway's own clock.</summary>
+    string TapeLineOf(TradingGateway gw, DateTimeOffset at)
+    {
+        var line = DailyReportText.Render(gw.Reports.Compose(at)).Split('\n')
+            .Single(l => l.StartsWith("- market context tape:", StringComparison.Ordinal));
         log.WriteLine(line);
+        return line;
+    }
 
-        Assert.Contains("6 rows recorded from 5 requests, 1 of them recorded a failure", line, StringComparison.Ordinal);
-        Assert.Contains("1 gaps", line, StringComparison.Ordinal);
-        Assert.Contains("the longest 40 min on " + TapeSourceCatalog.OpenInterest, line, StringComparison.Ordinal);
-        Assert.Contains("last failure: the host answered 503 and nothing was read", line, StringComparison.Ordinal);
-        Assert.Contains("2 of the rows are GDELT's", line, StringComparison.Ordinal);
-        Assert.Contains(TapeSourceCatalog.GdeltCitation, line, StringComparison.Ordinal);
-        Assert.Contains("never evaluation evidence", line, StringComparison.Ordinal);
+    /// <summary>A gateway whose clock — the report's instant — is <paramref name="instant"/>, reading the tape at <paramref name="file"/>.</summary>
+    static async Task<(TradingGateway Gw, Database Db)> ReportingAt(DateTimeOffset instant, string file)
+    {
+        var (gw, _, db) = await TestEnv.Ready(options: new GatewayOptions { Clock = new TestClock(instant) });
+        gw.Tape = new TapeReader(file);
+        return (gw, db);
+    }
+
+    /// <summary>
+    /// (a) A NIGHT THE APP WAS DOWN IS A GAP ON BOTH DAYS IT TOUCHES. Open interest delivered from 21:00 to 22:00 yesterday —
+    /// its first delivery ever — and from 07:00 to 08:00 today, and nothing between: one gap, from 22:00 yesterday to 07:00
+    /// today, which yesterday's line counts from 22:00 to its midnight and today's from midnight to 07:00, each naming
+    /// where the gap began or ended on the other day. Before this unit both lines counted nothing for it; and today's finds
+    /// the delivery at 22:00 only by looking back past its own band of rows.
+    /// </summary>
+    [Fact]
+    public void A_night_the_app_was_down_is_a_gap_on_both_days_it_touches()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var (yFrom, yTo) = DailyReports.LocalDay(noon.AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", yTo.AddHours(-3), yTo.AddHours(-2), TwoMinutes);
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(7), from.AddHours(8), TwoMinutes);
+        var instant = from.AddHours(8).AddMinutes(1);
+
+        // THE TAPE'S OWN READING: one gap, the same on both days, each day holding its own part of it.
+        var reader = new TapeReader(store.File);
+        var yesterday = Of(reader.Day(yFrom, yTo, instant), TapeSourceCatalog.OpenInterest);
+        var today = Of(reader.Day(from, to, instant), TapeSourceCatalog.OpenInterest);
+        Assert.Equal((yTo.AddHours(-2), from.AddHours(7), yTo.AddHours(-2), yTo, 0), Shape(Assert.Single(yesterday.Gaps)));
+        Assert.Equal((yTo.AddHours(-2), from.AddHours(7), from, from.AddHours(7), 0), Shape(Assert.Single(today.Gaps)));
+        Assert.Equal((TimeSpan.FromHours(1), TimeSpan.FromHours(1) + TimeSpan.FromMinutes(1)), (yesterday.Recorded, today.Recorded));
+        Assert.Equal(yTo.AddHours(-3), yesterday.Began);
+    }
+
+    /// <summary>
+    /// (b) A DAY WITH NO DELIVERY READS AS ONE GAP, NEVER AS ZERO. Open interest delivered just before yesterday began and
+    /// again half an hour into today, and not once yesterday: yesterday's line counts one gap of the whole day, named by
+    /// the deliveries either side of it — not "0 gaps", which is what an unrecorded day read as before this unit. Settled
+    /// funding delivered once, nine days before yesterday, and never since: its gap is the whole day too, and began before
+    /// the look back stopped.
+    /// </summary>
+    [Fact]
+    public void A_day_with_no_delivery_reads_as_one_gap_never_as_zero()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, _) = DailyReports.LocalDay(noon);
+        var (yFrom, yTo) = DailyReports.LocalDay(noon.AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        store.Append(Attempt(TapeSourceCatalog.Funding, "funding-rate", yFrom.AddDays(-9)));
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", yFrom.AddMinutes(-10), yFrom.AddMinutes(-6), TwoMinutes);
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddMinutes(30), from.AddMinutes(34), TwoMinutes);
+        var instant = from.AddMinutes(35);
+
+        // THE TAPE'S OWN READING.
+        var day = new TapeReader(store.File).Day(yFrom, yTo, instant);
+        var oi = Of(day, TapeSourceCatalog.OpenInterest);
+        Assert.Equal((yFrom.AddMinutes(-6), from.AddMinutes(30), yFrom, yTo, 0), Shape(Assert.Single(oi.Gaps)));
+        Assert.Equal(TimeSpan.Zero, oi.Recorded);
+        Assert.Equal((null, null, yFrom, yTo, 0), Shape(Assert.Single(Of(day, TapeSourceCatalog.Funding).Gaps)));
+        Assert.Equal(2, day.Gaps);
+    }
+
+    /// <summary>
+    /// (c) A RESTART ACROSS MIDNIGHT IS COUNTED ONCE IN EACH DAY. Open interest delivered until 23:44 yesterday and again
+    /// from 00:16 today: one gap of 32 minutes, sixteen of them on each day, and each day's line counts its own part once.
+    /// The delivery at 23:44 is more than <see cref="TapeReader.ArrivalSlack"/> before today began, so today's line finds it
+    /// by looking back, not in the band of rows its day read.
+    /// </summary>
+    [Fact]
+    public void A_restart_across_midnight_is_counted_once_in_each_day()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var (yFrom, yTo) = DailyReports.LocalDay(noon.AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", yTo.AddHours(-1), yTo.AddMinutes(-16), TwoMinutes);
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddMinutes(16), from.AddMinutes(30), TwoMinutes);
+        var instant = from.AddMinutes(31);
+
+        // THE TAPE'S OWN READING: the one gap, its two parts adding up to it, and nothing else on either day.
+        var reader = new TapeReader(store.File);
+        var yesterday = Assert.Single(Of(reader.Day(yFrom, yTo, instant), TapeSourceCatalog.OpenInterest).Gaps);
+        var today = Assert.Single(Of(reader.Day(from, to, instant), TapeSourceCatalog.OpenInterest).Gaps);
+        Assert.Equal((yTo.AddMinutes(-16), from.AddMinutes(16), yTo.AddMinutes(-16), yTo, 0), Shape(yesterday));
+        Assert.Equal((yTo.AddMinutes(-16), from.AddMinutes(16), from, from.AddMinutes(16), 0), Shape(today));
+        Assert.Equal(TimeSpan.FromMinutes(32), yesterday.Length + today.Length);
+    }
+
+    /// <summary>
+    /// (d) A GAP WITH FAILED ATTEMPTS IS NAMED FAILING, AND ONE WITH NONE "NOTHING ASKED". Open interest delivered from
+    /// 08:00, failed ten times from 08:32 to 08:50 — the newest because the host did not answer — delivered again from
+    /// 08:52 to 09:20, was not asked at all until 11:00, and delivered to 11:10: two gaps, each named by what the tape holds
+    /// inside it.
+    /// </summary>
+    [Fact]
+    public void A_gap_with_failed_attempts_is_named_failing_and_one_with_none_not_asked()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        using var store = new TapeStore(NewFile());
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8), from.AddHours(8).AddMinutes(30), TwoMinutes);
+        for (var at = from.AddHours(8).AddMinutes(32); at < from.AddHours(8).AddMinutes(50); at += TwoMinutes)
+            store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", at, "the host answered 503 and nothing was read"));
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8).AddMinutes(50), "the host did not answer within 10 s"));
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(8).AddMinutes(52), from.AddHours(9).AddMinutes(20), TwoMinutes);
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", from.AddHours(11), from.AddHours(11).AddMinutes(10), TwoMinutes);
+        var instant = from.AddHours(11).AddMinutes(11);
+
+        // THE TAPE'S OWN READING: what is inside each gap.
+        var oi = Of(new TapeReader(store.File).Day(from, to, instant), TapeSourceCatalog.OpenInterest);
+        Assert.Equal(
+            [(from.AddHours(8).AddMinutes(30), 10, "the host did not answer within 10 s"), (from.AddHours(9).AddMinutes(20), 0, null)],
+            oi.Gaps.Select(g => (g.ClippedFrom, g.Attempts, g.NewestFailure)));
+        Assert.Equal((47, 10), (oi.Attempts, oi.Failed));
+    }
+
+    /// <summary>
+    /// (e) A DAY STILL OPEN COUNTS ITS TAIL TO THE REPORT'S INSTANT. Open interest delivered from 09:00 to 10:00 and the
+    /// premium index to 10:28; the report is written at 10:30. Open interest's half hour since its last delivery is a gap
+    /// still open, ending at the report's instant; the premium index's two minutes are inside its allowance and are not.
+    /// Each share is of the ten and a half hours the day has had.
+    /// </summary>
+    [Fact]
+    public void A_day_still_open_counts_its_tail_to_the_reports_instant()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        using var store = new TapeStore(NewFile());
+        for (var at = from.AddHours(9); at <= from.AddHours(10).AddMinutes(28); at += TwoMinutes)
+        {
+            store.Append(Attempt(TapeSourceCatalog.Premium, "premium-index", at));
+            if (at <= from.AddHours(10)) store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", at));
+        }
+        var instant = from.AddHours(10).AddMinutes(30);
+
+        // THE TAPE'S OWN READING.
+        var day = new TapeReader(store.File).Day(from, to, instant);
+        Assert.Equal((instant, true), (day.Until, day.Open));
+        var oi = Of(day, TapeSourceCatalog.OpenInterest);
+        Assert.Equal((from.AddHours(10), null, from.AddHours(10), instant, 0), Shape(Assert.Single(oi.Gaps)));
+        Assert.Equal(TimeSpan.FromHours(1), oi.Recorded);
+        var premium = Of(day, TapeSourceCatalog.Premium);
+        Assert.Empty(premium.Gaps);
+        Assert.Equal(TimeSpan.FromMinutes(90), premium.Recorded);
+    }
+
+    /// <summary>
+    /// (f) BEFORE A SOURCE'S FIRST DELIVERY, NOTHING IS A GAP. Yesterday open interest failed once at 09:00 and delivered for
+    /// the first time at 10:00, to 10:20; the premium index only ever failed; the funding series was never asked; OKX first
+    /// delivered just after midnight today. Open interest's morning is no gap and its line says when its recording began;
+    /// the others recorded nothing and say why, and none of them counts a gap.
+    /// </summary>
+    [Fact]
+    public void Before_a_sources_first_delivery_nothing_is_a_gap()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, _) = DailyReports.LocalDay(noon);
+        var (yFrom, yTo) = DailyReports.LocalDay(noon.AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", yFrom.AddHours(9), "the host could not be reached: refused"));
+        for (var n = 0; n < 3; n++)
+            store.Append(Attempt(TapeSourceCatalog.Premium, "premium-index", yFrom.AddHours(9).AddMinutes(5 * n + 1),
+                n == 2 ? "the host answered 451 and nothing was read" : "the host answered 403 and nothing was read"));
+        Deliver(store, TapeSourceCatalog.OpenInterest, "open-interest", yFrom.AddHours(10), yFrom.AddHours(10).AddMinutes(20), TwoMinutes);
+        store.Append(Attempt(TapeSourceCatalog.OkxEeaAnnouncements, "announcements", from.AddMinutes(10)));
+        var instant = from.AddMinutes(30);
+
+        // THE TAPE'S OWN READING.
+        var day = new TapeReader(store.File).Day(yFrom, yTo, instant);
+        Assert.Equal(1, day.Gaps);
+        var oi = Of(day, TapeSourceCatalog.OpenInterest);
+        Assert.Equal((true, yFrom.AddHours(10), TimeSpan.FromMinutes(20)), (oi.Begun, oi.Began, oi.Recorded));
+        Assert.Equal((yFrom.AddHours(10).AddMinutes(20), null, yFrom.AddHours(10).AddMinutes(20), yTo, 0), Shape(Assert.Single(oi.Gaps)));
+        var premium = Of(day, TapeSourceCatalog.Premium);
+        Assert.Equal((false, null, 3, 3, "the host answered 451 and nothing was read"),
+            (premium.Begun, premium.Began, premium.Attempts, premium.Failed, premium.NewestFailure));
+        Assert.Empty(premium.Gaps);
+        Assert.Equal((false, null, 0), (Of(day, TapeSourceCatalog.Funding).Begun, Of(day, TapeSourceCatalog.Funding).Began, Of(day, TapeSourceCatalog.Funding).Attempts));
+        Assert.Equal((false, from.AddMinutes(10)), (Of(day, TapeSourceCatalog.OkxEeaAnnouncements).Begun, Of(day, TapeSourceCatalog.OkxEeaAnnouncements).Began));
     }
 
     static string Counts(string file)
