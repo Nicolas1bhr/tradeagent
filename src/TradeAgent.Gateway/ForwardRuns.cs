@@ -421,12 +421,22 @@ public sealed class ForwardRuns
 
                 // EACH DECLARED FEATURE'S VALUE AT THIS BAR'S CLOSE, AS IT HAD ARRIVED BY THEN LESS ITS LATENCY — the
                 // instant its decision is taken (`BarGrid.EndOf`), exactly as `Backtest.Run` asks. A feed that halts —
-                // a day more than one read serves, or a cutoff set while this pass read — ends the run in its words.
+                // a day more than one read serves, or a cutoff set while this pass read — ends the run in its words, and
+                // so does a tape that cannot be read: a pass that throws at the same close every time is a run left active
+                // whose later minutes are never protected again, and ending it is the protection policy.
                 IReadOnlyList<FeatureValue>? values = null;
                 if (feed is not null)
                 {
                     var close = grid.EndOf(closed.OpenTime);
-                    var answer = feed.At(close);
+                    FeatureAnswer answer;
+                    try { answer = feed.At(close); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        answer = new FeatureAnswer(null, $"the tape could not be read for the close at "
+                            + $"{close.ToString("u", CultureInfo.InvariantCulture)}: {ex.Message.ReplaceLineEndings(" ")}");
+                    }
+
                     if (answer.Halt is { } halt)
                         return await EndAsync(deployment, Halted(halt), ct, state, replayed, skipped, last, account);
 

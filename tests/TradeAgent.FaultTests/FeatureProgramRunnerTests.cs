@@ -500,6 +500,46 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
         return lines;
     });
 
+    // ---- (c') --------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c') A TAPE THAT CANNOT BE READ ENDS THE RUN, AND ITS BOOK IS CLOSED. The run enters at 13:00 and the entry fills;
+    /// then the tape's file stops being a database. The 13:00 close is served from what the run already read; the 14:00
+    /// close needs the tape, and a read that throws is not a pass to retry for ever — a run whose pass throws at the same
+    /// close every time is a run whose later minutes are never protected again — so the run is ENDED in words naming the
+    /// close and the tape's own error, and the END closes what it holds.
+    ///
+    /// <para><b>RED before the guard</b>: the read throws out of the pass, the run is left active and unprotected, and the
+    /// pass answers nothing for it.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_tape_that_cannot_be_read_ends_the_run_and_closes_its_book()
+    {
+        await using var rig = await ReadyAsync(Program());
+        rig.Reading(At.AddMinutes(10), "-0.01000000");
+        Assert.Null((await rig.ThroughHourAsync(1, 1)).Ended);
+        rig.Minutes(HourClose(1) + 1, HourClose(1) + 2);
+        Assert.Null(Assert.Single(await rig.PassAsync()).Ended);
+        Assert.Equal(1m, await rig.Position());
+
+        // THE TAPE STOPS BEING READABLE: its writer closed, and the file overwritten with what is not a database.
+        rig.Tape!.Dispose();
+        foreach (var side in new[] { "-wal", "-shm" }) File.Delete(rig.TapeFile + side);
+        File.WriteAllBytes(rig.TapeFile, Encoding.UTF8.GetBytes(new string('x', 8192)));
+
+        var state = await rig.ThroughHourAsync(2, HourClose(1) + 3);
+        Show(rig);
+        log.WriteLine($"ended: {state.Ended}");
+
+        var ended = rig.Gw.Deployments.ById(rig.Run.Id)!;
+        Assert.Equal(DeploymentState.Ended, ended.State);
+        Assert.Equal(state.Ended, ended.EndReason);
+        Assert.StartsWith("the program's features could not be read at a close this run decides: the tape could not be "
+                          + "read for the close at 2026-10-03 14:00:00Z: ", ended.EndReason, StringComparison.Ordinal);
+        Assert.Single(rig.Ops, o => o.Kind == DeploymentOpKind.Flatten);
+        Assert.Contains(await rig.Wire(), o => o.Side == OrderSide.Sell && o.Quantity == 1m);
+    }
+
     // ---- (g) ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
