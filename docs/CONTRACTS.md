@@ -3335,7 +3335,8 @@ limit named when it binds first. The facts — price, rates and the app's own bo
 paged; a rate the file moved reads "not dated", a price it moved carries the file's own date and page. The terms — two
 sentences naming typesafe.ai/legal/mca and openrouter.ai/terms (both re-read 2026-10-10), OpenRouter's agreement for Jev's
 answers stated UNKNOWN; never a click-through. **The Test press** — ONE press (it grants no room; its worst case, one
-reservation, is named beside it), disabled while it flies and a press that lands anyway sends nothing; ONE fixed call — a
+reservation of the instrument it will ask — the key's own, named in words with its price when the card shows the other —
+is named beside it), disabled while it flies and a press that lands anyway sends nothing; ONE fixed call — a
 neutral sentence as the state, one Noul, schema `owner-test` v1, sources `["owner-test-press"]`, so its `decision_call` row
 says it was the owner's test and never a lens's evidence — to the instrument whose address the key was pasted for, never
 the other (asking the other would make the holder forget the key); then the status, a refusal's words verbatim, the

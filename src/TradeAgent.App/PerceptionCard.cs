@@ -322,8 +322,16 @@ sealed class PerceptionCard
                   + $"host's. A call is counted at the most it could use — {i.ReservedTokens:N0} tokens — until its answer says "
                   + $"what it used, so {inFlight:N0} call{(inFlight == 1 ? "" : "s")} can be in flight at once here.";
 
-        var worst = $"Asks {i.DisplayName} one fixed question, once. The most it can cost is {Exact(i.Reservation)} {i.Currency} — "
-                    + $"{i.ReservedTokens:N0} tokens at the price above — taken from the perception budget.";
+        // THE WORST CASE OF THE INSTRUMENT THE PRESS WILL ASK: the key's own (Target), whichever the card shows — said in
+        // words, with that instrument's price, when it is not the one above.
+        var asked = KeyInstrument(read, held, keyOrigin);
+        var worst = asked is null || asked.Id == i.Id
+            ? $"Asks {i.DisplayName} one fixed question, once. The most it can cost is {Exact(i.Reservation)} {i.Currency} — "
+              + $"{i.ReservedTokens:N0} tokens at the price above — taken from the perception budget."
+            : $"The key is held for {asked.DisplayName}, not {i.DisplayName} shown above, so the test asks {asked.DisplayName} one "
+              + $"fixed question, once. The most it can cost is {Exact(asked.Reservation)} {asked.Currency} — "
+              + $"{asked.ReservedTokens:N0} tokens at {asked.DisplayName}'s price of {Exact(asked.InputPerMillion)} {asked.Currency} "
+              + $"per million input tokens and {Exact(asked.OutputPerMillion)} per million output — taken from the perception budget.";
 
         var origin = UrlOrigin.Of(i.Endpoint);
         var builtInOrigin = UrlOrigin.Of(shipped.Endpoint);
@@ -335,7 +343,7 @@ sealed class PerceptionCard
                 : $"A key pasted here would be sent only to {origin} — not TradeAgent's built-in address for {i.DisplayName}, "
                   + $"which is {builtInOrigin}.";
 
-        var heldFor = held ? read.Instruments.FirstOrDefault(x => UrlOrigin.Of(x.Endpoint) == keyOrigin)?.DisplayName : null;
+        var heldFor = asked?.DisplayName;
 
         string spent;
         var capFirst = false;
@@ -361,6 +369,13 @@ sealed class PerceptionCard
         return new(i.DisplayName, Stopped(read, chosen), price, tokens, requests, own, worst, destination, builtIn,
             Labels.PerceptionKeyState(held, keyOrigin, heldFor), spent, capFirst);
     }
+
+    /// <summary>
+    /// THE INSTRUMENT A HELD KEY BELONGS TO — the one whose address it was pasted for, which is the one the Test press asks
+    /// (<see cref="Target"/>) — or null: no key, or none of the instruments that may be called has that address.
+    /// </summary>
+    static DecisionInstrument? KeyInstrument(DecisionInstrumentsRead read, bool held, string? keyOrigin) =>
+        held && keyOrigin is not null ? read.Instruments.FirstOrDefault(x => UrlOrigin.Of(x.Endpoint) == keyOrigin) : null;
 
     /// <summary>
     /// WHY AN INSTRUMENT CANNOT BE CALLED, in <see cref="DecisionInstrumentsRead"/>'s own words — the file unreadable, or a
@@ -509,7 +524,7 @@ sealed class PerceptionCard
             return null;
         }
 
-        if (read.Instruments.FirstOrDefault(i => UrlOrigin.Of(i.Endpoint) == origin) is { } live) return live;
+        if (KeyInstrument(read, true, origin) is { } live) return live;
 
         var shipped = DecisionInstruments.BuiltIn().FirstOrDefault(i => UrlOrigin.Of(i.Endpoint) == origin);
         why = shipped is null

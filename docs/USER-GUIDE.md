@@ -819,8 +819,9 @@ can reach any of it. Everything about it is on the **Safety** page, in the **Per
 - **The terms**, in two sentences with both agreements' addresses. Through OpenRouter, which agreement
   covers Jev's answers is not known, and the card says so.
 - **Ask a test question.** One press asks the model your key is kept for one fixed, neutral question —
-  nothing of yours and no market data — and the most it can cost, one question's worth, is written
-  beside it. The card then shows what happened: who answered and whether it was the exact model
+  nothing of yours and no market data — and the most it can cost, one question's worth at that model's
+  price, is written beside it; when your key is kept for the other model than the one the card shows,
+  the line says so and names the one it will ask. The card then shows what happened: who answered and whether it was the exact model
   TradeAgent asked for, the probability it gave, how long it took, and what it cost — the host's own
   bill when it reports one, otherwise TradeAgent's estimate at the list price, and it says which. A
   question that failed keeps the most it could have cost as its cost, because nobody said what it used.
