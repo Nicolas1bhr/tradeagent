@@ -237,6 +237,13 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// hands on. <see cref="TurnMeter"/> refuses every launch while any of them runs.
     /// </summary>
     public IReadOnlyList<ProcessEntry>? Survivors { get; init; }
+
+    /// <summary>
+    /// THE CANON THIS TURN RAN UNDER, read at its launch, or null where nothing was launched or no canon could be read
+    /// (<c>U-canon</c>). Set by the conversation that launched it — the CLI's <c>AGENTS.md</c> as found, the harness's
+    /// system text as sent — and written into the attempt's <c>context</c> by <see cref="TurnMeter"/>.
+    /// </summary>
+    public CanonSeen? Canon { get; init; }
 }
 
 /// <summary>

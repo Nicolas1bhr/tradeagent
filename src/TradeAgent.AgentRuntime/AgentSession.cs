@@ -211,8 +211,15 @@ public sealed class AgentSession(
     string role = CouncilRoles.Operations,
     Func<string?>? attempt = null,
     AgentGrants? grants = null,
-    Func<string?>? launchRefusal = null) : IAgentConversation, IAdmittedConversation
+    Func<string?>? launchRefusal = null,
+    AppFileManifest? appFiles = null) : IAgentConversation, IAdmittedConversation
 {
+    /// <summary>
+    /// THE CANON THE TURN IN FLIGHT WAS LAUNCHED UNDER, read in <see cref="RunTurnAsync"/> before the process starts and
+    /// carried out on <see cref="TurnEnded"/>. Null until a turn launches; reset with every turn.
+    /// </summary>
+    CanonSeen? _canon;
+
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
@@ -444,6 +451,7 @@ public sealed class AgentSession(
 
         SetBusy(true);
         _survivors = null;
+        _canon = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -483,7 +491,9 @@ public sealed class AgentSession(
                 // AND WHAT THE TEARDOWN COULD NOT END. The meter closes this turn's row on this event; a
                 // process of the turn still running past that is spend no ceiling sees, so the meter holds
                 // the next launch while any of these is the same process and still running.
-                Survivors = _survivors
+                Survivors = _survivors,
+                // AND THE CANON IT WAS LAUNCHED UNDER, as found on disk the moment before the process started.
+                Canon = _canon
             });
         }
     }
@@ -545,6 +555,10 @@ public sealed class AgentSession(
         // command it cannot run.
         var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
         AgentEnvironment.Apply(psi, env, manifest.KeepEnvironment);
+
+        // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
+        // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.
+        _canon = Canon.SeenByCli(psi.WorkingDirectory, role, appFiles ?? AppFileManifest.Shared);
 
         // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has

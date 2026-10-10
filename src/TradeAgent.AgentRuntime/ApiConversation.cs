@@ -57,8 +57,15 @@ public sealed class ApiConversation(
     Func<TurnAllowance>? allowance = null,
     TimeSpan? requestTimeout = null,
     HttpMessageHandler? transport = null,
-    Func<DateTimeOffset>? now = null) : IAgentConversation, IAdmittedConversation, IDisposable
+    Func<DateTimeOffset>? now = null,
+    AppFileManifest? appFiles = null) : IAgentConversation, IAdmittedConversation, IDisposable
 {
+    /// <summary>
+    /// THE CANON THE TURN IN FLIGHT SENT AS ITS SYSTEM TEXT, set when the first request is composed and carried out on
+    /// <see cref="TurnEnded"/>. Null on a turn that sent nothing.
+    /// </summary>
+    CanonSeen? _canon;
+
     /// <summary>
     /// THE MOST REQUESTS ONE TURN MAY MAKE, however cheap they are.
     ///
@@ -293,6 +300,7 @@ public sealed class ApiConversation(
         }
 
         SetBusy(true);
+        _canon = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -328,6 +336,9 @@ public sealed class ApiConversation(
                 // nothing and would read as a free turn.
                 Usage = usage,
 
+                // AND THE CANON IT SENT: the system text's hash, version and whether it is the app's own.
+                Canon = _canon,
+
                 // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
                 // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
                 // difference — see EndedCompleted.
@@ -351,9 +362,11 @@ public sealed class ApiConversation(
     {
         var bound = allowance?.Invoke() ?? TurnAllowance.Default;
         var surface = tools();
+        var mission = Mission();
+        _canon = Canon.SeenByHarness(mission, role, appFiles ?? AppFileManifest.Shared);
         var messages = new List<ProviderMessage>
         {
-            ProviderMessage.System(Mission()),
+            ProviderMessage.System(mission),
             ProviderMessage.User(message)
         };
 
