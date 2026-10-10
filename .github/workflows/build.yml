@@ -67,6 +67,16 @@ jobs:
       - run: dotnet restore TradeAgent.sln
       - run: dotnet build TradeAgent.sln -c Release --no-restore
 
+      # WINDOWS TEST HOMES ON THE WORK DISK (U-ci-shards). Every test process makes its home under
+      # Path.GetTempPath() (tests/Shared/TestEnv.cs), which on a windows runner is C:, the system disk, while
+      # the workspace and runner.temp are on D:. Set for the steps after this one, the two test steps.
+      - name: Put the test homes on the work disk
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+
       # THE SUITE MINUS ONE CATEGORY — every platform, no retry, no rescue. A red here is a red run.
       # This is 833 of the 914 tests, including every test that asserts what the product does.
       #
