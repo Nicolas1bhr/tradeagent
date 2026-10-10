@@ -561,6 +561,19 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
             Assert.DoesNotContain(rig.Ops, o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit);
             Assert.True(rig.Gw.Deployments.IsReconciled(rig.Run.Id));
 
+            // AND THE SWEEP SAYS THE SAME SENTENCE, SO IT STARTS NO REPLACEMENT.
+            Assert.Equal(Words, ForwardRuns.CannotRun(rig.Gw.Strategies, rig.Version, rig.Gw.Tape, rig.Gw.Datasets, rig.Clock.At));
+            var started = new List<int>();
+            for (var k = 1; k <= 3; k++)
+            {
+                rig.Clock.At = rig.Clock.At.AddMinutes(1);
+                started.Add(rig.Gw.StartPaperDeploymentsDue(rig.Clock.At));
+                await rig.Runner.AdvanceAsync();
+            }
+            log.WriteLine($"sweeps after the end started: {string.Join(", ", started)}");
+            Assert.Equal([0, 0, 0], started);
+            Assert.Single(rig.Gw.Deployments.ForAllocation(rig.Run.AllocationId));
+            Assert.Empty(rig.Gw.Deployments.Open());
         }
     }
 
