@@ -149,8 +149,10 @@ jobs:
           # passed. A green whose second trx exists is a green that needed two attempts.
           path: '**/results*.trx'
 
+  # NOT BEHIND `test`, deliberately (U-ci-shards), as package-linux is not: it builds the installer from the
+  # same tree and tests nothing, and waiting for the suites only put its four minutes after the slowest of
+  # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
   package:
-    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
