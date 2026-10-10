@@ -543,6 +543,118 @@ public class RefereeVerdictTests
             Assert.DoesNotContain(never, verdict.Args.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
     }
 
+    // ---- a verdict the app stops (U-verdict-stopped) ----------------------------------------------
+
+    /// <summary>
+    /// (a) A VERDICT THE APP STOPS BEFORE ITS CHARGE IS REFUSED AND CHARGES NOTHING.
+    ///
+    /// <para>The stop is the app's — it is closing, or the harness turn that asked for the verdict was ended — and it
+    /// is asked before the charge, so a stop that has already fired costs the campaign no judgement: nothing charged,
+    /// no holdout run, no promotion, no note, no boundary and no wake. And the same ask, not stopped, is judged on one
+    /// judgement. RED on the base, where the stop reached only the holdout run: the judgement was charged, the run
+    /// halted at its first bar, and the halt was recorded as the version's final verdict — <c>refused</c>,
+    /// <c>the-holdout-run-did-not-complete</c> — on a FAULTED run under the referee, blaming the strategy for the
+    /// app's own stop.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_the_app_stops_before_its_charge_is_refused_and_charges_nothing()
+    {
+        var w = await Given();
+        using var _1 = w.Db;
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id, stop: stop.Token);
+
+        Assert.True(verdict.Stopped, "a verdict the app stopped before its charge was answered as one: "
+            + Answered(w, verdict));
+        Assert.False(verdict.Ok);
+        Assert.Null(verdict.Promotion);
+        Assert.Contains("before its judgement was charged", verdict.Why, StringComparison.Ordinal);
+
+        NothingRecorded(w);
+        Assert.Empty(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+        Assert.Equal(0, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+
+        // AND THE SAME ASK, NOT STOPPED, IS JUDGED: charged once, and promoted.
+        var judged = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(judged.Promoted, judged.Promotion?.Reason ?? judged.Why);
+        Assert.False(judged.Stopped);
+        Assert.Single(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+    }
+
+    /// <summary>
+    /// (b) A VERDICT THE APP STOPS DURING ITS RUN RECORDS NOTHING, AND ITS CHARGE JUDGES IT LATER.
+    ///
+    /// <para>The stop fires when the charge reads the referee's clock (<c>ChargeVerdict</c>, inside the charge's own
+    /// transaction), so the check before the charge has already passed, the judgement is written, and the holdout run
+    /// starts with the stop set and halts at its first bar. What is under test is the second check, when the run
+    /// returns: nothing of that run is kept — no run row, no promotion, no note, no boundary, no wake — and the charge
+    /// is neither undone, voided nor moved: it stands, as after a crash. Asked again, not stopped, the version is
+    /// judged ON THAT CHARGE: the budget is ONE and already spent, and the verdict is taken with the count unmoved.</para>
+    ///
+    /// <para>RED on the base: the halted run was recorded as the version's final <c>refused</c>, and the second ask
+    /// answered that refusal again — a re-run over the same bytes has the same run id, so the first rows stand and only
+    /// a new version, a second judgement, could go on.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_the_app_stops_during_its_run_records_nothing_and_its_charge_judges_it_later()
+    {
+        var w = await Given(verdicts: 1);
+        using var _1 = w.Db;
+        using var stop = new CancellationTokenSource();
+        var stopping = new Referee(w.Db, () =>
+        {
+            stop.Cancel();
+            return At;
+        });
+
+        var verdict = stopping.Verdict(w.VersionId, w.Campaign.Id, stop: stop.Token);
+
+        Assert.True(verdict.Stopped, "a verdict the app stopped during its holdout run was answered as one: "
+            + Answered(w, verdict));
+        Assert.False(verdict.Ok);
+        Assert.Null(verdict.Promotion);
+        Assert.Contains("stays this version's", verdict.Why, StringComparison.Ordinal);
+
+        NothingRecorded(w);
+
+        // THE CHARGE STANDS: one row, for this version, and the budget of one is spent.
+        Assert.Equal(w.VersionId, Assert.Single(w.Gw.Campaigns.Verdicts(w.Campaign.Id)).VersionId);
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+
+        // ASKED AGAIN, NOT STOPPED: judged on that charge, and nothing more is spent.
+        var judged = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(judged.Ok, judged.Why);
+        Assert.False(judged.Stopped);
+        Assert.Equal(PromotionVerdict.Promoted, judged.Promotion!.Verdict);
+        Assert.Equal(PromotionReason.Met, judged.Promotion!.Reason);
+        Assert.Single(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+        Assert.Equal(BacktestOutcome.COMPLETED.ToString(),
+            new StrategyStore(w.Db).RunById(judged.Promotion!.HoldoutRunId)!.Outcome);
+    }
+
+    /// <summary>What the referee answered and what the campaign was charged, in one line, for a red assertion to quote.</summary>
+    static string Answered(World w, RefereeVerdict verdict) =>
+        $"ok {verdict.Ok}, {verdict.Promotion?.Verdict ?? "no verdict"} / {verdict.Promotion?.Reason ?? "no reason"}, "
+        + $"why \"{verdict.Why}\", judgements spent {w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id)}";
+
+    /// <summary>
+    /// NOTHING OF A STOPPED VERDICT IS IN THE LEDGERS: no holdout run under the referee, no promotion, no note to Research
+    /// and no wake for it, no boundary and no wake for either director.
+    /// </summary>
+    static void NothingRecorded(World w)
+    {
+        Assert.DoesNotContain(new StrategyStore(w.Db).Runs(1000), r => r.Role == Referee.RunRole);
+        Assert.Empty(new Promotions(w.Db).All());
+        Assert.Empty(new PublicationStore(w.Db).By(Referee.RunRole));
+        Assert.Empty(new MissionEventStore(w.Db).OfKind(MissionEventKind.Verdict));
+        Assert.Empty(new CouncilBoundaries(w.Db).All());
+        Assert.Empty(new MissionEventStore(w.Db).OfKind(MissionEventKind.Boundary));
+    }
+
     // ---- the bounds a verdict was taken under -----------------------------------------------------
 
     /// <summary>

@@ -54,13 +54,19 @@ public sealed record VerdictCharge(bool Ok, string Why, int Spent, int Budget, l
 /// matters: the bars have been read, the metric exists, and whoever asked has learnt something about
 /// months they were never shown. So the row is written by <see cref="RequestVerdict"/>, in its own
 /// transaction, and the audience that reads the holdout is handed back only on the far side of that
-/// write. "Charged after the run" is the mutant this class was built against.</para>
+/// write. "Charged after the run" is the mutant this class was built against. <b>And nothing undoes it</b>
+/// (<c>U-verdict-stopped</c>): a verdict the app stops after its charge — it is closing, or the turn that
+/// asked was ended — writes nothing, and the charge stands as it would after a crash, never voided, refunded
+/// or moved, buying that version's one answer when it is asked again. Handing the access back would take the
+/// word of a run that had already read the months.</para>
 ///
-/// <para><b>No pipe op and no `trade` verb reaches any of this.</b> There is no operation an agent can
-/// send that asks for a verdict, and that is not an omission to be filled in later: the request is a
-/// decision about the owner's private evidence, and the caller being judged is the one party that must
-/// not be able to spend it. `HoldoutOverPipeTests` asks every op this build has and none of them serves
-/// a held-back bar.</para>
+/// <para><b>One op asks for a verdict, and asking is all it does.</b> <c>trade verdict</c>
+/// (<c>U-verdict-op</c>) names a version and at most a dataset: the months, the scorer, the friction and
+/// the budget are the campaign's, so the caller being judged can ask and can choose nothing about how it is
+/// judged. No op writes a promotion, opens, renews or re-budgets a campaign, or stops a verdict once asked:
+/// a stop is the app's own, in process — it is closing, or the owner ended the turn — and it buys nothing,
+/// neither a figure nor a judgement freed for another version. `HoldoutOverPipeTests` asks every op this
+/// build has and none of them serves a held-back bar.</para>
 /// </summary>
 public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     CouncilBoundaries? boundaries = null, Func<decimal>? judgeCapital = null, Func<TapeReader?>? tape = null)
@@ -145,7 +151,9 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     ///
     /// <para>Asking twice for the same version is one verdict and one charge — the same version over the
     /// same holdout is the same answer — so a crash between this call and the run it authorises leaves
-    /// the verdict obtainable rather than paid for and unreachable.</para>
+    /// the verdict obtainable rather than paid for and unreachable. A stop there is the same case
+    /// (<c>U-verdict-stopped</c>): <see cref="Verdict"/> writes nothing for a run the app stopped, and the
+    /// charge it took here is what judges the version when it is asked again.</para>
     ///
     /// <para><b>The charge buys a judge, and the two are written together.</b> A campaign pinned its
     /// cost model when it opened, and that pin is what the verdict is scored under. A campaign opened
@@ -299,6 +307,16 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// campaign, a policy this build does not implement, a dataset that serves nothing, a program that
     /// declares none of the three execution bounds) writes no row and says why in
     /// <see cref="RefereeVerdict.Why"/>.</para>
+    ///
+    /// <para><b>A verdict the app STOPS is neither</b> (<c>U-verdict-stopped</c>). <paramref name="stop"/> is the
+    /// app's — it is closing, or the turn that asked was ended — and it is asked twice: before the charge, where
+    /// nothing has been charged and nothing is; and when the holdout run returns, which a stop halts at its next
+    /// bar. Either way <see cref="RefereeVerdict.Stopped"/> is set and nothing is written — no run, no promotion,
+    /// no note, no boundary, no wake — and the halted run's partial figures and trace are dropped here, in memory:
+    /// the halt is the app's and not the program's, and scoring it would record a FINAL <c>refused</c> blaming the
+    /// strategy for something that did not happen. A judgement charged before the stop stays charged to the
+    /// version, as after a crash, and nothing undoes it: asking again judges the version on that charge and
+    /// spends no second one.</para>
     /// </summary>
     public RefereeVerdict Verdict(string versionId, long campaignId, ExecutionModel? model = null,
         CancellationToken stop = default)
@@ -306,6 +324,14 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         // NO EXECUTION BOUNDS, NO PROMOTION — asked before anything else, and answered off the text
         // this installation already holds. See `BoundsRefusal`.
         if (BoundsRefusal(versionId) is { } unbounded) return RefereeVerdict.No(unbounded);
+
+        // A VERDICT THE APP HAS ALREADY STOPPED IS NOT CHARGED (U-verdict-stopped): asked here, the last step
+        // before the charge, so a stop that has fired costs the campaign nothing. See the summary.
+        if (stop.IsCancellationRequested)
+            return RefereeVerdict.Halted(
+                "TradeAgent stopped this verdict before its judgement was charged — it is closing, or the turn "
+                + "that asked for it was ended — so nothing was charged, nothing was run over the held-back months "
+                + "and nothing was recorded. Nothing about the version or the request was wrong.");
 
         // THE CHARGE COMES FIRST AND IT IS WHAT PRODUCES THE AUDIENCE. Nothing below can read a
         // held-back bar without it, because the audience is on the charge and is internal to Core. The tape is read
@@ -357,6 +383,20 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         if (open.Result is not { } run)
             return RefereeVerdict.No(
                 $"the holdout of campaign {campaignId} could not be run: {open.Why}");
+
+        // A RUN THE APP STOPPED IS NOT A VERDICT (U-verdict-stopped), asked when the run returns, as
+        // `Backtests.Run` asks it. The stop halts the run at its next bar, and scoring what it read would record
+        // `the-holdout-run-did-not-complete` as this version's FINAL verdict — a FAULTED run under the referee
+        // blaming the strategy for the app's own stop, with a note, a boundary and three paid wakes. Nothing is
+        // written, and nothing of the run leaves this method: its figures and its trace are dropped here. The
+        // charge above stands, as after a crash.
+        if (stop.IsCancellationRequested)
+            return RefereeVerdict.Halted(
+                "TradeAgent stopped this verdict while its holdout run was reading — it is closing, or the turn that "
+                + "asked for it was ended — so nothing of the run was kept: no run, no verdict, no note and no "
+                + "boundary were recorded, and no figure from it is returned. The judgement already charged stays "
+                + $"this version's under campaign {campaignId}, as after a crash: asking again under it judges the "
+                + "version and spends no second one.");
 
         var at = _now();
 
@@ -620,7 +660,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 /// no — recorded, immutable, and delivered like any other. <see cref="Ok"/> false is the referee
 /// declining to judge — no charge, no such campaign, a scoring policy this build does not implement, a
 /// dataset that serves nothing, a program that declares none of the three execution bounds — and
-/// nothing is written.</para>
+/// nothing is written. <see cref="Stopped"/> marks the one decline that is the app's own stop
+/// (<c>U-verdict-stopped</c>).</para>
 ///
 /// <para><b>The figures are not on here.</b> A caller gets the promotion and the run's id; the trace and
 /// the metrics stay in <c>strategy_run</c>, which is the owner's table. <c>docs/COUNCIL.md</c>:196-197
@@ -641,7 +682,19 @@ public sealed record RefereeVerdict(bool Ok, string Why, PromotionRow? Promotion
     /// <summary>The holdout run this verdict was computed from, or null where there was none.</summary>
     public string? RunId => Promotion?.HoldoutRunId;
 
+    /// <summary>
+    /// WHETHER THE APP STOPPED THIS VERDICT (<c>U-verdict-stopped</c>), set by the two checks of the stop in
+    /// <see cref="Referee.Verdict"/> and by nothing else, so a caller maps it without reading <see cref="Why"/>. A
+    /// stopped verdict is not a verdict: <see cref="Ok"/> is false, <see cref="Promotion"/> is null and nothing was
+    /// written. Stopped before its charge, nothing was charged; stopped when its holdout run returned, the judgement
+    /// stays charged to the version, as after a crash, and asking again judges it on that charge.
+    /// </summary>
+    public bool Stopped { get; private init; }
+
     internal static RefereeVerdict No(string why) => new(false, why, null);
+
+    /// <summary>A verdict the app stopped, and the only writer of <see cref="Stopped"/>.</summary>
+    internal static RefereeVerdict Halted(string why) => new(false, why, null) { Stopped = true };
 }
 
 /// <summary>
