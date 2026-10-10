@@ -2649,6 +2649,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// judgement reads a whole holdout in process, and a caller that fires three is told so rather than
     /// left holding a connection.</para>
     ///
+    /// <para><b>A verdict the app stops is not answered</b> (<c>U-verdict-stopped</c>). <paramref name="ct"/> is
+    /// never the asker's: on the pipe it is the server's, cancelled only when the server is disposed, and on the
+    /// harness's door it is the turn's — the owner's Pause, the Chat page's Stop and every quit. The referee says
+    /// <c>Stopped</c> and writes nothing, and the caller is refused <c>IPC_UNAVAILABLE</c> with no figure
+    /// (<see cref="Backtests.VerdictStopped"/>). A judgement it charged before the stop stays the version's, as
+    /// after a crash: no promotion was recorded, so the next ask under this campaign runs the referee again, and
+    /// <c>ChargeVerdict</c> answers a charged pair Ok before the budget — judged, with nothing more spent.</para>
+    ///
     /// <para><b>What does NOT cross.</b> No metric, no trace hash, no run id, no bar and no figure of
     /// any kind. <c>text</c> is <c>RefereeFeedback.Text</c> — which reads the promotion row
     /// alone, whose reason column is a closed vocabulary that cannot hold a number — and is not built
@@ -2708,6 +2716,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // THE APP'S OWN REFEREE, UNCHANGED AND UNPARAMETERISED BEYOND THE TWO IDS. The charge, the
             // holdout feed, the scoring policy, the promotion row and the delivery are all its own.
             var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct);
+
+            // A VERDICT THE APP STOPPED IS NOT ANSWERED AS ONE (U-verdict-stopped): refused IPC_UNAVAILABLE, as
+            // `Backtests.Run` refuses a run it stopped, and BEFORE the paper sweep below, because a stop writes
+            // nothing. Read off the referee's flag, never off its words. See the summary.
+            if (verdict.Stopped)
+                throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Backtests.VerdictStopped);
 
             // AND THE APP'S OWN PAPER POLICY, IMMEDIATELY AFTER THE VERDICT RATHER THAN AT THE NEXT
             // TICK. It is the same sweep the mission loop runs on its periodic seam, and it writes
