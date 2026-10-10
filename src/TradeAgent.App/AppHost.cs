@@ -901,11 +901,16 @@ public sealed class AppHost : IAsyncDisposable
     /// THE FORWARD RUNNER, ON THE APP'S OWN CLOCK. Built lazily because a connector switch replaces
     /// <see cref="Gateway"/>, and a runner holding the old one would dispatch onto a platform the
     /// owner has moved off.
+    ///
+    /// <para><b>With the tape's reader from here, never off the gateway</b> (<c>U-runner-features</c>): the gateway's
+    /// <c>Tape</c> is set on a new gateway only after it exists, and a pass on it in between would end every run of a
+    /// program that reads a feature for a tape that is open. A runner built before the tape opened is built again once it
+    /// has: what it kept is values a restart reads again.</para>
     /// </summary>
     ForwardRuns ForwardRunner =>
-        _forwardRunner is { } held && ReferenceEquals(held.Gateway, Gateway)
+        _forwardRunner is { } held && ReferenceEquals(held.Gateway, Gateway) && ReferenceEquals(held.Tape, _tapeReader)
             ? held
-            : _forwardRunner = new ForwardRuns(Gateway, _db!);
+            : _forwardRunner = new ForwardRuns(Gateway, _db!, tape: _tapeReader);
 
     /// <summary>
     /// WHAT A PAPER FILL PAYS, RESOLVED FROM THE OWNER'S SETTINGS (<c>U-paper-friction</c>): an override

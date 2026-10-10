@@ -40,8 +40,7 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
         TapeReadings.Reading(store, stamped, funding, received);
 
     /// <summary>The brief's feature with a two-hour max age, so an hourly program sees a reading of the hour before.</summary>
-    public const string Spec =
-        """{"kind":"latest","input":{"source":"binance-um-premium","series":"premium-index","subject":"BTCUSDT","field":"lastFundingRate"},"latency_s":5,"max_age_s":7200}""";
+    public const string Spec = FeatureProgramSpec.Funding;
 
     /// <summary>Buys when funding is deeply negative, sells when it turns positive — the brief's observable program, hourly.</summary>
     public static string Program(string extra = "", string bars = "1h") => $"""

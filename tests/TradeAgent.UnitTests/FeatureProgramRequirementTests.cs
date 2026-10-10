@@ -53,7 +53,7 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
     /// another line rather than a line of its own (<c>max_capital_fraction</c>, <c>U-size-cap</c>), so a kind added to the
     /// parser and not to the list fails here; every line kind is accepted as a line's first word, and the clause on the
     /// size line; the backtest implements every one; a program using every kind requires every kind and the backtest
-    /// does not refuse it, while the paper runner refuses it naming <c>feature</c> and nothing else.
+    /// does not refuse it, and nor does the paper runner, which implements <c>feature</c> since <c>U-runner-features</c>.
     /// </summary>
     [Fact]
     public void Every_kind_parsed_is_one_the_backtest_implements()
@@ -105,9 +105,9 @@ public class FeatureProgramRequirementTests(ITestOutputHelper log)
             Assert.Equal(BacktestEventKind.Feature, run.Trace.Events[^1].Kind);
         }
 
-        Assert.Equal(StrategyDeclarations.All.Where(k => k != StrategyDeclarations.Feature), ForwardRuns.Implements);
-        Assert.StartsWith("this program requires `feature`, which this build's paper runner does not implement.",
-            ForwardRuns.Refuses(every), StringComparison.Ordinal);
+        // AND THE PAPER RUNNER IMPLEMENTS EVERY KIND, `feature` among them (U-runner-features): it refuses none of them.
+        Assert.Equal(StrategyDeclarations.All, ForwardRuns.Implements);
+        Assert.Null(ForwardRuns.Refuses(every));
         Assert.Null(ForwardRuns.Refuses(Parsed(EveryKind.Replace("funding < 0 and ", "", StringComparison.Ordinal)
             .Replace($"feature funding = {FeatureProgramGrammarTests.FundingSpec}\n", "", StringComparison.Ordinal))));
     }

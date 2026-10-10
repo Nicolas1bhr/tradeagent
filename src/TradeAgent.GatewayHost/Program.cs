@@ -58,6 +58,7 @@ await gateway.RefreshHealthAsync();
 server.Start();
 
 using var stopping = new CancellationTokenSource();
+// No tape: this host records none, so a run of a program that reads a feature is ended here in words (U-runner-features).
 var loop = Task.Run(() => Background(gateway, new ForwardRuns(gateway, db), stopping.Token));
 
 Console.WriteLine($"READY pipe={server.PipeName} connector={connector.Id} home={Paths.Home}");
