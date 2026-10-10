@@ -330,8 +330,16 @@ public static class Versions
     /// backfill gives every archive dataset the archive reading. Only <c>commercial-ok</c> and
     /// <c>first-party</c> confer live eligibility, and the live gate reads both the row's class and its
     /// source's newest reading (<c>DataLicence.LiveRefusal</c>).</para>
+    ///
+    /// <para><b>31 — the research ledger</b> (<c>U-research-ledger</c>): <c>ledger_entry</c>, <c>ledger_revision</c> and
+    /// <c>ledger_link</c> — each role's hypotheses, experiments, findings, kills and lessons as its own versioned claims,
+    /// marked claim, assumption or hypothesis (a CHECK), with the author's stated confidence or NULL for unknown (a
+    /// CHECK), under the role and attempt the launch grant proved; and the app's links from an entry to the research run
+    /// or promotion it answered a request asked under it with, by kind and id, never a copy of a field. Append-only:
+    /// <c>ResearchLedger</c> writes entries and revisions, <c>LedgerLinks</c> writes links, and nothing updates or deletes
+    /// a <c>ledger_</c> row. No app table gains a column.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 30;
+    public const int DatabaseSchemaVersion = 31;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

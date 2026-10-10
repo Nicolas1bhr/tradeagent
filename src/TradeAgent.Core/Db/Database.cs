@@ -1878,6 +1878,78 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','30') ON CONFLICT(key) DO UPDATE SET value='30';");
         }
 
+        if (have < 31)
+        {
+            // THE RESEARCH LEDGER — `U-research-ledger` (VISION § 6.7, the believed world).
+            //
+            // Before this rung what a role believed about its work was prose: `PLAN.md` and `JOURNAL.md`, snapshotted as
+            // publications, restating the app's ids and figures as words. These three tables hold each role's beliefs as
+            // its OWN versioned claims and keep them apart from what the app measured, the rule `material` and
+            // `material_note` keep (rung 2): an entry is a claim, and the measurement stays the app's record.
+            //
+            // `ledger_entry` IS WHAT AN ENTRY IS ABOUT AND WHO WROTE IT, fixed when it is added. `author` is the council
+            // role the launch grant proved — a position's id, the legacy role strings being positions since rung 28, so it
+            // references `org_position` and no app principal (the referee, the allocator, perception) can be one. `about`
+            // is another entry, claim to claim.
+            //
+            // `ledger_revision` IS WHAT THE AUTHOR SAID, ONE ROW PER REVISION, keyed (entry, revision) — the first is 1 and
+            // each is the last + 1. `mark` is the author's claim, assumption or hypothesis and a CHECK holds it to the three,
+            // so no row on this connection can say an entry was measured. `confidence` is the author's own number from 0 to
+            // 1, as stated, or NULL — an unknown, never refused, never defaulted and never carried forward — and a CHECK
+            // holds a stated one to digits and one point, between 0 and 1. `kind` and `status` are TEXT the store
+            // validates, never a CHECK (the reading rung 28 gives), so a later unit adds a kind without rebuilding a table.
+            //
+            // `ledger_link` IS THE APP'S ALONE, as `material` is the scanner's: that the app answered a request asked
+            // under an entry, at its revision then, by the attempt that asked, with one record — a research run or a
+            // promotion — named by its kind and id and never by a copy of any of its fields. Unique on (entry, kind,
+            // record), so a run asked for again is one link. No column is added to any app table.
+            //
+            // APPEND-ONLY: nothing in `src` updates or deletes a `ledger_` row. `IF NOT EXISTS` and the stamp last, so a
+            // crash between the statements and the stamp runs the rung again cleanly.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS ledger_entry(
+              id         INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind       TEXT NOT NULL,
+              author     TEXT NOT NULL REFERENCES org_position(id),
+              about      INTEGER REFERENCES ledger_entry(id),
+              source     TEXT,
+              created_at TEXT NOT NULL,
+              attempt    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_ledger_entry_author ON ledger_entry(author, id);
+            CREATE INDEX IF NOT EXISTS ix_ledger_entry_about ON ledger_entry(about, id);
+
+            CREATE TABLE IF NOT EXISTS ledger_revision(
+              entry_id   INTEGER NOT NULL REFERENCES ledger_entry(id),
+              revision   INTEGER NOT NULL CHECK (revision >= 1),
+              at         TEXT NOT NULL,
+              attempt    TEXT,
+              text       TEXT NOT NULL,
+              mark       TEXT NOT NULL CHECK (mark IN ('claim', 'assumption', 'hypothesis')),
+              confidence TEXT CHECK (confidence IS NULL OR (
+                           confidence GLOB '[0-9]*' AND confidence NOT GLOB '*[^0-9.]*' AND confidence NOT GLOB '*.*.*'
+                           AND CAST(confidence AS REAL) BETWEEN 0 AND 1)),
+              status     TEXT NOT NULL,
+              why        TEXT,
+              PRIMARY KEY (entry_id, revision)
+            );
+
+            CREATE TABLE IF NOT EXISTS ledger_link(
+              id          INTEGER PRIMARY KEY AUTOINCREMENT,
+              entry_id    INTEGER NOT NULL REFERENCES ledger_entry(id),
+              revision    INTEGER NOT NULL,
+              record_kind TEXT NOT NULL,
+              record_id   TEXT NOT NULL,
+              attempt     TEXT,
+              at          TEXT NOT NULL,
+              FOREIGN KEY (entry_id, revision) REFERENCES ledger_revision(entry_id, revision),
+              UNIQUE (entry_id, record_kind, record_id)
+            );
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','31') ON CONFLICT(key) DO UPDATE SET value='31';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
