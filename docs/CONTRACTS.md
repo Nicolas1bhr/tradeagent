@@ -3189,8 +3189,10 @@ is one gap of the whole day whenever the day is longer than its allowance, which
 Before a source's first delivery ever nothing is a gap; a source that has not begun reads "recorded nothing" with what
 was asked. Each gap is named by what the tape holds inside its part of the day: "asked N times, all failed: <the newest
 note>", or "nothing asked" — TradeAgent was not running or the switch was off, and the tape cannot tell which, said once
-on the line. The deliveries just outside the day are found per (source, series) on `ix_tape_fetch_series`, because
-within one series the tape writes attempts in the order they arrived: the one before no further back than eight days
+on the line. The deliveries just outside the day are, per (source, series), the latest that arrived before it and the
+earliest that arrived at or after its elapsed part's end: among the rows within `TapeReader.ArrivalSlack` of the day,
+taken by their arrival instants, never by the order the tape wrote them; beyond those, found on `ix_tape_fetch_series`,
+because within one series the tape writes attempts in the order they arrived: the one before no further back than eight days
 (`TapeReader.GapLookBack`, then "no delivery since before <date>"), the one after and a source's first delivery ever by a
 walk over failed attempts only. A read that fails is a gap in the owner's words, never a zero. **NOT claimed:** why
 nothing was asked — that needs the recorder's durable record of its runs and switch flips, a `tape.db` rung; per-symbol

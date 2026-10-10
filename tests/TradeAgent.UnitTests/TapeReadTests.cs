@@ -630,6 +630,44 @@ public class TapeReadTests(ITestOutputHelper log)
             line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (j) THE DELIVERIES EITHER SIDE OF A DAY ARE THE LATEST THAT ARRIVED BEFORE IT AND THE EARLIEST AT OR AFTER ITS END —
+    /// not the last and the first the tape wrote, which follow arrival only to within <see cref="TapeReader.ArrivalSlack"/>.
+    /// Open interest delivered at 23:59, then — written after it — at 23:58, and at 00:01 today; the premium index delivered
+    /// at 23:59, at 00:02 and then, written after it, at 00:01. Neither went longer than its allowance without a delivery,
+    /// so neither day has a gap — where the band read in the order it was written put the one before today at 23:58 and
+    /// the one after yesterday at 00:02, three minutes from their neighbours.
+    /// </summary>
+    [Fact]
+    public async Task The_deliveries_either_side_of_a_day_are_the_latest_before_and_the_earliest_after_by_arrival()
+    {
+        var noon = TestEnv.LocalNoon();
+        var (from, to) = DailyReports.LocalDay(noon);
+        var (yFrom, yTo) = DailyReports.LocalDay(noon.AddDays(-1));
+        using var store = new TapeStore(NewFile());
+        foreach (var at in new[] { from.AddMinutes(-1), from.AddMinutes(-2), from.AddMinutes(1) })
+            store.Append(Attempt(TapeSourceCatalog.OpenInterest, "open-interest", at));
+        foreach (var at in new[] { from.AddMinutes(-1), from.AddMinutes(2), from.AddMinutes(1) })
+            store.Append(Attempt(TapeSourceCatalog.Premium, "premium-index", at));
+        var instant = from.AddMinutes(3);
+
+        // THE TAPE'S OWN READING.
+        var reader = new TapeReader(store.File);
+        var today = reader.Day(from, to, instant);
+        var yesterday = reader.Day(yFrom, yTo, instant);
+        Assert.Empty(Of(today, TapeSourceCatalog.OpenInterest).Gaps);
+        Assert.Empty(Of(yesterday, TapeSourceCatalog.Premium).Gaps);
+        Assert.Equal((0, 0), (today.Gaps, yesterday.Gaps));
+
+        // AND THE REPORT SAYS SO IN WORDS.
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        Assert.Contains($"{TapeSourceCatalog.OpenInterest} recorded 3 min of 3 min so far, no gap", TapeLineOf(gw, noon), StringComparison.Ordinal);
+        Assert.Contains(
+            $"{TapeSourceCatalog.Premium} recorded 1 min of {Span(yTo - yFrom)}, its recording began at {Hm(yTo.AddMinutes(-1))}, no gap",
+            TapeLineOf(gw, noon.AddDays(-1)), StringComparison.Ordinal);
+    }
+
     static string Counts(string file)
     {
         using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");
