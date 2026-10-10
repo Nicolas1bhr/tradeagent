@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -196,6 +197,46 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
         Assert.True(insert.Index > links, "ledger_link is inserted outside LedgerLinks");
         Assert.Equal(["src/TradeAgent.Gateway/TradingGateway.cs"], sources
             .Where(s => s.Value.Contains("new LedgerLinks(", StringComparison.Ordinal)).Select(s => s.Key));
+
+        // AND `Link` IS CALLED FROM THE TWO RECORD PATHS ALONE (item 3), read off the compiled bodies — a lambda's
+        // under the method that wrote it: the run's own write, and the verdict's — its promotion write's callback and the
+        // answer of one already recorded.
+        Assert.Equal(["Backtests.Record", "GatewayPipeServer.VerdictFor"], CallersOf(
+            typeof(LedgerLinks).GetMethod(nameof(LedgerLinks.Link))!,
+            typeof(ResearchLedger).Assembly, typeof(GatewayPipeServer).Assembly, typeof(GrantedWorkerTools).Assembly));
+    }
+
+    /// <summary>
+    /// EVERY METHOD IN THESE ASSEMBLIES WHOSE COMPILED BODY CALLS <paramref name="target"/>, as <c>Type.Method</c> — a
+    /// compiler-made type or lambda named by the type and the method it was written in.
+    /// </summary>
+    static List<string> CallersOf(MethodInfo target, params Assembly[] assemblies)
+    {
+        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static
+                                 | BindingFlags.DeclaredOnly;
+        var callers = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var type in assemblies.SelectMany(a => a.GetTypes()))
+            foreach (var m in type.GetMethods(all).Cast<MethodBase>().Concat(type.GetConstructors(all)))
+            {
+                if (m.GetMethodBody()?.GetILAsByteArray() is not { } il) continue;
+                for (var i = 0; i < il.Length - 4; i++)
+                {
+                    if (il[i] is not (0x28 or 0x6F)) continue;   // call, callvirt
+                    MethodBase? called = null;
+                    try { called = m.Module.ResolveMethod(BitConverter.ToInt32(il, i + 1)); }
+                    catch (Exception ex) when (ex is ArgumentException or BadImageFormatException or TypeLoadException) { }
+                    if (called is not null && called.MetadataToken == target.MetadataToken && called.Module == target.Module)
+                        callers.Add($"{Outermost(type).Name}.{Written(m.Name, type)}");
+                }
+            }
+        return [.. callers];
+
+        static Type Outermost(Type t) => t.DeclaringType is { } outer ? Outermost(outer) : t;
+
+        static string Written(string name, Type type) =>
+            Regex.Match(name, "^<([^>]+)>") is { Success: true } lambda ? lambda.Groups[1].Value
+            : Regex.Match(type.Name, "^<([^>]+)>") is { Success: true } state ? state.Groups[1].Value
+            : name;
     }
 
     // ---- (b) a confidence the agent did not state is recorded as unknown ---------------------------------------------

@@ -271,6 +271,9 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             a["strategy"] = flags.GetValueOrDefault("strategy") ?? pos.ElementAtOrDefault(0) ?? "";
             a["dataset"] = flags.GetValueOrDefault("dataset") ?? pos.ElementAtOrDefault(1) ?? "";
             Opt("from"); Opt("to"); Opt("fees"); Opt("slippage"); Opt("increment"); Opt("capital");
+            // THE RESEARCH-LEDGER ENTRY IT IS ASKED UNDER (U-research-ledger): the gateway checks it is the caller's own
+            // before anything runs, and links the run it answers with.
+            Opt("entry");
             return (Ops.Backtest, a);
 
         // `trade run trades --run <id> [--after <ordinal>] [--limit <n>]`: every closed trade of a recorded run, in pages
@@ -296,6 +299,8 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         case "verdict":
             a["version"] = flags.GetValueOrDefault("version") ?? pos.ElementAtOrDefault(0) ?? "";
             Opt("dataset");
+            // The entry it is asked under, which chooses nothing judged; the app links the promotion it answers with.
+            Opt("entry");
             return (Ops.Verdict, a);
 
         case "material":
@@ -395,7 +400,7 @@ static void Usage()
                      At most 5000 rows a call; an answer that stopped early says so and gives the
                      --before that continues it. --as-of reads only what had arrived by then
       trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D]
-                     [--fees 0.001] [--slippage 0.0005] [--increment 0.001] [--capital 10000]
+                     [--fees 0.001] [--slippage 0.0005] [--increment 0.001] [--capital 10000] [--entry E]
                      run one of your own programs over that history and record it. The four
                      model numbers are yours to declare and are part of the run's identity;
                      omitted, the run declares no friction at all and says so
@@ -408,7 +413,9 @@ static void Usage()
                      already backtested, over the months it holds back from you. It COSTS one of
                      the campaign's final judgements — three by default, counted across renewals
                      and never reset — and what comes back is a verdict and a reason class in
-                     words, never a figure. Asking twice about one version is one judgement
+                     words, never a figure. Asking twice about one version is one judgement.
+                     --entry on either names your own research-ledger entry it is asked under, and
+                     TradeAgent links the run or the verdict it answers with
 
       trade material list [--origin inbox|agent]     what the owner gave you, and what you made
       trade material ran <sha> <what it did>         you executed it

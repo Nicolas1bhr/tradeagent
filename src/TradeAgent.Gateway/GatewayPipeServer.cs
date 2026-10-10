@@ -2327,7 +2327,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             req.Dec("capital"),
             // DECLARED BY THE SUBMITTER, never worked out by the app. It grants nothing: see
             // `BacktestAsk.Parent`.
-            req.Str("parent")), ct);
+            req.Str("parent"),
+            // THE LEDGER ENTRY IT IS ASKED UNDER, checked by the runner before anything runs (U-research-ledger).
+            LedgerId(req, "entry")), ct);
 
         var result = ran.Result;
         var m = result.Metrics;
@@ -2680,6 +2682,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // verdict on one either.
         var role = Backtests.RoleOf(ctx);
 
+        // THE ENTRY IT IS ASKED UNDER, CHECKED BEFORE ANYTHING IS CHARGED OR ANSWERED (U-research-ledger): in the ledger and
+        // this role's own, or refused with nothing charged. Nothing is written here; the link is the verdict's own write,
+        // or the one write beside an answer already recorded.
+        var under = LedgerEntry(ctx, role, req);
+
         var version = Require(req, "version");
         var completed = gateway.Strategies.CompletedRunsOf(version, role);
 
@@ -2712,7 +2719,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // with the record unchanged and `why` saying it was WITHDRAWN, when and why — read back bare, a
         // withdrawn promotion was a "promoted" with nothing beside it to say it no longer was.
         if (gateway.Promotions.For(version).FirstOrDefault(p => p.CampaignId == campaign.Id) is { } judged)
+        {
+            // ANSWERED AS IT STANDS, AND LINKED ALONE when it was asked under an entry: the app answered this request with
+            // that record. Nothing runs and nothing is charged; asked again, it is the same one link.
+            if (under is not null) gateway.Links.Link(under, LedgerRecord.Promotion, judged.Id, ctx.AttemptId);
             return Answered(campaign, version, judged, Withdrawn(version, campaign.Id, judged));
+        }
 
         if (!_judging.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -2723,7 +2735,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             // THE APP'S OWN REFEREE, UNCHANGED AND UNPARAMETERISED BEYOND THE TWO IDS. The charge, the
             // holdout feed, the scoring policy, the promotion row and the delivery are all its own.
-            var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct);
+            // AND THE LINK, WHEN IT WAS ASKED UNDER AN ENTRY, IN THE PROMOTION'S OWN WRITE (U-research-ledger) — through the
+            // referee's one callback, so a verdict not recorded links nothing and a `refused` one is linked like any other.
+            var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct,
+                recorded: under is null ? null : promotion => gateway.Links.Link(under, LedgerRecord.Promotion, promotion.Id, ctx.AttemptId));
 
             // A VERDICT THE APP STOPPED IS NOT ANSWERED AS ONE (U-verdict-stopped): refused IPC_UNAVAILABLE, as
             // `Backtests.Run` refuses a run it stopped, and BEFORE the paper sweep below, because a stop writes
@@ -3940,6 +3955,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 "an entry is written under the role whose launch wrote it, and this connection presented no launch grant — "
                 + "so there is no role to write it under. TradeAgent puts the grant in the environment of the process it "
                 + "starts; a caller holding only the machine token is authenticated and is nobody. Nothing was written.");
+
+    /// <summary>
+    /// THE LEDGER ENTRY A RUN OR A VERDICT IS ASKED UNDER, AS CHECKED, or null because the frame names none. The entry must be
+    /// in the ledger and <paramref name="role"/>'s own; a refusal says so and nothing has been run or charged.
+    /// </summary>
+    LedgerAsk? LedgerEntry(AgentContext ctx, string role, IpcRequest req) =>
+        LedgerId(req, "entry") is { } entry ? gateway.Ledger.Ask(entry, role) : null;
 
     /// <summary>
     /// A CONFIDENCE AS STATED, OR AN UNKNOWN. Absent, JSON <c>null</c> or the word <c>unknown</c> — what a read prints for

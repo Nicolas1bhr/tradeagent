@@ -28,7 +28,16 @@ public sealed record BacktestAsk(
     /// budget: a declared parent moves a trial out of the campaign's exploration reserve and into the
     /// rest of the trial budget, and the two sum to the budget that was already there.</para>
     /// </summary>
-    string? Parent = null);
+    string? Parent = null,
+    /// <summary>
+    /// THE RESEARCH-LEDGER ENTRY THE RUN IS ASKED UNDER, or null because it is asked under none (<c>U-research-ledger</c>).
+    ///
+    /// <para>It must be the caller's own role's entry, and it is checked before anything is run or charged. It changes
+    /// nothing about the run — not its id, its window, its model, its trial or its figures; what it buys is a link, written
+    /// by the app in the run's own write, saying this run answered a request asked under that entry. A request refused or
+    /// stopped writes no run and so no link.</para>
+    /// </summary>
+    long? Entry = null);
 
 /// <summary>
 /// THE APP'S OWN RUNNER, ON THE AGENT'S REQUEST — AND IT IS A READ AS FAR AS TRADING IS CONCERNED.
@@ -141,6 +150,14 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                     + "was derived from, which means it is that version and not a variant of it.");
         }
 
+        // THE ENTRY THE RUN IS ASKED UNDER IS CHECKED BEFORE ANYTHING IS RUN OR CHARGED (U-research-ledger): it is in the
+        // research ledger and it is this role's own, or the request is refused with nothing run and no trial charged. The
+        // check writes nothing; the link is written in the run's own write below, after its trials, so a run refused or
+        // stopped after this point links nothing. Its refusal is this method's kind, as every other here is.
+        LedgerAsk? under;
+        try { under = ask.Entry is { } entry ? gateway.Ledger.Ask(entry, role) : null; }
+        catch (TradeAgentException refused) { throw new GatewayDeniedException(refused.Code, refused.Message); }
+
         // THE PROGRAM TRADES THE DATASET'S INSTRUMENT, OR NOTHING IS RUN AND NOTHING IS CHARGED. Before
         // the increment, the trial look and the run: the dataset's instrument is the key the step is
         // looked up by, and a program about another instrument measured on these bars would be recorded
@@ -216,7 +233,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             if (stop.IsCancellationRequested)
                 throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Stopped);
 
-            Record(result, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent);
+            Record(result, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent, under);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source)
             {
@@ -545,7 +562,8 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
     void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource, string? frictionSource, string? parent)
+        IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource, string? frictionSource, string? parent,
+        LedgerAsk? under)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -615,6 +633,11 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 if (!registered.Ok)
                     throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, registered.Why);
             }
+
+            // AND THE LINK, LAST, IN THE SAME WRITE (U-research-ledger): the app answered a request asked under that entry
+            // with this run. After the trials, so a refused trial rolls it back with everything else; the same run asked
+            // again under the same entry is one run and one link — the first, with the revision it was asked under.
+            if (under is not null) gateway.Links.Link(under, LedgerRecord.Run, result.RunId, attempt);
 
             return 0;
         });

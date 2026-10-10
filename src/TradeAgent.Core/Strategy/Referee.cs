@@ -316,10 +316,17 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// the halt is the app's and not the program's, and scoring it would record a FINAL <c>refused</c> blaming the
     /// strategy for something that did not happen. A judgement charged before the stop stays charged to the
     /// version, as after a crash, and nothing undoes it: asking again judges the version on that charge and
-    /// spends no second one.</para>
+    /// spends no second one. A stopped verdict writes no promotion, so <paramref name="recorded"/> is not invoked
+    /// for it and nothing is linked.</para>
+    ///
+    /// <para><b><paramref name="recorded"/> is the one way a caller writes beside a verdict</b> (<c>U-research-ledger</c>):
+    /// invoked once, inside the promotion's own write, with the promotion as recorded, so what it writes lands with the
+    /// verdict or not at all — the research ledger's link from the entry a verdict was asked under. It is never invoked
+    /// where no promotion is written, and it is told nothing the promotion row does not hold. It decides nothing: the
+    /// charge, the run, the clauses and the answer are all above it.</para>
     /// </summary>
     public RefereeVerdict Verdict(string versionId, long campaignId, ExecutionModel? model = null,
-        CancellationToken stop = default)
+        CancellationToken stop = default, Action<PromotionRow>? recorded = null)
     {
         // NO EXECUTION BOUNDS, NO PROMOTION — asked before anything else, and answered off the text
         // this installation already holds. See `BoundsRefusal`.
@@ -491,6 +498,11 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 DataFreshness = program.Freshness?.DataFreshness,
                 MaxDecisionAge = program.Freshness?.MaxDecisionAge
             });
+
+            // AND WHAT THE CALLER WRITES BESIDE IT, IN THIS WRITE: the research ledger's link, when the verdict was asked
+            // under an entry (U-research-ledger). A `refused` verdict is recorded here like any other, so it is linked
+            // like any other.
+            recorded?.Invoke(promotion);
 
             // TOLD, ALWAYS. The research process is told what was judged and why, because being told is
             // what lets it iterate at all, and the note is sanitised by `RefereeFeedback` either way.

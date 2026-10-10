@@ -536,9 +536,15 @@ public class RefereeVerdictTests
         // AND THE WHOLE OF WHAT A CALLER MAY PASS. The execution model, the window, the policy and the
         // campaign are deliberately absent: a submitter that could pass any of them would be choosing
         // the standard its own evidence is scored against.
-        Assert.Equal(["version", "dataset"], verdict.Args.Select(a => a.Name).ToArray());
+        //
+        // `entry` (U-research-ledger) is the one addition, and it chooses nothing judged: it names the caller's own
+        // research-ledger entry the verdict is asked under, so the app can link the promotion it answers with — the
+        // months, the scorer, the friction and the budget are the campaign's exactly as before, and an entry that is not
+        // the caller's role's own is refused before anything is charged.
+        Assert.Equal(["version", "dataset", "entry"], verdict.Args.Select(a => a.Name).ToArray());
         Assert.True(verdict.Args.Single(a => a.Name == "version").Required);
         Assert.False(verdict.Args.Single(a => a.Name == "dataset").Required);
+        Assert.False(verdict.Args.Single(a => a.Name == "entry").Required);
         foreach (var never in new[] { "fees", "slippage", "from", "to", "policy", "campaign", "model" })
             Assert.DoesNotContain(never, verdict.Args.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
     }

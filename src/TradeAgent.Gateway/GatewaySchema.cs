@@ -73,6 +73,18 @@ public static class GatewaySchema
         operations = Ops(),
     };
 
+    /// <summary>
+    /// THE ONE ARGUMENT A RUN OR A VERDICT TAKES FROM THE RESEARCH LEDGER (<c>U-research-ledger</c>): the entry it is asked
+    /// under. It chooses nothing that is measured or judged — not the run, its window, its model or its trial, and not
+    /// the verdict's months, scorer or budget; what it buys is the app's link from that entry to the record it answers
+    /// with.
+    /// </summary>
+    const string LedgerEntryArg =
+        "A research-ledger entry of YOUR OWN role's this is asked under ('ledger-add' answers its id). It changes nothing "
+        + "that is run, judged or charged; TradeAgent links the record it answers with to that entry, at the revision it "
+        + "stands at now, for this attempt. An entry that is not there, or is the other director's, is refused before "
+        + "anything is run or charged; a request refused, stopped or not judged links nothing.";
+
     public static OpSpec[] Ops() =>
     [
         new(Core.Ops.Status,      "trade status",              false,
@@ -331,7 +343,7 @@ public static class GatewaySchema
             ]),
 
         new(Core.Ops.Backtest,
-            "trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D] [--fees F] [--slippage S] [--increment Q] [--capital C]",
+            "trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D] [--fees F] [--slippage S] [--increment Q] [--capital C] [--entry E]",
             false,
             "Run a strategy program of yours over the history this installation holds, and record it. "
             + "THE LANGUAGE ITSELF — the grammar, what each indicator computes, the limits and every "
@@ -386,7 +398,8 @@ public static class GatewaySchema
                 new("fees", "number", false, "Fee per fill as a FRACTION of its notional, e.g. 0.001 for ten basis points. OMIT IT and the run is charged the venue's published standard taker fee from TradeAgent's venue cost model, for that dataset's own venue, and the answer's 'friction_source' says so; a declared one always wins, 0 included."),
                 new("slippage", "number", false, $"Slippage as a FRACTION of the price, adverse on every fill. OMIT IT and the run is charged the venue cost model's {Core.Strategy.VenueCostModel.SlippageRate.ToString(System.Globalization.CultureInfo.InvariantCulture)}, which is TradeAgent's assumption and not a measurement of any venue's book; a declared one always wins, 0 included."),
                 new("increment", "number", false, "Quantity increment. A size is rounded DOWN to it and a size that rounds to nothing is no trade, with the reason. OMIT IT and TradeAgent takes the increment recorded for that dataset's own venue and instrument ('trade venue list'), and the answer's 'increment_source' says which row; a declared one always wins. An instrument the catalogue does not hold, or holds unverified, is REFUSED when you declare none — there is no default to fall back to."),
-                new("capital", "number", false, "What the run starts with. An entry it cannot pay for is no trade, with the reason. More capital does not fund a 'size risk_fraction' entry: its size is a fraction of equity over the stop distance, so it grows with the capital, and a tight stop asks for more than all of it whatever the capital. Cap it on the size line with max_capital_fraction — 'size risk_fraction 0.01 max_capital_fraction 0.95' sizes the smaller of the risk size and 0.95 of the capital at the signal's close. 10000 when omitted.")
+                new("capital", "number", false, "What the run starts with. An entry it cannot pay for is no trade, with the reason. More capital does not fund a 'size risk_fraction' entry: its size is a fraction of equity over the stop distance, so it grows with the capital, and a tight stop asks for more than all of it whatever the capital. Cap it on the size line with max_capital_fraction — 'size risk_fraction 0.01 max_capital_fraction 0.95' sizes the smaller of the risk size and 0.95 of the capital at the signal's close. 10000 when omitted."),
+                new("entry", "number", false, LedgerEntryArg)
             ]),
 
         new(Core.Ops.RunTrades, "trade run trades --run <id> [--after <ordinal>] [--limit <n>]", false,
@@ -418,7 +431,7 @@ public static class GatewaySchema
                 new("limit", "number", false, $"How many trades, a whole number from 1 to {Core.Db.StrategyStore.MaxTradeRows}; {Core.Db.StrategyStore.MaxTradeRows} when omitted. More is refused, never clamped.")
             ]),
 
-        new(Core.Ops.Verdict, "trade verdict --version <hash> [--dataset 3]", false,
+        new(Core.Ops.Verdict, "trade verdict --version <hash> [--dataset 3] [--entry E]", false,
             "ASK TRADEAGENT TO JUDGE A VERSION YOU HAVE ALREADY MEASURED, over the months that dataset "
             + "holds back from you. You ask; the APP decides admission and issues the verdict. WHAT IT "
             + "COSTS: one of the campaign's final judgements — three by default, counted across every "
@@ -448,7 +461,8 @@ public static class GatewaySchema
             + "One at a time per role.",
             [
                 new("version", "string", true, "The version's own hash, exactly as 'backtest' answered it. A version this installation never accepted, or one you have never completed a run of over this dataset, is refused."),
-                new("dataset", "number", false, "The dataset's ledger id, from 'trade data list'. Omit it when you have completed a run of this version over exactly one dataset; with none or several it is required.")
+                new("dataset", "number", false, "The dataset's ledger id, from 'trade data list'. Omit it when you have completed a run of this version over exactly one dataset; with none or several it is required."),
+                new("entry", "number", false, LedgerEntryArg)
             ]),
 
         new(Core.Ops.DeploymentList, "trade deployment list", false,
