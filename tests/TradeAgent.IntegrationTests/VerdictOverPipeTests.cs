@@ -395,6 +395,50 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
         });
     }
 
+    // ---- a verdict the app stops (U-verdict-stopped) ----------------------------------------------
+
+    /// <summary>
+    /// (c) A VERDICT THE APP STOPS IS REFUSED <c>IPC_UNAVAILABLE</c>, RECORDS NOTHING, AND THE NEXT ASK IS JUDGED.
+    ///
+    /// <para>Asked through <c>Server.CallAsync</c> — the door the app's own harness reaches this handler through
+    /// (<c>AppHost.ToolsFor</c>), whose token is the turn's: the owner's Pause, the Chat page's Stop and every quit
+    /// cancel it. A stopped verdict is not a verdict: it is refused with the code a client already reads when the app
+    /// closes under it, and nothing is recorded or charged. The same version asked again over the wire is judged, on
+    /// one judgement. RED on the base: the stopped ask came back Ok, <c>refused</c> /
+    /// <c>the-holdout-run-did-not-complete</c>, recorded as the version's final verdict.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_the_app_stops_over_the_pipe_is_refused_unavailable_and_the_next_ask_is_judged()
+    {
+        await using var w = await Given();
+        var version = await GivenMeasuredVersion(w);
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        var stopped = await w.Server.CallAsync(new IpcRequest
+        {
+            Op = Ops.Verdict, Session = "research", RequestId = "v-stopped", Args = Args(("version", version))
+        }, CouncilRoles.Research, "attempt-v1", stop.Token);
+        log.WriteLine(Json.Write(stopped.Error ?? (object)Data(stopped), pretty: true));
+
+        Assert.False(stopped.Ok, $"a verdict the app stopped was answered: {Json.Write(stopped.Data)}");
+        Assert.Equal(nameof(ErrorCode.IPC_UNAVAILABLE), stopped.Error?.Code);
+        Assert.Contains("TradeAgent stopped this verdict before it answered", stopped.Error!.Message,
+            StringComparison.Ordinal);
+        Assert.Empty(w.Gw.Promotions.For(version));
+        Assert.Equal(0, RefereeRuns(w));
+        Assert.Empty(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+
+        var reply = await AskVerdict(w.Client, version, rid: "v-after-the-stop");
+        log.WriteLine(Json.Write(reply.Error ?? (object)Data(reply), pretty: true));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Equal(PromotionVerdict.Promoted, Data(reply).GetProperty("verdict").GetString());
+        Assert.Equal(PromotionReason.Met, Data(reply).GetProperty("reason").GetString());
+        Assert.Equal(1, Data(reply).GetProperty("verdicts_spent").GetInt32());
+        Assert.Single(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+        Assert.Equal(1, RefereeRuns(w));
+    }
+
     // ---- the budget is the bound ------------------------------------------------------------------
 
     /// <summary>

@@ -241,6 +241,20 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         + "request was wrong. Ask for it again once TradeAgent is running.";
 
     /// <summary>
+    /// WHAT A CALLER IS TOLD ABOUT A VERDICT THE APP STOPPED (<c>U-verdict-stopped</c>) — beside <see cref="Stopped"/>,
+    /// because it is the same stop over the referee's run, answered with the same code: nothing recorded and no figure
+    /// returned. What differs is the charge. A judgement is charged BEFORE its run reads a held-back bar, so one charged
+    /// before the stop stays the version's, as after a crash, and asking again about that version judges it on that
+    /// charge (<c>GatewayPipeServer.VerdictFor</c>).
+    /// </summary>
+    internal const string VerdictStopped =
+        "TradeAgent stopped this verdict before it answered — it is closing, or the turn that asked for it was ended — "
+        + "so nothing was recorded: no holdout run, no verdict and no note, and no figure from those months is returned. "
+        + "Nothing about the version or the request was wrong. A judgement already charged for it stays this version's: "
+        + "ask for the verdict again under the same campaign once TradeAgent is running, and it is judged then and "
+        + "spends no second judgement.";
+
+    /// <summary>
     /// THE ROLE THIS CALLER PROVED IT IS, or a refusal. Never a default and never the folder's.
     ///
     /// <para>A backtest is recorded under a role, and the only honest source of that role is the launch
