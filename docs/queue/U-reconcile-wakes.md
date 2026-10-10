@@ -1,0 +1,39 @@
+# U-reconcile-wakes — each role is woken for what it owns, not by the clock: every wake names its role, a role with no open work is not looked at, and a renewal is bought only for a role its allowance stopped
+**Protects:** operator authority in-process (`CLAUDE.md`: no op, verb, arg, pipe-writable setting or agent-written file creates an objective or a wake); the owner's money (a wake is a paid turn: an idle day
+costs what an open objective asks for, never 18 turns for nothing); honesty (every wake named truthfully, the Safety page saying what the look setting really is, a false source comment corrected); recovery
+(a wake consumed in the launch's write, as today); PRINCIPLES "Autonomy is the default inside authority" (an objective says what is wanted, never how); VISION § 6.7 (the desired world as app data).
+Seat B; heavy (the agent boundary and paid turns: opus); **no rung** (objectives are code kinds over existing rows; their version rides the attempt context). Part 1 of 2, split by seat B from survey
+S-reconcile-wakes's one-unit draft (J1): this part has no `U-research-ledger` dependency; `U-reconcile-packet` (the owned tape and deadline wakes, and the packet) follows it and the ledger.
+**Depends on** `U-quiet-review`, `U-memory-kept`, `U-canon` (landed).
+**Facts (SOURCE at `main` `2fd1338e`, src identical at `dab2768e`; survey `fleet/tmp/B-survey-U-reconcile-wakes.md` § 1 has every row; re-check at dispatch).**
+- Twelve wake kinds, app-written only (`Core/Db/MissionEventStore.cs:11-92`, `:322-326`; `MissionEventTests.cs:262-271` bans `event`, `wake`, `mission` in op names); a NULL role means Operations (`:459-472`).
+  Fill and order wakes are raised for every execution and request, a paper deployment's included, with no role (`Gateway/TradingGateway.cs:2354-2356`, `:12488-12490`; `deployment_op.request_id`,
+  `DeploymentStore.cs:280`, `:558`).
+- `Schedule` raises a look and a renewal per role whatever it owns (`AgentRuntime/MissionLoop.cs:1984-2027`; the decay `:2054-2085`): an idle day is 9 paid turns per role (INFERENCE), ≈ 2.29 USD at attempt
+  3's measured rate (RECORD `BUILD-STATUS.md:8816-8817`); the renewal is bought even when neither role was stopped. `Spend(r).AdmitsAnotherTurn` (`:1620`) says whether a role's allowance stopped it.
+- A `note` wake (the paper allocation and forward-run notes, `TradingGateway.cs:446-456`, `:1652-1697`) reads "Why you are awake: note" and is not quoted (`MissionLoop.cs:2331-2332`; `Reason` has no `note`
+  arm, `:2348-2366`); new material is listed since EITHER role's last Situation (`App/AppHost.cs:1781-1782`).
+- Owed by two landed units: the Safety page states only the fastest look pace (`App/DashboardView.cs:1690-1695`; `Core/Errors.cs:457`; `Core/Trading.cs:465-479`; `fleet/records/U-quiet-review.md`); the
+  Restored header "put the version before it back" also heads the not-kept notices (`MissionLoop.cs:711-716`; `AgentRuntime/WorkspaceRevisions.cs:163-184`; `fleet/records/U-memory-kept.md`).
+- False today: `PublicationKind.Note`'s doc, and `MissionEventStore.cs:87-89`'s "new material is two rows" (the inbox wake is one, `AppHost.cs:1308-1309`, `:1417-1420`).
+Read first: `CLAUDE.md`; `docs/PRINCIPLES.md`'s autonomy paragraph; VISION § 6.7; R21 §§ 2-3; the two records above; `MissionLoop.cs:500-760`, `:1590-1760`, `:1960-2110`, `:2300-2420`; `MissionEventStore.cs`;
+`AppHost.cs:1300-1520`, `:1755-1960`.
+Must NOT: add a pipe op, verb, arg, pipe-writable setting, table, rung or migration, or a file the agent writes that sets an objective or a wake beyond `next.json` as it is; change an order, a fill, a ledger row or
+`RecordFill`'s result — only the role a wake is raised under; drop the owner's words from first place, the attempt line or any state line; change `ReviewEvery`'s meaning as the fastest pace, U-quiet-review's
+decay or `next.json`; touch the canon template, `WorkspaceBuilder`, `Canon.cs` or `ledger_` tables (`U-research-ledger` in flight); call the broker from `Schedule`; touch `OrgStore` or positions (`U-org-wakes`).
+Items, one commit each, one-sentence messages:
+1. **Ownership.** Every wake names its role: a fill or terminal order of a deployment's request wakes nobody (its forward-run note is the owned observation, survey J6); any other order or fill wakes Operations;
+   `note` gets its reason in `Reason` ("TradeAgent's paper allocation / forward-run note arrived in `in/`") and is quoted as a delivery; new material is listed to each role since ITS OWN last attempt.
+2. **Objectives** (`AgentRuntime/RoleObjectives.cs`): per-role kinds in code, `Version` 1 written into the attempt context; instances derived at read — an owner message without an outcome, a request the role
+   placed not terminal, a boundary open to it and unassessed, the verdict and forward run of its versions, Research's standing mandate; for Operations also a position open in its book, read from the host's
+   last status read synchronously (`AppHost.cs:1789-1811`), never a broker call (seat B's ruling on J5). `Schedule` raises the look only for a role with an open instance (Research's mandate keeps its look at
+   the decayed pace) and the renewal only for a role its allowance stopped.
+3. **The owed words.** The Safety page, `Errors.cs:457`, `Trading.cs:465-479`, `USER-GUIDE.md` and `CONTRACTS.md`'s wake queue say the look setting is the fastest pace, slower while nothing happens and only
+   while a role has open work it owns; the Restored header split by what happened to each file (restored / kept in `trading/archive/` and not restored); the two false comments made true.
+Red-first tests (each quoted red at base): (a) `An_idle_day_costs_only_the_looks_an_open_objective_asks_for` (24 quiet hours: base 18 turns; tip Operations 0, Research ≤ 8 with its mandate, renewals 0);
+(b) `A_renewal_wakes_only_a_role_its_allowance_stopped`; (c) `A_deployments_fill_wakes_no_director_and_an_operations_order_wakes_operations`; (d) `A_note_wake_is_named_and_quoted`;
+(e) `An_open_position_keeps_operations_look_without_a_broker_call`; (f) `New_material_is_listed_to_each_role_since_its_own_last_turn`; (g) `The_safety_page_says_the_look_is_the_fastest_pace`;
+(h) `Each_refused_memory_file_is_headed_by_what_happened_to_it`; (i) `Nothing_an_agent_writes_becomes_an_objective_or_a_wake` (op, arg and file names; no public writer), with
+`No_verb_and_no_pipe_op_names_the_wake_queue` and the quiet-review and memory-kept tests unedited. Mutants, red and quoted: the renewal raised unconditionally ⇒ (a), (b); the open-position instance dropped ⇒ (e).
+Gate: SPEED MODE (`fleet/SPEED-MODE.md` § 4) — rebase on `main` first; Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all three platforms; tests box `ready` once or
+NOT RUN; names vs `main` 0 removed (both set sizes). The report names "no rung", `RoleObjectives.Version` and the idle-day turn count before and after. `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
