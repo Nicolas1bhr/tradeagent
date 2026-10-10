@@ -220,6 +220,40 @@ public class MissionCostSurfacesTests
         Assert.Equal(Labels.SaveDailyCap, b.Content);
     }
 
+    /// <summary>
+    /// A CONFIRMATION COMPLETES ONLY THE FIGURE IT NAMED. The page's press over its own box: a raise to 6 is armed, the box
+    /// is changed to 100, and the armed press saves nothing — editing the box changed what the press meant — while 100
+    /// asks twice of its own, naming 100. Let an edit leave the press armed and the confirmation that named 6 saves 100.
+    /// </summary>
+    [Fact]
+    public void Editing_the_daily_cap_disarms_a_raise_armed_for_another_figure()
+    {
+        var saved = new List<decimal>();
+        var current = 5m;
+        var box = Ui.NumberField(current, 0m, 0.5m);
+        var b = SafetyPage.BuildSaveDailyCap(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
+
+        box.Value = 6m;
+        Press(b);
+        Assert.Equal(Labels.RaiseDailyCapArmed("6 USD"), b.Content);
+
+        box.Value = 100m;
+        Press(b);
+        Assert.Empty(saved);
+        Assert.Equal(Labels.RaiseDailyCapArmed("100 USD"), b.Content);
+        Press(b);
+        Assert.Equal([100m], saved);
+
+        // A LOWER FIGURE TYPED UNDER AN ARMED RAISE SAVES AT ONCE: it disarmed the raise and takes no room.
+        current = 100m;
+        box.Value = 200m;
+        Press(b);
+        box.Value = 1m;
+        Press(b);
+        Assert.Equal([100m, 1m], saved);
+        Assert.Equal(Labels.SaveDailyCap, b.Content);
+    }
+
     /// <summary>An unchanged number is not a grant either.</summary>
     [Fact]
     public void Leaving_the_daily_cap_alone_saves_in_one_press()
