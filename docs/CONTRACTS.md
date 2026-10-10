@@ -3561,7 +3561,7 @@ the app closing, or the harness turn that asked for it ended — with `IPC_UNAVA
 reads when the app closes under it, in words naming the stop: nothing recorded (no version, no run, no trial), nothing
 charged, and no figure returned. It used to come back as an ordinary answer, the halted run's figures over the bars before
 the stop, reaching no caller only because of the order the app shuts down in. Still true: a stopped run is never recorded
-as a FAULTED run blaming the strategy.
+as a FAULTED run blaming the strategy — and since `U-verdict-stopped`, neither is the referee's holdout run (The verdict).
 
 ## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
 
@@ -3802,6 +3802,23 @@ the holdout dataset records — and a version that reads features where the host
 (`U-language-v2a`; the referee is handed the host's tape as a function, `TradingGateway.Tape`); one that is
 judged has its features read from the tape under the referee's own audience, over the held-back window, exactly
 as its bars are. A *refusal* is a verdict and is recorded; a referee that could not judge at all writes nothing.
+
+**A verdict the app stops is not a verdict** (`U-verdict-stopped`). `Referee.Verdict` asks its stop — the app closing,
+or the harness turn that asked for it ended — before the charge and again when the holdout run returns, as
+`Backtests.Run` asks it; a stop halts the run at its next bar, so no quit waits longer. Either answer is
+`RefereeVerdict.Stopped`: no run, promotion, note, boundary or wake is written, the halted run's partial figures and
+trace are dropped in memory and logged nowhere, and `trade verdict` is refused `IPC_UNAVAILABLE` before the paper
+sweep, in words beside the backtest's (`Backtests.VerdictStopped`, which the harness's tool-call ledger records as
+it records every refusal; they hold no figure). Stopped before the charge, nothing is charged. Stopped after it, the
+judgement stays charged to that version, as after a crash — never undone, voided or moved — and asking again about
+the same version under the same campaign judges it then and spends no second one: `ChargeVerdict` answers a charged
+pair Ok before the budget, even a full one (the campaign section above). That crash path was chosen over voiding the
+charge (a rung for a void row, and holdout access handed back on a proof that nothing of the run escaped) and over
+running a charged verdict through the stop (it would argue with Pause, and a run past the quit's bound dies onto the
+crash path anyway). Not carried: a charge into a renewal opened before the version is asked again; nor is the asker
+told in a later turn that a stopped verdict is owed — both as after a crash. The agent holds no lever on any of it:
+on the pipe the stop is the server's, fired only when it is disposed; on the harness it is the turn's, fired only in
+process (Pause, the Chat page's Stop, the quit); and no op cancels a request.
 
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
 **after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
