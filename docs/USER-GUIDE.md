@@ -407,10 +407,14 @@ allow research but not a product that trades real money without a written licenc
 
 **Seeing that it is recording.** Your daily report (the Report page, and the file TradeAgent writes for each day)
 has a line under *Other operating costs* called **market context tape**: how many readings arrived that day, from how
-many requests, how many of those failed and the newest reason in words, and the **gaps** — times one of the sources
-went quiet for longer than twice its usual interval, including while TradeAgent was closed, with the longest named.
-It says when either button is switched off, and when some of the readings are GDELT's it credits GDELT with its link.
-A day with nothing recorded reads as zero readings, never as a blank. The AI sees the same thing live: its status
+many requests, how many of those failed and the newest reason in words, and for each source how much of the day it
+recorded — "recorded 16 h 48 min of 24 h" — with its **gaps**: times it went quiet for longer than twice its usual
+interval, including while TradeAgent was closed, overnight and across midnight, the longest named. Each gap gives its
+times, its length and what happened inside it: requests that all failed, with the newest reason, or *nothing asked* —
+TradeAgent was not running or the button was off, which the tape cannot tell apart. Before a source's very first reading
+nothing counts as a gap, and the line says when its recording began; today's report counts up to the moment it is
+written. It says when either button is switched off, and when some of the readings are GDELT's it credits GDELT with its
+link. A day with nothing recorded reads as one gap of the whole day, never as zero gaps or a blank. The AI sees the same thing live: its status
 says whether each of your two buttons is on, whether it is actually getting answers, how many attempts failed in the
 last hour, and whether GDELT's daily limit stopped it today. The AI can **read** what was recorded — every part of it
 equally, each reading with the moment it arrived and whether it was *live*, *point-in-time* or *archive* — but it
