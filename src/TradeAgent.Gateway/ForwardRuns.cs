@@ -240,6 +240,11 @@ public sealed class ForwardRuns
         // live minutes does not read the ledger again on each of them for a run that has never exited.
         var exited = written.Any(o => o.Kind == DeploymentOpKind.Exit);
 
+        // WHAT EACH OF THIS RUN'S ENTRIES AND EXITS STOOD ON, by the close it names (`U-runner-features`): a replay that
+        // reads anything else at that close is a run whose record of its own orders is no longer true. An exit sent again
+        // keeps the close and the digest of the one it repeats.
+        var stoodOn = feed is null ? null : StoodOn(written);
+
         var replayed = 0;
         var skipped = 0;
         DateTimeOffset? last = null;
@@ -427,6 +432,12 @@ public sealed class ForwardRuns
 
                     values = answer.Values!;
                     kept![close] = values;
+
+                    if (stoodOn!.TryGetValue(close, out var orders)
+                        && orders.FirstOrDefault(o => !string.Equals(o.Sha256, feed.ValuesSha256, StringComparison.Ordinal))
+                            is { Kind: not null } differs)
+                        return await EndAsync(deployment, NoLongerReads(differs.Kind, close, differs.Sha256, feed.ValuesSha256),
+                            ct, state, replayed, skipped, last, account);
                     if (live) SayAbsences(deployment, program, close, values, present);
                     else for (var f = 0; f < values.Count; f++) present[f] = values[f].Present;
                 }
@@ -464,7 +475,8 @@ public sealed class ForwardRuns
                         + "the referee refuses such a program a promotion and this run is over", ct,
                         state, replayed, skipped, last, account);
 
-                if (live && await DispatchAsync(deployment, bar, signalled, decision, reading, () => seq++, ct))
+                if (live && await DispatchAsync(deployment, bar, signalled, decision, reading,
+                        Named(program, grid.EndOf(closed.OpenTime), values, feed), () => seq++, ct))
                     planned = true;
                 exited |= live && signalled.Kind != IntentKind.Enter;
             }
@@ -517,8 +529,8 @@ public sealed class ForwardRuns
     /// refuse the cancel too, and keep it.</para>
     /// </summary>
     async Task<bool> DispatchAsync(StrategyDeploymentRow deployment, KlineBar bar,
-        StrategyIntent signal, IntentDecision decision, AccountReading account, Func<int> seq,
-        CancellationToken ct)
+        StrategyIntent signal, IntentDecision decision, AccountReading account, IntentFeatures? features,
+        Func<int> seq, CancellationToken ct)
     {
         var enter = signal.Kind == IntentKind.Enter;
         var asked = enter ? signal.Quantity : account.Quantity;
@@ -534,7 +546,8 @@ public sealed class ForwardRuns
         {
             Intent = enter ? OrderIntent.Open : OrderIntent.Close,
             Decision = decision,
-            StrategyVersionId = deployment.VersionId
+            StrategyVersionId = deployment.VersionId,
+            Features = features
         };
 
         var sent = await _gateway.RunDeploymentIntentAsync(deployment,
@@ -951,6 +964,54 @@ public sealed class ForwardRuns
         + "its closes: a program that reads a feature runs on its values as they had arrived, or not at all — never as "
         + "though every value were absent. TradeAgent opens the tape itself when it starts, and the account owner's "
         + "activity log says why it is not open; a run of this version starts again by itself once one is";
+
+    /// <summary>
+    /// WHAT AN ORDER DECIDED AT <paramref name="close"/> STANDS ON (<c>U-runner-features</c> item 3): each declared
+    /// feature's value or absence there, and the SHA-256 of every value the run has read through that close — or null for
+    /// a program that reads none, whose intents are written exactly as they always were.
+    /// </summary>
+    static IntentFeatures? Named(StrategyProgram program, DateTimeOffset close, IReadOnlyList<FeatureValue>? values,
+        FeatureFeed? feed) =>
+        values is null || feed is null
+            ? null
+            : new IntentFeatures(close,
+                [.. program.Features.Select((f, i) =>
+                    new IntentFeatureValue(f.Name, f.Spec.Id, values[i].Value, values[i].Absent, values[i].RowsSha256))],
+                feed.ValuesSha256);
+
+    /// <summary>
+    /// The entries and exits of a run that name the values they stood on, by the close they name — read off each one's own
+    /// intent as it was written. An intent that does not read back names nothing here.
+    /// </summary>
+    static Dictionary<DateTimeOffset, List<(string? Kind, string Sha256)>> StoodOn(IReadOnlyList<DeploymentOpRow> ops)
+    {
+        var named = new Dictionary<DateTimeOffset, List<(string? Kind, string Sha256)>>();
+        foreach (var op in ops)
+        {
+            if (op.Kind is not (DeploymentOpKind.Entry or DeploymentOpKind.Exit)) continue;
+
+            IntentFeatures? features;
+            try { features = Json.Read<PlaceIntent>(op.IntentJson)?.Features; }
+            catch (Exception) { features = null; }
+            if (features is null) continue;
+
+            if (!named.TryGetValue(features.Close, out var list)) named[features.Close] = list = [];
+            list.Add((op.Kind, features.Sha256));
+        }
+        return named;
+    }
+
+    /// <summary>
+    /// A REPLAY THAT NO LONGER READS WHAT AN ORDER STOOD ON, in words: the order's kind and close, the digest it recorded
+    /// and the one read now. The run ends on it, its book closed as any end closes it — the protection of its position
+    /// stood on that order too.
+    /// </summary>
+    static string NoLongerReads(string kind, DateTimeOffset close, string recorded, string now) =>
+        $"the replay of this run no longer reads the values its {kind} decided at the "
+        + close.ToString("u", CultureInfo.InvariantCulture) + " close stood on: that order recorded "
+        + $"{recorded} as the SHA-256 of every feature value read through that close, and the tape gives {now} now. The "
+        + "tape never changes a row, so it holds one now that it did not hold when that order was decided — a reading "
+        + "received by that close and written after it — and a run whose orders no longer stand on what it reads is over";
 
     /// <summary>A paper run's reads reaching a holdout window, in the feed's words, and what happens next.</summary>
     static string Withheld(string words) =>
