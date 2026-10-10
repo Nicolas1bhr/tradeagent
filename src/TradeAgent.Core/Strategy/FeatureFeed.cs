@@ -27,7 +27,7 @@ public sealed record FeatureRunSummary(
     string? WorstClass);
 
 /// <summary>One close's values, in the program's declared order — or why the run halts there.</summary>
-internal readonly record struct FeatureAnswer(IReadOnlyList<FeatureValue>? Values, string? Halt);
+public readonly record struct FeatureAnswer(IReadOnlyList<FeatureValue>? Values, string? Halt);
 
 /// <summary>
 /// A PROGRAM'S FEATURES, READ FOR A RUN AS THEY HAD ARRIVED BY EACH EVALUATED BAR'S CLOSE (<c>U-language-v2a</c> item 3;
@@ -63,6 +63,10 @@ internal readonly record struct FeatureAnswer(IReadOnlyList<FeatureValue>? Value
 /// <para><b>Every value read is in the run's id.</b> <see cref="ValuesSha256"/> hashes one line per value handed out —
 /// the feature's id, the instant, and the digest of the rows it stands on — so the same request over another tape is
 /// another run, and the same tape is the same run.</para>
+///
+/// <para><b>The paper runner reads through the same path</b> (<see cref="ForPaper"/>, <c>U-runner-features</c>): the same
+/// values at the same closes under its own audience, which never reads a holdout window, and the same digest — so the
+/// values an order of a paper run stood on are named in the backtest's own terms.</para>
 /// </summary>
 public sealed class FeatureFeed : IDisposable
 {
@@ -74,6 +78,12 @@ public sealed class FeatureFeed : IDisposable
     readonly long _pointsPerDay;
     readonly DateTimeOffset? _until;
     readonly IncrementalHash _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+    /// <summary>A paper run's values already read, by close (<see cref="ForPaper"/>) — null for every other feed.</summary>
+    IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<FeatureValue>>? _known;
+
+    /// <summary>Whether this is the paper runner's feed, whose refusals are a run's end rather than a backtest's refusal.</summary>
+    bool _paper;
 
     readonly List<DateTimeOffset> _closes = [];
     readonly long[] _absent;
@@ -126,6 +136,34 @@ public sealed class FeatureFeed : IDisposable
         _worst = new string?[_features.Count];
     }
 
+    /// <summary>
+    /// THE PAPER RUNNER'S FEED FOR ONE PASS (<c>U-runner-features</c>): <paramref name="program"/>'s features read from
+    /// <paramref name="reader"/> exactly as a backtest reads them — at each close the runner asks, as they had arrived by
+    /// it less the spec's latency, in the same slices, hashed into the same digest — under the paper runner's own
+    /// audience, which reads no holdout window of <paramref name="datasets"/>, and no slice past <paramref name="until"/>,
+    /// the pass's last declared close.
+    ///
+    /// <para><b><paramref name="known"/> is what the run has already read, by close</b>, and <see cref="At"/> serves a
+    /// close it holds from it — hashed into <see cref="ValuesSha256"/> in order, exactly as a value read now — and reads
+    /// the tape only for the rest. A value at a close that has passed is fixed: every input is a polled reading first
+    /// seen at its arrival, on a tape that never updates or deletes a row, so the tape gives the same value again — and a
+    /// restart, which knows nothing, reads it again and must decide the same.</para>
+    ///
+    /// <para>The audience goes no further than this feed: the factory hands out a feed and never a
+    /// <see cref="BarAudience"/> or a <see cref="TapeHoldout"/>, so <see cref="TapeHoldout.Pipe"/> stays the only public
+    /// door onto either.</para>
+    /// </summary>
+    public static FeatureFeed ForPaper(TapeReader reader, DatasetStore datasets, StrategyProgram program,
+        DateTimeOffset until, IReadOnlyDictionary<DateTimeOffset, IReadOnlyList<FeatureValue>>? known = null)
+    {
+        ArgumentNullException.ThrowIfNull(datasets);
+        return new FeatureFeed(reader, TapeHoldout.Of(BarAudience.PaperRunner, datasets), program, until)
+        {
+            _known = known,
+            _paper = true
+        };
+    }
+
     /// <summary>Who read the features, in the words a refusal uses: the run's own audience.</summary>
     public string ReadAs => _holdout.Who;
 
@@ -171,6 +209,7 @@ public sealed class FeatureFeed : IDisposable
     /// </summary>
     string? Withholds(DateTimeOffset first, DateTimeOffset? last, bool whole)
     {
+        if (_paper) return PaperWithholds(first, last, whole);
         if (Reaching(_holdout, _reach, first, last) is not { } reached) return null;
         var (from, why) = reached;
 
@@ -188,6 +227,29 @@ public sealed class FeatureFeed : IDisposable
                    : "close. The run halted before that slice was read: a run on the values outside the window would be another run");
     }
 
+    /// <summary>
+    /// THE SAME QUESTION FOR A PAPER RUN, in a paper run's words — the dataset and its window named, from the same reached
+    /// windows <see cref="TapeHoldout.Refusal(DateTimeOffset?, DateTimeOffset?)"/> refuses by — or null when its reads
+    /// reach none. Nobody asked for a window here, so nothing tells anyone to ask for another: the run is over, and a run
+    /// of the version starts again once one starting then would read nothing held.
+    /// </summary>
+    string? PaperWithholds(DateTimeOffset first, DateTimeOffset? last, bool whole)
+    {
+        var from = FeatureEvaluator.Minus(first, _reach);
+        var reached = _holdout.Reached(from, last);
+        if (reached.Count == 0) return null;
+
+        var names = string.Join(", ", _features.Select(f => $"`{f.Name}`"));
+        var reach = ((long)_reach.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        return $"this program's feature(s) — {names} — are read at the close of every bar a paper run decides, from the tape "
+               + $"stamped up to {reach} s before it, and {(whole ? "this run's" : "the next slice of this run's")} closes from "
+               + $"{FeatureEvaluator.Stamp(first)} to "
+               + (last is { } end ? FeatureEvaluator.Stamp(end) : "no end yet")
+               + $" read it from {FeatureEvaluator.Stamp(from)} — and " + string.Join("; ", reached.Select(w => w.Words))
+               + ". A paper run reads nothing a holdout window withholds: the evidence rule outranks a run's continuity, so it "
+               + "ends rather than read the window or run on the values outside it";
+    }
+
     /// <summary>The step the tape is read at: the bar for a uniform grid, an hour for a daily bar cut in a zone.</summary>
     public TimeSpan Step => _step;
 
@@ -203,21 +265,30 @@ public sealed class FeatureFeed : IDisposable
     /// <summary>
     /// EVERY DECLARED FEATURE'S VALUE AT <paramref name="close"/>, in the program's order — or the words the run halts
     /// on, because one day of a feature's values is more than one read serves, or because the slice holding it would
-    /// read the tape inside a holdout window.
+    /// read the tape inside a holdout window. A paper run's close it has already read is served from what it read
+    /// (<see cref="ForPaper"/>), and hashed the same.
     /// </summary>
-    internal FeatureAnswer At(DateTimeOffset close)
+    public FeatureAnswer At(DateTimeOffset close)
     {
         close = close.ToUniversalTime();
-        if (_slice is null || close < _sliceFrom || close > _sliceTo || (close - _sliceFrom).Ticks % _step.Ticks != 0)
-            if (Read(close) is { } halt) return new FeatureAnswer(null, halt);
 
-        var index = (int)((close - _sliceFrom).Ticks / _step.Ticks);
-        var values = new FeatureValue[_features.Count];
+        IReadOnlyList<FeatureValue> values;
+        if (Known(close) is { } already) values = already;
+        else
+        {
+            if (_slice is null || close < _sliceFrom || close > _sliceTo || (close - _sliceFrom).Ticks % _step.Ticks != 0)
+                if (Read(close) is { } halt) return new FeatureAnswer(null, halt);
+
+            var index = (int)((close - _sliceFrom).Ticks / _step.Ticks);
+            var read = new FeatureValue[_features.Count];
+            for (var i = 0; i < _features.Count; i++) read[i] = _slice![i][index];
+            values = read;
+        }
+
         var instant = Encoding.UTF8.GetBytes(" " + close.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) + " ");
         for (var i = 0; i < _features.Count; i++)
         {
-            var value = _slice![i][index];
-            values[i] = value;
+            var value = values[i];
 
             _digest.AppendData(Encoding.UTF8.GetBytes(_features[i].Spec.Id));
             _digest.AppendData(instant);
@@ -231,6 +302,16 @@ public sealed class FeatureFeed : IDisposable
         _summaries = null;
         return new FeatureAnswer(values, null);
     }
+
+    /// <summary>
+    /// The values a paper run already read at <paramref name="close"/>, or null for none — or for a list that is not one
+    /// value per declared feature, each stamped with that close, which is then read again rather than trusted.
+    /// </summary>
+    IReadOnlyList<FeatureValue>? Known(DateTimeOffset close) =>
+        _known is not null && _known.TryGetValue(close, out var held)
+        && held.Count == _features.Count && held.All(v => v.At == close)
+            ? held
+            : null;
 
     /// <summary>
     /// A SLICE STARTING AT <paramref name="from"/>: as many whole days as the last slice that was served, halved while any

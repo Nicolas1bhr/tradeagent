@@ -207,7 +207,7 @@ public class RunTradesTests(ITestOutputHelper log)
         var file = Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db");
         using (var store = new TapeStore(file))
             for (var h = -3; h < 8; h++)
-                FeatureProgramBacktestTests.Reading(store, Bar0.AddHours(h).AddMinutes(10), "0.00010000");
+                TapeReadings.Reading(store, Bar0.AddHours(h).AddMinutes(10), "0.00010000");
         gw.Tape = new TapeReader(file);
 
         var folder = Path.Combine(Paths.RoleHome(CouncilRoles.Research), "strategies");

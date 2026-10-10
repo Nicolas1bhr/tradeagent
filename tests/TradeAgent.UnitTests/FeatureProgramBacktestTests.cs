@@ -30,30 +30,14 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
     public void Dispose() => _ledger.Dispose();
 
-    /// <summary>The premium index's own address on this build's row: a reading recorded from it on time is O-LIVE.</summary>
-    static string BuiltInUrl => TapeSourceCatalog.BinanceUmBaseUrl + "/fapi/v1/premiumIndex";
-
     public static readonly DateTimeOffset Start = new(2026, 8, 3, 0, 0, 0, TimeSpan.Zero);
 
-    static string NewFile() => Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db");
+    // THE TAPE'S READINGS ARE WRITTEN BY THE SHARED HELPER (`tests/Shared/TapeReadings.cs`, lifted from here by
+    // U-runner-features), so the paper runner's tests write the tape these do.
+    static string NewFile() => TapeReadings.NewFile();
 
-    static TapeFetch Fetch(DateTimeOffset receivedAt) => new()
-    {
-        Source = TapeSourceCatalog.Premium,
-        Series = "premium-index",
-        Url = BuiltInUrl,
-        RequestedAt = receivedAt.AddMilliseconds(-300),
-        ReceivedAt = receivedAt,
-        HttpStatus = 200
-    };
-
-    /// <summary>One premium-index reading of BTCUSDT in the vendor's shape, stamped and received when the test says.</summary>
-    internal static void Reading(TapeStore store, DateTimeOffset stamped, string funding, DateTimeOffset? received = null) =>
-        store.Append(Fetch(received ?? stamped.AddSeconds(2)),
-        [
-            new TapeItem("BTCUSDT", stamped,
-                $$"""{"symbol":"BTCUSDT","markPrice":"85000.00000000","lastFundingRate":"{{funding}}","time":{{stamped.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)}}}""")
-        ]);
+    static void Reading(TapeStore store, DateTimeOffset stamped, string funding, DateTimeOffset? received = null) =>
+        TapeReadings.Reading(store, stamped, funding, received);
 
     /// <summary>The brief's feature with a two-hour max age, so an hourly program sees a reading of the hour before.</summary>
     public const string Spec =

@@ -186,9 +186,7 @@ public sealed class TapeHoldout
     /// </summary>
     public string? Refusal(DateTimeOffset? from, DateTimeOffset? to)
     {
-        if (Audience.MayReadHoldout) return null;
-
-        var reached = Windows().Where(w => w.ReachedBy(from, to)).ToList();
+        var reached = Reached(from, to);
         if (reached.Count == 0) return null;
 
         var asked = (from, to) switch
@@ -202,6 +200,15 @@ public sealed class TapeHoldout
         return string.Join("; ", reached.Select(w => w.Words)) + $" — and {asked}, which reaches "
             + (reached.Count == 1 ? "it. " : "them. ") + Why() + Repair(reached);
     }
+
+    /// <summary>
+    /// THE WINDOWS A READ OF SOURCE TIMES FROM <paramref name="from"/> TO <paramref name="to"/> (both inclusive, either null
+    /// for no bound) REACHES, as the ledger holds them now — none for the referee's. The one rule
+    /// <see cref="Refusal(DateTimeOffset?, DateTimeOffset?)"/> refuses by, and the windows a paper run is ended in the words
+    /// of (<c>Strategy.FeatureFeed.ForPaper</c>), so the two cannot disagree about what a read reaches.
+    /// </summary>
+    internal IReadOnlyList<TapeHoldoutWindow> Reached(DateTimeOffset? from, DateTimeOffset? to) =>
+        Audience.MayReadHoldout ? [] : [.. Windows().Where(w => w.ReachedBy(from, to))];
 
     /// <summary>
     /// WHY AN AS-OF READ AT <paramref name="asOf"/> MAY NOT SERVE <paramref name="row"/>, or null when it may: refused
