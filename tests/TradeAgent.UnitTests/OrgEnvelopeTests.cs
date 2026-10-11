@@ -357,6 +357,37 @@ public class OrgEnvelopeTests : IDisposable
         Assert.True(meter.Begin("## Situation", role: CouncilRoles.Research).Admitted);   // the readable chain still runs
     }
 
+    // ---- one cap per admission ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// ONE ADMISSION READS THE DAY'S CAP ONCE, and sizes the unit envelopes and the rule's own cap from that one value. The owner
+    /// lowers the cap from 10.00 to 2.00 between two reads: were the envelopes sized from the first and the rule's cap from the
+    /// second, Research's 5.00 and the root's 10.00 would sit inside a 2.00 day — a child envelope larger than the cap it is a
+    /// share of (BUDGET-001), and a launch admitted past the room its unit has against the cap the rule enforces.
+    /// </summary>
+    [Fact]
+    public void One_admission_reads_the_days_cap_once_and_sizes_its_envelopes_and_its_rule_from_it()
+    {
+        Unit("team-1", OrgIds.Research);
+        Seat("pos-1", "team-1");
+        var reads = 0;
+        decimal Lowered() => ++reads == 1 ? 10m : 2m;   // the owner lowers the cap the instant after the first read
+        var meter = new TurnMeter(_db, Lowered, runtimeId: () => "codex", now: () => _now, recordPath: _records,
+            owner: () => new OwnerPrice(1m, 4m), model: () => "gpt-5.6-sol", share: _ => 0.5m, live: new LiveAttempts());
+
+        reads = 0;
+        var rule = meter.AdmissionRuleFor("pos-1");
+        Assert.All(rule.Funding!, u => Assert.True(u.Envelope is not { } e || e <= rule.Cap,
+            $"{u.UnitId}'s envelope {u.Envelope} is larger than the cap {rule.Cap} this rule enforces"));
+        Assert.Equal(rule.Cap, rule.Funding!.Single(u => u.UnitId == OrgIds.Root).Envelope);
+        Assert.Equal(rule.Cap * 0.5m, rule.Funding!.Single(u => u.UnitId == OrgIds.Research).Envelope);
+        Assert.Equal(1, reads);
+
+        reads = 0;
+        Assert.True(meter.Begin("## Situation", role: "pos-1").Admitted);   // admitted against 10.00, every number of it
+        Assert.Equal(1, reads);
+    }
+
     // ---- item 3: envelope resolution ---------------------------------------------------------------------------------
 
     /// <summary>
