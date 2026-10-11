@@ -569,6 +569,35 @@ public class LaunchGrantTests
     }
 
     /// <summary>
+    /// A LAUNCH STILL RUNNING PAST ITS GRANT'S LIFE IS STILL A NEIGHBOUR (ORDER-001, <c>U-grant-tree</c> fix pass 1). A
+    /// Research turn whose process hangs beyond <see cref="AgentGrants.MaxTurn"/> has its grant refused for service — and
+    /// is still running, unconfined, beside whatever starts next. The Operations launch issued then may not trade; once the
+    /// research turn has ended, it no longer counts.
+    /// </summary>
+    [Fact]
+    public void A_launch_running_past_its_grants_life_still_withholds_order_permission_beside_it()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var grants = new AgentGrants(() => now);
+        var research = grants.IssueHere(CouncilRoles.Research, "attempt-research-hung");
+
+        now += AgentGrants.MaxTurn + TimeSpan.FromMinutes(1);
+        Assert.Equal(GrantState.Expired, grants.Verify(research.Token).State);
+
+        using (var chair = grants.Issue(CouncilRoles.Operations, "attempt-chair-past-max"))
+        {
+            Assert.False(chair.MayPlaceOrders,
+                "the chair's launch was given order permission while the Research Director's hung launch still ran beside it");
+            Assert.Contains("attempt-research-hung", chair.OrdersWithheld);
+        }
+
+        research.Dispose();   // the research turn returns: its tree was ended before it did
+        now += AgentGrants.Grace + TimeSpan.FromSeconds(1);
+        using var after = grants.Issue(CouncilRoles.Operations, "attempt-chair-after");
+        Assert.True(after.MayPlaceOrders, after.OrdersWithheld);
+    }
+
+    /// <summary>
     /// (h) GUARD: THE IN-PROCESS HARNESS IS NO PROCESS AND NOBODY'S NEIGHBOUR. An Operations call through
     /// <see cref="GatewayPipeServer.CallAsync"/> — no token, no grant — trades as it always did while a research launch's
     /// grant is live in the register.
