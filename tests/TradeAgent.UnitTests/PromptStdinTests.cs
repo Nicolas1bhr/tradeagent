@@ -100,6 +100,57 @@ public class PromptStdinTests
         }
     }
 
+    /// <summary>
+    /// (d) A RUNTIME THAT CANNOT READ STDIN IS NAMED IN THE LAUNCH, NOT SILENTLY FED ARGV. The flag is data on every built-in —
+    /// codex and OpenCode read stdin, a custom tool is not assumed to — for <c>U-thinking-seats</c>' gate to read; a runtime
+    /// without it still runs as it always did, and every attempt it makes says "prompt in argv (runtime cannot read stdin)" in
+    /// the row, where a runtime that reads stdin says <c>stdin</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_that_cannot_read_stdin_is_named_in_the_launch_not_silently_fed_argv()
+    {
+        var builtIn = RuntimeCatalog.BuiltIn();
+        Assert.True(builtIn.Single(m => m.Id == "codex").PromptOnStdin);
+        Assert.Equal("-", builtIn.Single(m => m.Id == "codex").StdinMarker);
+        Assert.True(builtIn.Single(m => m.Id == "opencode").PromptOnStdin);
+        Assert.Equal("", builtIn.Single(m => m.Id == "opencode").StdinMarker);
+        Assert.False(builtIn.Single(m => m.Id == "custom").PromptOnStdin);
+
+        foreach (var onStdin in new[] { false, true })
+        {
+            using var db = TestEnv.NewDb();
+            var dir = Path.Combine(TestEnv.Home, "prompt-stdin", $"meter-{onStdin}-{Guid.NewGuid():n}"[..30]);
+            Directory.CreateDirectory(dir);
+            var meter = new TurnMeter(db, () => 100m, runtimeId: () => "probe", recordPath: Path.Combine(dir, "turns.jsonl"),
+                live: new LiveAttempts());
+            var session = AgentRuntimeProbe.SessionOverStream(
+                """{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}""",
+                manifest: script => new RuntimeManifest
+                {
+                    Id = "probe", DisplayName = "Probe runtime", Executable = script,
+                    ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"], JsonFlag = "--json",
+                    PromptOnStdin = onStdin, StdinMarker = onStdin ? "-" : ""
+                },
+                name: $"{nameof(A_runtime_that_cannot_read_stdin_is_named_in_the_launch_not_silently_fed_argv)}-{onStdin}");
+            using (meter.Attach(session, CouncilRoles.Operations))
+                await session.SendAsync("words-5b1d");
+
+            var context = Context(db);
+            Assert.True(context.TryGetProperty("prompt_in", out var promptIn), $"the attempt's context carries no prompt_in: {context}");
+            Assert.Equal(onStdin ? "stdin" : "prompt in argv (runtime cannot read stdin)", promptIn.GetString());
+        }
+    }
+
+    /// <summary>The newest attempt's <c>context</c>, as the app wrote it.</summary>
+    static System.Text.Json.JsonElement Context(TradeAgent.Core.Db.Database db)
+    {
+        using var c = db.Cmd("SELECT id FROM ai_attempt ORDER BY started_at DESC, rowid DESC LIMIT 1");
+        var id = Convert.ToString(c.ExecuteScalar())!;
+        var row = new TradeAgent.Core.Db.AiAttemptStore(db).Get(id)!;
+        using var doc = System.Text.Json.JsonDocument.Parse(row.Context!);
+        return doc.RootElement.Clone();
+    }
+
     /// <summary>What the recorder wrote: one command line per start, and the stdin of the last start.</summary>
     internal sealed record Recording(string Dir)
     {
