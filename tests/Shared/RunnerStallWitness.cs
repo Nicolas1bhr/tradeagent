@@ -38,8 +38,8 @@ public sealed class RunnerStallWitness : IDisposable
 
     readonly TimeProvider _clock;
     readonly long _periodTicks;
-    readonly Loop _dedicated = new();
-    readonly Loop _pool = new();
+    readonly StallLoop _dedicated = new();
+    readonly StallLoop _pool = new();
     readonly CancellationTokenSource _stop = new();
     (TimeSpan Dedicated, TimeSpan Pool)? _final;
 
@@ -98,33 +98,51 @@ public sealed class RunnerStallWitness : IDisposable
     /// <summary>Stops both loops. The token source is not disposed: a loop may still be reading it as it ends.</summary>
     public void Dispose() => Stop();
 
-    TimeSpan Late(Loop loop)
+    TimeSpan Late(StallLoop loop)
     {
-        var worst = Math.Max(loop.WorstTicks, Now() - loop.LastTicks - _periodTicks);
+        var worst = loop.Worst(Now(), _periodTicks);
         return worst <= 0 ? TimeSpan.Zero : TimeSpan.FromSeconds((double)worst / _clock.TimestampFrequency);
     }
 
     /// <summary>How many ticks each loop has completed — for the witness's own test, which waits on them.</summary>
-    public (long Dedicated, long Pool) Ticks => (Interlocked.Read(ref _dedicated.Count), Interlocked.Read(ref _pool.Count));
+    public (long Dedicated, long Pool) Ticks => (_dedicated.Count, _pool.Count);
+}
 
-    sealed class Loop
+/// <summary>
+/// One loop's reading: when its last tick ended and the worst lateness it has seen, KEPT AS ONE PAIR. They were
+/// two independent reads once, and a tick completing between them left the old worst beside the new "last", so a
+/// measured stall read as none (the review of U-red-says-why, finding 4). The lock is held for a few
+/// assignments by the ticking thread and by a reader, and nothing in it waits, allocates or calls out. Internal
+/// so its test can hammer it without a thread of its own.
+/// </summary>
+internal sealed class StallLoop
+{
+    readonly object _gate = new();
+    long _last;
+    long _worst = long.MinValue;
+    long _count;
+
+    public long Count => Interlocked.Read(ref _count);
+
+    public void Begin(long now)
     {
-        long _last;
-        long _worst = long.MinValue;
-        public long Count;
+        lock (_gate) _last = now;
+    }
 
-        public long LastTicks => Interlocked.Read(ref _last);
-        public long WorstTicks => Interlocked.Read(ref _worst);
-
-        public void Begin(long now) => Interlocked.Exchange(ref _last, now);
-
-        public void Tick(long now, long period)
+    public void Tick(long now, long period)
+    {
+        lock (_gate)
         {
-            var late = now - Interlocked.Exchange(ref _last, now) - period;
-            long seen;
-            while (late > (seen = Interlocked.Read(ref _worst)) &&
-                   Interlocked.CompareExchange(ref _worst, late, seen) != seen) { }
-            Interlocked.Increment(ref Count);
+            var late = now - _last - period;
+            _last = now;
+            if (late > _worst) _worst = late;
         }
+        Interlocked.Increment(ref _count);
+    }
+
+    /// <summary>The worst lateness across the window as of <paramref name="now"/>, the tick in progress included.</summary>
+    public long Worst(long now, long period)
+    {
+        lock (_gate) return Math.Max(_worst, now - _last - period);
     }
 }

@@ -58,6 +58,52 @@ public class RunnerStallWitnessTests
         Assert.True(witness.DedicatedLate < TimeSpan.FromHours(1), $"read past the end of its window: {witness.Clause}");
     }
 
+    /// <summary>
+    /// A TICK THAT COMPLETES WHILE A READING IS UNDER WAY CANNOT ERASE THE STALL IT CLOSES. A loop's reading is
+    /// its worst lateness and the age of its last tick; read apart, a tick landing between the two reads left
+    /// the old worst beside the new "last", and a stall that was measured read as none. For a clock that jumped
+    /// 1500 ticks after a tick at 0, EVERY reading at 1500 — before the next tick, after it, or racing it — is at
+    /// least 1480 (the jump less one period). Nothing here waits on a wall clock or asserts a ceiling: a fixed
+    /// number of races between a ticking thread and a reading one, the smallest reading kept.
+    /// </summary>
+    [Fact]
+    public void A_tick_completing_mid_reading_cannot_erase_the_stall_it_closes()
+    {
+        const long period = 20, jump = 1_500, trials = 200_000;
+        StallLoop? current = null;
+        var quit = false;
+        var smallest = long.MaxValue;
+        var reader = new Thread(() =>
+        {
+            var least = long.MaxValue;
+            for (var spins = 0; !Volatile.Read(ref quit); spins++)
+            {
+                if ((spins & 1023) == 0) Thread.Yield();   // a one-core runner still lets the ticking thread run
+                var loop = Volatile.Read(ref current);
+                if (loop is null) continue;
+                least = Math.Min(least, loop.Worst(jump, period));
+            }
+            Volatile.Write(ref smallest, least);
+        }) { IsBackground = true };
+        reader.Start();
+
+        var rng = new Random(7);
+        for (var i = 0; i < trials; i++)
+        {
+            var loop = new StallLoop();
+            loop.Begin(0);
+            Volatile.Write(ref current, loop);
+            Thread.SpinWait(rng.Next(0, 64));
+            loop.Tick(jump, period);
+            Thread.SpinWait(rng.Next(0, 16));
+        }
+        Volatile.Write(ref quit, true);
+        reader.Join();
+
+        Assert.True(Volatile.Read(ref smallest) >= jump - period,
+            $"a reading racing a tick read {smallest}, below the {jump - period} every reading of a {jump}-tick jump must carry");
+    }
+
     /// <summary>A fixture's patience for the loops to tick — scaled, and bounding nothing under test.</summary>
     static async Task Until(Func<bool> condition, string what)
     {
