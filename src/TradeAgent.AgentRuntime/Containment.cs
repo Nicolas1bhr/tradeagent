@@ -135,6 +135,9 @@ public sealed record ContainmentFacts(bool Held, string Mechanism, bool SandboxO
         .Where(s => s.Length > 0));
 }
 
+/// <summary>The cell a process was started in: its policy's SHA-256 and the platform facts that confined it (the Mechanism line's source).</summary>
+public sealed record CellLaunch(string PolicyHash, CellPlatform Platform);
+
 /// <summary>
 /// One agent process and the thing that holds it: a Job Object on Windows, a session of its own on
 /// macOS and Linux. Disposing it ends the turn's whole tree, including the parts that detached.
@@ -160,13 +163,14 @@ public sealed class ContainedProcess : IDisposable
     /// </summary>
     readonly int _session;
 
-    internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism)
+    internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism, CellLaunch? cell = null)
     {
         Process = process;
         _job = job;
         _ownSession = ownSession;
         _held = held;
         Mechanism = mechanism;
+        Cell = cell;
         if (OperatingSystem.IsWindows()) return;
         _leader = process.Id;
         _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
@@ -200,6 +204,9 @@ public sealed class ContainedProcess : IDisposable
 
     /// <summary>What is holding it, or why nothing is. One line, for a health row.</summary>
     public string Mechanism { get; }
+
+    /// <summary>The cell it was started in — its policy's hash and the platform that confined it — or null for a launch without one.</summary>
+    public CellLaunch? Cell { get; }
 
     /// <summary>What the last teardown found, or null before one has run.</summary>
     public TreeEnd? Ended { get; private set; }
@@ -404,11 +411,65 @@ public static class ProcessContainment
     }
 
     /// <summary>
+    /// STARTS <paramref name="psi"/> IN A CELL (<c>U-cell-linux-a</c> item 4), OR THROWS — and never starts it any other way.
+    ///
+    /// <para>The opposite of <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?)"/>'s rule, on purpose: a caller that asked
+    /// for a cell is relying on what the cell denies, so a launch that cannot have one is refused with
+    /// <see cref="ErrorCode.CELL_UNAVAILABLE"/> in words — a platform with a <see cref="CellPlatform.Refusal"/> (not Linux, no
+    /// Landlock, an ABI below 6, a security-module list nobody can read), no launcher, or a launcher that will not start — and
+    /// nothing runs. The bare fallbacks stay for the launches that never asked for a cell.</para>
+    ///
+    /// <para>The policy is written owner-only under <see cref="CellPolicy.Directory"/> and named by its hash; the launcher is told
+    /// only that file's path, and the cell's environment is the policy's alone. <paramref name="platform"/> is a test seam:
+    /// production passes nothing and the machine is read.</para>
+    /// </summary>
+    public static ContainedProcess Start(ProcessStartInfo psi, CellPolicy cell, IReadOnlyList<string>? launcher = null,
+        CellPlatform? platform = null)
+    {
+        ArgumentNullException.ThrowIfNull(psi);
+        ArgumentNullException.ThrowIfNull(cell);
+
+        var on = platform ?? CellPlatform.Read();
+        if (on.Refusal() is { } refusal) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, refusal);
+
+        var prefix = launcher ?? DefaultLauncher();
+        if (prefix is not { Count: > 0 })
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command, which is what starts a cell, is not installed at " +
+                $"{Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)}; {psi.FileName} was not started");
+
+        var policyFile = cell.Write();
+        var exe = psi.FileName;
+        var args = psi.ArgumentList.ToArray();
+        Relaunch(psi, prefix, [ContainedLaunch.CellFlag, policyFile]);
+        // The stage finds the app's cell folder from the app's own home, whatever the caller's environment says.
+        psi.Environment["TRADEAGENT_HOME"] = Paths.Home;
+
+        Process process;
+        try
+        {
+            process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command at {prefix[0]} did not start; {exe} was not started");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            Command(psi, exe, args);
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message}); {exe} was not started, " +
+                "in a cell or outside one", ex);
+        }
+
+        return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
+            $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) in a session of its own; cancelling kills its process group",
+            new CellLaunch(cell.Hash, on));
+    }
+
+    /// <summary>
     /// Rewrites the command to run through the launcher. The original program becomes the launcher's
     /// first argument, which is what <c>execv</c> then becomes — so nothing about the arguments,
     /// the working directory, the environment or the three redirected streams changes.
     /// </summary>
-    static void Relaunch(ProcessStartInfo psi, IReadOnlyList<string> prefix)
+    static void Relaunch(ProcessStartInfo psi, IReadOnlyList<string> prefix, IReadOnlyList<string>? stage = null)
     {
         var exe = psi.FileName;
         var args = psi.ArgumentList.ToArray();
@@ -416,6 +477,7 @@ public static class ProcessContainment
         psi.ArgumentList.Clear();
         for (var i = 1; i < prefix.Count; i++) psi.ArgumentList.Add(prefix[i]);
         psi.ArgumentList.Add(ContainedLaunch.Flag);
+        foreach (var a in stage ?? []) psi.ArgumentList.Add(a);
         psi.ArgumentList.Add(exe);
         foreach (var a in args) psi.ArgumentList.Add(a);
     }
