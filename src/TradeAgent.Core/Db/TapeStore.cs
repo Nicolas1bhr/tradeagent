@@ -686,6 +686,10 @@ public sealed class TapeStore : IDisposable
 
         Write(() =>
         {
+            // A CALL UNDER A LENS IS ITS LENS'S, OR IT IS NOT RECORDED: checked again here, in the transaction that writes it.
+            if (LensCheck(call.Schema, call.StateSha256, call.Sources) is { } notTheLens)
+                throw new ArgumentException(notTheLens, nameof(call));
+
             using var c = Cmd($"""
                 INSERT INTO decision_call({DecisionCols})
                 VALUES($attempt,$instrument,$url,$origin,$requested,$answered,$pin,$unpinned,$host,$schema,$version,$schemaSha,
@@ -800,6 +804,54 @@ public sealed class TapeStore : IDisposable
 
             return new LensRegistration(InsertLens(lens, version, proposer, attempt, at), true, null);
         });
+    }
+
+    /// <summary>
+    /// WHY A CALL MAY NOT GO UNDER THE LENS ITS SCHEMA NAMES, or null — because it names no registered lens, or because it
+    /// is exactly that lens's question about one observation of its target (<c>U-lenses</c>). A call whose schema id names
+    /// a lens must carry that lens's registered version and ITS questions' hash, exactly one source, <c>tape_obs:&lt;id&gt;</c>,
+    /// naming an observation of the lens's target the screen does not quarantine, and the very state
+    /// <see cref="LensState.For(LensRecord, TapeObservation?)"/> builds from it — so what was asked, and about which item,
+    /// is the registry's to say and never the caller's. The wire asks this before its rate gate, its key or its reservation;
+    /// <see cref="RecordDecision"/> asks it again, in the transaction that writes the call.
+    /// </summary>
+    public string? LensRefusal(DecisionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Schema is null) return null;
+        string stateSha;
+        try { stateSha = TapeJson.Sha256(DecisionRequests.CanonicalState(request.State)); }
+        catch (Exception ex) when (ex is JsonException or ArgumentException) { stateSha = ""; }
+        return Read(() => LensCheck(request.Schema, stateSha, request.Sources));
+    }
+
+    string? LensCheck(SchemaRef schema, string stateSha, IReadOnlyList<string> sources)
+    {
+        using (var c = Cmd("SELECT COUNT(*) FROM lens WHERE id=$id", ("$id", schema.Id)))
+            if (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) == 0) return null;
+
+        if (LensAt(schema.Id, schema.Version) is not { } lens)
+            return $"the call names the lens '{schema.Id}', which has no version {schema.Version} on the tape; a lens's call carries "
+                   + "a version the tape registered, and nothing was sent";
+        if (!string.Equals(lens.SchemaSha, schema.Sha, StringComparison.Ordinal))
+            return $"the call names the lens '{schema.Id}' version {schema.Version} and asks other questions than it registered (its "
+                   + $"questions hash to {lens.SchemaSha}, the call's to {schema.Sha}); a lens's call asks exactly its lens's questions, "
+                   + "and nothing was sent";
+        if (sources is not { Count: 1 } || LensState.ObservationOf(sources[0]) is not { } id)
+            return "a lens's call carries exactly one source, 'tape_obs:<id>', the observation its state was built from, and nothing was sent";
+
+        TapeObservation? obs;
+        using (var c = Cmd($"SELECT {ObsCols} FROM tape_obs WHERE id=$id", ("$id", id)))
+        using (var r = c.ExecuteReader())
+            obs = r.Read() ? Obs(r) : null;
+        if (obs is null) return $"the call names tape_obs:{id}, which the tape does not hold, and nothing was sent";
+
+        var built = LensState.For(lens, obs);
+        if (built.Ask is not { } ask) return built.Refusal + ", and nothing was sent";
+        if (!string.Equals(TapeJson.Sha256(ask.State), stateSha, StringComparison.Ordinal))
+            return $"the state is not the one the lens '{lens.Id}' version {lens.Version} builds from tape_obs:{id}; a lens's state is "
+                   + "built by code from its observation and nothing else, and nothing was sent";
+        return null;
     }
 
     /// <summary>One registered lens by id and version, or null.</summary>

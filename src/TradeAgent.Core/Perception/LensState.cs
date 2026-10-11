@@ -4,8 +4,31 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Decisions;
 
 namespace TradeAgent.Core.Perception;
+
+/// <summary>
+/// ONE LENS'S QUESTION ABOUT ONE OBSERVATION, READY TO ASK: the registered lens, the state code built, the one source it
+/// was built from, the port's schema reference and the questions — every part of a call but the instrument, which is
+/// the owner's.
+/// </summary>
+public sealed record LensAsk(LensRecord Lens, string State, IReadOnlyList<string> Sources, SchemaRef Schema,
+    IReadOnlyDictionary<string, DecisionQuestion> Questions)
+{
+    /// <summary>The call to <paramref name="instrument"/>: everything in it from here, nothing from its caller but the instrument.</summary>
+    public DecisionRequest For(string instrument) => new()
+    {
+        Instrument = instrument,
+        Schema = Schema,
+        State = State,
+        Questions = Questions,
+        Sources = Sources
+    };
+}
+
+/// <summary>A lens's question about an observation, or the reason there is none, in words. Never both, never neither.</summary>
+public sealed record LensStateResult(LensAsk? Ask, string? Refusal);
 
 /// <summary>
 /// THE STATE A LENS ASKS ABOUT, BUILT BY CODE FROM ONE OBSERVATION OF ITS TARGET (<c>U-lenses</c>; EDGE § 6 item 4:
@@ -38,6 +61,47 @@ public static class LensState
         return digits.Length is >= 1 and <= 18 && digits.All(char.IsAsciiDigit) && digits[0] != '0'
             ? long.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture)
             : null;
+    }
+
+    /// <summary>
+    /// THE QUESTION <paramref name="lens"/> ASKS ABOUT <paramref name="observation"/>, or why it asks none: an observation
+    /// that is not there, one of another source or series than the lens's target, one the tape's screen quarantines and
+    /// one whose payload a read withheld are each refused in words — so a quarantined item never reaches a state, and a
+    /// state is never built from a payload its reader was not served.
+    /// </summary>
+    public static LensStateResult For(LensRecord lens, TapeObservation? observation)
+    {
+        ArgumentNullException.ThrowIfNull(lens);
+        if (lens.Parsed is not { } parsed)
+            return new(null, $"the lens '{lens.Id}' version {lens.Version} is not one this build's validator ({Lens.ValidatorVersion}) admits, so it asks nothing");
+        if (observation is null) return new(null, "there is no observation to ask about");
+        if (observation.Source != parsed.Target.Source || observation.Series != parsed.Target.Series)
+            return new(null, $"tape_obs:{observation.Id} is a '{observation.Source}/{observation.Series}' reading, and the lens "
+                             + $"'{lens.Id}' looks only at '{parsed.Target.Source}/{parsed.Target.Series}'");
+        if (observation.Quarantine is { } q)
+            return new(null, $"tape_obs:{observation.Id} is quarantined by the tape's screen (rule '{q.Rule}', version {q.Version}), "
+                             + "so no state is built from it");
+        if (observation.Payload is not { } payload)
+            return new(null, $"tape_obs:{observation.Id}'s payload was withheld from this read, so no state is built from it");
+
+        IReadOnlyDictionary<string, string?> values;
+        try { values = Values(parsed, payload); }
+        catch (JsonException) { return new(null, $"tape_obs:{observation.Id}'s payload does not read as JSON, so no state is built from it"); }
+
+        var state = Build(parsed, observation.Subject, observation.SourceTime, observation.ReceivedAt, observation.EvidenceClass, values);
+        return new(new LensAsk(lens, state, [SourceOf(observation.Id)], parsed.Schema(lens.Version), parsed.Questions), null);
+    }
+
+    /// <summary>
+    /// The question about what an as-of read served — or the read's own refusal, when a holdout window withheld the row,
+    /// and "nothing had arrived" when there was none.
+    /// </summary>
+    public static LensStateResult For(LensRecord lens, TapeAsOf read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        if (read.Row is null)
+            return new(null, read.Refusal is { } held ? "the read was refused, so no state is built: " + held : "nothing had arrived to ask about");
+        return For(lens, read.Row);
     }
 
     /// <summary>

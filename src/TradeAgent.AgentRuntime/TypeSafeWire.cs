@@ -135,7 +135,11 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
 
         // NO TAPE, NO CALL: an answer nobody can record is a measurement nobody can use, and its money would be spent on
         // nothing.
-        if (_tape() is null) return Refused(NoTape);
+        if (_tape() is not { } tape) return Refused(NoTape);
+
+        // A CALL UNDER A LENS ASKS EXACTLY ITS LENS'S QUESTION about one observation of its target (U-lenses), or it is
+        // refused here — before the rate gate, the key and the reservation, so it costs nothing and asks the holder nothing.
+        if (tape.LensRefusal(request) is { } lens) return Refused(lens);
 
         // THE HOST'S RATE, BEFORE THE KEY IS READ OR ANYTHING RESERVED (U-decision-card): a call the rate refuses asks the
         // holder for nothing and writes no row. Admitted, it is counted at its bound until it settles below — or withdrawn,
