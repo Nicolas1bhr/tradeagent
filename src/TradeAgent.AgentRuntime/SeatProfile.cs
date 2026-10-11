@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using TradeAgent.Core;
 
 namespace TradeAgent.AgentRuntime;
@@ -66,6 +67,129 @@ public static class SeatProfile
         return new UTF8Encoding(false).GetBytes(string.Join("\n", lines) + "\n");
     }
 
+    // ---- verified at every launch ------------------------------------------------------------------
+
+    /// <summary>
+    /// THE SEAT'S PROFILE, VERIFIED BEFORE A LAUNCH IS ADMITTED AND AGAIN AS IT STARTS, fresh or resumed: the program is the pin; the
+    /// command line carries the class's deny set; the config file is the app's bytes; nothing the profile forbids is in the seat home
+    /// or the workspace; and the CLI's own report shows no feature outside the allowlist on and no MCP server but the app's. Any miss
+    /// is the refusal, in words naming what and where; a runtime with no seat profile passes untouched.
+    ///
+    /// <para><b>INTEGRITY ADVISORY</b> while seats are unconfined (<c>docs/ORCHESTRATION.md</c> § 2.7): the CLI runs as the owner's
+    /// user, so what is verified here can change between this check and the start. It turns a misconfigured seat into a refusal; it
+    /// does not make a hostile one impossible.</para>
+    /// </summary>
+    public static async Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
+        string workingDirectory, ISeatProbe probe, CancellationToken ct)
+    {
+        if (manifest.Seat is not { } seat) return SeatVerdict.None;
+
+        Prepare(seat);
+
+        if (await PinRefusalAsync(manifest, exe, c => probe.VersionAsync(manifest, exe, c), ct) is { } notThePin)
+            return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notThePin);
+
+        var deny = seat.ArgsFor(SeatPlan.CliClass);
+        if (deny.Length > 0 && !Carries(argv, deny))
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: the command it built for {manifest.DisplayName} does not carry the seat's deny set. " +
+                "This is TradeAgent's own fault, not the AI's; nothing was started.");
+
+        if (ConfigPath(seat) is { } config && !SameBytes(config, ConfigBytes(seat)))
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: its settings file {config} is not the one TradeAgent just wrote. " +
+                "Something is changing it as it is written; close whatever else uses that folder.");
+
+        if (Foreign(seat.Root, seat.Forbidden) is { } inHome)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI while {inHome} exists: the AI's own home may hold only what TradeAgent puts " +
+                "there, and the AI would read that as instructions or tools. Remove it to continue.");
+
+        if (Foreign(workingDirectory, seat.WorkspaceForbidden) is { } inWorkspace)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI while {inWorkspace} exists in its working folder: the AI would load it as its " +
+                "own settings or skills. Remove it to continue.");
+
+        SeatReading reading;
+        try { reading = await probe.ReadAsync(manifest, exe, workingDirectory, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: it could not read what {manifest.DisplayName} would switch on ({ex.Message}).");
+        }
+
+        if (OffTheAllowlist(seat, reading.Features) is { } feature)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: {manifest.DisplayName} reports {feature} switched on, which the AI's profile does " +
+                $"not allow. This build of TradeAgent runs {manifest.DisplayName} {manifest.Install.Version} with only its own set on.");
+
+        if (Servers(seat, reading.Mcp) is { } server)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: {manifest.DisplayName} reports {server}, and the AI's profile allows no tool " +
+                "server TradeAgent did not configure.");
+
+        return new SeatVerdict(null, null, reading);
+    }
+
+    /// <summary>Whether <paramref name="argv"/> holds <paramref name="deny"/> as one unbroken run, in order.</summary>
+    static bool Carries(IReadOnlyList<string> argv, string[] deny)
+    {
+        for (var i = 0; i + deny.Length <= argv.Count; i++)
+        {
+            var j = 0;
+            while (j < deny.Length && string.Equals(argv[i + j], deny[j], StringComparison.Ordinal)) j++;
+            if (j == deny.Length) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The first of <paramref name="names"/> that exists under <paramref name="root"/>, as a full path, or null.</summary>
+    static string? Foreign(string root, string[] names)
+    {
+        foreach (var name in names)
+        {
+            var path = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
+            if (File.Exists(path) || Directory.Exists(path)) return path;
+        }
+        return null;
+    }
+
+    /// <summary>The features the report shows on and the allowlist does not hold, named, or null when there are none.</summary>
+    static string? OffTheAllowlist(SeatPlan seat, string report)
+    {
+        if (seat.FeaturesArgs.Length == 0) return null;
+        var on = new List<string>();
+        var read = 0;
+        foreach (var line in report.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length < 2 || words[^1] is not ("true" or "false")) continue;
+            read++;
+            if (words[^1] == "true" && !seat.FeatureAllowlist.Contains(words[0], StringComparer.Ordinal)) on.Add(words[0]);
+        }
+        if (read == 0) return "no feature list TradeAgent could read";
+        return on.Count == 0 ? null : (on.Count == 1 ? $"the feature {on[0]}" : $"the features {string.Join(", ", on)}");
+    }
+
+    /// <summary>The MCP servers the report lists and the allowlist does not hold, named, or null when there are none.</summary>
+    static string? Servers(SeatPlan seat, string report)
+    {
+        if (seat.McpArgs.Length == 0) return null;
+        List<string> names = [];
+        try
+        {
+            using var doc = JsonDocument.Parse(report);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return "a tool-server list TradeAgent could not read";
+            foreach (var server in doc.RootElement.EnumerateArray())
+            {
+                var name = server.ValueKind == JsonValueKind.Object && server.TryGetProperty("name", out var n) ? n.ToString() : server.ToString();
+                if (!seat.McpAllowlist.Contains(name, StringComparer.Ordinal)) names.Add(name);
+            }
+        }
+        catch (JsonException) { return "a tool-server list TradeAgent could not read"; }
+        return names.Count == 0 ? null : $"the tool server{(names.Count == 1 ? "" : "s")} {string.Join(", ", names)}";
+    }
+
     // ---- the pin ---------------------------------------------------------------------------------
 
     /// <summary>
@@ -125,5 +249,112 @@ public static class SeatProfile
         try { return File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes); }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
+    }
+}
+
+/// <summary>
+/// WHAT <see cref="SeatProfile.VerifyAsync"/> FOUND: a refusal in words with its code, or none — and what the probe read.
+/// </summary>
+public sealed record SeatVerdict(string? Refusal, ErrorCode? Code, SeatReading? Reading)
+{
+    /// <summary>A runtime with no seat profile: nothing refused, nothing read.</summary>
+    public static readonly SeatVerdict None = new(null, null, null);
+
+    public static SeatVerdict Refuse(ErrorCode code, string why) => new(why, code, null);
+
+    public bool Refused => Refusal is not null;
+}
+
+/// <summary>
+/// A CONVERSATION WHOSE SEAT IS VERIFIED BEFORE A LAUNCH IS ADMITTED. The meter asks it inside admission, before any row is written,
+/// so a seat that would be refused never reserves money or consumes a wake.
+/// </summary>
+public interface ISeatLaunch
+{
+    /// <summary>The seat's profile for the turn this conversation would launch next — refused in words, or not.</summary>
+    SeatVerdict CheckSeat();
+}
+
+/// <summary>What the CLI itself said about a seat: its feature report and its MCP server list, verbatim.</summary>
+public sealed record SeatReading(string Features, string Mcp);
+
+/// <summary>
+/// THE CLI ASKED ABOUT ITS OWN SEAT, behind an interface because CI has no codex: a test hands a fake, the product the real one.
+/// </summary>
+public interface ISeatProbe
+{
+    /// <summary>The feature report and the MCP server list, run under the seat home with the deny set's keys.</summary>
+    Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct);
+
+    /// <summary>What the program says its version is, or null — asked only of a program that is not the pin, for the words.</summary>
+    Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct);
+}
+
+/// <summary>
+/// THE REAL PROBE: the manifest's own commands, started the way every process of the runtime is — no window, stdin closed, the
+/// whitelist and the seat home (<see cref="AgentEnvironment.Apply(ProcessStartInfo, IReadOnlyDictionary{string, string},
+/// RuntimeManifest)"/>), its tree held and ended.
+/// </summary>
+public sealed class CliSeatProbe : ISeatProbe
+{
+    public static readonly CliSeatProbe Instance = new();
+
+    static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
+
+    public async Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
+    {
+        var seat = manifest.Seat ?? throw new InvalidOperationException($"{manifest.DisplayName} has no seat profile");
+        var keys = seat.KeyArgs();
+        var features = seat.FeaturesArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.FeaturesArgs, .. keys], workingDirectory, ct);
+        var mcp = seat.McpArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.McpArgs, .. keys], workingDirectory, ct);
+        return new SeatReading(features, mcp);
+    }
+
+    public async Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await Run(manifest, exe, manifest.VersionArgs, Paths.SeatHome, ct);
+        var text = string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
+        var m = System.Text.RegularExpressions.Regex.Match(text, @"\d+\.\d+(\.\d+)?");
+        return exit == 0 && m.Success ? m.Value : null;
+    }
+
+    static async Task<string> Read(RuntimeManifest manifest, string exe, string[] args, string cwd, CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await Run(manifest, exe, args, cwd, ct);
+        if (exit != 0)
+            throw new InvalidOperationException(
+                $"`{string.Join(' ', args.Take(2))}` exited {exit}: {Ansi.Strip(stderr).Trim().Split('\n').FirstOrDefault()}");
+        return stdout;
+    }
+
+    static async Task<(int Exit, string StdOut, string StdErr)> Run(RuntimeManifest manifest, string exe, IEnumerable<string> args,
+        string cwd, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = cwd,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        };
+        CliAgentRuntime.SetCommand(psi, exe, args);
+        AgentEnvironment.Apply(psi, new Dictionary<string, string>(), manifest);
+
+        using var held = ProcessContainment.Start(psi);
+        var p = held.Process;
+        try { p.StandardInput.Close(); } catch (Exception) { /* already gone */ }
+        using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timer.CancelAfter(Deadline);
+        var stdout = p.StandardOutput.ReadToEndAsync(timer.Token);
+        var stderr = p.StandardError.ReadToEndAsync(timer.Token);
+        try
+        {
+            await p.WaitForExitAsync(timer.Token);
+            return (p.ExitCode, await stdout, await stderr);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            held.Kill();
+            throw new InvalidOperationException($"{Path.GetFileName(exe)} did not answer within {Deadline.TotalSeconds:0} seconds");
+        }
     }
 }

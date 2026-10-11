@@ -826,6 +826,10 @@ public sealed class TurnMeter
         // reservation, before the wakes: a refused launch writes nothing and consumes nothing.
         if (StillRunning() is { } held) return held;
 
+        // NOR FROM A SEAT WHOSE PROFILE IS NOT THE APP'S (U-seat-home), refused the same way: no row, no reservation, no wake.
+        var seat = SeatOf(role);
+        if (seat.Refused) return new AiAdmission { Refusal = seat.Refusal };
+
         var reservation = Reservation(role);
 
         // A CLOSE NOBODY COMMITTED BELONGS TO A TURN THAT IS OVER. It can only be here because the
@@ -1091,13 +1095,32 @@ public sealed class TurnMeter
         if (conversation is IAdmittedConversation admitted)
             admitted.Admit = prompt => Begin(prompt, role: role, heldForTheLoop: false);
 
+        // THE SEAT THIS ROLE LAUNCHES FROM, verified inside every admission of it — the loop's and the owner's alike.
+        if (conversation is ISeatLaunch launches) lock (_gate) _seats[Key(role)] = launches;
+
         return new Detach(() =>
         {
             conversation.TurnEnded -= OnEnded;
             // CLEARED, AND THEREFORE REFUSING: a detached conversation's next typed turn has no meter to
             // reserve it, and a null Admit is a refusal (U-admission-fail-closed), never a pass.
             if (conversation is IAdmittedConversation a) a.Admit = null;
+            if (conversation is ISeatLaunch l)
+                lock (_gate)
+                    if (_seats.TryGetValue(Key(role), out var held) && ReferenceEquals(held, l)) _seats.Remove(Key(role));
         });
+    }
+
+    /// <summary>The seat each attached role launches from, by role.</summary>
+    readonly Dictionary<string, ISeatLaunch> _seats = new(StringComparer.Ordinal);
+
+    /// <summary>The verdict on the seat <paramref name="role"/> would launch from now, or none for a role with no seat attached.</summary>
+    SeatVerdict SeatOf(string? role)
+    {
+        ISeatLaunch? seat;
+        lock (_gate) _seats.TryGetValue(Key(role), out seat);
+        if (seat is null) return SeatVerdict.None;
+        try { return seat.CheckSeat(); }
+        catch (Exception ex) { return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent could not check the AI's own settings: {ex.Message}"); }
     }
 
     sealed class Detach(Action off) : IDisposable

@@ -219,8 +219,32 @@ public sealed class AgentSession(
     Func<string?>? attempt = null,
     AgentGrants? grants = null,
     Func<string?>? launchRefusal = null,
-    AppFileManifest? appFiles = null) : IAgentConversation, IAdmittedConversation
+    AppFileManifest? appFiles = null,
+    ISeatProbe? seatProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch
 {
+    /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
+    ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
+
+    /// <inheritdoc />
+    public SeatVerdict CheckSeat()
+    {
+        if (manifest.Seat is null) return SeatVerdict.None;
+        // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
+        if (resolveExecutable() is not { } exe) return SeatVerdict.None;
+        var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: RequestedModel);
+        var home = workspace();
+        try
+        {
+            // ON THE POOL, because the meter that asks is synchronous and may be on the window's thread.
+            return Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, CancellationToken.None))
+                .GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent could not check the AI's own settings: {ex.Message}");
+        }
+    }
+
     /// <summary>
     /// THE CANON THE TURN IN FLIGHT WAS LAUNCHED UNDER, read in <see cref="RunTurnAsync"/> before the process starts and
     /// carried out on <see cref="TurnEnded"/>. Null until a turn launches; reset with every turn.
@@ -526,6 +550,12 @@ public sealed class AgentSession(
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
         // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
         var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: RequestedModel);
+
+        // THE SEAT'S PROFILE, VERIFIED AS IT STARTS, fresh or resumed (U-seat-home): the pin, the deny set on this very argv, the
+        // config file, the home's and the workspace's inventory, and the CLI's own report. Checked again here although the meter
+        // checked it before admitting the turn: a host with no meter starts turns too, and this is the last moment before the start.
+        var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, ct);
+        if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
 
         var psi = new ProcessStartInfo
         {

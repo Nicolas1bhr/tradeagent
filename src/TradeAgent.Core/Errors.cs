@@ -52,6 +52,10 @@ public enum ErrorCode
     // MODE_FORBIDS_EXECUTION, which is about an ORDER this mode will not send: this is about the
     // assistant's own program not being started at all, and the repair is a different one.
     CONTAINMENT_REQUIRED,
+    // A SEAT WHOSE PROFILE IS NOT THE APP'S (U-seat-home): a file in its home or workspace the profile does not allow, a feature or
+    // MCP server outside the allowlist, a command line without its deny set. Not CONTAINMENT_REQUIRED, which is about real money and
+    // confinement: this is about the AI's own configuration, and the repair is the file or setting the message names.
+    AI_SEAT_REFUSED,
     // A TURN THAT REACHED ITS OWN BOUND, and stopped before the request that would have passed it.
     // Its own code because it is not a failure and not a refusal of anything the owner asked for: the
     // turn did work, that work is kept, and the repair is either a larger allowance on the Safety
@@ -858,7 +862,8 @@ public static class Errors
         // The other sentence that named Retry. The control it means is the setup step's "Try again"
         // (OnboardingView.cs:597), which is what an owner is actually looking at when they read this.
         [ErrorCode.AI_INSTALL_FAILED]              = ("The AI assistant could not be installed.", "Check your internet connection, then press Try again.", true),
-        [ErrorCode.AI_VERSION_UNSUPPORTED]         = ("The installed AI assistant is too old for this version of TradeAgent.", "TradeAgent can update it for you.", true),
+        // NOT ONLY "TOO OLD" since U-seat-home: a seat runs exactly the pinned build, so a newer one is refused too.
+        [ErrorCode.AI_VERSION_UNSUPPORTED]         = ("The installed AI assistant is not the version this TradeAgent runs.", "TradeAgent can install that version for you.", true),
         [ErrorCode.AI_AUTH_REQUIRED]               = ("You need to sign in to your AI account.", "Press Sign in. A browser window will open.", false),
         [ErrorCode.AI_AUTH_FAILED]                 = ("Signing in to the AI account did not work.", "Press Sign in again and complete the browser steps.", false),
         [ErrorCode.AI_AUTH_TIMEOUT]                = ("Signing in took too long and was cancelled.", "Press Sign in again.", false),
@@ -893,6 +898,7 @@ public static class Errors
         // market context TradeAgent recorded over them, and the trades of any run that reaches them.
         [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read something you are holding back, and was refused.", "No action needed. What you hold back stays private: every pair's prices over those months, the market news and figures TradeAgent recorded over them, and the trades of any strategy run that reaches them. TradeAgent uses them itself to judge a finished strategy.", false),
         [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
+        [ErrorCode.AI_SEAT_REFUSED]                = ("TradeAgent did not start the AI, because the AI's own settings are not the ones TradeAgent gave it.", "The message names what is out of place and where. Nothing else about the AI is changed.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
         // turn starts fresh. The two boxes named here are the ones on the Safety page.
