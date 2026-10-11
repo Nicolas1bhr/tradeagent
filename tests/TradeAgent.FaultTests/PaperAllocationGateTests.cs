@@ -956,4 +956,124 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         await gw.DisposeAsync();
         await second.DisposeAsync();
     }
+
+    // ---- U-referee-v2c: the paper queue's order -------------------------------------------------------
+
+    /// <summary>
+    /// THE VERDICT'S RESEARCH MEASUREMENT AS <c>ResearchEvidence.Record</c> WOULD HAVE WRITTEN IT — only its DSR matters to
+    /// the queue; <paramref name="candidate"/> names the run it read (null: none).
+    /// </summary>
+    static void ResearchRow(Database db, string version, double? dsr, string? candidate = null) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            INSERT INTO referee_research(campaign_id, version_id, method, candidate_run_id, days, blocks_known, blocks_positive,
+              trials_m, trials_unstreamed, n_eff, dsr, blocks_power, dsr_power, blocks_status, dsr_status, at)
+            SELECT campaign_id, version_id, $m, $run, 400, 8, 6, 1, 0, 1, $dsr, '0.5', '0.5', 'inconclusive', 'inconclusive', $at
+              FROM strategy_promotion WHERE version_id=$ver
+            """, ("$m", ResearchEvidence.Version), ("$run", candidate), ("$ver", version),
+            ("$dsr", dsr?.ToString("R", System.Globalization.CultureInfo.InvariantCulture)), ("$at", At.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Equal(1, c.ExecuteNonQuery());
+        return 0;
+    });
+
+    /// <summary>The verdict's sealed holdout row, as <c>RefereeHoldout.Record</c> would have written it: only its flag matters to the queue.</summary>
+    static void Sealed(Database db, string version, bool remembered) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            INSERT INTO referee_holdout(campaign_id, version_id, method, research_row, holdout_days, z_status, alpha_j,
+              wealth_before, wealth_after, addis_status, remembered, at)
+            SELECT campaign_id, version_id, $m, 1, 60, 'inconclusive', '0.01', '0.125', '0.08', 'inconclusive', $rem, $at
+              FROM strategy_promotion WHERE version_id=$ver
+            """, ("$m", RefereeHoldout.Version), ("$ver", version), ("$rem", remembered ? 1 : 0), ("$at", At.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Equal(1, c.ExecuteNonQuery());
+        return 0;
+    });
+
+    static IReadOnlyList<string> OnPaper(TradingGateway gw, PaperEnvelopeRow envelope) =>
+        [.. gw.Allocations.InEnvelope(envelope.Id, At).Select(a => a.VersionId).Order(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// (f) A REMEMBERED PAPER-ELIGIBLE VERSION IS OFFERED PAPER AFTER EVERY UNREMEMBERED ONE — and stays on the paper path
+    /// (seat A's Q8 (c)).
+    ///
+    /// <para>Two slots and three paper-eligible versions, newest first: F, whose author's model may remember its holdout and
+    /// whose research DSR is the best; N, judged before the sealed record existed, so whether it may be remembered cannot
+    /// be read — flagged; and U, the oldest and the weakest, whose holdout cannot be remembered. Today's order (newest
+    /// first) fills both slots with F and N and leaves U out; the queue offers U first, then F before N by DSR.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_remembered_paper_eligible_version_is_offered_paper_after_every_unremembered_one()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 2);
+        var u = Judged(db, PromotionVerdict.PaperEligible, 120, at: At.AddHours(-3));
+        var n = Judged(db, PromotionVerdict.PaperEligible, 121, at: At.AddHours(-2));
+        var f = Judged(db, PromotionVerdict.PaperEligible, 122, at: At.AddHours(-1));
+        ResearchRow(db, u, 0.10);
+        ResearchRow(db, n, 0.50);
+        ResearchRow(db, f, 0.99);
+        Sealed(db, u, remembered: false);
+        Sealed(db, f, remembered: true);
+
+        var written = gw.AllocatePaperDue(At);
+        log.WriteLine($"U N F                : {u[..12]} {n[..12]} {f[..12]}");
+        log.WriteLine($"on paper             : {string.Join(", ", OnPaper(gw, envelope).Select(v => v[..12]))}");
+
+        Assert.Equal(2, written);
+        Assert.Equal(new[] { u, f }.Order(StringComparer.Ordinal), OnPaper(gw, envelope));
+        Assert.Empty(gw.Allocations.For(n));
+        Assert.True(gw.Referee.Holdouts.Flag(CampaignOf(gw, f), f)!.Remembered);
+        Assert.Null(gw.Referee.Holdouts.Flag(CampaignOf(gw, n), n));
+        Assert.Empty(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (g) THE PAPER QUEUE IS ORDERED BY RESEARCH EVIDENCE, UNKNOWN LAST — in both passes.
+    ///
+    /// <para>The paper-eligible pass, two slots, four unflagged versions newest first: A with no research row, W whose row
+    /// read a run a holdout window reaches now (withheld, so unknown, whatever its DSR says), B at DSR 0.5 and C at 0.9.
+    /// Today's order puts A and W on paper; the queue puts C and B there. The inconclusive pass, three slots (one for the
+    /// quota), two no-trade refusals in two lineages oldest first: X with no research row, Y at DSR 0.2. Today's order
+    /// gives X the slot; the queue gives it to Y.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_paper_queue_is_ordered_by_research_evidence_unknown_last()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 2);
+        var c = Judged(db, PromotionVerdict.PaperEligible, 130, at: At.AddHours(-4));
+        var b = Judged(db, PromotionVerdict.PaperEligible, 131, at: At.AddHours(-3));
+        var w = Judged(db, PromotionVerdict.PaperEligible, 132, at: At.AddHours(-2));
+        var a = Judged(db, PromotionVerdict.PaperEligible, 133, at: At.AddHours(-1));
+        foreach (var v in new[] { a, b, c, w }) Sealed(db, v, remembered: false);
+        ResearchRow(db, c, 0.9);
+        ResearchRow(db, b, 0.5);
+        ResearchRow(db, w, 2.0, candidate: gw.Promotions.Standing(w).Promotion!.HoldoutRunId);
+        Assert.NotNull(gw.Referee.Research.Withheld(gw.Referee.Research.Of(CampaignOf(gw, w), w)!));
+
+        Assert.Equal(2, gw.AllocatePaperDue(At));
+        log.WriteLine($"A W B C              : {a[..12]} {w[..12]} {b[..12]} {c[..12]}");
+        log.WriteLine($"on paper             : {string.Join(", ", OnPaper(gw, envelope).Select(v => v[..12]))}");
+        Assert.Equal(new[] { b, c }.Order(StringComparer.Ordinal), OnPaper(gw, envelope));
+
+        var (second, _, secondDb) = await Ready();
+        using var _2 = secondDb;
+        var slots = Slots(second, 3);
+        var x = Judged(secondDb, PromotionVerdict.Refused, 140, PromotionReason.NoTrade, at: At.AddHours(-3));
+        var y = Judged(secondDb, PromotionVerdict.Refused, 141, PromotionReason.NoTrade, at: At.AddHours(-2));
+        ResearchRow(secondDb, y, 0.2);
+
+        Assert.Equal(1, second.AllocatePaperDue(At));
+        Assert.Equal(new[] { y }, Inconclusives(second, slots, At));
+        Assert.Empty(second.Allocations.For(x));
+        Assert.Empty(conn.Placed);
+        await gw.DisposeAsync();
+        await second.DisposeAsync();
+    }
 }
+

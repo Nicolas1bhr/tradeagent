@@ -401,9 +401,18 @@ public sealed class TradingGateway : IAsyncDisposable
 
         var written = 0;
 
+        // THE ORDER IS THE RESEARCH EVIDENCE'S (U-referee-v2c; seat A's Q8 (c)): every version whose holdout cannot be
+        // remembered by its author before any that may be, then by the verdict's research rank, unknown last — and ties in
+        // today's order, newest verdict first, because the sort is stable. A flagged version stays on this path; it is only
+        // offered later. The order reads the flag and the research row, never a sealed figure.
         foreach (var versionId in Promotions.All(PaperSweepLooksBack)
                      .Select(p => p.VersionId)
-                     .Distinct(StringComparer.Ordinal))
+                     .Distinct(StringComparer.Ordinal)
+                     .Select(v => (VersionId: v, Standing: Promotions.Standing(v)))
+                     .OrderBy(x => MayBeRemembered(x.Standing))
+                     .ThenByDescending(x => ResearchRank(x.Standing))
+                     .Select(x => x.VersionId)
+                     .ToList())
         {
             // ALREADY IN IT: nothing to do, and no note. The sweep runs on every tick, so an
             // allocation that is already standing must cost nobody a second paid turn. A standing row that authorises
@@ -450,6 +459,27 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE PAPER QUEUE'S RANK OF A STANDING (<c>U-referee-v2c</c>): its verdict's research measurement's
+    /// <see cref="ResearchEvidenceRow.Rank"/> — the deflated Sharpe ratio — or unknown (−∞, last) where the verdict has no
+    /// row, or its row read a run a holdout window reaches now (<see cref="ResearchEvidence.Withheld"/>), whose figures are
+    /// not read on a guess.
+    /// </summary>
+    double ResearchRank(PromotionStanding standing) =>
+        standing.Promotion is { } p && Referee.Research.Of(p.CampaignId, p.VersionId) is { } row
+        && Referee.Research.Withheld(row) is null
+            ? row.Rank
+            : double.NegativeInfinity;
+
+    /// <summary>
+    /// WHETHER A PAPER-ELIGIBLE STANDING'S HOLDOUT MAY BE REMEMBERED BY ITS AUTHOR (<c>U-referee-v2c</c>; Q7 (a)): its sealed
+    /// flag, or true where its verdict has no sealed row — whether it may be cannot be read, and unknown is never read as
+    /// "cannot". A promoted standing never is: its holdout post-dates its freeze, after the author's training.
+    /// </summary>
+    bool MayBeRemembered(PromotionStanding standing) =>
+        standing is { IsPaperEligible: true, Promotion: { } p }
+        && Referee.Holdouts.Flag(p.CampaignId, p.VersionId) is not { Remembered: false };
+
+    /// <summary>
     /// The inconclusive class of a standing over its verdict's holdout span, or null — the reading
     /// <see cref="Allocations.RecordPaper"/> re-asks inside its write.
     /// </summary>
@@ -459,8 +489,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
     /// <summary>
     /// THE ONE INCONCLUSIVE PATH INTO PAPER (<c>U-referee-v2b</c>, <c>docs/EDGE-FACTORY.md</c> § 4.5), after the
-    /// paper-eligible pass: every version whose refusal stands INCONCLUSIVE (<c>Strategy.Inconclusive</c>), oldest verdict
-    /// first, is offered a slot under <see cref="AllocationPolicy.InconclusiveV1"/> for <c>Inconclusive.Term</c> — and
+    /// paper-eligible pass: every version whose refusal stands INCONCLUSIVE (<c>Strategy.Inconclusive</c>), by its verdict's
+    /// research rank (unknown last; <c>U-referee-v2c</c>) and then oldest verdict first, is offered a slot under <see cref="AllocationPolicy.InconclusiveV1"/> for <c>Inconclusive.Term</c> — and
     /// <see cref="Allocations.RecordPaper"/> decides, inside its write: a third of the envelope's slots, none below three,
     /// one per campaign lineage at a time, one term per version, one trial charged to the verdict's campaign. A version
     /// that has ever held such a slot is not offered another. Answers how many it wrote.
@@ -477,7 +507,9 @@ public sealed class TradingGateway : IAsyncDisposable
             .Distinct(StringComparer.Ordinal)
             .Select(v => Promotions.Standing(v))
             .Where(s => s.Promotion is not null && InconclusiveOf(s) is not null)
-            .OrderBy(s => s.Promotion!.At)
+            // BY RESEARCH EVIDENCE FIRST, unknown last (U-referee-v2c), then today's order: oldest verdict first.
+            .OrderByDescending(ResearchRank)
+            .ThenBy(s => s.Promotion!.At)
             .ThenBy(s => s.Promotion!.Id, StringComparer.Ordinal)
             .ToList();
 

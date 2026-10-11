@@ -3986,8 +3986,7 @@ figure made of rounding. The owner's report adds it to each verdict's line — r
 :309); no op, verb or answer field reaches it — and asks `StrategyStore.HeldBack` again AT EACH READ of the candidate and
 every trial the measurement read through a stream (`ResearchEvidence.Withheld`): one held back now, by a holdout set after
 the verdict or a dataset gone, and the line says the measurement is withheld, which run and why, and shows no figure; the
-recorded rows are not touched. Not here: E2's ±20% neighbours (`U-referee-neighbours`), enforcing any gate, E4 and the queue's order
-(`U-referee-v2c`).
+recorded rows are not touched. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
 
 **One INCONCLUSIVE path into paper** (`U-referee-v2b`, EDGE § 4.5). A refusal is inconclusive when it says nothing about the
 version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `refused` — never invalidated — whose reason is
@@ -3995,7 +3994,7 @@ version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `re
 the campaign's `holdout_from` to its dataset's last close (`CampaignStore.HoldoutSpan`) and an end that cannot be read
 counting as short. `the-holdout-run-did-not-complete` is never inconclusive: the strategy faulted. After its paper-eligible
 pass the app's sweep (`TradingGateway.AllocatePaperDue`) offers each inconclusive version a PAPER row under
-`AllocationPolicy.InconclusiveV1`, oldest verdict first, and `Allocations.RecordPaper` decides inside its one write: the
+`AllocationPolicy.InconclusiveV1`, by research rank (unknown last; `U-referee-v2c`) and then oldest verdict first, and `Allocations.RecordPaper` decides inside its one write: the
 envelope's standing rows under that policy, other versions', are fewer than ⌊`max_deployments` / 3⌋ (none below three slots
 — the owner's card grants one, so it holds none today); no standing row under that policy, in any envelope, stands for
 another version judged under the same campaign lineage (`CampaignStore.LineageRoot` — the family's stand-in until `U-experiments-op`, named on the row's reason
@@ -4011,6 +4010,33 @@ that verdict its own `V1` row. The verdict path is untouched — `Referee`, `Pro
 `RefereeFeedback.Text` are byte-identical (`InconclusiveTests` pins the shas) — so the refusal stays refused and confers
 nothing live: no live reader reads a paper row. Research's note says "inconclusive quota", no figure. Schema: none — the
 marker and the term ride `policy_version` and `effective_to`. No op, verb or argument asks for a slot.
+
+**Every verdict also seals E4's holdout figures, and flags a holdout its author may remember** (`U-referee-v2c`, rung 35;
+EDGE § 4.5 E4, :206; R04 :255, :261-266, :290, :315). In the verdict's own write, beside its research row, `RefereeHoldout`
+records one `referee_holdout` row per (campaign, version, method), first writer wins, never updated or deleted (a stopped
+verdict writes none), computed from the holdout run's daily net returns in memory (`DailyReturns.Of` on the run's trace; the
+run keeps no stream): **fidelity** z = (SR_h − (SR_research − SR0)) / se_h over the verdict's research row, se_h by R04
+:64's variance with the holdout's skew and raw kurtosis, `inconclusive` while 2·se_h exceeds one annual Sharpe unit (every
+holdout under ≈ 1,460 known days; `Fidelity`); the **betting e-value** E_h = Π(1 + λ_t·r_t), λ_t = clip(plug-in Kelly/2,
+0, 0.5) from the days before t (`BettingE`); p_h = 1 − PSR(0); and the **α-wealth** step — ADDIS at α_paper 0.25, W0 = α/2,
+λ 0.25, τ 0.5, γ_j ∝ j^−1.6 (`AlphaWealth`) over every judgement `JudgementsSpent` counts, in charge order
+(`CampaignStore.JudgementsCharged`; lineage-wide and across campaigns over the same months, never reset by renewal), each
+earlier one read by its recorded step and one with none counted as tested, not rejected, not discarded; p_h ≤ α_j is tested
+only over ≥ 365 known days, else `inconclusive` with α_j spent anyway; α_j and the wealth before and after are recorded. An
+unknown input is NULL, never 0. **Sealed:** no surface reads a figure — not `RefereeFeedback.Text`, the note, the boundary,
+the Situation, the report or the answer — and no clause reads any; it gates nothing, and the verdict budget stays the cap.
+**Remembered** (seat A's Q7 (a)): flagged when the holdout starts before the authoring model's published knowledge cutoff
+ends, or the cutoff is unknown — the author read version → `attempt` → `ai_attempt.effective_model`, never
+`requested_model`, and a version with no attempt, an attempt naming no model (codex names none) or a model with no row in
+`ModelCutoffs` (data: the vendor's published cutoff, its page and the day it was read) is flagged; a holdout that starts at
+or after the version's freeze never is, so only the paper-eligible arm is touched. The report's verdict line says "holdout
+may be remembered" with the holdout's start, the model and its cutoff — two dates and a model id. **The paper queue's
+order** (Q8 (c)): the sweep's paper-eligible pass offers every version whose holdout cannot be remembered before any that
+may be (a verdict with no sealed row may be), then by the verdict's research `Rank` (the DSR; no row, or a `Withheld` one,
+last), ties newest verdict first as before; the inconclusive pass orders by the same rank, then oldest first. A flagged
+version stays paper-eligible and is only offered later; `RecordPaper`, both policies, `EvaluatorVersion`, the promotion and
+every standing are byte-identical. Not here: enforcing z, ADDIS or E_h; e-LOND and E7 (`U-live-tiers`); families
+(`U-experiments-op`); more paper slots (`U-envelope-slots`); serving any of it to an agent — never.
 
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
 **after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
