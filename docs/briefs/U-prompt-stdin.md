@@ -34,6 +34,6 @@ Red-first tests (CI has no codex: the suite's fake-CLI pattern; quote each red a
 **Evidence beyond CI:** one mock run (`fleet/tmp/A-org/seat-home/mock/run-case.sh`, a throwaway home, no real model) with the unit's real codex argv and
 the prompt on stdin — quote the mock's captured request containing the prompt and `ps -o args` of the codex process NOT containing it.
 Out of scope: cells (`U-cell-linux-*`); the seat home (`U-seat-home`); the API harness (no argv); OpenCode's home.
-Conflicts: `U-seat-home` inserts its deny set in `AgentArgs.Build` — this unit is dispatched on a `main` that has it; keep its args, fresh and resumed.
+Conflicts: `U-seat-home` LANDED (`053b9ec2`, record `133759b5`, rung 37): its deny set rides `AgentArgs` (settings on `RuntimeManifest.Seat`) and every launch verifies the seat's argv — keep its args fresh and resumed and make its argv check expect the stdin marker, never the prompt. **Seat A at dispatch:** the line numbers above are from `15dacd77`; U-seat-home and U-admission-fail-closed moved them — locate by `grep -n`. Codex evidence runs ONLY with a throwaway `CODEX_HOME`+`HOME` and the mock provider; the local Colima VM is OFF-LIMITS.
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all three
 platforms; the Codex review with the CI wait; names vs `main` 0 removed). `## Report` ≤ 20 lines appended here.
