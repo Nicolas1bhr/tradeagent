@@ -479,6 +479,25 @@ public sealed class AiAttemptStore(Database db)
         return r.Read() ? Read(r) : null;
     });
 
+    /// <summary>
+    /// THE LATEST LAUNCH OF <paramref name="role"/> THAT TOOK A WAKE — the newest row of that role that consumed a
+    /// <c>mission_event</c> in its own commit (<see cref="Begin"/>), whatever became of it after: LAUNCHED, ENDED or
+    /// LOST. That is a mission turn the loop's admission let through, the one kind of launch that is shown a
+    /// Situation; the owner's typed turn takes no wake, and a launch the ledger refused wrote no row at all. Null
+    /// where the role has none.
+    /// </summary>
+    public AiAttempt? LastWoken(string role) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM ai_attempt a
+             WHERE COALESCE(a.role, $chair) = $role
+               AND EXISTS (SELECT 1 FROM mission_event e WHERE e.consumed_by = a.id)
+             ORDER BY a.started_at DESC, a.rowid DESC LIMIT 1
+            """, ("$chair", CouncilRoles.Default), ("$role", role));
+        using var r = c.ExecuteReader();
+        return r.Read() ? Read(r) : null;
+    });
+
     /// <summary>Attempts that started in the window, oldest first.</summary>
     public List<AiAttempt> Between(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
     {

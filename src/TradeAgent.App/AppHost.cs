@@ -500,7 +500,6 @@ public sealed class AppHost : IAsyncDisposable
             ? new DateTimeOffset(t, TimeSpan.Zero)
             : null;
 
-    /// <summary>When the last mission turn was composed, so the next one can say what is new since.</summary>
     /// <summary>
     /// THE CHAIR'S BOOK AS THE LAST SITUATION READ IT — one line per open position — or null where none has been read
     /// or the last read failed. What <see cref="RoleObjectives"/> is handed, so a role's look is decided without a
@@ -525,8 +524,6 @@ public sealed class AppHost : IAsyncDisposable
         Volatile.Write(ref _lastBook, null);
     }
 
-    /// <summary>When each role's Situation last listed the owner's new material — see <see cref="RoleInboxMarks"/>.</summary>
-    readonly RoleInboxMarks _inboxSeen = new(DateTimeOffset.UtcNow);
 
     /// <summary>
     /// Whether a newer TradeAgent has been published, and the machinery to install one.
@@ -1828,9 +1825,10 @@ public sealed class AppHost : IAsyncDisposable
         async Task<MissionSituation> Compose(string role, CancellationToken ct)
         {
             var status = await host.Gateway.StatusAsync(ct);
-            // SINCE THIS ROLE'S OWN LAST SITUATION (U-reconcile-wakes): a file listed to Research is
-            // still news to the chair, and the other way round.
-            var since = host._inboxSeen.Take(role, DateTimeOffset.UtcNow);
+            // SINCE THIS ROLE'S OWN LAST ADMITTED TURN (U-reconcile-wakes): a file listed to Research is
+            // still news to the chair, and the other way round — and a Situation no launch was admitted
+            // for, or one a restart forgot, told the role nothing (RoleInboxMarks).
+            var since = host._db is { } marks ? RoleInboxMarks.Since(marks, role) : DateTimeOffset.MinValue;
 
             // Positions come from the broker and the broker can be down. A turn told "positions: none"
             // because a call failed would be a turn reasoning about an account it cannot see, so the

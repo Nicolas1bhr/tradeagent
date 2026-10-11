@@ -948,7 +948,30 @@ public sealed class TurnMeter
     }
 
     /// <summary>44 characters: the minute it started, so a person can read the table, and a guid.</summary>
-    string NewId() => $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44];
+    string NewId() => IdMintedAt(_now());
+
+    /// <summary>The prefix and the instant's spelling of every launch id this meter mints.</summary>
+    const string IdPrefix = "turn-", IdInstant = "yyyyMMddHHmmssfff";
+
+    /// <summary>
+    /// A LAUNCH ID MINTED AT <paramref name="at"/>: the instant to the millisecond, UTC, so a person can read the table,
+    /// and a guid. 44 characters.
+    /// </summary>
+    public static string IdMintedAt(DateTimeOffset at) =>
+        $"{IdPrefix}{at.UtcDateTime.ToString(IdInstant, CultureInfo.InvariantCulture)}-{Guid.NewGuid():n}"[..44];
+
+    /// <summary>
+    /// THE INSTANT A LAUNCH ID WAS MINTED, read back from the id this meter wrote — or null for an id it did not mint.
+    /// The loop mints a turn's id BEFORE it composes the turn's Situation (<c>MissionLoop.TurnAsync</c>), so this is an
+    /// instant at or before everything that Situation was shown.
+    /// </summary>
+    public static DateTimeOffset? MintedAt(string attemptId) =>
+        attemptId.StartsWith(IdPrefix, StringComparison.Ordinal)
+        && attemptId.Length >= IdPrefix.Length + IdInstant.Length
+        && DateTime.TryParseExact(attemptId.AsSpan(IdPrefix.Length, IdInstant.Length), IdInstant,
+            CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var at)
+            ? new DateTimeOffset(at, TimeSpan.Zero)
+            : null;
 
     /// <summary>
     /// WHAT THE NEXT TURN WOULD COMMIT: the allowance, priced at the model TradeAgent is asking for.

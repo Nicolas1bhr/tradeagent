@@ -2138,7 +2138,9 @@ owner's words, the inbox, the "work on its own" press and every fill and finishe
 except a fill or a finished order of a paper deployment's request (its id is a `deployment_op` row), which
 wakes nobody while the run is active: that run's observation is its forward-run note, raised for Research and
 quoted in the turn it buys like a report. Once the run has ENDED it is given no later note, so a fill or a
-finished order of its request after that — a close that rested at the END, an owed close — wakes Research. The Situation lists new inbox material to each role since ITS OWN last Situation. The
+finished order of its request after that — a close that rested at the END, an owed close — wakes Research. The Situation lists new inbox material to each role since ITS OWN last admitted turn — the instant its
+latest launch that took a wake was minted, read from the launch ledger, so a launch the ledger refused and a
+restart move nothing, and a role with no such launch is listed everything present. The
 scheduled look (`MissionReviewMinutes`, the FASTEST pace — `U-quiet-review` slows it to 8× while only looks
 wake a role) is raised only for a role with an open objective (`AgentRuntime/RoleObjectives.cs`, version 1,
 written into every attempt's context as `objectives_version`): kinds in code, instances derived at read from
