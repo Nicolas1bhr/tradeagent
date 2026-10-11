@@ -136,7 +136,8 @@ jobs:
       # row, green on attempt 1, went red on attempt 2 only because a FaultTests press test's red had
       # re-run everything: "red twice" belongs to one test. A first attempt that failed and names no
       # failed test (a crash, an abort, no trx) re-runs nothing and fails the step, saying so. The script is
-      # FAIL-CLOSED: a trx that is missing, unreadable or cut short, a failed result with no definition, or a name
+      # FAIL-CLOSED: attempt 1 must have written one trx for EACH test project that runs Timing tests (listed from
+      # the repo, not from the files present), and a trx that is missing, unreadable or cut short, a failed result with no definition, or a name
       # the filter cannot say exactly fails the step, and after the retry `verify` fails it unless the retry's own
       # trx lists exactly the tests attempt 1 failed, each Passed.
       - name: Test the timing category
@@ -165,8 +166,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::warning title=Timing category failed on its first attempt::${failed//$'\n'/, }"
 
-          # ONLY WHAT FAILED, read from the same trx files; nothing named is a failed step, not a re-run.
-          retry=$(.github/ci/timing-retry.sh filter tests/*/TestResults/results-timing.trx) || exit 1
+          # ONLY WHAT FAILED, read from attempt 1's trx files; nothing named is a failed step, not a re-run.
+          # THE FILES ARE THE ONES EVERY TEST PROJECT THAT RUNS TIMING TESTS MUST HAVE WRITTEN, derived from the repo
+          # and never from a glob of what is there: a project that crashed and wrote no trx is a missing file the
+          # script refuses, not a project that vanishes behind another project's passing retry.
+          first=$(.github/ci/timing-retry.sh trx results-timing.trx) || exit 1
+          retry=$(.github/ci/timing-retry.sh filter $first) || exit 1
           echo "Re-running only the timing tests that failed, once; the failure above stands in the record either way."
           echo "Filter: $retry"
           if ! dotnet test TradeAgent.sln -c Release --no-build \
@@ -177,7 +182,7 @@ jobs:
           # A GREEN RETRY COUNTS ONLY IF IT RE-RAN EXACTLY WHAT FAILED: the tests its own trx lists must be the
           # tests attempt 1's trx files list as failed, each Passed. A filter that selected fewer tests (a name
           # it could not say), more, or none at all leaves this red, whatever dotnet test exited with.
-          .github/ci/timing-retry.sh verify tests/*/TestResults/results-timing.trx -- tests/*/TestResults/results-timing-retry.trx
+          .github/ci/timing-retry.sh verify $first -- tests/*/TestResults/results-timing-retry.trx
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
