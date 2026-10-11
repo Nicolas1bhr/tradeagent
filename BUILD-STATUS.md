@@ -9798,3 +9798,40 @@ in sequence on the UI thread and the owed pass writes only days with no file, so
 ("Tailscale") judged a false positive, excluded by name. **Tests box:** NOT RUN — "the machine does not answer" (2026-10-10 11:45, 2026-10-11 01:50).
 **NOT done, NOT verified:** timings of the fixed reader (query plans only); `firstEver`'s walk for a never-delivered series grows with its failures; why nothing was asked (the recorder's durable run record, a `tape.db`
 rung); per-symbol completeness; the line over a real home's tape; full local suites (CI ran them).
+
+## 2026-10-11 — U-runner-features landed: the paper runner values a program's features as the backtest does — at each declared close, from what had arrived by it, under an audience that reads no holdout window — each order names the values it stood on, and live stays refused
+
+Built under build-fleet seat A from `docs/briefs/U-runner-features.md` (survey S-runner-features, queued `a5f17ec0`, dispatched `41d8b249`): a first builder died at a usage stop after item 1 (`908ccf88`); a FRESH builder
+(2026-10-11) continued from its branch and its uncommitted work — judged, finished and committed as items 2-4, its two throwaway probes used and deleted, never committed. The builder rebased onto `c4f611fe`; the
+manager stacked it on U-tape-gaps (`e6e2672d`) and land.sh v2's prep rebased it onto `604a3133`; src+tests patch-id identical (`8ef940840a5f`) throughout. Merge `52c2aec4` (ff-only): 6 commits (4 items, the guard, the report), 22 files,
++1,415/−215. On main: item 1 `d93032f2`, item 2 `55b3921f` + the guard `eb7f4069`, item 3 `680cf262`, item 4 `7124ad92`, the report `52c2aec4`.
+**No schema change** (main 31). EVIDENCE path (the holdout, a run's own record); paper only.
+
+- **Item 1 (`a77a7708`):** the backtest's feature feed is the paper runner's one path — `FeatureFeed.At` public, `FeatureFeed.ForPaper` reading under an internal paper-runner audience that reads no holdout window, serving a
+  run's already-read values by close and hashing them as read.
+- **Item 2 (`f23e91ee`, `922b69f5`):** the runner, handed the tape's reader by its composition root, reads each declared feature at each close through that feed and steps the program; `ForwardRuns.Implements` = All
+  (moved here from item 4 — the runner cannot step a feature program without it, a declared deviation); the first close is the bar holding the start (one bar earlier at most, so the holdout question asks about
+  more reads, never fewer — declared); a run whose reads would reach a held window is ENDED in words naming the dataset and window (the ruling); the GUARD the builder added: a tape read that throws ENDS the
+  run in words (before it, the throw left the run active with its later minutes unprotected).
+- **Item 3 (`d2a00ba3`):** `PlaceIntent.Features`, a passive record written only when set — its one read is `ForwardRuns.cs:1018` (`StoodOn`, the replay check), quoted by grep; an intent with no features writes no
+  key ((d)). A replay that no longer reads what an order stood on ends the run in words.
+- **Item 4 (`58f15b93`):** `ForwardRuns.CannotRun` (no tape; a run starting now that reaches a window) keeps the sweep from churning such a version; CONTRACTS "The runner" (the in-process value cache kept and why,
+  with the cost line — ruling 1), STRATEGY-LANGUAGE :131-141, `StrategyProgram.cs`.
+- **Canon:** the agents' feature sentence lives in `Canon.cs` GuideText (the guide, not a versioned seat template), so `Canon.Version` stays 1; canon bytes base = tip on every pair (ops·CLI 15,693 / 14,479 with /
+  without the simulator; research·CLI 12,883 / 12,039; research·harness 11,763 / 10,953 — all under 16,384); the guide −14 B each.
+**Verified by running (the builder, quoted).** Release `--no-incremental` `0 Warning(s)` `0 Error(s)`; 3× through the suite lock: `FeatureProgramRunnerTests` 9/9, `FeatureProgramRequirementTests` +
+`FeatureProgramBacktestTests` 10/10. **RED on the stubs:** (a)(b)(d)(e)(h) "this program requires `feature`, which this build…" where null was expected; (c) "The collection was empty"; (f) the same requirement words;
+(g) and the flipped requirement test `Expected: […"indicator", "feature", "size"…] Actual: […"indicator", "size"…]`; the guard's (c') without its catch, empty. **Mutant watched RED, restored:** the runner asking the NEXT
+close (`EndOf(EndOf(open))`) ⇒ (a) "the program faulted on the bar at 2026-10-03 12:00…". **Cost** (the Mac swapping ≈10.7 GB: an upper bound): a pass reading every close from the tape 1,063-1,157 ms and 331 MiB vs
+412-555 ms and 124 MiB for the twin without the feature; steady pass 335-516 ms; values kept 0.83 MiB.
+**Names vs main:** 2495 → 2504, removed 1 — `A_runner_that_does_not_understand_a_required_field_refuses`, (k), REWRITTEN as `The_runner_steps_a_feature_program_and_live_stays_refused` (the old name pinned the refusal this
+unit lifts; PRE-JUDGED in the brief, as U-timeframe-b's two), passed by `LAND_JUDGED_REMOVED` (land.sh, seat P 06:01: "JUDGED REMOVED") — added 10.
+**Codex review (gpt-6.1-sol, read-only, at `b1121e4d`, before landing), triaged by seat A — no fixer** (`fleet/records/U-runner-features-review-triage.md`): a planned order dispatched after a restart is a decision
+already recorded under the checks (not a defect); `StoodOn` skipping an intent with no readable features reaches only a corrupted row (OWED hardening, a light card); the rig's live assertion passes on the dataset
+licence, the feature's own live refusal proven by `FeatureProgramStandingTests.Research_only_feature_inputs_confer_no_live_authority` (a test note).
+**CI:** branch run 38095740997 at `b1121e4` (the old workflow): test ubuntu 13 min, macos 14, windows 60, linux-host 20, package-linux 2, package 3 — all success. Landing (the v2 gate): CI CARRIED from run 38102722770 at `e6e2672d` — green on all 11 jobs (sharded); its build tree equals `52c2aec4` outside the bookkeeping paths.
+**Tests box:** NOT RUN — `ready : NO - the machine does not answer`.
+**FINDING, NOT FIXED (the brief kept the minute clock untouched), OWED as card `U-runner-maxhold-replay`:** after the runner's own max-hold flatten the evaluator reads FLAT only on that live minute; a later replay
+reads LONG there, emits its own max-hold exit and leaves it pending, so the close after a max-hold flatten cannot enter and a catch-up pass could decide differently — pre-existing, every program.
+**NOT done, NOT verified:** live; the app was not run; the full Unit/Fault/Integration suites ran on CI only; the brief's NOT-claimed list (a row stamped by a close but committed after the deciding pass; forward
+bars' own holdout gap).
