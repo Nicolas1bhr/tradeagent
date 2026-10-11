@@ -14,7 +14,8 @@ namespace TradeAgent.Core;
 ///
 /// <para><b>An app-owned file, named by its own hash.</b> The policy reaches the cell stage as a file under
 /// <see cref="Directory"/> — never through the environment or the argument list of anything a model can steer — and the file's
-/// name IS the SHA-256 of its bytes, so a file changed after it was written no longer matches its name and is refused.</para>
+/// name begins with the SHA-256 of its bytes, so a file changed after it was written no longer matches its name and is refused.
+/// The rest of the name is one launch's own, so the launcher that removes it after its cell exits never removes another's.</para>
 ///
 /// <para><b>Refused, never trimmed.</b> A policy that would grant the app's home, anything above it, or anything beneath its
 /// <c>state/</c> or its cell policies is not a weaker cell: <see cref="Problem"/> names it and nothing starts.</para>
@@ -60,13 +61,14 @@ public sealed record CellPolicy
     public string Hash => Sha256Hex.Of(Serialize());
 
     /// <summary>
-    /// Writes the policy owner-only under <paramref name="directory"/> (default <see cref="Directory"/>) as <c>&lt;hash&gt;.cell.json</c>
-    /// and returns the path. Throws when <see cref="Problem"/> has anything to say.
+    /// Writes the policy owner-only under <paramref name="directory"/> (default <see cref="Directory"/>) as
+    /// <c>&lt;hash&gt;.&lt;launch&gt;.cell.json</c> (the launch part sixteen random hex digits: one file per launch) and returns the path. Throws when <see cref="Problem"/> has anything to say.
     /// </summary>
     public string Write(string? directory = null)
     {
         if (Problem() is { } why) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, why);
-        var path = Path.Combine(directory ?? Directory, Hash + FileSuffix);
+        var launch = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        var path = Path.Combine(directory ?? Directory, Hash + "." + launch + FileSuffix);
         OwnerOnlyFile.Write(path, Encoding.UTF8.GetBytes(Serialize()));
         return path;
     }
@@ -80,10 +82,10 @@ public sealed record CellPolicy
     {
         var name = Path.GetFileName(path);
         if (!FileName.IsMatch(name))
-            throw Refused($"the cell policy {path} is not named <sha256>{FileSuffix}");
+            throw Refused($"the cell policy {path} is not named <sha256>.<launch>{FileSuffix}");
         var bytes = File.ReadAllBytes(path);
         var hash = Sha256Hex.Of(bytes);
-        if (!name.StartsWith(hash, StringComparison.Ordinal))
+        if (!name.StartsWith(hash + ".", StringComparison.Ordinal))
             throw Refused($"the cell policy {path} does not hash to its name (its bytes hash to {hash}): it changed after the app wrote it");
 
         Wire? wire;
@@ -199,7 +201,7 @@ public sealed record CellPolicy
 
     const string FileSuffix = ".cell.json";
 
-    static readonly Regex FileName = new("^[0-9a-f]{64}\\.cell\\.json$", RegexOptions.CultureInvariant);
+    static readonly Regex FileName = new("^[0-9a-f]{64}\\.[0-9a-f]{16}\\.cell\\.json$", RegexOptions.CultureInvariant);
 
     sealed record Wire(int V, string? Workspace, string[]? ReadOnly, string[]? Executable, string[][]? Environment, int[]? TcpPorts);
 }

@@ -144,6 +144,7 @@ public static class ContainedLaunch
         catch (Exception ex)
         {
             error.WriteLine($"trade: could not run {run[0]} ({ex.Message})");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
             exitCode = cellPolicy is null ? 127 : 126;
             return true;
         }
@@ -163,6 +164,10 @@ public static class ContainedLaunch
             // only itself.
             var end = TreeTeardown.End(self, started, self, insideTheSession: true);
             if (!end.Ended) error.WriteLine($"trade: {end.Sentence}");
+
+            // THE CELL'S POLICY FILE GOES WITH IT (triage #6): one file per launch, removed once its cell and everything the cell
+            // started are gone — and only when it is the app's own, so a path handed to this flag removes nothing else.
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
 
             exitCode = orphaned || !command.HasExited ? 128 + 9 : command.ExitCode;
         }
@@ -239,7 +244,20 @@ public static class CellStage
         return Refuse(failure.Sentence);
     }
 
-    /// <summary>Why <paramref name="path"/> is not a policy file the app wrote, or null when it is.</summary>
+    /// <summary>Removes a launch's policy file once its cell has exited — when it is the app's own, and otherwise nothing. Never throws.</summary>
+    public static void Discard(string path)
+    {
+        try
+        {
+            if (AppOwned(path) is null) File.Delete(Path.GetFullPath(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* left for the next look; it grants nothing alone */ }
+    }
+
+    /// <summary>
+    /// Why <paramref name="path"/> is not a policy file the app wrote, or null when it is: in the app's own cell folder, not a
+    /// symlink, writable by nobody else, and on Linux owned by this account (triage #7).
+    /// </summary>
     static string? AppOwned(string path)
     {
         var full = Path.GetFullPath(path);
@@ -253,6 +271,8 @@ public static class CellStage
         if (!OperatingSystem.IsWindows() &&
             (File.GetUnixFileMode(real) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
             return $"the cell policy {full} can be written by another account";
+        if (OperatingSystem.IsLinux() && CellNative.NotOwnedByThisAccount(real) is { } owner)
+            return $"the cell policy {full} is not this account's own: {owner}";
         return null;
     }
 
