@@ -2643,7 +2643,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// the asking half, and every line of it is the deciding half's: the caller names a version and at
     /// most a dataset, and nothing else about the judgement is a parameter of the frame.</para>
     ///
-    /// <para><b>Admission, and each refusal says which clause it is.</b> A KNOWN COUNCIL ROLE, by
+    /// <para><b>Admission, and each refusal says which clause it is.</b> AN ACTIVE POSITION, by
     /// <see cref="Backtests.RoleOf"/> and the same refusal a backtest gets — a roleless connection is
     /// authenticated and is nobody, and the owner at the keyboard is not a council role. An OPEN
     /// CAMPAIGN for that dataset, because a campaign is what counts the attempts made against a
@@ -2686,7 +2686,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // THE ROLE FIRST, and it is `Backtests`' own answer rather than a second reading of the same
         // question: one refusal, one rule, and a caller that cannot record a run cannot ask for a
         // verdict on one either.
-        var role = Backtests.RoleOf(ctx);
+        var role = gateway.Backtests.RoleOf(ctx);
 
         // THE ENTRY IT IS ASKED UNDER, CHECKED BEFORE ANYTHING IS CHARGED OR ANSWERED (U-research-ledger): in the ledger and
         // this role's own, or refused with nothing charged. Nothing is written here; the link is the verdict's own write,
@@ -4021,7 +4021,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     object LensPropose(AgentContext ctx, IpcRequest req)
     {
         OnlyDeclared(req, LensOnly);
-        if (!CouncilRoles.IsKnown(ctx.Role))
+        // AN ACTIVE POSITION, by the gateway's one answer (U-org-rights): the legacy pair or any other the chart holds as
+        // active. An app principal proposes nothing here, and a dormant position, an unknown name and nobody are refused.
+        if (gateway.ActivePositionOf(ctx.Role) is not { } proposer)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "a lens is registered under the role whose launch proposed it, and this connection presented no launch grant — "
                 + "so there is no role to register it under. TradeAgent puts the grant in the environment of the process it "
@@ -4031,7 +4033,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 "TradeAgent has no market-context tape open, so there is nowhere to register a lens. It is opened when TradeAgent "
                 + "starts, and the account owner's activity log says why it could not be. Nothing was written.");
 
-        var registered = registrar(Require(req, "lens"), ctx.Role!, ctx.AttemptId);
+        var registered = registrar(Require(req, "lens"), proposer, ctx.AttemptId);
         if (registered.Lens is not { } lens)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "the lens was refused: " + (registered.Refusal ?? "TradeAgent's registrar gave no reason") + ".");

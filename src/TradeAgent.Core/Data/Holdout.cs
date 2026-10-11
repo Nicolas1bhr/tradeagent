@@ -67,10 +67,14 @@ public sealed class BarAudience
     ///
     /// <para><paramref name="role"/> is for the refusal's wording and for nothing else. A null role is
     /// not "not research" and is not a default that could be read as the chair: it is a caller that
-    /// proved nothing, and it gets the same refusal as both directors.</para>
+    /// proved nothing, and it gets the same refusal as both directors. A position after the legacy pair is
+    /// named by its id (<c>U-org-rights</c>) — the caller passes the active position its launch proved — and an
+    /// app principal, which is no position, is a caller that proved no role here.</para>
     /// </summary>
     public static BarAudience Pipe(string? role) => new(false,
-        CouncilRoles.IsKnown(role) ? $"the {CouncilRoles.Title(role!)}'s launch" : "a caller that proved no role");
+        CouncilRoles.IsKnown(role) ? $"the {CouncilRoles.Title(role!)}'s launch"
+        : CouncilRoles.IsPositionId(role) ? $"position {role}'s launch"
+        : "a caller that proved no role");
 
     /// <summary>
     /// THE ONE DOOR PAST THE CUTOFF. In-process, internal, and reached only from a charged verdict —
