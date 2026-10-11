@@ -193,7 +193,7 @@ jobs:
         run: |
           set -euo pipefail
           { cat tests/*/TestResults/results.trx 2>/dev/null || true; } | tr '\r\n' '  ' | tr '<' '\n' \
-            | { grep '^TestMethod ' || true; } | { grep -o ' className="[^"]*"' || true; } | cut -d'"' -f2 | sort -u \
+            | { grep '^TestMethod[[:space:]]' || true; } | { grep -o '[[:space:]]className="[^"]*"' || true; } | cut -d'"' -f2 | sort -u \
             | .github/ci/shard-filter.sh check "${{ matrix.shard }}" -
 
       - uses: actions/upload-artifact@v7
