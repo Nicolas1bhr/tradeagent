@@ -559,6 +559,163 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             "If a browser window does not appear shortly, press Sign in again.");
     }
 
+    /// <summary>
+    /// THE SIGN-IN WITH A ONE-TIME CODE (<c>U-seat-signin</c>): the manifest's <see cref="RuntimeManifest.DeviceCode"/> command,
+    /// started like every process of this runtime — no window, output captured, the pinned program, under the seat home
+    /// (<see cref="AgentEnvironment.Apply(ProcessStartInfo, IReadOnlyDictionary{string, string}, RuntimeManifest)"/>) — and left
+    /// running, because it is the process that waits for the owner to finish on the other device.
+    ///
+    /// <para><b>All three, or a refusal:</b> the link, the code and how long it lives are read by the manifest's own patterns. If
+    /// the program ends, or 30 seconds pass, before all three matched, the sign-in is stopped and refused in words naming the
+    /// runtime and its version — the app never shows a code it guessed.</para>
+    /// </summary>
+    public async Task<DeviceChallenge> BeginDeviceCodeAsync(CancellationToken ct = default)
+    {
+        var plan = manifest.DeviceCode is { Args.Length: > 0 } p ? p
+            : throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
+                $"{manifest.DisplayName} has no sign-in with a code in its manifest");
+        var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
+
+        RequirePin(exe);
+        StopLogin();
+
+        Regex url, code, expiry;
+        try { (url, code, expiry) = (new Regex(plan.UrlPattern), new Regex(plan.CodePattern), new Regex(plan.ExpiryPattern)); }
+        catch (ArgumentException ex)
+        {
+            throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
+                $"{manifest.DisplayName}'s sign-in with a code has a pattern TradeAgent cannot read ({ex.Message}).");
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = _workspace,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        SetCommand(psi, exe, plan.Args);
+        AgentEnvironment.Apply(psi, _env, manifest);
+
+        var contained = ProcessContainment.Start(psi);
+        var process = contained.Process;
+        _login = contained;
+        Presence(process, presence);
+        try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
+
+        var transcript = new StringBuilder();
+        var all = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Check()
+        {
+            string text;
+            lock (transcript) text = transcript.ToString();
+            if (url.IsMatch(text) && code.IsMatch(text) && expiry.IsMatch(text)) all.TrySetResult();
+        }
+
+        var pumps = Task.WhenAll(LinesAsync(process.StandardOutput, transcript, Check), LinesAsync(process.StandardError, transcript, Check));
+        var exited = process.WaitForExitAsync(ct);
+        await Task.WhenAny(all.Task, exited, Task.Delay(TimeSpan.FromSeconds(30), ct));
+        // A PROGRAM THAT ENDED HAS SAID ALL IT WILL: its last lines are read before anything is judged missing.
+        if (!all.Task.IsCompleted && exited.IsCompleted) await Task.WhenAny(pumps, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+
+        string printed;
+        lock (transcript) printed = transcript.ToString();
+        var u = url.Match(printed);
+        var c = code.Match(printed);
+        var e = expiry.Match(printed);
+        if (u.Success && c.Success && e.Success && int.TryParse(Group(e), out var minutes) && minutes > 0)
+            return new DeviceChallenge(TrimUrl(Group(u)), Group(c), TimeSpan.FromMinutes(minutes));
+
+        StopLogin();
+        var missing = string.Join(", ", new[] { (u.Success, "the address"), (c.Success, "the code"), (e.Success && int.TryParse(Group(e), out var m) && m > 0, "how long the code lasts") }
+            .Where(x => !x.Item1).Select(x => x.Item2));
+        var version = manifest.Install.Version is { Length: > 0 } pinned ? pinned : await GetVersionAsync(CancellationToken.None) ?? "of a version TradeAgent could not read";
+        throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
+            $"TradeAgent could not read {missing} in what {manifest.DisplayName} {version} printed for a sign-in with a code, and will " +
+            "not guess one. Nothing was signed in. Use the browser or a key instead; this version's words are corrected in TradeAgent's " +
+            "AI settings file, not on your computer.");
+    }
+
+    static string Group(Match m) => m.Groups.Count > 1 ? m.Groups[1].Value : m.Value;
+
+    /// <summary>Every line a stream prints, colour codes off, into the transcript — and the caller told after each.</summary>
+    static async Task LinesAsync(StreamReader reader, StringBuilder transcript, Action after)
+    {
+        try
+        {
+            string? raw;
+            while ((raw = await reader.ReadLineAsync()) is not null)
+            {
+                lock (transcript) transcript.AppendLine(Ansi.Strip(raw));
+                after();
+            }
+        }
+        catch (Exception) { /* the stream closing is how this ends */ }
+    }
+
+    /// <summary>
+    /// TRUE WHILE A SIGN-IN THIS RUNTIME STARTED IS STILL WAITING for the owner — the browser's callback or the code typed on
+    /// another device. False once it finished, failed, or was stopped.
+    /// </summary>
+    public bool SigningIn
+    {
+        get
+        {
+            try { return _login is { Process.HasExited: false }; }
+            catch (Exception) { return false; }
+        }
+    }
+
+    /// <summary>
+    /// WHETHER THE SEAT HOME HOLDS A CREDENTIAL, as the runtime's own status command says under it (<c>U-seat-signin</c>): exit 0
+    /// signed in, anything else signed out. A status that could not be run — no program, a program that is not the pin, a seat
+    /// home refused, a deadline — is UNKNOWN with the reason, never read as either answer. Never touches the owner's own home.
+    /// </summary>
+    public async Task<SeatSignInReading> ReadSignInAsync(CancellationToken ct = default)
+    {
+        if (manifest.Seat is null) return new(SeatSignInState.NotApplicable, null);
+        if (manifest.AuthStateArgs.Length == 0)
+            return new(SeatSignInState.Unknown, $"{manifest.DisplayName} has no sign-in status command in its manifest");
+        var exe = ResolveExecutable();
+        if (exe is null) return new(SeatSignInState.Unknown, $"{manifest.DisplayName} is not on this computer");
+        if (SeatProfile.PinRefusal(manifest, exe) is { } notThePin) return new(SeatSignInState.Unknown, notThePin);
+
+        ProcResult r;
+        try { r = await Run(exe, manifest.AuthStateArgs, TimeSpan.FromSeconds(30), ct, agentWork: false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { return new(SeatSignInState.Unknown, ex.Message); }
+
+        var signedIn = manifest.AuthStateSuccessPattern is { } pattern
+            ? Regex.IsMatch(Ansi.Strip(r.StdOut + "\n" + r.StdErr), pattern, RegexOptions.IgnoreCase)
+            : r.ExitCode == 0;
+        return new(signedIn ? SeatSignInState.SignedIn : SeatSignInState.SignedOut, null);
+    }
+
+    /// <summary>
+    /// REMOVES THE SEAT HOME'S SIGN-IN (<c>U-seat-signin</c>): the manifest's <see cref="RuntimeManifest.LogoutArgs"/>, run under the
+    /// seat home and nowhere else — the owner's own login is never touched. The caller asks twice first (it removes permission).
+    /// A sign-in still waiting is stopped before it.
+    /// </summary>
+    public async Task SignOutAsync(CancellationToken ct = default)
+    {
+        if (manifest.LogoutArgs.Length == 0)
+            throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, $"{manifest.DisplayName} has no sign-out command in its manifest");
+        if (manifest.Seat is null)
+            throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
+                $"{manifest.DisplayName} has no seat home of TradeAgent's own, so TradeAgent signs nothing out of it");
+        var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
+        RequirePin(exe);
+        StopLogin();
+
+        var r = await Run(exe, manifest.LogoutArgs, TimeSpan.FromSeconds(30), ct, agentWork: false);
+        if (r.ExitCode != 0)
+            throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, Summarise(string.IsNullOrWhiteSpace(r.StdErr) ? r.StdOut : r.StdErr));
+    }
+
     static async Task PumpAsync(StreamReader reader, StringBuilder transcript, Regex? pattern, TaskCompletionSource<string> found,
         Regex? codePattern, TaskCompletionSource<string> codeFound)
     {
@@ -704,9 +861,11 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                     $"{Path.GetFileName(exe)} did not accept the key within {KeySignInTimeout.TotalSeconds:0} seconds");
             }
 
+            // THE KEY NEVER COMES BACK IN THE WORDS: a CLI that echoes what it was handed would otherwise put the credential on
+            // the card, in the activity log and in any report of the error (CRED-001, U-seat-signin).
             if (p.ExitCode != 0)
                 throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
-                    Summarise(string.IsNullOrWhiteSpace(err) ? outp : err));
+                    Summarise(string.IsNullOrWhiteSpace(err) ? outp : err).Replace(key, "(the key)", StringComparison.Ordinal));
             return;
         }
 

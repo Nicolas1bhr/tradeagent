@@ -155,6 +155,27 @@ public sealed class SeatPlan
 }
 
 /// <summary>
+/// HOW A RUNTIME SIGNS IN WITH A ONE-TIME CODE TYPED ON ANOTHER DEVICE (<c>U-seat-signin</c>): the command, and the three
+/// patterns that read its link, its code and how long the code lives out of what it prints. Data, because the shape is the
+/// vendor's (CLAUDE.md, "vendor commands are data"): a reworded prompt is a one-line fix in <c>runtimes.json</c>. A pattern that
+/// does not match is a REFUSAL naming the runtime's version — never a guessed code shown to the owner.
+/// </summary>
+public sealed class DeviceCodePlan
+{
+    /// <summary>The command that prints a link and a one-time code and then waits for the owner to finish, e.g. <c>login --device-auth</c>.</summary>
+    public string[] Args { get; set; } = [];
+
+    /// <summary>Regex with one capture group: the address the owner opens on the other device.</summary>
+    public string UrlPattern { get; set; } = "";
+
+    /// <summary>Regex with one capture group: the one-time code.</summary>
+    public string CodePattern { get; set; } = "";
+
+    /// <summary>Regex with one capture group: how many MINUTES the code lives, as the vendor prints it.</summary>
+    public string ExpiryPattern { get; set; } = "";
+}
+
+/// <summary>
 /// How a runtime accepts a key the user pastes into TradeAgent's own window.
 ///
 /// This exists because of the no-terminal rule, not in spite of it. OpenCode's interactive sign-in
@@ -440,6 +461,15 @@ public sealed class RuntimeManifest
     /// <summary>How this runtime takes a pasted key, or null if it signs in another way.</summary>
     public ApiKeyPlan? ApiKey { get; set; }
 
+    /// <summary>The sign-in with a one-time code typed on another device, or null where the runtime has none (<c>U-seat-signin</c>).</summary>
+    public DeviceCodePlan? DeviceCode { get; set; }
+
+    /// <summary>
+    /// The command that removes this runtime's stored sign-in, or empty for none. Run under the seat home only, and only after the
+    /// owner's second press: it removes permission (CLAUDE.md, "two presses").
+    /// </summary>
+    public string[] LogoutArgs { get; set; } = [];
+
     /// <summary>
     /// How this vendor refuses a turn for its own usage limit, or null where nobody has recorded it. See
     /// <see cref="UsageLimitPlan"/>.
@@ -702,8 +732,8 @@ public static class RuntimeCatalog
                 ],
                 McpArgs = ["mcp", "list", "--json"],
                 McpAllowlist = [],
-                // PART 1 OF 2: the dashboard's own Sign-in for the seat home is U-seat-signin; until it lands, this sentence is
-                // what the owner reads instead of a turn that fails for no reason he can see.
+                // WHAT THE DASHBOARD'S "AI sign-in" CARD SAYS ABOVE ITS THREE WAYS IN (U-seat-signin), and what a refused turn says
+                // while the seat home holds no credential.
                 SignedOut = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again."
             },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
@@ -769,6 +799,21 @@ public static class RuntimeCatalog
             // CODEX_HOME, stderr "Not logged in", exit 1. stdout is empty in both cases and neither
             // carries an ANSI escape.
             AuthStateArgs = ["login", "status"],
+            // THE ONE-TIME CODE ON EVERY PLATFORM (U-seat-signin): the card offers it beside the browser and the pasted key, so an
+            // owner whose browser is on another device signs in all the same. The shape is the RUN of 2026-10-09 recorded above
+            // (codex-cli 0.160.1: the link, "(expires in 15 minutes)", a code of four and five) — a new shape refuses in words
+            // naming the version, and is a one-line fix here.
+            DeviceCode = new DeviceCodePlan
+            {
+                Args = ["login", "--device-auth"],
+                UrlPattern = @"(https://(?!localhost|127\.0\.0\.1)[^\s""'<>\)\]]+)",
+                CodePattern = @"\b([A-Z0-9]{4}-[A-Z0-9]{5})\b",
+                ExpiryPattern = @"expires in (\d+) minutes?"
+            },
+            // RUN 2026-10-11, codex-cli 0.160.1 on macOS, a throwaway CODEX_HOME and HOME, a FAKE key: `logout` after a key sign-in
+            // printed "Successfully logged out", exit 0, and `login status` then "Not logged in", exit 1; on an empty home it
+            // printed "Not logged in", exit 0. It removes the seat home's credential and nothing else.
+            LogoutArgs = ["logout"],
             // `codex login` prints two addresses: first the local callback server it just started,
             // then the one to actually visit. Requiring https and refusing localhost picks the
             // second, which is the one the user needs.
