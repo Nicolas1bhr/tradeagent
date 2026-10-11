@@ -832,7 +832,11 @@ public sealed class AppHost : IAsyncDisposable
             // the owner arms real money on the Dashboard while the AI is working.
             launchRefusal: () => Containment.RefusalToLaunch(
                 Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
-            presence: _presence);
+            presence: _presence,
+            // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
+            positions: () => new OrgStore(db).Positions()
+                .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))
+                .Select(p => p.Id).ToList());
         Meter = new TurnMeter(db,
             cap: AiCap,
             session: () => (Conversation as AgentSession)?.ThreadId,

@@ -112,11 +112,18 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// folder and nothing walked it, so everything that role read, wrote or was handed was outside
     /// the one record the agent cannot edit — and <c>docs/COUNCIL.md</c>'s "measured facts, the
     /// app's tables, read-only to agents" covered half a council.</para>
+    ///
+    /// <para><b>EVERY POSITION'S HOME, from this scanner's own database</b> (<c>U-org-principals</c>): the legacy pair
+    /// and every position the chart holds, whatever its status. Not only the active ones: the whole group is marked
+    /// missing against what this pass saw (<see cref="MaterialStore.MarkMissing"/>), so a dormant or ended position's
+    /// home left out of the walk would have its files stamped removed while they lie on the disk — an invented
+    /// deletion. An id that is not a position id has no home and is not walked: never mapped to another one.</para>
     /// </summary>
-    public static IEnumerable<(string Home, string Dir)> RolePaths() =>
-        from role in CouncilRoles.All
+    public IEnumerable<(string Home, string Dir)> RolePaths() =>
+        from position in CouncilRoles.All.Concat(new OrgStore(db).Positions().Select(p => p.Id))
+            .Distinct(StringComparer.Ordinal).Where(CouncilRoles.IsPositionId).ToList()
         from dir in TrackedRoleDirs
-        select (CouncilRoles.HomeDir(role), dir);
+        select (CouncilRoles.HomeDir(position), dir);
 
     /// <summary>Build output and package caches. Present by the tens of thousands or not at all.</summary>
     static readonly HashSet<string> NoiseDirs = new(StringComparer.OrdinalIgnoreCase)

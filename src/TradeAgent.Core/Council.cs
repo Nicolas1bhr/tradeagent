@@ -71,13 +71,50 @@ public static class CouncilRoles
     };
 
     /// <summary>
-    /// The role's folder name under <c>workspace/</c>.
+    /// A POSITION'S FOLDER NAME under <c>workspace/</c>, computed from its id and never read back from a row
+    /// (<c>docs/ORCHESTRATION.md</c> § 2.1).
     ///
-    /// Operations keeps <c>agent</c>: it is where the existing install's plan, journal, strategies
-    /// and data already are, and a rename would either strand them or require a move that could
-    /// silently choose between two versions of a file.
+    /// <para>Operations keeps <c>agent</c>: it is where the existing install's plan, journal, strategies and data
+    /// already are. Research keeps <c>research</c>. Every other position lives under <c>org/&lt;id&gt;</c> — its own
+    /// folder, so its canon never overwrites the chair's and its CLI never resumes the chair's session (a vendor's
+    /// <c>resume --last</c> is scoped by the working directory).</para>
+    ///
+    /// <para><b>An id that fails <see cref="IsPositionId"/> is refused, never mapped</b> (<c>U-org-principals</c>):
+    /// before this, any string that was not Research's went to the chair's folder.</para>
     /// </summary>
-    public static string HomeDir(string role) => role == Research ? Research : "agent";
+    /// <exception cref="TradeAgentException">INVALID_REQUEST for an id that is not a position id.</exception>
+    public static string HomeDir(string role) => role switch
+    {
+        Operations => "agent",
+        Research => Research,
+        _ when IsPositionId(role) => $"{OrgDir}/{role}",
+        _ => throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+            $"'{role}' is not a position id, so it has no home: a position id is lower-case letters, digits and "
+            + "hyphens, never a device name Windows reserves and never one of the app's own principals. Nothing was "
+            + "mapped to another position's folder.")
+    };
+
+    /// <summary>The folder every position after the legacy pair lives under: <c>workspace/org/&lt;id&gt;</c>.</summary>
+    public const string OrgDir = "org";
+
+    /// <summary>
+    /// WHETHER AN ID CAN NAME A POSITION'S HOME: <c>[a-z0-9-]+</c>, not a device name Windows reserves (a folder
+    /// called <c>con</c> or <c>com1</c> cannot be created there), and not an app principal, which is code and never
+    /// a position. Whether a position by that id EXISTS, and is active, is the chart's question, not this one.
+    /// </summary>
+    public static bool IsPositionId(string? id) =>
+        id is { Length: > 0 }
+        && id.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
+        && Array.IndexOf(ReservedDeviceNames, id) < 0
+        && !Db.OrgStore.IsAppPrincipal(id);
+
+    /// <summary>The names Windows reserves for devices, in the only case <see cref="IsPositionId"/> admits.</summary>
+    static readonly string[] ReservedDeviceNames =
+    [
+        "con", "prn", "aux", "nul",
+        "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+        "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"
+    ];
 
     /// <summary>
     /// WHAT THE APP DELIVERS INTO, inside each role's home. Here rather than on

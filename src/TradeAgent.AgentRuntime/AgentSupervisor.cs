@@ -26,10 +26,21 @@ namespace TradeAgent.AgentRuntime;
 /// start path passes its own, because the shared register is sticky — see
 /// <c>CliAgentRuntime.Presence</c>.
 /// </param>
+/// <param name="positions">
+/// The chart's active positions beside the legacy pair, read at every prepare — each gets a home of its own under
+/// <c>org/&lt;id&gt;</c>. Null is the legacy pair alone. A read that throws builds the legacy pair alone: a home that
+/// could not be listed is a home not built, never one guessed.
+/// </param>
 public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
-    AgentPresence? presence = null)
+    AgentPresence? presence = null, Func<IReadOnlyList<string>>? positions = null)
 {
+    IReadOnlyList<string> Positions()
+    {
+        try { return positions?.Invoke() ?? []; }
+        catch (Exception) { return []; }
+    }
+
     readonly SemaphoreSlim _gate = new(1, 1);
     IAgentRuntime? _runtime;
 
@@ -85,7 +96,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
                     : detection.Reason ?? $"{manifest.DisplayName} is not installed");
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-            var homes = WorkspaceBuilder.BuildAll(ctx);
+            var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions());
             Workspaces = homes;
             var workspace = homes[CouncilRoles.Operations];
             Workspace = workspace;
@@ -147,7 +158,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     /// <summary>Refreshes the instruction file so a restarted agent never reads a stale world.</summary>
     public async Task RestartAsync(WorkspaceContext ctx, CancellationToken ct = default)
     {
-        Workspaces = WorkspaceBuilder.BuildAll(ctx);
+        Workspaces = WorkspaceBuilder.BuildAll(ctx, positions: Positions());
         await StopAsync(ct);
         await StartAsync(ct);
     }

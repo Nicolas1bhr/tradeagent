@@ -127,10 +127,15 @@ public static class WorkspaceBuilder
         files.Record(homeDir, relPath, text);
     }
 
-    /// <summary>Builds every role's home in one pass and returns them by role.</summary>
+    /// <summary>
+    /// Builds every position's home in one pass and returns them by position id: the legacy pair always, and
+    /// <paramref name="positions"/> beside them — the chart's active positions, as the composition root reads them. A
+    /// home is representable, never runnable: building one opens no conversation (<c>U-org-principals</c>).
+    /// </summary>
     public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
-        AppFileManifest? appFiles = null) =>
-        CouncilRoles.All.ToDictionary(r => r, r => Build(ctx with { Role = r }, root, appFiles));
+        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null) =>
+        CouncilRoles.All.Concat(positions ?? []).Distinct(StringComparer.Ordinal)
+            .ToDictionary(r => r, r => Build(ctx with { Role = r }, root, appFiles), StringComparer.Ordinal);
 
     /// <summary>Environment handed to the agent process. The trade CLI is on PATH; no secrets are present.</summary>
     public static Dictionary<string, string> EnvironmentFor(string sessionId, string workspace)
