@@ -86,6 +86,10 @@ parse() {
       return out s
     }
     function sayable(s) { return s != "" && s != "\001" && s !~ /[[:cntrl:]]/ && s !~ /^[[:space:]]/ && s !~ /[[:space:]]$/ }
+    # A namespace prefix on an element (`<t:UnitTestResult`, `</t:TestRun>`) is the same element: strip it, so a writer
+    # that prefixes its elements cannot make a result vanish (the second review of this unit, finding 3). The vstest
+    # writer uses the default namespace and no prefix; this is for any writer that does not.
+    { if (match($0, /^\/?[A-Za-z_][-A-Za-z0-9_.]*:/)) $0 = (substr($0, 1, 1) == "/" ? "/" : "") substr($0, RLENGTH + 1) }
     /^TestRun[[:space:]]/ { started = 1 }
     /^\/TestRun>/ { ended = 1 }
     /^ResultSummary[[:space:]]/ { summary = 1 }
