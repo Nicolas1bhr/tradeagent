@@ -27,8 +27,26 @@ public sealed record LensRecord(
     /// <summary>The port's reference for this lens: what a call asked under it carries, hashed from its questions.</summary>
     public SchemaRef Schema => new(Id, Version, SchemaSha);
 
-    /// <summary>The definition, parsed — or null, because this build's validator would no longer admit it.</summary>
-    public Lens? Parsed => Lens.Parse(Definition).Lens;
+    /// <summary>
+    /// THE DEFINITION, PARSED BY THIS BUILD — or the refusal in words. A row another validator admitted
+    /// (<see cref="ValidatorVersion"/> is not <see cref="Lens.ValidatorVersion"/>) is REFUSED, naming both versions, and
+    /// never read under this build's rules or built into a state by this build's builder: refuse, never guess.
+    /// </summary>
+    public LensParse Parse()
+    {
+        if (!string.Equals(ValidatorVersion, Lens.ValidatorVersion, StringComparison.Ordinal))
+            return LensParse.No($"the lens '{Id}' version {Version} was admitted by validator {ValidatorVersion}, and this build's is "
+                                + $"{Lens.ValidatorVersion}; a lens is read only under the rules and the state builder that admitted it, "
+                                + $"so this build reads it as nothing — a build of {ValidatorVersion} reads it, or a lens proposed to this "
+                                + "build under another id takes its place");
+        var parsed = Lens.Parse(Definition);
+        return parsed.Ok
+            ? parsed
+            : LensParse.No($"the lens '{Id}' version {Version} is not one this build's validator ({Lens.ValidatorVersion}) admits: {parsed.Why}");
+    }
+
+    /// <summary>The definition, parsed — or null, for the reason <see cref="Parse"/> gives in words.</summary>
+    public Lens? Parsed => Parse().Lens;
 }
 
 /// <summary>
@@ -785,7 +803,10 @@ public sealed class TapeStore : IDisposable
         var at = now ?? DateTimeOffset.UtcNow;
         return Write(() =>
         {
-            if (LensBySha(lens.LensSha) is { } same) return new LensRegistration(same, false, null);
+            if (LensBySha(lens.LensSha) is { } same)
+                return same.Parse() is { Ok: false } other
+                    ? new LensRegistration(null, false, $"these bytes are already registered and cannot be used: {other.Why}. Nothing was written")
+                    : new LensRegistration(same, false, null);
 
             var (from, to) = OwnerDay.Window(at);
             using (var c = Cmd("SELECT COUNT(*) FROM lens WHERE proposer=$p AND registered_at >= $from AND registered_at < $to",

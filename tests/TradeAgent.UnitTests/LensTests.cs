@@ -539,6 +539,44 @@ public class LensTests(ITestOutputHelper log)
         Assert.Null(tape.LensRefusal(built.Ask.For(DecisionInstruments.TypeSafeDirect)));
     }
 
+    /// <summary>
+    /// A LENS ROW ANOTHER VALIDATOR ADMITTED IS REFUSED, NAMING BOTH VERSIONS — never read with this build's rules. A row
+    /// stamped <c>lens-v999</c> does not parse, builds no state, and a call naming it is refused by the store's check (the
+    /// wire's and the record's); the same bytes proposed again are refused rather than handed back as the lens there.
+    /// </summary>
+    [Fact]
+    public void A_lens_another_validator_admitted_is_refused_naming_both_versions()
+    {
+        var file = NewTape();
+        LensAsk ask;
+        TapeObservation clean;
+        using (var tape = new TapeStore(file))
+        {
+            var lens = tape.RegisterLens(Valid, CouncilRoles.Operations, null).Lens!;
+            clean = Arrive(tape, Notice("n0020", Noon, "OKX lists ETH options for EEA users"));
+            ask = LensState.For(lens, clean).Ask!;
+            Assert.Null(tape.LensRefusal(ask.For(DecisionInstruments.TypeSafeDirect)));
+        }
+        Exec(file, "UPDATE lens SET validator_version='lens-v999' WHERE id='suite-headline'");
+
+        using var reopened = new TapeStore(file);
+        var row = reopened.LensOf("suite-headline", 1)!;
+        Assert.Equal("lens-v999", row.ValidatorVersion);
+        (string What, string? Words)[] refused =
+        [
+            ("the state", LensState.For(row, clean).Refusal),
+            ("the call's check", reopened.LensRefusal(ask.For(DecisionInstruments.TypeSafeDirect))),
+            ("the same bytes again", reopened.RegisterLens(Valid, CouncilRoles.Operations, null).Refusal)
+        ];
+        foreach (var (what, words) in refused)
+        {
+            log.WriteLine($"{what}: {words}");
+            Assert.Contains("lens-v999", words, StringComparison.Ordinal);
+            Assert.Contains($"this build's is {Lens.ValidatorVersion}", words, StringComparison.Ordinal);
+        }
+        Assert.Null(row.Parsed);
+    }
+
     // ---- (f) ------------------------------------------------------------------------------------------------------
 
     /// <summary>

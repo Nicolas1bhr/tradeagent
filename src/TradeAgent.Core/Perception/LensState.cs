@@ -72,8 +72,8 @@ public static class LensState
     public static LensStateResult For(LensRecord lens, TapeObservation? observation)
     {
         ArgumentNullException.ThrowIfNull(lens);
-        if (lens.Parsed is not { } parsed)
-            return new(null, $"the lens '{lens.Id}' version {lens.Version} is not one this build's validator ({Lens.ValidatorVersion}) admits, so it asks nothing");
+        var parse = lens.Parse();
+        if (parse.Lens is not { } parsed) return new(null, parse.Why + ", so it asks nothing");
         if (observation is null) return new(null, "there is no observation to ask about");
         if (observation.Source != parsed.Target.Source || observation.Series != parsed.Target.Series)
             return new(null, $"tape_obs:{observation.Id} is a '{observation.Source}/{observation.Series}' reading, and the lens "
