@@ -140,8 +140,10 @@ public class BudgetReservationTests : IDisposable
         var refused = meter.Begin("## Situation", role: CouncilRoles.Research);
 
         Assert.False(refused.Admitted);
-        Assert.Equal(CouncilRoles.Research, refused.Ceiling);
-        Assert.Equal(Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Research)), refused.Refusal);
+        // THE CEILING IS THE RESEARCH DIVISION, the unit the legacy share now funds (U-org-envelopes): its envelope is the
+        // split, 1.00, and the refusal names the unit rather than a folded role title.
+        Assert.Equal(OrgIds.Research, refused.Ceiling);
+        Assert.Equal(Labels.UnitEnvelopeReached("the Research division", 1.00m, 1.00m, Reservation), refused.Refusal);
         Assert.Equal(0.28m, refused.Over);          // 1.28 asked for against a 1.00 share
         Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
         Assert.True(meter.Today.AdmitsAnotherTurn); // the DAY is nowhere near its ceiling

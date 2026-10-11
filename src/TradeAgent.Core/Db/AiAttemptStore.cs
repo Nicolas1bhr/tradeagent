@@ -145,8 +145,24 @@ public sealed record AiAdmissionRule
     /// <summary>The owner's ceiling for the whole day, across every role.</summary>
     public decimal Cap { get; init; }
 
-    /// <summary>That role's slice of it. Meaningless, and unread, when <see cref="Role"/> is null.</summary>
+    /// <summary>
+    /// That role's slice of it. Meaningless, and unread, when <see cref="Role"/> is null — and unread when <see cref="Funding"/>
+    /// is set, whose envelopes replace it.
+    /// </summary>
     public decimal RoleCap { get; init; }
+
+    /// <summary>
+    /// THE UNITS THAT FUND THIS LAUNCH, nearest first and ending at the root, each with the envelope it admits against
+    /// (<c>U-org-envelopes</c>, <c>docs/ORCHESTRATION.md</c> § 2.4): resolved from the chart before the transaction, and the
+    /// launch is admitted only if every unit's spent + unresolved reservations + this reservation fit its envelope — the
+    /// totals read INSIDE the transaction, through the chains recorded with each row, so two siblings cannot both take a
+    /// parent's last room. Ids and envelopes only, never a total: a rule that carried a reading is the defect above.
+    ///
+    /// <para>Null for a launch no unit funds — an app principal such as perception, which keeps <see cref="RoleCap"/> and counts
+    /// in the day's total and in no subtree. When set, it replaces <see cref="RoleCap"/>, and it must name the same units as
+    /// the attempt's own <see cref="AiAttempt.Funding"/>, which is what is recorded.</para>
+    /// </summary>
+    public IReadOnlyList<FundedUnit>? Funding { get; init; }
 
     /// <summary>What THIS launch commits — the number about to be written as its reservation.</summary>
     public decimal Reservation { get; init; }
@@ -317,9 +333,32 @@ public sealed class AiAttemptStore(Database db)
         if (admit is { } rule)
         {
             var day = Totals(rule.From, rule.To, null);
-            var mine = rule.Role is null ? day : Totals(rule.From, rule.To, rule.Role);
-            var reading = rule.Reading(day, mine);
-            if (!reading.AdmitsAnotherTurn) return Refuse(rule, reading);
+            if (rule.Funding is { } chain)
+            {
+                // THE CHAIN RECORDED IS THE CHAIN ADMITTED: one resolution, or the launch is not written.
+                if (!chain.Select(u => u.UnitId).SequenceEqual(a.Funding ?? [], StringComparer.Ordinal))
+                    throw new ArgumentException("the attempt's funding chain is not the one it was admitted against", nameof(a));
+
+                // THE DAY FIRST, AND UNCHANGED: every row's money, an app principal's included.
+                var reading = rule.Reading(day, day);
+                if (!reading.AdmitsGlobally) return Refuse(rule, reading);
+
+                // THEN EVERY UNIT OF THE CHAIN, over the attempts it funded, read here under the same lock as the INSERT.
+                if (rule.Metered)
+                    foreach (var unit in chain)
+                    {
+                        if (unit.Envelope is not { } envelope) continue;
+                        var funded = Totals(rule.From, rule.To, null, unit.UnitId);
+                        if (funded.Spent + funded.Reserved + rule.Reservation > envelope)
+                            return RefuseUnit(rule, unit.UnitId, envelope, funded);
+                    }
+            }
+            else
+            {
+                var mine = rule.Role is null ? day : Totals(rule.From, rule.To, rule.Role);
+                var reading = rule.Reading(day, mine);
+                if (!reading.AdmitsAnotherTurn) return Refuse(rule, reading);
+            }
         }
 
         using var c = db.Cmd($"""
@@ -367,6 +406,22 @@ public sealed class AiAttemptStore(Database db)
                     : Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Or(rule.Role))),
             Ceiling = global ? AiAdmission.Day : rule.Role,
             Over = over > 0m ? over : 0m,
+            ResumesAt = rule.ResumesAt
+        };
+    }
+
+    /// <summary>
+    /// THE REFUSAL BY A UNIT OF THE FUNDING CHAIN (<c>U-org-envelopes</c>): <see cref="AiAdmission.Ceiling"/> is the unit's id, and
+    /// the sentence names the unit, its envelope and the room it has left.
+    /// </summary>
+    static AiAdmission RefuseUnit(AiAdmissionRule rule, string unitId, decimal envelope, AiAttemptTotals funded)
+    {
+        var room = envelope - funded.Spent - funded.Reserved;
+        return new AiAdmission
+        {
+            Refusal = Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation),
+            Ceiling = unitId,
+            Over = rule.Reservation - room,
             ResumesAt = rule.ResumesAt
         };
     }
@@ -498,7 +553,9 @@ public sealed class AiAttemptStore(Database db)
     /// report that read these counts were each reading one as a turn. A role named is that role's rows,
     /// counts and all — perception's own reading is whole, because its budget is compared against it.</para>
     /// </summary>
-    AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role)
+    /// <para><b>A UNIT named</b> (<c>U-org-envelopes</c>) is every row whose recorded funding chain holds it — the subtree's spend as
+    /// it was admitted, never as today's chart would re-file it; its counts follow the role-less rule above.</para>
+    AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role, string? unit = null)
     {
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
         using var c = db.Cmd($"""
@@ -518,8 +575,10 @@ public sealed class AiAttemptStore(Database db)
                          CASE WHEN $role IS NULL AND role IN ({string.Join(",", principals.Select(p => p.Item1))})
                               THEN 0 ELSE 1 END AS counted
                     FROM ai_attempt WHERE started_at >= $from AND started_at < $to
-                     AND ($role IS NULL OR COALESCE(role,$chair) = $role))
-            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role),
+                     AND ($role IS NULL OR COALESCE(role,$chair) = $role)
+                     AND ($unit IS NULL OR EXISTS (SELECT 1 FROM ai_attempt_funding f
+                                                    WHERE f.unit_id = $unit AND f.attempt_id = ai_attempt.id)))
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$unit", unit),
             ("$chair", CouncilRoles.Default), .. principals]);
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);

@@ -886,7 +886,7 @@ public sealed class TurnMeter
         AiAdmission admission;
         try
         {
-            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation));
+            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding));
             if (admission.Id is { } written)
                 lock (_gate)
                 {
@@ -932,8 +932,13 @@ public sealed class TurnMeter
     /// and the turn about to start is the one that has to obey.
     ///
     /// It carries no totals. Those are read inside the transaction, which is the whole of the fix.
+    ///
+    /// <para><b>The chain replaces the role's share</b> (<c>U-org-envelopes</c>): <paramref name="funding"/> carries the units and
+    /// their envelopes, and the store reads each unit's totals inside its transaction. The legacy split is still what a legacy
+    /// division's envelope reads (<see cref="OrgEnvelopes"/>), so the legacy pair admits as before; a new position no longer
+    /// gets half the day by default.</para>
     /// </summary>
-    AiAdmissionRule RuleFor(string? role, TurnPrice reservation)
+    AiAdmissionRule RuleFor(string? role, TurnPrice reservation, IReadOnlyList<FundedUnit> funding)
     {
         var now = _now();
         var (from, to) = OwnerDay.Window(now);
@@ -944,11 +949,18 @@ public sealed class TurnMeter
             To = to,
             Role = role,
             Cap = cap,
-            RoleCap = role is null ? cap : cap * Share(role),
+            RoleCap = cap,
+            Funding = funding,
             Reservation = reservation.Cost ?? 0m,
             ResumesAt = OwnerDay.Midnight(now)
         };
     }
+
+    /// <summary>
+    /// THE RULE A LAUNCH BY <paramref name="role"/> WOULD BE ADMITTED AGAINST NOW — its reservation and funding chain resolved,
+    /// no totals in it. For a test that builds two rules before either is admitted. Throws where the chain cannot be read.
+    /// </summary>
+    internal AiAdmissionRule AdmissionRuleFor(string? role) => RuleFor(role, Reservation(role), FundingOf(role));
 
     /// <summary>
     /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root,

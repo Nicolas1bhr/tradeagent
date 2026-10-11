@@ -213,6 +213,18 @@ public static class OrgEnvelopes
         return resolved;
     }
 
+    /// <summary>
+    /// A UNIT'S NAME IN THE OWNER'S WORDS, for a refusal. Units carry no title column — titles are claims, published by charter —
+    /// so the seeded three are named here and any other unit by its id.
+    /// </summary>
+    public static string NameOf(string unitId) => unitId switch
+    {
+        OrgIds.Root => "the organisation",
+        OrgIds.Operations => "the Operations division",
+        OrgIds.Research => "the Research division",
+        _ => $"unit {unitId}"
+    };
+
     static decimal Fraction(string unitId, string text) =>
         decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var share) && share is >= 0m and <= 1m
             ? share

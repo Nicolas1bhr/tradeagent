@@ -82,6 +82,223 @@ public class OrgEnvelopeTests : IDisposable
         Seat("pos-2", "team-2");
     }
 
+    // ---- (a) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (a) TWO SIBLING TEAMS CANNOT BOTH TAKE THE PARENT'S LAST ROOM. Two real threads, both through
+    /// <see cref="TurnMeter.Begin"/>, both released together: the parent's totals are read in the transaction that writes
+    /// the reservation, so the second sees the first. And the sequential half: two rules built on an EMPTY ledger, handed to
+    /// the store one after the other — a rule that carried the parent's totals would admit both.
+    /// </summary>
+    [Fact]
+    public void Two_sibling_teams_cannot_both_take_the_parents_last_room()
+    {
+        TwoSiblingTeams();
+        var meter = Meter(10m);
+
+        var admissions = new AiAdmission[2];
+        using var go = new Barrier(2);
+        void Admit(int i, string who)
+        {
+            go.SignalAndWait();
+            admissions[i] = meter.Begin("## Situation", role: who);
+        }
+
+        var a = new Thread(() => Admit(0, "pos-1"));
+        var b = new Thread(() => Admit(1, "pos-2"));
+        a.Start();
+        b.Start();
+        Assert.True(a.Join(TimeSpan.FromSeconds(30)), "the first admission never finished");
+        Assert.True(b.Join(TimeSpan.FromSeconds(30)), "the second admission never finished");
+
+        Assert.Single(admissions, x => x.Admitted);
+        var refused = Assert.Single(admissions, x => !x.Admitted);
+        Assert.Equal("sub-1", refused.Ceiling);
+        Assert.Equal(0.56m, refused.Over);   // 1.28 committed + 1.28 asked for, against 2.00
+        Assert.Equal(1, Count("SELECT COUNT(*) FROM ai_attempt"));
+        Assert.True(meter.Today.AdmitsAnotherTurn);   // the DAY has room; the parent does not
+    }
+
+    /// <summary>(a), the sequential half: rules built before either reservation, admitted one after the other.</summary>
+    [Fact]
+    public void Two_sibling_teams_cannot_both_take_the_parents_last_room_with_rules_built_on_an_empty_ledger()
+    {
+        TwoSiblingTeams();
+        var meter = Meter(10m);
+        var store = new AiAttemptStore(_db);
+
+        var first = meter.AdmissionRuleFor("pos-1");
+        var second = meter.AdmissionRuleFor("pos-2");
+
+        Assert.True(store.Begin(Attempt("seq-1", "pos-1", first), admit: first).Admitted);
+        var refused = store.Begin(Attempt("seq-2", "pos-2", second), admit: second);
+        Assert.False(refused.Admitted);
+        Assert.Equal("sub-1", refused.Ceiling);
+        Assert.Null(store.Get("seq-2"));
+    }
+
+    AiAttempt Attempt(string id, string role, AiAdmissionRule rule) => new()
+    {
+        Id = id, StartedAt = _now, ReservedCost = Reservation, State = AiAttemptState.LAUNCHED, Role = role,
+        Funding = [.. rule.Funding!.Select(u => u.UnitId)]
+    };
+
+    // ---- (b) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (b) A UNIT OVER ITS ENVELOPE IS REFUSED WHILE ITS SIBLING LAUNCHES. Day 20.00; Research keeps the whole day (the legacy
+    /// share, 1); team-1 has 0.1 of it (2.00), team-2 0.5 (10.00). The second launch of team-1 is refused by team-1 by name,
+    /// and team-2's launch beside it is admitted.
+    /// </summary>
+    [Fact]
+    public void A_unit_over_its_envelope_is_refused_while_its_sibling_launches()
+    {
+        Unit("team-1", OrgIds.Research, "0.1");
+        Unit("team-2", OrgIds.Research, "0.5");
+        Seat("pos-1", "team-1");
+        Seat("pos-2", "team-2");
+        var meter = Meter(20m);
+
+        Assert.True(meter.Begin("## Situation", role: "pos-1").Admitted);
+        var refused = meter.Begin("## Situation", role: "pos-1");
+
+        Assert.False(refused.Admitted);
+        Assert.Null(refused.Id);
+        Assert.Equal("team-1", refused.Ceiling);
+        Assert.Equal(0.56m, refused.Over);   // 1.28 + 1.28 against 2.00
+
+        Assert.True(meter.Begin("## Situation", role: "pos-2").Admitted);
+        Assert.Equal(2, Count("SELECT COUNT(*) FROM ai_attempt"));
+    }
+
+    // ---- (c) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c) THE LEGACY PAIR ADMITS EXACTLY AS BEFORE — a GUARD. With no envelope set anywhere, each division's envelope is its
+    /// position's legacy share of the day, and a launch with no role is the chair's, so a sequence of launches by the two
+    /// legacy positions and by nobody is admitted, refused and measured over exactly where the pre-tree rule put it: the day
+    /// first, then <c>spent + reserved + this ≤ cap × share</c> over the role's rows, a NULL role read as the chair's.
+    /// </summary>
+    [Theory]
+    [InlineData("10", "0.5", "0.5")]
+    [InlineData("10", "0.3", "0.9")]
+    [InlineData("5", "1", "1")]
+    [InlineData("6.4", "0.25", "0.75")]
+    [InlineData("20", "0.6", "0.2")]
+    public void The_legacy_pair_admits_exactly_as_before(string capText, string opsText, string resText)
+    {
+        var cap = decimal.Parse(capText, CultureInfo.InvariantCulture);
+        var shares = new Dictionary<string, decimal>
+        {
+            [CouncilRoles.Operations] = decimal.Parse(opsText, CultureInfo.InvariantCulture),
+            [CouncilRoles.Research] = decimal.Parse(resText, CultureInfo.InvariantCulture)
+        };
+        var meter = Meter(cap, role => shares[role]);
+
+        decimal day = 0m;
+        var role = new Dictionary<string, decimal> { [CouncilRoles.Operations] = 0m, [CouncilRoles.Research] = 0m };
+        string?[] order =
+        [
+            CouncilRoles.Research, CouncilRoles.Operations, null, CouncilRoles.Research, CouncilRoles.Operations,
+            CouncilRoles.Research, null, CouncilRoles.Operations, CouncilRoles.Research, CouncilRoles.Operations,
+            CouncilRoles.Research, null, CouncilRoles.Operations, CouncilRoles.Research
+        ];
+        foreach (var who in order)
+        {
+            // THE PRE-TREE RULE, written out: the day, then the role's slice (a NULL role has none, and counts as the chair's).
+            var charged = who ?? CouncilRoles.Default;
+            var dayOver = day + Reservation - cap;
+            var roleOver = who is null ? 0m : role[charged] + Reservation - cap * shares[charged];
+            var admit = dayOver <= 0m && roleOver <= 0m;
+
+            var got = meter.Begin("## Situation", role: who);
+            Assert.True(admit == got.Admitted,
+                $"{who ?? "(no role)"} at day {day}, role {role[charged]}: expected {(admit ? "admitted" : "refused")}");
+            if (admit)
+            {
+                day += Reservation;
+                role[charged] += Reservation;
+            }
+            else if (dayOver > 0m)
+            {
+                Assert.Equal(AiAdmission.Day, got.Ceiling);
+                Assert.Equal(dayOver, got.Over);
+            }
+            else
+            {
+                Assert.NotEqual(AiAdmission.Day, got.Ceiling);
+                Assert.Equal(roleOver, got.Over);
+            }
+        }
+        Assert.Equal(day, meter.Today.Reserved);
+    }
+
+    // ---- (d) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (d) A LOST ATTEMPT KEEPS ITS RESERVATION IN EVERY ANCESTOR ACROSS A RESTART. A subdivision with 3.00 (0.15 of 20.00) and
+    /// two teams under it; every launch is followed by a restart, which declares it LOST at its reservation. Two fit; the third
+    /// is refused by the subdivision — the LOST rows are still its, and the root's.
+    /// </summary>
+    [Fact]
+    public void A_lost_attempt_keeps_its_reservation_in_every_ancestor_across_a_restart()
+    {
+        Unit("sub-1", OrgIds.Research, "0.15", OrgUnitKind.Subdivision);
+        Unit("team-1", "sub-1");
+        Unit("team-2", "sub-1");
+        Seat("pos-1", "team-1");
+        Seat("pos-2", "team-2");
+
+        var first = Meter(20m).Begin("## Situation", role: "pos-1");
+        Assert.True(first.Admitted);
+        var second = Meter(20m).Begin("## Situation", role: "pos-2");   // a restart: the first is LOST
+        Assert.True(second.Admitted);
+
+        var refused = Meter(20m).Begin("## Situation", role: "pos-1");   // and again: both are LOST
+        Assert.False(refused.Admitted);
+        Assert.Equal("sub-1", refused.Ceiling);
+        Assert.Equal(0.84m, refused.Over);   // 1.28 + 1.28 lost + 1.28 asked for, against 3.00
+
+        var store = new AiAttemptStore(_db);
+        Assert.Equal(AiAttemptState.LOST, store.Get(first.Id!)!.State);
+        Assert.Equal(AiAttemptState.LOST, store.Get(second.Id!)!.State);
+        Assert.Equal(["team-1", "sub-1", OrgIds.Research, OrgIds.Root], Chain(first.Id!));
+        Assert.Equal(["team-2", "sub-1", OrgIds.Research, OrgIds.Root], Chain(second.Id!));
+    }
+
+    // ---- (g) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) NON-POSITION SPEND STILL COUNTS AGAINST THE DAILY CAP UNDER THE TREE. Perception's 7.00 is in the day's total and in
+    /// no unit's: a team with 5.00 of a 10.00 day takes two launches (its subtree holds 2.56), and the third is refused by
+    /// the DAY, not by the team — and perception's rows carry no funding chain.
+    /// </summary>
+    [Fact]
+    public void Non_position_spend_still_counts_against_the_daily_cap_under_the_tree()
+    {
+        Unit("team-1", OrgIds.Research, "0.5");
+        Seat("pos-1", "team-1");
+        var meter = Meter(10m);
+        var store = new AiAttemptStore(_db);
+        store.Begin(new AiAttempt
+        {
+            Id = "decision-1", StartedAt = _now, ReservedCost = 7m, State = AiAttemptState.LAUNCHED,
+            Role = AppPrincipals.Perception
+        });
+
+        var one = meter.Begin("## Situation", role: "pos-1");
+        var two = meter.Begin("## Situation", role: "pos-1");
+        Assert.True(one.Admitted);
+        Assert.True(two.Admitted);
+        Assert.Equal(["team-1", OrgIds.Research, OrgIds.Root], Chain(one.Id!));
+
+        var refused = meter.Begin("## Situation", role: "pos-1");
+        Assert.False(refused.Admitted);
+        Assert.Equal(AiAdmission.Day, refused.Ceiling);
+        Assert.Equal(0.84m, refused.Over);   // 7.00 + 2.56 + 1.28 against 10.00
+        Assert.Empty(Chain("decision-1"));
+    }
+
     // ---- (h) ---------------------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -254,5 +471,32 @@ public class OrgEnvelopeTests : IDisposable
         using var c = raw.CreateCommand();
         c.CommandText = sql;
         return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+    // ---- (j) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (j) A PAST CHARGE STAYS WITH THE CHAIN IT WAS ADMITTED UNDER (§ 2.4, "funding lineage is immutable"). A team under
+    /// Research spends, then the chart moves it under Operations: its past charge stays Research's — Research's other team
+    /// is still refused for it, and Operations' launch is not.
+    /// </summary>
+    [Fact]
+    public void A_past_charge_stays_with_the_chain_it_was_admitted_under()
+    {
+        Unit("team-1", OrgIds.Research);
+        Unit("team-2", OrgIds.Research);
+        Seat("pos-1", "team-1");
+        Seat("pos-2", "team-2");
+        // Each division has 2.00 of a 4.00 day: room for one reservation each.
+        var meter = Meter(4m, _ => 0.5m);
+
+        var charge = meter.Begin("## Situation", role: "pos-1");
+        Assert.True(charge.Admitted);
+        Exec("UPDATE org_unit SET parent_id=$p WHERE id='team-1'", ("$p", OrgIds.Operations));
+
+        Assert.Equal(["team-1", OrgIds.Research, OrgIds.Root], Chain(charge.Id!));
+        var refused = meter.Begin("## Situation", role: "pos-2");
+        Assert.False(refused.Admitted);
+        Assert.Equal(OrgIds.Research, refused.Ceiling);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
     }
 }
