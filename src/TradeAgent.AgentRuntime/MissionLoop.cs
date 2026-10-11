@@ -320,6 +320,18 @@ public interface IMissionHost
     CouncilBoundaries? Boundaries => null;
 
     /// <summary>
+    /// THE WORK <paramref name="role"/> OWNS THAT IS OPEN NOW (<see cref="RoleObjectives"/>, <c>U-reconcile-wakes</c>),
+    /// or null where this host cannot say. It decides one thing: whether the app's own scheduled look is worth paying
+    /// for. Every real event still wakes the role it is for.
+    ///
+    /// <para>Null keeps today's clock — the look raised whatever the role owns — because a host that records nothing
+    /// cannot tell an idle role from a busy one, and the cost of guessing idle is work nobody looks at. It must be
+    /// answered from what the host has already read: it is asked on every pass of the loop, and the broker is never
+    /// called from here.</para>
+    /// </summary>
+    IReadOnlyList<RoleObjective>? Objectives(string role) => null;
+
+    /// <summary>
     /// RUNS THE APP'S OWN PAPER-ALLOCATION POLICY, and it is not a turn: no wake is consumed, no
     /// inference is bought and nothing is dispatched. A version whose verdict stands as
     /// <c>paper_eligible</c> or <c>promoted</c> is put into the standing paper envelope the owner
@@ -1998,7 +2010,16 @@ public sealed class MissionLoop
                 // other's look.
                 var woken = role == turned ? woke : null;
 
-                if (_options.ReviewEvery > TimeSpan.Zero)
+                // WHAT THIS ROLE OWNS THAT IS OPEN (U-reconcile-wakes), or null where the host cannot say.
+                // A role that owns nothing open is not looked at: the look is the owner paying for the
+                // clock, and a pending one raised while it had work is closed without a turn. Every real
+                // event still wakes it — this decides the clock, never the queue.
+                var open = OpenObjectives(role);
+                if (open is { Count: 0 })
+                {
+                    WithdrawLooks(events, role, now);
+                }
+                else if (_options.ReviewEvery > TimeSpan.Zero)
                 {
                     if (!events.HasUnconsumed(MissionEventKind.Review, role))
                     {
@@ -2014,7 +2035,12 @@ public sealed class MissionLoop
                 // it becomes a new one is a fact about the world rather than a preference — a role
                 // that stopped at its share has to be told when it may work again, and nothing else
                 // in the queue is going to say so on a quiet night.
-                if (!events.HasUnconsumed(MissionEventKind.Renewal, role))
+                //
+                // AND ONLY FOR A ROLE ITS ALLOWANCE STOPPED (U-reconcile-wakes). A role with room for
+                // another turn has nothing to be told at midnight, and the renewal bought it a paid turn
+                // to hear it anyway. Asked on every pass, so the first pass after a role reaches its
+                // share raises the renewal that tells it when it may work again.
+                if (!Spend(role).AdmitsAnotherTurn && !events.HasUnconsumed(MissionEventKind.Renewal, role))
                 {
                     var midnight = LocalMidnightAfter(now);
                     events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Renewal(midnight), role),
@@ -2027,6 +2053,32 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// WHAT <paramref name="role"/> OWNS THAT IS OPEN, from the host, or null where it cannot say — and a host that
+    /// throws cannot say. Null keeps the clock: guessing idle would cost work nobody looks at.
+    /// </summary>
+    IReadOnlyList<RoleObjective>? OpenObjectives(string role)
+    {
+        try { return _host.Objectives(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// CLOSES THIS ROLE'S PENDING SCHEDULED LOOKS, because it owns nothing open. Only its own payload-less looks —
+    /// the store's statement refuses everything else (<see cref="MissionEventStore.WithdrawLooks"/>). Never throws: a
+    /// look left pending is one look paid for, not the mission.
+    /// </summary>
+    static void WithdrawLooks(MissionEventStore events, string role, DateTimeOffset now)
+    {
+        try
+        {
+            events.WithdrawLooks(role, now,
+                $"{CouncilRoles.Title(role)} held no open work it owns (objectives v{RoleObjectives.Version}), so "
+                + "TradeAgent did not pay for a look");
+        }
+        catch (Exception) { /* the look stays; nothing the role is owed moves */ }
     }
 
     /// <summary>

@@ -88,6 +88,22 @@ public class MissionLoopTests
         public void Queue(string message) => _typed.Add(message);
     }
 
+    /// <summary>A role that has spent its whole share of a 5.00 day: no room for another turn.</summary>
+    static AiSpendToday StoppedReading(string role) => new()
+    {
+        Metered = true,
+        Role = role,
+        Spent = 5m,
+        RoleSpent = 5m,
+        Cap = 10m,
+        RoleCap = 5m,
+        NextTurnReservation = 0.10m,
+        Currency = "USD",
+        Turns = 10,
+        CanPrice = true,
+        ResumesAt = DateTimeOffset.Now.AddHours(1)
+    };
+
     /// <summary>
     /// The app, with a REAL scanner and a REAL presence behind it. Nothing about the attestation is
     /// simulated here: the same <c>MaterialScanner</c> the product runs walks the same tree layout,
@@ -119,6 +135,14 @@ public class MissionLoopTests
         /// pins that a host with no queue still turns.
         /// </summary>
         public MissionEventStore? Events { get; set; }
+
+        /// <summary>
+        /// Each role's reading of the day's spending, or null for the unmetered default. A renewal is raised only for
+        /// a role its allowance stopped (<c>U-reconcile-wakes</c>), so the tests about the renewal say which one.
+        /// </summary>
+        public Func<string, AiSpendToday>? Spending { get; set; }
+
+        public AiSpendToday SpendFor(string role) => Spending?.Invoke(role) ?? AiSpendToday.NotMetered;
 
         /// <summary>Every prompt a launch was opened for, in order.</summary>
         public List<string> Opened { get; } = [];
@@ -540,6 +564,10 @@ public class MissionLoopTests
     /// The fix pinned that test's hour; a pinned hour on its own leaves the other branch untested,
     /// and an untested branch is how the same clock comes back. Both hours are now facts about the
     /// test rather than about the minute the suite happened to reach it.
+    ///
+    /// <para><c>U-reconcile-wakes</c>: a renewal is raised only for a role its allowance stopped, so the one midnight
+    /// brings here is the Research Director's — it has spent its share — while the chair, with room, takes the turn
+    /// and asks for its ten minutes. The rule under test is unchanged: the wait is the queue's minimum.</para>
     /// </summary>
     [Fact]
     public async Task Within_five_minutes_of_midnight_the_renewal_beats_the_delay_the_ai_asked_for()
@@ -549,7 +577,11 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
-        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        var host = new FakeHost(db, root, presence, conversation)
+        {
+            Events = events,
+            Spending = role => role == CouncilRoles.Research ? StoppedReading(role) : AiSpendToday.NotMetered
+        };
         var late = new DateTimeOffset(DateTime.Today.AddHours(23).AddMinutes(55), DateTimeOffset.Now.Offset);
         events.Raise(MissionEventIds.Review(late), MissionEventKind.Review, late);
         File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
@@ -580,6 +612,9 @@ public class MissionLoopTests
     /// exists. One shared review tick would be consumed by whichever role reached it first, and the
     /// other would run only when a real event named it — a Research Director never scheduled at all
     /// on a quiet day. Two roles, two ticks, two renewals, and still nothing behind them.
+    ///
+    /// <para><c>U-reconcile-wakes</c>: a renewal is raised only for a role its allowance stopped, so both roles here
+    /// have spent their share — the case in which there is a renewal to pile up at all.</para>
     /// </summary>
     [Fact]
     public async Task The_review_tick_and_the_renewal_are_scheduled_ahead_and_never_pile_up()
@@ -589,7 +624,11 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
-        var loop = new MissionLoop(new FakeHost(db, root, presence, conversation) { Events = events },
+        var loop = new MissionLoop(new FakeHost(db, root, presence, conversation)
+            {
+                Events = events,
+                Spending = StoppedReading
+            },
             new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) }, now: () => Midday);
 
         for (var i = 0; i < 4; i++) await loop.TurnAsync();
