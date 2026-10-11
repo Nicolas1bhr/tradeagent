@@ -342,8 +342,9 @@ public class TapeStoreTests(ITestOutputHelper log)
             store.Append(Fetch(Noon.AddSeconds(2)), [Point(Noon, "1.0")]);
         }
 
-        // THE TAPE'S OWN TABLES, AND RUNG 2'S: the decision models' answers (U-decision-port).
-        Assert.Equal(["decision_call", "tape_fetch", "tape_meta", "tape_obs"], Tables(file));
+        // THE TAPE'S OWN TABLES, RUNG 2'S — the decision models' answers (U-decision-port) — AND RUNG 3'S: the lenses
+        // they are asked under (U-lenses).
+        Assert.Equal(["decision_call", "lens", "tape_fetch", "tape_meta", "tape_obs"], Tables(file));
         using (var raw = Raw(file))
         {
             Assert.Equal("wal", Scalar(raw, "PRAGMA journal_mode"));

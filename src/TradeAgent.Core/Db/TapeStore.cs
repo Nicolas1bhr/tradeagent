@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Decisions;
+using TradeAgent.Core.Perception;
 
 namespace TradeAgent.Core.Db;
 
@@ -14,6 +15,27 @@ namespace TradeAgent.Core.Db;
 /// that forgets to look at it is handed nothing, never a reading stamped inside a holdout window.
 /// </summary>
 public sealed record TapeAsOf(TapeObservation? Row, string? Refusal);
+
+/// <summary>
+/// ONE REGISTERED LENS, AS THE TAPE HOLDS IT (<c>U-lenses</c>): its whole canonical definition, the two hashes this store
+/// computed, the version it numbered, who proposed it under which attempt, when, and the validator that admitted it.
+/// </summary>
+public sealed record LensRecord(
+    string Id, int Version, string LensSha, string SchemaSha, string Definition, string TargetSource, string TargetSeries,
+    string Proposer, string? Attempt, DateTimeOffset RegisteredAt, string ValidatorVersion)
+{
+    /// <summary>The port's reference for this lens: what a call asked under it carries, hashed from its questions.</summary>
+    public SchemaRef Schema => new(Id, Version, SchemaSha);
+
+    /// <summary>The definition, parsed — or null, because this build's validator would no longer admit it.</summary>
+    public Lens? Parsed => Lens.Parse(Definition).Lens;
+}
+
+/// <summary>
+/// WHAT ONE PROPOSAL CAME TO: the lens it is — <see cref="New"/> when this proposal wrote it, false when the same bytes
+/// were already registered, and the first registration stands — or, with no lens, why it was refused, in words.
+/// </summary>
+public sealed record LensRegistration(LensRecord? Lens, bool New, string? Refusal);
 
 /// <summary>
 /// THE MARKET-CONTEXT TAPE: THE ONLY WRITER OF <c>state/tape.db</c>, now and for every later rung of
@@ -54,9 +76,14 @@ public sealed record TapeAsOf(TapeObservation? Row, string? Refusal);
 /// payload of one it quarantines. A quarantined item is still written like any other — the record is what
 /// the vendor published.</para>
 ///
-/// <para><b>It is app-owned.</b> There is no verb and no pipe op that writes here; the collector in the
-/// app's own process is the only caller of <see cref="Append"/>. Until containment an agent running
-/// unconfined could still edit the FILE — <c>docs/CONTRACTS.md</c> "The tape" says so and does not
+/// <para><b>It is app-owned.</b> There is no verb and no pipe op that writes here but ONE, and it is bounded: the
+/// collector in the app's own process is the only caller of <see cref="Append"/>, the port the only caller of
+/// <see cref="RecordDecision"/>, and the one exception is <c>lens-propose</c> (<c>U-lenses</c>), which reaches
+/// <see cref="RegisterLens"/> through a delegate the composition root hands the gateway — never this store — and can
+/// write one thing: a <c>lens</c> row, insert-only, parsed, numbered and hashed HERE, at most
+/// <see cref="MaxLensProposalsPerDay"/> a proposer an owner day, under the role the grant proved. It cannot write an
+/// observation, a fetch or a call, edit or delete any row, or register a lens for another role. Until containment an
+/// agent running unconfined could still edit the FILE — <c>docs/CONTRACTS.md</c> "The tape" says so and does not
 /// claim otherwise.</para>
 ///
 /// <para><b>Rung 2 adds the decision models' answers</b> (<c>U-decision-port</c>; <c>docs/EDGE-FACTORY.md</c> § 4.2:
@@ -67,11 +94,22 @@ public sealed record TapeAsOf(TapeObservation? Row, string? Refusal);
 /// computed HERE and taken from no caller, as the evidence class is: the ORIGIN, off the URL, and UNPINNED, off this
 /// build's own pin for the instrument (<see cref="DecisionInstruments.IsPinned"/>). One insert, never an update: a
 /// second record for one reservation is refused by its key.</para>
+///
+/// <para><b>Rung 3 adds the lenses</b> (<c>U-lenses</c>; <c>docs/EDGE-FACTORY.md</c> § 4.2): <c>lens</c> holds every
+/// question schema a call may be asked under, each its whole canonical definition, its own hash and the port's hash of
+/// its questions, the version THIS store numbered, who proposed it under which attempt, when, and the validator that
+/// admitted it. Insert only — UNIQUE(id, version) and UNIQUE(lens_sha), never an update or a delete — so a recorded
+/// answer resolves to exactly what was asked, about which item, for as long as the tape exists. This build's built-ins
+/// are registered at open under <see cref="BuiltInLenses.Proposer"/>, and one whose bytes differ from the tape's row
+/// of its id and version is REFUSED, the file untouched.</para>
 /// </summary>
 public sealed class TapeStore : IDisposable
 {
     /// <summary>The version of the layout below, written into the file it describes.</summary>
-    public const int Schema = 2;
+    public const int Schema = 3;
+
+    /// <summary>The most lenses one proposer may register in one owner day. Built-ins are not counted.</summary>
+    public const int MaxLensProposalsPerDay = 8;
 
     /// <summary>The most one observation's canonical payload may hold, in UTF-8 bytes.</summary>
     public const int MaxPayloadBytes = 64 * 1024;
@@ -100,7 +138,8 @@ public sealed class TapeStore : IDisposable
     /// written into the file, and the ladder. A newer tape is left byte-for-byte as it was found.</para>
     /// </summary>
     /// <param name="file">The file to open. Null is <see cref="Paths.TapeFile"/>; a test passes its own.</param>
-    public TapeStore(string? file = null)
+    /// <param name="builtIns">The lenses this build ships. Null is <see cref="BuiltInLenses.All"/>; a test passes its own.</param>
+    public TapeStore(string? file = null, IReadOnlyList<BuiltInLens>? builtIns = null)
     {
         File = file ?? Paths.TapeFile;
         var dir = Path.GetDirectoryName(File);
@@ -128,6 +167,7 @@ public sealed class TapeStore : IDisposable
 
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
             Migrate(have);
+            RegisterBuiltIns(builtIns ?? BuiltInLenses.All());
         }
         catch (Exception)
         {
@@ -175,7 +215,8 @@ public sealed class TapeStore : IDisposable
     }
 
     /// <summary>
-    /// THE LADDER. Two rungs today — the tape itself, and the decision models' answers (<c>U-decision-port</c>); every
+    /// THE LADDER. Three rungs today — the tape itself, the decision models' answers (<c>U-decision-port</c>) and the
+    /// lenses they are asked under (<c>U-lenses</c>); every
     /// later one is an <c>if (have &lt; N)</c> below them, written by the unit that needs it and committed in one
     /// transaction with its own version row, so a crash mid-rung re-runs the rung rather than leaving a file that claims
     /// a layout it does not have.
@@ -255,6 +296,28 @@ public sealed class TapeStore : IDisposable
 
                 INSERT INTO tape_meta(key, value) VALUES('schema', '2')
                   ON CONFLICT(key) DO UPDATE SET value='2';
+                """);
+
+        if (have < 3)
+            Rung("""
+                CREATE TABLE IF NOT EXISTS lens(
+                  id                TEXT NOT NULL,
+                  version           INTEGER NOT NULL CHECK (version >= 1),
+                  lens_sha          TEXT NOT NULL,
+                  schema_sha        TEXT NOT NULL,
+                  definition        TEXT NOT NULL,
+                  target_source     TEXT NOT NULL,
+                  target_series     TEXT NOT NULL,
+                  proposer          TEXT NOT NULL,
+                  attempt           TEXT NULL,
+                  registered_at     TEXT NOT NULL,
+                  validator_version TEXT NOT NULL,
+                  UNIQUE (id, version),
+                  UNIQUE (lens_sha));
+                CREATE INDEX IF NOT EXISTS ix_lens_proposer ON lens(proposer, registered_at);
+
+                INSERT INTO tape_meta(key, value) VALUES('schema', '3')
+                  ON CONFLICT(key) DO UPDATE SET value='3';
                 """);
     }
 
@@ -685,6 +748,157 @@ public sealed class TapeStore : IDisposable
             Answers = Sql.S(r.GetValue(25))
         },
         Sql.S(r.GetValue(3)), Sql.S(r.GetValue(6)), r.GetInt64(7) == 1);
+
+    // ---------------------------------------------------------------------------------------------- the lenses
+
+    const string LensCols =
+        "id, version, lens_sha, schema_sha, definition, target_source, target_series, proposer, attempt, registered_at, validator_version";
+
+    /// <summary>
+    /// REGISTERS ONE PROPOSED LENS, OR SAYS WHY NOT, in one transaction (<c>U-lenses</c>). The definition is parsed here
+    /// (<see cref="Lens.Parse"/>) and stored in its canonical spelling; the version and both hashes are this store's. The
+    /// same bytes as a registered lens are that lens — the first registration stands and nothing is written; the same id
+    /// with other bytes is its next version. Refused in words, nothing written: a definition the validator refuses, a
+    /// built-in's id, a proposer that is nobody or the app, and a proposer's <see cref="MaxLensProposalsPerDay"/>th
+    /// registration of the owner's day passed.
+    /// </summary>
+    /// <param name="proposer">The role the caller's launch grant proved — never a name the caller wrote.</param>
+    /// <param name="attempt">The attempt it proved, or null.</param>
+    /// <param name="now">When it was registered. Null is now; a test passes its own.</param>
+    public LensRegistration RegisterLens(string definition, string proposer, string? attempt, DateTimeOffset? now = null)
+    {
+        if (string.IsNullOrWhiteSpace(proposer))
+            return new(null, false, "a lens is registered under the role that proposed it, and this proposal names none; nothing was written");
+        if (string.Equals(proposer, BuiltInLenses.Proposer, StringComparison.Ordinal))
+            return new(null, false, $"'{BuiltInLenses.Proposer}' registers this build's own lenses and proposes none; nothing was written");
+
+        var parsed = Lens.Parse(definition);
+        if (parsed.Lens is not { } lens) return new(null, false, parsed.Why + "; nothing was written");
+        if (BuiltInLenses.Ids().Contains(lens.Id))
+            return new(null, false, $"'{lens.Id}' is the id of a lens this build ships, whose versions are the app's; a proposal "
+                                    + "takes another id. Nothing was written");
+
+        var at = now ?? DateTimeOffset.UtcNow;
+        return Write(() =>
+        {
+            if (LensBySha(lens.LensSha) is { } same) return new LensRegistration(same, false, null);
+
+            var (from, to) = OwnerDay.Window(at);
+            using (var c = Cmd("SELECT COUNT(*) FROM lens WHERE proposer=$p AND registered_at >= $from AND registered_at < $to",
+                       ("$p", proposer), ("$from", Sql.T(from)), ("$to", Sql.T(to))))
+            {
+                var today = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+                if (today >= MaxLensProposalsPerDay)
+                    return new LensRegistration(null, false,
+                        $"{proposer} has registered {today} lenses today, and a role registers at most {MaxLensProposalsPerDay} in one "
+                        + "owner day; the same bytes again are the lens already there and cost nothing. Nothing was written");
+            }
+
+            int version;
+            using (var c = Cmd("SELECT COALESCE(MAX(version), 0) + 1 FROM lens WHERE id=$id", ("$id", lens.Id)))
+                version = Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+            return new LensRegistration(InsertLens(lens, version, proposer, attempt, at), true, null);
+        });
+    }
+
+    /// <summary>One registered lens by id and version, or null.</summary>
+    public LensRecord? LensOf(string id, int version) => Read(() => LensAt(id, version));
+
+    /// <summary>The registered lenses, newest first.</summary>
+    public IReadOnlyList<LensRecord> Lenses(int limit = 100) => Read(() =>
+    {
+        using var c = Cmd($"SELECT {LensCols} FROM lens ORDER BY registered_at DESC, rowid DESC LIMIT $n", ("$n", Math.Max(0, limit)));
+        return (IReadOnlyList<LensRecord>)ReadAll(c, LensRow);
+    });
+
+    /// <summary>
+    /// THIS BUILD'S LENSES, REGISTERED AT OPEN — or the tape refused, untouched, because one of them differs from what the
+    /// tape holds under its id and version. Every check is a read, made before anything is written, so a refusal leaves
+    /// the file as it was found.
+    /// </summary>
+    void RegisterBuiltIns(IReadOnlyList<BuiltInLens> builtIns)
+    {
+        var lenses = new List<(Lens Lens, int Version)>();
+        foreach (var b in builtIns)
+        {
+            var parsed = Lens.Parse(b.Definition);
+            if (parsed.Lens is not { } lens || b.Version < 1)
+                throw new InvalidOperationException($"a lens this build ships does not validate ({parsed.Why}); the tape at {File} "
+                                                    + "has not been written to");
+            lenses.Add((lens, b.Version));
+        }
+
+        var missing = Read(() =>
+        {
+            var todo = new List<(Lens Lens, int Version)>();
+            foreach (var (lens, version) in lenses)
+            {
+                var held = LensAt(lens.Id, version);
+                var bySha = LensBySha(lens.LensSha);
+                if (held is not null && (held.LensSha != lens.LensSha || held.Proposer != BuiltInLenses.Proposer))
+                    throw new InvalidOperationException(
+                        $"the lens '{lens.Id}' version {version} this build ships hashes to {lens.LensSha}, and the market-context "
+                        + $"tape at {File} holds '{lens.Id}' version {version} as {held.LensSha}, registered by {held.Proposer}. "
+                        + "A lens never changes under its version — the answers recorded under it are bound to its exact bytes — "
+                        + $"so this build is refused this tape, and nothing has been written to it. A build that ships the changed "
+                        + $"lens as version {MaxVersion(lens.Id) + 1} opens it.");
+                if (bySha is not null && (bySha.Id != lens.Id || bySha.Version != version))
+                    throw new InvalidOperationException(
+                        $"the lens '{lens.Id}' version {version} this build ships is byte for byte '{bySha.Id}' version "
+                        + $"{bySha.Version} on the market-context tape at {File}; one definition is one lens, so this build is "
+                        + "refused this tape, and nothing has been written to it.");
+                if (held is null) todo.Add((lens, version));
+            }
+            return todo;
+        });
+
+        if (missing.Count == 0) return;
+        var at = DateTimeOffset.UtcNow;
+        Write(() =>
+        {
+            foreach (var (lens, version) in missing) InsertLens(lens, version, BuiltInLenses.Proposer, null, at);
+            return 0;
+        });
+    }
+
+    LensRecord InsertLens(Lens lens, int version, string proposer, string? attempt, DateTimeOffset at)
+    {
+        using (var c = Cmd($"""
+                   INSERT INTO lens({LensCols})
+                   VALUES($id,$version,$sha,$schema,$definition,$source,$series,$proposer,$attempt,$at,$validator)
+                   """,
+                   ("$id", lens.Id), ("$version", version), ("$sha", lens.LensSha), ("$schema", lens.SchemaSha),
+                   ("$definition", lens.Canonical), ("$source", lens.Target.Source), ("$series", lens.Target.Series),
+                   ("$proposer", proposer), ("$attempt", attempt), ("$at", Sql.T(at)), ("$validator", Lens.ValidatorVersion)))
+            c.ExecuteNonQuery();
+        return LensAt(lens.Id, version)!;
+    }
+
+    LensRecord? LensAt(string id, int version)
+    {
+        using var c = Cmd($"SELECT {LensCols} FROM lens WHERE id=$id AND version=$v", ("$id", id), ("$v", version));
+        using var r = c.ExecuteReader();
+        return r.Read() ? LensRow(r) : null;
+    }
+
+    LensRecord? LensBySha(string sha)
+    {
+        using var c = Cmd($"SELECT {LensCols} FROM lens WHERE lens_sha=$sha", ("$sha", sha));
+        using var r = c.ExecuteReader();
+        return r.Read() ? LensRow(r) : null;
+    }
+
+    int MaxVersion(string id)
+    {
+        using var c = Cmd("SELECT COALESCE(MAX(version), 0) FROM lens WHERE id=$id", ("$id", id));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>One <c>lens</c> row. Shared with <see cref="TapeReader"/>, which maps it the same way.</summary>
+    internal static LensRecord LensRow(SqliteDataReader r) => new(
+        r.GetString(0), r.GetInt32(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
+        r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), Sql.Time(r.GetString(9)), r.GetString(10));
 
     // ---------------------------------------------------------------------------------- the reads
 

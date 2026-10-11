@@ -3053,7 +3053,7 @@ reader that cannot write it (`U-tape-read`, **THE READ** below).
 **ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
 `Versions.DatabaseSchemaVersion` does not move for it: its own connection, WAL, `synchronous=FULL`,
 `busy_timeout 5000`, a version row inside the file and an `if (have < N)` ladder from version 1
-(`U-decision-port` added rung 2, `decision_call`, through `TapeStore`). The version is READ before anything is written, so a
+(`U-decision-port` added rung 2, `decision_call`, and `U-lenses` rung 3, `lens`, both through `TapeStore`; `TapeStore.Schema` 3). The version is READ before anything is written, so a
 tape from a newer build is refused with the file exactly as found — no table added, journal mode untouched —
 and the refusal is an activity line ("TradeAgent is not recording market context: …"); the app comes up
 without the tape.
@@ -3208,6 +3208,10 @@ file is refused by the database, and WAL means a read never blocks a collector's
 build's layout version and refuses another naming both versions; the app makes it after `TapeStore` has opened the file,
 with the catalogue the collectors record from, and sets it on every gateway it builds (a connector switch included). No
 type in the gateway's assembly is typed as `TapeStore` — `TapeOverPipeTests.No_pipe_op_writes_the_tape` holds that, and
+— **the one exception, bounded** (`U-lenses`, **Lenses** below) — `lens-propose` hands a definition to an app-owned
+registrar delegate (`TradingGateway.LensRegistrar`, set by `AppHost`), which can write exactly one insert-only `lens` row,
+parsed, numbered and hashed by `TapeStore.RegisterLens`, under the role the grant proved, at most 8 a role an owner day; it
+cannot write an observation, a fetch or a call, edit or delete a row, or register for another role. The sweep
 sends every `Ops` constant as the Operations Director's launch with every argument a writer might try, and the tape's
 every row and attempt hash the same before and after. **`data-tape`** takes `source` (required; an unknown one is refused
 naming the tape's), `series` (optional when the source records one; required, and named, when it records several),
@@ -3374,7 +3378,7 @@ and an answer's is read up to `TypeSafeWire.MaxAnswerBytes` (4 MiB) under the re
 its HTTP status kept; the key
 comes from the decision models' own holder (`AppHost.PerceptionKey`, never `HarnessKey.Shared`) for the endpoint's
 origin, read at the send. Held in `LiveAttempts.Shared` while it flies. (4) RECORDED on the tape before it settles: one
-`decision_call` row per sent call (tape.db rung 2, `TapeStore.Schema` 2), keyed by the attempt id — instrument, URL,
+`decision_call` row per sent call (tape.db rung 2; the file is at `TapeStore.Schema` 3 since `U-lenses`), keyed by the attempt id — instrument, URL,
 requested and answered id, host response id, schema id, version and sha, the state's sha and source references (the
 state's text is never written), the request and end instants, latency on a monotonic clock, HTTP status, status
 (`ANSWERED`, `FAILED`, `UNANSWERED`) and error class, input and output tokens, the estimated and the billed cost apart,

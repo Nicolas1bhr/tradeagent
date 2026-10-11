@@ -1,6 +1,11 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Data.Sqlite;
+using TradeAgent.Core;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Core.Perception;
 using Xunit;
@@ -152,5 +157,168 @@ public class LensTests(ITestOutputHelper log)
         Assert.NotEqual(lens.LensSha, capped.LensSha);
         Assert.Equal(lens.SchemaSha, capped.SchemaSha);
         Assert.Equal(SchemaRef.Of(lens.Id, 1, lens.Questions).Sha, lens.SchemaSha);
+    }
+
+    // ---- the registry --------------------------------------------------------------------------------------------
+
+    static string NewTape() => Path.Combine(TestEnv.Home, $"lens-tape-{Guid.NewGuid():n}.db");
+
+    static string FileSha(string file)
+    {
+        using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+
+    static string? Scalar(string file, string sql)
+    {
+        using var c = new SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        return Convert.ToString(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    static void Exec(string file, string sql)
+    {
+        using var c = new SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
+    // ---- (c) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c) THE SAME BYTES REGISTER ONCE AND NEW BYTES ARE THE NEXT VERSION. A lens proposed twice — the second time spelled
+    /// differently — is one row, the first registration standing; a change to its state alone, then to its questions, is
+    /// version 2 and then 3 of the same id, each with its own hash and the port's hash of its questions; and every number
+    /// and hash is the store's. A role's ninth registration of the owner's day is refused, another role's is not, and no
+    /// proposal takes a built-in's id or registers as the app.
+    /// </summary>
+    [Fact]
+    public void The_same_bytes_register_once_and_new_bytes_are_the_next_version()
+    {
+        using var tape = new TapeStore(NewTape());
+        var at = new DateTimeOffset(2026, 10, 11, 9, 0, 0, TimeSpan.Zero);
+
+        var first = tape.RegisterLens(Valid, CouncilRoles.Research, "attempt-1", at);
+        log.WriteLine($"v{first.Lens?.Version} {first.Lens?.LensSha} new={first.New} {first.Refusal}");
+        Assert.True(first.New, first.Refusal);
+        var lens = Lens.Parse(Valid).Lens!;
+        Assert.Equal(("suite-headline", 1, lens.LensSha, lens.SchemaSha, lens.Canonical), (first.Lens!.Id, first.Lens.Version,
+            first.Lens.LensSha, first.Lens.SchemaSha, first.Lens.Definition));
+        Assert.Equal((CouncilRoles.Research, "attempt-1", Lens.ValidatorVersion, "okx-eea-announcements", "announcements"),
+            (first.Lens.Proposer, first.Lens.Attempt, first.Lens.ValidatorVersion, first.Lens.TargetSource, first.Lens.TargetSeries));
+
+        var respelled = JsonSerializer.Serialize(JsonSerializer.Deserialize<JsonElement>(Valid));
+        var again = tape.RegisterLens(respelled, CouncilRoles.Operations, "attempt-2", at);
+        Assert.False(again.New);
+        Assert.Equal(first.Lens, again.Lens);
+
+        var state = tape.RegisterLens(With(l => l["state"]!["fields"]![0]!["max_chars"] = 301), CouncilRoles.Research, "attempt-3", at);
+        Assert.True(state.New, state.Refusal);
+        Assert.Equal(2, state.Lens!.Version);
+        Assert.NotEqual(first.Lens.LensSha, state.Lens.LensSha);
+        Assert.Equal(first.Lens.SchemaSha, state.Lens.SchemaSha);
+
+        var asked = tape.RegisterLens(With(l => Q(l, "urgent")["instructions"] = "Does it take effect within an hour?"),
+            CouncilRoles.Research, "attempt-4", at);
+        Assert.Equal(3, asked.Lens!.Version);
+        Assert.NotEqual(first.Lens.SchemaSha, asked.Lens.SchemaSha);
+
+        // THE PROPOSER'S DAY: eight registrations, and the ninth refused in words, nothing written.
+        for (var i = 4; i <= 8; i++)
+            Assert.True(tape.RegisterLens(With(l => l["id"] = $"suite-{i}"), CouncilRoles.Research, null, at).New);
+        var ninth = tape.RegisterLens(With(l => l["id"] = "suite-9"), CouncilRoles.Research, null, at);
+        log.WriteLine("ninth: " + ninth.Refusal);
+        Assert.Null(ninth.Lens);
+        Assert.Contains($"at most {TapeStore.MaxLensProposalsPerDay} in one owner day", ninth.Refusal, StringComparison.Ordinal);
+        Assert.True(tape.RegisterLens(With(l => l["id"] = "suite-9"), CouncilRoles.Operations, null, at).New);
+        Assert.True(tape.RegisterLens(With(l => l["id"] = "suite-10"), CouncilRoles.Research, null, at.AddDays(1)).New);
+
+        // NO PROPOSAL TAKES A BUILT-IN'S ID, NONE REGISTERS AS THE APP, AND NONE IS NOBODY'S.
+        var builtIn = tape.RegisterLens(With(l => l["id"] = BuiltInLenses.OkxAnnouncement), CouncilRoles.Operations, null, at);
+        Assert.Contains("the id of a lens this build ships", builtIn.Refusal, StringComparison.Ordinal);
+        Assert.Contains("registers this build's own lenses", tape.RegisterLens(Valid, BuiltInLenses.Proposer, null, at).Refusal, StringComparison.Ordinal);
+        Assert.Contains("names none", tape.RegisterLens(Valid, " ", null, at).Refusal, StringComparison.Ordinal);
+        Assert.Contains("offers no way out", tape.RegisterLens(With(l => Q(l, "kind")["criteria"]!.AsObject().Remove("other")),
+            CouncilRoles.Operations, null, at).Refusal, StringComparison.Ordinal);
+
+        Assert.Equal(1 + 3 + 5 + 2, tape.Lenses().Count);
+        Assert.Equal(first.Lens, tape.LensOf("suite-headline", 1));
+    }
+
+    // ---- (d) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (d) A BUILT-IN CHANGED UNDER ITS VERSION IS REFUSED AND THE TAPE UNTOUCHED. This build's built-in registers at open
+    /// as the app's; a build whose built-in of the same id and version has other bytes is refused the tape in words
+    /// naming both hashes and the version that would open it, the file byte for byte as it was; and the changed lens
+    /// shipped as the next version opens it, beside the first.
+    /// </summary>
+    [Fact]
+    public void A_built_in_changed_under_its_version_is_refused_and_the_tape_untouched()
+    {
+        var file = NewTape();
+        using (var shipped = new TapeStore(file))
+        {
+            var row = Assert.Single(shipped.Lenses());
+            log.WriteLine($"built-in {row.Id} v{row.Version} lens_sha {row.LensSha} schema_sha {row.SchemaSha} ({row.ValidatorVersion})");
+            Assert.Equal((BuiltInLenses.OkxAnnouncement, 1, BuiltInLenses.Proposer), (row.Id, row.Version, row.Proposer));
+            Assert.Equal(Lens.Parse(BuiltInLenses.OkxAnnouncementV1).Lens!.LensSha, row.LensSha);
+            Assert.Equal(["addresses_automated_reader", "direction_for_holders", "event_type", "time_sensitivity"],
+                row.Parsed!.Questions.Keys.Order(StringComparer.Ordinal).ToList());
+        }
+
+        // REOPENED BY THE SAME BUILD: nothing new.
+        using (var again = new TapeStore(file)) Assert.Single(again.Lenses());
+        var before = FileSha(file);
+
+        var changed = BuiltInLenses.OkxAnnouncementV1.Replace("\"max_chars\":500", "\"max_chars\":400", StringComparison.Ordinal);
+        Assert.NotEqual(BuiltInLenses.OkxAnnouncementV1, changed);
+        var refused = Assert.Throws<InvalidOperationException>(() => new TapeStore(file, [new BuiltInLens(changed, 1)]));
+        log.WriteLine(refused.Message);
+        Assert.Contains("'okx-announcement' version 1", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(Lens.Parse(changed).Lens!.LensSha, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("never changes under its version", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("as version 2 opens it", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, FileSha(file));
+        Assert.Equal("1", Scalar(file, "SELECT COUNT(*) FROM lens"));
+
+        // SHIPPED AS THE NEXT VERSION, IT OPENS — the first beside it, unchanged.
+        using (var next = new TapeStore(file, [new BuiltInLens(BuiltInLenses.OkxAnnouncementV1, 1), new BuiltInLens(changed, 2)]))
+        {
+            Assert.Equal([1, 2], next.Lenses().Select(l => l.Version).Order().ToList());
+            Assert.Equal(Lens.Parse(changed).Lens!.LensSha, next.LensOf(BuiltInLenses.OkxAnnouncement, 2)!.LensSha);
+        }
+    }
+
+    // ---- (i) ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (i) THE RUNG RERUNS CLEANLY AFTER A CRASH BEFORE ITS STAMP. A tape whose <c>lens</c> table and built-in row were
+    /// written but whose version row still says 2 — and a tape at rung 2 that never had the table — each open at
+    /// rung 3 with exactly one built-in row; the version row says 3.
+    /// </summary>
+    [Fact]
+    public void The_rung_reruns_cleanly_after_a_crash_before_its_stamp()
+    {
+        var crashed = NewTape();
+        using (var t = new TapeStore(crashed)) Assert.Equal(TapeStore.Schema, t.Version);
+        Exec(crashed, "UPDATE tape_meta SET value='2' WHERE key='schema'");
+
+        var rungTwo = NewTape();
+        using (var t = new TapeStore(rungTwo)) Assert.Equal(3, t.Version);
+        Exec(rungTwo, "DROP TABLE lens; UPDATE tape_meta SET value='2' WHERE key='schema'");
+
+        foreach (var file in new[] { crashed, rungTwo })
+        {
+            using var reopened = new TapeStore(file);
+            Assert.Equal(3, reopened.Version);
+            var row = Assert.Single(reopened.Lenses());
+            Assert.Equal(BuiltInLenses.OkxAnnouncement, row.Id);
+            Assert.Equal("3", Scalar(file, "SELECT value FROM tape_meta WHERE key='schema'"));
+        }
     }
 }
