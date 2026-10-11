@@ -9869,3 +9869,27 @@ Database.cs and Versioning.cs.
 **Tests box:** NOT RUN — `ready : NO - the machine does not answer` (01:38).
 **NOT done, NOT verified:** full Unit/Fault/Integration locally (CI ran them); no app run; every commit but the tip built on its own; the benchmark after the rebase; a stream
 for any run recorded before rung 32 (no backfill, by design); E1's depth gates, E2–E4 and the deflated figures (`U-referee-v2a`, rung 33, next).
+
+## U-closeall-latch — the Close-all wave test holds the wave's calls on a latch instead of sleeping 500 ms a call, so its red is a product red, never a slow runner (landed 2026-10-11, seat B)
+
+**Landed** at `2cb46752` (code tip `650f09fd`, report `0d98a94e`; rebased to `0ab4317a` (src+tests patch-id `da1a6fa8f8b1` identical), then stacked) on `main` `f1bdd2d2`, by `land.sh` v3's train `B1` (first of two, stacked to `2cb46752`):
+CI: its own run 38110304140 at `0ab4317a` green 11/11 (superseded when main moved); the train's run **38113735253** at `362ad63e` (its first, 38112158847 at `49fed8c1` on `eace5030`, green 11/11, superseded when U-trial-returns moved main): all 11 jobs success (windows shards 1–5 10/7/8/4/13 min, ubuntu 13, macos 14, linux-host 20; every test job 0 Warning(s)), CARRIED to the stacked tip; `land.sh train-check` VERDICT PASS. No local suite (SPEED-MODE § 5). No rung (main 31). Rig only: one simulator seam (null in the product)
+and the tests; no gateway, connector or deadline change. Builder sonnet/high (one pass, plus the review fix as its 3rd commit).
+**What changed** (5 files):
+- `Connectors.Fake/FakeConnector.cs`, `FakeBroker.cs`: `FaultProfile.Hold` (`Func<Task>?`, null = the product's path) — awaited at both former `Task.Delay(UncancellableLatencyMs)` sites in place of the delay;
+  it ignores cancellation, which is the fault being simulated. Pinned by the new `UnitTests/FakeConnectorHoldTests.cs` (null ⇒ the delay is paid on read and place; set ⇒ parks until released, a
+  cancelled token does not release it).
+- `GatewayPipeBackpressureTests`: the Close-all wave parks on a `CallLatch`; W declared 500 ms through an optional `declaredWorstCase` on `ReadyForHandlerTable` (null for every other caller). START: dispose once the
+  first read is parked, `disposing.IsCompleted == false` after the connection closed, then release all; MID-WAVE: release one at a time until a placement reaches the broker, then the same. The flat /
+  DISPATCHING / handlers-did-not-finish asserts are unchanged and in order. Both halves release the latch in a `finally` (seat B's Codex-review finding, `650f09fd`).
+**Evidence (the builder's report, `docs/briefs/U-closeall-latch.md` § Report):** Release `--no-incremental` 0 warnings; `GatewayPipeBackpressureTests` 34/34 ×3, `FakeConnectorHoldTests` 3/3 ×3, the latched
+test 20/20; branch CI 38100526388 green 11/11 on attempt 1 (the class in windows shard 1, the Timing step green on attempt 1). Names 2457 → 2463, removed 0 (at landing: the train 2512 → 2519, removed 0).
+- RED-before: the old test with `UncancellableLatencyMs = 1000` red at `Assert.DoesNotContain` (:1423; `P-MES`, `P-YM` open, 12 s) — the CI shape. The seam test's red-before is a compile red (no `Hold` before item 1).
+- MUTANT (the drain wait removed in `GatewayPipeServer.cs` step 3, worktree only): the latched test RED 3/3 on the final shape — at the every-position-flat assert (:1446), not at `IsCompleted` or :1416/:1417 as the brief
+  predicted: disposal lands at the first read, before any request row, so DISPATCHING stays 0 and the book is what shows the cut wave. Declared deviation; the mutant is still caught.
+**Review (Codex `gpt-6.1-sol`, high):** (1) `IsCompleted == false` does not prove the drain was reached — JUDGED not a defect: the brief's accepted residual (a slow runner can only hide a mutant, never make a false red);
+proving more needs a Gateway seam the brief forbade. (2) the latch release had no `finally` — REAL, minor: fixed in `650f09fd`, the mutant re-run on that shape.
+**Not claimed / not done:** that E on the wall clock can never cut a wave on a slow enough runner (one clock under the deadline is a larger money-path unit); full local Unit/Fault suites (CI's); AgentTreeTests and
+:1290 untouched. Tests box NOT RUN (`win-test.sh ready`: the machine did not answer). `cd7d9f38`'s windows red, recorded red under HOW-WE-BUILD:89-95, is answered by this unit: the test that went red then
+now measures the product, not the runner.
+Scan exclusions at prep (judged, by phrase): the cancellation phrases in the seam's doc and test names; "asleep, off Tailscale" in the tests-box line (a tool's message, no host).
