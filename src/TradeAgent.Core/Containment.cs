@@ -193,7 +193,7 @@ public static class ContainedLaunch
 /// THE CELL STAGE (<c>U-cell-linux-a</c> item 3): <c>trade --cell-exec &lt;policy-file&gt; &lt;program&gt; [args]</c>, started by the
 /// supervisor of a <see cref="ContainedLaunch.CellFlag"/> launch. It refuses a platform with a <see cref="CellPlatform.Refusal"/>,
 /// refuses a policy file that is not the app's own (anywhere but <see cref="CellPolicy.Directory"/>, a symlink, writable by anyone
-/// else, or not hashing to its name), finds the program on the policy's own <c>PATH</c>, moves into the workspace, and then
+/// else, another account's, or not hashing to its name), finds the program on the policy's own <c>PATH</c>, moves into the workspace, and then
 /// <see cref="CellNative.Enter"/>: no_new_privs, seccomp, Landlock, execve. Every failure exits 126 naming the step, and nothing runs.
 ///
 /// <para>It never opens the pipe, reads a grant or parses a verb: it only takes away (AUTH-001). And it inherits nothing into the
