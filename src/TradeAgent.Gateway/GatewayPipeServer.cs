@@ -606,6 +606,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         if (_loop is not null) return;
         Grants.Ended += OnGrantEnded;
+        Grants.Withholding += OnWithheld;
         _loop = Task.Run(() => AcceptLoop(_accept.Token));
     }
 
@@ -630,6 +631,20 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             if (!state.End()) continue;            // in a call: the handler closes it after the reply
             try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
         }
+    }
+
+    /// <summary>
+    /// THE ACTIVITY LINE FOR A LAUNCH ISSUED WITHOUT ITS ROLE'S ORDER PERMISSION (ORDER-001, <c>U-grant-tree</c>): the owner
+    /// reads that the chair's turn is answering and not trading, and why, before any order it asks for is refused.
+    /// </summary>
+    void OnWithheld(Security.AgentGrant grant)
+    {
+        try
+        {
+            gateway.Log.Activity($"{CouncilRoles.Title(grant.Role)} (attempt {grant.AttemptId}) holds no permission to trade " +
+                                 $"this turn: {grant.OrdersWithheld}", "info");
+        }
+        catch (Exception) { /* a line about a launch is never worth the launch */ }
     }
 
     async Task AcceptLoop(CancellationToken ct)
@@ -856,7 +871,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 state.EnterCall();
                 IpcResponse answer;
                 var endedMidCall = false;
-                try { answer = await Handle(req, grant?.Role, grant?.AttemptId, ct); }
+                try { answer = await Handle(req, grant?.Role, grant?.AttemptId, ct, grant?.OrdersWithheld); }
                 finally { endedMidCall = state.LeaveCall(); }
 
                 if (!await Send(pipe, answer, req.Op, req.Session, req.RequestId ?? req.Id)) return;
@@ -1165,7 +1180,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             ? Task.FromResult(refusal)
             : Handle(req, role, attemptId, ct);
 
-    async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct)
+    async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct,
+        string? ordersWithheld = null)
     {
         // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
         // that is USED, not on the field that may be absent.
@@ -1211,7 +1227,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
                 "and that has to be a shape the broker will give back");
 
-        var ctx = AgentContext.ForAgent(req.Session, role, attemptId);
+        var ctx = AgentContext.ForAgent(req.Session, role, attemptId, ordersWithheld);
 
         // THE ROLE DECIDES WHETHER MONEY MOVES, and this is the only line that reads it.
         //
@@ -1226,6 +1242,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // still apply to everything that gets past this.
         if (Core.Ops.IsMutating(req.Op) && !ctx.MayPlaceOrders)
         {
+            // THE ROLE MAY, THIS LAUNCH MAY NOT (ORDER-001, U-grant-tree): an Operations launch that started beside
+            // another attempt's unconfined process holds no order permission, and is told why in the grant's own words.
+            if (ctx.OrdersWithheld is { } withheld)
+            {
+                gateway.Log.Activity($"AI order refused: this launch of the {CouncilRoles.Title(CouncilRoles.Operations)} holds no order permission", "warn");
+                return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE, $"'{req.Op}' moves money, and {withheld}.");
+            }
+
             var who = ctx.Role is { Length: > 0 } named
                 ? $"the {CouncilRoles.Title(named)}"
                 : "a caller that presented no launch grant";
@@ -4488,6 +4512,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         //    gateway and database behind it, alive for the life of the process. A no-op if Start
         //    was never called.
         Grants.Ended -= OnGrantEnded;
+        Grants.Withholding -= OnWithheld;
 
         // 1. Stop taking new connections. Handlers already running are untouched by this.
         await _accept.CancelAsync();

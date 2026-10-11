@@ -46,6 +46,7 @@ public static class TestEnv
         AppDomain.CurrentDomain.ProcessExit += (_, _) => DeleteHome();
         Environment.SetEnvironmentVariable("TRADEAGENT_HOME", Home);
         Environment.SetEnvironmentVariable("TRADEAGENT_PIPE", "ta-test-" + Guid.NewGuid().ToString("n")[..12]);
+        EnsureLauncher();
 
         // ONE CHAIR'S LAUNCH GRANT FOR THE WHOLE ASSEMBLY, because in the product every process that
         // dials this pipe IS a launch TradeAgent started and minted a grant for. A test assembly has
@@ -58,8 +59,40 @@ public static class TestEnv
         //
         // BOUND TO THIS TEST PROCESS (U-grant-tree): a grant is served only to a peer inside the container
         // it was bound to, and the test process and the `trade` children it starts are this launch's.
+        //
+        // NOT IN AN ASSEMBLY THAT LAUNCHES AGENTS THROUGH THE SHARED REGISTER (NO_TEST_CHAIR, the unit
+        // tests): while an order-capable grant is live no other launch is issued at all (ORDER-001), so a
+        // chair that never ends would refuse every turn the composed host starts. Nothing there dials
+        // the pipe with it.
+#if !NO_TEST_CHAIR
         Chair = AgentGrants.Shared.IssueHere(CouncilRoles.Operations, "test-attempt");
         Environment.SetEnvironmentVariable(AgentGrants.Variable, Chair.Token);
+#endif
+    }
+
+    /// <summary>
+    /// THE LAUNCHER EVERY AGENT LAUNCH ON macOS AND LINUX IS HELD BY (<c>U-grant-tree</c>, RULING 2): a launch the app cannot
+    /// hold is refused before it starts, so this home has TradeAgent's own trade command where the app looks for it — a
+    /// shim that runs the built <c>trade.dll</c>, as <c>ContainmentTests.DeployLauncher</c> writes it — exactly as an
+    /// installed app has the real one. A test that takes it away to see what happens without one puts it back through
+    /// here. Windows holds a launch in a job and needs nothing; a build with no <c>trade.dll</c> writes nothing.
+    /// </summary>
+    public static void EnsureLauncher()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !File.Exists(Path.Combine(d.FullName, "TradeAgent.sln"))) d = d.Parent;
+        var bin = d is null ? null : Path.Combine(d.FullName, "src", "TradeAgent.TradeCli", "bin");
+        var dll = bin is not null && Directory.Exists(bin)
+            ? Directory.GetFiles(bin, "trade.dll", SearchOption.AllDirectories).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault()
+            : null;
+        if (dll is null) return;
+        var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+        if (string.IsNullOrWhiteSpace(host) || !File.Exists(host)) host = Environment.ProcessPath;
+        Directory.CreateDirectory(Paths.Bin);
+        var exe = Path.Combine(Paths.Bin, AgentRuntime.ToolDeployer.TradeCliName);
+        File.WriteAllText(exe, $"#!/bin/sh\nexec \"{host}\" \"{dll}\" \"$@\"\n");
+        File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
     /// <summary>The assembly's stand-in for a launch of the Operations Director. See <see cref="Init"/>.</summary>

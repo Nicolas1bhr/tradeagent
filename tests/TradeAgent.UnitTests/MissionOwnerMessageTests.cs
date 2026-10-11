@@ -1,3 +1,4 @@
+using TradeAgent.Security;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -42,7 +43,7 @@ public class MissionOwnerMessageTests
         // the shared one would downgrade every inbox sighting in this assembly. Measured, and
         // written down in TurnMeterTests for the same reason.
         return new AgentSession(manifest, () => null, () => dir,
-            () => new Dictionary<string, string>(), presence: new AgentPresence())
+            () => new Dictionary<string, string>(), presence: new AgentPresence(), grants: new AgentGrants())
         {
             RecordTyped = record
         };

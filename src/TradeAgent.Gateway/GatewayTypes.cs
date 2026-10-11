@@ -200,14 +200,23 @@ public sealed class AgentContext
     public AgentContext(string sessionId) : this(sessionId, isOperator: false) { }
 
     AgentContext(string sessionId, bool isOperator, string? role = null, string? attemptId = null,
-        string? deploymentId = null)
+        string? deploymentId = null, string? ordersWithheld = null)
     {
         SessionId = sessionId;
         IsOperator = isOperator;
         Role = role;
         AttemptId = attemptId;
         DeploymentId = deploymentId;
+        OrdersWithheld = ordersWithheld;
     }
+
+    /// <summary>
+    /// WHY THIS LAUNCH HOLDS NO ORDER PERMISSION ALTHOUGH ITS ROLE HAS IT, or null (<c>U-grant-tree</c>, ORDER-001). Taken
+    /// from the launch grant, which decided it when it was issued: an Operations launch that started while another
+    /// attempt's process was running unconfined beside it. Never set for the operator or a deployment, and never for an
+    /// in-process harness call, which is no process and is nobody's neighbour.
+    /// </summary>
+    public string? OrdersWithheld { get; }
 
     public string SessionId { get; }
     public bool IsOperator { get; }
@@ -268,15 +277,17 @@ public sealed class AgentContext
     /// answer, and a caller with no role has none: Research submits hypotheses and reads, and the
     /// doctrine gives it no order permission (<c>docs/COUNCIL.md</c>).
     /// </summary>
-    public bool MayPlaceOrders => IsOperator || IsDeployment || CouncilRoles.MayPlaceOrders(Role);
+    public bool MayPlaceOrders => IsOperator || IsDeployment || (CouncilRoles.MayPlaceOrders(Role) && OrdersWithheld is null);
 
     /// <summary>
     /// The context for a caller on the other side of the fence, named by whatever session string it
     /// sent and by the role it PROVED. The only factory the pipe server uses, and it cannot return
     /// an operator.
     /// </summary>
-    public static AgentContext ForAgent(string? sessionId, string? role = null, string? attemptId = null) =>
-        new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!, isOperator: false, role, attemptId);
+    public static AgentContext ForAgent(string? sessionId, string? role = null, string? attemptId = null,
+        string? ordersWithheld = null) =>
+        new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!, isOperator: false, role, attemptId,
+            ordersWithheld: ordersWithheld);
 
     public override string ToString() =>
         IsOperator ? "operator (in-process)"

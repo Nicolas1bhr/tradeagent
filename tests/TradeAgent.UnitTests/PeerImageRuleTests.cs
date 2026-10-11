@@ -144,8 +144,9 @@ public class LaunchGrantRegisterTests
     public void One_roles_token_is_not_another_roles()
     {
         var grants = new AgentGrants();
-        using var chair = grants.IssueHere(CouncilRoles.Operations, "a");
+        // Research first: no other launch is issued beside an order-capable chair (ORDER-001, U-grant-tree).
         using var research = grants.IssueHere(CouncilRoles.Research, "b");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "a");
 
         Assert.Equal(CouncilRoles.Operations, grants.Verify(chair.Token).Grant!.Role);
         Assert.Equal(CouncilRoles.Research, grants.Verify(research.Token).Grant!.Role);

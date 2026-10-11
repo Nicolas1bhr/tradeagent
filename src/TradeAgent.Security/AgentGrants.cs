@@ -46,14 +46,32 @@ public sealed class AgentGrant : IDisposable
 {
     readonly AgentGrants _owner;
 
-    internal AgentGrant(AgentGrants owner, string token, string role, string attemptId, DateTimeOffset expires)
+    internal AgentGrant(AgentGrants owner, string token, string role, string attemptId, DateTimeOffset expires,
+        string? ordersWithheld = null)
     {
         _owner = owner;
         Token = token;
         Role = role;
         AttemptId = attemptId;
         Expires = expires;
+        OrdersWithheld = ordersWithheld;
     }
+
+    /// <summary>
+    /// WHETHER THIS LAUNCH MAY PLACE, CHANGE OR CANCEL ORDERS (ORDER-001, <c>U-grant-tree</c>): its role may — only
+    /// <c>operations</c> — AND no other launch's process grant was live when it was issued. Decided once, atomically, in
+    /// <see cref="AgentGrants.Issue"/>, and never changed: a launch that started beside an unconfined neighbour stays one.
+    /// </summary>
+    public bool MayPlaceOrders => CouncilRoles.MayPlaceOrders(Role) && OrdersWithheld is null;
+
+    /// <summary>
+    /// Why this launch holds no order permission although its role has it, in words the refusal and the turn's own message
+    /// carry — or null when it holds it, or its role never had it.
+    /// </summary>
+    public string? OrdersWithheld { get; }
+
+    /// <summary>Set when the turn ends: a grant in its grace is no longer a running neighbour (<see cref="AgentGrants.Issue"/>).</summary>
+    internal bool TurnOver { get; set; }
 
     public string Token { get; }
     public string Role { get; }
@@ -156,19 +174,95 @@ public sealed class AgentGrants
     /// question "which attempt placed this order" has an answer that does not depend on an agent
     /// telling the truth about itself.
     /// </summary>
+    ///
+    /// <para><b>ORDER PERMISSION IS DECIDED HERE, ATOMICALLY, AND THIS IS THE HARD LINE OF ORDER-001's OVERLAP RULE</b>
+    /// (<c>U-grant-tree</c>, R23 P-01). A launch that may trade must not stand beside another attempt's process that
+    /// nothing confines: a research turn running as the same user can read the chair's environment, and only a cell stops
+    /// that (§ 2.8). So, under the register's lock: while a live, order-capable grant's turn runs, no other launch is
+    /// issued at all — <see cref="ErrorCode.LAUNCH_HELD"/> is thrown before any process exists; and an <c>operations</c>
+    /// launch issued while any other launch's grant is live — pending, bound, whatever its role — gets a grant WITHOUT order
+    /// permission and the reason in <see cref="AgentGrant.OrdersWithheld"/>. A grant whose turn has ended is no neighbour:
+    /// its tree was ended before the turn returned. The mission loop asks <see cref="HeldBy"/> first and defers rather than
+    /// meeting this line; this line is what holds when two launches race past that look.</para>
+    /// </summary>
     public AgentGrant Issue(string role, string attemptId, TimeSpan? life = null)
     {
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var span = life is { } l && l > TimeSpan.Zero && l < MaxTurn ? l : MaxTurn;
-        var grant = new AgentGrant(this, token, role, attemptId ?? "", _now() + span);
+        AgentGrant? grant = null;
+        string? held;
         List<string>? gone;
         lock (_gate)
         {
             gone = Prune();
-            _live.Add(grant);
+            held = Held(role);
+            if (held is null)
+            {
+                grant = new AgentGrant(this, token, role, attemptId ?? "", _now() + span, Withheld(role));
+                _live.Add(grant);
+            }
         }
         RaiseEnded(gone);
-        return grant;
+        if (grant?.OrdersWithheld is not null && Withholding is { } told)
+            try { told(grant); } catch (Exception) { /* a line about a launch is never worth the launch */ }
+        return grant ?? throw new TradeAgentException(ErrorCode.LAUNCH_HELD, held);
+    }
+
+    /// <summary>
+    /// THE LOOK BEFORE THE LAUNCH: the sentence <see cref="Issue"/> would refuse a launch of <paramref name="role"/> with
+    /// right now, or null when it would issue one. The mission loop asks this and defers — no admission row, wakes kept —
+    /// so the hard line in <see cref="Issue"/> is met only by a race.
+    /// </summary>
+    public string? HeldBy(string role)
+    {
+        List<string>? gone;
+        string? held;
+        lock (_gate) { gone = Prune(); held = Held(role); }
+        RaiseEnded(gone);
+        return held;
+    }
+
+    /// <summary>
+    /// The sentence a launch of <paramref name="role"/> issued now would carry in <see cref="AgentGrant.OrdersWithheld"/>,
+    /// or null — so the turn's own message can say it holds no order permission before it is sent. A LOOK: the grant
+    /// decides, and a turn told it may trade that then may not is refused at the order in the same words.
+    /// </summary>
+    public string? WouldWithhold(string role)
+    {
+        List<string>? gone;
+        string? withheld;
+        lock (_gate) { gone = Prune(); withheld = Withheld(role); }
+        RaiseEnded(gone);
+        return withheld;
+    }
+
+    /// <summary>
+    /// A LAUNCH WAS ISSUED WITHOUT THE ORDER PERMISSION ITS ROLE HAS (ORDER-001), raised outside the lock with the grant,
+    /// so the app can write the activity line. A subscriber that throws is ignored.
+    /// </summary>
+    public event Action<AgentGrant>? Withholding;
+
+    /// <summary>Under the lock: why a launch of <paramref name="role"/> may not start now, or null.</summary>
+    string? Held(string role)
+    {
+        foreach (var g in _live)
+            if (!g.TurnOver && g.MayPlaceOrders)
+                return $"the {CouncilRoles.Title(g.Role)}'s launch (attempt {Shown(g.AttemptId)}) holds permission to " +
+                       $"trade, and no other AI launch starts while it runs, so this launch of the {CouncilRoles.Title(role)} " +
+                       "waits until that turn ends";
+        return null;
+    }
+
+    /// <summary>Under the lock: why a launch of <paramref name="role"/> would hold no order permission now, or null.</summary>
+    string? Withheld(string role)
+    {
+        if (!CouncilRoles.MayPlaceOrders(role)) return null;
+        foreach (var g in _live)
+            if (!g.TurnOver)
+                return $"this launch of the {CouncilRoles.Title(role)} started while the {CouncilRoles.Title(g.Role)}'s " +
+                       $"launch (attempt {Shown(g.AttemptId)}) was running beside it, so it holds no permission to trade " +
+                       "this turn: it may read and answer, and may not place, change or cancel an order";
+        return null;
     }
 
     /// <summary>
@@ -214,6 +308,7 @@ public sealed class AgentGrants
         {
             var until = _now() + Grace;
             if (grant.Expires > until) grant.Expires = until;
+            grant.TurnOver = true;
             gone = Prune();
         }
 

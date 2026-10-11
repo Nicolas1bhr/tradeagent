@@ -87,10 +87,17 @@ public class BarHoldoutOverPipeTests(ITestOutputHelper log)
     sealed record Rig(TradingGateway Gw, Database Db, GatewayPipeServer Server, AgentGrants Grants, string Pipe,
         DatasetRecord A, DatasetRecord B, DatasetRecord C) : IAsyncDisposable
     {
+        /// <summary>The launch the last dial stood in for. Its client is done by the next dial.</summary>
+        AgentGrant? _launch;
+
         public async Task<Raw> Dial(string? role)
         {
             var client = await Raw.ConnectAsync(Pipe);
-            var grant = role is null ? null : Grants.IssueHere(role, "attempt-bar-holdout").Token;
+            // ONE LAUNCH AT A TIME, as the product runs them (ORDER-001, U-grant-tree): the previous dial's turn is over before
+            // the next is issued — no launch is issued beside a live order-capable one.
+            _launch?.Dispose();
+            _launch = role is null ? null : Grants.IssueHere(role, "attempt-bar-holdout");
+            var grant = _launch?.Token;
             var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return client;
