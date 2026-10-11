@@ -10160,3 +10160,26 @@ brief is that turn's measurement); 3 NOT REAL (`blocked` is not an outcome). Tri
 **Scan:** a report commit (bf6bc19b) carried the private network's product name in a quoted tests-box line; the next commit paraphrased it; the same name already stands in tools/README.md on main, so no new
 exposure; the net diff scans clean.
 **OWED (pre-existing):** a failed turn that also published a brief is both delegated and retried. Tests box NOT RUN (the machine did not answer).
+
+## U-lenses — a lens is a versioned, hashed question schema over the tape's own text, proposed by an agent, validated and registered by the app on `tape.db` rung 3, so every recorded answer resolves to exactly what was asked about which item (landed 2026-10-11, seat B)
+
+**Landed** solo (`land.sh` v2) on `main` `3430404b`: rebased tip `f84f32f1` (src+tests patch-id `9604c6d8ea07` identical to the reported `46068ccc`). CI run **38133689748** at that tip: every job
+success, `land.sh check` VERDICT PASS. **Rung: `tape.db` 3** (`lens`); main's schema untouched. No request sent: every host in the tests is the loopback `FakeProvider`, no vendor contacted.
+**What changed:**
+1. `Core/Perception/Lens.cs`: `Lens.Parse` of `{id, target{source, series}, state{fields}, questions}`, refused in words for each rule (a target not a text row of this build's tape catalogue; a field outside
+   the target's payload; a Choice with no escape option; an instrument/host/pin/key/budget/model field; id `owner-test`; > 16 KiB as stored and hashed; doubled keys; questions the port would refuse — the
+   checks shared with `DecisionRequests.Refusal` as `QuestionsRefusal`/`BytesRefusal`, against `DecisionInstruments.StrictestBuiltInLimits`, state cap `LensState.CapBytes`). Validator `lens-v1`.
+2. `tape.db` rung 3 `lens(id, version, lens_sha, schema_sha, definition, …, validator_version)`, insert-only; `TapeStore.RegisterLens`: same bytes ⇒ the existing row, same id new bytes ⇒ the app's next
+   version, ≤ 8 per proposer per owner day; built-ins registered at open as `app`, a changed built-in under its version REFUSED; built-in ids and the proposer `app` reserved. Built-in `okx-announcement` v1
+   (R02 § 6.7(a) cut): `lens_sha` 3e5d2e0e1ce2500a8dab5427ab54b2848ef5756dd790e1c35f3abc5324bbe88f. A row of another validator version is refused naming both versions wherever it is read (review fix).
+3. `LensState.For`: pure; refuses quarantined, withheld or off-target observations; builds the canonical state and `Sources = ["tape_obs:<id>"]` itself. The wire refuses a request naming a registered lens
+   with other questions AFTER "no tape" and BEFORE the rate gate, the key read and `Reserve`; `RecordDecision` re-checks inside its transaction and refuses a state sha that is not the lens's.
+4. Ops `lens-propose` (arg `lens`), `lens-list`, `lens-show` through an app-owned registrar delegate `AppHost` sets (`TradingGateway.LensRegistrar`); CONTRACTS "Lenses", USER-GUIDE, the guide paragraph
+   (canon hashes unchanged). Deviations, accepted: the arg is `lens`, not `definition` (`InstrumentCheckTests` bans that word in op/arg names); `lens-show`'s `version` is a string.
+**Evidence:** RED at base for (a)–(i) quoted in the brief (e.g. (a) "Expected: REFUSED Actual: ANSWERED"; (i) "table lens already exists"). MUTANTS red: escape check dropped ⇒ (b); `lens_sha` over the
+questions only ⇒ (a), (c), (d); the lens check after `Reserve` ⇒ (f); Sources from the caller ⇒ (a); the validator-version check removed ⇒ its test. Release `--no-incremental` 0 warnings; LensTests +
+TapeStoreTests 41/41 ×3, LensOverPipeTests 1/1 ×3; branch CI 38127947502 and 38129938392 green; names vs base cf290476 2564 → 2575, removed 0. `No_pipe_op_reaches_the_decision_port` unedited and green.
+**Review (Codex `gpt-6.1-sol`, high):** 3 REAL, fixed red-first by a fresh fixer (canonical-size cap; validator version on read; doubled keys); re-review: no regression. Triage: fleet/records/U-lenses-review-triage.md.
+**Scan:** seven judged false positives excluded by PHRASE (model-token limits, `token_supply_change`, the pipe's machine-token refusal text, a grant's `.Token`, the `api_key` refusal case, a "suite token" notice).
+**OWED CARD — BLOCKS U-annotator:** the holdout at the lens boundary: `LensState.For`'s raw-observation overload can build a state from a held observation, and `RecordDecision`'s re-check does not apply
+`TapeHoldout` (it needs the main database's `DatasetStore`). Not reachable today: nothing runs a lens and the port's only caller goes through `TapeAsOf`. Quarantine is re-checked. Tests box NOT RUN; UI path not exercised.
