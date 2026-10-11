@@ -172,12 +172,11 @@ public class ConnectorSendDeadlineTests
         var flooding = Enumerable.Range(0, Calls).Select(_ => connector.GetAccountsAsync()).ToArray();
         Observe(flooding);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         await connector.DisposeAsync();
         timer.Stop();
 
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10),
-            $"DisposeAsync took {timer.Elapsed.TotalSeconds:0.0}s against a bridge that stopped reading");
+        timer.AssertUnder(TimeSpan.FromSeconds(10), "DisposeAsync against a bridge that stopped reading", TimedCall.Returned);
     }
 
     /// <summary>
@@ -399,13 +398,13 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Task.Delay(250);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-STALLED"));
         timer.Stop();
 
         Assert.True(ex is ConnectorTransportException, $"an emergency cancel surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the emergency cancel-all took {timer.Elapsed.TotalSeconds:0.00}s — it is still queueing behind the stalled write");
+        // On a runner that kept time, a red here is the emergency still queueing behind the stalled write.
+        timer.AssertUnder(TimeSpan.FromSeconds(6), "the emergency cancel-all behind a stalled write", ex);
 
         // A sentence the owner can act on, not a stack trace.
         Assert.Contains("not responding", ex.Message);
@@ -448,7 +447,7 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Task.Delay(250);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => caller == "leg"
             ? connector.CancelOrderAsync("FB-1")
             : connector.CancelAllOrdersAsync("ATAS-STALLED"));
@@ -456,8 +455,9 @@ public class ConnectorSendDeadlineTests
 
         Assert.True(ex is ConnectorTransportException,
             $"a cancellation of unknown outcome surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the '{caller}' cancellation took {timer.Elapsed.TotalSeconds:0.00}s behind a stalled write — it is still on the full deadline");
+        // On a runner that kept time, a red here is this caller still on the full deadline — whose own
+        // message is "could not reach the ATAS bridge", not the emergency's "not responding".
+        timer.AssertUnder(TimeSpan.FromSeconds(6), $"the '{caller}' cancellation behind a stalled write", ex);
         Assert.Contains("NOT confirmed", ex.Message);
     }
 
@@ -514,7 +514,7 @@ public class ConnectorSendDeadlineTests
         await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
         var acceptedBefore = peer.BytesRead;
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         Exception? ex = null;
         try { await connector.CancelAllOrdersAsync("ATAS-READING"); }
         catch (Exception e) { ex = e; }
@@ -537,8 +537,7 @@ public class ConnectorSendDeadlineTests
 
         Assert.NotNull(ex);
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
+        timer.AssertUnder(TimeSpan.FromSeconds(6), "the emergency behind a busy bridge", ex);
 
         // The honest sentence, and NOT the one that sends a person hunting a dead bridge.
         Assert.Contains("busy", ex.Message);
@@ -826,13 +825,12 @@ public class ConnectorSendDeadlineTests
         bridge.Start();
         await Wait(async () => await connector.IsConnectedAsync());
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var cancelled = await connector.CancelAllOrdersAsync("ATAS-LOOPBACK").WaitAsync(TimeSpan.FromSeconds(10));
         timer.Stop();
 
         Assert.NotNull(cancelled);
-        Assert.True(timer.Elapsed < connector.EmergencyDeadline,
-            $"an emergency against a healthy bridge took {timer.Elapsed.TotalSeconds:0.00}s");
+        timer.AssertUnder(connector.EmergencyDeadline, "an emergency against a healthy bridge", TimedCall.Returned);
         Assert.True(await connector.IsConnectedAsync());
     }
 
@@ -884,7 +882,7 @@ public class ConnectorSendDeadlineTests
         await Wait(() => Task.FromResult(Volatile.Read(ref answered) > 0));
         var answeredBefore = Volatile.Read(ref answered);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-ANSWERING"));
         timer.Stop();
 
@@ -911,8 +909,7 @@ public class ConnectorSendDeadlineTests
             "no request was answered while the emergency waited, so this is the wedged case and not the busy one");
 
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
+        timer.AssertUnder(TimeSpan.FromSeconds(6), "the emergency behind a bridge that was answering", ex);
         Assert.Contains("busy", ex.Message);
         Assert.Contains("NOT confirmed", ex.Message);
         Assert.DoesNotContain("not responding", ex.Message);
@@ -1107,7 +1104,7 @@ public class ConnectorSendDeadlineTests
         // frame can only ever measure the gate. Sixty-four kilobytes cannot land in an eight-kilobyte
         // buffer that nobody is draining, which is what makes the write cost real time and puts both
         // phases of the call on trial in one measurement.
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var emergency = Record.ExceptionAsync(() => connector.CancelAllOrdersAsync(new string('a', 64 * 1024)));
 
         // Most of the emergency's budget spent on the queue, then the gate. The peer's allowance
@@ -1134,8 +1131,8 @@ public class ConnectorSendDeadlineTests
         Assert.Contains("NOT confirmed", ex.Message);
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
             $"the emergency returned in {timer.Elapsed.TotalSeconds:0.00}s — it never queued, so this measures nothing");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(3),
-            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s against a two-second promise — the gate wait and the write each started their own clock");
+        // On a runner that kept time, a red here is the gate wait and the write each starting their own clock.
+        timer.AssertUnder(TimeSpan.FromSeconds(3), "the emergency, against a two-second promise,", ex);
     }
 
     /// <summary>
@@ -1170,7 +1167,7 @@ public class ConnectorSendDeadlineTests
         await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
 
         using var scope = RiskReducingScope.Begin(connector.EmergencyDeadline);
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var first = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelOrderAsync("FB-1"));
         var afterFirst = timer.Elapsed;
         var second = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-READING"));
@@ -1183,8 +1180,9 @@ public class ConnectorSendDeadlineTests
         Assert.True(afterFirst >= TimeSpan.FromMilliseconds(1900),
             $"the first call returned in {afterFirst.TotalSeconds:0.00}s — it never queued, so the second had a budget to inherit anyway");
 
-        Assert.True(timer.Elapsed < TimeSpan.FromMilliseconds(3500),
-            $"two calls in one operation took {timer.Elapsed.TotalSeconds:0.00}s — each is still starting its own two seconds");
+        // On a runner that kept time, a red here is each call still starting its own two seconds.
+        timer.AssertUnder(TimeSpan.FromMilliseconds(3500), "two calls in one operation",
+            $"first {TimedCall.Outcome(first)}; the second {TimedCall.Outcome(second)}");
         Assert.Contains("NOT confirmed", first.Message);
         Assert.Contains("NOT confirmed", second.Message);
     }
@@ -1232,14 +1230,14 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Task.Delay(250);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f11-sweep" })
             .WaitAsync(TimeSpan.FromSeconds(40));
         timer.Stop();
 
         Assert.False(reply.Ok, "the sweep reported success against a bridge that has read nothing");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"cancel-all through the real gateway took {timer.Elapsed.TotalSeconds:0.00}s — the prerequisite orders read is still on the ordinary deadline");
+        // On a runner that kept time, a red here is the prerequisite orders read still on the ordinary deadline.
+        timer.AssertUnder(TimeSpan.FromSeconds(6), "cancel-all through the real gateway", TimedCall.Outcome(reply));
 
         // And it is the emergency's own sentence that comes back, not a generic transport failure:
         // the read inherited the operation's urgency. It did NOT inherit an order's words, which is
@@ -1284,15 +1282,15 @@ public class ConnectorSendDeadlineTests
         await Wait(async () => await connector.IsConnectedAsync());
 
         // ~5 KiB/s against 512 KiB: a hundred seconds of steady, unbroken progress.
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(
             new PlaceOrderCommand("TA-ceiling-1", "ATAS-READING", "ES", OrderSide.Buy, OrderType.Market,
                 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024))));
         timer.Stop();
 
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10),
-            $"the write ran for {timer.Elapsed.TotalSeconds:0.00}s — the per-chunk budget was reset forever and nothing bounded the total");
+        // On a runner that kept time, a red here is the per-chunk budget reset for ever with nothing bounding the total.
+        timer.AssertUnder(TimeSpan.FromSeconds(10), "the write to a peer that keeps making progress", ex);
         Assert.True(timer.Elapsed >= TimeSpan.FromSeconds(3) - TimeSpan.FromMilliseconds(200),
             $"the write ended after {timer.Elapsed.TotalSeconds:0.00}s, before the ceiling — some other bound fired and this measures nothing");
 
@@ -1397,7 +1395,7 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(
             new PlaceOrderCommand("TA-intent-2", "ATAS-READING", "ES", OrderSide.Sell, OrderType.Market,
                 1m, null, null, TimeInForce.Day, null) { Intent = intent }));
@@ -1406,11 +1404,11 @@ public class ConnectorSendDeadlineTests
         Assert.IsType<ConnectorTransportException>(ex);
         if (intent is OrderIntent.Close)
         {
-            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5),
-                $"a CLOSING placement waited {timer.Elapsed.TotalSeconds:0.00}s against a " +
-                $"{connector.EmergencyDeadline.TotalSeconds:0}s emergency deadline — the intent on the " +
-                "command is not reaching the classification, so the last call of a close is still on the " +
-                "ordinary clock while everything in front of it ran inside the budget");
+            // On a runner that kept time, a red here is the intent on the command not reaching the
+            // classification, so the last call of a close is still on the ordinary clock while
+            // everything in front of it ran inside the budget.
+            timer.AssertUnder(TimeSpan.FromSeconds(5),
+                $"a CLOSING placement, against a {connector.EmergencyDeadline.TotalSeconds:0}s emergency deadline,", ex);
             // The owner's sentence, not a generic transport failure: this frame really was a mutation
             // and they need to know where to look.
             Assert.Contains("NOT confirmed", ex.Message);
@@ -1458,20 +1456,20 @@ public class ConnectorSendDeadlineTests
             OrderType.Market, 1m, null, null, TimeInForce.Day, null);
 
         var record = new TransportRecord();
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
+        Exception closed;
         using (TransportLedger.Attach(record))
         using (RiskReducingScope.Begin(TimeSpan.Zero))
         {
-            var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(closing));
+            var ex = closed = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(closing));
             timer.Stop();
             Assert.Contains("not sent", ex.Message);
             Assert.Contains("ran out of time before this leg's turn came", ex.Message);
         }
 
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1),
-            $"a closing placement inside a spent operation waited {timer.Elapsed.TotalSeconds:0.00}s — it " +
-            "started a budget of its own instead of taking what was left of the operation's, which is the " +
-            "per-leg bound round 8 removed");
+        // On a runner that kept time, a red here is a close that started a budget of its own instead of
+        // taking what was left of the operation's — the per-leg bound round 8 removed.
+        timer.AssertUnder(TimeSpan.FromSeconds(1), "a closing placement inside a spent operation", closed);
 
         // PROVABLY nothing was written, which is what makes the leg `not-sent` rather than an order to
         // go and reconcile something that does not exist.
@@ -1531,7 +1529,7 @@ public class ConnectorSendDeadlineTests
         await using var client = new PipeClient();
         await client.ConnectAsync(10_000, ipcPipe);
 
-        var timer = Stopwatch.StartNew();
+        using var timer = TimedCall.Start();
         var reply = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Close,
@@ -1541,10 +1539,11 @@ public class ConnectorSendDeadlineTests
         timer.Stop();
 
         Assert.True(reply.Ok, reply.Error?.Message);
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"`close` through the real gateway took {timer.Elapsed.TotalSeconds:0.00}s against a " +
-            $"{connector.EmergencyBudget.TotalSeconds:0}s emergency budget — the prefix ran inside it and the " +
-            "placement it exists to make did not");
+        // On a runner that kept time, a red here is the prefix running inside the budget and the
+        // placement it exists to make not.
+        timer.AssertUnder(TimeSpan.FromSeconds(6),
+            $"`close` through the real gateway, against a {connector.EmergencyBudget.TotalSeconds:0}s emergency budget,",
+            TimedCall.Outcome(reply));
 
         // The order is UNKNOWN and flagged, which is right: the frame went out and nothing came back.
         var record = gw.GetRequest("f5-close")!;
@@ -1627,6 +1626,62 @@ public class ConnectorSendDeadlineTests
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// THE ONE WAY THIS CLASS PUTS A WALL-CLOCK CEILING ON A CALL, and what its red says.
+    ///
+    /// A ceiling measures the runner as well as the product, so a red can only say "this machine took
+    /// that long". The sentences these asserts used to end with — "it is still on the full deadline",
+    /// "it is still queueing behind the stalled write" — named a cause nothing had measured, and Windows
+    /// run 37524459410 shows what that costs: the button row went red at 11.80 s with the full
+    /// deadline's own sentence, and the survey reproduced it to the hundredth by stopping the whole
+    /// test host for 9.8 s from 1.9 s into the call, while the product's own bound held at 2.00 s every
+    /// time it was allowed to run. The mutant that really does put the button on the full deadline
+    /// earns the same sentence at 9.75 s. Two causes, one text.
+    ///
+    /// So a red here carries what WAS measured: the elapsed time against the ceiling, the call's own
+    /// outcome (its exception's message, or that it returned), and <see cref="RunnerStallWitness"/>'s
+    /// clause — how late a dedicated thread's and the pool's 20 ms ticks were across the same window.
+    /// The witness LABELS the red and never decides it: nothing is subtracted, excused or skipped, the
+    /// bound is the bound, and a late pool can be product code. What a red would mean if the runner
+    /// kept time is said at each call site, as a comment, where it is a reading aid and not a verdict.
+    /// </summary>
+    sealed class TimedCall : IDisposable
+    {
+        readonly RunnerStallWitness _witness = RunnerStallWitness.Start();
+        readonly Stopwatch _clock = Stopwatch.StartNew();
+
+        public static TimedCall Start() => new();
+
+        public TimeSpan Elapsed => _clock.Elapsed;
+
+        /// <summary>Ends the window for both: the elapsed time and the witness's readings are fixed here.</summary>
+        public void Stop()
+        {
+            _clock.Stop();
+            _witness.Stop();
+        }
+
+        public void Dispose() => _witness.Dispose();
+
+        public void AssertUnder(TimeSpan ceiling, string what, Exception? outcome) =>
+            AssertUnder(ceiling, what, Outcome(outcome));
+
+        public void AssertUnder(TimeSpan ceiling, string what, string outcome) =>
+            Assert.True(_clock.Elapsed < ceiling,
+                $"{what} took {_clock.Elapsed.TotalSeconds:0.00}s against a {ceiling.TotalSeconds:0.##}s ceiling. " +
+                $"The call {outcome.TrimEnd('.')}. The runner's ticks across it: {_witness.Clause}.");
+
+        /// <summary>The outcome of a call that came back without throwing.</summary>
+        public const string Returned = "returned";
+
+        /// <summary>A call's own outcome, in its own words.</summary>
+        public static string Outcome(Exception? ex) =>
+            ex is null ? Returned : $"threw {ex.GetType().Name}: {ex.Message}";
+
+        public static string Outcome(IpcResponse reply) =>
+            reply.Ok ? "returned ok" : $"returned an error: {reply.Error?.Message}";
+    }
 
     static void Observe(IEnumerable<Task> tasks)
     {
