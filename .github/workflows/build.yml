@@ -26,11 +26,49 @@ on:
   workflow_dispatch:
 
 jobs:
+  # THE DEDUPE GATE (U-ci-dedupe). On a PUSH TO MAIN only, asks .github/ci/tested-before.sh whether a completed,
+  # first-attempt, every-job-success workflow_dispatch run of this workflow already built a tree equal to this
+  # push's outside the bookkeeping list above (the list land.sh uses for its carry); if so every other job is
+  # skipped and the summary names that run. A lookup that fails, times out or is ambiguous gives skip=false and
+  # the build RUNS; a pull_request or workflow_dispatch run is never skipped. The job itself runs on every event
+  # (its steps only on a push) so that it is `success`, never `skipped`, on a dispatch run: land.sh carries only
+  # from a run whose every job is success, and a skipped job would end every carry. A deduped push run has all
+  # its other jobs skipped, so land.sh can never carry from it. Not named test*: it builds nothing.
+  tested-before:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      skip: ${{ steps.gate.outputs.skip || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'push'
+        continue-on-error: true
+      - id: gate
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if out=$(timeout 240 .github/ci/tested-before.sh HEAD) && grep -qx 'skip=true' <<< "$out" && grep -qE '^tested_by=[0-9]+$' <<< "$out"; then
+            echo "$out" | tee -a "$GITHUB_OUTPUT"
+            echo "### Skipped: this tree was tested before" >> "$GITHUB_STEP_SUMMARY"
+            echo "Run $(sed -n 's/^tested_by=//p' <<< "$out") at $(sed -n 's/^tested_sha=//p' <<< "$out") (workflow_dispatch, every job success) built this push's tree outside the bookkeeping paths above; no job of this run builds or tests it again." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" | tee -a "$GITHUB_OUTPUT"
+            echo "### Not skipped: no completed, all-success dispatched run is known to have built this tree" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # THE WINDOWS SHARDS COME FROM ONE FILE (U-ci-shards). .github/ci/test-shards.txt is the partition and
   # .github/ci/shard-filter.sh its one reader; this job turns the file's shard count into the test matrix,
   # so every shard the file names is a windows job by construction, with no second list here to drift from it.
   # Not named test*: land.sh reads every test* job's build log for its 0 Warning(s) line, and this builds nothing.
   shard-plan:
+    needs: tested-before
+    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -54,7 +92,8 @@ jobs:
   # so each platform still runs every test exactly once, and the Timing category, its one retry and its record in
   # exactly one job.
   test:
-    needs: shard-plan
+    needs: [tested-before, shard-plan]
+    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' && needs.shard-plan.result == 'success' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.shard-plan.outputs.matrix) }}
@@ -188,6 +227,8 @@ jobs:
   # same tree and tests nothing, and waiting for the suites only put its four minutes after the slowest of
   # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
   package:
+    needs: tested-before
+    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -241,6 +282,8 @@ jobs:
   # adds nothing to how long a branch's CI takes. A release is still cut by hand from a green run.
   # PINNED: the runner image and the SDK both, so what this job proves is the same thing on every branch.
   package-linux:
+    needs: tested-before
+    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -284,7 +327,8 @@ jobs:
   # mapped to 127.0.0.1 before the app starts — no exchange is ever asked from a US runner, and the one source
   # that answers is the job's own loopback server. It reads the app's home with sqlite3 -readonly, never the pipe.
   linux-host:
-    needs: package-linux
+    needs: [tested-before, package-linux]
+    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
