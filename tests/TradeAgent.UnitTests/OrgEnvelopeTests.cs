@@ -498,6 +498,74 @@ public class OrgEnvelopeTests : IDisposable
         using (var db = new Database(file)) AssertFilled(db);
     }
 
+    /// <summary>
+    /// A HOME OF ONE ATTEMPT, stamped one below the funding rung with no funding table: a chart of <paramref name="units"/>
+    /// written in order, a position on <paramref name="seatUnit"/>, and one attempt by it. Returns the file.
+    /// </summary>
+    string HomeBeforeTheFundingRung(IEnumerable<(string Id, string Parent)> units, string seatUnit, string? afterwards = null)
+    {
+        var file = Path.Combine(TestEnv.Home, $"funding-rung-{Guid.NewGuid():n}.db");
+        using (var db = new Database(file))
+        {
+            foreach (var (id, parent) in units)
+                Write(db, $"INSERT INTO org_unit(id, parent_id, kind, status, created_at) VALUES('{id}', '{parent}', 'team', 'active', '2026-10-11T12:00:00.0000000Z')");
+            Write(db, $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('pos-deep', '{seatUnit}', 'org/pos-deep', 'active', '2026-10-11T12:00:00.0000000Z')");
+            if (afterwards is not null) Write(db, afterwards);
+            new AiAttemptStore(db).Begin(new AiAttempt { Id = "a-deep", StartedAt = _now, ReservedCost = 1m, Role = "pos-deep" });
+        }
+        using (var raw = Raw(file))
+            RawExec(raw, $"DROP TABLE ai_attempt_funding; UPDATE meta SET value='{FundingRung - 1}' WHERE key='schema_version';");
+        return file;
+    }
+
+    /// <summary>
+    /// THE RUNG NEVER CUTS A CHAIN SHORT. A team 65 levels below Research has a chain of 67 units, its own to the root, and the
+    /// rung records every one of them: a chain cut at a fixed depth would stamp the rung with the top units' charges lost, and
+    /// the chart keeps no depth limit (VISION § 3).
+    /// </summary>
+    [Fact]
+    public void The_funding_rung_records_a_deep_chain_whole_and_never_cuts_it_short()
+    {
+        var units = Enumerable.Range(1, 65).Select(i => ($"deep-{i}", i == 1 ? OrgIds.Research : $"deep-{i - 1}")).ToList();
+        var file = HomeBeforeTheFundingRung(units, "deep-65");
+
+        using var db = new Database(file);
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), Scalar(db, "SELECT value FROM meta WHERE key='schema_version'")?.ToString());
+        var chain = new AiAttemptStore(db).FundingOf("a-deep");
+        Assert.Equal(67, chain.Count);
+        Assert.Equal("deep-65", chain[0]);
+        Assert.Equal([OrgIds.Research, OrgIds.Root], chain.TakeLast(2));
+    }
+
+    /// <summary>
+    /// A CHART WHOSE LINE OF PARENTS LOOPS REFUSES THE RUNG, never fills it in part. The rung's walk up the chart stops only at a
+    /// guard that exists to stop a loop — the chart's own number of units, past which a line must revisit one — and a line that
+    /// reaches it fails the rung in a sentence naming the unit and the depth. The home is left as it was: schema 37, no funding
+    /// table, no row. Once the loop is repaired, the same home climbs the rung.
+    /// </summary>
+    [Fact]
+    public void The_funding_rung_refuses_a_chart_that_loops_and_leaves_the_home_untouched()
+    {
+        // loop-a hangs from loop-b, which hangs from loop-a; the seat's team hangs from loop-a.
+        var file = HomeBeforeTheFundingRung(
+            [("loop-a", OrgIds.Research), ("loop-b", "loop-a"), ("loop-team", "loop-a")], "loop-team",
+            afterwards: "UPDATE org_unit SET parent_id='loop-b' WHERE id='loop-a'");
+
+        var refused = Assert.Throws<TradeAgentException>(() => new Database(file).Dispose());
+        Assert.Contains("loop-team", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("depth", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("loop", refused.Message, StringComparison.Ordinal);
+        using (var raw = Raw(file))
+        {
+            Assert.Equal(FundingRung - 1, RawScalar(raw, "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'"));
+            Assert.Equal(0L, RawScalar(raw, "SELECT COUNT(*) FROM sqlite_master WHERE name='ai_attempt_funding'"));
+            RawExec(raw, $"UPDATE org_unit SET parent_id='{OrgIds.Research}' WHERE id='loop-a'");   // the repair
+        }
+
+        using var db = new Database(file);
+        Assert.Equal(["loop-team", "loop-a", OrgIds.Research, OrgIds.Root], new AiAttemptStore(db).FundingOf("a-deep"));
+    }
+
     const int FundingRung = 38;
 
     static object? Scalar(Database db, string sql) => db.Read(_ =>
