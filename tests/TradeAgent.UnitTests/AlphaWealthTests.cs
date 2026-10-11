@@ -1,3 +1,4 @@
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
 using Xunit;
 
@@ -18,7 +19,7 @@ public class AlphaWealthTests
     /// is discarded and spends nothing.</para>
     /// </summary>
     [Fact]
-    public void Addis_spends_per_verdict_across_renewals_and_tests_only_a_year_long_holdout()
+    public async Task Addis_spends_per_verdict_across_renewals_and_tests_only_a_year_long_holdout()
     {
         // γ is j^-1.6 normalised: γ1 = 1/ζ(1.6) = 0.43749… (onlineFDR's constant).
         Assert.Equal(0.4374901658, AlphaWealth.Gamma(1), 9);
@@ -64,5 +65,46 @@ public class AlphaWealthTests
         // THE WEALTH NEVER GOES BELOW ZERO, however many verdicts spend.
         var many = Enumerable.Repeat(AlphaWealth.Inconclusive, 500).ToList();
         Assert.InRange(AlphaWealth.WealthAfter(many), 0, AlphaWealth.W0);
+
+        // AND IN THE LEDGER, ACROSS A RENEWAL: two verdicts under the first campaign — one judged, one charged and never
+        // run, so it has no step and counts as tested — then a renewal, whose first verdict is the lineage's third and is
+        // tested at α_3. The renewal resets nothing.
+        var w = await RefereeVerdictTests.Given(frozenAt: new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), verdicts: 3);
+        using var _ = w.Db;
+        var second = Version(w, 102);
+        var third = Version(w, 101);
+        var t0 = new DateTimeOffset(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);
+
+        Assert.True(new Referee(w.Db, () => t0).Verdict(w.VersionId, w.Campaign.Id).Ok);
+        Assert.True(w.Gw.Campaigns.ChargeVerdict(w.Campaign.Id, second, t0.AddMinutes(1)).Ok);
+        var child = w.Gw.Campaigns.Renew(w.Campaign.Id, 5, 3, t0.AddMinutes(2));
+        Assert.True(child.Ok, child.Why);
+        var referee = new Referee(w.Db, () => t0.AddMinutes(3));
+        var renewed = referee.Verdict(third, child.Campaign!.Id);
+        Assert.True(renewed.Ok, renewed.Why);
+
+        var holdouts = referee.Holdouts;
+        var row1 = holdouts.SealedOf(w.Campaign.Id, w.VersionId)!;
+        var row3 = holdouts.SealedOf(child.Campaign.Id, third)!;
+        Assert.Null(holdouts.SealedOf(w.Campaign.Id, second));
+
+        // A ONE-HOUR HOLDOUT IS NOT A YEAR: the first verdict is inconclusive and spent its α_1.
+        Assert.Equal((AlphaWealth.Inconclusive, alpha1), (row1.AddisStatus, row1.AlphaJ));
+        Assert.Equal([AlphaWealth.Inconclusive, AlphaWealth.Tested], holdouts.History(child.Campaign.Id, third));
+        Assert.Equal(AlphaWealth.AlphaAfter([AlphaWealth.Inconclusive, AlphaWealth.Tested]), row3.AlphaJ, 15);
+        Assert.Equal(AlphaWealth.WealthAfter([AlphaWealth.Inconclusive, AlphaWealth.Tested]), row3.WealthBefore, 15);
+        Assert.True(row3.AlphaJ < afterSpend);
+        Assert.Equal(AlphaWealth.Inconclusive, row3.AddisStatus);
+    }
+
+    /// <summary>Another version of the fixture's program, recorded frozen with the fixture's own, for a second verdict.</summary>
+    static string Version(RefereeVerdictTests.World w, int exitAbove)
+    {
+        var parsed = StrategyParser.Parse("instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+            + $"exit when close > {exitAbove}\nentry when close < 97\n").Program!;
+        new StrategyStore(w.Db).RecordVersion(new StrategyVersionRow(parsed.StrategyId, parsed.Source, parsed.Canonical,
+            parsed.Manifest, StrategyStore.InterpreterBuild, ParseVerdict.Accepted, parsed.WarmUpBars,
+            new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), null, null));
+        return parsed.StrategyId;
     }
 }

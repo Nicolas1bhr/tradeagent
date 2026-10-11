@@ -359,8 +359,14 @@ public static class Versions
     /// by <c>Deployments.Start</c> in the run's own insert and by nothing else. No backfill: a run recorded before the rung
     /// has none, and the runner ends it in words naming both versions rather than replay it under rules it was not decided
     /// under — the refusal, not a migration.</para>
+    ///
+    /// <para><b>35 — the referee's sealed holdout record</b> (<c>U-referee-v2c</c>, after 34): <c>referee_holdout</c>, one
+    /// row per campaign, version and method — what a verdict computed of its holdout run and SEALED: the research row it read, the holdout's moments, E4's fidelity z, betting
+    /// e-value and p_h, the α-wealth step, the author's model and published cutoff, and the remembered-holdout flag. No
+    /// surface reads a figure of it; written only by <c>RefereeHoldout.Record</c> in the verdict's own write, first writer
+    /// wins, never updated or deleted; a verdict before the rung has none and gains none.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 34;
+    public const int DatabaseSchemaVersion = 35;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

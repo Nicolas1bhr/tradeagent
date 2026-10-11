@@ -78,6 +78,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     readonly PublicationStore _publications = new(db);
     readonly Promotions _promotions = new(db);
     readonly ResearchEvidence _research = new(db);
+    readonly RefereeHoldout _holdouts = new(db);
     readonly DataLicences _licences = new(db);
     readonly CouncilBoundaries _boundaries = new(db);
     readonly AiAttemptStore _attempts = new(db);
@@ -683,6 +684,15 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     string Research(long campaignId, string versionId) =>
         _research.Of(campaignId, versionId) is { } e ? ResearchLine(e, _research.Withheld(e)) : "";
 
+    /// <summary>
+    /// WHETHER THE VERDICT'S HOLDOUT MAY BE REMEMBERED BY THE MODEL THAT WROTE THE VERSION (<c>U-referee-v2c</c>), appended to
+    /// its line: the flag, the holdout's start, the model and its published cutoff — two dates and a model id, and no
+    /// figure, because every figure of the sealed record was computed over the held-back months and this report is served
+    /// to the AI. Nothing for a holdout that cannot be remembered, or for a verdict before this build sealed any.
+    /// </summary>
+    string Remembered(long campaignId, string versionId) =>
+        _holdouts.Flag(campaignId, versionId) is { Remembered: true } flag ? $". Its {flag.Words}" : "";
+
     /// <summary>One research run, with the figures the app computed from its own trace.</summary>
     static string RunLine(StrategyRunRow run) =>
         $"backtest {Short(run.Id)} of version {Short(run.VersionId)} over dataset {run.DatasetId} "
@@ -963,7 +973,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                             + $"{p.At.UtcDateTime:yyyy-MM-dd HH:mm}Z under campaign {p.CampaignId}, on holdout run "
                             + $"{Short(p.HoldoutRunId)}: {PromotionReason.Words(p.Reason)}"
                             + (withdrawn ? $" — INVALIDATED since: {standing.Why}" : "")
-                            + Research(p.CampaignId, p.VersionId));
+                            + Research(p.CampaignId, p.VersionId)
+                            + Remembered(p.CampaignId, p.VersionId));
             }
         }
         catch (Exception ex) { gaps.Add(new ReportGap("verdicts", $"the promotion ledger could not be read ({ex.Message})")); }
