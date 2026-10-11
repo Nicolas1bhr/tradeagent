@@ -84,28 +84,19 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     /// A VERSION THAT REALLY CARRIES A VERDICT IN THIS DATABASE — the dataset, the holdout, the
     /// campaign, the version, the holdout run and the promotion row. A faked id would be refused by the
     /// ledger a step earlier and would prove nothing about anything above it.
+    ///
+    /// <para><paramref name="reason"/> names a refusal's clause, <paramref name="under"/>
+    /// judges it under a campaign an earlier call opened — one lineage — and <paramref name="at"/> is the verdict's own
+    /// instant, which orders the inconclusive quota's queue (<c>U-referee-v2b</c>).</para>
     /// </summary>
-    static string Judged(Database db, string verdict, int threshold = 103)
+    static string Judged(Database db, string verdict, int threshold = 103, string? reason = null,
+        long? under = null, DateTimeOffset? at = null, int trialBudget = 10)
     {
         var datasets = new DatasetStore(db);
-        var file = Path.Combine(Paths.Data, $"paper-envelope-{Guid.NewGuid():n}.csv");
-        Directory.CreateDirectory(Paths.Data);
-        File.WriteAllText(file, KlineNormaliser.Header + "\n");
-
-        // FIRST-PARTY EVIDENCE UNDER A SOURCE NO READING NAMES (`TestEnv.FirstParty`): the live half of this
-        // class allocates capital, and archive bars are refused for live a step before it (U-data-licence).
-        // Paper on research-only evidence is `DataLicenceTests`' to prove.
-        // THE NEXT LABEL IN THIS LEDGER: a test judges two versions over one ledger, and the ledger refuses a
-        // second row under a (pair, interval, version) it holds.
-        var id = datasets.Record(new DatasetRecord(
-            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
-            file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
-            false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []) { Licence = TestEnv.FirstParty });
-        Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
-        var set = datasets.ById(id)!;
-
-        var campaign = new CampaignStore(db).Open($"BTCUSDT 1m v{threshold}", set, 10, 3, At);
-        Assert.True(campaign.Ok, campaign.Why);
+        var campaigns = new CampaignStore(db);
+        var (set, campaignId) = under is { } existing
+            ? (datasets.ById(campaigns.ById(existing)!.HoldoutDatasetId)!, existing)
+            : Opened(db, threshold, trialBudget);
 
         var program = StrategyParser.Parse(ProgramText(threshold)).Program!;
         var strategies = new StrategyStore(db);
@@ -126,15 +117,41 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         // re-checks: a paper-eligible row carries PaperV1's, a promotion carries V1's, and a row
         // carrying the other one is invalidated the instant it is read.
         new Promotions(db).Record(new PromotionRow(
-            "", program.StrategyId, campaign.Campaign!.Id,
+            "", program.StrategyId, campaignId,
             verdict == PromotionVerdict.PaperEligible
                 ? CampaignPolicy.Sha256Of(CampaignPolicy.PaperV1)
                 : CampaignPolicy.Sha256Of(CampaignPolicy.V1),
             StrategyStore.InterpreterBuild, set.Id, set.NormalisedSha256, model.Canonical,
             Referee.EvaluatorVersion, runId, verdict,
-            verdict == PromotionVerdict.PaperEligible ? PromotionReason.MetOnHistory : PromotionReason.Met, At));
+            reason ?? (verdict == PromotionVerdict.PaperEligible ? PromotionReason.MetOnHistory : PromotionReason.Met),
+            at ?? At));
 
         return program.StrategyId;
+    }
+
+    /// <summary>A fresh dataset held back at <see cref="Cutoff"/> and the campaign opened over it.</summary>
+    static (DatasetRecord Set, long Campaign) Opened(Database db, int threshold, int trialBudget)
+    {
+        var datasets = new DatasetStore(db);
+        var file = Path.Combine(Paths.Data, $"paper-envelope-{Guid.NewGuid():n}.csv");
+        Directory.CreateDirectory(Paths.Data);
+        File.WriteAllText(file, KlineNormaliser.Header + "\n");
+
+        // FIRST-PARTY EVIDENCE UNDER A SOURCE NO READING NAMES (`TestEnv.FirstParty`): the live half of this
+        // class allocates capital, and archive bars are refused for live a step before it (U-data-licence).
+        // Paper on research-only evidence is `DataLicenceTests`' to prove.
+        // THE NEXT LABEL IN THIS LEDGER: a test judges two versions over one ledger, and the ledger refuses a
+        // second row under a (pair, interval, version) it holds.
+        var id = datasets.Record(new DatasetRecord(
+            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
+            file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
+            false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []) { Licence = TestEnv.FirstParty });
+        Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
+        var set = datasets.ById(id)!;
+
+        var campaign = new CampaignStore(db).Open($"BTCUSDT 1m v{threshold}", set, trialBudget, 3, At);
+        Assert.True(campaign.Ok, campaign.Why);
+        return (set, campaign.Campaign!.Id);
     }
 
     static async Task<PaperEnvelopeRow> Envelope(TradingGateway gw, decimal quantity = 5m,
@@ -349,6 +366,43 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
 
         Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), outcome, StringComparison.Ordinal);
         Assert.Empty(conn.Placed);
+        Assert.Null(gw.Allocations.StandingForLive(version, At));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (e, <c>U-referee-v2b</c>) AN INCONCLUSIVE SLOT NEVER AUTHORISES A LIVE DISPATCH. With the mode LIVE_AUTONOMOUS and
+    /// the real-money switch thrown the dispatch gate reads live rows only, finds none, and refuses <c>ALLOCATION_NONE</c>;
+    /// the live press refuses the version too. Back in PAPER the same slot authorises — the positive control.
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_slot_never_authorises_a_live_dispatch()
+    {
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        using var _1 = db;
+
+        Slots(gw, 3);
+        var version = Judged(db, PromotionVerdict.Refused, 150, PromotionReason.NoTrade);
+        Assert.Equal(1, gw.AllocatePaperDue(At));
+
+        gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
+        gw.ActivateLive(true);
+        var inLive = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "inconclusive-live", By(version)));
+        var press = gw.Allocate(version, 1m, null, "by the account owner");
+
+        // THE POSITIVE CONTROL, back in practice mode: the same slot does authorise there.
+        gw.ActivateLive(false);
+        gw.SetMode(TradingMode.PAPER);
+        var inPaper = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "inconclusive-paper", By(version)));
+
+        log.WriteLine($"in paper             : {inPaper}");
+        log.WriteLine($"in live              : {inLive}");
+        log.WriteLine($"live press           : {press.Ok} — {press.Why}");
+
+        Assert.StartsWith("ok", inPaper, StringComparison.Ordinal);
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), inLive, StringComparison.Ordinal);
+        Assert.False(press.Ok);
+        Assert.Single(conn.Placed);
         Assert.Null(gw.Allocations.StandingForLive(version, At));
         await gw.DisposeAsync();
     }
@@ -598,6 +652,199 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         Assert.Contains("PAPER", line, StringComparison.Ordinal);
         Assert.Contains("no capital", line, StringComparison.Ordinal);
         Assert.Empty(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    // ---- U-referee-v2b: the inconclusive quota ------------------------------------------------------
+
+    /// <summary>
+    /// AN ENVELOPE OF <paramref name="slots"/> RUNS AT A TIME, written to the ledger — the owner's card grants one, and the
+    /// quota needs three before it holds any. Long enough for a 90-day term to end inside it.
+    /// </summary>
+    static PaperEnvelopeRow Slots(TradingGateway gw, int slots)
+    {
+        var granted = gw.Envelopes.Grant(new PaperEnvelopeRow(
+            "", gw.Connector.Id, "SIM-001", "BTCUSDT", "USD", 6m, null, slots, At, At.AddDays(200),
+            $"test: {slots} runs at a time", null));
+        Assert.True(granted.Ok, granted.Why);
+        return granted.Envelope!;
+    }
+
+    /// <summary>The campaign a version's verdict was taken under.</summary>
+    static long CampaignOf(TradingGateway gw, string version) => gw.Promotions.Standing(version).Promotion!.CampaignId;
+
+    /// <summary>An inconclusive-quota row as the sweep writes it: the envelope's share, for exactly the term.</summary>
+    static AllocationRow InconclusiveRowFor(TradingGateway gw, string version, PaperEnvelopeRow envelope) =>
+        PaperRowFor(gw, version, envelope, quantity: envelope.ShareOf(envelope.MaxQuantity)) with
+        {
+            PolicyVersion = AllocationPolicy.InconclusiveV1,
+            EffectiveTo = At + Inconclusive.Term,
+            Reason = "inconclusive quota: test"
+        };
+
+    static IReadOnlyList<string> Inconclusives(TradingGateway gw, PaperEnvelopeRow envelope, DateTimeOffset at) =>
+        [.. gw.Allocations.InEnvelope(envelope.Id, at)
+            .Where(a => a.PolicyVersion == AllocationPolicy.InconclusiveV1).Select(a => a.VersionId)];
+
+    /// <summary>
+    /// (b) AN INCONCLUSIVE VERDICT GETS AT MOST A THIRD OF THE SLOTS, AND ONE PER LINEAGE AT A TIME.
+    ///
+    /// <para>Six slots, so two for the quota. Four no-trade refusals, oldest first: A1 and A2 under one campaign, B1 and C1
+    /// under two others — and a faulted version, which is never inconclusive. The sweep puts A1 and B1 on paper: A2 waits
+    /// behind A1's lineage, C1 behind the third. THE MUTANT, the lineage check removed, puts A1 and A2 there and leaves B1
+    /// out.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_verdict_gets_at_most_a_third_of_the_slots_and_one_per_lineage()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 6);
+        var a1 = Judged(db, PromotionVerdict.Refused, 110, PromotionReason.NoTrade, at: At.AddHours(-5));
+        var a2 = Judged(db, PromotionVerdict.Refused, 111, PromotionReason.NoTrade, CampaignOf(gw, a1), At.AddHours(-4));
+        var b1 = Judged(db, PromotionVerdict.Refused, 112, PromotionReason.NoTrade, at: At.AddHours(-3));
+        var c1 = Judged(db, PromotionVerdict.Refused, 113, PromotionReason.NoTrade, at: At.AddHours(-2));
+        var faulted = Judged(db, PromotionVerdict.Refused, 114, PromotionReason.DidNotComplete, at: At.AddHours(-6));
+
+        var written = gw.AllocatePaperDue(At);
+        var again = gw.AllocatePaperDue(At);
+        var on = Inconclusives(gw, envelope, At);
+
+        log.WriteLine($"written              : {written}, and on the second sweep {again}");
+        log.WriteLine($"on paper             : {string.Join(", ", on.Select(v => v[..12]))}");
+        log.WriteLine($"A1 A2 B1 C1 faulted  : {a1[..12]} {a2[..12]} {b1[..12]} {c1[..12]} {faulted[..12]}");
+        foreach (var row in gw.Allocations.InEnvelope(envelope.Id, At)) log.WriteLine($"reason               : {row.Reason}");
+
+        Assert.Equal(2, written);
+        Assert.Equal(0, again);
+        Assert.Equal(new[] { a1, b1 }.Order(StringComparer.Ordinal), on.Order(StringComparer.Ordinal));
+        Assert.Empty(gw.Allocations.For(a2));
+        Assert.Empty(gw.Allocations.For(c1));
+        Assert.Empty(gw.Allocations.For(faulted));
+
+        // THE REASON NAMES THE CLASS AND THE LINEAGE, and the slot stands authorising in PAPER.
+        var standing = gw.Allocations.StandingForPaper(a1, gw.Connector.Id, envelope.AccountId, At)!;
+        Assert.Equal($"inconclusive quota: {Inconclusive.TooFewEvents}; lineage {CampaignOf(gw, a1)}",
+            standing.Allocation.Reason);
+        Assert.True(standing.Authorises);
+        Assert.Equal(PromotionState.Refused, standing.Promotion.State);
+        Assert.Empty(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (c) AN INCONCLUSIVE SLOT IS CHARGED ONE TRIAL, AND A FULL POT REFUSES IT.
+    ///
+    /// <para>Three slots, two no-trade refusals in one lineage: exactly one on paper, for 90 days, and its campaign's trial
+    /// count up by one — the brief's observable result. A version judged under a campaign whose one trial is already spent
+    /// gets nothing, in words, and nothing is written.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_slot_is_charged_one_trial_and_a_full_pot_refuses_it()
+    {
+        var (gw, _, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 3);
+
+        // A SPENT POT FIRST, while the quota has room: one trial, registered, and a no-trade refusal under it.
+        var spentVersion = Judged(db, PromotionVerdict.Refused, 122, PromotionReason.NoTrade, at: At.AddHours(-1),
+            trialBudget: 1);
+        var spent = CampaignOf(gw, spentVersion);
+        var run = gw.Promotions.Standing(spentVersion).Promotion!.HoldoutRunId;
+        Assert.True(gw.Campaigns.RegisterTrial(spent, spentVersion, run, EvaluationClass.Research, At).Ok);
+        var fullPot = gw.Allocations.RecordPaper(InconclusiveRowFor(gw, spentVersion, envelope), At);
+
+        var first = Judged(db, PromotionVerdict.Refused, 120, PromotionReason.NoTrade, at: At.AddHours(-3));
+        var campaign = CampaignOf(gw, first);
+        var second = Judged(db, PromotionVerdict.Refused, 121, PromotionReason.NoTrade, campaign, At.AddHours(-2));
+        var before = gw.Campaigns.TrialsCharged(campaign);
+
+        var written = gw.AllocatePaperDue(At);
+        var after = gw.Campaigns.TrialsCharged(campaign);
+        var row = gw.Allocations.For(first).Single();
+
+        log.WriteLine($"written              : {written}");
+        log.WriteLine($"trials charged       : {before} before, {after} after");
+        log.WriteLine($"term                 : {row.EffectiveFrom:u} to {row.EffectiveTo:u}");
+        log.WriteLine($"full pot             : {fullPot.Ok} — {fullPot.Why}");
+
+        Assert.Equal(1, written);
+        Assert.Equal(0, before);
+        Assert.Equal(1, after);
+        Assert.Empty(gw.Allocations.For(second));
+        Assert.Equal(AllocationPolicy.InconclusiveV1, row.PolicyVersion);
+        Assert.Equal(At + TimeSpan.FromDays(90), row.EffectiveTo);
+        Assert.Equal(envelope.ShareOf(envelope.MaxQuantity), row.MaxQuantity);
+
+        Assert.False(fullPot.Ok);
+        Assert.Contains("spent all 1", fullPot.Why, StringComparison.Ordinal);
+        Assert.Empty(gw.Allocations.For(spentVersion));
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(spent));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (d) AN INCONCLUSIVE SLOT ENDS AFTER NINETY DAYS, ITS CHARGE STAYS, AND THE VERSION IS NOT ADMITTED AGAIN.
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_slot_ends_after_ninety_days_its_charge_stays_and_the_version_is_not_admitted_again()
+    {
+        var (gw, _, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 3);
+        var version = Judged(db, PromotionVerdict.Refused, 130, PromotionReason.NoTrade);
+        var campaign = CampaignOf(gw, version);
+
+        Assert.Equal(1, gw.AllocatePaperDue(At));
+        var lastDay = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At.AddDays(90).AddSeconds(-1));
+        var ended = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At.AddDays(90));
+        var later = gw.AllocatePaperDue(At.AddDays(91));
+        var again = gw.Allocations.RecordPaper(InconclusiveRowFor(gw, version, envelope) with
+        {
+            EffectiveFrom = At.AddDays(91), EffectiveTo = At.AddDays(91) + Inconclusive.Term
+        }, At.AddDays(91));
+
+        log.WriteLine($"last second of term  : {lastDay?.Authorises.ToString() ?? "none"}");
+        log.WriteLine($"at ninety days       : {ended?.Authorises.ToString() ?? "none"}");
+        log.WriteLine($"sweep at 91 days     : {later}");
+        log.WriteLine($"asked again          : {again.Ok} — {again.Why}");
+        log.WriteLine($"trials charged       : {gw.Campaigns.TrialsCharged(campaign)}");
+
+        Assert.True(lastDay!.Authorises);
+        Assert.Null(ended);
+        Assert.Equal(0, later);
+        Assert.False(again.Ok);
+        Assert.Single(gw.Allocations.For(version));
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// (f) FEWER THAN THREE SLOTS HOLD NO INCONCLUSIVE SLOT: a third of two, or of one, is none.
+    /// </summary>
+    [Fact]
+    public async Task Fewer_than_three_slots_hold_no_inconclusive_slot()
+    {
+        var (gw, _, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 2);
+        var version = Judged(db, PromotionVerdict.Refused, 140, PromotionReason.NoTrade);
+
+        var written = gw.AllocatePaperDue(At);
+        var asked = gw.Allocations.RecordPaper(InconclusiveRowFor(gw, version, envelope), At);
+
+        log.WriteLine($"written              : {written}");
+        log.WriteLine($"asked directly       : {asked.Ok} — {asked.Why}");
+
+        Assert.Equal(0, written);
+        Assert.False(asked.Ok);
+        Assert.Contains("three", asked.Why, StringComparison.Ordinal);
+        Assert.Empty(gw.Allocations.For(version));
+        Assert.Equal(0, gw.Campaigns.TrialsCharged(CampaignOf(gw, version)));
         await gw.DisposeAsync();
     }
 }

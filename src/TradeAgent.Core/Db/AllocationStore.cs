@@ -254,8 +254,34 @@ public sealed record AllocationStanding(
     /// flattened.</para>
     /// </summary>
     public bool Authorises => Allocation.IsPaper
-        ? Envelope is not null && (Promotion.IsPromoted || Promotion.IsPaperEligible)
+        ? Envelope is not null && (Promotion.IsPromoted || Promotion.IsPaperEligible || InconclusiveTermOpen)
         : Promotion.IsPromoted && Promotion.LiveRefusal is null;
+
+    /// <summary>
+    /// WHICH INCONCLUSIVE CLASS THE VERDICT UNDER THIS ROW IS, read at <see cref="ReadAt"/> by the paper readers
+    /// (<c>Strategy.Inconclusive.Of</c> over the standing and its holdout span) — or null: a live row, a row of another
+    /// policy, or a verdict that is not inconclusive now. The default is null, so a standing built without it asked
+    /// authorises nothing on the inconclusive arm.
+    /// </summary>
+    public string? InconclusiveClass { get; init; }
+
+    /// <summary>The instant the paper reader read this standing at, which the inconclusive term is measured against.</summary>
+    public DateTimeOffset? ReadAt { get; init; }
+
+    /// <summary>
+    /// THE INCONCLUSIVE ARM (<c>U-referee-v2b</c>): a PAPER row under <see cref="AllocationPolicy.InconclusiveV1"/>, whose
+    /// promotion is still the one it was written for and still inconclusive, inside its term — a row with no end is not a
+    /// term and opens nothing. Asked only inside the paper arm of <see cref="Authorises"/>; the live arm never reads it,
+    /// and no live reader reads a paper row at all.
+    /// </summary>
+    bool InconclusiveTermOpen =>
+        Allocation.IsPaper
+        && string.Equals(Allocation.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)
+        && Strategy.Inconclusive.IsKnown(InconclusiveClass)
+        && Promotion.Promotion is { } promotion
+        && string.Equals(promotion.Id, Allocation.PromotionId, StringComparison.Ordinal)
+        && Allocation.EffectiveTo is not null
+        && ReadAt is { } at && Allocation.StandsAt(at);
 
     /// <summary>
     /// WHY A LIVE ROW IN FORCE UNDER A PROMOTION THAT STANDS AUTHORISES NOTHING, or null because that is not
@@ -303,6 +329,7 @@ public sealed class Allocations(Database db)
 {
     readonly Promotions _promotions = new(db);
     readonly Envelopes _envelopes = new(db);
+    readonly CampaignStore _campaigns = new(db);
 
     const string Cols =
         "id, version_id, promotion_id, policy_version, max_quantity, max_notional, currency, " +
@@ -446,12 +473,41 @@ public sealed class Allocations(Database db)
 
         var standing = _promotions.Standing(allocation.VersionId);
 
+        // THE POLICY THE ROW NAMES IS ONE THIS BUILD APPLIES, or nothing is written: a paper row under a policy nobody
+        // implements is a row no reader could account for (refuse, never guess).
+        var inconclusive = string.Equals(allocation.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal);
+        if (!inconclusive && !string.Equals(allocation.PolicyVersion, AllocationPolicy.V1, StringComparison.Ordinal))
+            return new AllocationResult(false,
+                $"this paper allocation names policy {allocation.PolicyVersion}, which this build does not apply, so "
+                + "nothing was written.", null);
+
         // PROMOTED *OR* PAPER-ELIGIBLE, and this is the one place in the product where the second
         // answer opens anything. `docs/PRINCIPLES.md` § Evidence: "forward paper evidence cannot be
         // required before the very first paper run that produces it" — a version that can never reach
         // paper because it has no forward evidence can never acquire any. What it opens is an
         // experiment on an account the owner proved is a simulation, and nothing else.
-        if (!standing.IsPromoted && !standing.IsPaperEligible)
+        //
+        // AND THE ONE INCONCLUSIVE PATH (`U-referee-v2b`), only under its own policy: a refusal the referee could not
+        // make discriminate, read by `Strategy.Inconclusive` — the refusal stays refused, and the quota below bounds it.
+        string? inconclusiveClass = null;
+        if (inconclusive)
+        {
+            if ((inconclusiveClass = InconclusiveOf(standing)) is null)
+                return new AllocationResult(false,
+                    $"version {Short(allocation.VersionId)} has no inconclusive verdict standing, so it was not given an "
+                    + $"inconclusive paper slot: {standing.Why}", null);
+
+            if (!string.Equals(standing.Promotion!.Id, allocation.PromotionId, StringComparison.Ordinal))
+                return new AllocationResult(false,
+                    $"the verdict this inconclusive slot names ({Short(allocation.PromotionId)}) is not the one version "
+                    + $"{Short(allocation.VersionId)} stands on ({Short(standing.Promotion.Id)}), so nothing was written.", null);
+
+            if (allocation.EffectiveTo != allocation.EffectiveFrom + Strategy.Inconclusive.Term)
+                return new AllocationResult(false,
+                    $"an inconclusive paper slot runs for exactly {Strategy.Inconclusive.Term.TotalDays:0} days from its "
+                    + "first instant and this one asks for another term, so nothing was written.", null);
+        }
+        else if (!standing.IsPromoted && !standing.IsPaperEligible)
             return new AllocationResult(false,
                 $"version {Short(allocation.VersionId)} has no verdict that stands, so it was not put "
                 + $"on paper: {standing.Why}", null);
@@ -481,6 +537,11 @@ public sealed class Allocations(Database db)
                 + $"{AllocationRow.Num(cap)} {envelope.Currency} at a time and this allocation asks for "
                 + (allocation.MaxNotional is { } a ? AllocationRow.Num(a) : "no value limit at all")
                 + ", so nothing was written.", null);
+
+        // THE INCONCLUSIVE QUOTA, AFTER THE ENVELOPE AND THE CEILING AND BEFORE THE SLOTS (`U-referee-v2b`). All of it
+        // inside this one write, so the count, the lineage, the charge and the row cannot move apart.
+        if (inconclusive && Quota(allocation, standing.Promotion!, envelope, now) is { } refused)
+            return new AllocationResult(false, refused, null);
 
         // ONE EXPERIMENT AT A TIME, AND IT IS ABOUT *OTHER* VERSIONS. Re-recording the version that is
         // already in the envelope — a restart, a second sweep of the same policy — raises the id that
@@ -538,6 +599,86 @@ public sealed class Allocations(Database db)
             + $"{connector}, up to {AllocationRow.Num(written.MaxQuantity)} at a time. No capital and "
             + "no live authority come with it.", written);
     });
+
+    /// <summary>
+    /// WHY THIS INCONCLUSIVE SLOT MAY NOT BE WRITTEN, in words, or null because it may (<c>U-referee-v2b</c>). Read inside
+    /// <see cref="RecordPaper"/>'s write. Four questions, each about the ledger as it stands: ONE TERM PER VERSION — a
+    /// version that has held a slot is never given another, so an ended term ends it; A THIRD OF THE SLOTS — the envelope's
+    /// standing slots of OTHER versions under this policy are fewer than <c>Inconclusive.Slots(max_deployments)</c>, none
+    /// below three; ONE PER LINEAGE — none of them stands for a version judged under the same campaign lineage (the family's
+    /// stand-in until <c>U-experiments-op</c>), and a lineage that cannot be read refuses; and THE CHARGE — the verdict's
+    /// campaign has a trial left (<see cref="CampaignStore.IncubationRefusal"/>). Re-recording the row that is already
+    /// there is the same slot and is neither a second term nor a second charge.
+    /// </summary>
+    string? Quota(AllocationRow allocation, PromotionRow promotion, PaperEnvelopeRow envelope, DateTimeOffset now)
+    {
+        var id = allocation.ComputedId;
+        var already = ById(id) is not null;
+
+        if (!already && For(allocation.VersionId).Any(a =>
+                string.Equals(a.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)))
+            return $"version {Short(allocation.VersionId)} has already held its one inconclusive paper slot, so it was not "
+                   + "given another: a term is never renewed or extended by this policy, and its trial stays charged.";
+
+        var slots = Strategy.Inconclusive.Slots(envelope.MaxDeployments);
+        if (slots == 0)
+            return $"the paper envelope on account {envelope.AccountId} carries {envelope.MaxDeployments} "
+                   + $"version{(envelope.MaxDeployments == 1 ? "" : "s")} at a time and the inconclusive quota is a third "
+                   + "of an envelope's slots, rounded down — none below three — so version "
+                   + $"{Short(allocation.VersionId)} was not given an inconclusive paper slot.";
+
+        if (_campaigns.LineageRoot(promotion.CampaignId) is not { } lineage)
+            return $"the campaign {promotion.CampaignId} version {Short(allocation.VersionId)} was judged under is not in "
+                   + "this installation's ledger, so its lineage cannot be read and nothing was written.";
+
+        var held = InEnvelope(envelope.Id, now)
+            .Where(a => string.Equals(a.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)
+                        && !string.Equals(a.VersionId, allocation.VersionId, StringComparison.Ordinal))
+            .GroupBy(a => a.VersionId, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
+        if (held.Count >= slots)
+            return $"the paper envelope on account {envelope.AccountId} already gives {held.Count} of its "
+                   + $"{envelope.MaxDeployments} slots to inconclusive verdicts "
+                   + $"({string.Join(", ", held.Select(a => Short(a.VersionId)))}) and the quota is {slots}, a third rounded "
+                   + $"down, so version {Short(allocation.VersionId)} was not given an inconclusive paper slot.";
+
+        foreach (var other in held)
+            if (_promotions.ById(other.PromotionId) is not { } theirs
+                || _campaigns.LineageRoot(theirs.CampaignId) is not { } root
+                || root == lineage)
+                return $"version {Short(other.VersionId)} already holds the inconclusive paper slot of campaign lineage "
+                       + $"{lineage} in the paper envelope on account {envelope.AccountId} — or its lineage cannot be read — "
+                       + $"and the quota allows one per lineage at a time, so version {Short(allocation.VersionId)} was "
+                       + "not given one. The lineage stands in for the family until families exist.";
+
+        return already ? null : _campaigns.IncubationRefusal(promotion.CampaignId, allocation.VersionId);
+    }
+
+    /// <summary>
+    /// WHICH INCONCLUSIVE CLASS THIS STANDING IS, over its verdict's holdout span (<see cref="CampaignStore.HoldoutSpan"/>),
+    /// or null because it is not inconclusive. The one reading the quota's writer, its sweep and its readers share.
+    /// </summary>
+    public string? InconclusiveOf(PromotionStanding standing) =>
+        Strategy.Inconclusive.Of(standing,
+            standing.Promotion is { } promotion ? _campaigns.HoldoutSpan(promotion.CampaignId) : null);
+
+    /// <summary>
+    /// A PAPER ROW'S STANDING AT <paramref name="now"/>: the verdict, the grant, and — for a row under
+    /// <see cref="AllocationPolicy.InconclusiveV1"/> only — its inconclusive class, read now.
+    /// </summary>
+    AllocationStanding PaperStandingOf(AllocationRow row, PaperEnvelopeRow? envelope, DateTimeOffset now)
+    {
+        var standing = _promotions.Standing(row.VersionId);
+        return new AllocationStanding(row, standing, envelope)
+        {
+            InconclusiveClass = string.Equals(row.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)
+                ? InconclusiveOf(standing)
+                : null,
+            ReadAt = now
+        };
+    }
 
     void Insert(AllocationRow row)
     {
@@ -632,7 +773,7 @@ public sealed class Allocations(Database db)
             if (row.EnvelopeId is not { Length: > 0 } id) continue;
             if (_envelopes.ById(id) is not { } envelope || !envelope.StandsAt(now)) continue;
 
-            return new AllocationStanding(row, _promotions.Standing(row.VersionId), envelope);
+            return PaperStandingOf(row, envelope, now);
         }
 
         return null;
@@ -680,9 +821,9 @@ public sealed class Allocations(Database db)
             .Where(a => a.IsPaper && a.StandsAt(now))
             .GroupBy(a => (a.VersionId, a.EnvelopeId))
             .Select(g => g.First())
-            .Select(a => new AllocationStanding(a, _promotions.Standing(a.VersionId),
+            .Select(a => PaperStandingOf(a,
                 a.EnvelopeId is { Length: > 0 } id && _envelopes.ById(id) is { } e && e.StandsAt(now)
-                    ? e : null))];
+                    ? e : null, now))];
 
     static List<AllocationRow> Read(SqliteCommand c)
     {
