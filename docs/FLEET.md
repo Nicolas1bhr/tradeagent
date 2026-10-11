@@ -108,8 +108,10 @@ The operational text is `fleet/SPEED-MODE.md`, with the compact builder prompt `
   and read its exit code — never pipe one: on 2026-10-11 a chain piped into `tail` hid a failed check and a refused merge, and `record` pushed a false landing
   record, reverted at once.
 - **Capacity.** The 5-hour window binds, and so do GitHub Free's 20 concurrent jobs (a sharded run needs 11). Measured: three seats and ~6 Opus legs ≈ 40–50 %
-  of the window an hour; two seats and ~4 legs ≈ 25 %; a hard freeze (no new leg of any class, landings only) ≈ 10 %. The orchestrator measures about every half
-  hour and freezes on the projection to the reset. Landing fixers go before new units. A code landing makes every other prepped unit run CI again, so prefer
+  of the window an hour; two seats and ~4 legs ≈ 25 %; a hard freeze (no new leg of any class, landings only) ≈ 10 %. The orchestrator reads the pace at each wake and
+  reports it; since 2026-10-11 it freezes nothing and the seats have no wrap-up mechanism — the owner: "go full send (as per usual, not in a flame the rate
+  limit for sport way)" and "let the rate limit stop everything and resume from you and / or the heartbeat"; the limit stops the legs where they stand and
+  the heartbeat resumes them from their branches. Landing fixers go before new units. A code landing makes every other prepped unit run CI again, so prefer
   trains and cancel a run the moment it can no longer carry.
 - **Never "a flake".** A red the diff cannot reach is named with its run id and judged at landing (`LAND_JUDGED_RED`); its second sighting makes it a unit.
 
@@ -181,6 +183,10 @@ gate, a known red) is written into the record as a judgement.
   stop; the fresh seat's prompt names the charter, handoff and status files, the verified state and the orchestrator's priorities. Survey outputs live in
   the session scratchpad, which the OS empties: the orchestrator copies what a seat will need into `fleet/tmp/`. A killed leg is resumed by `SendMessage` naming its branch state, or re-briefed
   fresh from its brief and branch — the branch is the handoff.
+  **Every handoff, compaction prompt and fresh-leg prompt is immaculate** (the owner, 2026-10-11, after the orchestrator's compaction kept the work state
+  but lost the vision's grounding and his latest word — it went on braking against "all gas no breaks"): it carries the owner's standing words of the
+  session verbatim; the order to re-read the primary sources before acting — PRINCIPLES, VISION, ORCHESTRATION, ORGANISATION § 15, the charter or brief —
+  never the summary alone; the live state with ids (legs, branches, CI runs, locks, rungs); the rulings in force; the owner's open asks; the next step.
 - **A new orchestrator session** starts with § "The orchestrator" (*Starting a session*), then `fleet/handoff/ORCHESTRATOR.md` for the state. Agent ids die with the session that spawned them: it opens FRESH seats from
   `fleet/charters/`, `fleet/handoff/` and `fleet/status/`, and a paused builder's work is continued by a fresh builder from its branch and worktree.
 - **The repo is the checkpoint:** a `BUILD-STATUS.md` record per landing; the resume block at each wave's end and at every stop (the orchestrator); the
