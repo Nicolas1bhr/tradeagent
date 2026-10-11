@@ -29,6 +29,12 @@ public static class SeatProfile
     /// judged here. A folder another account owns is refused too, and each folder is made owner-only (<see cref="OwnedHere"/>).
     /// ADVISORY like the rest while seats are unconfined (§ 2.7): a same-user
     /// writer can swap a folder for a link between this look and the start.</para>
+    ///
+    /// <para><b>THE WHOLE HOME, AT EVERY PREPARATION</b> (<c>U-seat-acl</c>; CRED-001): not only the folders the environment names but
+    /// every folder below the root — whatever the CLI made there since — and the files that hold its credential
+    /// (<see cref="SeatPlan.PrivateFiles"/>) and its settings (<see cref="SeatPlan.ConfigFile"/>) are made owner-only, because an access
+    /// entry on a file outlives any change to its folder's. A link met on the walk is never followed (its target is not the seat home);
+    /// a credential file that is a link is refused like a folder.</para>
     /// </summary>
     public static void Prepare(SeatPlan seat)
     {
@@ -36,6 +42,7 @@ public static class SeatProfile
         RealFolder(root, root);
         foreach (var (name, value) in seat.ResolvedEnvironment())
             if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) RealFolder(root, Path.GetFullPath(value));
+        PrivateBelow(root, seat);
 
         // THE CLI'S OWN CONFIG FILE, WRITTEN BY THE APP BEFORE EVERY START. A turn ignores it (--ignore-user-config), but `login`,
         // `features` and `mcp` take no such flag, and a seat can write this file: a seat-written chatgpt_base_url would steer the
@@ -69,19 +76,81 @@ public static class SeatProfile
         foreach (var part in rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
             Real(at = Path.Combine(at, part));
 
-        static void Real(string at)
+        void Real(string at)
         {
             NotALink(at);
-            if (Directory.Exists(at)) { OwnedHere(at); return; }
+            if (Directory.Exists(at)) { OwnedHere(at, root); return; }
             if (File.Exists(at))
                 throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
                     $"TradeAgent will not use the AI's own home while {at} is a file where its folder belongs. Nothing was written " +
                     $"or started. Remove {at} and TradeAgent makes the folder there.");
             Directory.CreateDirectory(at);
             NotALink(at);
-            OwnedHere(at);
+            OwnedHere(at, root);
         }
     }
+
+    /// <summary>
+    /// EVERY FOLDER BELOW <paramref name="root"/>, PARENTS FIRST, AND THE CREDENTIAL AND SETTINGS FILES, MADE OWNER-ONLY. A folder
+    /// that is a link, a junction or another reparse point is stepped over, never entered: what it points to is not the seat home.
+    /// Measured on the dev Mac (U-seat-acl's report): the walk costs milliseconds on a home with thousands of session files, since
+    /// it lists folders only.
+    /// </summary>
+    static void PrivateBelow(string root, SeatPlan seat)
+    {
+        var options = new EnumerationOptions { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false };
+        var folders = new Stack<string>();
+        folders.Push(root);
+        while (folders.Count > 0)
+        {
+            var at = folders.Pop();
+            List<string> below;
+            try { below = [.. Directory.EnumerateDirectories(at, "*", options)]; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(at, ex.Message); }
+            foreach (var folder in below)
+            {
+                if (IsLink(folder)) continue;
+                OwnedHere(folder, root);
+                folders.Push(folder);
+            }
+        }
+
+        foreach (var rel in seat.PrivateFiles.Append(seat.ConfigFile))
+        {
+            if (string.IsNullOrEmpty(rel)) continue;
+            var path = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
+            NotALink(path);
+            if (File.Exists(path)) PrivateFile(path);
+        }
+    }
+
+    /// <summary>Whether <paramref name="path"/> is itself a link, a junction or any other reparse point, looked at without following it.</summary>
+    static bool IsLink(string path)
+    {
+        var info = new FileInfo(path);
+        try { if (info.LinkTarget is not null) return true; }
+        catch (IOException) { /* a reparse point this platform cannot read the target of; the attribute says */ }
+        return info.Attributes.HasFlag(FileAttributes.ReparsePoint);
+    }
+
+    /// <summary>
+    /// <paramref name="path"/>, a file of the seat home that holds its credential or settings, made this account's alone: <c>0600</c> on
+    /// Linux and macOS. A file that cannot be is refused in words, never used.
+    /// </summary>
+    static void PrivateFile(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(path, ex.Message); }
+    }
+
+    /// <summary>The refusal for a seat-home file or folder this account cannot make its own alone, naming it, why, and the repair.</summary>
+    static TradeAgentException NotPrivate(string path, string why) =>
+        new(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use the AI's own home while {path} cannot be made private to this account ({why}): it may belong to " +
+            "another account, be locked against changes or sit on a disk that cannot be changed, and the AI's settings and sign-in must " +
+            $"be this account's alone. Nothing was written or started. Remove {path} (unlock it first if it is locked); TradeAgent makes " +
+            "its own in its place, and a removed sign-in is signed in again from TradeAgent.");
 
     /// <summary>
     /// REFUSES A SEAT HOME FOLDER THAT BELONGS TO ANOTHER ACCOUNT, and makes each one owner-only. On Linux and macOS the folder is
@@ -95,7 +164,7 @@ public static class SeatProfile
     /// process cannot tell a foreign folder from its own here. TradeAgent installs per user and never asks for elevation
     /// (<c>CLAUDE.md</c>), so its seats do not run as root; a build that does would need the owner read from <c>stat</c>.</para>
     /// </summary>
-    static void OwnedHere(string at)
+    static void OwnedHere(string at, string root)
     {
         string? owner = null;
         bool ours;
