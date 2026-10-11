@@ -57,6 +57,20 @@ public sealed class AppHost : IAsyncDisposable
     public ITradingConnector Connector { get; private set; } = null!;
 
     /// <summary>
+    /// THE APP'S ONE SIGN-IN INTO ITS SEAT HOME (<c>U-seat-signin</c>), for the runtime the owner chose — read through the settings at
+    /// every call, since he changes it while the app runs. Its status is read on the background loop's cadence, never on the window's
+    /// thread; the Dashboard's "AI sign-in" card shows it and offers the three ways in. A test's host is handed another.
+    /// </summary>
+    public SeatSignIn SeatSignIn
+    {
+        get => _seatSignIn ??= new SeatSignIn(() =>
+            Gateway?.Settings.SelectedRuntimeId is { Length: > 0 } id ? RuntimeCatalog.Find(id) : null);
+        internal set => _seatSignIn = value;
+    }
+
+    SeatSignIn? _seatSignIn;
+
+    /// <summary>
     /// Everything this machine needs before the product can work, and the code that installs it.
     ///
     /// The list is the whole answer to "what do I have to do first?", and the intended answer is
@@ -1212,6 +1226,12 @@ public sealed class AppHost : IAsyncDisposable
                 // beside a launch, and no later than it has to be once the turn is over.
                 if (pass % 6 == 0 || _scanOwed) _scanOwed = ScanMaterials(ct) is null;
 
+                // THE SEAT HOME'S SIGN-IN (U-seat-signin): every pass while the card is showing — so a sign-in finished on the
+                // owner's phone takes the card away within seconds — and every thirty seconds while signed in. Off this pass: a status
+                // read is a program start, and nothing here waits for it; the card is told when it lands.
+                if (pass % 6 == 0 || SeatSignIn.Wanted || SeatSignIn.SigningIn)
+                    _ = SeatSignIn.RefreshAsync(ct).ContinueWith(_ => Changed?.Invoke(), TaskScheduler.Default);
+
                 // Once at startup, then every five minutes. A day that ended while this machine was
                 // asleep gets its report the first time the app is awake afterwards; a day that ends
                 // while it is running gets one within five minutes of midnight. Cheap: on a day whose
@@ -2135,6 +2155,8 @@ public sealed class AppHost : IAsyncDisposable
             _decisionModels.Clear();
         }
         _harness?.Dispose();
+        // A SIGN-IN STILL WAITING for the owner's browser or code is a process of the app's: it ends with the app. Nothing is signed out.
+        _seatSignIn?.Dispose();
         // STOPPED WITH THE APP, AND BEFORE THE DATABASE CLOSES: a look in flight holds a write
         // transaction, and disposing the store underneath it is how a clean exit becomes a corrupt
         // row. This waits for the look it interrupted.
