@@ -300,9 +300,16 @@ public partial class CouncilLoopTests
         public IReadOnlyList<LedgerListed>? Beliefs(string role) =>
             Owns ? MissionSituation.OpenBeliefs(_db, role) : null;
 
+        /// <summary>
+        /// While set, every ask for the holdout windows throws — a ledger that cannot be read for a while
+        /// (<c>U-reconcile-packet</c>, review 2).
+        /// </summary>
+        public bool HoldoutsUnreadable { get; set; }
+
         /// <summary>The role's holdout windows as the dataset ledger holds them now, exactly as the app reads them.</summary>
-        public IReadOnlyList<TapeHoldoutWindow>? Holdouts(string role) =>
-            TapeHoldout.Pipe(role, new DatasetStore(_db)).Windows();
+        public IReadOnlyList<TapeHoldoutWindow>? Holdouts(string role) => HoldoutsUnreadable
+            ? throw new IOException("the dataset ledger could not be read")
+            : TapeHoldout.Pipe(role, new DatasetStore(_db)).Windows();
     }
 
     /// <summary>How long a boundary in these tests stays open. A day compressed to a minute.</summary>

@@ -532,8 +532,8 @@ public interface IMissionHost
     /// THE HOLDOUT WINDOWS <paramref name="role"/>'S OWN READS ARE REFUSED, as the dataset ledger holds them NOW
     /// (<see cref="TapeHoldout.Pipe"/>, <c>U-reconcile-packet</c> review 1), or null where this host cannot say. The loop
     /// asks it when it admits a tape wake and when it renders the packet, so a window declared after the wake was raised
-    /// still holds what it holds. Null closes every tape wake without a turn: a wake nobody can show is outside every
-    /// window names nothing.
+    /// still holds what it holds. Null — or a throw — DEFERS every tape wake (review 2): no turn and no name now, the
+    /// wake left untaken and undisposed, and decided again at the next look. Fail closed never means losing the wake.
     /// </summary>
     IReadOnlyList<TapeHoldoutWindow>? Holdouts(string role) => null;
 }
@@ -1815,8 +1815,10 @@ public sealed class MissionLoop
             RecoverLostOwnerWords(events);
             RecoverUnansweredOwnerWords(events);
             Schedule(events);
-            WithdrawHeldTape(events);
-            var due = RolesDue(events);
+            var deferred = WithdrawHeldTape(events);
+            // A ROLE WHOSE ONLY DUE WAKES ARE TAPE WAKES IT CANNOT CHECK NOW IS NOT A CANDIDATE: the wakes wait for the
+            // next look, and they do not stand in front of another role's.
+            var due = RolesDue(events).Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
             if (due.Count == 0) return Idle(events);
 
             // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
@@ -2684,7 +2686,7 @@ public sealed class MissionLoop
 
     /// <summary>
     /// THE HOLDOUT WINDOWS OF <paramref name="role"/> FROM THE HOST, read now, or null where it cannot say — and a host
-    /// that throws cannot say. Null closes every tape wake without a turn.
+    /// that throws cannot say. Null defers every tape wake to the next look: no turn, no name, nothing withdrawn.
     /// </summary>
     IReadOnlyList<TapeHoldoutWindow>? HoldoutsOf(string role)
     {
@@ -2694,27 +2696,42 @@ public sealed class MissionLoop
 
     /// <summary>
     /// EVERY UNTAKEN TAPE WAKE A WINDOW NOW HOLDS, CLOSED WITHOUT A TURN, before the loop decides whose turn it is
-    /// (<c>U-reconcile-packet</c>, review 1) — so a held item never makes its role the one that is due. Never throws: a
-    /// wake left here is asked again when it is admitted.
+    /// (<c>U-reconcile-packet</c>, review 1) — so a held item never makes its role the one that is due. Answers the roles
+    /// whose untaken tape wakes could not be checked because their windows could not be read: those wakes are deferred,
+    /// not closed (review 2). Never throws: a wake left here is asked again when it is admitted.
     /// </summary>
-    void WithdrawHeldTape(MissionEventStore events)
+    HashSet<string> WithdrawHeldTape(MissionEventStore events)
     {
+        var deferred = new HashSet<string>(StringComparer.Ordinal);
         foreach (var role in CouncilRoles.All)
         {
             try
             {
                 var pending = events.Pending(MissionEventKind.Tape, role);
-                if (pending.Count > 0) Unheld(events, role, pending, HoldoutsOf(role));
+                if (pending.Count == 0) continue;
+                var windows = HoldoutsOf(role);
+                if (windows is null) deferred.Add(role);
+                else Unheld(events, role, pending, windows);
             }
             catch (Exception) { /* asked again at the admission */ }
         }
+        return deferred;
+    }
+
+    /// <summary>The role's due wakes, or none when the queue cannot be read.</summary>
+    List<MissionEvent> DueFor(MissionEventStore events, string role)
+    {
+        try { return events.DueFor(role, _now()); }
+        catch (Exception) { return []; }
     }
 
     /// <summary>
     /// <paramref name="wake"/> WITHOUT THE TAPE WAKES <paramref name="windows"/> NOW HOLD ENTIRELY, each of those closed
-    /// without a turn (<see cref="MissionEventStore.WithdrawTape"/>) — and every tape wake when the windows could not be
-    /// read. The reason recorded names the rule and never the item: a disposition that said which subject or month would
-    /// be a read of the held month by another door. A wake that could not be closed is still left out of this turn.
+    /// without a turn (<see cref="MissionEventStore.WithdrawTape"/>). Every tape wake is left out when the windows could
+    /// not be read, and DEFERRED, never withdrawn (review 2): untaken, undisposed, named nowhere, and decided again at the
+    /// next look — a transient failure to read the ledger is no reason to lose what the tape owes the role. The reason
+    /// recorded names the rule and never the item: a disposition that said which subject or month would be a read of the
+    /// held month by another door. A wake that could not be closed is still left out of this turn.
     /// </summary>
     List<MissionEvent> Unheld(MissionEventStore events, string role, List<MissionEvent> wake,
         IReadOnlyList<TapeHoldoutWindow>? windows)
@@ -2727,11 +2744,11 @@ public sealed class MissionLoop
                 kept.Add(e);
                 continue;
             }
+            if (windows is null) continue; // DEFERRED: out of this turn, and still owed
             try
             {
-                events.WithdrawTape(e.Id, _now(), windows is null
-                    ? $"TradeAgent could not read {CouncilRoles.Title(role)}'s holdout windows, so it did not pay for a turn on this"
-                    : $"a holdout window {CouncilRoles.Title(role)}'s reads are refused now holds what this counted, so TradeAgent did not pay for a turn on it");
+                events.WithdrawTape(e.Id, _now(),
+                    $"a holdout window {CouncilRoles.Title(role)}'s reads are refused now holds what this counted, so TradeAgent did not pay for a turn on it");
             }
             catch (Exception) { /* left untaken, and out of this turn; asked again on the next pass */ }
         }

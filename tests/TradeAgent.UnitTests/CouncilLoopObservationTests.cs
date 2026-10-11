@@ -280,6 +280,51 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (b3) A TAPE WAKE WHOSE WINDOWS CANNOT BE READ FOR A WHILE IS DEFERRED, NEVER LOST (review 2). Fail closed is "no
+    /// launch and no name NOW": while the holdout windows throw the wake buys no turn, is named in no packet and is
+    /// neither taken nor withdrawn — and it does not stand in front of another role's wake. Once the windows read again
+    /// it is decided again, and it buys Research its turn.
+    ///
+    /// <para>RED at fa8f86c4 (a null read withdrew every tape wake): "Assert.Null() Failure: Value is not null" — the
+    /// wake was withdrawn on the first look. Mutant, the withdraw on an unreadable read restored: red, the same line.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_tape_wake_whose_holdouts_cannot_be_read_is_deferred_and_decided_again_at_the_next_look()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var okx = Okx();
+        var host = new CouncilHost(db, root, new Concurrency());
+        var now = TapeNow;
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        Assert.True(TapeWakes.Raise(db, new TapeArrival(okx.Id, okx.Series[0].Id, okx.Parser, 1,
+            [new TapeArrived("subject-outside-every-window", TapeNow.AddHours(-1))]), TapeNow));
+        now = TapeNow.AddMinutes(1);
+        events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(now), CouncilRoles.Operations),
+            MissionEventKind.Review, now, now, role: CouncilRoles.Operations);
+
+        // THE WINDOWS THROW FOR A WHOLE LOOK: Operations, waiting behind the tape wake, gets its turn; Research does not,
+        // no packet names the item, and the wake is still untaken and undisposed.
+        host.HoldoutsUnreadable = true;
+        await loop.TurnAsync();
+        var tape = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.Null(tape.Disposition);
+        Assert.Null(tape.ConsumedAt);
+        Assert.Equal([CouncilRoles.Operations], host.Opened.Select(o => o.Role));
+        Assert.DoesNotContain("subject-outside-every-window", host.Opened[0].Prompt, StringComparison.Ordinal);
+
+        // THE NEXT LOOK READS THEM: the same wake buys Research its turn and is taken by it.
+        host.HoldoutsUnreadable = false;
+        await loop.TurnAsync();
+        Assert.Equal([CouncilRoles.Operations, CouncilRoles.Research], host.Opened.Select(o => o.Role));
+        Assert.Contains("subject-outside-every-window", host.Opened[1].Prompt, StringComparison.Ordinal);
+        tape = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.NotNull(tape.ConsumedBy);
+    }
+
+    /// <summary>
     /// A MARKET READING WAKES RESEARCH ONLY WHILE AN ACTIVE DEPLOYMENT OF ITS VERSION READS IT. The input is the one the
     /// version's program declares, read back from the version the deployment runs; no deployment, or one that is not
     /// active, and the same reading wakes nobody — it arrives every poll.
