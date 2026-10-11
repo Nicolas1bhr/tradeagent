@@ -122,7 +122,9 @@ public sealed class TapeCollector : IAsyncDisposable
     /// (<c>U-reconcile-packet</c>). The app decides there whether a role owns it and raises its wake; this collector
     /// holds no database. A listener that throws never costs the look, and its notice stays pending here and is told
     /// again at the row's next look until it is told (coalesced by the listener, so a retry is never a second wake).
-    /// Pending notices coalesce per series into one, so what is pending is bounded without ever dropping one (review 2).
+    /// Pending notices coalesce per series, so what is pending is bounded without ever dropping one (review 2); a notice
+    /// once offered to the listener is never extended, so a retry can never raise a second wake for what it already
+    /// carried, and a held arrival never brings a retry forward (review 3).
     /// </param>
     public TapeCollector(
         TapeStore store,
@@ -294,10 +296,14 @@ public sealed class TapeCollector : IAsyncDisposable
                     stored += appended.Stored;
                     // OWED FIRST, THEN TOLD: a series with a notice still pending folds this fetch into it rather than
                     // telling it alone, so its notice is never told twice and never ahead of what came before it.
+                    // NEVER A RETRY ON AN ARRIVAL'S TIMING (review 3): while a notice the listener failed is pending, what
+                    // this fetch stored waits for the next look with it. Telling now would retry that notice because
+                    // something arrived — and what arrived may be inside a holdout window, which a wake's timing may not
+                    // reveal. With nothing failed pending, this fetch's own notice is the only one there is.
                     if (appended.Stored > 0 && _stored is not null)
                     {
                         state.Owe(row, series, appended.FetchId);
-                        TellPending(state);
+                        if (!state.AnyOffered) TellPending(state);
                     }
                 }
                 else problem ??= $"{series.Id}{(symbol is null ? "" : " " + symbol)}: {note}";
@@ -315,8 +321,10 @@ public sealed class TapeCollector : IAsyncDisposable
     /// <summary>
     /// TELLS THE LISTENER WHAT ONE PENDING NOTICE STORED NEW — every fetch of its series from its first through its last,
     /// read back from the tape, subjects and source times only — as one arrival under its LAST fetch id, and answers
-    /// whether it was told. A notice retried unchanged keeps that id, so the listener's coalesced raise keeps the retry one
-    /// wake; one extended since carries a new id, so nothing it added is ever coalesced away under a wake already taken.
+    /// whether it was told. A notice the listener failed is OFFERED and never extended again (review 3): its retry is the
+    /// same range under the same id, so the listener's raise — keyed by that id, a row that outlives the turn which takes
+    /// it — keeps every retry the one wake it may already have raised, and a later fetch, held or not, is a notice of its
+    /// own under its own id, so nothing new is ever coalesced away under a wake already taken.
     /// Never throws: a notice that could not be read or delivered is false, and stays pending for the row's next look.
     /// </summary>
     bool Tell(RowState.Owed owed)
@@ -333,14 +341,22 @@ public sealed class TapeCollector : IAsyncDisposable
 
     /// <summary>
     /// TELLS THE ROW'S PENDING NOTICES, oldest first, and stops at the first that fails again: the listener is still
-    /// falling over, and the rest wait for the next look in order. A notice told is dropped; one never is otherwise.
+    /// falling over, and the rest wait for the next look in order. A notice told is dropped; one never is otherwise. One
+    /// telling at a time per row, so a notice is offered by one caller and its range is frozen before another can extend it.
     /// </summary>
     void TellPending(RowState state)
     {
-        while (state.NextOwed() is { } owed)
+        lock (state.Telling)
         {
-            if (!Tell(owed)) return;
-            state.Told(owed);
+            while (state.NextOwed() is { } owed)
+            {
+                if (!Tell(owed))
+                {
+                    state.Offered(owed);
+                    return;
+                }
+                state.Told(owed);
+            }
         }
     }
 
@@ -429,13 +445,24 @@ public sealed class TapeCollector : IAsyncDisposable
         readonly Lock _owedGate = new();
 
         /// <summary>
-        /// THE NOTICES NOT YET TOLD, AT MOST ONE PER SERIES OF THE ROW (review 2) — the bound: a row owes at most as many
-        /// notices as the catalog gives it series, however long its listener stays down, and nothing is ever evicted. A
-        /// storing fetch of a series that already owes one extends it to that fetch; the tape keeps what each fetch
-        /// stored, so a notice is two fetch ids, never a list. The listener coalesces to one wake per role anyway, so
-        /// folding fetches together loses no wake — and dropping one could lose the only item outside every window.
+        /// THE NOTICES NOT YET OFFERED TO THE LISTENER, AT MOST ONE PER SERIES OF THE ROW (review 2). A storing fetch of a
+        /// series that already owes one extends it to that fetch; the tape keeps what each fetch stored, so a notice is
+        /// two fetch ids, never a list. The listener coalesces to one wake per role anyway, so folding fetches together
+        /// loses no wake — and dropping one could lose the only item outside every window.
         /// </summary>
         readonly Dictionary<string, Owed> _owed = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// THE NOTICES THE LISTENER WAS OFFERED AND FAILED, AT MOST ONE PER SERIES (review 3) — frozen: never extended,
+        /// retried as they are. The listener may have raised its wake before it fell over, and that wake may since have
+        /// been taken; only the same range under the same id is a retry its raise recognises. A fetch after it is owed in
+        /// <see cref="_owed"/>, behind it. The bound: at most two notices per series of the row — one offered, one not —
+        /// however long the listener stays down, and nothing is ever evicted.
+        /// </summary>
+        readonly Dictionary<string, Owed> _offered = new(StringComparer.Ordinal);
+
+        /// <summary>Held while the row's notices are told, so one caller offers a notice and freezes it before another reads it.</summary>
+        public Lock Telling { get; } = new();
 
         /// <summary>
         /// A notice the listener was not told: every fetch of one series from <see cref="FirstFetch"/> through
@@ -452,10 +479,19 @@ public sealed class TapeCollector : IAsyncDisposable
                     : new Owed(row, series, fetchId, fetchId);
         }
 
-        /// <summary>The oldest notice still owed (by its first fetch), or null.</summary>
+        /// <summary>
+        /// The oldest notice still owed, offered or not (by its first fetch), or null. A series' offered notice is always
+        /// older than its other, so the other is never told while the offered one is pending.
+        /// </summary>
         public Owed? NextOwed()
         {
-            lock (_owedGate) return _owed.Values.MinBy(o => o.FirstFetch);
+            lock (_owedGate) return _offered.Values.Concat(_owed.Values).MinBy(o => o.FirstFetch);
+        }
+
+        /// <summary>Whether a notice the listener failed is still pending in this row.</summary>
+        public bool AnyOffered
+        {
+            get { lock (_owedGate) return _offered.Count > 0; }
         }
 
         /// <summary>
@@ -466,10 +502,35 @@ public sealed class TapeCollector : IAsyncDisposable
         {
             lock (_owedGate)
             {
-                if (!_owed.TryGetValue(owed.Series.Id, out var now)) return;
-                if (now.LastFetch <= owed.LastFetch) _owed.Remove(owed.Series.Id);
-                else _owed[owed.Series.Id] = now with { FirstFetch = owed.LastFetch + 1 };
+                if (_offered.TryGetValue(owed.Series.Id, out var offered) && offered == owed)
+                {
+                    _offered.Remove(owed.Series.Id);
+                    return;
+                }
+                Unowe(owed);
             }
+        }
+
+        /// <summary>
+        /// FREEZES A NOTICE THE LISTENER FAILED (review 3): what was offered becomes the series' offered notice, retried as
+        /// it is, and a fetch folded into it while it was being told stays owed behind it as a notice of its own.
+        /// </summary>
+        public void Offered(Owed owed)
+        {
+            lock (_owedGate)
+            {
+                if (_offered.TryGetValue(owed.Series.Id, out var offered) && offered == owed) return;
+                Unowe(owed);
+                _offered[owed.Series.Id] = owed;
+            }
+        }
+
+        /// <summary>Takes what <paramref name="owed"/> carried off the series' not-yet-offered notice. Under the gate.</summary>
+        void Unowe(Owed owed)
+        {
+            if (!_owed.TryGetValue(owed.Series.Id, out var now)) return;
+            if (now.LastFetch <= owed.LastFetch) _owed.Remove(owed.Series.Id);
+            else _owed[owed.Series.Id] = now with { FirstFetch = owed.LastFetch + 1 };
         }
 
         public string? LastError { get => _lastError; set => _lastError = value; }

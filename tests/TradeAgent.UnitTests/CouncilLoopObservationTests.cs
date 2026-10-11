@@ -225,6 +225,118 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (a4) A RETRY NEVER RAISES A SECOND WAKE FOR WHAT A TAKEN WAKE ALREADY CARRIED, AND A HELD FETCH NEVER BUYS ONE
+    /// (review 3). The listener raises Research's wake for an item outside every window and then falls over; Research's
+    /// turn takes that wake. While the listener keeps falling over, a fetch of the same series stores an item inside
+    /// August, which is held. Once it recovers, an unchanged page polled again raises nothing: the failed notice is retried
+    /// as it was offered, under the id its taken wake already holds, and the held fetch is a notice of its own that owns
+    /// nothing outside a window.
+    ///
+    /// <para>RED at 0afd7deb (the held fetch extended the failed notice, so its retry carried the old item under a new
+    /// id): "Assert.Single() Failure: The collection contained 2 items". Mutant, the failed notice not frozen
+    /// (<c>Offered</c> a no-op): red, the same line.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_retry_never_raises_a_second_wake_for_a_taken_one_and_a_held_fetch_never_buys_one()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        using var archive = new FakeArchive();
+        var okx = Okx();
+        var path = TapeCollector.Url(okx.Series[0], "", null);
+        using var store = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+        HeldDataset(new DatasetStore(db), new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 31, 23, 59, 0, TimeSpan.Zero), new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var down = true;
+        await using var collector = new TapeCollector(store, baseUrl: archive.BaseUrl,
+            requestTimeout: TimeSpan.FromSeconds(5), now: () => TapeNow,
+            catalog: new TapeSourceCatalogRead([okx], null, []),
+            stored: arrival =>
+            {
+                TapeWakes.Raise(db, arrival, TapeNow);
+                if (down) throw new IOException("the listener fell over after it raised");
+            });
+
+        // THE LISTENER RAISES FOR THE ITEM OUTSIDE AND FALLS OVER; RESEARCH'S TURN TAKES THE WAKE.
+        var outside = Announcement("okx-will-list-outside", TapeNow.AddHours(-1), "OKX will list OUT");
+        archive.PublishAt(path, AnnouncementPage(outside));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        events.Consume([wake.Id], "turn-1", TapeNow);
+
+        // STILL FALLING OVER, A HELD ITEM OF THE SAME SERIES ARRIVES.
+        archive.PublishAt(path, AnnouncementPage(outside,
+            Announcement("okx-will-list-held", new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero), "OKX will list H")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+
+        // RECOVERED, THE UNCHANGED PAGE POLLED AGAIN: every notice is told, and still the one wake, taken.
+        down = false;
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.All(events.OfKind(MissionEventKind.Tape), e => Assert.True(e.Consumed));
+
+        // AND A NEW ITEM OUTSIDE EVERY WINDOW STILL RAISES ITS OWN: nothing new is coalesced away under the taken wake.
+        archive.PublishAt(path, AnnouncementPage(outside,
+            Announcement("okx-will-list-next", TapeNow.AddMinutes(-5), "OKX will list NEXT")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(2, events.OfKind(MissionEventKind.Tape).Count);
+        Assert.Single(events.OfKind(MissionEventKind.Tape), e => !e.Consumed);
+    }
+
+    /// <summary>
+    /// (a5) A HELD ARRIVAL NEVER BRINGS A RETRY FORWARD (review 3). The listener falls over before it raises on an item
+    /// outside every window, and again when the next look retries it; in that look a fetch stores an item inside August.
+    /// The wake is not raised on the held fetch's timing — that would say something arrived in a held month — but at the
+    /// next look, which the timer starts.
+    ///
+    /// <para>RED at 0afd7deb (every storing fetch told every pending notice): "Assert.Equal() Failure: Values differ
+    /// Expected: 2 Actual: 3" — the held fetch's arrival retried the failed notice.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_held_arrival_never_brings_a_failed_notice_s_retry_forward()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        using var archive = new FakeArchive();
+        var okx = Okx();
+        var path = TapeCollector.Url(okx.Series[0], "", null);
+        using var store = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+        HeldDataset(new DatasetStore(db), new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 31, 23, 59, 0, TimeSpan.Zero), new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var calls = 0;
+        await using var collector = new TapeCollector(store, baseUrl: archive.BaseUrl,
+            requestTimeout: TimeSpan.FromSeconds(5), now: () => TapeNow,
+            catalog: new TapeSourceCatalogRead([okx], null, []),
+            stored: arrival =>
+            {
+                if (++calls <= 2) throw new IOException("the listener fell over");
+                TapeWakes.Raise(db, arrival, TapeNow);
+            });
+
+        // LOOK 1: the item outside is stored and its notice fails.
+        var outside = Announcement("okx-will-list-outside", TapeNow.AddHours(-1), "OKX will list OUT");
+        archive.PublishAt(path, AnnouncementPage(outside));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+
+        // LOOK 2: its retry fails at the look's start; the listener would answer now, but a held item is what just arrived.
+        archive.PublishAt(path, AnnouncementPage(outside,
+            Announcement("okx-will-list-held", new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero), "OKX will list H")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(2, calls);
+        Assert.Empty(events.OfKind(MissionEventKind.Tape));
+
+        // LOOK 3: the timer's look tells it, one wake counting only the item outside.
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        var payload = Json.Read<TapeWakePayload>(wake.Payload!)!;
+        Assert.Equal(1, payload.Count);
+        Assert.Equal(TapeParse.ItemSubject(AnnouncementUrl("okx-will-list-outside")), payload.Subject);
+    }
+
+    /// <summary>
     /// (b) A TAPE ITEM INSIDE A HOLDOUT WINDOW WAKES NOBODY — a window that ends, and one with no end because its dataset
     /// does not record where its bars end. An item outside every window still wakes Research, and the held one beside it
     /// is neither counted nor named.
