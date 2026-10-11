@@ -139,7 +139,15 @@ public static class SeatProfile
     /// </summary>
     static void PrivateFile(string path)
     {
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows())
+        {
+            if (!OwnedOnWindows(new FileInfo(path), isRoot: false, out var owner))
+                throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                    $"TradeAgent will not use the AI's own home while {path} belongs to another account{(owner is null ? "" : $" ({owner})")}: " +
+                    $"whoever owns it could read the AI's sign-in. Nothing was written or started. Remove {path}; a removed sign-in is " +
+                    "signed in again from TradeAgent.");
+            return;
+        }
         try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(path, ex.Message); }
         if (OperatingSystem.IsMacOS()) NoExtendedAcl(path);
@@ -227,7 +235,7 @@ public static class SeatProfile
     {
         string? owner = null;
         bool ours;
-        if (OperatingSystem.IsWindows()) ours = OwnedOnWindows(at, out owner);
+        if (OperatingSystem.IsWindows()) ours = OwnedOnWindows(new DirectoryInfo(at), at == root, out owner);
         else
         {
             try { new DirectoryInfo(at).UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute; ours = true; }
@@ -253,37 +261,111 @@ public static class SeatProfile
             $"{at} and TradeAgent makes its own folder there.");
     }
 
+    /// <summary>
+    /// WINDOWS: <paramref name="item"/>'s OWNER IS THIS ACCOUNT (or the Administrators group, for an elevated process) — false
+    /// otherwise, with the owner read — AND ITS ACCESS LIST IS OWNER-ONLY. The root (<paramref name="isRoot"/>) holds a protected list
+    /// — nothing inherited, nothing kept — granting this account, its owner and SYSTEM. Everything below it holds NO entry of its own
+    /// and no protection, so it inherits exactly the root's (<c>U-seat-acl</c>): a replaced folder list moves only inherited entries,
+    /// and an explicit grant on an existing <c>auth.json</c> or a protected subfolder would otherwise survive it. Looked at first and
+    /// written only when it is not so — a write to a folder's list re-propagates over every file below it — then read again: a list
+    /// the system would not take, or one that still is not so, is the refusal in words.
+    /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    static bool OwnedOnWindows(string at, out string? owner)
+    static bool OwnedOnWindows(FileSystemInfo item, bool isRoot, out string? owner)
     {
         owner = null;
+        System.Security.Principal.SecurityIdentifier user, sid;
+        using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
         try
         {
-            var sid = new DirectoryInfo(at).GetAccessControl(System.Security.AccessControl.AccessControlSections.Owner)
-                .GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) as System.Security.Principal.SecurityIdentifier;
-            if (sid is null) return false;
+            if (Security(item).GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) is not System.Security.Principal.SecurityIdentifier found) return false;
+            sid = found;
             owner = sid.Value;
-            using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
-            if (me.User is not { } user) return false;
+            if (me.User is not { } account) return false;
+            user = account;
             var ours = sid.Equals(user)
                 || (sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
                     && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
             if (!ours) return false;
-
-            // OWNER-ONLY: a protected list — nothing inherited, nothing kept — granting this account, the owner and SYSTEM.
-            var only = new System.Security.AccessControl.DirectorySecurity();
-            only.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            const System.Security.AccessControl.InheritanceFlags both =
-                System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
-            foreach (var who in new[] { user, sid, new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null) }.Distinct())
-                only.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who,
-                    System.Security.AccessControl.FileSystemRights.FullControl, both,
-                    System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
-            new DirectoryInfo(at).SetAccessControl(only);
-            return true;
         }
         catch (UnauthorizedAccessException) { return false; }
         catch (InvalidOperationException) { return false; }
+
+        var system = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
+        var allowed = new HashSet<System.Security.Principal.SecurityIdentifier> { user, sid, system };
+        // BELOW THE ROOT, the root's own owner is in what it inherits: the Administrators group when an elevated process made it.
+        if (!isRoot && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+            allowed.Add(new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null));
+        try
+        {
+            if (Private(Security(item), isRoot, allowed)) return true;
+            System.Security.AccessControl.FileSystemSecurity list;
+            if (isRoot)
+            {
+                // OWNER-ONLY: a protected list — nothing inherited, nothing kept — granting this account, the owner and SYSTEM.
+                list = new System.Security.AccessControl.DirectorySecurity();
+                list.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+                foreach (var who in new[] { user, sid, system }.Distinct())
+                    list.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who,
+                        System.Security.AccessControl.FileSystemRights.FullControl, Both,
+                        System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+            }
+            else
+            {
+                // NOTHING OF ITS OWN: every explicit entry gone and the protection off, so the system merges in the folder's list.
+                list = Security(item);
+                foreach (var who in list.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier))
+                             .Cast<System.Security.AccessControl.FileSystemAccessRule>().Select(r => r.IdentityReference).Distinct().ToList())
+                    list.PurgeAccessRules(who);
+                list.SetAccessRuleProtection(isProtected: false, preserveInheritance: false);
+            }
+            if (item is DirectoryInfo folder) folder.SetAccessControl((System.Security.AccessControl.DirectorySecurity)list);
+            else ((FileInfo)item).SetAccessControl((System.Security.AccessControl.FileSecurity)list);
+            item.Refresh();
+            if (Private(Security(item), isRoot, allowed, exact: false)) return true;
+            throw NotPrivate(item.FullName, "its access list still grants another account after it was replaced");
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or IOException
+                                       or System.ComponentModel.Win32Exception)
+        {
+            throw NotPrivate(item.FullName, ex.Message);
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static System.Security.AccessControl.InheritanceFlags Both =>
+        System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static System.Security.AccessControl.FileSystemSecurity Security(FileSystemInfo item) =>
+        item is DirectoryInfo folder ? folder.GetAccessControl() : ((FileInfo)item).GetAccessControl();
+
+    /// <summary>
+    /// Whether <paramref name="list"/> is owner-only: for the root, protected, nothing inherited, and every entry that allows naming
+    /// one of <paramref name="allowed"/> — and, when <paramref name="exact"/> (is it already the list the app writes?), exactly one
+    /// full-control entry, inherited by all below, for each of them; below it, unprotected, no entry of its own, and every inherited
+    /// entry that allows naming one of <paramref name="allowed"/>.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static bool Private(System.Security.AccessControl.FileSystemSecurity list, bool isRoot,
+        HashSet<System.Security.Principal.SecurityIdentifier> allowed, bool exact = true)
+    {
+        var rules = list.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier))
+            .Cast<System.Security.AccessControl.FileSystemAccessRule>().ToList();
+        bool Allowed(System.Security.AccessControl.FileSystemAccessRule r) =>
+            r.AccessControlType == System.Security.AccessControl.AccessControlType.Deny
+            || allowed.Contains((System.Security.Principal.SecurityIdentifier)r.IdentityReference);
+        if (isRoot)
+        {
+            if (!list.AreAccessRulesProtected || rules.Any(r => r.IsInherited) || !rules.All(Allowed)) return false;
+            if (!exact) return true;
+            var granted = rules.Select(r => (System.Security.Principal.SecurityIdentifier)r.IdentityReference).ToHashSet();
+            return rules.Count == granted.Count && granted.SetEquals(allowed) && rules.All(r =>
+                r.AccessControlType == System.Security.AccessControl.AccessControlType.Allow
+                && r.FileSystemRights == System.Security.AccessControl.FileSystemRights.FullControl
+                && r.InheritanceFlags == Both && r.PropagationFlags == System.Security.AccessControl.PropagationFlags.None);
+        }
+        return !list.AreAccessRulesProtected && rules.All(r => r.IsInherited && Allowed(r));
     }
 
     /// <summary>
