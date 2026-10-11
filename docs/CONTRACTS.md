@@ -4401,7 +4401,8 @@ run too; whichever pass reaches it first ends it, each with its own reason.
 minute, in this order: what has an answer is settled; when the run's books read flat, any stop or target of the run still
 working is cancelled (`U-runner-refused-close`); when a stop, a target, an exit or a flatten landed on the minute,
 the other half of the stop/target pair is cancelled; when the entry filled on it, the stop and the target go to the
-venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed; on a minute
+venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed — its reading
+handed to the evaluator on every pass that reaches the minute, its cancel and close only on the live one; on a minute
 that closes no declared bar, an exit refused before the wire is sent again (below); the program is asked; last, after
 an exit refused before the wire, the stop and the target go back (below); and a UTC day that closed is told to Research.
 Only the STEP waits for the declared clock: the evaluator is asked on the bar
@@ -4499,7 +4500,10 @@ position is closed at market and the evaluator then reads a FLAT account. Asked 
 from a position this app had already said must not survive the bar — the mutant `ForwardRunnerTests` measures.
 It is asked on every minute and counted in the program's bars (`BarGrid.Between`, a zone's 23- or 25-hour day being
 one bar), so it reaches the limit at the declared bar's close and a close a gate refused is asked for again on the
-next minute, not the next hour.
+next minute, not the next hour. The reading is a function of the books, not of the pass (`U-runner-maxhold-replay`):
+on every minute whose books read long at or past the limit, live or replayed, the evaluator reads `RunBooks.Flat`, and
+only the cancel and the flatten wait for the live minute — a replay handed the long reading fired the program's own
+`max_hold_bars` exit, whose pending held the next entry back, a whole declared bar of them on an hourly program.
 
 **THE CURSOR IS THE FRONTIER.** Nothing is planned past the first bar the deployment's cursor has not reached,
 and the cursor is the last bar every one of whose operations resolved or was refused. An UNKNOWN answer
