@@ -4080,7 +4080,12 @@ recorded rows are not touched. **A trial measured under other evaluation semanti
 as `no-stream` — counted in M and clustered alone, the reading that only lowers the deflated figures, never the candidate
 — records how many it read so in `referee_research.trials_other_semantics` (NULL on a measurement before the rung, which
 never asked), and the report's line says "of which N measured under other evaluation semantics" when N > 0; `U-referee-v2c`'s sealed
-record and the queue's rank inherit it through `Measure`. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
+record and the queue's rank inherit it through `Measure`. **The evaluator is in the measurement's identity** (rung 36):
+`referee_research`, its trials and `referee_holdout` are keyed (campaign, version, method, `evaluator_version`), the label
+written by `Record` from this build's `Referee.EvaluatorVersion` and never a caller's, so a verdict asked again under another
+evaluator is measured and sealed under its own; every reader — `Of`, `Withheld`'s row, `SealedOf`, the remembered flag, the
+queue's rank, the α-wealth history and the report's line — reads this build's evaluator's rows only, another's or one from
+before the rung (rebuilt with every row kept, NULL = unknown) read as absent. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
 
 **One INCONCLUSIVE path into paper** (`U-referee-v2b`, EDGE § 4.5). A refusal is inconclusive when it says nothing about the
 version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `refused` — never invalidated — whose reason is
@@ -4107,7 +4112,7 @@ marker and the term ride `policy_version` and `effective_to`. No op, verb or arg
 
 **Every verdict also seals E4's holdout figures, and flags a holdout its author may remember** (`U-referee-v2c`, rung 35;
 EDGE § 4.5 E4, :206; R04 :255, :261-266, :290, :315). In the verdict's own write, beside its research row, `RefereeHoldout`
-records one `referee_holdout` row per (campaign, version, method), first writer wins, never updated or deleted (a stopped
+records one `referee_holdout` row per (campaign, version, method, evaluator — rung 36), first writer wins, never updated or deleted (a stopped
 verdict writes none), computed from the holdout run's daily net returns in memory (`DailyReturns.Of` on the run's trace; the
 run keeps no stream): **fidelity** z = (SR_h − (SR_research − SR0)) / se_h over the verdict's research row, se_h by R04
 :64's variance with the holdout's skew and raw kurtosis, `inconclusive` while 2·se_h exceeds one annual Sharpe unit (every

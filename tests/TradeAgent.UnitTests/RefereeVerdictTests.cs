@@ -964,10 +964,15 @@ public class RefereeVerdictTests
             .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (f, i, line)))
             .Where(l => rewrite.IsMatch(l.line) || l.line.Contains("INSERT INTO referee_research", StringComparison.Ordinal))
             .Select(l => $"{Path.GetFileName(l.f)}: {l.line.Trim()}")
+            .Order(StringComparer.Ordinal)
             .ToList();
+        // Beside the one writer, rung 36's rebuild (the evaluator joining the key), which copies every row as it was; in
+        // ordinal order, because the file system's is not one.
         Assert.Equal(
-            ["ResearchEvidence.cs: INSERT INTO referee_research({Cols})",
-             "ResearchEvidence.cs: INSERT INTO referee_research_trial(campaign_id, version_id, method, ordinal, run_id, cluster, reading)"],
+            ["Database.cs: INSERT INTO referee_research(campaign_id, version_id, method, evaluator_version, candidate_run_id,",
+             "Database.cs: INSERT INTO referee_research_trial(campaign_id, version_id, method, evaluator_version, ordinal, run_id,",
+             "ResearchEvidence.cs: INSERT INTO referee_research({Cols})",
+             "ResearchEvidence.cs: INSERT INTO referee_research_trial(campaign_id, version_id, method, evaluator_version, ordinal, run_id, cluster, reading)"],
             writers);
     }
 
@@ -1377,8 +1382,12 @@ public class RefereeVerdictTests
             .SelectMany(f => File.ReadAllLines(f).Select(line => (f, line)))
             .Where(l => rewrite.IsMatch(l.line))
             .Select(l => $"{Path.GetFileName(l.f)}: {l.line.Trim()}")
+            .Order(StringComparer.Ordinal)
             .ToList();
-        Assert.Equal(["RefereeHoldout.cs: INSERT INTO referee_holdout({Cols})"], writers);
+        // Beside the one writer, rung 36's rebuild (the evaluator joining the key), which copies every row as it was; in
+        // ordinal order, because the file system's is not one.
+        Assert.Equal(["Database.cs: INSERT INTO referee_holdout(campaign_id, version_id, method, evaluator_version, research_row,",
+            "RefereeHoldout.cs: INSERT INTO referee_holdout({Cols}, evaluator_version)"], writers);
     }
 
     /// <summary>
@@ -1440,6 +1449,209 @@ public class RefereeVerdictTests
 
         Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
     }
+
+    /// <summary>
+    /// THE EVALUATOR IS IN THE MEASUREMENT'S IDENTITY (<c>U-evidence-evaluator-label</c>, the review's P1): a verdict asked
+    /// again under another evaluator measures its research and seals its holdout under its own, and the earlier
+    /// evaluator's rows stand beside them, untouched and unread. The home is one whose verdict, over a streamed research
+    /// trial, was recorded by a build under evaluator A — every run, the promotion (its id hashes the evaluator) and every
+    /// research and sealed row labelled A, where the table carries a label. Asked again under this build with no new
+    /// research run, the trial is A's: counted in M, none of its returns used, so the measurement has no candidate — and
+    /// that is what is read back, with a sealed row of this build's beside it. RED before the fix: the measurement under
+    /// this build was discarded by the (campaign, version, method) key, <c>Of</c> served A's — a candidate whose returns
+    /// another evaluator measured — and the seal guard, finding nothing measured, sealed nothing for this build, ever.
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_asked_again_under_another_evaluator_is_measured_and_sealed_under_its_own()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _ = w.Db;
+        var trial = StreamedRun(w, "candidate", 139, 11);
+        var first = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(first.Promoted, first.Promotion?.Reason ?? first.Why);
+        Assert.Equal(trial, RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!.CandidateRunId);
+
+        AsIfJudgedUnder(w, "backtest=1;metrics=1;scoring=1");
+        var earlier = (Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial") + Bytes(w.Db, "referee_holdout"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        var again = new Referee(w.Db, () => At.AddHours(1)).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(again.Promoted, again.Promotion?.Reason ?? again.Why);
+        Assert.Equal(Referee.EvaluatorVersion, again.Promotion!.EvaluatorVersion);
+        Assert.Equal(2L, Count(w.Db, "strategy_promotion"));
+
+        var e = RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId);
+        Assert.NotNull(e);
+        Assert.Null(e.CandidateRunId);
+        Assert.Equal((1, 1, 1), (e.TrialsM, e.TrialsUnstreamed, e.TrialsOtherSemantics));
+        Assert.Equal((trial, ResearchEvidence.NoStream), Assert.Single(e.Trials) is var t ? (t.RunId, t.Reading) : default);
+        Assert.Equal(GateStatus.NoStream, e.DsrStatus);
+
+        var sealedRow = RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId);
+        Assert.NotNull(sealedRow);
+        Assert.Equal(e.Method, sealedRow.ResearchRow);
+        Assert.Equal(e.At, sealedRow.At);
+        Assert.NotNull(RefereeOf(w).Holdouts.Flag(w.Campaign.Id, w.VersionId));
+
+        // A'S ROWS STAND, BYTE FOR BYTE, BESIDE THIS BUILD'S ONE OF EACH.
+        var now = Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial") + Bytes(w.Db, "referee_holdout");
+        Assert.All(earlier, row => Assert.Contains(row + "\n", now, StringComparison.Ordinal));
+        Assert.Equal((2L, 2L, 2L),
+            (Count(w.Db, "referee_research"), Count(w.Db, "referee_research_trial"), Count(w.Db, "referee_holdout")));
+
+        // AND ASKED A THIRD TIME UNDER THIS BUILD: first writer wins, and nothing more is written.
+        var settled = Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial") + Bytes(w.Db, "referee_holdout");
+        Assert.True(new Referee(w.Db, () => At.AddHours(2)).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        Assert.Equal(settled,
+            Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial") + Bytes(w.Db, "referee_holdout"));
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+    }
+
+    /// <summary>
+    /// RUNG 36 REBUILDS THE MEASUREMENT TABLES WITH THE EVALUATOR IN THEIR KEY AND KEEPS EVERY ROW, AND A CRASH BEFORE ITS
+    /// STAMP RUNS NONE OF IT AGAIN. A home at rung 35 — <c>referee_research</c>, its trials and <c>referee_holdout</c> keyed
+    /// (campaign, version, method), one verdict's rows in each — is opened by this build: every row is there, byte for byte
+    /// but for the new columns, which are NULL (unknown, from before the rung), and no reader of this build's evaluator
+    /// serves it. Then the stamp is set one lower, as a crash between the rebuild's commit and the stamp leaves it, and the
+    /// home opens at this build's stamp with every row as it was.
+    /// </summary>
+    [Fact]
+    public async Task The_measurement_tables_are_rebuilt_at_rung_36_with_every_row_kept_and_a_crash_before_its_stamp_recovers()
+    {
+        Assert.True(Versions.DatabaseSchemaVersion >= 36, $"this build says {Versions.DatabaseSchemaVersion}");
+        var w = await Given(frozenAt: Bar0);
+        StreamedRun(w, "candidate", 139, 11);
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        string Tables(Database db) =>
+            Bytes(db, "referee_research") + Bytes(db, "referee_research_trial") + Bytes(db, "referee_holdout");
+        var expected = Tables(w.Db)
+            .Replace($"evaluator_version={Referee.EvaluatorVersion}|", "evaluator_version=|", StringComparison.Ordinal)
+            .Replace("trials_other_semantics=0|", "trials_other_semantics=|", StringComparison.Ordinal);
+        Assert.Equal(3, expected.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+        var file = w.Db.Read(c => c.DataSource);
+        await w.Gw.DisposeAsync();
+        w.Db.Dispose();
+
+        // A HOME AT RUNG 35: the three tables as rungs 33 and 35 made them, the same rows, the stamp before this rung.
+        using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                BEGIN;
+                ALTER TABLE referee_research_trial RENAME TO t36; ALTER TABLE referee_research RENAME TO r36;
+                ALTER TABLE referee_holdout RENAME TO h36;
+                CREATE TABLE referee_research(
+                  campaign_id INTEGER NOT NULL REFERENCES strategy_campaign(id), version_id TEXT NOT NULL REFERENCES strategy_version(id),
+                  method INTEGER NOT NULL, candidate_run_id TEXT REFERENCES strategy_run(id), friction_sha256 TEXT, trace_sha256 TEXT,
+                  days INTEGER NOT NULL, blocks_known INTEGER NOT NULL, blocks_positive INTEGER NOT NULL, trials_m INTEGER NOT NULL,
+                  trials_unstreamed INTEGER NOT NULL, n_eff INTEGER NOT NULL, sr TEXT, skew TEXT, kurtosis TEXT, sr0 TEXT, dsr TEXT,
+                  ceiling TEXT, blocks_power TEXT NOT NULL, dsr_power TEXT NOT NULL, blocks_status TEXT NOT NULL,
+                  dsr_status TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(campaign_id, version_id, method));
+                CREATE TABLE referee_research_trial(
+                  campaign_id INTEGER NOT NULL, version_id TEXT NOT NULL, method INTEGER NOT NULL, ordinal INTEGER NOT NULL,
+                  run_id TEXT NOT NULL, cluster INTEGER NOT NULL,
+                  reading TEXT NOT NULL CHECK(reading IN ('streamed','no-stream','held-back')),
+                  PRIMARY KEY(campaign_id, version_id, method, run_id),
+                  FOREIGN KEY(campaign_id, version_id, method) REFERENCES referee_research(campaign_id, version_id, method));
+                CREATE TABLE referee_holdout(
+                  campaign_id INTEGER NOT NULL REFERENCES strategy_campaign(id), version_id TEXT NOT NULL REFERENCES strategy_version(id),
+                  method INTEGER NOT NULL, research_row INTEGER NOT NULL, holdout_days INTEGER NOT NULL, sr_h TEXT, skew_h TEXT,
+                  kurtosis_h TEXT, z TEXT, z_status TEXT NOT NULL, e_h TEXT, p_h TEXT, alpha_j TEXT NOT NULL,
+                  wealth_before TEXT NOT NULL, wealth_after TEXT NOT NULL, addis_status TEXT NOT NULL, author_attempt TEXT,
+                  author_model TEXT, model_cutoff TEXT, cutoff_source TEXT, remembered INTEGER NOT NULL, at TEXT NOT NULL,
+                  PRIMARY KEY(campaign_id, version_id, method));
+                INSERT INTO referee_research SELECT campaign_id, version_id, method, candidate_run_id, friction_sha256, trace_sha256,
+                  days, blocks_known, blocks_positive, trials_m, trials_unstreamed, n_eff, sr, skew, kurtosis, sr0, dsr, ceiling,
+                  blocks_power, dsr_power, blocks_status, dsr_status, at FROM r36;
+                INSERT INTO referee_research_trial SELECT campaign_id, version_id, method, ordinal, run_id, cluster, reading FROM t36;
+                INSERT INTO referee_holdout SELECT campaign_id, version_id, method, research_row, holdout_days, sr_h, skew_h,
+                  kurtosis_h, z, z_status, e_h, p_h, alpha_j, wealth_before, wealth_after, addis_status, author_attempt,
+                  author_model, model_cutoff, cutoff_source, remembered, at FROM h36;
+                DROP TABLE t36; DROP TABLE r36; DROP TABLE h36;
+                UPDATE meta SET value='35' WHERE key='schema_version';
+                COMMIT;
+                """;
+            c.ExecuteNonQuery();
+        }
+
+        using (var db = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), Stamp(db));
+            Assert.Equal(expected, Tables(db));
+            var referee = new Referee(db, () => At);
+            Assert.Null(referee.Research.Of(w.Campaign.Id, w.VersionId));
+            Assert.Null(referee.Holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+            Assert.Null(referee.Holdouts.Flag(w.Campaign.Id, w.VersionId));
+            Assert.Null(Assert.Single(referee.Research.All()).EvaluatorVersion);
+            Assert.Single(Assert.Single(referee.Research.All()).Trials);
+            Assert.Empty(db.Read(_ =>
+            {
+                using var c = db.Cmd("PRAGMA foreign_key_check");
+                using var r = c.ExecuteReader();
+                var rows = new List<string>();
+                while (r.Read()) rows.Add(r.GetString(0));
+                return rows;
+            }));
+        }
+
+        // A CRASH BETWEEN THE REBUILD'S COMMIT AND THE STAMP: the rebuilt tables and every row in place, the stamp one lower.
+        using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "UPDATE meta SET value='35' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var rerun = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), Stamp(rerun));
+            Assert.Equal(expected, Tables(rerun));
+        }
+
+        static string Stamp(Database db) => db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+            return (string)c.ExecuteScalar()!;
+        });
+    }
+
+    /// <summary>
+    /// THE HOME AS A BUILD UNDER <paramref name="evaluator"/> WOULD HAVE LEFT IT: every run labelled so, every promotion's
+    /// evaluator and its id (which hashes it) re-written to it, and every research and sealed row labelled so where its
+    /// table carries the label — the imitation of an earlier build's home, in a test only.
+    /// </summary>
+    static void AsIfJudgedUnder(World w, string evaluator) => w.Db.Write(_ =>
+    {
+        using (var defer = w.Db.Cmd("PRAGMA defer_foreign_keys=ON;"))
+            defer.ExecuteNonQuery();
+        using (var runs = w.Db.Cmd("UPDATE strategy_run SET evaluator_version=$e", ("$e", (object?)evaluator)))
+            runs.ExecuteNonQuery();
+
+        var promotions = new Promotions(w.Db);
+        var ids = new List<string>();
+        using (var c = w.Db.Cmd("SELECT id FROM strategy_promotion"))
+        using (var r = c.ExecuteReader())
+            while (r.Read()) ids.Add(r.GetString(0));
+        foreach (var id in ids)
+        {
+            var moved = promotions.ById(id)! with { EvaluatorVersion = evaluator };
+            using var u = w.Db.Cmd("UPDATE strategy_promotion SET evaluator_version=$e, id=$new WHERE id=$old",
+                ("$e", evaluator), ("$new", moved.ComputedId), ("$old", id));
+            u.ExecuteNonQuery();
+        }
+
+        foreach (var table in new[] { "referee_research", "referee_research_trial", "referee_holdout" })
+        {
+            using var has = w.Db.Cmd($"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='evaluator_version'");
+            if ((long)has.ExecuteScalar()! == 0) continue;
+            using var u = w.Db.Cmd($"UPDATE {table} SET evaluator_version=$e", ("$e", evaluator));
+            u.ExecuteNonQuery();
+        }
+        return 0;
+    });
 
     /// <summary>The report's line for the world's verdict, by its verdict word.</summary>
     static string VerdictLineOf(World w, string verdict) => Assert.Single(
