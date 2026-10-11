@@ -21,6 +21,15 @@ public static class AllocationPolicy
 {
     /// <summary>The only policy this build implements. Hashed into <see cref="AllocationRow.Id"/>.</summary>
     public const string V1 = "allocation-policy-v1";
+
+    /// <summary>
+    /// THE INCONCLUSIVE QUOTA (<c>U-referee-v2b</c>): a PAPER row the app's sweep writes for a version whose refusal
+    /// is <c>Strategy.Inconclusive</c> — at most a third of an envelope's slots, one per campaign lineage at a time, for
+    /// <c>Inconclusive.Term</c>, charged one trial to the verdict's campaign. Hashed into the row's id like
+    /// <see cref="V1"/>, so a slot is never mistaken for a paper-eligible allocation; it authorises only while the
+    /// refusal stays inconclusive and the term is open, and never in a live mode.
+    /// </summary>
+    public const string InconclusiveV1 = "allocation-policy-inconclusive-v1";
 }
 
 /// <summary>
