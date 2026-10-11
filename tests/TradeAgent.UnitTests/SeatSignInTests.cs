@@ -51,8 +51,8 @@ public class SeatSignInTests
 
             // ONE THREAD FOR THE PAGE, which owns its controls: every wait below is made on it.
             var page = new DashboardPage(host, () => Task.CompletedTask);
-            rig.Service.RefreshAsync().GetAwaiter().GetResult();
-            page.Update(host.Gateway.StatusAsync().GetAwaiter().GetResult(), []);
+            Rig.OnThisThread(rig.Service.RefreshAsync());
+            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
 
             var card = page.SignIn;
             Assert.Contains(card.Root, page.Root.GetLogicalDescendants());
@@ -65,8 +65,8 @@ public class SeatSignInTests
 
             // SIGNED IN — here by the script's own marker, as a sign-in finished elsewhere would leave it — the card goes.
             File.WriteAllText(rig.Marker, "");
-            rig.Service.RefreshAsync().GetAwaiter().GetResult();
-            page.Update(host.Gateway.StatusAsync().GetAwaiter().GetResult(), []);
+            Rig.OnThisThread(rig.Service.RefreshAsync());
+            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
             Assert.False(card.Root.IsVisible);
             Assert.True(card.SignedIn.IsVisible);
         }
@@ -419,6 +419,9 @@ public class SeatSignInTests
             Assert.True(Card.Pressing?.Wait(TimeSpan.FromSeconds(60)) ?? true, "the press never finished");
             while (_posted.TryDequeue(out var work)) work();
         }
+
+        /// <summary>A task waited for ON THIS THREAD, which owns the controls the next line touches.</summary>
+        public static T OnThisThread<T>(Task<T> task) => task.GetAwaiter().GetResult();
 
         /// <summary>A status read, waited for ON THIS THREAD — the card belongs to it — and the card's pass.</summary>
         public void Refresh()
