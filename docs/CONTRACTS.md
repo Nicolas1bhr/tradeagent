@@ -3957,9 +3957,13 @@ method) in `referee_research` and its trials in `referee_research_trial`, insert
 verdict's own write — first writer wins, never updated or deleted, so a stopped verdict or one not judged writes none —
 naming the candidate's run, friction and trace shas and every trial it read with its cluster and reading; a figure that is
 not a number is NULL, never 0. **No clause reads any of it**: `ScoringPolicyV1`, `PaperPolicyV1`, both policy texts,
-`EvaluatorVersion`, the promotion's nine facts and `RefereeFeedback.Text` are what they were, so no standing moved. The
-owner's report adds it to each verdict's line — research data, which agents may read (R04 :309); no op, verb or answer
-field reaches it. Not here: E2's ±20% neighbours (`U-referee-neighbours`), enforcing any gate, E4 and the queue's order
+`EvaluatorVersion`, the promotion's nine facts and `RefereeFeedback.Text` are what they were, so no standing moved. A
+stream whose known days hold one value has no moments and no correlation: its SR, skew, kurtosis and DSR are NULL, never a
+figure made of rounding. The owner's report adds it to each verdict's line — research data, which agents may read (R04
+:309); no op, verb or answer field reaches it — and asks `StrategyStore.HeldBack` again AT EACH READ of the candidate and
+every trial the measurement read through a stream (`ResearchEvidence.Withheld`): one held back now, by a holdout set after
+the verdict or a dataset gone, and the line says the measurement is withheld, which run and why, and shows no figure; the
+recorded rows are not touched. Not here: E2's ±20% neighbours (`U-referee-neighbours`), enforcing any gate, E4 and the queue's order
 (`U-referee-v2c`).
 
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
