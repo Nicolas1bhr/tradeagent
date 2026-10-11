@@ -249,8 +249,17 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   an allowlist: the app **verifies the effective tool and configuration surface at every launch**, fresh and resumed, keeps project-level
   configuration out of every seat's workspace, and labels the configuration's integrity ADVISORY while ANY unconfined seat shares the host and user —
   its own shell or a neighbour's can rewrite the home, `state/` and `runtimes.json` (§ 2.3's no-neighbour rule ends that where the organisation runs).
+- **A seat's prompt travels on stdin, never in its argv** (`U-prompt-stdin`): today the whole packet rides in the command line
+  (`AgentSession.cs:155, 162`; stdin closed at `:580`), where any process of the host can read it — a confined cell included, since
+  `/proc/<pid>/cmdline` is outside Landlock's reach — and where it is capped (128 KiB per argument on Linux, 32,767 characters per command line on
+  Windows). A test proves a cell cannot read another attempt's prompt.
 - **The broker's shell-free door:** a broker-only seat reaches the broker without a shell — through the app's own MCP server (or the API harness's
-  tools), under the attempt's grant, serving the organisation's verbs, artifact reads by id and bounded data queries (`U-thinking-seats`).
+  tools), under the attempt's grant, serving the organisation's verbs, artifact reads by id and bounded data queries (`U-thinking-seats`). A **broker-only codex seat** is shown
+  viable and MEDIATED (`docs/research/2026-10-11/R-exec-server.md`, the dev Mac, a mock model): with `CODEX_EXEC_SERVER_URL=none`, the host-reaching
+  features off, `agents.enabled=false` and the app's tools as a loopback HTTP MCP server, no host-reaching tool is offered and 17 calls to tools not
+  offered were refused on both tool modes; flags alone are not enough (with a local environment present, `apply_patch` wrote a host file); the
+  offered surface is verified at every launch, since a runtime update or the account's default model changes it. Thinking seats therefore need
+  neither `U-harness-responses` nor an API key.
 - **Native delegation** (the factory plan's level A) only where the profile says so, inside one attempt and its envelope, charged to it, with no
   rows; durable delegation is a mandate (§ 2.2).
 - **Usage:** what the provider reports; otherwise the reservation stands.
@@ -260,12 +269,17 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   inputs; nothing of `state/`, the credentials, the inbox or the holdout), a network and IPC policy, a lifetime and resource ceilings — and an
   **assurance profile** naming which properties were PROVEN on which build and platform, each with its enforcement class (the factory plan's Law 9;
   VISION § 6.3). A confined seat keeps its working freedom: shell, code, packages, permitted network, the runtime's own helpers (R20).
-- **Providers:** none (today, ADVISORY, labelled "unconfined"); **Linux first** (the owner's answer): user, mount and pid namespaces with seccomp or
-  Landlock and a per-attempt cgroup — proved on CI's ubuntu runners, then on the Linux host; Windows (`R-containment`'s AppContainer route, on the
+- **Providers:** none (today, ADVISORY, labelled "unconfined"); **Linux first** (the owner's answer): the app's own launcher — no_new_privs, then seccomp
+  (`socket()` only for TCP over IPv4 or IPv6, `io_uring` denied, `socketpair()` kept), then Landlock (ABI 6 or newer, refused below), on one
+  thread, then `execve` — and a per-attempt cgroup in a subtree the app's systemd service delegates; no namespaces (Ubuntu refuses unprivileged
+  user namespaces) — proved on CI's ubuntu runners, then on the Linux host (`docs/queue/U-cell-linux-a.md`; parts a–e in ORGANISATION § 15); Windows (`R-containment`'s AppContainer route, on the
   box); macOS only for development, if cheap.
 - **The split** (Law 2): the harness that holds the login stays outside the cell; model-directed shell, file, package and network actions run
-  inside. Candidate routes: (a) codex 0.160.1's experimental `exec-server` inside the cell, the harness outside — UNKNOWN whether every
-  model-directed action routes through it (`R-exec-server`); (b) the whole CLI inside the cell, acceptable ONLY with a provider-supported workload
+  inside. Candidate routes: (a) codex 0.160.1's experimental `exec-server` inside the cell, the harness outside — shown viable on the dev Mac
+  against a mock model (`R-exec-server`): every host-reaching model-directed action ran in the exec-server and the login never crossed its
+  transport, on four conditions — a scrubbed `env -i` stdio launch (or `--ws-auth` on a WebSocket listener), the workspace at the same path on both
+  sides, MCP servers placed in the cell without the harness's `env_vars` and the cell's own `mcp_servers` answer ignored, and the cell's codex home
+  empty and unwritable by its model processes; Linux not yet run (`U-cell-linux` re-runs the kit); (b) the whole CLI inside the cell, acceptable ONLY with a provider-supported workload
   credential scoped below the owner's account — a copy of the owner's login inside a cell is exposure, revocable or not; (c) the API harness with an
   app-run executor in the cell.
 - **Information flow:** a cell with permitted network or IPC can talk to another outside the relay through any service both may reach; side-channel
@@ -381,7 +395,7 @@ Each table lands with its unit, on the next free rung, in landing order; none is
 
 ## 5. Seat types — what each property's enforcement class is, or is meant to become
 
-| Property | Legacy pair, CLI, unconfined (today → after the named unit) | Thinking seat, API harness (TARGET) | Thinking seat, codex with host tools off (TARGET; UNKNOWN until `R-exec-server`) | Doing seat, confined cell (TARGET, per provider) |
+| Property | Legacy pair, CLI, unconfined (today → after the named unit) | Thinking seat, API harness (TARGET) | Thinking seat, codex broker-only (TARGET; viable, MEDIATED — `R-exec-server`) | Doing seat, confined cell (TARGET, per provider) |
 |---|---|---|---|---|
 | Decision rights at the verbs | refused: no org verb runs on an unconfined seat (§ 2.3) | hard (brokered) | mediated | hard |
 | AI admission | hard, once `U-admission-fail-closed` lands | hard | hard | hard |
@@ -451,8 +465,8 @@ thinks · a proving-ground score read as market truth.
 | 2.4 Envelopes | `U-admission-fail-closed`, `U-org-envelopes` (O4), `U-billing-classes` |
 | 2.5 Scheduler | `U-org-wakes` (O3), `U-org-lanes` (O9) |
 | 2.6 Packets | `U-reconcile-packet`, `U-org-packets` |
-| 2.7 Runtimes and seat homes | `U-seat-home`, `R-exec-server`, `U-thinking-seats` (the broker's shell-free door), `U-harness-responses`, `U-puppet-runtime` |
-| 2.8 Cells | `U-cell-linux` (`U-contain-seats`' Linux provider), `U-execution-environment`, `U-cell-windows` |
+| 2.7 Runtimes and seat homes | `U-seat-home`, `R-exec-server`, `U-prompt-stdin`, `U-thinking-seats` (the broker's shell-free door), `U-harness-responses`, `U-puppet-runtime` |
+| 2.8 Cells | `U-cell-linux` a–e (`U-contain-seats`' Linux provider), `U-execution-environment`, `U-cell-windows` |
 | 2.9 Broker and verbs | `U-org-assignments`, `U-org-verbs` |
 | 2.10 Relay | `U-org-assignments` (deliveries), `U-org-chief` (the owner's words), `U-org-verbs` (boundaries' assessor sets) |
 | 2.11 Decisions | `U-org-assignments`, `U-org-scorecards` (O8) |
@@ -463,12 +477,14 @@ thinks · a proving-ground score read as market truth.
 | 2.16 Evolution | `U-seat-shadow`, `U-org-templates`, `U-org-router` (ORGANISATION § 15) |
 
 ## 11. Open, and how each closes
-- Does codex's exec-server carry every model-directed action into a separate environment, with the login outside? Can a codex seat run with every
-  host-reaching tool disabled and the app's tools only? → `R-exec-server`; if not, thinking seats wait for `U-harness-responses` and an API key, the
-  owner's call.
+- CLOSED by `R-exec-server` (2026-10-11, the dev Mac, a mock model): the exec-server split carries every host-reaching model-directed action with
+  the login outside, and a broker-only codex seat is MEDIATED — thinking seats need no API key. Still open: both on Linux (`U-cell-linux` re-runs
+  the kit) and a real model on the broker-only surface (`U-thinking-seats`' first observed run).
 - Which tools a seat is actually offered under the owner's home today, fresh and resumed → `U-seat-home`'s inventory.
-- Which Linux confinement the host supports, without root where possible → `U-cell-linux`'s survey, then the host (the nine host questions of
-  2026-10-09 and the owner's go to deploy).
+- Which Linux confinement the host supports: answered for CI's runner and a local VM by `U-cell-linux`'s survey (the stack in § 2.8); the host's
+  own answers are the owner's — the nine questions of 2026-10-09 and five for the cells (the kernel, 6.12 or newer for Landlock ABI 6; `landlock` in
+  the LSM list; the app as a systemd service under its own non-root user with `Delegate=yes`; no other agent CLI run as that user; an executor
+  cell's default network) — then his go to deploy.
 - How many concurrent turns a quota pool allows, with the owner's own use beside it → measured under `U-org-lanes`.
 - Does a manager layer pay? → the proving ground, then M-org2's paired run (ORGANISATION § 17).
 - **The owner's:** when testing may start (M-org0 first); the go to deploy on the Linux host and its nine questions; funding beyond the plan after
