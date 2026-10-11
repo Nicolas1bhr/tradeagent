@@ -10316,3 +10316,27 @@ no regression; one P2 — no executable regression test of land.sh's `test*` pre
 the bookkeeping list: whether it dedupes is not known at this record — its verdict (skip named or a full run) goes to fleet/ci-ledger.md and the next record. Tests box NOT RUN (CI-only unit).
 **VERIFIED since (the orchestrator, 2026-10-11 17:29 CEST):** main run 38151486639 on `ba27ce63` deduped — `dedupe-gate` success, its log printing
 `tested_by=38149744637`; shard-plan, test, package, package-linux and linux-host `skipped`; the run's conclusion success.
+
+## U-admission-fail-closed — a launch whose admission cannot be written is refused in words and never runs unrecorded; the refusal reaches the owner on every wake kind and the owed wake waits out the loop's failure backoff (landed 2026-10-11, seat B)
+
+**Landed** solo (`land.sh` v2) on `main` `24dc2676`: rebased tip (src+tests patch-id `60ba3f1313b9` identical to the reported `b4d060c7`). CI run **38153466085** at `fa1048dc` CARRIED (build tree
+equal outside bookkeeping paths): every job success, `land.sh check` VERDICT PASS. **No rung.** Spend protection (ORCHESTRATION § 2.4 first bullet; R23 A04; BUDGET-001). No paid run of the app's AI.
+**What changed:**
+1. `TurnMeter.Begin`: a failed admission write returns `AiAdmission.LedgerRefused(cause)` — `Ceiling = AiAdmission.Ledger`, the sentence `Labels.LaunchLedgerUnwritable` — never an admitted value. The
+   ungated `_attempts.Begin(opened)` in `Record` stays (it records a turn that already ran and admits nothing; commented).
+2. Fail-open edges closed: `MissionHost.BeginTurn` with no meter refuses (the window before `ComposeTheAi`); a null `Admit` in `AgentSession` / `ApiConversation` refuses (a runtime change detaches the
+   meter while Chat can still send). `AiAdmission.Unrecorded` renamed `NoLedger`, used only as `IMissionHost.BeginTurn`'s default and by test hosts built without a ledger.
+3. (fix 1) A ledger refusal is visible on EVERY wake kind: the card's WaitingFor names the launch ledger and its cause (held in memory, so it shows when the database takes no write); a new
+   `IMissionHost.LaunchLedgerRefused` writes ONE warn activity line per distinct cause, cleared on the next admitted launch; the wake STAYS DUE under the loop's failure `Backoff` (30 s doubling to
+   30 min), not the 5 s busy retry; the first admitted turn resets it; owner messages still marked Blocked. `AiAdmission` gained `Cause`.
+4. (fix 1) `ExecuteTaskAsync` deleted from `IAgentRuntime`, `ApiAgentRuntime` and `CliAgentRuntime` (no caller anywhere; each launched a paid turn with no admission); `docs/CONTRACTS.md` updated.
+**Evidence:** RED at base: (a) "a launch the ledger would not record was admitted"; (b) Assert.Empty (the Situation was sent); (c) "the AI tool was started for a turn the ledger never recorded"; fix 1:
+"Expected: 00:00:30 Actual: 00:00:05" and two Assert.Single failures. MUTANTS red: the catch restored to the admitted value ⇒ Failed 3; the ledger branch gated back to Owner wakes ⇒ Failed 2.
+Release `--no-incremental` 0 warnings; touched classes ×3 (BudgetReservationTests "Passed: 24"; ContainmentTests 2/2); names 2612 → 2623, removed 0. Tests box FULL suite GREEN on the fixed tree:
+Unit 1742/1742, Fault 498/498, Integration 692/693 (1 not run); the box owner's files unchanged.
+**Deviation, accepted:** meterless test helpers (SessionOverStream, QuiescenceBarrier.ChatSession, two ContainmentTests sessions) set `Admit = _ => AiAdmission.NoLedger` explicitly; names and assertions
+unchanged — the explicit no-ledger path the brief asked for.
+**Review (Codex `gpt-6.1-sol`, high):** build review P1 REAL (a ledger refusal reached only owner messages) → fixed red-first by a fresh fixer. Re-review: P1 closed, no regression. One P2 ACCEPTED as an
+owed light: only the LAST cause is remembered, so alternating refusals A → B → A write three lines for two causes — bounded by the backoff itself (at most one line per refused turn, 30 s doubling to
+30 min apart), never a storm; a fix pass was not worth its spend (the owner's "not for sport", 18:20).
+**NOT VERIFIED:** the refusal in the running app (no app run; no paid AI run); the deduped-alternation case beyond the review's reading.
