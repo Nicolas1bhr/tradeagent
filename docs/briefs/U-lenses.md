@@ -1,0 +1,38 @@
+# U-lenses — a lens is a versioned, hashed question schema over the tape's own text, proposed by an agent, validated and registered by the app on `tape.db` rung 3, so every recorded answer can be resolved to exactly what was asked about which item
+**Protects:** measurement vs claim (`CLAUDE.md`; EDGE § 6 item 3, `docs/EDGE-FACTORY.md:307`: the `lens` row is the app's, insert-only and hashed by it; an agent's reasons are a research-ledger claim); observations as data (EDGE § 6 item 4, `:308-309`:
+a state is built by code from declared fields, a quarantined item never reaches one); operator authority in-process (no op touches the budget, key, pin, instrument or activation); the moat (R10 #14: a lens targets
+tape catalogue rows only, so genome-bank and trace lenses cannot be expressed); public until the absolute point (only an R02-derived built-in is committed); evidence true about what ran (definitions never edited;
+a changed built-in under its version is refused); recovery (the rung and its stamp in one transaction).
+Seat B; heavy (the agent boundary and the evidence record: opus). **Rung: `tape.db` 3** (`lens`); main stays at its number (no main rung). **Depends on** `U-decision-port`, `U-decision-card`, `U-research-ledger` (landed).
+**Facts (SOURCE at `main` `e78f105c`; survey `fleet/tmp/B-survey-U-lenses.md` has every row; re-check at dispatch).**
+- No lens exists; the one schema is the Test press's `owner-test` (`App/PerceptionCard.cs:87`, `:114-127`). `SchemaRef.Sha` hashes the questions only and the port refuses a mismatch (`Core/Decisions/DecisionModel.cs:77-90`, `:269-272`).
+- `decision_call` keeps `schema_sha256` and free-text `sources`, never the questions' text (`Core/Db/TapeStore.cs:225-258`): a recorded answer cannot be resolved to what was asked once the code changes.
+- The wire refuses structure → currency → no tape → rate gate → key → reserve (`AgentRuntime/TypeSafeWire.cs:133-161`). Limits are per instrument (`Core/Decisions/DecisionInstruments.cs:12-25`).
+- Text on the tape: OKX EEA announcements `{annType, title, url, pTime, businessPTime}` (`Core/Data/TapeSourceCatalog.cs:442-470`), GDELT GKG rows (`Core/Data/GdeltGkg.cs:39`); `TapeScreen.Check` quarantines
+  (`Core/Data/TapeScreen.cs:85-110`), `AsOf` withholds a quarantined payload and refuses a held window (`TapeStore.cs:696-749`). The gateway holds a `TapeReader` only (`Gateway/ForwardRuns.cs:74`).
+- `No_pipe_op_reaches_the_decision_port` bans `question`, `model`, `instrument`, `budget`, `pin`, `key`, `test`, `annotat`… in op/arg names and port types in the gateway assembly (`tests/TradeAgent.UnitTests/DecisionPortTests.cs:561-596`).
+Read first: `CLAUDE.md`; EDGE § 4.2 (`:150-172`); R02 §§ 6.1, 6.3, 6.7 (`docs/research/2026-10-02/R02-jev-grounding.md:206-275`); R07 § 5.2 (`R07-lookahead-leakage.md:133-141`); the two records; `CONTRACTS.md` "The tape", "The decision port".
+Must NOT: call the port or send anything to a vendor; add an op, verb or arg that activates, runs, prices or pins a lens or names a port type; give the gateway a tape writer; touch `tape_obs`, `tape_fetch` or an existing
+`decision_call` column; update or delete a `lens` row; add a main rung; edit `No_pipe_op_reaches_the_decision_port` or the Test press; target anything but a text row of this build's tape catalogue; commit an agent-proposed lens.
+Items, one commit each, one-sentence messages:
+1. **The lens.** `Core/Perception/Lens.cs`: `LensParse` (the `FeatureParse` shape) of `{id, target{source, series}, state{fields: [path, max_chars]}, questions}`; refused in words: a target not a text catalogue row, a
+   field not in the target's payload shape, a Choice with no escape option (`other`, `cannot_tell`, `insufficient_information`, `none_of_these`), any `instrument`/`host`/`pin`/`key`/`budget`/`model` field, id `owner-test`,
+   > 16 KiB, questions the port would refuse — one helper shared with `DecisionRequests.Refusal`, checked against the STRICTEST built-in instrument, declared state cap included. `lens_sha` = SHA-256 of the canonical whole.
+2. **The registry, `tape.db` rung 3.** `lens(id, version, lens_sha, schema_sha, definition, target_source, target_series, proposer, attempt, registered_at, validator_version)`, UNIQUE(id, version), UNIQUE(lens_sha);
+   `TapeStore.RegisterLens`: same bytes ⇒ the existing row, same id new bytes ⇒ version + 1 (the app's number), ≤ 8 per proposer per owner day; built-ins registered at open as `app`, a built-in whose bytes differ
+   under its version REFUSED in words; built-in `okx-announcement` v1 (R02 § 6.7(a) cut to title, annType and age: `event_type`, `direction_for_holders`, `time_sensitivity`, `addresses_automated_reader`; candidate
+   assets by code over the catalogue's symbols). `TapeStore`'s "no pipe op writes here" comment and CONTRACTS say the one exception and its bounds.
+3. **The state and the record.** `LensState.For(lens, observation)`: pure; refuses a quarantined, withheld or off-target observation; builds the canonical state and `Sources = ["tape_obs:<id>"]` itself. The wire
+   REFUSES, before the gate, a request whose schema id names a registered lens unless (version, schema_sha) match; `RecordDecision` re-checks the lens and that its one source is an existing `tape_obs` of the target.
+4. **The agents' surface.** `lens-propose` (arg `definition`) under the grant's proven role, handed to an app-owned registrar through a delegate `AppHost` supplies, answering id, version, both hashes or the refusal;
+   `lens-list` / `lens-show` bounded. AGENTS/USER-GUIDE/CONTRACTS: the reasons for a lens go in `ledger-add` with `source` `lens:<id>@<v>`; nothing here runs a lens (U-annotator).
+Red-first tests (each quoted red at base): (a) `A_recorded_answer_resolves_to_the_exact_lens_it_asked`; (b) `A_lens_is_refused_in_words_for_each_rule` (Theory over item 1's rules);
+(c) `The_same_bytes_register_once_and_new_bytes_are_the_next_version`; (d) `A_built_in_changed_under_its_version_is_refused_and_the_tape_untouched`; (e) `A_quarantined_or_held_item_builds_no_state`;
+(f) `A_request_naming_a_lens_with_other_questions_is_refused_before_the_gate_and_reads_no_key`; (g) `No_lens_targets_anything_but_the_tapes_text_rows` (genome bank, ledger, traces, a market row);
+(h) `Lens_propose_writes_only_through_the_registrar_and_reaches_no_port` with `No_pipe_op_reaches_the_decision_port` unedited; (i) `The_rung_reruns_cleanly_after_a_crash_before_its_stamp`.
+Mutants, red and quoted: the escape-option check dropped ⇒ (b); `lens_sha` over the questions only ⇒ (a), (c); the wire's lens check after `Reserve` ⇒ (f); `Sources` taken from the caller ⇒ (a).
+**Pointers re-checked at dispatch (main `02b6a608`, seat B 10:4x; U-wire-body-deadline moved some):** `No_pipe_op_reaches_the_decision_port` is now `DecisionPortTests.cs:606` (banned words :608-626);
+`TypeSafeWire.cs:133-162` unchanged in order (structure :133, currency :134, no tape :138, rate gate :145, key :155-156, `Reserve` :161); `DecisionRequests` (its `Refusal`) lives in `Core/Decisions/DecisionModel.cs`;
+`DecisionLimits` `DecisionInstruments.cs:16`, the instruments `:149-181`; `TapeStore.AsOf` `:711`; `decision_call` rung 2 `TapeStore.cs:225-258`; the rest as stated. Grep before editing.
+Gate: SPEED MODE (`fleet/SPEED-MODE.md` § 4) — rebase on `main` first; Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all platforms; tests box `ready` once or NOT RUN; names
+vs `main` 0 removed (both set sizes); the vendor scan unchanged. The report names `tape.db` 3, `LensParse`'s validator version, the built-in's `lens_sha`, and "no request sent". `## Report` ≤ 20 lines appended. No push to `main`, no merge.
