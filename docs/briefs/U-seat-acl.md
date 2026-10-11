@@ -2,14 +2,14 @@
 **Arrow closed:** the two CRED-001 gaps `U-seat-home`'s last review left (its record in `BUILD-STATUS.md`, "OWED"); ORGANISATION § 15 row `U-seat-acl`;
 `docs/ORCHESTRATION.md` § 2.7 (one app-owned seat home, its credentials pinned to file storage). **A protection — CRED-001: red-first per platform and ONE
 watched mutant.** Seat A; opus/high (credentials). **No rung.** After `U-seat-home` (landed, rung 37).
-**Today (main `a09937da`, read by seat A):** `SeatProfile.Prepare` (`src/TradeAgent.AgentRuntime/SeatProfile.cs:33-50`) walks every seat-home folder
+**Today (main `521c5fc9`, re-checked by seat A at dispatch):** `SeatProfile.Prepare` (`src/TradeAgent.AgentRuntime/SeatProfile.cs:33-50`) walks every seat-home folder
 through `RealFolder` → `NotALink` + `OwnedHere` (`:72-83`). `OwnedHere` (`:98-121`) makes a folder owner-only by MODE on Linux and macOS
-(`UnixFileMode` 0700, `:105`) and, on Windows, `OwnedOnWindows` (`:123-155`) replaces the FOLDER's DACL with a protected list granting this account,
+(`UnixFileMode` 0700, `:105`) and, on Windows, `OwnedOnWindows` (`:125-155`) replaces the FOLDER's DACL with a protected list granting this account,
 the owner and SYSTEM (`:143-150`). Two holes: (1) **macOS** keeps extended ACL entries independent of the mode bits — an entry such as
 `everyone allow read,file_inherit` on `seat-home/codex` survives `chmod 0700`, and an inheritable one is copied onto the `auth.json` codex writes at
 sign-in; (2) **Windows** — an EXISTING `codex/auth.json` (or any file or subfolder already in the seat home) keeps its EXPLICIT entries when the parent's
 DACL is replaced: only inherited entries follow the parent. Linux needs no change for POSIX ACLs (0700 sets the ACL mask to `---`, which voids named
-entries) — a test pins that. Tests today: `SeatHomeTests.Every_seat_home_folder_is_made_owner_only` (`tests/TradeAgent.UnitTests/SeatHomeTests.cs:300`)
+entries) — a test pins that. Tests today: `SeatHomeTests.Every_seat_home_folder_is_made_owner_only` (`tests/TradeAgent.UnitTests/SeatHomeTests.cs:302`)
 checks mode bits and the folder DACL only.
 **Observable result:** after `Prepare`, no account but this one (and, on Windows, the owner SID and SYSTEM) holds any access entry on any folder OR file
 of the seat home, whatever was there before — or the seat is refused in words naming the path and the repair, never started.
