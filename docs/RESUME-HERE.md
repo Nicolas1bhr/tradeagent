@@ -11,8 +11,8 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-09)
-and `fleet/handoff/ORCHESTRATOR.md` for the state. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
+heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-11)
+and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode's rules: `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
 **2026-10-08, late evening — a second outside audit (canon and architecture drift), verified and answered; docs only
@@ -83,6 +83,31 @@ bounded experiment is testing it; one chief with a strategy council; a Security 
 invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. **It changes no unit before M-org1 — M0 is still next.**
 When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-org-verbs` keeps the bounds as policy data under the earning rule (§ 3),
 `U-org-watcher` scopes its detectors per unit (§ 5.2).
+
+**Checkpoint 2026-10-11 10:40 CEST — the fourth session under the orchestration standard, run in SPEED MODE (the owner, 2026-10-11 00:36: "optimize for sheer
+building speed. obviously we cannot compromise on build quality as having to go back and rebuild things would be disastrous").** Seats A (edge & evidence) and
+B (agents & truth), plus P (platform & speed) until 06:17; A and B rotated at the 05:35 reset, B again at 10:35. **Speed mode** (`fleet/SPEED-MODE.md`; it changes no
+protection): every leg names its model and effort (opus xhigh/high for money, evidence, credentials and schema units; sonnet high for UI, docs, CI and rig units; haiku
+low for mechanical waits); Codex `gpt-6.1-sol` reviews every unit's diff, read-only and outside Claude's quota, and a fresh fixer follows each real finding; builders
+run their touched classes locally and the full suite on branch CI; landing is on CI, not on the Mac's 25-minute local suite. **Infrastructure:** `U-ci-shards` cut CI
+from ~66 to ~25 min (five windows shards from one class list, every test once per platform; test homes on the runner's work disk; a bookkeeping-only push starts no
+run, confirmed on `d0e4f01f`); `fleet/bin/land.sh` v2 lands on a green CI run that carries across a rebase when the trees match outside the bookkeeping files,
+`LAND_JUDGED_REMOVED` takes a pre-judged name removal, v3 lands a stack of units as one train (first real train: B1); `dispatch.sh <unit> <seat> [amended-brief]`
+commits a brief's amendment with the move. LANDED, fourteen units (record sha, or main sha where the board gives it, in landing order): `U-verdict-stopped` `dab2768e` ·
+`U-ci-shards` `df40e7b6` · `U-decision-card` `f1d899ff` (the Perception card's key pasted and forgotten in-app, its budget press now binding the amount; **plus main's
+AI daily cap**, whose two-press raise saved $100 after arming $3 — found by seat B, fixed red-first, declared) · `U-research-ledger` `9a26c026` (rung 31, canon v2) ·
+`U-tape-gaps` `e491755f` · `U-runner-features` `b55fc552` · `U-trial-returns` `5c3f9b34` (rung 32) · train B1 `U-closeall-latch` + `U-wire-body-deadline` `5056d972`
+· train B2 `U-shard-rebalance` + `U-harness-trade-args` `10e26930` (the API harness can now pass every op's arguments; `additionalProperties:false` reaches providers for
+the first time) · `U-referee-v2a` `9c5eb85f` (rung 33) · `U-referee-v2b` `96a549b1` · `U-reconcile-wakes` `02b6a608` (an idle day's paid AI turns 18 → 8). Names removed
+against main: 0 in every record the board quotes, but one judged in `U-runner-features`. **The review paid:** more than twenty real defects caught before landing, per
+the board (a stale inconclusive row authorising paper through a later verdict; a crash-consumed owner message no turn could close; a fail-open trx guard). **At 10:35:**
+nothing mid-landing, no lock held, main CI green on `9c5eb85f`, `96a549b1`, `02b6a608`. IN FLIGHT / NEXT — seat A: a fresh fixer for `U-runner-maxhold-replay` (builder
+reported, CI green; Codex found a paper run started under an earlier build replays under the new reading — fix: stamp a version per forward run and end a mismatched
+run in words naming both versions), then `v2c` of the referee, lights, `U-prove-phase4` (dispatched); seat B (fresh): `U-owner-words-delegated` first, `U-red-says-why`
+pass 3 (revert the narrowed Timing retry), `U-lenses` (tape.db 3), `U-ci-dedupe`, `U-reconcile-packet`, `U-timing-shard`. Usage 0 % at the 10:30 reset, weekly 30 %.
+Schema: main 33 (34 reserved for `U-runner-maxhold-replay`), tape.db 2 (3 reserved for `U-lenses`). **For the owner:** (a) GitHub Pro or Team would double CI's 20
+concurrent jobs, saturated twice tonight — a paid commitment, his; (b) the Safety card grants one paper slot per envelope, so the new inconclusive quota (⌊n/3⌋) holds
+none from the UI today (owed card `U-envelope-slots`); (c) the nine Linux-host questions of 2026-10-09 are still open (block below).
 
 **Checkpoint 2026-10-09 16:55 CEST — the third session under the orchestration standard (the owner, 2026-10-09 00:00: "assume my orchestrator
 position for the night as usual now"; wound down at weekly 94 % — the owner was told the line was ~92 %).** Fresh seats A (edge & evidence) and B
