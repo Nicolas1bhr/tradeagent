@@ -64,4 +64,52 @@ public partial class PaperDeploymentTests
 
         await gw.DisposeAsync();
     }
+    /// <summary>
+    /// A FILL OF AN ENDED RUN'S REQUEST WAKES RESEARCH. The run's end note is published when the END is written, and an
+    /// ended run is given no later note; so a close that rested at the END and fills after it would be observed by
+    /// nobody. The run is the app's own run of a Research version, and its observation was Research's — so a fill or a
+    /// finished order of an ended run's request wakes the Research Director, and an active run's still wakes nobody.
+    ///
+    /// <para>RED at a2e839e6 (review 1, finding 4): the resting close filled after the END and raised no wake at all.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_close_that_fills_after_its_run_ended_wakes_research()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var wakes = new List<(string Id, string Kind, string Role)>();
+        gw.RaiseMissionWake = (id, kind, _, role) => { lock (wakes) wakes.Add((id, kind, role)); };
+
+        await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var deployment = gw.Deployments.Open().Single();
+        await SeedAPosition(gw, conn, deployment);
+        lock (wakes) wakes.Clear();
+
+        // THE END'S CLOSE RESTS AT THE PLATFORM, AND THE RUN IS ENDED OVER IT.
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        var ended = await gw.EndPaperDeploymentAsync(deployment.Id, "test: the owner stopped it");
+        Assert.True(ended!.IsEnded);
+        var close = gw.Deployments.OpsOf(deployment.Id).Last(o => o.Kind == DeploymentOpKind.Flatten);
+        var resting = gw.GetRequest(close.RequestId)!;
+        Assert.Equal(ExecutionState.WORKING, resting.State);
+        Assert.DoesNotContain(wakes, w => w.Kind is MissionEventKind.Fill or MissionEventKind.Order);
+
+        // AND IT FILLS AFTERWARDS: read back by the health pass past its grace, recorded by the fill pull.
+        Assert.NotNull(conn.Broker.FillWorking(resting.ConnectorOrderId!));
+        conn.Faults.Fill = FillBehaviour.FillImmediately;
+        clock.At = clock.At.AddMinutes(5);
+        await gw.RefreshHealthAsync();
+        await gw.PullFillsAsync();
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest(close.RequestId)!.State);
+
+        log.WriteLine($"wakes after the ended run's close filled: {string.Join(", ", wakes)}");
+        var fill = Assert.Single(wakes, w => w.Kind == MissionEventKind.Fill);
+        Assert.Equal(CouncilRoles.Research, fill.Role);
+        var order = Assert.Single(wakes, w => w.Kind == MissionEventKind.Order);
+        Assert.Equal(CouncilRoles.Research, order.Role);
+        Assert.Contains(close.RequestId, order.Id, StringComparison.Ordinal);
+
+        await gw.DisposeAsync();
+    }
 }

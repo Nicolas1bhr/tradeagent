@@ -99,13 +99,22 @@ public sealed class TradingGateway : IAsyncDisposable
     /// and fill — the chair's own, the owner's by hand, one the platform reports with no request this
     /// app knows — is Operations': it is the book that role answers for.</para>
     ///
+    /// <para><b>Unless the run has ENDED</b> (review 1, finding 4): its end note is written with the END, and an
+    /// ended run is given no later note, so a close that rested at the END and fills after it — or an owed close
+    /// sent on a later minute — would be observed by nobody. Its observation is Research's, whose version the run
+    /// was, so a fill or a finished order of an ended run's request wakes the Research Director.</para>
+    ///
     /// <para>A lookup that fails answers Operations: a turn spent on a deployment's fill costs money, a
     /// fill of the chair's own nobody was told about costs the book.</para>
     /// </summary>
     string? WakeRoleFor(string? requestId)
     {
         if (requestId is not { Length: > 0 }) return CouncilRoles.Operations;
-        try { return _deployments.OpById(requestId) is null ? CouncilRoles.Operations : null; }
+        try
+        {
+            if (_deployments.OpById(requestId) is not { } op) return CouncilRoles.Operations;
+            return _deployments.ById(op.DeploymentId) is { IsEnded: true } ? CouncilRoles.Research : null;
+        }
         catch (Exception) { return CouncilRoles.Operations; }
     }
 
