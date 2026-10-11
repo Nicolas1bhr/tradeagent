@@ -1,3 +1,4 @@
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -11,27 +12,29 @@ namespace TradeAgent.App;
 /// whose turn the inbox wake actually buys. Each role now has its own mark, so the sentence is true of the
 /// role it is said to.</para>
 ///
-/// <para>In memory, from the moment the app started, exactly as the shared mark was: material that arrived
-/// while the app was closed is the inbox wake's to announce, and a mark that outlived a restart would be a
-/// second ledger of what the agent was told.</para>
+/// <para><b>Read from the launch ledger, never kept</b> (review 1, findings 5 and 6). A role was told what its last
+/// ADMITTED turn's Situation listed, and nothing a Situation composed for a launch that was then refused, or that a
+/// restart forgot: the mark is the instant the role's latest launch that took a wake was minted
+/// (<see cref="AiAttemptStore.LastWoken"/>, <see cref="TurnMeter.MintedAt"/>) — at or before the moment its
+/// Situation read the material, so a file is listed again rather than never. A role with no such launch has been
+/// told nothing, and is listed everything present. No row is written for it: composing a Situation moves no mark.</para>
 /// </summary>
-public sealed class RoleInboxMarks(DateTimeOffset start)
+public static class RoleInboxMarks
 {
-    readonly Dictionary<string, DateTimeOffset> _at = [];
-    readonly Lock _gate = new();
-
     /// <summary>
-    /// The instant <paramref name="role"/> was last told, and from now on <paramref name="now"/>: one
-    /// read and one move, so two roles composing at once each get their own window.
+    /// The instant <paramref name="role"/> was last told what had arrived, from its latest admitted launch, or
+    /// <see cref="DateTimeOffset.MinValue"/> where it has none — or where the ledger cannot be read, which lists a
+    /// file twice rather than hides one.
     /// </summary>
-    public DateTimeOffset Take(string role, DateTimeOffset now)
+    public static DateTimeOffset Since(Database db, string role)
     {
-        lock (_gate)
+        try
         {
-            var since = _at.TryGetValue(role, out var at) ? at : start;
-            _at[role] = now;
-            return since;
+            return new AiAttemptStore(db).LastWoken(role) is { } last
+                ? TurnMeter.MintedAt(last.Id) ?? last.StartedAt
+                : DateTimeOffset.MinValue;
         }
+        catch (Exception) { return DateTimeOffset.MinValue; }
     }
 
     /// <summary>
