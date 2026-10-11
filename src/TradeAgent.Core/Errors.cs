@@ -56,6 +56,11 @@ public enum ErrorCode
     // MCP server outside the allowlist, a command line without its deny set. Not CONTAINMENT_REQUIRED, which is about real money and
     // confinement: this is about the AI's own configuration, and the repair is the file or setting the message names.
     AI_SEAT_REFUSED,
+    // A PROGRAM ASKED TO RUN IN A CELL THAT THIS COMPUTER CANNOT GIVE IT (U-cell-linux-a): no Landlock, an ABI below 6, a
+    // launcher that is missing or will not start, or a policy that is refused. Not CONTAINMENT_REQUIRED, which is the armed live
+    // configuration refusing an UNCONTAINED runtime: this is a contained launch that was asked for and is never downgraded to a
+    // bare one, and the repair is the machine's, not the owner's trading switch.
+    CELL_UNAVAILABLE,
     // A TURN THAT REACHED ITS OWN BOUND, and stopped before the request that would have passed it.
     // Its own code because it is not a failure and not a refusal of anything the owner asked for: the
     // turn did work, that work is kept, and the repair is either a larger allowance on the Safety
@@ -899,6 +904,7 @@ public static class Errors
         [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read something you are holding back, and was refused.", "No action needed. What you hold back stays private: every pair's prices over those months, the market news and figures TradeAgent recorded over them, and the trades of any strategy run that reaches them. TradeAgent uses them itself to judge a finished strategy.", false),
         [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
         [ErrorCode.AI_SEAT_REFUSED]                = ("TradeAgent did not start the AI, because the AI's own settings are not the ones TradeAgent gave it.", "The message names what is out of place and where. Nothing else about the AI is changed.", false),
+        [ErrorCode.CELL_UNAVAILABLE]               = ("TradeAgent did not start a program that was to run in a cell, because this computer cannot confine it the way a cell requires.", "Nothing was started and nothing else changed. A cell needs Linux with Landlock ABI 6 or newer (kernel 6.12 or later); the technical detail names what this computer has.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
         // turn starts fresh. The two boxes named here are the ones on the Safety page.
