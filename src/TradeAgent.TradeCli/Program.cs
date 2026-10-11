@@ -357,6 +357,31 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade lens propose <lens>`, `list [--id I] [--limit N]` and `show <id> [--version V]` (U-lenses). Every flag
+        // is sent on under its own name and the gateway refuses one the verb does not take; the lens's JSON takes every word
+        // left, so a JSON object the shell split on its spaces arrives whole.
+        case "lens":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "propose":
+                    Fill(a, rest, "lens");
+                    return (Ops.LensPropose, a);
+                case "list" or "ls":
+                    return (Ops.LensList, a);
+                case "show":
+                    Fill(a, rest, "id");
+                    return (Ops.LensShow, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         case "cancel-all": return (Ops.CancelAll, a);
         case "close":
             a["symbol"] = pos.ElementAtOrDefault(0) ?? "";

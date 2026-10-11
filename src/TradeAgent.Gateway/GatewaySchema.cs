@@ -10,6 +10,9 @@ namespace TradeAgent.Gateway;
 public static class GatewaySchema
 {
     public sealed record ArgSpec(string Name, string Type, bool Required, string Description);
+
+    /// <summary>The most lenses one <c>lens-list</c> answers, and how many when it names no limit.</summary>
+    public const int LensListMax = 50, LensListDefault = 20;
     public sealed record OpSpec(string Op, string Cli, bool Mutating, string Description, ArgSpec[] Args);
 
     public static object Describe(GatewayStatus? status = null) => new
@@ -581,6 +584,38 @@ public static class GatewaySchema
                 new("entry", "number", true, "The entry's id."),
                 new("part", "string", false, "revisions | links | about — the list the answer begins at; revisions when omitted. Pass an answer's 'next'."),
                 new("before", "number", false, "In that list, serve only rows before it — a revision number, or the cursor an answer's 'next' names.")
+            ]),
+
+        // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.
+        new(Core.Ops.LensPropose, "trade lens propose <lens>", false,
+            "PROPOSE A LENS: a question schema over the tape's own text, as one JSON object — 'id' (lower-case letters, digits "
+            + "and '-'), 'target' ({source, series}: OKX's announcements or GDELT's kept news items, and nothing else), 'state' "
+            + "({fields: [{path, max_chars}]}: which fields of the item the question may see, each cut to its cap) and "
+            + "'questions' ({name: {type, instructions, criteria}}: a Choice with its options — one of them 'other', "
+            + "'cannot_tell', 'insufficient_information' or 'none_of_these' — a Noul, or a Score with its levels, lowest first). "
+            + "TradeAgent VALIDATES it, numbers its version and hashes it ITSELF, and registers it under YOUR launch's role — "
+            + "the same bytes again are the lens already there; the same id with other bytes is its next version — or REFUSES "
+            + $"it in words with nothing written. At most {Core.Perception.Lens.MaxDefinitionBytes:N0} bytes, and at most "
+            + $"{Core.Db.TapeStore.MaxLensProposalsPerDay} registrations a role a day. A lens names no instrument, host, pin, "
+            + "key, budget or model, and registering one RUNS NOTHING and spends nothing: which lenses are asked, and at whose "
+            + "expense, is the account owner's. Why it is worth asking is your claim: write it with 'ledger-add' and "
+            + "'source' lens:<id>@<version>. Nothing edits or deletes a lens.",
+            [new("lens", "string", true, "The lens, as one JSON object: {id, target, state, questions}.")]),
+        new(Core.Ops.LensList, "trade lens list [--id I] [--limit N]", false,
+            "THE REGISTERED LENSES, NEWEST FIRST — a READ, for every role: each one's id, version, both hashes TradeAgent "
+            + "computed (the whole definition's, and its questions' as a recorded answer carries them), its target, who "
+            + "proposed it under which attempt, when, and the validator that admitted it — never its definition; "
+            + $"'trade lens show' reads that. At most {LensListMax} a call; 'more' says the limit stopped it.",
+            [
+                new("id", "string", false, "Only the versions of this lens."),
+                new("limit", "number", false, $"How many, 1 to {LensListMax}; {LensListDefault} when omitted.")
+            ]),
+        new(Core.Ops.LensShow, "trade lens show <id> [--version V]", false,
+            "ONE REGISTERED LENS IN FULL — a READ, for every role: its whole definition as TradeAgent stored it, canonical, "
+            + "beside every fact 'lens-list' gives. The newest version when 'version' is omitted.",
+            [
+                new("id", "string", true, "The lens's id."),
+                new("version", "string", false, "Which version, a whole number from 1; the newest when omitted.")
             ]),
 
         new(Core.Ops.Buy,  "trade buy <symbol> <qty>",  true, "Buy. Market unless you pass --limit or --stop.",

@@ -121,6 +121,11 @@ public sealed class GrantedWorkerTools(
     /// <see cref="Ops.Mutating"/> — nothing reaches a broker, the mode, the kill switch, an approval or an update — and the
     /// gateway decides the rest: a write is recorded under the role and attempt this surface was given, refused without one,
     /// an argument the op does not take is refused, and no op writes a link.</para>
+    ///
+    /// <para><b>The lenses' three are on it, for every role</b> (<c>U-lenses</c>): <see cref="Ops.LensPropose"/>,
+    /// <see cref="Ops.LensList"/> and <see cref="Ops.LensShow"/>. Proposing a question schema is research work every seat
+    /// may do, and the app decides the rest: it validates, numbers and hashes a proposal under the role this surface was
+    /// given, and registering one runs nothing and spends nothing. Not in <see cref="Ops.Mutating"/>.</para>
     /// </summary>
     public static readonly string[] TradeOps =
     [
@@ -128,6 +133,7 @@ public sealed class GrantedWorkerTools(
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
         Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.RunTrades, Ops.Verdict, Ops.VenueList,
         Ops.LedgerAdd, Ops.LedgerRevise, Ops.LedgerList, Ops.LedgerShow,
+        Ops.LensPropose, Ops.LensList, Ops.LensShow,
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 

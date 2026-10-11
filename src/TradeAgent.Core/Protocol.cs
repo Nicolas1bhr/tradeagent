@@ -187,6 +187,22 @@ public static class Ops
     public const string LedgerAdd = "ledger-add", LedgerRevise = "ledger-revise", LedgerList = "ledger-list",
         LedgerShow = "ledger-show";
 
+    /// <summary>
+    /// THE LENSES — question schemas over the tape's own text (<c>U-lenses</c>; <c>docs/EDGE-FACTORY.md</c> § 4.2: "agents
+    /// propose lenses; the app validates"). <c>LensPropose</c> hands one definition to the app, which validates it, numbers
+    /// its version and hashes it ITSELF and registers it under the role the launch grant proved — or refuses it in words;
+    /// <c>LensList</c> and <c>LensShow</c> read every role's, bounded.
+    ///
+    /// <para><b>A proposal is a definition and nothing else.</b> No op here runs, schedules, prices, pins or chooses a model
+    /// for a lens, and none edits or deletes one: which lenses are asked, and at whose expense, is the account owner's and
+    /// the app's. Why a lens is worth asking is its proposer's CLAIM, and goes in the research ledger
+    /// (<see cref="LedgerAdd"/> with <c>source</c> <c>lens:&lt;id&gt;@&lt;version&gt;</c>), never in the registry.</para>
+    ///
+    /// <para>NOT in <see cref="Mutating"/>: nothing here reaches a broker, the mode, the kill switch, an approval or an
+    /// update. The proposal needs a launch grant, because a lens is registered under the role that proved it is one.</para>
+    /// </summary>
+    public const string LensPropose = "lens-propose", LensList = "lens-list", LensShow = "lens-show";
+
     public static readonly string[] Mutating =
         [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll, DeploymentStop];
     public static bool IsMutating(string op) => Mutating.Contains(op);

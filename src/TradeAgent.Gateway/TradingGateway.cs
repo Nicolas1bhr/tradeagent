@@ -152,6 +152,16 @@ public sealed class TradingGateway : IAsyncDisposable
     public TapeReader? Tape { get; set; }
 
     /// <summary>
+    /// THE APP'S LENS REGISTRAR (<c>U-lenses</c>) — a definition, the role that proposed it and the attempt it proved in;
+    /// the registration or its refusal out — or null, because this host has no tape open. Set by the composition root
+    /// beside <see cref="Tape"/>, on every gateway it builds. It is a delegate and not the store: the one thing it can
+    /// write is one insert-only <c>lens</c> row the store parses, numbers and hashes itself, so this gateway still holds
+    /// no writer of the tape's observations, fetches or calls, and nothing reachable from it can edit or delete a row.
+    /// <c>lens-propose</c> is its one caller, under the role the launch grant proved.
+    /// </summary>
+    public Func<string, string, string?, LensRegistration>? LensRegistrar { get; set; }
+
+    /// <summary>
     /// The venue catalogue — what instruments this installation knows of, on which venue, with what
     /// grid and what step, and who said so. READ ONLY from here in the sense that matters: the rows
     /// come from <c>VenueCatalog</c> (the built-ins plus <c>venues.json</c>) at construction, overlaid at

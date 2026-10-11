@@ -922,6 +922,39 @@ public sealed class TapeReader
         }
     }
 
+    /// <summary>
+    /// THE REGISTERED LENSES, NEWEST FIRST (<c>U-lenses</c>) — every one, or every version of <paramref name="id"/> — at most
+    /// <paramref name="limit"/>. A read of definitions and hashes, never of an observation: it takes no holdout because
+    /// it serves no reading of the tape.
+    /// </summary>
+    public IReadOnlyList<LensRecord> Lenses(string? id, int limit)
+    {
+        using var c = Open();
+        using var cmd = Cmd(c, $"""
+            SELECT {LensReadCols} FROM lens WHERE ($id IS NULL OR id=$id)
+            ORDER BY registered_at DESC, rowid DESC LIMIT $n
+            """, ("$id", id), ("$n", Math.Max(0, limit)));
+        var rows = new List<LensRecord>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) rows.Add(TapeStore.LensRow(r));
+        return rows;
+    }
+
+    /// <summary>One registered lens: <paramref name="id"/> at <paramref name="version"/>, or its newest when that is null.</summary>
+    public LensRecord? Lens(string id, int? version)
+    {
+        using var c = Open();
+        using var cmd = Cmd(c, $"""
+            SELECT {LensReadCols} FROM lens WHERE id=$id AND ($v IS NULL OR version=$v)
+            ORDER BY version DESC LIMIT 1
+            """, ("$id", id), ("$v", version));
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? TapeStore.LensRow(r) : null;
+    }
+
+    const string LensReadCols =
+        "id, version, lens_sha, schema_sha, definition, target_source, target_series, proposer, attempt, registered_at, validator_version";
+
     /// <summary>The layout version the file names, or null for a file that names none.</summary>
     static int? LayoutVersion(SqliteConnection c)
     {

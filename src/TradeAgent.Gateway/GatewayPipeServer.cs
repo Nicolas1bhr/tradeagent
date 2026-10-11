@@ -341,6 +341,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.LedgerRevise, TimeSpan.Zero, "the research ledger: one revision of the caller's own entry, in process"),
         new(Core.Ops.LedgerList, TimeSpan.Zero, "the research ledger's entries, newest first, in process"),
         new(Core.Ops.LedgerShow, TimeSpan.Zero, "the research ledger: one entry, its revisions, its links and the ids derived from them, in process"),
+        new(Core.Ops.LensPropose, TimeSpan.Zero, "the app's lens registrar: one parse and at most one insert into the tape's lens table, in process"),
+        new(Core.Ops.LensList, TimeSpan.Zero, "the tape's own file, opened read-only: the registered lenses, newest first, on disk"),
+        new(Core.Ops.LensShow, TimeSpan.Zero, "the tape's own file, opened read-only: one registered lens, on disk"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1249,6 +1252,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.LedgerRevise => LedgerRevise(ctx, req),
                 Core.Ops.LedgerList   => LedgerList(req),
                 Core.Ops.LedgerShow   => LedgerShow(req),
+                Core.Ops.LensPropose  => LensPropose(ctx, req),
+                Core.Ops.LensList     => LensList(req),
+                Core.Ops.LensShow     => LensShow(req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -3983,7 +3989,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// silently dropped is a link the agent believes it wrote and no table holds — and a link is the app's to write. So the
     /// four ledger ops refuse what they do not take, in words naming what they do take and where a link comes from.</para>
     /// </summary>
-    static void OnlyDeclared(IpcRequest req)
+    static void OnlyDeclared(IpcRequest req, string? why = null)
     {
         if (req.Args is not { Count: > 0 } args) return;
         var spec = GatewaySchema.Ops().Single(o => o.Op == req.Op);
@@ -3993,10 +3999,128 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
             $"{string.Join(", ", undeclared.Select(k => $"'{k}'"))} {(undeclared.Count == 1 ? "is not an argument" : "are not arguments")} "
             + $"of '{req.Op}', which takes {string.Join(", ", spec.Args.Select(a => a.Name))} — TradeAgent refuses an argument "
-            + "rather than act as though it had read it. A link between an entry and a run or a verdict is TradeAgent's "
-            + "alone to write: ask for the run with 'backtest' or the verdict with 'verdict' under the entry ('entry'), and "
-            + "TradeAgent links the record it answered with. Nothing was written.");
+            + "rather than act as though it had read it. "
+            + (why ?? "A link between an entry and a run or a verdict is TradeAgent's "
+                      + "alone to write: ask for the run with 'backtest' or the verdict with 'verdict' under the entry ('entry'), and "
+                      + "TradeAgent links the record it answered with. Nothing was written."));
     }
+
+    // ---- the lenses (U-lenses) ---------------------------------------------------------------------------------------
+
+    /// <summary>What every lens op says of an argument it does not take.</summary>
+    const string LensOnly =
+        "A lens is its definition and nothing else: which lenses are asked, by which model, at whose expense, is the account "
+        + "owner's and TradeAgent's, and no argument here can say it. Nothing was written.";
+
+    /// <summary>
+    /// ONE LENS PROPOSED, AND THE APP'S ANSWER: the definition handed to the app's registrar under the role and the attempt
+    /// the launch grant proved — never a name the frame carries — and registered, numbered and hashed by the tape's store,
+    /// or refused in its words with nothing written. This gateway holds no tape writer: the registrar is a delegate the
+    /// composition root supplies, and the one row it can write is a lens.
+    /// </summary>
+    object LensPropose(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, LensOnly);
+        if (!CouncilRoles.IsKnown(ctx.Role))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "a lens is registered under the role whose launch proposed it, and this connection presented no launch grant — "
+                + "so there is no role to register it under. TradeAgent puts the grant in the environment of the process it "
+                + "starts; a caller holding only the machine token is authenticated and is nobody. Nothing was written.");
+        var registrar = gateway.LensRegistrar
+            ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                "TradeAgent has no market-context tape open, so there is nowhere to register a lens. It is opened when TradeAgent "
+                + "starts, and the account owner's activity log says why it could not be. Nothing was written.");
+
+        var registered = registrar(Require(req, "lens"), ctx.Role!, ctx.AttemptId);
+        if (registered.Lens is not { } lens)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "the lens was refused: " + (registered.Refusal ?? "TradeAgent's registrar gave no reason") + ".");
+
+        return new LensProposeReply(lens.Id, lens.Version, lens.LensSha, lens.SchemaSha, registered.New, lens.Proposer,
+            registered.New
+                ? $"Registered as {lens.Id} version {lens.Version}. It runs nothing and spends nothing: which lenses are asked is "
+                  + $"the account owner's. Write why it is worth asking with 'ledger-add' and 'source' lens:{lens.Id}@{lens.Version}."
+                : $"These bytes are already {lens.Id} version {lens.Version}, registered by {lens.Proposer}; the first registration "
+                  + "stands and nothing was written.");
+    }
+
+    /// <summary>EVERY ROLE'S LENSES, NEWEST FIRST, at most <see cref="GatewaySchema.LensListMax"/> a call, never a definition.</summary>
+    object LensList(IpcRequest req)
+    {
+        OnlyDeclared(req, LensOnly);
+        var tape = LensTape();
+        var id = req.Str("id");
+        var limit = GatewaySchema.LensListDefault;
+        if (req.Args is not null && req.Args.ContainsKey("limit"))
+        {
+            var raw = req.Dec("limit");
+            if (raw is not { } n || n != decimal.Truncate(n) || n < 1 || n > GatewaySchema.LensListMax)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'limit' is a whole number from 1 to {GatewaySchema.LensListMax}; nothing was read.");
+            limit = (int)n;
+        }
+
+        var rows = tape.Lenses(id, limit + 1);
+        var more = rows.Count > limit;
+        var lenses = rows.Take(limit).Select(l => new LensListReplyEntry(l.Id, l.Version, l.LensSha, l.SchemaSha, l.TargetSource,
+            l.TargetSeries, l.Proposer, l.Attempt, l.RegisteredAt, l.ValidatorVersion,
+            l.Parsed?.Questions.Keys.Order(StringComparer.Ordinal).ToList() ?? [])).ToList();
+        return new LensListReply(id, limit, lenses.Count, more, more ? TapeReader.CappedByLimit : null, lenses);
+    }
+
+    /// <summary>ONE REGISTERED LENS IN FULL: its canonical definition beside every fact the list gives.</summary>
+    object LensShow(IpcRequest req)
+    {
+        OnlyDeclared(req, LensOnly);
+        var tape = LensTape();
+        var id = Require(req, "id");
+        int? version = null;
+        if (req.Args is not null && req.Args.TryGetValue("version", out var given))
+        {
+            // A STRING ON THE WIRE, as every op's 'version' is typed alike on the harness's one tool; a number is taken too.
+            var text = given.ValueKind == JsonValueKind.Number ? given.GetRawText() : req.Str("version");
+            if (text is not { Length: >= 1 and <= 9 } || !text.All(char.IsAsciiDigit) || text[0] == '0')
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'version' is a lens's version, a whole number from 1 written in digits, and '{text}' is not one; nothing was read.");
+            version = int.Parse(text, CultureInfo.InvariantCulture);
+        }
+
+        var lens = tape.Lens(id, version)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                version is { } asked
+                    ? $"the tape holds no lens '{id}' version {asked}; 'trade lens list --id {id}' names its versions."
+                    : $"the tape holds no lens '{id}'; 'trade lens list' names every registered lens.");
+        using var definition = JsonDocument.Parse(lens.Definition);
+        return new LensShowReply(lens.Id, lens.Version, lens.LensSha, lens.SchemaSha, lens.TargetSource, lens.TargetSeries,
+            lens.Proposer, lens.Attempt, lens.RegisteredAt, lens.ValidatorVersion, definition.RootElement.Clone());
+    }
+
+    TapeReader LensTape() => gateway.Tape
+        ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+            "TradeAgent has no market-context tape open, so there are no lenses to read. It is opened when TradeAgent starts, "
+            + "and the account owner's activity log says why it could not be.");
+
+    /// <inheritdoc cref="LensPropose"/>
+    sealed record LensProposeReply(string Id, int Version, string LensSha, string SchemaSha, bool New, string Proposer, string Note);
+
+    /// <inheritdoc cref="LensList"/>
+    sealed record LensListReply(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Id,
+        int Limit, int Count, bool More,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
+        IReadOnlyList<LensListReplyEntry> Lenses);
+
+    /// <inheritdoc cref="LensList"/>
+    sealed record LensListReplyEntry(
+        string Id, int Version, string LensSha, string SchemaSha, string TargetSource, string TargetSeries, string Proposer,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        DateTimeOffset RegisteredAt, string ValidatorVersion, IReadOnlyList<string> Questions);
+
+    /// <inheritdoc cref="LensShow"/>
+    sealed record LensShowReply(
+        string Id, int Version, string LensSha, string SchemaSha, string TargetSource, string TargetSeries, string Proposer,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
+        DateTimeOffset RegisteredAt, string ValidatorVersion, JsonElement Definition);
 
     /// <summary>
     /// THE ROLE AN ENTRY IS WRITTEN UNDER: the council role the caller's launch grant proved, or a refusal — the rule

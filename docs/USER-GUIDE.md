@@ -843,6 +843,15 @@ can reach any of it. Everything about it is on the **Safety** page, in the **Per
 
 The first test question you ask is the first request TradeAgent has ever sent to either host.
 
+**Lenses — the questions the AI would like asked.** A *lens* is a fixed set of these questions about one kind of item
+the market-context tape records — an OKX announcement or a GDELT news item — together with which parts of the item
+the questions may see. TradeAgent ships one (about announcements: what kind of event, what it means for holders, how
+soon it matters, and whether its text is trying to instruct a machine), and the AI may propose more. TradeAgent checks
+each proposal, gives it a version number and a fingerprint of its own, and keeps it for good; a proposal that names a
+model, a key, a budget or anything that is not the tape's own text is refused. **Proposing a lens asks nothing and
+spends nothing**: no lens is asked of any model yet, and when they are it will be inside the perception budget you
+set here. Why the AI thinks a lens is worth asking is its own claim, kept in its research ledger and not in the lens.
+
 ### Where its memory lives
 
 Every so often the AI starts a fresh session and remembers nothing of the previous one. It keeps two

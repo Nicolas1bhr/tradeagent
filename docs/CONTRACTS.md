@@ -3457,6 +3457,75 @@ containment, that an agent running unconfined cannot edit `state/tape.db` or `de
 § 2.3(b), forbids training a model on its outputs or to imitate them; the record exists to replay and judge answers
 against our own outcomes and for nothing else.
 
+## Lenses — `src/TradeAgent.Core/Perception/Lens.cs`, `LensState.cs`, `BuiltInLenses.cs`, `Core/Db/TapeStore.cs` (`lens`), `Gateway/GatewayPipeServer.cs`
+
+**What it is.** A lens is a versioned, hashed question schema over the tape's own text (`U-lenses`; `docs/EDGE-FACTORY.md`
+§ 4.2; R02 § 6.7): `{id, target: {source, series}, state: {fields: [{path, max_chars}]}, questions: {name: {type,
+instructions, criteria}}}`, the questions in the port's wire shape. Data, not code: an agent proposes one, the app
+validates, numbers and hashes it, and registers it on `tape.db` rung 3 so a recorded answer resolves to exactly what was
+asked about which item. **Nothing here asks a model**: no lens is run, scheduled or priced by this unit (`U-annotator`'s),
+and no request has been sent to any vendor.
+
+**THE PARSE** (`Lens.Parse`, validator `Lens.ValidatorVersion` = `lens-v1`, which names the rules and `LensState`'s
+builder) is total and refuses in words: a text over 16,384 bytes; an unknown, missing or doubled key; an id that is not
+lower-case letters, digits and `-` (≤ 64) or is `owner-test` (the owner's Test press, never a lens's evidence); a target
+that is not a text row of THIS build's shipped catalogue — `okx-eea-announcements/announcements` (fields `annType`,
+`title`, `url`, `pTime`, `businessPTime`) and `gdelt-gkg/gkg-items` (GKG 2.1's 27) and nothing else, so no market row, no
+row `tape-sources.json` adds and nothing that is not the tape (the genome bank, the ledger, agent traces: R10 #14) can be
+targeted; a field its target's items do not carry, named twice, or a cap outside 1–4,000 characters; more than 16
+fields; a property anywhere whose words name an instrument, host, pin, key, budget or model; a Choice with none of
+`other`, `cannot_tell`, `insufficient_information`, `none_of_these`; and any question the port would refuse, in the port's
+own words (`DecisionRequests.QuestionsRefusal`, shared with `DecisionRequests.Refusal`), against
+`DecisionInstruments.StrictestBuiltInLimits` — with the DECLARED state cap (`LensState.CapBytes`: the builder's own output
+for the worst item, every character at six bytes) and the questions checked by `DecisionRequests.BytesRefusal`. A lens
+that parsed is one every built-in instrument takes. `Canonical` is the whole definition in one spelling (keys ordinal,
+fields by path); `lens_sha` = SHA-256 of it; `schema_sha` = the port's `SchemaRef.Sha` over the questions alone.
+
+**THE REGISTRY** (`lens`, tape.db rung 3, one transaction with its stamp; `TapeStore.Schema` 3): `id, version, lens_sha,
+schema_sha, definition (canonical), target_source, target_series, proposer, attempt, registered_at, validator_version`,
+UNIQUE(id, version) and UNIQUE(lens_sha), insert only. `TapeStore.RegisterLens(definition, proposer, attempt)`: the same
+bytes (any spelling) are the existing row and write nothing; the same id with other bytes is `MAX(version) + 1`, the
+store's number; refused in words, nothing written — a definition the parse refuses, a built-in's id, a proposer that is
+empty or `app`, and a proposer's ninth registration in one owner day (`MaxLensProposalsPerDay` 8). **Built-ins** —
+`BuiltInLenses.All()`: `okx-announcement` v1, R02 § 6.7(a) cut to an OKX item's title (≤ 500), type (≤ 100) and age, asking
+`event_type` (R02's twelve options), `direction_for_holders` (R02's five), `time_sensitivity` (Score, four levels) and
+`addresses_automated_reader` (Noul); `new_vs_prior` waits for prior headlines — are registered at every open as `app`,
+after the ladder and before anything else is written; one whose bytes differ from the tape's row of its id and version,
+or that is byte for byte another row, REFUSES the tape in words naming both hashes and the version that would open it,
+the file untouched (`TapeStore.TryOpen` turns it into the activity line).
+
+**THE STATE** (`LensState.For(lens, observation)`, and the overload over a `TapeAsOf`): pure and deterministic; refuses in
+words no observation, one of another source or series than the target, one the tape's screen quarantines, one whose
+payload a read withheld and a read a holdout window refused. It builds, canonical, the declared fields cut to their caps
+(never inside a surrogate pair), and code facts only — `source`, `series`, `subject`, `source_time`, `received_at`,
+`age_seconds_at_arrival`, `evidence_class`, `truncated`, and `candidate_assets` (this build's six coins matched as whole
+words, with their common names, in the fields' text); no text from the proposer enters it. Its one source is
+`tape_obs:<id>`, built there and taken from no caller. **The wire** (`TypeSafeWire.DecideAsync`) asks
+`TapeStore.LensRefusal` after "no tape" and BEFORE the rate gate, the key and the reservation: a request whose schema id
+names a registered lens is REFUSED unless it carries that lens's registered version and its questions' hash, exactly one
+source naming an observation of the target the screen does not quarantine, and the very state the lens builds from it.
+**`RecordDecision`** asks the same in the transaction that writes the call, and a call that fails it is not recorded (the
+wire's "not recorded" path: UNANSWERED, its reservation the cost). No `decision_call` column changed.
+
+**THE AGENTS' SURFACE.** `lens-propose` (arg `lens`, the definition's JSON — not `definition`, a word `InstrumentCheckTests.No_pipe_op_writes_an_instrument_check` bans in arg names — for every role, in the harness's `trade` tool too) hands the text
+to `TradingGateway.LensRegistrar` — a delegate `AppHost` sets beside `Tape` over its store, never the store — under the
+role and attempt the launch grant proved; a connection with no grant is refused, an argument other than `definition` is
+refused, and a host with no tape answers MARKET_DATA_UNAVAILABLE, each with nothing written. It answers the id, the
+version, both hashes, whether this proposal wrote it, and the proposer. `lens-list` (`id`, `limit` 1–50, default 20)
+and `lens-show` (`id`, `version` — a string arg, as every op's `version` is typed alike on the harness's one tool — newest when omitted) read through the gateway's `TapeReader`, read-only, every role's;
+the list never carries a definition, the show carries it canonical. Why a lens is worth asking is the proposer's claim
+and goes in the research ledger, `ledger-add` with `source` `lens:<id>@<version>` — kept in the ledger's tables, apart
+from the registry. No op, verb or argument runs, activates, prices or pins a lens, names an instrument, a model or a key,
+or edits or deletes a row; `DecisionPortTests.No_pipe_op_reaches_the_decision_port` holds the names, unedited.
+
+**Claimed:** a registered lens is exactly the canonical bytes its hash names, numbered by the store; a call under a lens
+asks that lens's registered questions about one unquarantined observation of its target, with the state code built
+from it; a built-in never changes under its version. **NOT claimed:** that a lens is a good question, or that any lens
+has been asked (none has); that `candidate_assets` finds every asset an item concerns (a word match, not entity
+resolution); that the 8-a-day bound limits anything but registrations; and, until containment, that an agent running
+unconfined cannot edit `state/tape.db` (§ 6.11). **Public:** only the R02-derived built-in is in the repository; agents'
+lenses live in the home's `tape.db`.
+
 ## Features — `src/TradeAgent.Core/Features/FeatureSpec.cs`, `FeatureCanonical.cs`, `FeatureVersions.cs`, `FeatureEvaluator.cs`, `FeatureSeries.cs`, `FeatureLicence.cs`
 
 **What it is.** A feature is a deterministic spec, as data, over one series of the tape — known by its hash and computed

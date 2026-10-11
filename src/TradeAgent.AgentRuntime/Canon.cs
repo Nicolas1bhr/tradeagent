@@ -541,6 +541,13 @@ public static class Canon
         verdict it answered with to that entry; nothing you send writes a link, and a link says only that it
         answered under that entry, never that the record supports it.
 
+        **A lens is a question you would have asked of every new item on the tape** — an OKX announcement or a
+        GDELT news item: which fields of it the question sees, and the questions, each Choice with a way out.
+        Propose one with `{{verb lens-propose <lens>}}`; TradeAgent validates it, numbers its version and
+        hashes it, registers it under your role or says why not, and registering one runs nothing and spends
+        nothing. Why it is worth asking is your claim and goes in your ledger, `{{args --source lens:<id>@<version>}}`;
+        `{{verb lens-list}}` and `{{verb lens-show <id>}}` read every role's.
+
         ### The work that happens before an order exists
 
         Most of the money is made by the work that happens before an order exists:

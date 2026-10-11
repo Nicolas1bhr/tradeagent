@@ -589,7 +589,15 @@ public sealed class AppHost : IAsyncDisposable
     /// property is on the object, exactly like <see cref="ReportAiToTheGateway"/>. Forgetting this line is how
     /// <c>trade data tape</c> starts answering that no tape is open while the collectors are recording.
     /// </summary>
-    void ReportTapeToTheGateway() => Gateway.Tape = _tapeReader;
+    void ReportTapeToTheGateway()
+    {
+        Gateway.Tape = _tapeReader;
+
+        // AND THE LENS REGISTRAR BESIDE IT (U-lenses): a delegate over the store, never the store, so the one thing the
+        // gateway can have written to the tape is one lens row the store parses, numbers and hashes itself.
+        var store = _tapeReader is null ? null : _tape;
+        Gateway.LensRegistrar = store is null ? null : (definition, proposer, attempt) => store.RegisterLens(definition, proposer, attempt);
+    }
 
     /// <summary>
     /// GDELT'S RECORDER — GDELT's news items about crypto, into the same tape on its own task (<c>U-tape-archive</c>).

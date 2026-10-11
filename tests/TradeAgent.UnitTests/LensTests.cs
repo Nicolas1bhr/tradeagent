@@ -358,6 +358,13 @@ public class LensTests(ITestOutputHelper log)
                   "probabilities":{"0":0.125,"1":0.375,"2":0.375,"3":0.125},"confidence":0.5}}
         """;
 
+    /// <summary>A built-in instrument, every field as it ships but its address: the loopback listener.</summary>
+    static DecisionInstrument PointedAt(FakeProvider host, string id = DecisionInstruments.TypeSafeDirect) =>
+        DecisionInstruments.BuiltIn().Single(i => i.Id == id) with
+        {
+            Endpoint = id == DecisionInstruments.OpenRouterJev ? $"http://127.0.0.1:{host.Port}/api/v1/systemone" : $"{host.BaseUrl}/systemone"
+        };
+
     static TypeSafeWire Wire(DecisionInstrument instrument, HarnessKey key, DecisionPortTests.Rig rig, DecisionRateGate? gate = null) =>
         new(instrument, key, rig.Db, () => rig.Tape, () => 5m, () => 1m, rig.Live, () => "USD",
             requestTimeout: TimeSpan.FromSeconds(10), gate: gate ?? new DecisionRateGate());
@@ -391,7 +398,7 @@ public class LensTests(ITestOutputHelper log)
         using var rig = new DecisionPortTests.Rig();
         using var host = new FakeProvider();
         host.Answer(FakeProvider.SystemOne("jev-1.13.0", ValidAnswers));
-        var instrument = DecisionPortTests.PointedAt(host);
+        var instrument = PointedAt(host);
         using var wire = Wire(instrument, host.Holding("not-a-real-decision-key-" + Guid.NewGuid().ToString("n")), rig);
 
         var v1 = rig.Tape.RegisterLens(Valid, CouncilRoles.Research, "attempt-a").Lens!;
@@ -543,7 +550,7 @@ public class LensTests(ITestOutputHelper log)
         using var rig = new DecisionPortTests.Rig();
         using var host = new FakeProvider();
         host.Answer(FakeProvider.SystemOne("typesafe/jev-1.13-20260917", ValidAnswers));
-        var instrument = DecisionPortTests.PointedAt(host, DecisionInstruments.OpenRouterJev);
+        var instrument = PointedAt(host, DecisionInstruments.OpenRouterJev);
         var holder = new HarnessKey();
         holder.Set("not-a-real-decision-key-" + Guid.NewGuid().ToString("n"), "https://elsewhere.invalid");
         var gate = new DecisionRateGate();
