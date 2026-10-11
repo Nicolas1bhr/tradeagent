@@ -196,8 +196,11 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **Wakes** are `mission_event` rows addressed to a position, with a cause class, a priority class, an entity and a deduplication key; raised only
   by app paths; consumed inside the launch transaction (as today).
 - **Eligibility:** the position active; not leased (one conversation per position at a time); its unit not asleep (the circuit breaker, VISION § 7.7);
-  envelope room; its quota pool not held; its cell available; the activation gate passes for every capability the launch needs (§ 2.3 — a refused position's due wakes settle with a
-  recorded disposition and never retry); the owner's pause and stop obeyed.
+  envelope room; its quota pool not held; its cell available; the activation gate passes for every capability the launch needs (§ 2.3); the owner's pause and stop obeyed. **A refusal about the
+  position itself** — its standing (dormant, ended, unknown) or a capability its seat cannot carry — settles its due wakes with a recorded
+  disposition and never retries; **a refusal about the host or the launch** — no proven cell on the host, the no-unconfined-neighbour rule, no
+  launcher, a held order grant, an unwritable ledger — steps over and keeps every wake, under backoff. **The owner's words are never settled by
+  a refusal of either kind:** they stay owed, and his surface shows them undelivered with the reason (the O3 survey, 2026-10-11).
 - **Priority:** ORGANISATION § 10's order, read from there and never restated; oldest due first within a class; ties by unit depth, then id.
 - **Objectives per position kind** (extending `RoleObjectives`): a wake is a divergence between the observed and the desired world. A head owns its
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
