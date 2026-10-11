@@ -269,6 +269,13 @@ public interface IMissionHost
     IAgentConversation? ConversationFor(string role) => Conversation;
 
     /// <summary>
+    /// WHY A POSITION MAY NOT TURN, in a sentence, or null when it may (<c>U-org-principals</c>): the host's activation
+    /// seam. The loop steps over a position it refuses — its wakes stay due and unconsumed — so a wake for a position that
+    /// is representable and not runnable never holds the legacy pair's turns behind it. A host with no seam refuses nobody.
+    /// </summary>
+    string? ActivationRefusal(string role) => null;
+
+    /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous
     /// because positions and open orders come from the broker, and a turn boundary is exactly the
     /// right place to pay for a fresh reading rather than hand the AI a cached one.
@@ -1827,6 +1834,12 @@ public sealed class MissionLoop
             var due = RolesDue(events).Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
             if (due.Count == 0) return Idle(events);
 
+            // A POSITION THE ACTIVATION SEAM REFUSES IS STEPPED OVER, never chosen and handed no conversation: left in,
+            // the oldest wake of a position that cannot run would be chosen on every pass and the legacy pair would never
+            // turn. Its wakes stay due and unconsumed.
+            due = [.. due.Where(Runnable)];
+            if (due.Count == 0) return _options.BusyRetry;
+
             // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
             // role that has spent its share is. Without this line a second caller always collides
             // on the longest-waiting role and is refused, so the OTHER role — whose wake is sitting
@@ -2437,6 +2450,13 @@ public sealed class MissionLoop
     /// The roles with a due wake, longest-waiting first, or nothing at all when the queue cannot be
     /// read. A queue that throws is not a reason to launch a process nobody asked for.
     /// </summary>
+    /// <summary>Whether the host's activation seam lets this position turn. A seam that throws refuses.</summary>
+    bool Runnable(string role)
+    {
+        try { return _host.ActivationRefusal(role) is null; }
+        catch (Exception) { return false; }
+    }
+
     List<string> RolesDue(MissionEventStore events)
     {
         try { return events.RolesDue(_now()); }

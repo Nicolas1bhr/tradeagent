@@ -211,6 +211,34 @@ public sealed class OrgStore(Database db)
         return r.Read() ? ReadPosition(r) : null;
     });
 
+    /// <summary>
+    /// ONE POSITION'S STANDING, or null because the chart holds no position by exactly that id — an app principal, a name
+    /// that is not a position id, and an unknown id included, none of them folded into another. Its kind is DERIVED:
+    /// <see cref="OrgPositionKind.Head"/> where a unit's head is this position, <see cref="OrgPositionKind.Staff"/> in a
+    /// <see cref="OrgUnitKind.Staff"/> unit, else <see cref="OrgPositionKind.Member"/>; its home is computed from the id.
+    /// Read in one snapshot. The seam <see cref="PositionActivation.Refusal"/> reads it (<c>U-org-principals</c>).
+    /// </summary>
+    public PositionStanding? Standing(string id)
+    {
+        if (IsAppPrincipal(id) || !CouncilRoles.IsPositionId(id)) return null;
+        return db.Read(_ =>
+        {
+            using var c = db.Cmd("""
+                SELECT p.id, p.unit_id, p.status, u.kind,
+                       EXISTS (SELECT 1 FROM org_unit h WHERE h.head_position_id = p.id)
+                  FROM org_position p JOIN org_unit u ON u.id = p.unit_id
+                 WHERE p.id = $id
+                """, ("$id", id));
+            using var r = c.ExecuteReader();
+            if (!r.Read()) return null;
+            var kind = r.GetInt64(4) != 0 ? OrgPositionKind.Head
+                : r.GetString(3) == OrgUnitKind.Staff ? OrgPositionKind.Staff
+                : OrgPositionKind.Member;
+            return new PositionStanding(r.GetString(0), r.GetString(1), r.GetString(2), kind,
+                CouncilRoles.IsKnown(id), CouncilRoles.HomeDir(id));
+        });
+    }
+
     /// <summary>The unit a position belongs to — which it heads when that unit's head is this position — or null.</summary>
     public OrgUnitRow? UnitOf(string positionId) => db.Read(_ =>
     {

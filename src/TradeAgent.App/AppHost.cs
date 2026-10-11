@@ -277,6 +277,10 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public IAgentConversation? ConversationFor(string role)
     {
+        // THE ACTIVATION SEAM, FIRST (U-org-principals): a position it refuses opens nothing — no conversation, no
+        // meter attached, no row written. Today only the legacy pair pass; U-thinking-seats fills the gate.
+        if (PositionActivation.Refusal(role, StandingOf(role)) is not null) return null;
+
         if (role == CouncilRoles.Operations) return Conversation;
 
         // THE ROLE'S OWN RUNTIME, WHICH MAY NOT BE THE APP'S. The cache below is keyed on the runtime
@@ -302,6 +306,22 @@ public sealed class AppHost : IAsyncDisposable
 
     readonly Dictionary<string, (IAgentRuntime Owner, IAgentConversation Conversation, IDisposable? Metering)>
         _roleConversations = [];
+
+    /// <summary>
+    /// The chart's standing for one position id, or null where there is no such position, no database yet, or a chart
+    /// that could not be read — each of which the seam refuses.
+    /// </summary>
+    PositionStanding? StandingOf(string role)
+    {
+        try { return _db is null ? null : new OrgStore(_db).Standing(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WHY A POSITION MAY NOT TURN, in a sentence, or null: the activation seam's own answer, asked by the loop so a
+    /// position it refuses is stepped over rather than chosen and handed no conversation.
+    /// </summary>
+    public string? ActivationRefusal(string role) => PositionActivation.Refusal(role, StandingOf(role));
 
     /// <summary>
     /// ONE ROLE'S OWN DIRECTORY, as the last prepare built it, and the managed path for that role
@@ -1664,6 +1684,9 @@ public sealed class AppHost : IAsyncDisposable
     internal sealed class MissionHost(AppHost host) : IMissionHost
     {
         public IAgentConversation? Conversation => host.Conversation;
+
+        /// <summary>The activation seam's refusal for one position. See <see cref="AppHost.ActivationRefusal"/>.</summary>
+        public string? ActivationRefusal(string role) => host.ActivationRefusal(role);
 
         /// <summary>One role's conversation. The chair's is the window's; see <see cref="AppHost.ConversationFor"/>.</summary>
         public IAgentConversation? ConversationFor(string role) => host.ConversationFor(role);

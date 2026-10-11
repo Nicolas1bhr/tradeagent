@@ -329,7 +329,7 @@ public class OrgLedgerTests
         }
 
         Assert.Equal(
-            ["Ancestors", "IsAppPrincipal", "Position", "Positions", "Subtree", "UnitOf", "Units"],
+            ["Ancestors", "IsAppPrincipal", "Position", "Positions", "Standing", "Subtree", "UnitOf", "Units"],
             typeof(OrgStore)
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .Select(m => m.Name).Order(StringComparer.Ordinal).ToArray());

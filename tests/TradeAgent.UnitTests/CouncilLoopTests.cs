@@ -184,7 +184,11 @@ public partial class CouncilLoopTests
         public CouncilBoundaries? Boundaries { get; }
 
         public IAgentConversation? Conversation => Conversations[CouncilRoles.Operations];
-        public IAgentConversation? ConversationFor(string role) => Conversations[role];
+        public IAgentConversation? ConversationFor(string role) => Conversations.GetValueOrDefault(role);
+
+        /// <summary>The activation seam's refusals, by position: empty is today's legacy pair, refused by nobody.</summary>
+        public Dictionary<string, string> Refusals { get; } = [];
+        public string? ActivationRefusal(string role) => Refusals.GetValueOrDefault(role);
 
         public string AgentHome => WorkspaceBuilder.HomeOf(Root, CouncilRoles.Operations);
         public string HomeFor(string role) => WorkspaceBuilder.HomeOf(Root, role);
@@ -563,6 +567,34 @@ public partial class CouncilLoopTests
         Assert.Empty(host.Conversations[CouncilRoles.Operations].Sent);
         Assert.Single(host.Conversations[CouncilRoles.Research].Sent);
         Assert.Equal([CouncilRoles.Research], host.Opened.Select(o => o.Role));
+    }
+
+    /// <summary>
+    /// A POSITION THE ACTIVATION SEAM REFUSES IS STEPPED OVER, AND THE LEGACY PAIR WORKS (<c>U-org-principals</c>). A
+    /// third position is representable and not runnable; its wake, older than Research's, stays due and unconsumed, and
+    /// Research takes the turn. The mutant — the loop's step-over removed — chooses the third position on every pass, and
+    /// the legacy pair never turns behind it.
+    /// </summary>
+    [Fact]
+    public async Task A_position_the_activation_seam_refuses_is_stepped_over_and_the_legacy_pair_works()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, NoHeartbeat);
+        const string third = "pos-7f3a90c1";
+        host.Refusals[third] = "no activation gate in this build";
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var thirds = MissionEventIds.ForRole(MissionEventIds.Review(earlier), third);
+        host.Events!.Raise(thirds, MissionEventKind.Review, earlier, role: third);
+        host.Events.Raise(MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Research),
+            MissionEventKind.Review, earlier.AddSeconds(1), role: CouncilRoles.Research);
+
+        await loop.TurnAsync();
+
+        Assert.Equal([CouncilRoles.Research], host.Opened.Select(o => o.Role));
+        Assert.False(host.Events.Get(thirds)!.Consumed);
     }
 
     /// <summary>

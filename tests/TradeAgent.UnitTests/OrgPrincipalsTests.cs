@@ -184,6 +184,69 @@ public class OrgPrincipalsTests : IDisposable
             Assert.Null(gateway.ActivePositionOf(who));
     }
 
+    // ---- (h) no conversation before the activation gate -----------------------------------------------------------
+
+    /// <summary>
+    /// (h) A THIRD POSITION OPENS NO CONVERSATION BEFORE THE ACTIVATION GATE. RED at base:
+    /// <c>AppHost.ConversationFor</c> opened one for any role string, in the chair's folder. The legacy pair still open
+    /// theirs, through the host's own composition (<c>ComposeTheAi</c>) and a real runtime over a one-line program.
+    /// </summary>
+    [Fact]
+    public async Task A_third_position_opens_no_conversation_before_the_activation_gate()
+    {
+        RuntimeCatalog.SaveOverrides([ProbeRuntime()]);
+        using var db = TestEnv.NewDb();
+        Seat(db, Third);
+        var connector = new FakeConnector(new FakeBroker());
+        await using (var before = new TradingGateway(db, connector, new HealthRegistry()))
+            before.Update(s => s.SelectedRuntimeId = Probe);
+        new OnboardingStore(db).Complete(OnboardingStep.SETUP_COMPLETE);
+        await connector.ConnectAsync();
+
+        var host = AppHost.Composed(db, connector, new AgentPresence());
+        try
+        {
+            await host.StartTheAiAsync();
+            var attempts = Attempts(db);
+
+            var opened = host.ConversationFor(Third);
+            Assert.True(opened is null, $"a conversation opened for {Third}, in {host.HomeFor(Third)}");
+            Assert.Equal(attempts, Attempts(db));
+
+            // THE SEAM REFUSES IT IN WORDS, AND ITS STANDING IS DERIVED FROM THE CHART, NEVER STORED.
+            var standing = new OrgStore(db).Standing(Third);
+            Assert.Equal(new PositionStanding(Third, OrgIds.Research, OrgPositionStatus.Active, OrgPositionKind.Member,
+                IsLegacy: false, HomeDir: $"org/{Third}"), standing);
+            Assert.Contains("no activation gate", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
+            Assert.Contains("no activation gate", host.ActivationRefusal(Third), StringComparison.Ordinal);
+            Assert.Contains("not an active position", host.ActivationRefusal("nobody-here"), StringComparison.Ordinal);
+            Assert.Null(new OrgStore(db).Standing(AppPrincipals.Perception));
+            Assert.Equal(OrgPositionKind.Head, new OrgStore(db).Standing(CouncilRoles.Operations)!.Kind);
+            db.Write(_ =>
+            {
+                using var c = db.Cmd("""
+                    INSERT INTO org_unit(id, parent_id, kind, status, created_at)
+                    VALUES('staff-1', 'org', 'staff', 'active', '2026-10-11T12:00:00.0000000Z')
+                    """);
+                return c.ExecuteNonQuery();
+            });
+            Seat(db, "pos-staff", unit: "staff-1");
+            Assert.Equal(OrgPositionKind.Staff, new OrgStore(db).Standing("pos-staff")!.Kind);
+            Assert.True(new OrgStore(db).Standing(CouncilRoles.Research)!.IsLegacy);
+            Assert.Null(PositionActivation.Refusal(CouncilRoles.Operations, new OrgStore(db).Standing(CouncilRoles.Operations)));
+            Assert.Null(PositionActivation.Refusal(CouncilRoles.Research, new OrgStore(db).Standing(CouncilRoles.Research)));
+
+            // THE LEGACY PAIR KEEP THEIR EXISTING TWO-ROLE BEHAVIOUR.
+            Assert.Same(host.Conversation, host.ConversationFor(CouncilRoles.Operations));
+            Assert.NotNull(host.ConversationFor(CouncilRoles.Research));
+        }
+        finally
+        {
+            await host.Agent.StopAsync();
+            await host.Gateway.DisposeAsync();
+        }
+    }
+
     static RuntimeManifest ProbeRuntime()
     {
         var dir = Path.Combine(TestEnv.Home, $"principals-probe-{Guid.NewGuid():n}");
