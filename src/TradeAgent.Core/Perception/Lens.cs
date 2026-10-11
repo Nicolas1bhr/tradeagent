@@ -44,10 +44,10 @@ public sealed class LensParse
 /// carry. Data, not code: an agent proposes one as text, <see cref="Parse"/> validates it, and the tape's store
 /// registers it (<see cref="Db.TapeStore.RegisterLens"/>), numbering its version and hashing it itself.
 ///
-/// <para><b>The parse is TOTAL and refuses in words.</b> An unknown key, a missing one, a target that is not a text row
-/// of this build's catalogue, a field the target's items do not carry, a Choice with no escape option, a property
-/// naming an instrument, a host, a pin, a key, a budget or a model, the owner's Test press's own id, a text over
-/// <see cref="MaxDefinitionBytes"/> — and any question the port would refuse, in the port's own words
+/// <para><b>The parse is TOTAL and refuses in words.</b> An unknown key, a missing one, a key named twice anywhere, a
+/// target that is not a text row of this build's catalogue, a field the target's items do not carry, a Choice with no
+/// escape option, a property naming an instrument, a host, a pin, a key, a budget or a model, the owner's Test press's
+/// own id, a text over <see cref="MaxDefinitionBytes"/> — and any question the port would refuse, in the port's own words
 /// (<see cref="DecisionRequests.QuestionsRefusal"/>), checked against the STRICTEST built-in instrument with the
 /// lens's declared state cap included (<see cref="DecisionRequests.BytesRefusal"/>). A lens that parsed is one every
 /// built-in instrument takes.</para>
@@ -263,9 +263,13 @@ public sealed class Lens
         q = null;
         if (e.ValueKind != JsonValueKind.Object) return $"the question '{name}' is an object: {{type, instructions, criteria}}";
         var allowed = new[] { "type", "instructions", "criteria" };
+        var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in e.EnumerateObject())
+        {
+            if (!keys.Add(p.Name)) return $"the question '{name}' names '{p.Name}' twice";
             if (!allowed.Contains(p.Name, StringComparer.Ordinal))
                 return $"'{p.Name}' is not a key of a question: a question has type, instructions and criteria";
+        }
         if (!e.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String)
             return $"the question '{name}' names no type: choice, noul or score";
         if (!e.TryGetProperty("instructions", out var ins) || ins.ValueKind != JsonValueKind.String)
@@ -303,9 +307,11 @@ public sealed class Lens
                 if (criteria.ValueKind == JsonValueKind.Undefined) { q = DecisionQuestion.Noul(instructions); return null; }
                 if (criteria.ValueKind != JsonValueKind.Object) return $"the Noul '{name}''s criteria are an object: {{true, false}}";
                 string? yes = null, no = null;
+                var named = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var c in criteria.EnumerateObject())
                 {
                     if (c.Name is not ("true" or "false")) return $"the Noul '{name}''s criteria name only 'true' and 'false'";
+                    if (!named.Add(c.Name)) return $"the Noul '{name}''s criteria name '{c.Name}' twice";
                     if (c.Value.ValueKind != JsonValueKind.String) return $"the Noul '{name}''s '{c.Name}' is text";
                     if (c.Name == "true") yes = c.Value.GetString(); else no = c.Value.GetString();
                 }
