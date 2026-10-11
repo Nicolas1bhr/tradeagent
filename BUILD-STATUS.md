@@ -10233,3 +10233,31 @@ FeatureProgramGoldenVector 2, BacktestLedger 8, PaperAllocationGate 18, each ×3
 U-friction-home in this train). **Landing CI (train A5):** run 38135936547 at the stacked tip `f4778fd4` (train A5, onto `af1a7a6f`) — every job success: windows 1–5 10/9/11/5/9 min, ubuntu 13, macos 15, linux-host 20, packages. **Names vs main:** train [Fact]/[Theory] 2547 → 2553, removed 0. **Scan:** clean at landing. **Tests box:** NOT RUN — the machine does not answer.
 **NOT done, NOT verified:** the bump itself (U-backtest-parity, next); a gateway-level test of the trial charge under another evaluator (store and id level only); a crash in the middle
 of the rebuild's transaction (SQLite's atomicity, not simulated); the full local suites (CI ran them).
+
+## 2026-10-11 — U-friction-home landed (train A5): a role start no longer moves the Research Director's own home into the chair's folder — the older-layout move (compatibility code) is deleted, so a start moves or deletes nothing outside a role's own home
+
+Built under build-fleet seat A from `docs/briefs/U-friction-home.md` (the orchestrator's ruling 12:41: a pattern on main, landing-fixer class). Three CI sightings of one symptom —
+`PaperFrictionTests` → GatewayDeniedException "there is no file at 'strategies/friction-<guid>.strategy'" from `Backtests.Resolve` on a test's REPEAT Run: macOS 38126064304 (seat B's
+u-red-says-why, judged at B3's landing), ubuntu 38130672332 (u-referee-v2c), ubuntu 38133547987 (u-evidence-evaluator-label, a second test of the class). A static survey found no
+cause; the builder (opus/high) found it and reported `df58312b` (code `0d97e0dd` on `1970f86a`). Landed in TRAIN A5 (land.sh v3, onto main `af1a7a6f`, after U-prove-phase4 and
+U-evidence-evaluator-label). On main: brief `86f1a11d`, fix `e547c96d`, report `f4778fd4`. **Schema: none.**
+**THE CAUSE — A PRODUCT DEFECT, not test isolation.** `WorkspaceBuilder.MoveOlderLayout` (src/TradeAgent.AgentRuntime), compatibility code for a pre-council layout (08a9e56c,
+2026-09-06), moved every `workspace/<dir>` into `workspace/agent/<dir>` on the chair's start when the target was absent — and `workspace/research` has been the RESEARCH DIRECTOR'S OWN
+HOME since 89c5ad8e (2026-09-07). So the first chair start in a home without `workspace/agent/research` moved that role's whole home, its programs included, into the CHAIR's folder,
+and the role's build then recreated it empty: Research lost its own programs, and the chair's tree held another role's files. In tests, the first AI-starting test of a process did it
+(ResumeOnStartTests, MaterialPassExclusionTests) while PaperFrictionTests ran in parallel: the third sighting's trx has the failing test (10:55:25.982–26.701) overlapping
+ResumeOnStartTests' first AI starts (25.012–26.715); a kept test home held 3 friction-*.strategy files under workspace/agent/research/strategies.
+**THE FIX.** `MoveOlderLayout` deleted, with its delete of a stale workspace/AGENTS.md, under CLAUDE.md's no-backward-compatibility rule. File.Exists told the truth (the file was
+gone), so `U-resolve-says-why` was NOT absorbed and is withdrawn as moot. **RED first:** `CouncilRoleTests.A_start_never_moves_the_research_directors_files_into_the_chairs_folder` →
+"the Research Director's program is no longer at …/research/strategies/mine.strategy". **Mutant** (only the research move restored) → red, the same message (Failed 1 / Passed 5);
+restored → Passed 6. After the fix a kept home has agent/research empty and all 4 programs in workspace/research/strategies. A 6-run local stress loop of the unfixed code never went
+red; the reproduction is the deterministic test plus the kept-home evidence.
+**Codex review** (`fleet/records/U-friction-home-review-triage.md`): (1) without the move, a pre-2026-09-06 home's old dirs are stranded (left untouched, nothing destroyed) instead of
+refused in words — REAL in principle, NOT BLOCKING (main's move corrupted every current home; this touches only homes over five weeks old) → OWED `U-older-layout-refusal` (an explicit
+refusal naming both layouts and the repair, with the in-app fresh-start path); (2) "no report" — not real (the review ran before the report commit).
+**Gate.** Release 0/0; CouncilRole + PaperFriction + MaterialPassExclusion + ResearchLibrary together 3×: Passed 21. Branch CI 38133704634 every job. **Landing CI (train A5):** run 38135936547 at the stacked tip `f4778fd4` (train A5, onto `af1a7a6f`) — every job success: windows 1–5 10/9/11/5/9 min, ubuntu 13, macos 15, linux-host 20, packages.
+**Names vs main:** train [Fact]/[Theory] 2547 → 2553, removed 0 (vs its base 1970f86a: 2580 → 2581, removed 0). **Scan:** clean at landing. **Tests box:** NOT RUN — the machine does not answer.
+**OWNER-FACING:** any real home that restarted the chair after Research wrote programs, from 2026-09-07 until this build, has the Research Director's programs under
+`workspace/agent/research` and an emptier `workspace/research`. NOT VERIFIED for the owner's homes or the M0 attempts → OWED read-only card `U-moved-research-audit` (his machines only
+on his word); nothing here moves them back.
+**NOT done, NOT verified:** the older-layout refusal (owed); the audit (owed); test homes are still shared per process (no isolation change — the remover is gone).
