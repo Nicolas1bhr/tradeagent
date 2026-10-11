@@ -1392,27 +1392,48 @@ public class GatewayPipeBackpressureTests
     /// cheaper (some placements are already done) and it is the case the bounce names, so it is
     /// asserted too rather than argued from the first.
     ///
-    /// The latency is UNCANCELLABLE on purpose, for the reason the cold-placement disposal test
+    /// The calls are UNCANCELLABLE on purpose, for the reason the cold-placement disposal test
     /// gives: a call that unwinds at the cancel records UNKNOWN and hides the harm as "an order that
     /// needs reconciling", while a call that ignores the token leaves the row DISPATCHING with
     /// nothing coming to change it — and the count is read the INSTANT disposal returns, because a
     /// request settled after that was still abandoned by the shutdown.
+    ///
+    /// WHAT DECIDES THE WAVE'S LENGTH IS A LATCH, NOT A CLOCK (U-closeall-latch). The wave used to
+    /// be sixteen serialised 500 ms sleeps, about 8 s, raced against the product's wall-clock
+    /// emergency budget (12 s): on a windows runner whose store work ate the difference, the budget
+    /// cut the wave, a leg was refused before the wire, two positions stayed open, and the third
+    /// assert reported the runner's speed (run 37851666182 — `P-MES`, `P-YM`). Here the calls park on
+    /// <c>FaultProfile.Hold</c> and the TEST says when each ends: disposal lands while the first one
+    /// is held, the drain must still be waiting when the agent's connection has closed, and only then
+    /// is the wave let through. The latch decides how long the wave is held; the wall clock still
+    /// bounds the wave's own store work, which is inside the 12 s budget (about a second measured on
+    /// windows). Nothing about the budget, the drain or W changes — W is DECLARED as the 500 ms the
+    /// old delay made it, so the drain is the 15.1 s it always was.
     /// </summary>
     [Fact]
     public async Task A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled()
     {
-        var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-wave-dispose-a");
+        var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-wave-dispose-a", TimeSpan.FromMilliseconds(500));
         using var _1 = db;
         await using (var client = new PipeClient())
         {
             await client.ConnectAsync(10_000, pipe);
             await StockTheBook(client, gw, conn);
 
-            conn.Faults.UncancellableLatencyMs = 500;
+            var latch = new CallLatch();
+            conn.Faults.Hold = latch.Hold;
             var sweep = Swallow(client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-a" }));
-            await Task.Delay(200);   // the whole prefix and the whole wave are still ahead
+            // The whole prefix and the whole wave are still ahead: the composite's first read is parked.
+            await WaitFor(() => latch.Parked > 0, TimeSpan.FromSeconds(30));
 
-            await server.DisposeAsync();
+            var disposing = server.DisposeAsync().AsTask();
+            // The agent's connection closing is step 2 of disposal; the drain (step 3) is what comes
+            // next, and it must be WAITING for the held handler — not have given up on it.
+            await sweep;
+            Assert.False(disposing.IsCompleted, "disposal returned while the wave was still held");
+            latch.ReleaseAll();
+            await disposing;
+
             Assert.Equal(0, Dispatching(db));
             Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
 
@@ -1426,23 +1447,73 @@ public class GatewayPipeBackpressureTests
 
         // MID-WAVE: a second sweep over a freshly stocked book, disposed once a placement of the
         // wave has actually reached the broker.
-        var (gw2, conn2, db2, server2, pipe2) = await ReadyForHandlerTable("ta-wave-dispose-b");
+        var (gw2, conn2, db2, server2, pipe2) = await ReadyForHandlerTable("ta-wave-dispose-b", TimeSpan.FromMilliseconds(500));
         using var _3 = db2;
         await using var client2 = new PipeClient();
         await client2.ConnectAsync(10_000, pipe2);
         await StockTheBook(client2, gw2, conn2);
 
         var before = conn2.Broker.Orders.Count;
-        conn2.Faults.UncancellableLatencyMs = 500;
+        var latch2 = new CallLatch();
+        conn2.Faults.Hold = latch2.Hold;
         var sweep2 = Swallow(client2.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-b" }));
-        await WaitFor(() => conn2.Broker.Orders.Count > before, TimeSpan.FromSeconds(30));
+        // One call at a time, until a placement has passed its hold and reached the broker.
+        while (conn2.Broker.Orders.Count <= before)
+        {
+            await WaitFor(() => latch2.Parked > 0 || conn2.Broker.Orders.Count > before, TimeSpan.FromSeconds(30));
+            if (conn2.Broker.Orders.Count > before) break;
+            latch2.ReleaseOne();
+        }
 
-        await server2.DisposeAsync();
+        var disposing2 = server2.DisposeAsync().AsTask();
+        await sweep2;
+        Assert.False(disposing2.IsCompleted, "disposal returned while the rest of the wave was still held");
+        latch2.ReleaseAll();
+        await disposing2;
         Assert.Equal(0, Dispatching(db2));
         Assert.Null(ReadEngineering(db2, "handlers_did_not_finish"));
         Assert.DoesNotContain(conn2.Broker.Positions, p => p.Quantity != 0);
         await sweep2;
         await server2.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The hold a test gives <c>FaultProfile.Hold</c>: every call parks until the test releases it,
+    /// one at a time or all at once (and every later call then passes straight through). Releasing
+    /// ignores no token because the calls it holds do not take one — that is the fault.
+    /// </summary>
+    sealed class CallLatch
+    {
+        readonly object _gate = new();
+        readonly Queue<TaskCompletionSource> _parked = new();
+        bool _open;
+
+        public int Parked { get { lock (_gate) return _parked.Count; } }
+
+        public Task Hold()
+        {
+            lock (_gate)
+            {
+                if (_open) return Task.CompletedTask;
+                var call = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _parked.Enqueue(call);
+                return call.Task;
+            }
+        }
+
+        public void ReleaseOne()
+        {
+            TaskCompletionSource? call;
+            lock (_gate) _parked.TryDequeue(out call);
+            call?.TrySetResult();
+        }
+
+        public void ReleaseAll()
+        {
+            TaskCompletionSource[] calls;
+            lock (_gate) { _open = true; calls = [.. _parked]; _parked.Clear(); }
+            foreach (var call in calls) call.TrySetResult();
+        }
     }
 
     /// <summary>
@@ -1479,10 +1550,15 @@ public class GatewayPipeBackpressureTests
     /// any E above W), which is the property the number is chosen for.
     /// </summary>
     static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db, GatewayPipeServer Server, string Pipe)>
-        ReadyForHandlerTable(string pipe)
+        ReadyForHandlerTable(string pipe, TimeSpan? declaredWorstCase = null)
     {
         var db = TestEnv.NewDb();
-        var conn = new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(12) };
+        // `declaredWorstCase` is for the test whose calls are held by a latch and not by a delay: the
+        // delay is what W derives itself from by default, so a latched wave has to DECLARE the W its
+        // drain is priced on. Null leaves the derivation as it is for every other caller.
+        var conn = declaredWorstCase is { } w
+            ? new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(12), WorstCaseOperationPath = w }
+            : new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(12) };
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
