@@ -10115,8 +10115,8 @@ of it to agents (never); a VACUUM pin (owed); the full local suites (CI ran them
 
 ## U-red-says-why — an emergency's wall-clock red says what it measured: the runner's own stall is named beside the ceiling, every ceiling goes through one assert, and CI's Timing retry stays the whole category (landed 2026-10-11, seat B; moved from seat P)
 
-**Landed** in `land.sh` v3's train `B3` (first of two, then U-owner-words-delegated) on `main` `43c894a4`: stacked tip `ccaf04fd` (18 commits: the build, review-1 fixes, pass 2, the pass-3 revert, the reports).
-CI run **38130339835** at the train's tip `8a4f4c39`: every job success (see the train's check). No rung. Tests + `build.yml` only; nothing in `src/`.
+**Landed** in `land.sh` v3's train `B3` (first of two, then U-owner-words-delegated) on `main` `1970f86a`: stacked tip `68e24212` (18 commits: the build, review-1 fixes, pass 2, the pass-3 revert, the reports).
+CI run **38132029331** at the train's tip `93aaa4dd`: all 11 jobs success, CARRIED; `land.sh train-check` VERDICT PASS. (A first train run, 38130339835 on `43c894a4`, was green too; seat A's U-referee-v2c landed first, so the train re-prepped.) No rung. Tests + `build.yml` only; nothing in `src/`.
 **What changed (items kept):**
 1. `tests/Shared/RunnerStallWitness.cs` (linked in `tests/Directory.Build.props`): a dedicated thread and a pool tick read the test's clock, so a red reports "the runner's ticks across it: dedicated N ms,
    pool N ms late"; worst and last kept under one lock (race test, 200k races, RED on the two independent reads 3/3). RED first against a witness reading `Stopwatch` instead of its clock.
@@ -10138,7 +10138,7 @@ Not done: the 2 InRange bounds and the lower bounds (outside the brief's 13 ceil
 
 ## U-owner-words-delegated — nothing an agent writes can mark the owner's words handled: delegation is the app's measurement of a finished turn's own brief over no outcome, and a finished turn that left the words without one hands them on once (landed 2026-10-11, seat B)
 
-**Landed** in `land.sh` v3's train `B3` (second of two, after U-red-says-why) on `main` `43c894a4`: stacked tip `8a4f4c39` (8 commits). CI run **38130339835** at that tip: every job success (see the
+**Landed** in `land.sh` v3's train `B3` (second of two, after U-red-says-why) on `main` `1970f86a`: stacked tip `93aaa4dd` (8 commits). CI run **38132029331** at that tip: all 11 jobs success, CARRIED (see the
 train's check). No rung, no table, op, verb, arg or pipe-writable setting. Operator authority + inbox as data (CLAUDE.md); ranked first in seat B's lane by the orchestrator.
 **The defect (pre-existing, found at U-reconcile-wakes' review):** a brief's file NAME carries an attempt id — an agent's text — and `CouncilRelay` passed it to `MissionEventStore.Delegated`, which marked
 that attempt's consumed owner message `delegated` OVER `answered` and `failed`, for any attempt, LOST ones included. Startup runs `Relay.Reconcile()` before the loop's recovery, so a brief naming a lost
