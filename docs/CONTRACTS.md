@@ -4019,8 +4019,8 @@ run keeps no stream): **fidelity** z = (SR_h − (SR_research − SR0)) / se_h o
 :64's variance with the holdout's skew and raw kurtosis, `inconclusive` while 2·se_h exceeds one annual Sharpe unit (every
 holdout under ≈ 1,460 known days; `Fidelity`); the **betting e-value** E_h = Π(1 + λ_t·r_t), λ_t = clip(plug-in Kelly/2,
 0, 0.5) from the days before t (`BettingE`); p_h = 1 − PSR(0); and the **α-wealth** step — ADDIS at α_paper 0.25, W0 = α/2,
-λ 0.25, τ 0.5, γ_j ∝ j^−1.6 (`AlphaWealth`) over every judgement `JudgementsSpent` counts, in charge order
-(`CampaignStore.JudgementsCharged`; lineage-wide and across campaigns over the same months, never reset by renewal), each
+λ 0.25, τ 0.5, γ_j ∝ j^−1.6 (`AlphaWealth`) over every judgement `JudgementsSpent` counts, in charge order —
+the order the charges were recorded, never their timestamps (`CampaignStore.JudgementsCharged`; lineage-wide and across campaigns over the same months, never reset by renewal), each
 earlier one read by its recorded step and one with none counted as tested, not rejected, not discarded; p_h ≤ α_j is tested
 only over ≥ 365 known days, else `inconclusive` with α_j spent anyway; α_j and the wealth before and after are recorded. An
 unknown input is NULL, never 0. **Sealed:** no surface reads a figure — not `RefereeFeedback.Text`, the note, the boundary,
