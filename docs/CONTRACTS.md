@@ -3974,16 +3974,17 @@ counting as short. `the-holdout-run-did-not-complete` is never inconclusive: the
 pass the app's sweep (`TradingGateway.AllocatePaperDue`) offers each inconclusive version a PAPER row under
 `AllocationPolicy.InconclusiveV1`, oldest verdict first, and `Allocations.RecordPaper` decides inside its one write: the
 envelope's standing rows under that policy, other versions', are fewer than ⌊`max_deployments` / 3⌋ (none below three slots
-— the owner's card grants one, so it holds none today); none of them stands for a version judged under the same campaign
-lineage (`CampaignStore.LineageRoot` — the family's stand-in until `U-experiments-op`, named on the row's reason
+— the owner's card grants one, so it holds none today); no standing row under that policy, in any envelope, stands for
+another version judged under the same campaign lineage (`CampaignStore.LineageRoot` — the family's stand-in until `U-experiments-op`, named on the row's reason
 "inconclusive quota: <class>; lineage <root>"; a lineage that cannot be read refuses); the version has never held such a
 row — **one term per version**, so an ended term ends it and renewal is `U-incubator`'s; and the verdict's campaign has a
 trial left. The row is the envelope's share with `effective_to` exactly **90 days** after `effective_from`, and it is
 **charged once**: `TrialsCharged` counts, besides runs, every version that has ever held such a row whose promotion's
 campaign is in the lineage (`IncubationsCharged`, out of neither pot, only the whole budget), from a ledger with no update
-or delete, so a charge is never refunded; a spent budget refuses the slot in words and writes nothing. `Authorises` gains
-one arm, paper only: the row is `InconclusiveV1`, its promotion is still the one it names and still inconclusive, and the
-term is open. The verdict path is untouched — `Referee`, `PromotionRow`, both policy texts, `Promotions.Standing` and
+or delete, so a charge is never refunded; a spent budget refuses the slot in words and writes nothing. An `InconclusiveV1`
+row authorises through one arm only, paper only: its promotion is still the one it names and still inconclusive, and the
+term is open — a later favourable verdict does not open it (the standing is the version's newest), and the sweep writes
+that verdict its own `V1` row. The verdict path is untouched — `Referee`, `PromotionRow`, both policy texts, `Promotions.Standing` and
 `RefereeFeedback.Text` are byte-identical (`InconclusiveTests` pins the shas) — so the refusal stays refused and confers
 nothing live: no live reader reads a paper row. Research's note says "inconclusive quota", no figure. Schema: none — the
 marker and the term ride `policy_version` and `effective_to`. No op, verb or argument asks for a slot.
