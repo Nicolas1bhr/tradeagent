@@ -324,6 +324,16 @@ public static class Labels
         + "Nothing was sent to the AI tool and nothing was charged. It is tried again at the next look.";
 
     /// <summary>
+    /// THE TURN REFUSED BECAUSE ITS POSITION'S FUNDING CHAIN COULD NOT BE READ (<c>U-org-envelopes</c>,
+    /// <c>docs/ORCHESTRATION.md</c> § 2.4): a launch is admitted against every unit from the position's own to the root, and a
+    /// chain nobody can read is not admitted on the day's limit alone — that would be spend no unit's envelope sees.
+    /// <paramref name="why"/> is what the chart said.
+    /// </summary>
+    public static string FundingChainUnreadable(string position, string why) =>
+        $"TradeAgent could not read which units fund '{position}' ({why}), so this turn was not started. "
+        + "Nothing was sent to the AI tool and nothing was charged. It is tried again at the next look.";
+
+    /// <summary>
     /// What the Chat page says when the owner types while the AI is working. Beside the two refusals
     /// above because all three are the same promise: their words were kept, and here is what happens
     /// next.

@@ -381,8 +381,15 @@ public static class Versions
     /// <c>ai_attempt.runtime_profile</c>, one SHA-256 over the pinned program, the seat's deny set, its config file and the CLI's
     /// own feature and MCP report, verified before the launch was admitted; written by <c>AiAttemptStore.Begin</c> in the row's own
     /// insert and never updated. No backfill: a launch recorded before the rung has NULL — unknown.</para>
+    ///
+    /// <para><b>38 — the funding chain a launch was admitted under</b> (<c>U-org-envelopes</c>, the orchestrator's rung 38, after 37):
+    /// <c>ai_attempt_funding</c>, one row per unit from the position's own to the root, with its depth — written by
+    /// <c>AiAttemptStore.Begin</c> in the attempt's own transaction and never updated or deleted, so a past charge never moves when the
+    /// chart does (<c>docs/ORCHESTRATION.md</c> § 2.4). A unit's spend is read through these rows. Backfilled from each existing row's
+    /// role as the ledger read it — NULL the chair's, a position its unit's chain as the chart stood at the rung, an app principal
+    /// none — in one statement over the rows with no chain yet, so a crash before the stamp reruns it and writes nothing twice.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 37;
+    public const int DatabaseSchemaVersion = 38;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

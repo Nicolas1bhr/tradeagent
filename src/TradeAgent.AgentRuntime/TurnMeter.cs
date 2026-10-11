@@ -842,6 +842,16 @@ public sealed class TurnMeter
 
         var reservation = Reservation(role);
 
+        // THE UNITS THAT FUND THIS LAUNCH, read from the chart before the transaction and recorded with the row inside it
+        // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
+        // no unit's envelope sees. No row, no reservation, no wake.
+        IReadOnlyList<string> funding;
+        try { funding = FundingOf(role); }
+        catch (Exception ex)
+        {
+            return new AiAdmission { Refusal = Labels.FundingChainUnreadable(Key(role), ex.Message), Ceiling = AiAdmission.Chart };
+        }
+
         // A CLOSE NOBODY COMMITTED BELONGS TO A TURN THAT IS OVER. It can only be here because the
         // transition that should have carried it never ran — a cancelled turn, a host with no
         // commit behind it — and writing it now is late rather than wrong. Leaving it would hold a
@@ -869,7 +879,8 @@ public sealed class TurnMeter
             InputHash = HashOf(prompt),
             Role = role,
             // THE PROFILE THE SEAT WAS VERIFIED UNDER, above, before this row existed (U-seat-home). Written here and nowhere else.
-            RuntimeProfile = seat.Profile
+            RuntimeProfile = seat.Profile,
+            Funding = funding
         };
 
         AiAdmission admission;
@@ -937,6 +948,19 @@ public sealed class TurnMeter
             Reservation = reservation.Cost ?? 0m,
             ResumesAt = OwnerDay.Midnight(now)
         };
+    }
+
+    /// <summary>
+    /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root
+    /// (<see cref="OrgStore.FundingLine"/>). A launch with no role is the chair's, as its ledger row is — so its spend stays in
+    /// the chair's units, where the role-share rule always counted it. Throws where the chart cannot answer.
+    /// </summary>
+    IReadOnlyList<string> FundingOf(string? role) => [.. new OrgStore(_db).FundingLine(Key(role)).Select(u => u.Id)];
+
+    IReadOnlyList<string>? FundingOrNone(string? role)
+    {
+        try { return FundingOf(role); }
+        catch (Exception) { return null; }
     }
 
     /// <summary>The owner's ceiling, or zero where the settings could not be read. Never a throw into a launch.</summary>
@@ -1052,7 +1076,10 @@ public sealed class TurnMeter
                 PricingBasis = price.Basis,
                 ReservedCost = 0m,
                 PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture),
-                Role = role
+                Role = role,
+                // ITS UNITS, where the chart can say: the bill counts in them as an admitted turn's does. A chart that cannot
+                // answer records the bill without them — the turn has run, and the day's total still holds it.
+                Funding = FundingOrNone(role)
             };
             // Ungated: nothing admitted this turn, so nothing may refuse it after the vendor has
             // already done the work. The row exists so the bill is recorded, not to decide anything —
