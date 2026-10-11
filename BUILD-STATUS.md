@@ -10367,3 +10367,37 @@ third pass the orchestrator approved; fix-3 re-review CLEAN ("No regression foun
 **CI red the diff cannot reach (first sighting, fleet/ci-ledger.md):** run 38154236715 test (windows-latest, 3) — `actions/upload-artifact@v7` hung after its tests and shard check passed.
 **Owed cards:** a crash between the tape commit and the tell loses the wake (owed notices are in memory; a persisted "told" watermark needs a table/rung); GDELT archive rows raise no tape wake.
 **NOT VERIFIED:** no app run; no paid AI run; no real tape wake observed end to end.
+
+
+## U-seat-home — every codex seat runs in ONE app-owned seat home under a default-deny profile verified at every launch, never under the owner's own `~/.codex`; RUNG 37 (landed 2026-10-11, seat A)
+
+**Landed** solo (`land.sh` v2) on `main` `5f4401ca`: MERGE_SHA `053b9ec2` (fixer's report tip `511523c6`, code `5077711c`; builder pass 1 tip `3b0aa7b2`). A protection — AUTH-001,
+ORDER-005, CRED-001. **Schema rung 37** (`Versioning.cs:385` `DatabaseSchemaVersion = 37`): `ai_attempt.runtime_profile`, written once at the attempt's insert, never updated.
+On main, in order: `78e4f689` seat env · `ca235dcc` deny set · `38787bf2` pin · `2e229071` verify every launch · `8b838baa` rung 37 · `64a7b602` signed-out refused ·
+`a5962943` Linux sign-in test · `80bf9f4f` non-pin never run · `bb1a1d5d` hash every check · `90304cf8` links refused · `18283df6` foreign owner refused ·
+`5856c6f5` Windows owner-only ACL · `42fb70fe` unprivatisable folder refused · `053b9ec2` report. Built by a71a21b23bd4153a6 (pass 1) and a fresh fixer a36de4039513dc247.
+**CI:** run **38166217557** at `5077711c`, every job success (dedupe-gate, shard-plan, package, package-linux, test windows 1-5, ubuntu, macos, linux-host), CARRIED to
+`053b9ec2` (build tree equal outside the bookkeeping list; main moved only by docs since); `land.sh check` VERDICT PASS. Names 2635 → 2649, removed 0; [Fact]/[Theory] 2575 → 2589.
+Scan: judged false positives excluded by phrase — `timer.Token`, the fake key `sk-FAKE-0000`, `--with-api-key`, `SignInWithApiKeyAsync`, a test name.
+**What changed:** every codex process (turn, resume, `--version`, `login status`, sign-in, API key) runs with `CODEX_HOME=<home>/seat-home/codex` and `HOME=<home>/seat-home/home`
+at the one `AgentEnvironment.Apply` seam; the deny set (`--ignore-user-config`, `--ignore-rules`, `--strict-config`, every host feature disabled) is manifest data on fresh AND
+resumed argv, and the app writes the same keys to the seat home's `config.toml` before every codex start; codex is pinned to rust-v0.160.1 per platform by archive and program
+digest (win 9e7c59c0…f55d · linux x64 f34a4d23…1e35 · linux arm64 fbbaec80…eb3e · mac arm64 09fa44fd…82be · mac x64 8757e2a2…eafc; archive digests = GitHub's); a program that is
+not the pin is NEVER run, `--version` included, and the refusal names both hashes; the hash is read from the bytes at every check (no cache); every launch verifies pin, argv,
+config bytes, forbidden files and a features/MCP probe; a link, junction or reparse point anywhere in the seat home, a foreign-owned folder, or one that cannot be made owner-only
+is refused in words; a signed-out seat home is refused: "Sign in again" (no copy of the owner's login — U-seat-signin adds the in-app button). Admission's fail-closed refusal
+(U-admission-fail-closed: LedgerRefused, NoLedger, a null Admit refuses) is kept; the branch's ExecuteTaskAsync edits dropped (deleted on main).
+**Evidence:** RED at base — (a) expected `…/seat-home/codex`, got the owner's codex home; (b) `Item not found in collection`; fixes: `Sub-string not found`, `a same-length swap with
+its time restored was taken for the pin`, `seat-home/codex -> owner-home/.codex: detected as installed` (owner fixture byte-identical after). WATCHED MUTANT (drop
+`--ignore-user-config`, rebased tree): (b) `Item not found in collection`, (c) `Filter not matched in collection`; restored → green. Release `--no-incremental` 0 warnings;
+touched classes 3× `Passed: 74`. Mock provider (throwaway hostile home, the unit's real argv, no real model): 4 tools offered fresh and resumed (exec_command, write_stdin,
+request_user_input, view_image), no child process, notify hook never called; clean seat home: exactly the 26 allowlisted features, `mcp list` `[]`, `login status` rc 1.
+`request_user_input` under exec answers "unavailable in Default mode" and the turn exits 0 — left offered (no key removes it).
+**Deviations accepted:** `forced_login_method="chatgpt"` dropped (it blocks a pasted key); settings on `RuntimeManifest.Seat`; a profile change starts a fresh session inside
+AgentSession; the meter checks the seat through the role's attached conversation (Begin's signature unchanged).
+**Tests box:** run 20261011-185626-583276c5 GREEN (1754 unit, 692 integration, 498 fault, timing; his files unchanged) on a tip BEFORE the ownership fixes; the landed tree has
+NO box run (busy at every later try).
+**NOT VERIFIED:** Windows home resolution through USERPROFILE / the known-folder API (→ U-cell-windows); `$CODEX_HOME/AGENTS.md` is refused only by the per-launch inventory check
+— ADVISORY while any unconfined seat shares the host and user, as is binary integrity (a hash-to-exec swap remains); the ownership check proves nothing for root (the product never
+runs elevated); the Windows owner-only ACL test was never shown red. **OWED (CRED-001 protection lights, § 15):** macOS ACL entries survive 0700 on seat folders; explicit
+grants on an existing `codex/auth.json` survive the Windows folder ACL. Reviews: fleet/tmp/A-org/u-seat-home-build/, fleet/tmp/A-org/u-seat-home-fix/ (re-reviews 1-3).
