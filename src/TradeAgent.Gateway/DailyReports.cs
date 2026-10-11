@@ -77,6 +77,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     readonly MissionEventStore _events = new(db);
     readonly PublicationStore _publications = new(db);
     readonly Promotions _promotions = new(db);
+    readonly ResearchEvidence _research = new(db);
     readonly DataLicences _licences = new(db);
     readonly CouncilBoundaries _boundaries = new(db);
     readonly AiAttemptStore _attempts = new(db);
@@ -650,6 +651,29 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// <summary>A hash as it is shown in a report: the first twelve characters, or all of a short id.</summary>
     static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
+    /// <summary>
+    /// WHAT THE VERDICT MEASURED OF ITS VERSION'S RESEARCH EVIDENCE (<c>U-referee-v2a</c>), appended to its line: E3's DSR,
+    /// N_eff of M and the noise ceiling, E2's blocks, each gate's status and power, and the family gate. RESEARCH DATA ONLY
+    /// — the streams of research runs before the cutoff, never a figure of the held-back months (R04 :309: agents may see
+    /// their own M, N_eff, noise ceiling and DSR) — and SHOWN, never enforced. Nothing for a verdict taken before this build
+    /// measured any.
+    /// </summary>
+    static string ResearchLine(ResearchEvidenceRow? e)
+    {
+        if (e is null) return "";
+        static string F(double? x) => x is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) : "unknown";
+        var trials = $"M {e.TrialsM} ({e.TrialsUnstreamed} without a readable stream), N_eff {e.NEff}";
+        if (e.CandidateRunId is null)
+            return $". Research evidence (research streams only, shown and not enforced): {Core.Strategy.GateStatus.NoStream} for this "
+                   + $"version in its lineage; {trials}";
+
+        var floor = Core.Strategy.GatePower.Discriminates.ToString("0.00", CultureInfo.InvariantCulture);
+        return $". Research evidence (research streams only, shown and not enforced), over run {Short(e.CandidateRunId)}'s "
+               + $"{e.Days} known days: DSR {F(e.Dsr)} — {e.DsrStatus}, power {F(e.DsrPower)} of the {floor} it needs; "
+               + $"{trials}, noise ceiling {F(e.Ceiling)} annual Sharpe; blocks {e.BlocksPositive}/{Core.Strategy.BlockTest.Count} positive "
+               + $"— {e.BlocksStatus}, power {F(e.BlocksPower)}; family PBO: no family — {e.FamilyStatus}";
+    }
+
     /// <summary>One research run, with the figures the app computed from its own trace.</summary>
     static string RunLine(StrategyRunRow run) =>
         $"backtest {Short(run.Id)} of version {Short(run.VersionId)} over dataset {run.DatasetId} "
@@ -929,7 +953,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                 metrics.Add($"{p.Verdict.ToUpperInvariant()} version {Short(p.VersionId)} at "
                             + $"{p.At.UtcDateTime:yyyy-MM-dd HH:mm}Z under campaign {p.CampaignId}, on holdout run "
                             + $"{Short(p.HoldoutRunId)}: {PromotionReason.Words(p.Reason)}"
-                            + (withdrawn ? $" — INVALIDATED since: {standing.Why}" : ""));
+                            + (withdrawn ? $" — INVALIDATED since: {standing.Why}" : "")
+                            + ResearchLine(_research.Of(p.CampaignId, p.VersionId)));
             }
         }
         catch (Exception ex) { gaps.Add(new ReportGap("verdicts", $"the promotion ledger could not be read ({ex.Message})")); }

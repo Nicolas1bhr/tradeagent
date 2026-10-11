@@ -970,6 +970,48 @@ public class RefereeVerdictTests
             writers);
     }
 
+    /// <summary>
+    /// ITEM 3 — THE REPORT SHOWS A VERDICT'S RESEARCH EVIDENCE BESIDE IT, AND STILL NO HOLDOUT FIGURE. The verdict line in
+    /// "measured by TradeAgent" carries the DSR, N_eff of M, the noise ceiling and the blocks, each with its status and
+    /// power, and the family gate — research data, which agents may read (R04 :309) — and the holdout run's own figures
+    /// stay out of the document exactly as before. A verdict whose lineage had no stream says so.
+    /// </summary>
+    [Fact]
+    public async Task The_report_shows_a_verdicts_research_evidence_beside_it()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+        StreamedRun(w, "candidate", 139, 11);
+        StreamedRun(w, "streamless", 0, 0);
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Promoted, verdict.Why);
+        var e = RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!;
+
+        var text = DailyReportText.Render(w.Gw.Reports.Compose(Midday()));
+        var line = Assert.Single(text.Split('\n'), l => l.Contains($"PROMOTED version {w.VersionId[..12]}", StringComparison.Ordinal));
+
+        Assert.Contains("Research evidence (research streams only, shown and not enforced), over run run-candidat's 139 known days",
+            line, StringComparison.Ordinal);
+        Assert.Contains($"DSR {e.Dsr!.Value.ToString("0.00", CultureInfo.InvariantCulture)} — inconclusive, power "
+            + $"{e.DsrPower.ToString("0.00", CultureInfo.InvariantCulture)} of the 0.50 it needs", line, StringComparison.Ordinal);
+        Assert.Contains("M 2 (1 without a readable stream), N_eff 2, noise ceiling "
+            + $"{e.Ceiling!.Value.ToString("0.00", CultureInfo.InvariantCulture)} annual Sharpe", line, StringComparison.Ordinal);
+        Assert.Contains($"blocks {e.BlocksPositive}/8 positive — inconclusive, power "
+            + $"{e.BlocksPower.ToString("0.00", CultureInfo.InvariantCulture)}", line, StringComparison.Ordinal);
+        Assert.Contains("family PBO: no family — inconclusive", line, StringComparison.Ordinal);
+
+        var run = new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!;
+        Assert.DoesNotContain(run.TraceSha256, text, StringComparison.Ordinal);
+        Assert.DoesNotContain($"net {run.NetPnl?.ToString(CultureInfo.InvariantCulture)}", line, StringComparison.Ordinal);
+
+        var bare = await Given(frozenAt: Bar0);
+        using var _2 = bare.Db;
+        Assert.True(RefereeOf(bare).Verdict(bare.VersionId, bare.Campaign.Id).Promoted);
+        Assert.Contains("Research evidence (research streams only, shown and not enforced): no research stream for this "
+            + "version in its lineage; M 0 (0 without a readable stream), N_eff 0",
+            DailyReportText.Render(bare.Gw.Reports.Compose(Midday())), StringComparison.Ordinal);
+    }
+
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()
     {
