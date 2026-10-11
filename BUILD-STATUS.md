@@ -10135,3 +10135,28 @@ Seat A surveys it (U-trial-returns' test, evidence) — a first sighting, not "a
 **Scan:** phrase exclusions for the stop-handle lines of item 1 ('stop token', 'token.s handle', '_stop\.Token', 'token source is not disposed'), each read and judged — a cancellation handle, no secret.
 **OWED:** a narrowed Timing retry needs a real trx parser and a per-result-id comparison on all three runners; not worth its risk until the Timing step is its own shard (with U-timing-shard).
 Not done: the 2 InRange bounds and the lower bounds (outside the brief's 13 ceilings). Tests box NOT RUN (the machine did not answer).
+
+## U-owner-words-delegated — nothing an agent writes can mark the owner's words handled: delegation is the app's measurement of a finished turn's own brief over no outcome, and a finished turn that left the words without one hands them on once (landed 2026-10-11, seat B)
+
+**Landed** in `land.sh` v3's train `B3` (second of two, after U-red-says-why) on `main` `43c894a4`: stacked tip `8a4f4c39` (8 commits). CI run **38130339835** at that tip: every job success (see the
+train's check). No rung, no table, op, verb, arg or pipe-writable setting. Operator authority + inbox as data (CLAUDE.md); ranked first in seat B's lane by the orchestrator.
+**The defect (pre-existing, found at U-reconcile-wakes' review):** a brief's file NAME carries an attempt id — an agent's text — and `CouncilRelay` passed it to `MissionEventStore.Delegated`, which marked
+that attempt's consumed owner message `delegated` OVER `answered` and `failed`, for any attempt, LOST ones included. Startup runs `Relay.Reconcile()` before the loop's recovery, so a brief naming a lost
+turn hid its owner's words from the re-raise for good.
+**What changed:**
+1. `Delegated` writes only where the named launch is ENDED in `ai_attempt`, the publication is a brief of that launch's role AND was published by that attempt (`p.attempt = a.id`, review fix `25a6a90c`:
+   publication ids hash role, kind and content, so identical bytes from another turn must not carry the link), over no outcome (NULL, or `blocked` — a standing reason on an untaken row). Reconcile-then-
+   recovery now equals the reverse order. Declared deviation: `blocked` counts as no outcome, as `LostOwnerWords` already treats it.
+2. `RecoverUnansweredOwnerWords`: an owner message consumed by an ENDED launch (or one with no meter row) and still unsettled after its relay pass is settled `failed` ("…ended without an outcome…") and
+   re-raised once through `RetryOnce`, in one commit; a retry's own failure is not raised again; runs only while that role's turn slot is held (new `Hold`).
+3. CONTRACTS' disposition and wake-queue paragraphs say what delegation now requires (USER-GUIDE does not state it).
+**Evidence:** RED at base (c4a6f2d8): (a) lost turn's words "Expected: \"failed\" Actual: \"delegated\""; (b) "Expected: 0 Actual: 1"; (c) "Expected: 0 Actual: 1"; (d) "Assert.Single() Failure …";
+(e) "Expected: \"failed\" Actual: null"; (f) the legitimate path, green by design. Fix: `A_brief_whose_bytes_another_turn_published_first_delegates_nothing` RED at 4afe0cd8 "Expected: 0 Actual: 1".
+MUTANTS: the no-outcome guard removed ⇒ (b) red; the ENDED/role clause removed ⇒ (a), (c) red; the attempt check removed ⇒ the fix test alone red. Release `--no-incremental` 0 warnings; touched classes
+41/41 ×3; branch CI 38126700131 and 38128457013 green on every job; names 2510 → 2517 [Fact]/[Theory], removed 0.
+Test changed, declared: OwnerDispositionTests' delegated test now sets up an ENDED attempt and a real brief; its assertions unchanged.
+**Review (Codex `gpt-6.1-sol`, high):** 3 findings — 1 REAL (the attempt check, fixed above; its re-review: no defects); 2 NOT REAL (a retry consumed by an ENDED turn of its role that published that turn's
+brief is that turn's measurement); 3 NOT REAL (`blocked` is not an outcome). Triage: fleet/records/U-owner-words-delegated-review-triage.md.
+**Scan:** a report commit (bf6bc19b) carried the private network's product name in a quoted tests-box line; the next commit paraphrased it; the same name already stands in tools/README.md on main, so no new
+exposure; the net diff scans clean.
+**OWED (pre-existing):** a failed turn that also published a brief is both delegated and retried. Tests box NOT RUN (the machine did not answer).
