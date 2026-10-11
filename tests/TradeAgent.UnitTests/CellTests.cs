@@ -70,6 +70,96 @@ public class CellPolicyTests
         Assert.Contains("not an absolute path", Policy(ws, "relative/in").Problem());
         Assert.Throws<TradeAgentException>(() => Policy(Paths.Home).Write(Dir("cells")));
     }
+
+    /// <summary>
+    /// THE PROTECTED SET IS JUDGED WHERE IT REALLY IS (triage #3): with the app's home reached through a symlink, a grant naming the
+    /// REAL <c>state/</c>, the real home or its real cell folder is refused — not passed because its spelling differs from the home's.
+    /// </summary>
+    [UnixFact]
+    public void A_grant_naming_the_real_state_of_a_home_reached_through_a_symlink_is_refused()
+    {
+        var real = Dir("realhome");
+        Directory.CreateDirectory(Path.Combine(real, "state", "data"));
+        Directory.CreateDirectory(Path.Combine(real, "cells"));
+        var home = Path.Combine(TestEnv.Home, "homelink-" + Guid.NewGuid().ToString("n")[..8]);
+        File.CreateSymbolicLink(home, real);
+        var realHome = CellNative.RealPath(real)!;
+        var ws = Dir("ws");
+
+        Assert.Null(Policy(ws).Problem(home));
+        Assert.Contains("lies inside TradeAgent's state", Policy(ws, Path.Combine(realHome, "state")).Problem(home));
+        Assert.Contains("lies inside TradeAgent's state", Policy(ws, Path.Combine(realHome, "state", "data")).Problem(home));
+        Assert.Contains("lies inside TradeAgent's state", Policy(ws, Path.Combine(realHome, "cells")).Problem(home));
+        Assert.Contains("TradeAgent's own home", Policy(ws, realHome).Problem(home));
+    }
+
+    /// <summary>
+    /// A READ-ONLY INPUT MAY NOT OVERLAP THE WORKSPACE (triage #4): Landlock's rights accumulate along a path, so an input inside the
+    /// read-write workspace would stay writable. Inside it, equal to it, containing it, or reaching into it by a symlink: refused in words.
+    /// </summary>
+    [UnixFact]
+    public void A_read_only_input_inside_equal_to_or_containing_the_workspace_is_refused()
+    {
+        var outer = Dir("overlap");
+        var ws = Path.Combine(outer, "ws");
+        var input = Path.Combine(ws, "input");
+        Directory.CreateDirectory(input);
+        var link = Path.Combine(Dir("elsewhere"), "input-link");
+        File.CreateSymbolicLink(link, input);
+
+        foreach (var ro in new[] { input, ws, outer, link })
+        {
+            var why = Policy(ws, ro).Problem();
+            Assert.Contains("read-only input", why);
+            Assert.Contains("workspace", why);
+        }
+        Assert.Null(Policy(ws, Dir("apart")).Problem());
+    }
+}
+
+/// <summary>A fact about the Linux kernel itself (Landlock): run on Linux; skipped elsewhere, where no cell starts.</summary>
+public sealed class LinuxKernelFactAttribute : FactAttribute
+{
+    public LinuxKernelFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux()) Skip = "builds a Landlock ruleset: Linux only (CI's ubuntu job runs it)";
+    }
+}
+
+/// <summary>
+/// A GRANT IS THE DESCRIPTOR THAT WAS CHECKED (triage #2): the ruleset opens each path first and judges where that descriptor really
+/// leads, so a symlink retargeted after the policy's check — by another cell sharing the workspace — cannot grant <c>state/</c>.
+/// </summary>
+public class CellGrantTests
+{
+    [LinuxKernelFact]
+    public void A_grant_retargeted_to_state_after_the_policy_was_checked_is_refused()
+    {
+        var root = Path.Combine(TestEnv.Home, "cellgrant-" + Guid.NewGuid().ToString("n")[..8]);
+        var ws = Path.Combine(root, "ws");
+        var shared = Path.Combine(root, "shared");
+        Directory.CreateDirectory(ws);
+        Directory.CreateDirectory(shared);
+        Directory.CreateDirectory(Paths.State);
+        var link = Path.Combine(root, "input");
+        File.CreateSymbolicLink(link, shared);
+        var policy = new CellPolicy(ws, [link], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")]);
+        Assert.Null(policy.Problem());
+
+        CellNative.BeforeGrantOpen = p =>
+        {
+            if (p != link) return;
+            File.Delete(link);
+            File.CreateSymbolicLink(link, Paths.State);
+        };
+        int fd;
+        CellNative.Failure? failure;
+        try { fd = CellNative.Ruleset(policy, out failure); }
+        finally { CellNative.BeforeGrantOpen = null; }
+
+        Assert.True(fd < 0, $"a Landlock ruleset was built granting {link}, which by then led to {Paths.State}");
+        Assert.Contains("lies inside TradeAgent's state", failure!.Sentence);
+    }
 }
 
 /// <summary>
@@ -133,6 +223,27 @@ public class CellSeccompTests
             Assert.Equal(Eperm, Run(arch, audit, nr));
         Assert.Equal(Allow, Run(arch, audit, 0));
         Assert.Equal(Kill, Run(arch, I386, socket, inet, stream, 0));
+    }
+
+    /// <summary>
+    /// <c>socketpair()</c> IS A UNIX STREAM OR SEQPACKET PAIR ONLY (triage #1): a datagram pair end could be re-connected or
+    /// <c>sendto</c>'d to any pathname datagram listener, so it is EACCES, flags masked as for <c>socket()</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 53u)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 199u)]
+    public void Socketpair_is_a_unix_stream_or_seqpacket_pair_only(System.Runtime.InteropServices.Architecture arch, uint audit, uint socketpair)
+    {
+        const ulong unix = 1, inet = 2, stream = 1, dgram = 2, raw = 3, seqpacket = 5, flags = 0x800 | 0x80000;
+
+        Assert.Equal(Allow, Run(arch, audit, socketpair, unix, stream, 0));
+        Assert.Equal(Allow, Run(arch, audit, socketpair, unix, stream | flags, 0));
+        Assert.Equal(Allow, Run(arch, audit, socketpair, unix, seqpacket, 0));
+        Assert.Equal(Allow, Run(arch, audit, socketpair, unix, seqpacket | flags, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socketpair, unix, dgram, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socketpair, unix, dgram | flags, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socketpair, unix, raw, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socketpair, inet, stream, 0));
     }
 
     [Fact]

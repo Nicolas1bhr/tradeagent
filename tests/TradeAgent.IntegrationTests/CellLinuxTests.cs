@@ -421,6 +421,101 @@ public class CellLinuxTests
         Says(ran, "pair-wake");
     }
 
+    /// <summary>
+    /// A DATAGRAM PAIR IS REFUSED (triage #1): an AF_UNIX datagram socket from a pair can be re-<c>connect</c>ed, or <c>sendto</c>'d,
+    /// to any pathname datagram listener on the host — journald, <c>/dev/log</c>, a notify socket — so seccomp allows
+    /// <c>socketpair()</c> for stream and seqpacket pairs only. Outside the cell the same pair opens.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_cannot_make_a_datagram_socketpair()
+    {
+        PlatformIsACells();
+        var w = new World("dgrampair");
+        var probe = w.Script("dgrampair.py", """
+            import socket
+            for name, kind in (("dgram", socket.SOCK_DGRAM), ("dgram-flags", socket.SOCK_DGRAM | socket.SOCK_NONBLOCK | socket.SOCK_CLOEXEC)):
+                try:
+                    socket.socketpair(socket.AF_UNIX, kind); print(name + "-pair-open")
+                except OSError as e:
+                    print(f"{name}-pair-denied errno={e.errno}")
+            """);
+        var control = await Outside("/usr/bin/python3", "-I", probe);
+        Says(control, "dgram-pair-open", "dgram-flags-pair-open");
+
+        var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", probe);
+        Says(ran, "dgram-pair-denied errno=13", "dgram-flags-pair-denied errno=13");
+        Assert.DoesNotContain("-pair-open", ran.Out);
+    }
+
+    /// <summary>The pairs runtimes wake themselves with still work in a cell: stream and seqpacket, with or without their flags.</summary>
+    [LinuxFact]
+    public async Task A_cell_stream_socketpair_still_works()
+    {
+        PlatformIsACells();
+        var w = new World("streampair");
+        var probe = w.Script("streampair.py", """
+            import socket
+            for name, kind in (("stream", socket.SOCK_STREAM), ("seqpacket", socket.SOCK_SEQPACKET),
+                               ("stream-flags", socket.SOCK_STREAM | socket.SOCK_NONBLOCK | socket.SOCK_CLOEXEC)):
+                a, b = socket.socketpair(socket.AF_UNIX, kind); a.send(b"wake"); print(f"{name}-pair-" + b.recv(4).decode())
+            """);
+        var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", probe);
+        Assert.Equal(0, ran.Code);
+        Says(ran, "stream-pair-wake", "seqpacket-pair-wake", "stream-flags-pair-wake");
+    }
+
+    /// <summary>
+    /// A STREAM OR SEQPACKET PAIR END REACHES ONLY ITS PEER (triage #1): <c>connect</c> on a connected stream end is EISCONN before
+    /// anything is queued at the listener, a stream end's <c>sendto</c> with an address is EISCONN, and a seqpacket end's address is
+    /// ignored for its peer. Planted OUTSIDE the workspace: a pathname stream listener and a pathname datagram receiver, both shown
+    /// reachable from outside first — and neither gets anything from the cell.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_stream_pair_end_cannot_connect_or_sendto_a_pathname_socket()
+    {
+        PlatformIsACells();
+        var w = new World("pairend");
+        var listenerPath = Path.Combine(w.Root, "listener.sock");
+        var receiverPath = Path.Combine(w.Root, "receiver.sock");
+        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(listenerPath));
+        listener.Listen(8);
+        using var receiver = new Socket(AddressFamily.Unix, SocketType.Dgram, ProtocolType.Unspecified);
+        receiver.Bind(new UnixDomainSocketEndPoint(receiverPath));
+
+        var control = await Outside("/usr/bin/python3", "-I", "-c",
+            "import socket, sys; s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM); s.sendto(b'control', sys.argv[2]); print('control-sent'); " +
+            "t = socket.socket(socket.AF_UNIX); t.connect(sys.argv[1]); print('control-connected')", listenerPath, receiverPath);
+        Says(control, "control-sent", "control-connected");
+        Require(receiver.Poll(TimeSpan.FromSeconds(5), SelectMode.SelectRead), "the planted datagram receiver reachable from outside the cell");
+        var got = new byte[64];
+        Assert.Equal("control", System.Text.Encoding.ASCII.GetString(got, 0, receiver.Receive(got)));
+        Require(listener.Poll(TimeSpan.FromSeconds(5), SelectMode.SelectRead), "the planted stream listener reachable from outside the cell");
+        listener.Accept().Dispose();
+
+        var probe = w.Script("pairend.py", """
+            import socket, sys
+            listener, receiver = sys.argv[1], sys.argv[2]
+            a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+            for name, act in (("stream-connect", lambda: a.connect(listener)), ("stream-sendto", lambda: a.sendto(b"leak", receiver))):
+                try:
+                    act(); print(name + "-reached")
+                except OSError as e:
+                    print(f"{name}-refused errno={e.errno}")
+            c, d = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            try:
+                c.sendto(b"leak", receiver); print("seqpacket-sendto-went-to-" + ("its-peer" if d.recv(8) == b"leak" else "elsewhere"))
+            except OSError as e:
+                print(f"seqpacket-sendto-refused errno={e.errno}")
+            """);
+        var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", probe, listenerPath, receiverPath);
+        Says(ran, "stream-connect-refused errno=106", "stream-sendto-refused errno=106");
+        Assert.DoesNotContain("-reached", ran.Out);
+        Assert.DoesNotContain("went-to-elsewhere", ran.Out);
+        Assert.False(receiver.Poll(TimeSpan.FromSeconds(1), SelectMode.SelectRead), "the outside datagram receiver got something from the cell");
+        Assert.False(listener.Poll(TimeSpan.FromSeconds(1), SelectMode.SelectRead), "the outside stream listener got a connection from the cell");
+    }
+
     [LinuxFact]
     public async Task A_cell_cannot_use_io_uring()
     {
