@@ -73,7 +73,11 @@ public static class RoleObjectives
         + string.Join(",", Enum.GetValues<ExecutionState>().Where(s => !OrderStateMachine.IsTerminal(s)).Select(s => $"'{s}'"))
         + ")";
 
-    /// <summary>The objective kinds a role holds, in this build.</summary>
+    /// <summary>
+    /// The objective kinds a role holds, in this build: the legacy pair's, each by its exact id. ANY OTHER POSITION HOLDS
+    /// NONE (<c>U-org-rights</c>, a guard): its objectives are mandates (<c>U-org-assignments</c>) and its schedule is O3's,
+    /// so no look of the app's clock wakes it; <see cref="Open"/> answers it nothing either.
+    /// </summary>
     public static IReadOnlyList<string> KindsOf(string role) => role switch
     {
         CouncilRoles.Operations => [OwnerAnswered, RequestFinal, PositionWatched, BoundaryAssessed],
