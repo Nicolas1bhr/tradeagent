@@ -233,6 +233,14 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI: the command it built for {manifest.DisplayName} does not carry the seat's deny set. " +
                 "This is TradeAgent's own fault, not the AI's; nothing was started.");
 
+        // THE PROMPT'S SLOT CARRIES THE STDIN MARKER, NEVER THE PROMPT (U-prompt-stdin): a seat's packet on its command line is
+        // readable by every process of the user, a confined cell included. The admission's argv and the start's are one argv.
+        if (manifest.PromptOnStdin && manifest.StdinMarker.Length > 0 && !MarksStdin(manifest, argv))
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start the AI: the command it built for {manifest.DisplayName} does not carry " +
+                $"\"{manifest.StdinMarker}\" where the message goes, the sign that the message travels on its input and not on its command line. " +
+                "This is TradeAgent's own fault, not the AI's; nothing was started.");
+
         if (ConfigPath(seat) is { } config && !SameBytes(config, ConfigBytes(seat)))
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: its settings file {config} is not the one TradeAgent just wrote. " +
@@ -302,6 +310,21 @@ public static class SeatProfile
         Part("features", Encoding.UTF8.GetBytes(reading.Features));
         Part("mcp", Encoding.UTF8.GetBytes(reading.Mcp));
         return Convert.ToHexStringLower(sha.GetHashAndReset());
+    }
+
+    /// <summary>
+    /// Whether <paramref name="argv"/> carries the stdin marker in the prompt's slot of the fresh or the resumed template: the
+    /// marker, then the template's words after the slot, and nothing else to the end.
+    /// </summary>
+    static bool MarksStdin(RuntimeManifest manifest, IReadOnlyList<string> argv)
+    {
+        foreach (var template in new[] { manifest.ExecArgs, manifest.ResumeArgs, manifest.TaskArgs })
+        {
+            var slot = Array.FindIndex(template, a => a.Contains("{prompt}", StringComparison.Ordinal));
+            string[] tail = slot < 0 ? [manifest.StdinMarker] : [manifest.StdinMarker, .. template[(slot + 1)..]];
+            if (argv.Count >= tail.Length && tail.Select((t, i) => argv[argv.Count - tail.Length + i] == t).All(x => x)) return true;
+        }
+        return false;
     }
 
     /// <summary>Whether <paramref name="argv"/> holds <paramref name="deny"/> as one unbroken run, in order.</summary>

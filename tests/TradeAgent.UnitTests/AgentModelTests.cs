@@ -38,17 +38,18 @@ public class AgentModelTests
         var codex = Codex();
 
         // The seat's deny set sits between the unattended flags and the model (U-seat-home); SeatHomeTests holds its contents.
+        // The prompt's slot is `-`: the prompt itself travels on stdin (U-prompt-stdin; PromptStdinTests).
         var deny = AgentArgs.SeatArgs(codex);
         Assert.NotEmpty(deny);
 
         Assert.Equal(
             ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
-             .. deny, "-m", "gpt-5.6-sol", "PROMPT"],
+             .. deny, "-m", "gpt-5.6-sol", "-"],
             AgentArgs.For(codex, "PROMPT", resuming: false, model: "gpt-5.6-sol"));
 
         Assert.Equal(
             ["exec", "resume", "--last", "--json", "--skip-git-repo-check",
-             "--dangerously-bypass-approvals-and-sandbox", .. deny, "-m", "gpt-5.6-sol", "PROMPT"],
+             "--dangerously-bypass-approvals-and-sandbox", .. deny, "-m", "gpt-5.6-sol", "-"],
             AgentArgs.For(codex, "PROMPT", resuming: true, model: "gpt-5.6-sol"));
     }
 
