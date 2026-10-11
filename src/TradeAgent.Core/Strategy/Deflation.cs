@@ -163,7 +163,7 @@ public static class Deflation
     public static StreamMoments? MomentsOf(IReadOnlyList<DailyReturn> days)
     {
         var x = Known(days);
-        if (x.Count < 2) return null;
+        if (x.Count < 2 || !Varies(x)) return null;
         var mean = x.Average();
         double m2 = 0, m3 = 0, m4 = 0;
         foreach (var v in x)
@@ -198,7 +198,7 @@ public static class Deflation
                 ys.Add(y);
             }
 
-        if (xs.Count < 2) return (null, xs.Count);
+        if (xs.Count < 2 || !Varies(xs) || !Varies(ys)) return (null, xs.Count);
         double mx = xs.Average(), my = ys.Average(), sxy = 0, sxx = 0, syy = 0;
         for (var i = 0; i < xs.Count; i++)
         {
@@ -207,6 +207,18 @@ public static class Deflation
             syy += (ys[i] - my) * (ys[i] - my);
         }
         return sxx > 0 && syy > 0 ? (sxy / Math.Sqrt(sxx * syy), xs.Count) : (null, xs.Count);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="x"/> holds two different values. Asked of the values themselves, not of a computed variance:
+    /// a constant stream's mean is a rounding error off its value, which leaves a "variance" above zero made of nothing but
+    /// rounding — and a Sharpe ratio, a correlation and a DSR made of it. A stream with no variation has none of them.
+    /// </summary>
+    static bool Varies(IReadOnlyList<double> x)
+    {
+        for (var i = 1; i < x.Count; i++)
+            if (x[i] != x[0]) return true;
+        return false;
     }
 
     /// <summary>The lineage's clusters. See the type's summary for the rule.</summary>

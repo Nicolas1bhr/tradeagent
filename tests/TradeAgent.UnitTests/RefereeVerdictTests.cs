@@ -741,7 +741,7 @@ public class RefereeVerdictTests
     /// <paramref name="windowTo"/> says otherwise — a run over the held-back minutes is (g)'s.
     /// </summary>
     static string StreamedRun(World w, string name, int days, int seed, string? version = null, DateTimeOffset? windowTo = null,
-        double mean = 0.001)
+        double mean = 0.001, IEnumerable<double>? returns = null)
     {
         var runId = "run-" + name;
         var of = version ?? w.VersionId;
@@ -749,7 +749,7 @@ public class RefereeVerdictTests
         IReadOnlyList<StrategyStreamRow> streams = days == 0
             ? []
             : [new StrategyStreamRow(runId, 1, model, "friction-" + name, "trace-" + name, "COMPLETED", DailyReturns.Version,
-                null, DeflationTests.Series(StreamDay0, DeflationTests.Normal(seed, days, mean, 0.01)))];
+                null, DeflationTests.Series(StreamDay0, returns ?? DeflationTests.Normal(seed, days, mean, 0.01)))];
         new StrategyStore(w.Db).RecordRun(new StrategyRunRow(
             runId, of, w.Set.Id, w.Set.NormalisedSha256, Bar0, windowTo ?? Bar0.AddMinutes(HoldoutAtBar - 1), model,
             BacktestOutcome.COMPLETED.ToString(), null, 60, 1, 1, 1, 2, 10, 0, 0, 1m, 0m, 1m, 0m, "trace-" + name, At,
@@ -1062,6 +1062,59 @@ public class RefereeVerdictTests
     /// <summary>The report's line for the world's verdict.</summary>
     static string VerdictLine(World w) => Assert.Single(DailyReportText.Render(w.Gw.Reports.Compose(Midday())).Split('\n'),
         l => l.Contains($"PROMOTED version {w.VersionId[..12]}", StringComparison.Ordinal));
+
+    /// <summary>
+    /// A VERDICT OVER NO RESEARCH STREAM, OR OVER A DEGENERATE ONE, RECORDS ITS ROW AND CHANGES NOTHING ELSE. One lineage's
+    /// only trial has no stream; another's candidate earns exactly 0.1% every day — no variation, so its Sharpe ratio, skew,
+    /// kurtosis and DSR cannot be computed — beside a trial of another version that earns exactly 0 every day. Neither
+    /// verdict throws; each records its row with every figure that cannot be computed recorded as unknown (NULL, never NaN
+    /// or infinity text, and "unknown" in the report); and each promotion row, holdout note and <c>RefereeFeedback.Text</c>
+    /// is byte for byte that of the same verdict over a lineage with no trial at all — the closest honest comparison, since
+    /// this build has no verdict without its measurement step.
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_over_no_stream_or_a_degenerate_stream_records_its_row_and_changes_nothing()
+    {
+        var bare = await Given(frozenAt: Bar0);
+        using var _1 = bare.Db;
+        var based = RefereeOf(bare).Verdict(bare.VersionId, bare.Campaign.Id);
+        Assert.True(based.Promoted, based.Why);
+
+        var none = await Given(frozenAt: Bar0);
+        using var _2 = none.Db;
+        StreamedRun(none, "streamless", 0, 0);
+
+        var flat = await Given(frozenAt: Bar0);
+        using var _3 = flat.Db;
+        var candidate = StreamedRun(flat, "flat", 139, 0, returns: Enumerable.Repeat(0.001, 139));
+        StreamedRun(flat, "idle", 139, 0, OtherVersion(flat), returns: Enumerable.Repeat(0.0, 139));
+
+        foreach (var w in new[] { none, flat })
+        {
+            var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+            Assert.True(verdict.Promoted, verdict.Why);
+            Assert.Equal(Bytes(bare.Db, "strategy_promotion"), Bytes(w.Db, "strategy_promotion"));
+            Assert.Equal(
+                new PublicationStore(bare.Db).By(Referee.RunRole).Select(p => p.Content),
+                new PublicationStore(w.Db).By(Referee.RunRole).Select(p => p.Content));
+            Assert.Equal(RefereeFeedback.Text(based.Promotion!), RefereeFeedback.Text(verdict.Promotion!));
+            Assert.Single(RefereeOf(w).Research.All());
+            foreach (var word in new[] { "NaN", "Infinity", "∞" })
+                Assert.DoesNotContain(word, Bytes(w.Db, "referee_research"), StringComparison.Ordinal);
+        }
+
+        var unstreamed = RefereeOf(none).Research.Of(none.Campaign.Id, none.VersionId)!;
+        Assert.Null(unstreamed.CandidateRunId);
+        Assert.Equal((1, 1, 1), (unstreamed.TrialsM, unstreamed.TrialsUnstreamed, unstreamed.NEff));
+        Assert.Equal((GateStatus.NoStream, GateStatus.NoStream), (unstreamed.BlocksStatus, unstreamed.DsrStatus));
+
+        var e = RefereeOf(flat).Research.Of(flat.Campaign.Id, flat.VersionId)!;
+        Assert.Equal((candidate, 139, 8, 8), (e.CandidateRunId, e.Days, e.BlocksKnown, e.BlocksPositive));
+        Assert.Equal((2, 0, 2), (e.TrialsM, e.TrialsUnstreamed, e.NEff));
+        Assert.Equal((null, null, null, null), (e.Sr, e.Skew, e.Kurtosis, e.Dsr));
+        Assert.Equal(GateStatus.Inconclusive, e.DsrStatus);
+        Assert.Contains("DSR unknown — inconclusive", VerdictLine(flat), StringComparison.Ordinal);
+    }
 
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()

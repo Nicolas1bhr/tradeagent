@@ -151,6 +151,30 @@ public class DeflationTests
     /// power check removed from <see cref="GatePower.Status"/>: the passing DSR at 139 days then reads as enforceable.
     /// Deep enough, the same statistic reads enforceable — and an unknown statistic never does.</para>
     /// </summary>
+    /// <summary>
+    /// A STREAM WITH NO VARIATION HAS NO MOMENTS AND NO CORRELATION, AND ITS DSR IS UNKNOWN — never a figure made of rounding.
+    /// 0.1% every day averages to a double a rounding error off 0.001, which left a "standard deviation" below 1e-18, a
+    /// per-day Sharpe of 1.5e15 and a DSR of 1 before this; 0 every day already had none. Both are null now, and a
+    /// constant stream joins no cluster.
+    /// </summary>
+    [Fact]
+    public void A_stream_with_no_variation_has_no_moments_correlation_or_dsr()
+    {
+        var flat = Series(Day0, Enumerable.Repeat(0.001, 139));
+        var idle = Series(Day0, Enumerable.Repeat(0.0, 139));
+        var moving = Series(Day0, Normal(3, 139, 0.001, 0.01));
+
+        Assert.Null(Deflation.MomentsOf(flat));
+        Assert.Null(Deflation.MomentsOf(idle));
+        Assert.Null(Deflation.Correlation(flat, moving).Rho);
+        Assert.Null(Deflation.Correlation(moving, flat).Rho);
+        Assert.Null(Deflation.Correlation(flat, flat).Rho);
+
+        var deflated = Deflation.Of(flat, [new TrialStream("flat", flat), new TrialStream("idle", idle)]);
+        Assert.Equal((null, null, 2), (deflated.Candidate, deflated.Dsr, deflated.NEff));
+        Assert.True(deflated.Sr0 is { } h && double.IsFinite(h) && deflated.Ceiling is { } c && double.IsFinite(c));
+    }
+
     [Fact]
     public void A_gate_below_its_power_answers_inconclusive_even_when_its_statistic_passes()
     {
