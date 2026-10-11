@@ -9931,3 +9931,26 @@ so `577a1761` re-balanced on the six-run mean.
 proof and the exactness check, not re-reviewed (a lines-only move).
 **Seat B's judgement:** LANDED as no worse and better balanced on the mean; 5 shards kept (4 would lengthen 2–5 without moving shard 1). OWED card: a Timing split (its own job, or Timing spread over shards) — the real
 lever on the run's wall time; with U-ci-dedupe or after U-red-says-why (both touch build.yml). Tests box NOT RUN (CI-only unit).
+
+## U-harness-trade-args — the API harness offers the trade, data and report tools every argument their ops take, typed as the pipe reads them, and additionalProperties:false now reaches the provider at all (landed 2026-10-11, seat B)
+
+**Landed** in train `B2` (behind `U-shard-rebalance`) at `d38cc6d9` (code tip `98e7bf9b`, report `d64257b5`; stacked to `d38cc6d9`) on `main` `5056d972`, by `land.sh` v3's train: CI run **38116390482** at the
+train's tip: all 11 jobs success (windows shards 1–5 10/9/5/6/12 min, ubuntu 12, macos 15, linux-host 20; every test job 0 Warning(s)), CARRIED to the stacked tip; `land.sh train-check` VERDICT PASS. **No rung.** The agent boundary (what a provider may SEND; the gateway's per-op argument refusal, `Fields`, every parser, op and `ArgSpec` untouched).
+Owed (pre-existing on `main`, found by seat B 02:16): the trade tool declared only `op`/`request_id` under `additionalProperties:false`, so a schema-honouring provider could pass no op's arguments — it had to land
+before any unattended run on the API harness. Builder opus/high, one pass with the review's two gaps folded in.
+**What changed:**
+- `OpsSchema` (in `GrantedWorkerTools.cs`) builds trade/data/report's parameters from `GatewaySchema.Ops()` for exactly the ops each carries: an `op` enum, `request_id` only on a tool with a mutating op, the union
+  of the ops' args, each described "For <ops>."; `bool` → `boolean`, `number` → `number` (`Dec` reads a JSON number). It THROWS on one name with two types, an unknown type or an undescribed op. `sell` declares
+  none ("same arguments as buy"; one `ParsePlace` reads both), so it is offered buy's (declared deviation). Offered tools on the wire: **5,139 → 7,280 bytes** (they ride every API turn).
+- **Found and fixed (declared deviation):** `Json.Write`'s snake_case policy had been sending `additional_properties` — `additionalProperties:false` never reached ANY provider on any of the six tools. The schema is
+  now a Dictionary and the key arrives as written; a strict provider now refuses an undeclared argument, as the code always meant.
+**Evidence (builder's report):** Release 0 warnings; `WorkerToolTests` 28/28 ×3, `HarnessTradeArgsTests` 3/3 ×3; CI 38114512335 green 11/11; names 2512 → 2516, removed 0 (train: 2519 → 2523, removed 0); `CanonTests` 21/21 —
+canon bytes unchanged (it reads tool names and ops, never tool text).
+- The test: every op's complete call validates against the wire schema and is refused for no argument's name or type, on the harness route AND the real pipe, with a real tape and a real ledger entry; every
+  number/flag argument probed with an unreadable value must be refused FOR that argument; `'run' is not an argument of 'ledger-add'` still holds on both routes; no offered property undeclared.
+- RED at base: "the schema does not say additionalProperties: false under that name (its keys: type, properties, additional_properties); 'symbol' is not a property the schema offers", and no `op` enum.
+- Mutants red then green: skip `Ops.Backtest` ⇒ "'strategy' is not a property the schema offers"; drop `capital` (declared by backtest alone) ⇒ "offered nothing, read as number".
+**Reviews (Codex `gpt-6.1-sol`, high):** review 1 — two REAL test gaps (data-tape refused before its arguments were read; the brief's skip-Buy mutant cannot go red) → folded in (`5586185e`, `98e7bf9b`). Scoped re-review:
+the skip-Buy mutant still stays green — JUDGED NOT A DEFECT: with sell offering buy's arguments, skipping buy's specs yields the IDENTICAL offered schema (an equivalent mutant; seat B's brief example was wrong);
+the per-op mutants that change the output (skip backtest, drop capital) go red.
+**Not claimed:** not run against a real provider's schema validator; tests box NOT RUN (did not answer). Scan exclusions (judged, by phrase): `"attempt-args").Token` in a test; the tests-box line's "asleep, off Tailscale".
