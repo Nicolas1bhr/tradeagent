@@ -567,6 +567,69 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A CONVERSATION NO METER IS ATTACHED TO REFUSES THE OWNER'S TURN. In the shipped app that is a conversation whose
+    /// runtime was replaced — the meter detaches and clears its admission — still bound to the Chat page; a null
+    /// admission used to be "unrecorded" and admitted, so the typed turn ran with no row and no ceiling.
+    /// </summary>
+    [Fact]
+    public async Task A_conversation_no_meter_is_attached_to_refuses_the_owners_turn()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(50m, () => now);
+        var marker = Path.Combine(TestEnv.Home, $"ran-{Guid.NewGuid():n}.txt");
+        var chat = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, marker: marker);
+        meter.Attach(chat, CouncilRoles.Operations).Dispose();   // the meter detaches, as on a runtime change
+
+        await chat.SendAsync("what are you doing?");
+
+        Assert.False(File.Exists(marker), "the AI tool was started for a turn no meter reserved");
+        Assert.Contains("what are you doing?", chat.TakeTyped());
+        var said = chat.History[^1];
+        Assert.Equal(ChatRole.System, said.Role);
+        Assert.Equal(AiAdmission.NoLedgerOpen.Refusal, said.Text);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)) + Rows(nameof(AiAttemptState.ENDED)));
+    }
+
+    /// <summary>
+    /// THE APP'S MISSION HOST WITH NO METER REFUSES THE LAUNCH. A freshly built app has no meter until its start
+    /// composes one; a launch asked of it then is one no ledger could reserve, and it is refused on the ledger.
+    /// </summary>
+    [Fact]
+    public void The_apps_mission_host_with_no_meter_refuses_the_launch()
+    {
+        var mission = new AppHost.MissionHost(new AppHost());
+
+        foreach (var admission in new[]
+                 {
+                     mission.BeginTurn("## Situation", []),
+                     mission.BeginTurn("## Situation", [], CouncilRoles.Research)
+                 })
+        {
+            Assert.False(admission.Admitted, "a launch with no meter to reserve it was admitted");
+            Assert.Equal(AiAdmission.Ledger, admission.Ceiling);
+            Assert.Equal(AiAdmission.NoLedgerOpen.Refusal, admission.Refusal);
+        }
+    }
+
+    /// <summary>
+    /// THE GUARD: A HOST BUILT WITHOUT A LEDGER STILL RUNS ITS TURNS, through the explicit value and nothing else —
+    /// the loop's no-ledger default sends the turn, and a conversation that says it has no ledger starts its process.
+    /// </summary>
+    [Fact]
+    public async Task A_host_built_without_a_ledger_still_runs_its_turns_through_the_explicit_value()
+    {
+        var host = new NoLedgerHost();
+        await new MissionLoop(host).TurnAsync();
+        Assert.Single(host.Conv.Sent);
+
+        var marker = Path.Combine(TestEnv.Home, $"ran-{Guid.NewGuid():n}.txt");
+        var chat = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, marker: marker);
+        Assert.Equal(AiAdmission.NoLedger, chat.Admit!("say hi"));
+        await chat.SendAsync("say hi");
+        Assert.True(File.Exists(marker), "a conversation built without a ledger did not run its turn");
+    }
+
+    /// <summary>
     /// THE RESERVATION CHARGES INPUT AT THE DEARER OF THE TWO RATES THE SAME TOKENS CAN BE BILLED AT.
     ///
     /// <c>gpt-5.6-sol</c>, on this build's own shipped list, costs 4.00 per million input and 5.00
@@ -655,6 +718,20 @@ public class BudgetReservationTests : IDisposable
         public MissionEventStore? Wakes { get; init; }
 
         public MissionEventStore? Events => Wakes;
+    }
+
+    /// <summary>A host built without a launch ledger: it keeps the interface's own no-ledger admission.</summary>
+    sealed class NoLedgerHost : IMissionHost
+    {
+        public Recording Conv { get; } = new();
+
+        public IAgentConversation? Conversation => Conv;
+        public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"no-ledger-home-{Guid.NewGuid():n}");
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
     }
 
     /// <summary>A conversation that records what it was sent, and answers every turn the same way.</summary>

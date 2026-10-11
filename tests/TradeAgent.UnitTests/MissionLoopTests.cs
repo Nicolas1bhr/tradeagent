@@ -167,7 +167,7 @@ public class MissionLoopTests
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
         {
             Opened.Add(prompt);
-            if (Events is null) return AiAdmission.Unrecorded;
+            if (Events is null) return AiAdmission.NoLedger;
 
             var id = $"turn-{_tag}-{++_attempts}";
             var admission = new AiAttemptStore(_db).Begin(

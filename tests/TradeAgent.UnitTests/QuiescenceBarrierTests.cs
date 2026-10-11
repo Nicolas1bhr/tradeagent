@@ -81,8 +81,12 @@ public class QuiescenceBarrierTests
             ExecArgs = ["{prompt}"],
             ResumeArgs = ["{prompt}"]
         };
+        // Built without a launch ledger, and saying so: see AgentRuntimeProbe.SessionOverStream.
         return new AgentSession(manifest, () => script, () => dir,
-            () => new Dictionary<string, string>(), presence: presence);
+            () => new Dictionary<string, string>(), presence: presence)
+        {
+            Admit = _ => AiAdmission.NoLedger
+        };
     }
 
     static void Drop(string root, string name) =>

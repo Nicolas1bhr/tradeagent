@@ -165,15 +165,27 @@ public sealed record AiAdmissionRule
 /// WHETHER A LAUNCH MAY HAPPEN, AND WHAT IT COMMITTED — decided and written in one transaction.
 ///
 /// <see cref="Admitted"/> is keyed on the REFUSAL and not on the id, because the two absences mean
-/// opposite things. A refusal is "do not start the process": some ceiling has no room. A null id
-/// with no refusal is "nothing could be recorded" — a host that keeps no ledger, or a database that
-/// would not take the row — and the turn still runs, because a launch the app failed to write down
-/// is not a launch the app may silently decline to make.
+/// opposite things. A refusal is "do not start the process": some ceiling has no room, or the launch
+/// ledger could not take the row that reserves the turn (<see cref="Ledger"/>). A null id with no
+/// refusal is <see cref="NoLedger"/> and nothing else: a host BUILT without a ledger, by construction.
+/// A database that would not take the row is never that — it is a refusal, because a launch nobody
+/// could reserve is spending no ceiling sees (<c>U-admission-fail-closed</c>).
 /// </summary>
 public sealed record AiAdmission
 {
-    /// <summary>Nothing was written and nothing refused it. The caller carries on.</summary>
-    public static readonly AiAdmission Unrecorded = new();
+    /// <summary>
+    /// A HOST BUILT WITHOUT A LAUNCH LEDGER, AND ONLY THAT: nothing was written because there is nothing to write to by
+    /// construction, and nothing refused it. The unit-test hosts' explicit path. Never the answer to a write that failed
+    /// (that is <see cref="LedgerRefused"/>), and never what the shipped app answers when its meter or a conversation's
+    /// admission is missing (that is <see cref="NoLedgerOpen"/>).
+    /// </summary>
+    public static readonly AiAdmission NoLedger = new();
+
+    /// <summary>
+    /// THE REFUSAL FOR A LAUNCH WITH NO LEDGER OPEN TO RESERVE IT — the shipped app's meter not built, or a conversation
+    /// no meter is attached to. Refused for the same reason a failed write is: there is no row, so no ceiling sees it.
+    /// </summary>
+    public static AiAdmission NoLedgerOpen => LedgerRefused("no launch ledger is open for it");
 
     /// <summary>The attempt id to complete at the end of the turn, or null when none was written.</summary>
     public string? Id { get; init; }
