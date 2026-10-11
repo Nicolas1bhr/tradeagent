@@ -399,6 +399,51 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
             new AiAttemptStore(rig.Db).TotalsBetween(from, to, AppPrincipals.Perception).Spent);
     }
 
+    /// <summary>
+    /// A 200 WHOSE HEADERS ARRIVE AT ONCE AND WHOSE BODY THEN STALLS ENDS UNANSWERED "timeout" AT THE WIRE'S OWN DEADLINE
+    /// (<c>U-wire-body-deadline</c>), its status kept: the attempt is ENDED with the reservation as its cost, not held as
+    /// flying, and the tape's record says UNANSWERED — never ANSWERED, never FAILED. The send reads the headers first, so
+    /// HttpClient's own timeout stops there and only the wire's linked deadline bounds the body's read; the test sets its
+    /// own ceiling, so a wire without that deadline FAILS here rather than hanging the suite.
+    ///
+    /// <para>Take <c>deadline.CancelAfter(_http.Timeout)</c> out of <c>TypeSafeWire.SendAsync</c> and the call never returns.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_200_whose_body_stalls_ends_unanswered_timeout_at_the_wires_deadline()
+    {
+        using var rig = new Rig();
+        using var stalled = new FakeProvider { StallsBody = true };
+        stalled.Answer(FakeProvider.SystemOne("jev-1.13.0", TriageAnswers, input: 300, output: 20));
+        using var wire = Wire(PointedAt(stalled), stalled.Holding(_pasted), rig, timeout: TimeSpan.FromSeconds(2));
+
+        // NO CALLER CANCELLATION: only the wire's own deadline can end this. The ceiling is the test's, far past the 2 s.
+        var call = wire.DecideAsync(Ask());
+        var returned = await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(20)));
+        foreach (var mark in stalled.Marks) log.WriteLine(mark);
+        Assert.True(ReferenceEquals(returned, call),
+            "the call had not returned 20 s after a 2 s wire timeout: nothing bounds a body that stalls after a 200");
+
+        var lost = await call;
+        log.WriteLine($"stalled: {lost.Status} {lost.ErrorClass} {lost.HttpStatus} after {lost.Latency}");
+        Assert.Equal(DecisionStatus.UNANSWERED, lost.Status);
+        Assert.Equal("timeout", lost.ErrorClass);
+        Assert.Equal(200, lost.HttpStatus);
+        Assert.Empty(lost.Answers);
+        Assert.Single(stalled.Requests);
+        Assert.Contains(stalled.Marks, m => m.Contains("first part flushed"));
+
+        var kept = new AiAttemptStore(rig.Db).Get(lost.AttemptId!)!;
+        Assert.Equal(AiAttemptState.ENDED, kept.State);
+        Assert.Equal(Reservation, kept.Cost);
+        Assert.Null(kept.InputTokens);
+        Assert.False(rig.Live.Holds(lost.AttemptId));
+        var record = rig.Tape.RecordedCall(lost.AttemptId!)!;
+        Assert.Equal(DecisionStatus.UNANSWERED, record.Call.Status);
+        Assert.Equal("timeout", record.Call.ErrorClass);
+        Assert.Equal(200, record.Call.HttpStatus);
+        Assert.Null(record.Call.Answers);
+    }
+
     // ---- (d) ------------------------------------------------------------------------------------------------------
 
     /// <summary>
