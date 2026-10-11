@@ -54,3 +54,6 @@ CI 38114619726 (fe3ff54) success on all 11 jobs, no Timing retry on any platform
   A misplaced class (ApprovalReauthorizationTests checked as shard 1) still exit 1 on both. A real green run, 38114619726: shards 1–4 "N listed classes, N ran a test, 0 ran none; 0 classes ran that it does not list", shard 5 "0 classes ran that a line lists".
 Tests box: `win-test.sh ready` exit 1, "NO - the machine does not answer" — NOT RUN. Not done: the 2 InRange bounds (`:695`, `:970`) and the lower bounds were left unchanged (the brief's list is the 13 ceilings); the sample trx files for items 3–4 are hand-edited from real ones and not committed.
 Superseded run 38114582468 (pre-rebase tip) was cancelled, not red. The class header's "re-run once on windows-latest and only there" is stale (it predates U-press-stopwatch); left alone, as it is outside the brief.
+
+## Fix report (review 1)
+Review of the 8d8b6fa5 report: `fleet/tmp/B-scratch/U-red-says-why/review.md` (5 findings). Fix commits after 8d8b6fa5: 7a0d84f3 (1-3 and the guard), b8500f8c (5), a8c228ce (4). Draft: results are filled in when the CI run finishes.
