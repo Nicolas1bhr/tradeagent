@@ -661,10 +661,10 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     /// AN ENVELOPE OF <paramref name="slots"/> RUNS AT A TIME, written to the ledger — the owner's card grants one, and the
     /// quota needs three before it holds any. Long enough for a 90-day term to end inside it.
     /// </summary>
-    static PaperEnvelopeRow Slots(TradingGateway gw, int slots)
+    static PaperEnvelopeRow Slots(TradingGateway gw, int slots, string account = "SIM-001")
     {
         var granted = gw.Envelopes.Grant(new PaperEnvelopeRow(
-            "", gw.Connector.Id, "SIM-001", "BTCUSDT", "USD", 6m, null, slots, At, At.AddDays(200),
+            "", gw.Connector.Id, account, "BTCUSDT", "USD", 6m, null, slots, At, At.AddDays(200),
             $"test: {slots} runs at a time", null));
         Assert.True(granted.Ok, granted.Why);
         return granted.Envelope!;
@@ -904,5 +904,56 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         Assert.True(own.Authorises);
         Assert.Null(gw.Allocations.StandingForLive(version, At.AddHours(3)));
         await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// ONE INCONCLUSIVE SLOT PER LINEAGE ACROSS EVERY ENVELOPE, not per envelope (fix of the review's finding 2). Two
+    /// 3-slot envelopes on two accounts over one ledger; A1 holds the slot of its lineage in the first. Its sibling A2 is
+    /// refused the second envelope in words, by the sweep and asked directly, and nothing is written or charged — while B1,
+    /// of another lineage, is admitted there, so the second envelope's own third had room. The third-of-slots count stays
+    /// per envelope. THE MUTANT, the fence reading the target envelope only, admits A2.
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_lineage_holds_one_slot_across_every_envelope()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+        var (second, secondConn, _) = await Ready(db: db, account: "SIM-002");
+
+        var first = Slots(gw, 3);
+        var other = Slots(second, 3, "SIM-002");
+        var a1 = Judged(db, PromotionVerdict.Refused, 180, PromotionReason.NoTrade, at: At.AddHours(-3));
+        Assert.Equal(1, gw.AllocatePaperDue(At));
+
+        var a2 = Judged(db, PromotionVerdict.Refused, 181, PromotionReason.NoTrade, CampaignOf(gw, a1), At.AddHours(-2));
+        var campaign = CampaignOf(gw, a1);
+        var chargedBefore = gw.Campaigns.TrialsCharged(campaign);
+
+        var swept = second.AllocatePaperDue(At);
+        var asked = second.Allocations.RecordPaper(InconclusiveRowFor(second, a2, other), At);
+
+        var b1 = Judged(db, PromotionVerdict.Refused, 182, PromotionReason.NoTrade, at: At.AddHours(-1));
+        var control = second.AllocatePaperDue(At);
+
+        log.WriteLine($"first envelope       : {string.Join(", ", Inconclusives(gw, first, At).Select(v => v[..12]))}");
+        log.WriteLine($"second envelope      : {string.Join(", ", Inconclusives(second, other, At).Select(v => v[..12]))}");
+        log.WriteLine($"A2 by the sweep      : {swept}");
+        log.WriteLine($"A2 asked directly    : {asked.Ok} — {asked.Why}");
+        log.WriteLine($"B1, another lineage  : {control}");
+
+        Assert.Equal(new[] { a1 }, Inconclusives(gw, first, At));
+        Assert.Equal(0, swept);
+        Assert.False(asked.Ok);
+        Assert.Contains($"lineage {campaign}", asked.Why, StringComparison.Ordinal);
+        Assert.Contains("SIM-001", asked.Why, StringComparison.Ordinal);
+        Assert.Empty(gw.Allocations.For(a2));
+        Assert.Equal(chargedBefore, gw.Campaigns.TrialsCharged(campaign));
+
+        Assert.Equal(1, control);
+        Assert.Equal(new[] { b1 }, Inconclusives(second, other, At));
+        Assert.Empty(conn.Placed);
+        Assert.Empty(secondConn.Placed);
+        await gw.DisposeAsync();
+        await second.DisposeAsync();
     }
 }
