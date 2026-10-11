@@ -9662,3 +9662,35 @@ Scan clean with `stop.Token` (a CancellationTokenSource's) and the prose "whose 
 reviewed before the merge.
 **NOT done, NOT verified:** the app was not run, so Pause during a verdict was not watched on screen — (c) drives the harness's `CallAsync` with a cancelled stop; a stop AFTER the charge is proved at the
 referee ((b)), not over the pipe; NOT claimed, per the brief: a charge carried into a renewal, a later-turn notice to the asker, a kill mid-run, re-judging verdicts recorded before this unit.
+
+## U-ci-shards — a CI run in 25.5 min instead of ~66, every test still run exactly once per platform (landed 2026-10-11, seat P)
+
+**Landed** at `608c81d9` (code tip `a082e026`) on `main` `c4f611fe`, by `land.sh` v2: **CI CARRIES** — run **38097157034** at `a082e026`, whose build tree
+equals the tip's outside `fleet/bin/bookkeeping-paths.txt` (the report commit touches `docs/briefs` only). No local suite (speed mode, SPEED-MODE § 5). No rung.
+**What changed** (`.github/workflows/build.yml`, `.github/ci/test-shards.txt`, `.github/ci/shard-filter.sh`; no `src/`, no test):
+- Windows runs as 5 test jobs. The partition is one file (80 classes on shards 1-4); shard 5 is the COMPLEMENT (every class listed nowhere), so a new class or
+  project runs there by construction. Each job runs the whole solution under its filter. A `shard-plan` job builds the matrix from the file, so the shard
+  count has no second copy. The Timing step is unchanged except its `if:` (shard 1 on windows; ubuntu and macos unsharded).
+- Each shard's check step is a red when a class ran in a shard that does not list it, or a listed class ran in the complement (item 1b, seat P's amendment
+  from the Codex review: a `~Ns.Class.` substring could select a future class in two shards). Stale lines are `::warning`s.
+- Windows test homes go to `runner.temp` (D:, the work disk) instead of C:. Measured A/B, identical counts, summed non-Timing 10318 → 8403 s.
+- `package` no longer `needs: test`. `on.push.paths-ignore` = the 13 bookkeeping paths, equal as a set to the fleet's list (checked by `land.sh`'s guard and by
+  a direct diff at landing). Each was grep-proven unread; markdown only under docs/{briefs,queue,research}, because `ResearchLibraryTests` enumerates `*.strategy`.
+**Verified (quoted from the builder's report and `land.sh check`):**
+- Run 38097157034, 12 jobs all success. Wall 00:04:07Z → 00:29:34Z = 25.5 min. Windows shards 10/8/8/4/11 min, ubuntu 12, macos 16, linux-host 20, package 4.
+  Every `test*` job's log: `0 Warning(s)`. Timing green on its first attempt on all three platforms. Every shard check: 0 classes out of place, 0 stale.
+- Exactly once (trx testName multisets, non-Timing + the Timing first attempt) vs main's push run 38093191853 of `dab2768e` (c4f611fe's own push run was
+  cancelled by the orchestrator's capacity rule; dab2768e..c4f611fe is bookkeeping only): ubuntu, macos, windows each Fault 485, Integration 766, Unit 1613 —
+  0 missing, 0 duplicated.
+- Locally: VSTest `--list-tests` per shard filter, union = the `Category!=Timing` list (2749 names), 0 in two shards; the guard red on Codex's synthetic
+  overlap and on a listed class in the complement; a duplicate line refused.
+- `land.sh check`: names `sets: base 2457 tip 2457`, `removed: 0`; `SCAN CLEAN`; VERDICT PASS. Release `--no-incremental`: 0 warnings, 0 errors.
+**Reviews (Codex gpt-6.1-sol, two passes)**, each finding judged on the board. Real: the substring overlap, fixed by 1b. Real but fail-safe, deferred to
+`U-red-says-why`: the check greps `className="…"` anywhere in the trx, stdout included, so a test PRINTING that text would be a false red (0 such today).
+Not real: an empty trx or a missing className (no test ran, so coverage is unaffected; vstest always writes className).
+**Red seen, not this unit's:** run 38095346946's linux-host — `prove.sh` phase 4 counted the killed process's last row 77 ms after `kill -9`, then failed the
+pid check (a false red, never a false green). Sent to the orchestrator for seat A's harness.
+**NOT VERIFIED / not done:** ≤ 30 min holds only with free runners (run B 31 min with 4.5 min queued). Shards not rebalanced after the D: move (shard 5 11 min,
+shard 4 4). The paths-ignore filter on a real main push: checked after this push (the landing push must start a run, the next bookkeeping-only push none).
+shellcheck green on CI only (not installed locally). `tools/win-test-run.ps1` still runs the suite whole. Tests box NOT RUN ("the machine does not answer").
+**CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat P's next record and `fleet/ci-ledger.md`.
