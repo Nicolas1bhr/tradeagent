@@ -11,9 +11,24 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-11, the close)
+heartbeat first; in a meeting, arm nothing), then the four blocks right after this paragraph (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20), the newest checkpoint below (2026-10-11, the close)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-11, afternoon — the in-app orchestration becomes the first priority; docs only (`docs/ORCHESTRATION.md`;
+`docs/research/2026-10-11/R23-orchestration-first.md`).** The owner: "we need to have the orchestration dialed in, as well build out as can be. this is a
+priority over all the others … lets start arching out that genuine in app ai orchestration and get it right from the get go." **The architecture:** one
+kernel in which the organisation is data — row, rule, reading; build the whole kernel and activate by measurement, the proving ground built with it;
+authority exercised through the broker, never resting on an unconfined shell, and code run only in confined cells; turns spent as capital; occupants
+disposable. An Opus and a Codex review attacked the draft before it landed (R23 answers every finding). **His two answers:**
+containment PARALLEL, gated — the work plane may land before the cells, nothing runs on real agents until executors are confined (R20's "containment first"
+becomes an order of activation); M-org1 on the LINUX HOST, so Linux cells come first. **The order** (ORGANISATION § 15): seat A — org cells & runtime,
+`U-seat-home` FIRST (a protection: every codex seat runs on the owner's own `~/.codex`, whose plugins, MCP servers and notify hook become model-native tools
+of every seat — RUN-confirmed on this Mac), then `R-exec-server`, `U-thinking-seats`, `U-puppet-runtime`, `U-cell-linux`, …; seat B — org spine & work,
+`U-reconcile-packet` pass 2 ∥ `U-admission-fail-closed` (today a launch whose admission cannot be written runs unrecorded) → O2a → O2b ∥ O4 → O3 →
+`U-grant-tree` → `U-org-lanes` → M-org0 → O5 …; the edge lane and B's perception chain PARKED with their
+queues kept. No further observed run before `U-seat-home`. **For the owner:** M-org0 (and M0 attempt 4) when testing may start; the Linux host's nine
+questions and his go before M-org1; still open from the morning: GitHub Pro or Team, `U-envelope-slots`, `U-moved-research-audit`.
 
 **2026-10-08, late evening — a second outside audit (canon and architecture drift), verified and answered; docs only
 (`docs/research/2026-10-08/R22-canon-drift-audit.md`).** The owner shared it as the output of "an automated vision rectifying agent", not canonical. Checked

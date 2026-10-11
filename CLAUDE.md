@@ -24,6 +24,11 @@ outranks no protection. **Since 2026-10-08 `docs/PRINCIPLES.md` says autonomy is
 mandates, money, evidence and authority — never how an agent reasons inside its mandate (the owner's decisions on an outside audit,
 `docs/research/2026-10-08/R20-autonomy-audit.md`). A new rule over an agent's reversible reasoning or exploration needs a demonstrated failure first.
 
+**`docs/ORCHESTRATION.md` is the in-app orchestration's architecture** (2026-10-11, the owner: the organisation is "a priority over all the
+others", built out as far as it can be and "right from the get go"): one kernel in which the organisation is data — row, rule, reading — authority exercised
+through the broker and code run only in confined cells, turns spent as capital, the proving ground built with the kernel. It is the product's runtime, NOT the build fleet
+(`docs/FLEET.md`); it decides how the kernel is built, ORGANISATION § 15 alone decides the order, and it outranks no protection.
+
 **`docs/VISION.md` is the end state the organisation grows toward** (2026-10-06, the owner's synthesis): unbounded in what TradeAgent can represent,
 deliberately bounded in what it activates — every active seat, department and management layer exists because current work requires it or a bounded
 experiment is testing it; one chief with a strategy council that assesses and never owns; a Security & Assurance Council and a watcher per department as the

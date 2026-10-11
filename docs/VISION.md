@@ -11,7 +11,7 @@ here is DESIGN unless a line says otherwise; nothing in this file marks a featur
 **Where it sits.** `docs/PRINCIPLES.md` stays the product definition and outranks this file. This file is the direction `docs/ORGANISATION.md` converges on:
 ORGANISATION § 15's current order is the build sequence through M-org1 (re-sequenced on 2026-10-08 by R20, R21 and R22), and where the two describe the organisation's eventual shape differently, this file says
 where it is going and ORGANISATION says what is built next. `docs/EDGE-FACTORY.md` stays the target for the information, evidence, selection and capital
-planes the organisation works on. Every protection in `CLAUDE.md` and on the code stands — § 13 names each one this vision touches and how it is kept. It
+planes the organisation works on. `docs/ORCHESTRATION.md` (2026-10-11) is the runtime architecture the kernel of § 6 is built as. Every protection in `CLAUDE.md` and on the code stands — § 13 names each one this vision touches and how it is kept. It
 grants no authority and outranks no protection.
 
 **2026-10-08 — read through `docs/PRINCIPLES.md` "Autonomy is the default inside authority"** (the owner's decisions on an outside autonomy audit,

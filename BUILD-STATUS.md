@@ -10261,3 +10261,31 @@ refusal naming both layouts and the repair, with the in-app fresh-start path); (
 `workspace/agent/research` and an emptier `workspace/research`. NOT VERIFIED for the owner's homes or the M0 attempts → OWED read-only card `U-moved-research-audit` (his machines only
 on his word); nothing here moves them back.
 **NOT done, NOT verified:** the older-layout refusal (owed); the audit (owed); test homes are still shared per process (no isolation change — the remover is gone).
+
+## 2026-10-11 (afternoon) — the in-app orchestration becomes the first priority: its architecture, two surveys and an adversarial review; docs only
+
+**The owner:** "we need to have the orchestration dialed in, as well build out as can be. this is a priority over all the others … lets start arching
+out that genuine in app ai orchestration and get it right from the get go." **Landed (docs only — no product code, test or build):**
+`docs/ORCHESTRATION.md` — the organisation kernel: the organisation as data run by one kernel ("row, rule, reading"); build the whole kernel, activate
+by measurement (an app-checked earning test; the proving ground built with the kernel); authority exercised through the broker, never resting on an
+unconfined shell, code run only in confined cells; turns spent as capital; occupants disposable — sixteen components, flows, seat classes as targets,
+a protection map. `docs/research/2026-10-11/R23-orchestration-first.md` — the record. `docs/ORGANISATION.md` § 15 re-sequenced: both seats on the
+organisation (A: seat homes, cells, the puppet runtime, the audit line, the watcher, the proving ground; B: admission, positions, wakes, lanes, mandates,
+packets, verbs, the surface, the chief); the edge lane and B's perception chain PARKED with their queues kept. Pointers: `CLAUDE.md`, VISION,
+the resume block.
+**The owner's two answers (asked, recommendation first):** containment and the work plane in PARALLEL, gated — nothing runs on real agents until
+executors are confined (R20's "containment first" becomes an order of activation); M-org1 on the LINUX HOST (Linux cells first).
+**Verified by reading (SOURCE at `fd7174ee`) and by one run:**
+- Every codex seat on the default home runs under the owner's own codex configuration: the app never sets `CODEX_HOME` and disables no feature
+  (`AgentRuntime/RuntimeManifest.cs:499-502`, `:586-592`, `:649`; `AgentEnvironment.cs:78, 87`). RUN 2026-10-11 16:18 CEST on this Mac: a `codex exec`
+  (0.160.1) under that home spawned the ChatGPT app's computer-use MCP server (`node_repl`) and two plugin MCP servers as children (`ps`). Which tools a
+  seat's own launch offers its model: NOT VERIFIED. → `U-seat-home`, first; a prerequisite of M0 attempt 4 and of every further observed run.
+- Admission fails open when it cannot be written: `TurnMeter.Begin` returns `AiAdmission.Unrecorded` on any exception (`AgentRuntime/TurnMeter.cs:874`),
+  and `Unrecorded.Admitted` is true (`Core/Db/AiAttemptStore.cs:164-181`). → `U-admission-fail-closed`, before O4.
+- The material pass's quiescence is an evidence protection any concurrency must keep (`AgentRuntime/MissionLoop.cs:1350-1382`).
+**Review before landing:** Codex `gpt-6.1-sol` (read-only, high) — 48 findings, 22 HIGH, "not ready to become doctrine"; every one answered in R23 § 2
+and the draft rewritten (the legacy exception in the activation gate, process binding claimed only against cross-container replay, confinement not a
+spend bound, side channels in networked cells, the earning test, sealed deliveries, restart reconciliation, the owner's lane, the audit line). A fresh
+Opus reviewer — R23 § 2b.
+**NOT VERIFIED / not done:** nothing built; every enforcement class for a future seat is a TARGET; the exec-server split, the broker-only codex seat and
+Linux confinement are UNKNOWN until `R-exec-server` and `U-cell-linux`; no seat opened, no builder dispatched — the build waits for the owner's word.
