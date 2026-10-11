@@ -198,21 +198,42 @@ pid="$(main_pid)"
 [ "$pid" -gt 0 ] || fail "tradeagent has no main process to kill"
 restarts_before="$(systemctl show -p NRestarts --value tradeagent.service)"
 started_before="$(activity_count 'TradeAgent started')"
-before="$(loopback_max_id)"
 t_kill_ms="$(now_ms)"
 kill -9 "$pid"
-wait_until 30 loopback_row_after "$before" \
-    || fail "no loopback tape row within 30 s of kill -9 (NRestarts $(systemctl show -p NRestarts --value tradeagent.service))"
+# The row baseline is read once the killed process is GONE (SIGKILL: it can commit nothing after that), and the
+# restart is awaited from the kill before a row is accepted, so a row the dying process committed in its last
+# instant can never count. The baseline is deliberately not read after the restart: the restarted app records
+# its first loopback row at once (run 38125438221 saw it land before the restart check returned), and a baseline
+# taken after that row would wait for the next one a whole 60 s cadence later. Both waits share the one 30 s
+# budget measured from the kill.
+old_process_gone() { [ ! -e "/proc/$pid" ]; }
+restart_done() {
+    new_pid="$(main_pid)"
+    restarts_after="$(systemctl show -p NRestarts --value tradeagent.service)"
+    started_after="$(activity_count 'TradeAgent started')"
+    [ "$new_pid" -gt 0 ] && [ "$new_pid" != "$pid" ] && [ "$restarts_after" -gt "$restarts_before" ] \
+        && [ "$started_after" -gt "$started_before" ]
+}
+restart_missing() {
+    local missing=""
+    { [ "$new_pid" -gt 0 ] && [ "$new_pid" != "$pid" ]; } || missing="$missing new-main-process"
+    [ "$restarts_after" -gt "$restarts_before" ] || missing="$missing NRestarts-increase"
+    [ "$started_after" -gt "$started_before" ] || missing="$missing recorded-start"
+    echo "${missing# }: main process $new_pid (was $pid), NRestarts $restarts_after (was $restarts_before), TradeAgent started $started_after (was $started_before)"
+}
+new_pid=0 restarts_after="$restarts_before" started_after="$started_before"
+budget_left() { echo $(( 30 - ($(now_ms) - t_kill_ms) / 1000 )); }
+wait_until 5 old_process_gone || fail "the killed main process $pid was still there 5 s after kill -9"
+before2="$(loopback_max_id)"
+wait_until "$(budget_left)" restart_done || fail "within 30 s of kill -9 the restart was incomplete, missing $(restart_missing)"
+restart_ms=$(( $(now_ms) - t_kill_ms ))
+remaining="$(budget_left)"
+[ "$remaining" -ge 1 ] || fail "restarted only $restart_ms ms after kill -9, no time left to see a loopback row"
+wait_until "$remaining" loopback_row_after "$before2" \
+    || fail "restarted (main process $new_pid, was $pid) after $restart_ms ms but no loopback tape row from the restarted process within 30 s of kill -9 (newest row id $(loopback_max_id), was $before2 once the killed process was gone)"
 recorded_after_ms=$(( $(now_ms) - t_kill_ms ))
 [ "$recorded_after_ms" -le 30000 ] || fail "recorded again only $recorded_after_ms ms after kill -9"
-new_pid="$(main_pid)"
-restarts_after="$(systemctl show -p NRestarts --value tradeagent.service)"
-started_after="$(activity_count 'TradeAgent started')"
-if [ "$new_pid" = "$pid" ] || [ "$restarts_after" -le "$restarts_before" ]; then
-    fail "after kill -9 the main process is $new_pid (was $pid) and NRestarts $restarts_after (was $restarts_before)"
-fi
-[ "$started_after" -gt "$started_before" ] || fail "the restarted app did not record its start"
-pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, started and recorded again ${recorded_after_ms} ms after the kill"
+pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, started (${restart_ms} ms after the kill) and recorded again ${recorded_after_ms} ms after the kill"
 
 # ---- 5. the window, as the owner would see it --------------------------------------------------------
 until [ $(( $(now) - t_start )) -ge $(( minutes * 60 - 90 )) ]; do sleep 5; done
