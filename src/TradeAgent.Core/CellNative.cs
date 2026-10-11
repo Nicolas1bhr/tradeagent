@@ -79,7 +79,14 @@ public static class CellNative
     };
 
     const int PR_SET_SECCOMP = 22, PR_SET_NO_NEW_PRIVS = 38, SECCOMP_MODE_FILTER = 2;
-    const int O_CLOEXEC = 0x80000, O_PATH = 0x200000;
+    const int O_CLOEXEC = 0x80000, O_PATH = 0x200000, ENOENT = 2, ENOTDIR = 20;
+
+    /// <summary><c>O_NOFOLLOW</c>: 0400000 on x86-64, 0100000 on arm64 (its own <c>asm/fcntl.h</c>).</summary>
+    static int O_NOFOLLOW => RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x8000 : 0x20000;
+
+    const int AT_FDCWD = -100, AT_SYMLINK_NOFOLLOW = 0x100, AT_EMPTY_PATH = 0x1000;
+    const uint STATX_TYPE = 0x1, STATX_MODE = 0x2, STATX_UID = 0x8;
+    const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFLNK = 0xA000;
     const uint CLOSE_RANGE_CLOEXEC = 1U << 2;
     const int SIGPIPE = 13, SIG_SETMASK = 2;
 
@@ -112,6 +119,51 @@ public static class CellNative
 
     [DllImport("libc", EntryPoint = "free")]
     static extern void free(nint p);
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    static extern int statx(int dirfd, string path, int flags, uint mask, nint buf);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern uint geteuid();
+
+    /// <summary>
+    /// The owner and file type of what <paramref name="fd"/> holds (<paramref name="path"/> null), or of <paramref name="path"/>
+    /// itself without following a final symlink — or null when the kernel would not say. <c>struct statx</c> is the same on every
+    /// architecture: <c>stx_uid</c> at 20, <c>stx_mode</c> at 28.
+    /// </summary>
+    static (uint Uid, int Type)? Stat(int fd, string? path)
+    {
+        var buf = Zeroed(256);
+        try
+        {
+            var r = path is null
+                ? statx(fd, "", AT_EMPTY_PATH, STATX_TYPE | STATX_MODE | STATX_UID, buf)
+                : statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_TYPE | STATX_MODE | STATX_UID, buf);
+            if (r != 0) return null;
+            return ((uint)Marshal.ReadInt32(buf, 20), (ushort)Marshal.ReadInt16(buf, 28) & S_IFMT);
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    /// <summary>
+    /// Why <paramref name="path"/> is not owned by the account this process runs as (its effective uid), or null when it is. Linux
+    /// only; .NET itself has no owner API.
+    /// </summary>
+    internal static string? NotOwnedByThisAccount(string path)
+    {
+        if (!OperatingSystem.IsLinux()) return $"{path}'s owner can be read on Linux only";
+        var me = geteuid();
+        return Stat(-1, path) is not { } st ? $"{path}'s owner could not be read"
+            : st.Uid != me ? $"{path} belongs to uid {st.Uid}, not to this account (uid {me})"
+            : null;
+    }
+
+    /// <summary>Where an open descriptor really leads, as the kernel names it (<c>/proc/self/fd/&lt;n&gt;</c>), or null.</summary>
+    static string? Target(int fd)
+    {
+        try { return new FileInfo($"/proc/self/fd/{fd}").LinkTarget; }
+        catch (Exception) { return null; }
+    }
 
     /// <summary>
     /// The Landlock ABI the running kernel reports, or 0 and the reason it did not: <c>ENOSYS</c> (not built in) or
@@ -217,19 +269,40 @@ public static class CellNative
         var fd = (int)Syscall3(SysLandlockCreateRuleset, attr, 24, 0);
         if (fd < 0) { failed = Fail("landlock_create_ruleset"); return -1; }
 
+        // OPENED FIRST, THEN JUDGED, AND THE DESCRIPTOR JUDGED IS THE ONE GRANTED (triage #2): the policy's check ran on paths, and
+        // a path can be retargeted after it — by another cell sharing the workspace — so what is checked here is where the open
+        // descriptor really leads, against the app's protected set in every spelling, and that same descriptor goes to the kernel.
+        var guarded = CellPolicy.Guarded.Of();
         bool Grant(string p, ulong rights, bool required)
         {
             BeforeGrantOpen?.Invoke(p);
-            if (!Directory.Exists(p) && !File.Exists(p))
+            var name = Utf8(p);
+            var parent = OpenPath(name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+            if (parent >= 0 && Stat(parent, null) is { Type: S_IFLNK })
             {
-                if (!required) return true;          // a root this machine does not have grants nothing
-                failure = new Failure($"granting {p} (it does not exist)", 0);
+                // A SYMLINK AS THE LAST COMPONENT (Ubuntu's /lib, /bin, /sbin): opened through, and judged below by where it led.
+                close(parent);
+                parent = OpenPath(name, O_PATH | O_CLOEXEC);
+            }
+            if (parent < 0)
+            {
+                var errno = Marshal.GetLastPInvokeError();
+                if (!required && errno is ENOENT or ENOTDIR) return true;   // a root this machine does not have grants nothing
+                failure = new Failure($"opening {p}", errno);
                 return false;
             }
-            if (!Directory.Exists(p)) rights &= FsFileRights;
-            var name = Utf8(p);
-            var parent = OpenPath(name, O_PATH | O_CLOEXEC);
-            if (parent < 0) { failure = Fail($"opening {p}"); return false; }
+            var target = Target(parent);
+            var stat = Stat(parent, null);
+            var why = target is null || !target.StartsWith('/') || target.EndsWith(" (deleted)", StringComparison.Ordinal)
+                ? "names no path the kernel can show"
+                : stat is null ? "could not be examined" : guarded.Refuses(target);
+            if (why is not null)
+            {
+                close(parent);
+                failure = new Failure($"granting {p}, which leads to {target ?? "nothing"}: it {why}", 0);
+                return false;
+            }
+            if (stat!.Value.Type != S_IFDIR) rights &= FsFileRights;
             var rule = Zeroed(12);                   // struct landlock_path_beneath_attr is packed: u64 rights, s32 fd
             Marshal.WriteInt64(rule, 0, (long)rights);
             Marshal.WriteInt32(rule, 8, parent);
