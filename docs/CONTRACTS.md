@@ -4397,6 +4397,17 @@ Stepping it would trade a program nobody judged under the deployment of one some
 withdraws the verdict (`Promotions.Standing`, "the evaluation semantics changed"), so the reconcile pass ends the
 run too; whichever pass reaches it first ends it, each with its own reason.
 
+**AND THE RUN MUST HAVE BEEN RECORDED UNDER THIS BUILD'S REPLAY SEMANTICS** (`U-runner-maxhold-replay`, rung 34). Every
+pass rebuilds a run from its first minute under this build's reading of a replayed minute, and minutes an earlier build
+decided under another reading replay into a state the run never had — on the Codex review's hourly case an entry it
+never sent, from which the stop of the one it did send was sized (105, not 104.5). `Deployments.Start` stamps each run
+with `Versions.ForwardReplay` (`strategy_deployment.replay_version`, its only writer), and a run whose stamp is not this
+build's — or that has none, because a build before the rung started it — is ENDED, before anything is settled, replayed
+or sent, in words naming both versions; nothing it recorded is rewritten. The number is raised with any change to what a
+replayed minute hands the evaluator. A run of the version this build starts carries this build's stamp, so
+`ForwardRuns.CannotRun` does not say it and the deployment sweep starts a fresh run — a different record — as it does
+after any end.
+
 **TWO CLOCKS: THE RULES ON THE DECLARED BAR, EVERYTHING THAT PROTECTS ON THE MINUTE** (`U-timeframe-b`). On every
 minute, in this order: what has an answer is settled; when the run's books read flat, any stop or target of the run still
 working is cancelled (`U-runner-refused-close`); when a stop, a target, an exit or a flatten landed on the minute,

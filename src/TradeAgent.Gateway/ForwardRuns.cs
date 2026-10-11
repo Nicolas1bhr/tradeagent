@@ -173,6 +173,14 @@ public sealed class ForwardRuns
     {
         ArgumentNullException.ThrowIfNull(deployment);
 
+        // A RUN RECORDED UNDER OTHER REPLAY SEMANTICS IS ENDED, IN WORDS NAMING BOTH, BEFORE ANYTHING IS SETTLED, REPLAYED
+        // OR SENT (`U-runner-maxhold-replay`). Every pass below rebuilds the run from its first minute under THIS build's
+        // reading, and minutes an earlier build decided under another replay into a state the run never had — an entry it
+        // never sent, and the stop of the one it did send sized from that one. Refused, never replayed on a guess; nothing
+        // it recorded is rewritten. See `Versions.ForwardReplay`.
+        if (deployment.ReplayVersion != Versions.ForwardReplay)
+            return await EndAsync(deployment, ReplayedUnder(deployment.ReplayVersion), ct);
+
         if (Frozen(_strategies, deployment.VersionId) is not { } program)
             return await EndAsync(deployment, NotFrozen, ct);
 
@@ -1138,6 +1146,21 @@ public sealed class ForwardRuns
                 }));
         }
     }
+
+    /// <summary>
+    /// WHAT THE RUNNER SAYS WHEN A RUN WAS RECORDED UNDER OTHER REPLAY SEMANTICS THAN THIS BUILD'S
+    /// (<c>U-runner-maxhold-replay</c>), on the deployment's line and to Research: both versions, and why it is not
+    /// replayed. A property of the run, not of the version — a run of the version this build starts carries this
+    /// build's stamp — so <see cref="CannotRun"/> does not say it.
+    /// </summary>
+    static string ReplayedUnder(int? stamped) =>
+        (stamped is { } other
+            ? $"this run was recorded under the paper runner's replay semantics {other.ToString(CultureInfo.InvariantCulture)}"
+            : "this run was recorded with no replay semantics on it — a build before they were stamped (schema 34) started it")
+        + $", and this build replays under {Versions.ForwardReplay.ToString(CultureInfo.InvariantCulture)}: every pass "
+        + "rebuilds a run from its first minute, and minutes decided under other rules replay into a state the run never "
+        + "had — an entry it never sent, a stop sized from it — so it was ended before anything was settled, replayed or "
+        + "sent, and nothing it recorded was rewritten";
 
     /// <summary>What the runner says when it cannot run a version, on the deployment's line and to Research.</summary>
     const string NotFrozen =
