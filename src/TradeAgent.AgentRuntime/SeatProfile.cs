@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -228,22 +227,19 @@ public static class SeatProfile
     // ---- the pin ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// What each program file hashed to, keyed on its path and remembered against its length and last write: a launch hashes the
-    /// program once per change rather than once per start, and a file replaced in place is hashed again.
+    /// SHA-256, lower-case hex, of the file at <paramref name="path"/> — read in full at EVERY call, never remembered. The first pass
+    /// kept each hash against the file's length and last write, and a same-user writer can swap same-length bytes and put the time
+    /// back; no file metadata is out of that writer's reach (Windows lets it set even the change time), so nothing short of the bytes
+    /// is trusted. Measured: codex 0.160.1 is 241,556,032 bytes and hashes in 0.61 s with <c>shasum</c>, far under a turn.
+    ///
+    /// <para><b>INTEGRITY ADVISORY</b> while any unconfined seat shares the host and user (<c>docs/ORCHESTRATION.md</c> § 2.7): the
+    /// same writer can still swap the file between this hash and the start. The pin turns a wrong or updated program into a refusal;
+    /// it does not make a hostile same-user swap impossible.</para>
     /// </summary>
-    static readonly ConcurrentDictionary<string, (long Length, DateTime Written, string Sha)> Hashes = new(StringComparer.Ordinal);
-
-    /// <summary>SHA-256, lower-case hex, of the file at <paramref name="path"/>.</summary>
     public static string Sha256Of(string path)
     {
-        var info = new FileInfo(path);
-        var (length, written) = (info.Length, info.LastWriteTimeUtc);
-        if (Hashes.TryGetValue(path, out var known) && known.Length == length && known.Written == written) return known.Sha;
-
         using var stream = File.OpenRead(path);
-        var sha = Convert.ToHexStringLower(SHA256.HashData(stream));
-        Hashes[path] = (length, written, sha);
-        return sha;
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
     /// <summary>Whether <paramref name="exe"/> is the plan's pinned program — always, for a plan that pins none.</summary>

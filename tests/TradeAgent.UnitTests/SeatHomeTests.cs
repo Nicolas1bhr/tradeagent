@@ -162,6 +162,33 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// A PINNED PROGRAM SWAPPED IN PLACE — SAME LENGTH, ITS MODIFICATION TIME PUT BACK — IS NOT THE PIN (the review's P1 on the fix
+    /// pass, 2026-10-11). The first pass remembered each file's hash against its length and last write, so a same-user writer could
+    /// replace the bytes, restore the time, and be admitted under the old hash. Every check now hashes the file itself.
+    /// </summary>
+    [Fact]
+    public async Task A_pinned_program_swapped_in_place_with_its_length_and_time_kept_is_refused()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_pinned_program_swapped_in_place_with_its_length_and_time_kept_is_refused));
+        Assert.True(SeatProfile.IsPin(codex, exe));
+        var pinned = File.ReadAllBytes(exe);
+        var written = File.GetLastWriteTimeUtc(exe);
+
+        var swapped = System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.UTF8.GetString(pinned).Replace("0.160.1", "0.160.2", StringComparison.Ordinal));
+        Assert.Equal(pinned.Length, swapped.Length);
+        Assert.False(pinned.AsSpan().SequenceEqual(swapped));
+        File.WriteAllBytes(exe, swapped);
+        File.SetLastWriteTimeUtc(exe, written);
+        Assert.Equal(pinned.Length, new FileInfo(exe).Length);
+        Assert.Equal(written, new FileInfo(exe).LastWriteTimeUtc);
+
+        Assert.False(SeatProfile.IsPin(codex, exe), "a same-length swap with its time restored was taken for the pin");
+        Assert.Contains("version unknown — not run", SeatProfile.PinRefusal(codex, exe), StringComparison.Ordinal);
+        Assert.False((await new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe()).DetectAsync()).Installed);
+        Assert.Empty(Argv(dump));
+    }
+
+    /// <summary>
     /// (c) A FILE THE PROFILE DOES NOT ALLOW, IN THE SEAT HOME OR THE WORKSPACE, REFUSES THE LAUNCH IN WORDS NAMING IT — before
     /// admission and again at the start, fresh or resumed. Each of the three was measured reaching the model (survey §§ 1-2): the
     /// home's <c>AGENTS.md</c> injected even under the deny set, <c>$HOME/.agents/skills</c> a skill root with CODEX_HOME set, and a
