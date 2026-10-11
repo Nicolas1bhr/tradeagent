@@ -10340,3 +10340,30 @@ unchanged — the explicit no-ledger path the brief asked for.
 owed light: only the LAST cause is remembered, so alternating refusals A → B → A write three lines for two causes — bounded by the backoff itself (at most one line per refused turn, 30 s doubling to
 30 min apart), never a storm; a fix pass was not worth its spend (the owner's "not for sport", 18:20).
 **NOT VERIFIED:** the refusal in the running app (no app run; no paid AI run); the deduped-alternation case beyond the review's reading.
+
+## U-reconcile-packet — Research is woken once for a new tape item it owns and a director before a boundary's deadline, never by an item inside a holdout window; every turn's Situation says what changed, what the role believes and what is wanted (landed 2026-10-11, seat B)
+
+**Landed** solo (`land.sh` v2) on `main` at tip `ce99ad6c` (rebased on `7ef727a0`). CI run **38158400186** at `501226fb` CARRIED (build tree equal outside bookkeeping paths): every job success, linux-host
+included; `land.sh check` VERDICT PASS (names removed 0, scan clean). **No rung, no op/verb/arg/table.** Canon **v3** (ops `08fd3106…9d380`, research `c5a1dc57…ca71c7e`; −5 B per variant, bytes in the brief).
+**What changed:**
+1. Tape wake: `TapeCollector` tells an app-set delegate → `AgentRuntime/TapeWakes.cs` raises ONE coalesced untaken `tape` wake per role for announcements/inputs an ACTIVE deployment of a Research version
+   reads; items inside any `TapeHoldout.Pipe(research)` window are neither counted nor named. `deadline:<boundary>:<role>` raised in `Schedule` ¼ window before `deadline_at`, withdrawn once assessed/settled.
+2. The Situation: "Why you are awake", What changed (≤ 50 lines), What you believe (ledger `List(role, open)`, ≤ 10 entries / 2 KiB, every line "your claim"), What is wanted (objectives v1). Fixture
+   bytes: operations 792 → 1,664, research 644 → 1,589.
+3. Holdout re-checked when the wake is admitted and when it is rendered: a wake every item of which is now held is withdrawn without a turn and names nothing; a partly held one names only the items
+   outside; an UNREADABLE holdout (null or throw) DEFERS the wake — neither taken nor withdrawn, decided again at the next look; a role whose only due wakes are deferred is stepped over.
+4. Collector notices: a notice the listener fails is OFFERED and frozen, retried as the same range under the same fetch id, so the listener's `Tape:<id>` row (ON CONFLICT DO NOTHING) keeps every
+   retry to the one wake it may already have raised; a later fetch is owed as its own notice behind it; bound TWO per series, nothing evicted; while an offered notice is pending a storing fetch tells
+   nothing until the next look, so a held arrival never brings a retry forward.
+**Evidence:** RED at each base and MUTANTS red, quoted in the brief's four reports — e.g. not coalesced ⇒ "The collection contained 2 items"; holdout check skipped ⇒ "Assert.False() … Actual: True";
+withdraw-on-unreadable restored ⇒ "Actual: \"withdrawn\""; `Offered` a no-op ⇒ "contained 2 items" / "Expected: 2 Actual: 3". Release `--no-incremental` 0 warnings each pass; touched classes 3×
+(pass 3: "Passed: 46"); names 2623 → 2635, removed 0. Tests box FULL suite GREEN on pass 2's tree (run 20261011-173747-725fcadb: Unit 1742/1742, Fault 498/498, Integration 692/693, 1 not run); pass 3
+(TapeCollector only) NOT RUN there by seat B's ruling — CI covers it.
+**Tests edited, declared and accepted:** `The_loop_settles_a_boundary_at_its_deadline_without_launching_anything` (each unassessed director's one reminder is taken first; the deadline still settles with
+no launch); `ResearchLedgerOverPipeTests` `Canon.Version == 2` → `>= 2` (a version floor; CanonTests pin the exact version and hashes).
+**Review (Codex `gpt-6.1-sol`, high), four rounds:** build review 2 REAL (holdout declared after the wake; a failed tell lost) → fix 1; re-review 2 REAL (an unreadable holdout withdrew a valid wake;
+the 256 cap could evict the one unheld notice) → fix 2; re-review 1 REAL (extending a pending range replayed a delivered item under a new id: a churn wake and a holdout timing channel) → fix 3, the
+third pass the orchestrator approved; fix-3 re-review CLEAN ("No regression found … bounded at two notices per series"). Triage: fleet/records/U-reconcile-packet-review-triage.md.
+**CI red the diff cannot reach (first sighting, fleet/ci-ledger.md):** run 38154236715 test (windows-latest, 3) — `actions/upload-artifact@v7` hung after its tests and shard check passed.
+**Owed cards:** a crash between the tape commit and the tell loses the wake (owed notices are in memory; a persisted "told" watermark needs a table/rung); GDELT archive rows raise no tape wake.
+**NOT VERIFIED:** no app run; no paid AI run; no real tape wake observed end to end.
