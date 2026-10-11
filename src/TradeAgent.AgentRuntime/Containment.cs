@@ -135,8 +135,11 @@ public sealed record ContainmentFacts(bool Held, string Mechanism, bool SandboxO
         .Where(s => s.Length > 0));
 }
 
-/// <summary>The cell a process was started in: its policy's SHA-256 and the platform facts that confined it (the Mechanism line's source).</summary>
-public sealed record CellLaunch(string PolicyHash, CellPlatform Platform);
+/// <summary>
+/// The cell a process was started in: its policy's SHA-256, the platform facts that confined it (the Mechanism line's source), and
+/// the launch's own policy file, which the launcher removes once the cell has exited.
+/// </summary>
+public sealed record CellLaunch(string PolicyHash, CellPlatform Platform, string PolicyFile);
 
 /// <summary>
 /// One agent process and the thing that holds it: a Job Object on Windows, a session of its own on
@@ -454,6 +457,7 @@ public static class ProcessContainment
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
         {
             Command(psi, exe, args);
+            CellStage.Discard(policyFile);
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 $"TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message}); {exe} was not started, " +
                 "in a cell or outside one", ex);
@@ -461,7 +465,7 @@ public static class ProcessContainment
 
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
             $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) in a session of its own; cancelling kills its process group",
-            new CellLaunch(cell.Hash, on));
+            new CellLaunch(cell.Hash, on, policyFile));
     }
 
     /// <summary>

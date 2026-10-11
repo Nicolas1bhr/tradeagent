@@ -38,7 +38,8 @@ public class CellPolicyTests
         var policy = Policy(ws);
         var path = policy.Write(Dir("cells"));
 
-        Assert.Equal(policy.Hash + ".cell.json", Path.GetFileName(path));
+        Assert.Matches("^" + policy.Hash + "\\.[0-9a-f]{16}\\.cell\\.json$", Path.GetFileName(path));
+        Assert.NotEqual(path, policy.Write(Path.GetDirectoryName(path)));     // one file per launch: the launcher removes only its own
         var back = CellPolicy.Read(path);
         Assert.Equal(policy.Hash, back.Hash);
         Assert.Equal(ws, back.Workspace);
@@ -132,6 +133,17 @@ public sealed class LinuxKernelFactAttribute : FactAttribute
 /// </summary>
 public class CellGrantTests
 {
+    /// <summary>"App-owned" includes the owner (triage #7): a file of another account — root's <c>/etc/passwd</c> — is not this account's.</summary>
+    [LinuxKernelFact]
+    public void A_file_of_another_account_is_not_this_accounts_own()
+    {
+        Assert.NotEqual("root", Environment.UserName);
+        var mine = Path.Combine(TestEnv.Home, "mine-" + Guid.NewGuid().ToString("n")[..8]);
+        File.WriteAllText(mine, "x");
+        Assert.Null(CellNative.NotOwnedByThisAccount(mine));
+        Assert.Contains("belongs to uid 0, not to this account", CellNative.NotOwnedByThisAccount("/etc/passwd"));
+    }
+
     [LinuxKernelFact]
     public void A_grant_retargeted_to_state_after_the_policy_was_checked_is_refused()
     {

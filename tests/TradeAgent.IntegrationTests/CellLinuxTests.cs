@@ -629,6 +629,25 @@ public class CellLinuxTests
         Assert.All(fds, fd => Assert.Contains(fd, new[] { "0", "1", "2", "3" }));
     }
 
+    /// <summary>One policy file per launch, in the app's own cell folder while the cell runs, and gone once it has exited (triage #6).</summary>
+    [LinuxFact]
+    public async Task A_cell_policy_file_is_removed_after_the_cell_exits()
+    {
+        PlatformIsACells();
+        var w = new World("discard");
+        var psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("sleep 2");
+        using var held = ProcessContainment.Start(psi, w.Policy(), Launcher());
+        var file = held.Cell!.PolicyFile;
+        Assert.Equal(CellPolicy.Directory, Path.GetDirectoryName(file));
+        Assert.True(File.Exists(file), $"the launch's policy file {file} while its cell runs");
+        held.Process.StandardInput.Close();
+        await held.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(90));
+        Assert.Equal(0, held.Process.ExitCode);
+        Assert.False(File.Exists(file), $"the launch's policy file {file} outlived its cell");
+    }
+
     [LinuxFact]
     public async Task A_cell_stage_refuses_a_policy_file_that_is_not_the_apps_own()
     {
@@ -643,7 +662,7 @@ public class CellLinuxTests
         Assert.Equal(CellStage.Failed, code);
         Assert.Contains("not in TradeAgent's own cell folder", err);
 
-        var tampered = Path.Combine(CellPolicy.Directory, new string('0', 64) + ".cell.json");
+        var tampered = Path.Combine(CellPolicy.Directory, new string('0', 64) + ".0000000000000000.cell.json");
         File.WriteAllText(tampered, File.ReadAllText(written));
         (code, _, err) = await Run(tampered);
         Assert.Equal(CellStage.Failed, code);
