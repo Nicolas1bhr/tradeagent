@@ -1,6 +1,8 @@
 using System.Reflection;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -148,5 +150,54 @@ public class RoleObjectivesTests
         using var context = JsonDocument.Parse(row.Context!);
         Assert.True(context.RootElement.TryGetProperty("objectives_version", out var version), row.Context);
         Assert.Equal(RoleObjectives.Version, version.GetInt32());
+    }
+    /// <summary>
+    /// A FILL RECORDED AFTER THE BOOK WAS READ LEAVES THE BOOK UNREAD. The chair's position objective is decided from
+    /// the host's last read of the platform, and that read stays the host's own; but a fill the ledger records after
+    /// it — a paper deployment's included, which wakes no director — has moved the book the read describes, and an
+    /// out-of-date book read as flat would withdraw the chair's look over a position it holds. Unread opens the
+    /// objective; the next Situation reads the book again.
+    ///
+    /// <para>RED at a2e839e6 (review 1, finding 3): the book stayed the flat one the Situation read, and the chair
+    /// held no open objective over the position the fill opened.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_fill_recorded_after_the_book_was_read_leaves_the_book_unread()
+    {
+        using var db = TestEnv.NewDb();
+        var connector = new FakeConnector(new FakeBroker());
+        var host = AppHost.Composed(db, connector, new AgentPresence());
+        try
+        {
+            host.Gateway.Update(s =>
+            {
+                s.Mode = TradingMode.PAPER;
+                s.SelectedAccountId = connector.Broker.AccountId;
+                s.Risk.MaxOrderQuantity = 10m;
+                s.Risk.MaxNotionalPerOrder = 10_000_000m;
+                s.Risk.MaxOpenPositions = 10;
+                s.Risk.MaxOrdersPerMinute = 100;
+                s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            });
+            await connector.ConnectAsync();
+            await host.Gateway.RefreshHealthAsync();
+            var mission = new AppHost.MissionHost(host);
+
+            await mission.SituationAsync(CouncilRoles.Operations, CancellationToken.None);
+            Assert.Empty(mission.Objectives(CouncilRoles.Operations)!);
+
+            await host.Gateway.PlaceAsync(new AgentContext("chair"), "book-moves", TestEnv.Buy());
+            Assert.NotEmpty(host.Gateway.Fills.Since());
+            Assert.Contains(new RoleObjective(RoleObjectives.PositionWatched, RoleObjectives.UnreadBook),
+                mission.Objectives(CouncilRoles.Operations)!);
+
+            await mission.SituationAsync(CouncilRoles.Operations, CancellationToken.None);
+            Assert.Contains(new RoleObjective(RoleObjectives.PositionWatched, "ES +1"),
+                mission.Objectives(CouncilRoles.Operations)!);
+        }
+        finally
+        {
+            await host.Gateway.DisposeAsync();
+        }
     }
 }

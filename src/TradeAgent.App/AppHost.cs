@@ -508,6 +508,23 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     string[]? _lastBook;
 
+    /// <summary>
+    /// HOW MANY FILLS THE LEDGER HAS RECORDED SINCE THIS HOST STARTED, as the gateway told it — so a read of the book
+    /// that a fill overtook is not stored as current (review 1, finding 3).
+    /// </summary>
+    long _bookMoves;
+
+    /// <summary>
+    /// A FILL WAS RECORDED, so the book the last Situation read is no longer the account: it is unread until the next
+    /// read. A paper deployment's fill wakes no director, and without this the chair's look would be decided from a
+    /// book the fill has already moved. Never a broker call — the next Situation is what reads it again.
+    /// </summary>
+    void BookMoved()
+    {
+        Interlocked.Increment(ref _bookMoves);
+        Volatile.Write(ref _lastBook, null);
+    }
+
     /// <summary>When each role's Situation last listed the owner's new material — see <see cref="RoleInboxMarks"/>.</summary>
     readonly RoleInboxMarks _inboxSeen = new(DateTimeOffset.UtcNow);
 
@@ -861,6 +878,7 @@ public sealed class AppHost : IAsyncDisposable
         // than a reference to this host, so nothing reachable from it can change a mode, lift
         // the kill switch or approve anything.
         Gateway.RaiseMissionWake = RaiseWake;
+        Gateway.FillRecorded = BookMoved;
         ReportAiToTheGateway();
     }
 
@@ -986,6 +1004,7 @@ public sealed class AppHost : IAsyncDisposable
         // A new gateway is a new object and the sink is on the object, exactly like the hook below.
         // Forgetting this line is how a fill on the new platform stops waking the AI.
         Gateway.RaiseMissionWake = RaiseWake;
+        Gateway.FillRecorded = BookMoved;
 
         _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
         _server.Start();
@@ -1625,7 +1644,7 @@ public sealed class AppHost : IAsyncDisposable
     /// because the loop must not be handed the composition root: everything it can reach is on these
     /// five members, and none of them can change a mode, lift the kill switch or approve an order.
     /// </summary>
-    sealed class MissionHost(AppHost host) : IMissionHost
+    internal sealed class MissionHost(AppHost host) : IMissionHost
     {
         public IAgentConversation? Conversation => host.Conversation;
 
@@ -1818,12 +1837,16 @@ public sealed class AppHost : IAsyncDisposable
             // failure is said in the words the AI reads rather than rendered as an empty list.
             IReadOnlyList<string> positions;
             IReadOnlyList<ConnectorSdk.PositionInfo>? held = null;
+            // A READ A FILL OVERTOOK IS NOT KEPT AS CURRENT: the count is taken before the read and checked after the
+            // store, so a fill recorded while the platform answered leaves the book unread rather than stale.
+            var moves = Interlocked.Read(ref host._bookMoves);
             try
             {
                 held = await host.Gateway.PositionsAsync(ct);
                 positions = held.Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0} at {p.AveragePrice}").ToArray();
                 Volatile.Write(ref host._lastBook, held.Where(p => p.Quantity != 0)
                     .Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0}").ToArray());
+                if (Interlocked.Read(ref host._bookMoves) != moves) Volatile.Write(ref host._lastBook, null);
             }
             catch (Exception ex)
             {

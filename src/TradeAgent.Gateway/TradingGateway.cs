@@ -73,6 +73,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Action<string, string, string?, string>? RaiseMissionWake { get; set; }
 
+    /// <summary>
+    /// TOLD THAT THE LEDGER RECORDED A FILL, of any request or of none — or null where nobody listens
+    /// (<c>U-reconcile-wakes</c>, review 1). The host's last read of the book describes the account before it, so
+    /// the host stops calling that read current. It is told the fact and nothing else: no row, no answer and no
+    /// wake depends on it, and a listener that throws changes nothing here.
+    /// </summary>
+    public Action? FillRecorded { get; set; }
+
     /// <summary>Raises one wake for <paramref name="role"/>, never throwing into the caller — every call site is an event handler.</summary>
     void Wake(string id, string kind, string role, object? payload = null)
     {
@@ -2493,6 +2501,12 @@ public sealed class TradingGateway : IAsyncDisposable
             // FOR THE ROLE WHOSE BOOK IT IS, and for nobody when a paper deployment placed it
             // (WakeRoleFor). Only the wake's role is decided here: the row is written and the answer
             // returned exactly as before.
+            if (recorded)
+            {
+                try { FillRecorded?.Invoke(); }
+                catch (Exception ex) { _log.TryEngineering("Gateway", "fill_recorded_listener_failed", "warn", ex: ex); }
+            }
+
             if (recorded && WakeRoleFor(requestId) is { } role)
                 Wake(MissionEventIds.Fill(x.ExecutionId), MissionEventKind.Fill, role,
                     new { symbol = x.Symbol, side = x.Side.ToString(), quantity = x.Quantity });
