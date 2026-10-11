@@ -1062,6 +1062,22 @@ public sealed class TapeStore : IDisposable
     });
 
     /// <summary>
+    /// WHAT THE FETCHES OF ONE SERIES FROM <paramref name="firstFetch"/> THROUGH <paramref name="lastFetch"/> STORED NEW —
+    /// subject and source time of each, in the order written, never a payload: the collector's coalesced notice to its
+    /// listener (<c>U-reconcile-packet</c>, review 2). Names and instants only, like <see cref="SourceTimes"/>.
+    /// </summary>
+    public IReadOnlyList<TapeArrived> Arrived(string source, string series, long firstFetch, long lastFetch) => Read(() =>
+    {
+        using var c = Cmd(
+            "SELECT subject, source_time FROM tape_obs WHERE fetch_id >= $first AND fetch_id <= $last AND source=$src AND series=$ser ORDER BY id",
+            ("$first", firstFetch), ("$last", lastFetch), ("$src", source), ("$ser", series));
+        var items = new List<TapeArrived>();
+        using var r = c.ExecuteReader();
+        while (r.Read()) items.Add(new TapeArrived(r.GetString(0), Sql.Time(r.GetString(1))));
+        return (IReadOnlyList<TapeArrived>)items;
+    });
+
+    /// <summary>
     /// THE SOURCE TIMES HELD FOR ONE SUBJECT OF ONE SERIES at or after <paramref name="from"/> — for an archive, which
     /// of its files the tape already holds a record of (<c>U-tape-archive</c>), so a recorder resumes from the tape and
     /// never from a memory of its own.

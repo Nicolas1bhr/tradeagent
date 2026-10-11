@@ -172,6 +172,59 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (a3) NO UNHELD NOTICE IS EVER DROPPED BY THE BOUND ON WHAT IS PENDING (review 2). The listener falls over for 257
+    /// storing fetches of one series; only the first stored an item outside every holdout window, the 256 after it are
+    /// all inside August, which is held. Pending notices coalesce per series into one, so nothing has to be evicted, and
+    /// once the listener recovers an unchanged page polled again still raises Research's wake — counting and naming only
+    /// the item outside.
+    ///
+    /// <para>RED at fa8f86c4 (≤ 256 notices, the oldest evicted): "Assert.Single() Failure: The collection was empty".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_full_backlog_of_held_notices_never_evicts_the_one_outside_every_window()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        using var archive = new FakeArchive();
+        var okx = Okx();
+        var path = TapeCollector.Url(okx.Series[0], "", null);
+        using var store = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+        HeldDataset(new DatasetStore(db), new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 31, 23, 59, 0, TimeSpan.Zero), new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var down = true;
+        await using var collector = new TapeCollector(store, baseUrl: archive.BaseUrl,
+            requestTimeout: TimeSpan.FromSeconds(5), now: () => TapeNow,
+            catalog: new TapeSourceCatalogRead([okx], null, []),
+            stored: arrival =>
+            {
+                if (down) throw new IOException("the listener fell over");
+                TapeWakes.Raise(db, arrival, TapeNow);
+            });
+
+        // THE FIRST STORING FETCH IS OUTSIDE EVERY WINDOW; THE 256 AFTER IT ARE INSIDE AUGUST.
+        archive.PublishAt(path, AnnouncementPage(Announcement("okx-will-list-outside", TapeNow.AddHours(-1), "OKX will list OUT")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        var held = new DateTimeOffset(2026, 8, 15, 0, 0, 0, TimeSpan.Zero);
+        for (var i = 0; i < 256; i++)
+        {
+            archive.PublishAt(path, AnnouncementPage(Announcement($"okx-will-list-held-{i}", held.AddMinutes(i), $"OKX will list H{i}")));
+            Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        }
+        Assert.Empty(events.OfKind(MissionEventKind.Tape));
+
+        // THE LISTENER RECOVERS, AND THE UNCHANGED PAGE POLLED AGAIN STORES NOTHING: the item outside still wakes Research.
+        down = false;
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.Equal(CouncilRoles.Research, wake.Role);
+        var payload = Json.Read<TapeWakePayload>(wake.Payload!)!;
+        Assert.Equal(1, payload.Count);
+        Assert.Equal(TapeParse.ItemSubject(AnnouncementUrl("okx-will-list-outside")), payload.Subject);
+        Assert.DoesNotContain("held", wake.Payload!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (b) A TAPE ITEM INSIDE A HOLDOUT WINDOW WAKES NOBODY — a window that ends, and one with no end because its dataset
     /// does not record where its bars end. An item outside every window still wakes Research, and the held one beside it
     /// is neither counted nor named.
