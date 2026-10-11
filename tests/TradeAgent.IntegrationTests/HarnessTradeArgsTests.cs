@@ -337,6 +337,34 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// EVERY ARGUMENT OF EVERY OP IS OFFERED, CHECKED OP BY OP rather than as the union, so an op whose arguments went
+    /// missing goes red even where another op declares names it shares. The arguments exactly one op declares are named
+    /// in the log: they are the ones a dropped op would lose and no other op would carry back.
+    /// </summary>
+    [Fact]
+    public void Every_argument_every_op_declares_is_offered_with_the_type_the_pipe_reads()
+    {
+        var missing = new List<string>();
+        foreach (var tool in GrantedWorkerTools.Granted.Where(t => GrantedWorkerTools.OpsOf(t.Name).Count > 0))
+        {
+            var schema = Wire(tool);
+            var ops = GrantedWorkerTools.OpsOf(tool.Name);
+            foreach (var op in ops)
+                foreach (var arg in ArgsOf(op))
+                {
+                    var wanted = arg.Type == "bool" ? "boolean" : arg.Type;
+                    if (OfferedType(schema, arg.Name) != wanted)
+                        missing.Add($"{tool.Name}·{op}·{arg.Name}: offered {OfferedType(schema, arg.Name) ?? "nothing"}, read as {wanted}");
+                }
+
+            var sole = ops.SelectMany(op => GatewaySchema.Ops().Single(o => o.Op == op).Args.Select(a => (op, a.Name)))
+                .GroupBy(x => x.Name).Where(g => g.Count() == 1).Select(g => $"{g.Key} ({g.Single().op})");
+            log.WriteLine($"{tool.Name}: declared by exactly one op — {string.Join(", ", sole)}");
+        }
+        Assert.True(missing.Count == 0, "an op's argument is not offered as the pipe reads it:\n" + string.Join("\n", missing));
+    }
+
     static JsonElement J(object v) => JsonSerializer.SerializeToElement(v);
 
     static string Cut(string? s) => s is null ? "" : s.Length <= 140 ? s : s[..140] + "…";
