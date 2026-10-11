@@ -10290,3 +10290,27 @@ Opus reviewer of the rewrite — 24 findings, 3 HIGH (the owner's lane beside an
 still carrying rejected definitions), all fixed in the text before any brief: R23 § 2b.
 **NOT VERIFIED / not done:** nothing built; every enforcement class for a future seat is a TARGET; the exec-server split, the broker-only codex seat and
 Linux confinement are UNKNOWN until `R-exec-server` and `U-cell-linux`; no seat opened, no builder dispatched — the build waits for the owner's word.
+
+
+## U-ci-dedupe — a push to main whose build tree a successful dispatched run already tested skips its jobs and names that run, so a landing no longer re-tests a tree land.sh has proven green (landed 2026-10-11, seat A; built by seat B)
+
+**Landed** solo (`land.sh` v2) on `main` `28a72cf6`: MERGE_SHA `cc0dec52` (reported tip `1909e07e`, rebased by docs only). On main, in order: `5ad3dc75` dispatch · `04fd4ec2` the
+lookup script · `69be7bf6` the gate · `d04445ec` report · `3b5b178b` the job rename · `ccd78ddd` docs/ORCHESTRATION.md into paths-ignore · `cc0dec52` fix-pass report. No rung.
+**CI:** run **38149744637** at `6894d342`, every job success (dedupe-gate success with its push-only steps skipped; shard-plan; package; package-linux; test windows 1-5,
+ubuntu, macos each `0 Warning(s)`; linux-host), CARRIED to `cc0dec52` (build tree equal outside the bookkeeping list); `land.sh check` VERDICT PASS. Names 2612/2612, removed 0,
+[Fact]/[Theory] 2553/2553. Scan clean (the variable name `GH_TOKEN`, no value, excluded by that phrase).
+**What changed:**
+1. Job `dedupe-gate` (permissions `actions: read`, `contents: read`): on a push to main its steps (`.github/ci/tested-before.sh`) list the newest successful first-attempt
+   `workflow_dispatch` runs of build.yml and compare each head tree with this push's outside `on.push.paths-ignore`, requiring every job `success`; a match outputs `skip=true` +
+   `tested_by=<run>` and the summary names the run. Any lookup, filter, timeout or fetch failure ⇒ `skip=false`: it fails closed by running.
+2. Every other job `needs:` it with `if: !cancelled() && needs.dedupe-gate.outputs.skip != 'true'`. The gate JOB always runs (only its steps are push-only), because land.sh's carry
+   needs every job `success`; a deduped push run has every other job `skipped`, so land.sh can never carry FROM one.
+3. FIX PASS (seat A, fresh sonnet fixer): the first landing attempt's `land.sh check` FAILED because check reads every job named `test*` as a test job needing a build summary
+   (`tested-before` printed none) — the gate job is renamed `dedupe-gate`, every `needs:`/outputs reference with it; job keys now dedupe-gate, shard-plan, test, package,
+   package-linux, linux-host. The earlier false landing record was reverted at `6853e0bb`.
+4. `docs/ORCHESTRATION.md` (read by no test, build, package or tool — grep of src/tests/tools/packaging/.github prints only the paths-ignore line) joins paths-ignore, and
+   fleet/bin/bookkeeping-paths.txt gained the same line AT this merge, so land.sh's drift guard (list vs main's build.yml) stays equal.
+**Review (Codex `gpt-6.1-sol`, high):** pass 1's P2 (`git diff -- .` relative to the cwd; CI runs at the repo root) → OWED light card. Fix pass: the rename closes the check failure,
+no regression; one P2 — no executable regression test of land.sh's `test*` predicate — judged fleet tooling outside the unit (land.sh's own test, owed card).
+**NOT VERIFIED:** a real deduped main push. This record's push carries the merged build.yml, so it starts a main run whose tree equals run 38149744637's outside
+the bookkeeping list: whether it dedupes is not known at this record — its verdict (skip named or a full run) goes to fleet/ci-ledger.md and the next record. Tests box NOT RUN (CI-only unit).
