@@ -1637,6 +1637,7 @@ public sealed class MissionLoop
 
         if (events is not null)
         {
+            RecoverLostOwnerWords(events);
             Schedule(events);
             var due = RolesDue(events);
             if (due.Count == 0) return Idle(events);
@@ -2494,18 +2495,9 @@ public sealed class MissionLoop
                 events.Settle(e.Id, disposition);
                 if (!failed || e.Kind != MissionEventKind.Owner) continue;
 
-                var said = Json.Read<MissionOwnerMessage>(e.Payload ?? "");
-                if (said is null || said.RetryOf is not null) continue;
-
-                var seq = events.NextOwnerSequence();
-                events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
-                    Json.Write(said with
-                    {
-                        RetryOf = e.Id,
-                        Failure = ended?.Raw is { Length: > 0 } raw
-                            ? raw[..Math.Min(raw.Length, 500)]
-                            : "the turn ended without a reply"
-                    }), CouncilRoles.Operations);   // the chair's, as the message it retries was
+                RetryOnce(events, e, ended?.Raw is { Length: > 0 } raw
+                    ? raw[..Math.Min(raw.Length, 500)]
+                    : "the turn ended without a reply");
             }
         }
         catch (Exception)
@@ -2514,6 +2506,47 @@ public sealed class MissionLoop
             // cost this turn its consumption record, and stopping the loop over it would turn a
             // bookkeeping failure into the AI stopping work.
         }
+    }
+
+    /// <summary>
+    /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the chair's next turn — carrying which message it retries and why. A
+    /// message that is itself a retry is left as it is: the owner can see both rows and ask again in their own words.
+    /// </summary>
+    void RetryOnce(MissionEventStore events, MissionEvent e, string failure)
+    {
+        var said = Json.Read<MissionOwnerMessage>(e.Payload ?? "");
+        if (said is null || said.RetryOf is not null) return;
+
+        var seq = events.NextOwnerSequence();
+        events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
+            Json.Write(said with { RetryOf = e.Id, Failure = failure }),
+            CouncilRoles.Operations);   // the chair's, as the message it retries was
+    }
+
+    /// <summary>The failure a lost turn's retry carries: what the app knows, and nothing it does not.</summary>
+    internal const string LostTurn =
+        "the turn that took this message was lost: TradeAgent stopped before it ended, and nothing reported a reply";
+
+    /// <summary>
+    /// THE OWNER'S WORDS A LOST TURN TOOK, BACK IN FRONT OF THE CHAIR (review 1, finding 2). A launch consumes the
+    /// owner's message in its own write, and a crash after that write leaves it consumed by a launch the restart's
+    /// meter declares LOST, with no outcome — invisible to every later turn, which is handed only unconsumed wakes.
+    /// Each one is settled <c>failed</c> (the turn that took it ran and was lost) and its words re-raised once, exactly
+    /// as a failed turn's are, so the chair's next admitted turn is shown them first and that turn's outcome closes
+    /// them.
+    ///
+    /// <para>Read off the app's own two ledgers — the wake queue and the launch ledger's LOST rows, which only the
+    /// meter writes — and nothing an agent writes settles or raises anything here. Run before the schedule, so the
+    /// retry is due on this very pass. Never throws: the words stay where they are, and the next pass tries again.</para>
+    /// </summary>
+    void RecoverLostOwnerWords(MissionEventStore events)
+    {
+        try
+        {
+            foreach (var e in events.LostOwnerWords())
+                if (events.SettleLost(e.Id, LostTurn)) RetryOnce(events, e, LostTurn);
+        }
+        catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
     }
 
     /// <summary>

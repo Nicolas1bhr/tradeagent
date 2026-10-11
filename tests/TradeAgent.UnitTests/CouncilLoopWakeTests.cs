@@ -211,37 +211,52 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
-    /// THE OWNER'S WORDS ARE OPEN UNTIL THEY HAVE AN OUTCOME, not until a launch took them. A launch consumes the
-    /// owner's message in its own write; a crash after that write leaves the message consumed and with no outcome, and
-    /// the chair keeps its look over it — the look the fixed clock used to give it — until a turn's outcome is written.
+    /// THE OWNER'S WORDS A LOST TURN TOOK REACH THE CHAIR'S NEXT TURN FIRST, AND THAT TURN CLOSES THEM. A launch
+    /// consumes the owner's message in its own write; a crash after that write leaves it consumed by a launch a
+    /// restart declares LOST. The loop re-raises those words once, as it does a failed turn's, so the chair's next
+    /// admitted turn is shown them first; that turn's outcome settles them; and nothing stays open that no turn can
+    /// close — four quiet hours with a flat book buy that one turn and no look after it.
     ///
-    /// <para>RED at a2e839e6 (review 1, finding 2): the objective read only unconsumed messages, so the crash took the
-    /// owner's words out of the objectives and the chair's look was withdrawn.</para>
+    /// <para>Review 1, finding 2, as the re-review of 053c03ff corrected it. RED at 053c03ff: the lost message stayed
+    /// an objective that no turn could take, so the chair was bought scheduled looks that never quoted the words.</para>
     /// </summary>
     [Fact]
-    public async Task The_owners_words_a_lost_turn_took_stay_open_until_they_have_an_outcome()
+    public async Task The_owners_words_a_lost_turn_took_reach_the_chairs_next_turn_first_and_then_close()
     {
         var (db, root) = Workspace();
         using var _ = db;
         var events = new MissionEventStore(db);
         var now = Noon();
-        Assert.True(events.RecordOwnerMessage("close the ES position before the weekend", now));
+        const string said = "close the ES position before the weekend";
+        Assert.True(events.RecordOwnerMessage(said, now));
         var owner = Assert.Single(events.OfKind(MissionEventKind.Owner));
 
-        // THE LAUNCH'S WRITE, THEN THE CRASH: consumed by an attempt nobody will hear from again.
-        events.Consume([owner.Id], "turn-lost", now);
-        new AiAttemptStore(db).LoseOpen(now.AddMinutes(1));
+        // THE LAUNCH'S WRITE: the chair's turn admitted, the owner's words consumed in the same commit.
+        var lost = TurnMeter.IdMintedAt(now);
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = lost, StartedAt = now, ReservedCost = 0.10m, Role = CouncilRoles.Operations
+        }, [owner.Id]).Admitted);
 
-        Assert.Contains(new RoleObjective(RoleObjectives.OwnerAnswered, owner.Id),
-            RoleObjectives.Open(db, CouncilRoles.Operations, []));
+        // THE CRASH, AND THE RESTART: the app's meter opens the database and loses the launch nobody will report.
+        var restarted = new TurnMeter(db, () => 100m, now: () => now.AddMinutes(1), live: new LiveAttempts(),
+            recordPath: Path.Combine(root, "turns.jsonl"));
+        Assert.NotNull(restarted);
+        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(db).Get(lost)!.State);
+
+        // THE SCHEDULED LOOKS, A FLAT BOOK, FOUR QUIET HOURS.
         var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
-        await new MissionLoop(host, HalfHourLooks, now: () => now.AddMinutes(2)).TurnAsync();
-        Assert.True(host.Events!.HasUnconsumed(MissionEventKind.Review, CouncilRoles.Operations),
-            "the owner's words a lost turn took raised no look for the chair");
+        var opened = await Quiet(host, HalfHourLooks, now.AddMinutes(2), TimeSpan.FromHours(4));
+        var chair = opened.Where(o => o.Role == CouncilRoles.Operations).ToList();
+        var said1 = $"{chair.Count} chair turns in four quiet hours; first quotes the words: "
+                    + (chair.Count > 0 && chair[0].Prompt.Contains(said, StringComparison.Ordinal));
 
-        // A TURN'S OUTCOME CLOSES IT.
-        Assert.True(events.Settle(owner.Id, MissionEventDisposition.Answered));
+        var turn = Assert.Single(chair);
+        Assert.True(turn.Prompt.Contains(said, StringComparison.Ordinal), said1);
+        Assert.True(turn.Prompt.IndexOf(said, StringComparison.Ordinal)
+                    < turn.Prompt.IndexOf("Why you are awake", StringComparison.Ordinal), "the owner's words are not first");
         Assert.Empty(RoleObjectives.Open(db, CouncilRoles.Operations, []));
+        Assert.All(events.OfKind(MissionEventKind.Owner), e => Assert.NotNull(e.Disposition));
     }
 
     static string Repo()
