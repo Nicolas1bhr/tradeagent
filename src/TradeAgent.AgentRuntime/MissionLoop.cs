@@ -444,6 +444,14 @@ public interface IMissionHost
     void LaunchLedgerRefused(string role, string refusal) { }
 
     /// <summary>
+    /// Told once per DISTINCT CAUSE: a launch of <paramref name="role"/> was not started because it could not be — this
+    /// computer cannot hold it (<paramref name="lasting"/>, RULING 2) or the Operations Director's order-capable turn is
+    /// running (ORDER-001) — before any row was written or wake consumed (<c>U-grant-tree</c>). The host owns the words and
+    /// the activity line, as it does for <see cref="LaunchLedgerRefused"/>.
+    /// </summary>
+    void LaunchBarred(string role, string why, bool lasting) { }
+
+    /// <summary>
     /// OPENS THE DURABLE RECORD OF THE TURN ABOUT TO RUN AND COMMITS ITS COST — called by the loop
     /// immediately before the CLI is started, and for no other reason.
     ///
@@ -671,6 +679,13 @@ public sealed record MissionSituation
     public string? Cut { get; init; }
 
     /// <summary>
+    /// WHY THIS TURN HOLDS NO ORDER PERMISSION ALTHOUGH ITS ROLE HAS IT, or null (ORDER-001, <c>U-grant-tree</c>): the
+    /// Operations Director launched while another attempt's process runs beside it. Rendered first, so the turn reads it
+    /// before it plans an order the gateway would refuse.
+    /// </summary>
+    public string? OrdersWithheld { get; init; }
+
+    /// <summary>
     /// WHY THIS TURN IS HAPPENING, in the words of the events that caused it.
     ///
     /// A turn used to have no cause at all: the previous one ended, so this one started. An AI told
@@ -789,6 +804,8 @@ public sealed record MissionSituation
     {
         var b = new StringBuilder();
         b.AppendLine("## Situation").AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(OrdersWithheld)) b.Append(LaunchBar.Told(OrdersWithheld));
 
         if (OwnerMessages.Count > 0)
         {
@@ -1342,6 +1359,9 @@ public sealed class MissionLoop
 
     /// <summary>The launch ledger's last refusal the host was told of, so a ledger that stays broken is one line.</summary>
     string? _ledgerRefusalTold;
+
+    /// <summary>The last launch bar the host was told of (<c>U-grant-tree</c>), so a bar that stays is one line.</summary>
+    string? _barTold;
 
     /// <summary>
     /// THE ROLES WITH A TURN IN FLIGHT RIGHT NOW — the turn lease, and the whole of it.
@@ -1931,6 +1951,12 @@ public sealed class MissionLoop
         // mission's waits rather than racing it, and what they typed is carried into the next one.
         if (conversation.Busy) return _options.BusyRetry;
 
+        // ---- a launch that may not start (U-grant-tree) -------------------------------------------
+        // DEFERRED BEFORE ANYTHING IS WRITTEN: no admission row, no wake consumed, no scan taken. A computer that cannot
+        // hold the launch backs off as a ledger refusal does and the card says why (RULING 2); the Operations Director's
+        // order-capable turn holds every other launch until it ends (ORDER-001), and the loop looks again shortly.
+        if (conversation is ILaunchGate gate && gate.Barred() is { } bar) return Barred(role, bar, events);
+
         // ---- yield to the scanner ----------------------------------------------------------------
         // Nothing of THIS turn is running at this line: the previous turn's process has exited and
         // this one has not started. So a pass taken here measures a window that contains no agent
@@ -1999,6 +2025,9 @@ public sealed class MissionLoop
         {
             Role = role,
             Attempt = attemptId,
+            // ORDER-001 (U-grant-tree): a launch of the Operations Director that would start beside another attempt is told
+            // so in the prompt the ledger hashes. A look — the grant decides, and refuses the order in the same words.
+            OrdersWithheld = (conversation as ILaunchGate)?.OrdersWithheldNow(),
             // WHAT TRADEAGENT DID TO THIS ROLE'S LAST TURN, if it cut it. Read here rather than
             // removed: a turn the ledger then refuses never runs, and consuming the notice into a
             // message nobody sent would lose it.
@@ -2090,7 +2119,7 @@ public sealed class MissionLoop
 
         // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
         // is a new event and is told.
-        lock (_gate) _ledgerRefusalTold = null;
+        lock (_gate) { _ledgerRefusalTold = null; _barTold = null; }
 
         // THE ID THE ROW ACTUALLY CARRIES. Null is a host BUILT WITHOUT A LEDGER (AiAdmission.NoLedger)
         // and nothing else — a ledger that would not take the row refused above — and then the minted
@@ -3155,6 +3184,40 @@ public sealed class MissionLoop
 
         Changed?.Invoke();
         return Backoff(errors);
+    }
+
+    /// <summary>
+    /// A LAUNCH THAT MAY NOT START (<c>U-grant-tree</c>), refused before anything was written. Told to the host once per
+    /// distinct cause. Lasting (RULING 2: this computer cannot hold it): counted as a failed turn and backed off from as a
+    /// ledger refusal is, the card saying what it waits for and the owner's due messages marked with the reason — they stay
+    /// owed. Passing (ORDER-001: the chair's order-capable turn runs): looked at again after <see cref="MissionOptions.BusyRetry"/>.
+    /// </summary>
+    TimeSpan Barred(string role, LaunchBar bar, MissionEventStore? events)
+    {
+        bool told;
+        var errors = 0;
+        lock (_gate)
+        {
+            told = string.Equals(_barTold, bar.Why, StringComparison.Ordinal);
+            _barTold = bar.Why;
+            if (bar.Lasting)
+            {
+                errors = Failed(role);
+                _role = role;
+                _waitingFor = $"TradeAgent to be able to hold the AI's programs again ({bar.Why})";
+            }
+        }
+
+        if (!told)
+        {
+            Refused?.Invoke($"{CouncilRoles.Title(role)}: {bar.Why}");
+            try { _host.LaunchBarred(role, bar.Why, bar.Lasting); }
+            catch (Exception) { /* a line about a launch is never worth the loop */ }
+        }
+        if (bar.Lasting && events is not null) BlockOwnerMessages(events, bar.Why);
+
+        Changed?.Invoke();
+        return bar.Lasting ? Backoff(errors) : _options.BusyRetry;
     }
 
     /// <summary>Doubling from <see cref="MissionOptions.FirstBackoff"/>, capped at the same ceiling.</summary>

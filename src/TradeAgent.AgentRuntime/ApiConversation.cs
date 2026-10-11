@@ -655,6 +655,29 @@ public sealed class ApiConversation(
 /// recorded once the provider had already been paid — the exact defect <c>U-budget-reserve</c>
 /// removed from the owner's own chat.</para>
 /// </summary>
+/// <summary>
+/// WHY A LAUNCH MAY NOT START NOW (<c>U-grant-tree</c>). <see cref="Lasting"/>: this computer cannot hold the launch at all
+/// (RULING 2) — the loop backs off as it does for a ledger refusal and the card says the reason and the repair. Otherwise
+/// it passes: the Operations Director's order-capable turn is running (ORDER-001), and the loop looks again shortly.
+/// </summary>
+public sealed record LaunchBar(string Why, bool Lasting)
+{
+    /// <summary>The line a turn without order permission opens with, in the grant's own words.</summary>
+    public static string Told(string withheld) =>
+        $"**This turn holds no permission to trade.** TradeAgent says: {withheld}. Read, answer and plan; do not place, " +
+        "change or cancel an order this turn.\n\n";
+}
+
+/// <summary>A conversation whose launches are processes, and can say before admission why one may not start (<c>U-grant-tree</c>).</summary>
+public interface ILaunchGate
+{
+    /// <summary>Why a launch may not start now, or null.</summary>
+    LaunchBar? Barred();
+
+    /// <summary>Why a launch issued now would hold no order permission its role has, or null.</summary>
+    string? OrdersWithheldNow();
+}
+
 public interface IAdmittedConversation
 {
     /// <summary>

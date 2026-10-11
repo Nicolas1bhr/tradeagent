@@ -545,6 +545,107 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A LAUNCH THAT MAY NOT START IS DEFERRED BEFORE ANYTHING IS WRITTEN (<c>U-grant-tree</c>). While the Operations
+    /// Director's order-capable turn runs (ORDER-001) the loop writes no row, consumes no wake, tells the owner once and looks
+    /// again after its busy retry; once the bar lifts, the next look launches the turn the wake was owed.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_held_by_the_chairs_order_permission_writes_no_row_and_keeps_its_wake()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("review:1", MissionEventKind.Review, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var options = new MissionOptions();
+        var loop = new MissionLoop(host, options, now: () => now);
+        host.Conv.Bar = new LaunchBar("the Operations Director's launch (attempt a-1) holds permission to trade", Lasting: false);
+
+        var first = await loop.TurnAsync();
+        var second = await loop.TurnAsync();
+
+        Assert.Empty(host.Conv.Sent);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.Null(events.Get("review:1")!.ConsumedBy);
+        Assert.Equal(options.BusyRetry, first);
+        Assert.Equal(options.BusyRetry, second);
+        var told = Assert.Single(host.BarTold);
+        Assert.False(told.Lasting);
+        Assert.Contains("attempt a-1", told.Why);
+
+        host.Conv.Bar = null;
+        await loop.TurnAsync();
+        Assert.Single(host.Conv.Sent);
+        Assert.NotNull(events.Get("review:1")!.ConsumedBy);
+    }
+
+    /// <summary>
+    /// A COMPUTER THAT CANNOT HOLD THE LAUNCH (<c>U-grant-tree</c>, RULING 2): nothing is written and the wake stays owed, as
+    /// above, and the loop backs off as from a ledger refusal — the card saying what it waits for, in the reason's own words.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_this_computer_cannot_hold_backs_off_and_the_card_says_why()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("fill:1", MissionEventKind.Fill, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var options = new MissionOptions();
+        var waits = new List<TimeSpan>();
+        var loop = new MissionLoop(host, options, now: () => now, delay: (d, ct) =>
+        {
+            lock (waits) waits.Add(d);
+            return Task.Delay(1, ct);
+        });
+        host.Conv.Bar = new LaunchBar("TradeAgent's own trade command is not at /nowhere/trade. Restart TradeAgent", Lasting: true);
+
+        loop.Start();
+        string? card = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            card ??= loop.Status.WaitingFor;
+            lock (waits) if (waits.Count >= 2 && card is not null) break;
+            await Task.Delay(1);
+        }
+        await loop.PauseAsync();
+
+        Assert.Empty(host.Conv.Sent);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.Null(events.Get("fill:1")!.ConsumedBy);
+        lock (waits)
+        {
+            Assert.Equal(options.FirstBackoff, waits[0]);
+            Assert.True(waits[1] > waits[0], $"the second look waited {waits[1]} after {waits[0]}: no backoff");
+        }
+        Assert.True(Assert.Single(host.BarTold).Lasting);
+        Assert.Contains("Restart TradeAgent", card);
+    }
+
+    /// <summary>
+    /// THE CHAIR'S TURN WITHOUT ORDER PERMISSION IS TOLD SO IN THE PROMPT ITSELF (ORDER-001, <c>U-grant-tree</c>) — the
+    /// string the ledger hashes and the vendor receives.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_that_holds_no_order_permission_is_told_so_in_its_own_message()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("review:2", MissionEventKind.Review, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var loop = new MissionLoop(host, new MissionOptions(), now: () => now);
+        host.Conv.Withheld = "this launch started beside the Research Director's (attempt r-9)";
+
+        await loop.TurnAsync();
+
+        var sent = Assert.Single(host.Conv.Sent);
+        Assert.Contains("This turn holds no permission to trade.", sent);
+        Assert.Contains("attempt r-9", sent);
+    }
+
+    /// <summary>
     /// A LEDGER REFUSAL REACHES THE OWNER WHATEVER WOKE THE LOOP (<c>U-admission-fail-closed</c>, fix pass 1, review P1).
     /// It used to be written only onto due Owner messages, so a turn a fill, a review or the inbox asked for was refused in
     /// silence: the owner saw an unexplained wait. Now the host is told, with the ledger's own words and the cause, and the
@@ -835,6 +936,14 @@ public class BudgetReservationTests : IDisposable
         {
             lock (LedgerTold) LedgerTold.Add((role, refusal));
         }
+
+        /// <summary>What the loop told the owner about a launch that may not start (U-grant-tree).</summary>
+        public List<(string Role, string Why, bool Lasting)> BarTold { get; } = [];
+
+        public void LaunchBarred(string role, string why, bool lasting)
+        {
+            lock (BarTold) BarTold.Add((role, why, lasting));
+        }
     }
 
     /// <summary>A host built without a launch ledger: it keeps the interface's own no-ledger admission.</summary>
@@ -852,10 +961,19 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>A conversation that records what it was sent, and answers every turn the same way.</summary>
-    sealed class Recording : IAgentConversation
+    sealed class Recording : IAgentConversation, ILaunchGate
     {
         readonly List<ChatTurn> _history = [];
         public List<string> Sent { get; } = [];
+
+        /// <summary>What the launch gate answers (U-grant-tree); null lets every launch start.</summary>
+        public LaunchBar? Bar { get; set; }
+
+        /// <summary>Why a launch now would hold no order permission; null when it would hold it.</summary>
+        public string? Withheld { get; set; }
+
+        public LaunchBar? Barred() => Bar;
+        public string? OrdersWithheldNow() => Withheld;
 
         public bool Busy => false;
         public IReadOnlyList<ChatTurn> History => _history.ToArray();

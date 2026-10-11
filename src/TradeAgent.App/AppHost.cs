@@ -1869,6 +1869,16 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         /// <summary>
+        /// The one activity line for a launch that was not started (<c>U-grant-tree</c>) — this computer cannot hold it, or
+        /// the Operations Director's order-capable turn is running. Once per distinct cause; the loop decides that.
+        /// </summary>
+        public void LaunchBarred(string role, string why, bool lasting)
+        {
+            host.Gateway.Log.Activity($"{CouncilRoles.Title(role)}: not started — {why}", lasting ? "warn" : "info");
+            host.Changed?.Invoke();
+        }
+
+        /// <summary>
         /// The loop's own pass, run inside its exclusion — so it records the workspace directly rather
         /// than through <see cref="AppHost.ScanMaterials"/>, which would find that exclusion taken and
         /// refuse.

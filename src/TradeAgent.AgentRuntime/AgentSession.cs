@@ -276,7 +276,7 @@ public sealed class AgentSession(
     AgentGrants? grants = null,
     Func<string?>? launchRefusal = null,
     AppFileManifest? appFiles = null,
-    ISeatProbe? seatProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch
+    ISeatProbe? seatProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
 {
     /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
     ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
@@ -303,6 +303,21 @@ public sealed class AgentSession(
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent could not check the AI's own settings: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
+    /// chat take before anything is admitted, so a refused launch writes no row and consumes no wake. Lasting when this
+    /// computer cannot hold the launch at all (RULING 2); passing while the Operations Director's turn holds order
+    /// permission (ORDER-001). The launch itself meets the same two refusals as hard lines.
+    /// </summary>
+    public LaunchBar? Barred()
+    {
+        if (ProcessContainment.CannotHold() is { } unheld) return new LaunchBar(unheld, Lasting: true);
+        return (grants ?? AgentGrants.Shared).HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
+    }
+
+    /// <inheritdoc />
+    public string? OrdersWithheldNow() => (grants ?? AgentGrants.Shared).WouldWithhold(role);
 
     /// <summary>
     /// THE CANON THE TURN IN FLIGHT WAS LAUNCHED UNDER, read in <see cref="RunTurnAsync"/> before the process starts and
@@ -424,6 +439,19 @@ public sealed class AgentSession(
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         if (_busy) { Queue(message); return; }
+
+        // NOT STARTED, NOT ADMITTED, NOT LOST (U-grant-tree): a launch this computer cannot hold, or one that would start
+        // beside the Operations Director's order-capable turn, is refused before the ledger is asked — the owner's words
+        // are held with the reason, exactly as a turn the ceiling stopped holds them.
+        if (Barred() is { } bar)
+        {
+            Hold(message, bar.Why);
+            return;
+        }
+
+        // THIS TURN HOLDS NO ORDER PERMISSION, AND IS TOLD SO IN ITS OWN MESSAGE (ORDER-001) — before the ledger hashes it,
+        // so the record is of the words actually sent.
+        if (OrdersWithheldNow() is { } withheld) message = LaunchBar.Told(withheld) + message;
 
         // THE OWNER'S TURN IS ADMITTED AND RESERVED LIKE ANY OTHER, BEFORE ANYTHING IS STARTED.
         //
@@ -616,6 +644,11 @@ public sealed class AgentSession(
         if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
             throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
 
+        // A LAUNCH THIS COMPUTER CANNOT HOLD NEVER STARTS (U-grant-tree, RULING 2): its grant could be bound to nothing,
+        // so every request it made would be refused while the vendor billed for the turn. Before the grant is minted.
+        if (ProcessContainment.CannotHold() is { } unheld)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, unheld);
+
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
@@ -699,14 +732,23 @@ public sealed class AgentSession(
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
         // exited has none left to walk — measured before this line existed, a detached grandchild
         // outlived CancelAsync on both platforms. See ProcessContainment.
-        var contained = ProcessContainment.Start(psi);
+        var contained = ProcessContainment.Start(psi, requireHeld: true);
         var process = contained.Process;
         _current = contained;
 
         // THE GRANT IS BOUND TO WHAT HOLDS THE LAUNCH, NOW AND NEVER BEFORE (U-grant-tree). Until this line it is pending
         // and the pipe serves it to nobody; from it, only to a peer inside this container — the job the process was put
-        // in, or the session the launcher makes. A launch that is not held is never bound, so its grant serves nothing.
-        if (contained.Container is { } container) register.Bind(launch.Token, container);
+        // in, or the session the launcher makes. A launch with no container is torn down at once and refused (RULING 2):
+        // the attempt keeps its reservation, because a process that ran for any time is spend nobody can call zero.
+        if (contained.Container is not { } container)
+        {
+            _current = null;
+            EndTree(contained);
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
+                $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it ended it " +
+                "at once. Restart TradeAgent — it puts back what it needs to hold the AI as it starts. If this stays, reinstall TradeAgent.");
+        }
+        register.Bind(launch.Token, container);
 
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
         // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened as the turn
