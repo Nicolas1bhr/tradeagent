@@ -10203,3 +10203,33 @@ PASS, exit 0. Reviewer's own mocked check: base PASS → HEAD FAIL; exactly 3000
 **Landing CI (train A5):** run 38135936547 at the stacked tip `f4778fd4` (train A5, onto `af1a7a6f`) — every job success: windows 1–5 10/9/11/5/9 min, ubuntu 13, macos 15, linux-host 20, packages. **Names vs main:** train [Fact]/[Theory] 2547 → 2553, removed 0. **Scan:** clean at landing. **Tests box:** NOT RUN — the machine does not answer (a Linux-host unit).
 **NOT verified:** the original race reproduced on demand (timing; removed by construction); review 1's finding 2 (baseline read under a slow harness — judged not real in practice:
 the restarted app's first row comes ~11 s after the kill, the baseline read milliseconds after /proc empties); a real slow-harness run of the new failure messages; one green run per pass is one sample.
+
+## 2026-10-11 — U-evidence-evaluator-label landed at rung 36 (train A5): every recorded run names the evaluator it was measured under and its id carries it; the research measurement, its trials and the sealed holdout record are keyed by that evaluator; research evidence counts a run measured under other semantics as a trial and never uses its returns
+
+Built under build-fleet seat A from `docs/briefs/U-evidence-evaluator-label.md` (seat A's ruling Q1 of 2026-10-11 on S-backtest-maxhold-reentry: every evaluator bump needs the label
+first; the orchestrator's ruling 11:31: the backtest-parity bump `backtest=3` lands THIS session, after this unit). One builder (opus/high) reported `e7e8cf4a` (code `ed7fb4cf` on
+`e989bfa4`, rung 36 over 34); its Codex review found one REAL defect (P1) → a FRESH fixer (opus/high) re-stacked onto rung 35 and fixed it, reporting `1a7d2eec` (code `cc49b4f9`).
+Landed in TRAIN A5 (land.sh v3, three units on one CI run, onto main `af1a7a6f`, after U-prove-phase4). On main: item 1 `99246ba2`, item 2 `e9fc5bc0`, item 3 `2e4bb745`, item 4
+`afe38fae`, golden re-pin `a3dfddf8`, report `dfc90f1f`, fix `71db9ebe`, fix report `0797ad9b`. **Schema: main 36** (35's block, then 36's, each stamp last). EVIDENCE PATH.
+`Referee.EvaluatorVersion` is NOT bumped here (that is U-backtest-parity's `backtest=3`).
+**What it does.** Rung 36: `strategy_run.evaluator_version`, written only by `StrategyStore.RecordRun` from `Referee.EvaluatorVersion` (never a caller's value; NULL before the rung =
+unknown, no backfill). `RunIdFor` hashes the evaluator, so the same request under another evaluator is another run with its own row and streams. `ResearchEvidence.Measure` reads a
+trial whose label is not this build's (or NULL) as no-stream: counted in M, clustered alone, never the candidate; `referee_research.trials_other_semantics` counts them (NULL on a
+measurement from before the rung). The fix: `referee_research`, `referee_research_trial` and `referee_holdout` REBUILT at rung 36 keyed (campaign, version, method, evaluator_version)
+in one transaction (rename aside, create, copy EVERY row with NULL, drop; foreign keys off for it — set before BEGIN), guarded by the column, then the stamp; both Records write this
+build's evaluator and `Of`, `SealedOf`, the flag and the α-wealth history read only its rows. Words: CONTRACTS "The backtest" + the verdict's research paragraph; the report's evidence
+line names trials measured under other evaluation semantics.
+**Codex review 1** (`fleet/records/U-evidence-evaluator-label-review-triage.md`): P1 REAL — keyed without the evaluator, a verdict re-asked after a bump was served the old evaluator's
+measurement and (with v2c's guard) never sealed, read as flagged forever. FIXED red-first: RED "Assert.Null() Failure … Actual: \"run-candidate\""; mutant (evaluator dropped from the
+three keys and both ON CONFLICTs) "Assert.NotNull() Failure: Value is null". Crash: a rung-35 home opens with every row byte for byte, new columns NULL, `foreign_key_check` empty;
+stamp set back to 35 → reopens at 36 unchanged. **Re-review of the fix:** no defects; P1 closed; the golden re-pin `ed7fb4cf` sound. Keyed by evaluator, not promotion id (the readers
+hold no promotion id) — accepted by seat A.
+**RED before** (builder): (a) CS1061 'StrategyRunRow' has no 'EvaluatorVersion'; (b) "Assert.NotEqual() Failure: Strings are equal". **Mutants:** Measure's label check `if (false)` ⇒ (c)
+"Expected: \"run-candidate\" Actual: \"run-foreign\""; RecordRun writing the row's label ⇒ (a) "Expected: \"backtest=2;metrics=1;scoring=1\" Actual: \"backtest=0;metrics=0;scoring=0\"".
+**Deviations, accepted by seat A:** the second column `trials_other_semantics`; the one-writer tests list rung 36's three copy INSERTs ordinal-sorted; PaperAllocationGateTests'
+fabricated rows carry this build's label; golden-vector run ids re-pinned (four), every program id, value digest and trace unchanged.
+**Gate.** Builder: Release 0/0; five classes ×3; CI 38129573205 red (golden pins carry run ids) → fixed → 38131030559 all 11 jobs. Fixer: Release 0/0; RefereeVerdict 30, AlphaWealth 2,
+FeatureProgramGoldenVector 2, BacktestLedger 8, PaperAllocationGate 18, each ×3; CI 38133547987 10/11 (ubuntu red = the third PaperFrictionTests missing-file sighting, fixed by
+U-friction-home in this train). **Landing CI (train A5):** run 38135936547 at the stacked tip `f4778fd4` (train A5, onto `af1a7a6f`) — every job success: windows 1–5 10/9/11/5/9 min, ubuntu 13, macos 15, linux-host 20, packages. **Names vs main:** train [Fact]/[Theory] 2547 → 2553, removed 0. **Scan:** clean at landing. **Tests box:** NOT RUN — the machine does not answer.
+**NOT done, NOT verified:** the bump itself (U-backtest-parity, next); a gateway-level test of the trial charge under another evaluator (store and id level only); a crash in the middle
+of the rebuild's transaction (SQLite's atomicity, not simulated); the full local suites (CI ran them).
