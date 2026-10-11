@@ -1700,12 +1700,17 @@ sealed class SafetyPage
             Ui.Divider(),
             // BESIDE THE CEILING, because this is the other half of what the AI costs: the limit
             // above is what it may spend, and this is how often it spends anything at all when
-            // nothing has happened. A turn now happens because something happened — the owner typed,
-            // material arrived, an order filled or settled, the day turned over — and this is the
-            // heartbeat for the days when none of that does.
-            Ui.Muted("The AI takes a turn when something happens. This is how often it is woken to "
-                + "look around anyway — research, backtests, the journal. Every wake is a turn it is "
-                + "charged for, so a shorter interval costs more."),
+            // nothing has happened. A turn happens because something happened that a role owns — the
+            // owner typed, material arrived, its own order filled or settled, a report or a verdict
+            // arrived — and this is the look for the days when none of that does: the FASTEST one
+            // (U-quiet-review slows it while nothing happens) and only for a role that has open work
+            // it owns (U-reconcile-wakes). The page says that, not "this often".
+            Ui.Muted("The AI takes a turn when something happens. This is the fastest it is woken to "
+                + "look around anyway — research, backtests, the journal. The look slows while nothing "
+                + "happens, up to eight times this interval, and each role is looked at only while it has "
+                + "open work it owns: your messages and its orders and positions for the Operations "
+                + "Director, the research for the Research Director. Every wake is a turn it is charged "
+                + "for, so a shorter interval costs more."),
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.ReviewEvery, _reviewEvery,
                 "0 means it is woken only when something actually happens. Waking it more often spends "
@@ -2461,7 +2466,7 @@ sealed class SafetyPage
         _host.Gateway.Update(s => s.MissionReviewMinutes = minutes);
         var said = minutes == 0
             ? "The AI is now woken only when something happens"
-            : $"The AI is now woken to look around every {minutes} minute{(minutes == 1 ? "" : "s")}";
+            : $"The AI is now woken to look around at most every {minutes} minute{(minutes == 1 ? "" : "s")}";
         _host.Gateway.Log.Activity(said);
         _reviewNote.Text = $"Saved. {said}, from the next time TradeAgent starts.";
     }

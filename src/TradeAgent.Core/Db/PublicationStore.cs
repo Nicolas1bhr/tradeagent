@@ -12,8 +12,11 @@ public static class PublicationKind
     public const string Brief = "brief";
 
     /// <summary>
-    /// THE OPERATIONS DIRECTOR'S NOTE ON THE OWNER'S DAILY REPORT, at most 20 lines
-    /// (<c>docs/COUNCIL.md</c>, "The owner's report, every day, from the app").
+    /// A NOTE: the Operations Director's note on the owner's daily report, at most 20 lines
+    /// (<c>docs/COUNCIL.md</c>, "The owner's report, every day, from the app") — and, written by TradeAgent
+    /// itself, the paper allocation and forward-run notes to the Research Director
+    /// (<c>TradingGateway</c>; their wakes are keyed by <c>MissionEventIds.PaperAllocation</c> and
+    /// <c>MissionEventIds.PaperRun</c>, named and quoted in the turn they buy).
     ///
     /// <para>It is the ONE paid thing anywhere near that report, and it exists only when an app
     /// predicate changed: "No material change: the app says so and pays nobody." The report itself is
@@ -21,10 +24,11 @@ public static class PublicationKind
     /// other, so it is recorded, attributed and size-limited by the same machinery rather than being
     /// pasted into the facts.</para>
     ///
-    /// <para><b>Nothing in this build produces one.</b> The constant is here because the report page
-    /// and <c>DailyReports.NoteFor</c> LOOK for one and must show its absence honestly — a report
-    /// that silently showed yesterday's note, or the chair's agenda, as today's commentary would be
-    /// exactly the merge of measurement and claim the ledger rules forbid.</para>
+    /// <para><b>No role produces the daily report's note in this build.</b> The report page and
+    /// <c>DailyReports.NoteFor</c> LOOK for one by <c>operations</c> and must show its absence honestly — a
+    /// report that silently showed yesterday's note, the chair's agenda, or one of TradeAgent's own notes
+    /// to Research as today's commentary would be exactly the merge of measurement and claim the ledger
+    /// rules forbid.</para>
     /// </summary>
     public const string Note = "note";
 

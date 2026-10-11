@@ -160,6 +160,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
 
             var last = _store.Latest(role, kind);
             string notice;
+            var putBack = false;
             if (last is null)
                 notice = $"`{rel}` {why}, so no revision of it was recorded. There is no earlier revision "
                          + "to put back, so what is on disk is whatever you last wrote.";
@@ -169,6 +170,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 // copy was made from. The notice names the copy, because a copy the next turn cannot
                 // find is a copy in name only.
                 restores.Add(new Restore(full, last.Content));
+                putBack = true;
                 notice = $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
                          + $"the app accepted — has been put back in its place; what you wrote is kept at "
                          + $"`{kept}`. Move what still matters into the "
@@ -183,7 +185,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                          + "was not put back: what is on disk is what you last wrote."
                          + (content is null ? "" : $" Bring it under {cap} lines yourself.");
 
-            Note(role, kind, notice);
+            Note(role, kind, notice, putBack);
             try { Rejected?.Invoke($"{CouncilRoles.Title(role)}: {notice}"); }
             catch (Exception) { /* the app's own logging; never this class's problem */ }
         }
@@ -289,13 +291,25 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     /// different process's worth of work away, and because a notice the app forgot across a restart
     /// would be a plan silently replaced under an agent that never learned why.
     /// </summary>
-    public static IReadOnlyList<string> Notices(Database db, string role)
+    public static IReadOnlyList<string> Notices(Database db, string role) => Read(db, role, null);
+
+    /// <summary>
+    /// THE SAME NOTICES, SPLIT BY WHAT HAPPENED TO THE FILE (<c>U-reconcile-wakes</c>): <paramref name="putBack"/> true
+    /// answers the files whose refused text was kept in <see cref="ArchiveDir"/> and whose last accepted revision was put
+    /// back; false the files nothing was put back over — the first-ever refusal, and a file whose text could not be kept.
+    /// The Situation heads each group with what is true of it.
+    /// </summary>
+    public static IReadOnlyList<string> Notices(Database db, string role, bool putBack) => Read(db, role, putBack);
+
+    static IReadOnlyList<string> Read(Database db, string role, bool? putBack)
     {
         var said = new List<string>();
         foreach (var (kind, _, _) in Files)
             try
             {
-                if (db.GetKv(Key(role, kind)) is { Length: > 0 } text) said.Add(text);
+                if (db.GetKv(Key(role, kind)) is not { Length: > 0 } text) continue;
+                if (putBack is { } wanted && (db.GetKv(PutBackKey(role, kind)) == "1") != wanted) continue;
+                said.Add(text);
             }
             catch (Exception) { /* a Situation is composed of what could be read */ }
 
@@ -310,15 +324,26 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
 
     static string Key(string role, string kind) => $"revision_rejected:{role}:{kind}";
 
-    void Note(string role, string kind, string text)
+    /// <summary>Whether the notice under <see cref="Key"/> is about a file the app put a revision back over: "1" or "".</summary>
+    static string PutBackKey(string role, string kind) => $"revision_put_back:{role}:{kind}";
+
+    void Note(string role, string kind, string text, bool putBack)
     {
-        try { db.SetKv(Key(role, kind), text); }
+        try
+        {
+            db.SetKv(PutBackKey(role, kind), putBack ? "1" : "");
+            db.SetKv(Key(role, kind), text);
+        }
         catch (Exception) { /* the activity line above still says it happened */ }
     }
 
     void Clear(string role, string kind)
     {
-        try { db.SetKv(Key(role, kind), ""); }
+        try
+        {
+            db.SetKv(Key(role, kind), "");
+            db.SetKv(PutBackKey(role, kind), "");
+        }
         catch (Exception) { /* a stale notice costs one line in one Situation */ }
     }
 }
