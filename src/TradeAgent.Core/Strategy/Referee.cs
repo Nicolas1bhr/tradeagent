@@ -505,7 +505,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                     run.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
 
-            var promotion = _promotions.Record(new PromotionRow(
+            var row = new PromotionRow(
                 "", version.Id, campaign.Id, scoredBy, StrategyStore.InterpreterBuild,
                 run.Request.DatasetId, run.Request.DatasetSha256, run.Request.Model.Canonical,
                 EvaluatorVersion, run.RunId, answer, reason, at)
@@ -521,16 +521,25 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 Timeframe = program.Freshness?.Timeframe,
                 DataFreshness = program.Freshness?.DataFreshness,
                 MaxDecisionAge = program.Freshness?.MaxDecisionAge
-            });
+            };
+            var promoted = _promotions.ById(row.ComputedId) is null;
+            var promotion = _promotions.Record(row);
 
             // THE RESEARCH EVIDENCE MEASURED BEFORE THE RUN, in this write and at the verdict's instant (U-referee-v2a):
             // first writer wins, as the promotion's own insert does.
-            _research.Record(research with { At = at });
+            var measured = _research.Record(research with { At = at });
 
             // AND WHAT IT SEALED OF THE HOLDOUT, in this write (U-referee-v2c): E4's fidelity, betting e-value and α-wealth
             // step after every earlier judgement over the same months, and the remembered-holdout flag. Read by no surface
             // and by no clause; first writer wins.
-            _holdouts.Record(_holdouts.Seal(campaign.Id, version.Id, research, days, author, at));
+            //
+            // ONLY IN THE WRITE THAT RECORDS THIS PROMOTION AND THIS RESEARCH MEASUREMENT FOR THE FIRST TIME. A verdict asked
+            // again — one from before rung 35 among them, which holds its v2a row and no sealed one — re-runs the holdout and
+            // measures the research again, and a row sealed then would set a fidelity read off research measured now beside
+            // a `research_row` naming the older, immutable measurement the verdict was judged beside: not true about what
+            // ran. A verdict before the rung gains none; a later one's row stands, first writer wins.
+            if (promoted && measured)
+                _holdouts.Record(_holdouts.Seal(campaign.Id, version.Id, research, days, author, at));
 
             // AND WHAT THE CALLER WRITES BESIDE IT, IN THIS WRITE: the research ledger's link, when the verdict was asked
             // under an entry (U-research-ledger). A `refused` verdict is recorded here like any other, so it is linked

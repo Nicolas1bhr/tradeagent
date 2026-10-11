@@ -188,9 +188,10 @@ public sealed class ResearchEvidence(Database db)
     /// <summary>
     /// RECORDS one measurement and its trials — called inside the verdict's own write (<c>Referee.Verdict</c>), so it lands
     /// with the promotion or not at all. First writer wins: a measurement already recorded for the (campaign, version,
-    /// method) stands, and this writes nothing.
+    /// method) stands, and this writes nothing. True when this call recorded it — what the verdict's write asks before it
+    /// seals a holdout record beside it (<c>U-referee-v2c</c>).
     /// </summary>
-    internal void Record(ResearchEvidenceRow row) => db.Write(_ =>
+    internal bool Record(ResearchEvidenceRow row) => db.Write(_ =>
     {
         ArgumentNullException.ThrowIfNull(row);
         using var insert = db.Cmd($"""
@@ -206,7 +207,7 @@ public sealed class ResearchEvidence(Database db)
             ("$sr0", Text(row.Sr0)), ("$dsr", Text(row.Dsr)), ("$ceil", Text(row.Ceiling)),
             ("$bpow", Text(row.BlocksPower)), ("$dpow", Text(row.DsrPower)),
             ("$bstat", row.BlocksStatus), ("$dstat", row.DsrStatus), ("$at", Sql.T(row.At)));
-        if (insert.ExecuteNonQuery() == 0) return 0;
+        if (insert.ExecuteNonQuery() == 0) return false;
 
         foreach (var trial in row.Trials)
         {
@@ -218,7 +219,7 @@ public sealed class ResearchEvidence(Database db)
                 ("$run", trial.RunId), ("$cluster", trial.Cluster), ("$reading", trial.Reading));
             c.ExecuteNonQuery();
         }
-        return 1;
+        return true;
     });
 
     /// <summary>The measurement recorded for one version under one campaign at this build's method, or null.</summary>
