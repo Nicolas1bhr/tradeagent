@@ -73,7 +73,28 @@ rewritten before landing. Every finding is ADOPTED unless the row says otherwise
 | D03 | § 10 restated an order | ADOPTED — § 10 maps components to units only; order and status live in ORGANISATION § 15 | § 10 |
 | E01–E08 | missing: sealed deliveries; restructuring transitions; service mandates; the public audit line; currency semantics; delegable evidence allowances; versioned seat records; input lineage | ADOPTED — `U-org-audit` added for the audit line | §§ 2.2–2.4, 2.6, 2.9, 2.13, 3 |
 
-**The Opus reviewer** (fresh, read-only): see § 2b, appended when it reports.
+## 2b. The Opus review
+**A fresh Opus reviewer, read-only, against the rewritten text (`af17606b`): 24 findings — 3 HIGH, 13 MEDIUM, 8 LOW — "sound to build from once
+P-01, P-02 and P-03 are fixed in the text. None of them needs code."** All three were fixed before any brief was cut; every finding is ADOPTED
+unless the row says otherwise.
+
+| Ids | What the review found | Answer | Where now |
+|---|---|---|---|
+| P-01 (HIGH) | the owner's lane kept `operations`' live grant beside an unconfined research turn — the window the binding cannot close | ADOPTED — until cells, `operations` holds no order permission beside another unconfined attempt, the owner's lane included; it answers and does not trade | ORCHESTRATION §§ 2.3, 2.5, 8; `U-grant-tree` |
+| P-02 (HIGH) | the unconfined legacy pair are a same-user NEIGHBOUR who can rewrite `state/`, `runtimes.json` and any seat's home: every target class is capped by them | ADOPTED — the no-neighbour rule: where any other position is active the pair run confined too, or not there; every class holds only without an unconfined neighbour | §§ 2.3, 2.7, 5 |
+| P-03 (HIGH) | four § 15 rows still carried definitions the Codex review had rejected (one dropped COUNCIL rule 7); RESUME overclaimed the run | ADOPTED — rows rewritten to the committed text; RESUME corrected | ORGANISATION § 15; RESUME-HERE |
+| P-04 | a per-attempt cgroup binds only if the cell cannot write cgroupfs; delegation and user-namespace prerequisites | ADOPTED — MEDIATED until shown; prerequisites for `U-cell-linux` | § 2.3 |
+| P-05 | theses 1 and 3 were false for the legacy pair | ADOPTED — the pair hold no organisational verb until confined; the chief (before it, the owner) heads their divisions' organisational work; ORGANISATION's header says so | § 0.3; § 2.3; ORGANISATION header |
+| P-06 | triage could hide a named deviation or off-path finding from the head | ADOPTED — only deliveries naming no deviation are retried by code, under the head's own policy | § 2.5; ORGANISATION § 4 |
+| P-07, P-08, P-09 | a charter (a claim) in the canon; "never woken by a timer" banned an executor's own wake; envelope periods undefined | ADOPTED | §§ 2.6, 2.5, 2.4 |
+| P-10 | no shell-free transport to the broker for a broker-only seat | ADOPTED — the app's own MCP server or the harness's tools, built by `U-thinking-seats` | §§ 2.7, 10 |
+| P-11, P-12, P-13 | sealed manifests kept no bytes; the proving ground cannot share a process with the real home; sweeps would run once per lane | ADOPTED — a content-addressed store; a separate process; sweeps once per tick | §§ 2.2, 2.14, 2.5 |
+| P-14 | one home per seat class means one sign-in and refresh chain each | ADOPTED — one seat home, one sign-in, per-class configuration at launch, file credential storage pinned | § 2.7; § 8 |
+| P-15, P-16 | the earning test checked only that ids exist; the armed-live refusal stops the organisation | ADOPTED — kind, recency and bearing checked; the stop stated | §§ 2.9, 8 |
+| P-17 – P-24 | a restated priority list; status answered "from records"; a second MCP server and an environment policy unnamed; § 5's legacy column; the tilt bound; ids; fences and the breaker; M-org0's baseline; "building is unbounded"; an unpinned binary; the gate's attribution | ADOPTED — each in the text; M-org0 re-baselined on attempt 4 under the seat home | §§ 1, 2.1, 2.3, 2.5, 2.7, 5; ORGANISATION § 15 |
+
+Its observation, not an order: nothing in M-org0 or M-org1 needs more than one lane, so `U-org-lanes` and `U-grant-tree` may wait behind the cells —
+§ 15's rows now say so.
 
 ## 3. The outside review of 2026-10-09 — its organisation points
 The owner keeps an outside "adversarial review with a path to making it work", dated 2026-10-09, outside the repository; it was never recorded here.

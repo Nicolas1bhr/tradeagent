@@ -10286,6 +10286,7 @@ executors are confined (R20's "containment first" becomes an order of activation
 **Review before landing:** Codex `gpt-6.1-sol` (read-only, high) — 48 findings, 22 HIGH, "not ready to become doctrine"; every one answered in R23 § 2
 and the draft rewritten (the legacy exception in the activation gate, process binding claimed only against cross-container replay, confinement not a
 spend bound, side channels in networked cells, the earning test, sealed deliveries, restart reconciliation, the owner's lane, the audit line). A fresh
-Opus reviewer — R23 § 2b.
+Opus reviewer of the rewrite — 24 findings, 3 HIGH (the owner's lane beside an unconfined turn; the legacy pair as an unconfined neighbour; § 15 rows
+still carrying rejected definitions), all fixed in the text before any brief: R23 § 2b.
 **NOT VERIFIED / not done:** nothing built; every enforcement class for a future seat is a TARGET; the exec-server split, the broker-only codex seat and
 Linux confinement are UNKNOWN until `R-exec-server` and `U-cell-linux`; no seat opened, no builder dispatched — the build waits for the owner's word.

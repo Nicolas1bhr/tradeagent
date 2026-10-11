@@ -23,8 +23,8 @@ authority exercised through the broker, never resting on an unconfined shell, an
 disposable. An Opus and a Codex review attacked the draft before it landed (R23 answers every finding). **His two answers:**
 containment PARALLEL, gated — the work plane may land before the cells, nothing runs on real agents until executors are confined (R20's "containment first"
 becomes an order of activation); M-org1 on the LINUX HOST, so Linux cells come first. **The order** (ORGANISATION § 15): seat A — org cells & runtime,
-`U-seat-home` FIRST (a protection: every codex seat runs on the owner's own `~/.codex`, whose plugins, MCP servers and notify hook become model-native tools
-of every seat — RUN-confirmed on this Mac), then `R-exec-server`, `U-thinking-seats`, `U-puppet-runtime`, `U-cell-linux`, …; seat B — org spine & work,
+`U-seat-home` FIRST (a protection: a codex seat on the default home runs on the owner's own `~/.codex`, whose plugins, MCP servers and notify hook are
+within its reach — those MCP servers start with codex under that home (RUN on this Mac); which tools a seat is offered is NOT VERIFIED), then `R-exec-server`, `U-thinking-seats`, `U-puppet-runtime`, `U-cell-linux`, …; seat B — org spine & work,
 `U-reconcile-packet` pass 2 ∥ `U-admission-fail-closed` (today a launch whose admission cannot be written runs unrecorded) → O2a → O2b ∥ O4 → O3 →
 `U-grant-tree` → `U-org-lanes` → M-org0 → O5 …; the edge lane and B's perception chain PARKED with their
 queues kept. No further observed run before `U-seat-home`. **For the owner:** M-org0 (and M0 attempt 4) when testing may start; the Linux host's nine

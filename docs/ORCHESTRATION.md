@@ -32,12 +32,14 @@ organisation (M-org1) runs on the **Linux host**, so Linux confinement is built 
    active layer earned (§§ 0, 3), and so does the outside review of 2026-10-09 the owner keeps outside the repository (a single agent against a
    critic against a hierarchy, at equal budgets). Both hold when the kernel can represent and run ANY configuration — flat, critic, headed, deeper —
    as data, when structural growth passes an app-checked earning test (§ 2.9), and when the instrument that compares configurations is part of the
-   kernel: the proving ground (§ 2.14) and the paired run are built with it, not after it. Building is unbounded; activation is earned.
+   kernel: the proving ground (§ 2.14) and the paired run are built with it, not after it. Representation is unbounded and the kernel is built whole; activation is earned.
 3. **Authority needs no shell; code runs only in cells.** Every decision right — assign, accept, charter, decide — is exercised through the
    app's broker and never depends on a shell. Code, at any level, runs in a confined cell (§ 2.8). A head works broker-only by default and gets a
    cell when its mandate needs computation, as an executor does; nothing restricts how any agent reasons (PRINCIPLES, "Autonomy is the default
    inside authority"). The harness that holds a model login is not where model-directed code runs (the factory plan's Law 2). What blocked the
-   organisation — containment — is needed exactly where code runs, and nowhere does an unconfined shell stand behind a decision right.
+   organisation — containment — is needed exactly where code runs, and nowhere does an unconfined shell stand behind a decision right. The one
+   exception is the legacy pair: they keep their existing two-role behaviour on unconfined seats and so hold no organisational decision right until
+   they too are confined, and no unconfined seat runs beside an organisation seat (§ 2.3).
 4. **Turns are capital.** On the owner's plan the organisation shares about six strong-model turns every five hours (ORGANISATION § 10). The
    scheduler is the kernel's economy: a turn is spent on a divergence between what is observed and what is wanted; code triages before a paid turn;
    a note wakes nobody; no eligible work is healthy idleness.
@@ -57,7 +59,8 @@ organisation (M-org1) runs on the **Linux host**, so Linux confinement is built 
 | Inbox attestation | a material pass runs only while no role holds its turn lease, and no lease is taken during a pass (`MissionLoop.cs:1350-1382`; COUNCIL rule 7) | an evidence protection any concurrency must keep |
 | Prompt | the Situation: fixed-order text, no size cap, no ledger, no objectives (`MissionLoop.cs:690-795`); `U-reconcile-packet` in flight | a packet in progress |
 | Runtimes | codex: `codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -m <model>` (`RuntimeManifest.cs:586-592`, `:649`), resumed each turn, fresh every 20 (`MissionLoop.cs:1744-1748`); OpenCode; the API harness posts to chat-completions and has never made a real provider call | a CLI seat is one process with full host reach |
-| Seat configuration | the app never sets `CODEX_HOME`, keeps an inherited one (`RuntimeManifest.cs:499-502`) and passes `HOME`/`USERPROFILE` (`AgentEnvironment.cs:78, 87`); no codex feature is disabled. A codex seat on the default home runs under the owner's personal codex configuration — on this Mac its plugins (computer use, Chrome, browser, GitHub, Hostinger), an MCP server, a notify hook and a global AGENTS.md. RUN, 16:18 CEST: a `codex exec` (0.160.1) started under that home spawned, as its children, the ChatGPT app's computer-use MCP server (`node_repl`) and two plugin MCP servers. Which of their tools the model is offered in a seat's own launch is NOT VERIFIED (§ 2.7's inventory) | the owner's ambient authority within a seat's reach — a protection gap |
+| Seat configuration | the app never sets `CODEX_HOME`, keeps an inherited one (`RuntimeManifest.cs:499-502`) and passes `HOME`/`USERPROFILE` (`AgentEnvironment.cs:78, 87`); no codex feature is disabled. A codex seat on the default home runs under the owner's personal codex configuration — on this Mac its plugins (computer use, Chrome, browser, GitHub, Hostinger), two MCP servers (`node_repl` and `computer-use`), a `shell_environment_policy` that sets
+variables past the app's environment whitelist, a notify hook and a global AGENTS.md. RUN, 16:18 CEST: a `codex exec` (0.160.1) started under that home spawned, as its children, the ChatGPT app's computer-use MCP server (`node_repl`) and two plugin MCP servers. Which of their tools the model is offered in a seat's own launch is NOT VERIFIED (§ 2.7's inventory) | the owner's ambient authority within a seat's reach — a protection gap |
 | Identity | a grant per launch through `TRADEAGENT_GRANT` and a check of the calling `trade`'s path and hash (`Gateway/GatewayPipeServer.cs:1068-1088`); the code itself says a same-user process can pass as the deployed `trade` (`Security/PeerImage.cs:101-108`) | sound against a confused agent; advisory against a determined unconfined one |
 | Spend | one admission transaction: the day cap, then the role's share, 1/N of two (`AiAttemptStore.cs:256-281`; `Core/Trading.cs:311-314`); LOST rows keep their reservation — but an admission that cannot be written runs anyway: `TurnMeter.Begin` turns any exception into `AiAdmission.Unrecorded` (`TurnMeter.cs:874`), whose `Admitted` is true (`AiAttemptStore.cs:164-181`) | the best primitive in the agent half, with one fail-open path |
 | Memory | canon v2 per role × runtime, generated reach, hash ledger (`AgentRuntime/Canon.cs`); PLAN 60 / JOURNAL 200 lines (`WorkspaceRevisions.cs`); the research ledger at rung 31, author → `org_position`, writers limited to the pair (`Core/Db/ResearchLedger.cs:484-488`) | the three layers, built for two roles |
@@ -104,7 +107,8 @@ OWNER (in-process) — mission · ceilings · authority · veto · the Org page 
 - **Rules:** only `OrgStore` writes `org_*`; ids are app-minted and never equal a legacy id or an app principal (`referee`, `allocator`,
   `perception`, which are never positions); a position grants no system privilege (ORG-001); order permission is bound to `operations` and never
   follows headship (ORDER-001). The legacy pair are positions `operations` and `research` (homes `agent` and `research` kept); every later position
-  lives under `org/<id>`, the id checked as `[a-z0-9-]+` and never read back as a path from a row.
+  lives under `org/<id>`, the id opaque and app-minted — never a name an agent chose, never a reserved device name on Windows — and never read back
+  as a path from a row.
 
 ### 2.2 Mandates — one record from charter to task
 VISION § 6.1's mandate is the kernel's unit of work and of governance: parent, decider (one position), holder, kind (mission, charter, family,
@@ -118,7 +122,8 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **`operations` stays the owner's** (ORGANISATION § 3): no mandate to it, or to a position working on its behalf, names an instrument, side, size or
   timing — refused at `assign` by the app's validation; an `operations` attempt launched for another position's mandate carries no order permission
   in its effective grant.
-- **A delivery is sealed before it is judged:** the app writes an immutable manifest (artifact paths and hashes) first; the checks run on that
+- **A delivery is sealed before it is judged:** the app copies its artifacts into its own content-addressed store and writes an immutable manifest of
+  their hashes first (the material scanner walks every position's home); the checks run on that
   revision, inside a bounded environment and never with the app's authority; acceptance binds to the checked revision, and a later edit is a new
   delivery.
 - **Failures are remembered:** the mandate carries its retry policy (two fresh failures by default, ORGANISATION § 4), its failure count and its
@@ -132,11 +137,15 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **The grant per attempt** (today's `AgentGrant`, extended) names the position, mandate, seat, effective capabilities, information scope, expiry
   and fencing generation. It is **bound to the attempt's process container**: the broker accepts it only from a peer the app placed in that
   attempt's container — a job object on Windows (named-pipe client pid, `IsProcessInJob` on the retained handle), a per-attempt cgroup on Linux
-  (descendants cannot leave it, whatever session they create), the launcher's session and process group on macOS (weaker; said so) — after a held
+  (descendants cannot leave it, whatever session they create — MEDIATED until the cell cannot write the cgroup filesystem; systemd user delegation
+  and the host's user-namespace policy are prerequisites `U-cell-linux` checks), the launcher's session and process group on macOS (weaker; said so) — after a held
   launch handshake, with process start time against pid reuse and a refusal on any lookup error. API-harness seats are authenticated in-process.
   **What it stops:** a token read from another seat's environment and replayed from outside that container. **What it does not stop:** a
   determined same-user process that passes or duplicates an authenticated connection, or acts through a process inside the other container —
   only containment and process-access restrictions stop those (§ 2.8). Concurrency waits for it (§ 2.5).
+- **`operations` never holds order permission beside another unconfined attempt** (until cells): an `operations` attempt that overlaps one — the
+  owner's lane included — is admitted without it (it answers, it does not trade, and says so), and no other unconfined launch starts while
+  `operations` holds it. The grant binding cannot close that window (it does not stop a determined same-user process); this rule does.
 - **Effective capability** = requested ∩ the parent's delegable ∩ product policy ∩ what the seat's runtime and cell support — computed and
   recorded by the app, never supplied by a model (the factory plan's § 13.2).
 - **The lattice, v1** (VISION § 6.2): dimensions — verbs and ops, targets (the caller's own subtree for a head, minus the reserved identities of
@@ -144,15 +153,22 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   decided is "not contained"; grants never combine into a union. **Never delegable:** operator controls, credentials, the holdout, ceilings, live
   activation, updates, evidence policy and global evidence budgets, `operations`' order permission. **Delegable:** bounded trial and verdict
   allowances, carved from the parent's, like AI spend.
-- **The activation gate — the owner's 2026-10-11 answer, as code.** Each CAPABILITY has a minimum seat assurance, checked when a position is
+- **The activation gate — the owner's 2026-10-11 answer (nothing runs until executors are confined), with its decision-verb minimum decided on his
+  behalf, as code.** Each CAPABILITY has a minimum seat assurance, checked when a position is
   activated and again, fail-closed, immediately before model work on every adapter path, against the pinned profile and the boundary actually
   established: decision verbs need a broker-only or a confined seat, never an unconfined one; code execution needs a confined cell; helpers inherit
   their parent's minimum. The legacy pair may keep running unconfined for their existing two-role behaviour only — any capability new to the
-  organisation (its verbs, assignments to them, helpers) is refused on an unconfined seat. Assurance-required work never falls back to a degraded
+  organisation (its verbs, assignments to them, helpers) is refused on an unconfined seat. So until they are confined the legacy pair hold no organisational decision
+  right, and the chief — before it exists, the owner — heads their divisions' organisational work. **No unconfined neighbour:** on a host where any
+  position other than the legacy pair is active, the legacy pair run confined too, or not there; every class below holds only where no unconfined
+  seat shares the host and user (a neighbour's shell can rewrite `state/`, `runtimes.json` and any seat's home, and read any seat's environment). Assurance-required work never falls back to a degraded
   start: today's bare-start fallbacks (§ 1, Containment) refuse instead, for such work.
 - **Fences.** Every authority-changing transition — a subtree put to sleep, a mandate cancelled, a position retired, a seat replaced, a veto — bumps
   the generation of every grant it touches; the broker checks the generation on every operation; a running attempt under a stale generation is
-  ended with its process tree, and its outputs are quarantined at completion, never published.
+  ended with its process tree, and its outputs are quarantined at completion, never published. Fences and the circuit breaker act on the
+  organisation's AI only: they never touch trading (pause, stop and flatten stay the owner's), and anything about `operations` stays his presses. The
+  breaker trips on code detectors — a fabrication finding, spend without milestones, runaway retries (VISION § 7.7). Policy data — lanes, ceilings,
+  retry and timescale defaults, the rights matrix — is changed by the owner in the app; the organisation can only propose.
 
 ### 2.4 Envelopes and admission
 - `AiAttemptStore.Begin` stays the one admission transaction and becomes **fail-closed**: a launch whose admission cannot be written is refused in
@@ -169,6 +185,8 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **Two enforcement classes, never merged:** admission is hard (refused before launch); incurred cost is bounded only where a total-turn bound —
   helpers and the vendor's own subagents included — is demonstrated for that runtime; elsewhere the reservation is the bound, and an overrun is
   recorded and charged, never hidden.
+- **Periods and units:** AI spend is counted per local day (the owner's daily cap) and per quota-pool window; trials and verdicts per campaign; a
+  mandate's allocation over its life; `envelope_share` is a fraction of the parent's envelope in the same currency and period, never an amount.
 - When a currency binds, the app shows its shadow price: a manager weighs a price, never an argument (VISION § 7.2).
 
 ### 2.5 The scheduler — the turn allocator
@@ -176,33 +194,34 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   by app paths; consumed inside the launch transaction (as today).
 - **Eligibility:** the position active; not leased (one conversation per position at a time); its unit not asleep (the circuit breaker, VISION § 7.7);
   envelope room; its quota pool not held; its cell available; the owner's pause and stop obeyed.
-- **Priority** (ORGANISATION § 10): app protection is never a turn; then the owner's words; unblocking a deployment or required data; decisions
-  owed (deliveries to judge, escalations); research and exploration; housekeeping. Oldest due first within a class; ties by unit depth, then id.
+- **Priority:** ORGANISATION § 10's order, read from there and never restated; oldest due first within a class; ties by unit depth, then id.
 - **Objectives per position kind** (extending `RoleObjectives`): a wake is a divergence between the observed and the desired world. A head owns its
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
-  open mandate and is never woken by a timer. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
+  open mandate and its own requested wakes, never an app timer or heartbeat. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
   never a heartbeat.
-- **Code triages before a paid turn.** A delivery's checks run first, on its sealed manifest: a failure goes back to a fresh executor attempt under
-  the mandate's remembered retry policy (§ 2.2) without waking its head; the head wakes on a pass, an escalation or a review event. A lateral note
-  wakes nobody. A question about status is answered from records.
+- **Code triages before a paid turn.** A delivery's checks run first, on its sealed manifest. One that fails them and names no deviation goes back
+  to a fresh executor attempt under the head's own retry policy, remembered on the mandate (§ 2.2), without waking the head — code applies the head's
+  policy; it does not judge. One that names a deviation or an off-path finding always reaches the head. The head wakes on a pass, an escalation, a
+  deviation or a review event. A lateral note wakes nobody. The liaison answers status from app facts (ORGANISATION § 2).
 - **Lanes.** The loop dispatches up to N eligible attempts — one conversation lease per position; a helper is a child attempt admitted under its
   parent's mandate, not a second lease. Limits are keyed by **quota pool** (provider, account, plan window — shared by every seat on it and by the
   owner's own use outside the app, whose consumption is unknown) and by cell class, as policy data. N stays 1 by default until grants are bound to
   containers (§ 2.3) and cells exist. **Inbox attestation is kept:** a material pass still needs every UNCONFINED seat quiet, so with N > 1 the
   scheduler drains to a quiet window for each pass; a confined seat whose cell cannot write the inbox does not count, and outputs are sealed before
   any pass reads them. Expensive work — checks, hashing, scans — runs outside the store's single write lock on immutable inputs; commits stay short
-  and revalidate what they rest on.
+  and revalidate what they rest on. The app's sweeps (boundary deadlines, paper allocation and deployments) run once per tick, never once per lane.
 - **The owner's lane.** The owner's words get an immediate receipt and a visible place in the queue. An idle addressed position answers at once in a
-  lane reserved for the owner, outside N, as the chair does today; a busy one takes them first in its next packet, and the owner sees why it waits.
+  lane reserved for the owner, outside N, as the chair does today (an `operations` turn there carries no order permission beside another
+  unconfined attempt, § 2.3); a busy one takes them first in its next packet, and the owner sees why it waits.
   In-process emergency controls never wait for any queue.
 - **Healthy idleness:** no eligible wake, no paid turn. Budget exhaustion stops paid work; app protection and reconciliation never wait for it.
 
 ### 2.6 Packets — what every turn starts from
-- **The canon per seat template** (position kind × runtime × cell class): identity, the mission and the unit's charter, authority generated from the
+- **The canon per seat template** (position kind × runtime × cell class): identity, the mission, authority generated from the
   verbs the position holds (what it decides, what it never decides — ORGANISATION § 2), the evidence rules, the boundary, and its reach generated
   from what enforces it — `U-canon`'s mechanism, its version ledger and binding test carried to every template.
 - **The packet per attempt** (`U-reconcile-packet`'s, extended to positions): the owner's words first when addressed to it; why it is awake; the
-  mandate (objective, scope, checks, latitude or exact, deadline, allocation left per currency); what changed since its cursor; what it believes (its
+  unit's charter, quoted as data; the mandate (objective, scope, checks, latitude or exact, deadline, allocation left per currency); what changed since its cursor; what it believes (its
   open ledger entries, bounded); what is wanted (its open objectives); deliveries and lateral notes as data, by reference, sender-stamped; references
   (artifact ids and how to fetch deeper); state lines. Size budgets per seat class — about 2 k tokens for an executor (ORGANISATION § 6) — measured
   per attempt, cached and uncached input apart.
@@ -219,14 +238,17 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   (everything else disabled), the MCP servers (the app's only), sandbox mode, output-schema support — each field unknown, advertised, observed or
   trusted-for-a-property. A runtime update invalidates the observed fields it can change; a profile this build does not recognise is refused with
   both versions named (`CLAUDE.md`, "Refuse, never guess").
-- **A seat never runs under the owner's own agent configuration.** Each seat class gets an app-owned **seat home** (for codex, its own `CODEX_HOME`)
-  with an app-written, default-deny configuration — no plugins, no MCP server but the app's, no notify hook, no memories, computer and browser use off.
+- **A seat never runs under the owner's own agent configuration.** The app keeps ONE app-owned **seat home** (for codex, its own `CODEX_HOME`, its
+  credentials pinned to file storage) and ONE sign-in, and applies each seat class's default-deny configuration at launch — no plugins, no MCP server
+  but the app's, no notify hook, no memories, computer and browser use off; the runtime binary is pinned by version and hash, never a moving latest.
   The home is part of the profile and every runtime operation uses it: detection, sign-in (in the app; on Linux the device code shown in the app's
   own window, with expiry and retry — `U-linux-host`'s path), status, turns, resume, usage-limit reads, diagnostics and the observed-run audit
   (whose session store moves with it); the move is a deliberate fresh start, never a copy of the owner's login or sessions. A clean home is not yet
   an allowlist: the app **verifies the effective tool and configuration surface at every launch**, fresh and resumed, keeps project-level
-  configuration out of every seat's workspace, and labels the configuration's integrity ADVISORY while the seat is unconfined, because an unconfined
-  shell can rewrite its own home.
+  configuration out of every seat's workspace, and labels the configuration's integrity ADVISORY while ANY unconfined seat shares the host and user —
+  its own shell or a neighbour's can rewrite the home, `state/` and `runtimes.json` (§ 2.3's no-neighbour rule ends that where the organisation runs).
+- **The broker's shell-free door:** a broker-only seat reaches the broker without a shell — through the app's own MCP server (or the API harness's
+  tools), under the attempt's grant, serving the organisation's verbs, artifact reads by id and bounded data queries (`U-thinking-seats`).
 - **Native delegation** (the factory plan's level A) only where the profile says so, inside one attempt and its envelope, charged to it, with no
   rows; durable delegation is a mandate (§ 2.2).
 - **Usage:** what the provider reports; otherwise the reservation stands.
@@ -257,14 +279,15 @@ One authority implementation (Law 8): the organisation's verbs join the gateway'
 - **Heads:** `assign` (a leaf mandate into its own subtree), `accept` or `reject` a delivery (a rejection names a failed check or a stated defect),
   `rescope`, `cancel`, `escalate`; service requests to another division's head.
 - **Unit heads:** `charter`, `close`, `merge`, `hire`, `retire`, `tilt` — each a decision record with a forecast, inside the throttles (a unit lives
-  14 days; two structural changes a week), shown on the owner's chart and vetoable (ORGANISATION § 3).
+  14 days; two structural changes a week; a tilt moves a share by at most 20 points a week, ORGANISATION § 8), shown on the owner's chart and vetoable (ORGANISATION § 3).
 - **Executors:** `deliver` (a sealed manifest, a report, deviations named), `decline` with a reason, `propose`, `note` (lateral, inside its
   information grant); helpers as child attempts inside its own allocation and capability subset.
 - **One rights matrix** (actor × target × operation, data the app enforces): reserved identities — anything about `operations` is the owner's two
   presses; the legacy `research` is never retired by an agent; a division head is replaced only by an app trigger or the owner, the chief proposing;
   the chief's own appointment and replacement are the owner's; appointment and replacement are different operations.
-- **The earning test** (VISION § 3), app-checked at `charter`, `hire` and any new layer: the record cites evidence of current work (record ids the app
-  checks exist) or a funded, bounded experiment, and states its collapse condition; without one the verb is refused.
+- **The earning test** (VISION § 3), app-checked at `charter`, `hire` and any new layer: the record cites evidence of current work — records of the kinds VISION § 3
+  names (a tape series with features, a family with candidates, a recurring service load, a control finding), checked by the app for kind, recency
+  and bearing on the unit chartered, not only for existence — or a funded, bounded experiment, and states its collapse condition; without one the verb is refused.
 - **Restructuring is a transaction:** a close, merge, retire or veto disposes every open mandate (re-assigned or cancelled with a reason), fences the
   grants it touches (§ 2.3), carries reservations, debts and history to the successor, and keeps funding lineage; a veto restores structure, never
   work already done.
@@ -310,8 +333,9 @@ state (SIM-001: no evidence path, belief or genome-bank row reads it); a configu
 budget and is scored in hours: planted edges found, false discoveries on noise, AI dollars, calibration, cost discipline, and the off-path exam
 (VISION § 6.4). Paired configurations start from one snapshot of memory. Its first ladder answers the 2026-10-09 outside review's question — does
 added intelligence pay: a deterministic search with no model as the floor, one agent, an agent with a critic, a headed team — at equal budgets on the
-same markets. It is built with the kernel because it is how a layer earns its place: flat against headed is a pair of configurations, not a debate. Its plumbing is proved with puppet seats at no cost; a run with real models is a paid
-run and needs the owner's word, like any other.
+same markets. It is built with the kernel because it is how a layer earns its place: flat against headed is a pair of configurations, not a debate. It runs as a separate app process with its own home, pipe and registers, never inside the real one; real models run in it only on confined
+seats, or SIM-001 is advisory there. Its plumbing is proved with puppet seats at no cost; a run with real models is a paid run and needs the owner's
+word, like any other.
 
 ### 2.15 The owner's surface
 The Org page appears when positions govern — a chart that governs nothing is a sophisticated-looking lie (the owner's interface architecture of
@@ -327,7 +351,7 @@ collapse test read from decision timestamps, and shared playbooks, tools and tem
 
 ## 3. The data, at a glance
 Each table lands with its unit, on the next free rung, in landing order; none is designed for an older build (`CLAUDE.md`).
-- **Kept:** `org_unit`, `org_event` (rung 28); `ledger_*` (rung 31); `mission_event`; `tool_call`.
+- **Kept:** `org_unit`, `org_event` (rung 28); `ledger_*` (rung 31); `tool_call`.
 - **Changed:** `org_position` gains its kind and its seat-version reference; `mission_event` gains the position (exact id, never folded);
   `ai_attempt` gains the position, mandate, seat version, runtime-profile hash, cell id, funding chain and parent attempt, and its input lineage.
 - **New:** versioned seat and runtime-profile records; `org_mandate` and `org_mandate_event` (with sealed delivery manifests and failure records);
@@ -355,7 +379,7 @@ Each table lands with its unit, on the next free rung, in landing order; none is
 
 ## 5. Seat types — what each property's enforcement class is, or is meant to become
 
-| Property | Legacy pair, CLI, unconfined (MEASURED today) | Thinking seat, API harness (TARGET) | Thinking seat, codex with host tools off (TARGET; UNKNOWN until `R-exec-server`) | Doing seat, confined cell (TARGET, per provider) |
+| Property | Legacy pair, CLI, unconfined (today → after the named unit) | Thinking seat, API harness (TARGET) | Thinking seat, codex with host tools off (TARGET; UNKNOWN until `R-exec-server`) | Doing seat, confined cell (TARGET, per provider) |
 |---|---|---|---|---|
 | Decision rights at the verbs | refused: no org verb runs on an unconfined seat (§ 2.3) | hard (brokered) | mediated | hard |
 | AI admission | hard, once `U-admission-fail-closed` lands | hard | hard | hard |
@@ -368,7 +392,8 @@ Each table lands with its unit, on the next free rung, in landing order; none is
 
 "Hard" means enforced by app code or the operating system on a stated build and platform; "mediated" means no model-reachable tool crosses it but the
 process itself could; "advisory" means asked, not enforced. A TARGET becomes a class only when the unit that builds it shows it on its build, platform
-and probe. Every organisation figure names its seats' classes until every seat is hard (ORGANISATION § 14).
+and probe. Every TARGET holds only where no unconfined seat shares the host and user; beside one it is advisory (§ 2.3's no-neighbour rule). Every
+organisation figure names its seats' classes until every seat is hard (ORGANISATION § 14).
 
 ## 6. Running an organisation on a fixed plan
 - On the plan the organisation shares about six strong-model turns every five hours; priority, triage and timescale ceilings decide who gets them,
@@ -390,7 +415,7 @@ and probe. Every organisation figure names its seats' classes until every seat i
 | Property | Kept by |
 |---|---|
 | Operator authority in-process (AUTH-001) | no verb, packet field or note reaches mode, the kill switch, live activation, approvals, updates or credentials; seat homes remove the owner's computer-use and browser plugins, which could press his controls through the screen |
-| Orders (ORDER-001) | `MayPlaceOrders` unchanged; never by headship; no mandate names instrument, side, size or timing to `operations`; an `operations` attempt for another position carries no order permission; grants bound to containers refuse cross-container replay |
+| Orders (ORDER-001) | `MayPlaceOrders` unchanged; never by headship; no mandate names instrument, side, size or timing to `operations`; an `operations` attempt for another position carries no order permission; until cells, `operations` holds no order permission beside another unconfined attempt; grants bound to containers refuse cross-container replay |
 | The four adapter rules (ORDER-002…005) | the connectors and the gateway, untouched; seat homes and cells remove a model-native way to drive a user interface |
 | UNKNOWN-001 | the gateway's reconciliation, untouched; restart reconciliation keeps every uncertain external effect |
 | Capital | live authority, allocations and two presses unchanged; no verb, mandate or currency carries capital (the factory plan's Law 5) |
@@ -400,10 +425,10 @@ and probe. Every organisation figure names its seats' classes until every seat i
 | Inbox attestation (COUNCIL rule 7) | quiescence kept for unconfined writers; outputs sealed before a pass |
 | Measurement versus claim | objectives, rationales, reports and forecasts are claims; checks, resolutions, scores and costs are app records; a claim references a record, never copies it (R22) |
 | Inbox and messages as data (INBOX-001) | notes, deliveries and owner words are data in a packet; an approval inside text is void |
-| Credentials (CRED-001) | no seat runs under the owner's agent configuration; cells keep his files and login out; the unconfined ceiling of three stands |
+| Credentials (CRED-001) | no seat runs under the owner's agent configuration; the seat home's own login is held by a codex thinking seat's process and offered to no model tool; cells keep his files and login out; the unconfined ceiling of three stands |
 | SIGNAL-001 | no verb, packet or seat on the signal path; what trades is the frozen, measured computation |
 | ORG-001, CHANGE-001 | a position grants no system privilege; kernel changes are proposals to the owner, never made by the organisation |
-| Armed-live refusal | an unconfined runtime is refused when live is armed (`AgentRuntime/Containment.cs:60-69`) — kept, and applied to every seat class |
+| Armed-live refusal | an unconfined runtime is refused when live is armed (`AgentRuntime/Containment.cs:60-69`) — kept, and applied to every seat class: while live is armed every seat without a cell, broker-only codex managers included, is refused, so the organisation stops unless its managers run on the API harness or in cells — said so on the Safety page |
 | Refuse, never guess; recovery | an unrecognised profile, seat version or home is refused with both versions named; an older home is never rewritten — starting fresh is the owner's press (`CLAUDE.md`) |
 | No terminal | seat-home sign-in, the Org page, the veto, the watcher's page — all in the app |
 | Honesty | every enforcement claim states its class per seat type; targets stay targets until measured; simulated stays labelled |
@@ -424,7 +449,7 @@ thinks · a proving-ground score read as market truth.
 | 2.4 Envelopes | `U-admission-fail-closed`, `U-org-envelopes` (O4), `U-billing-classes` |
 | 2.5 Scheduler | `U-org-wakes` (O3), `U-org-lanes` (O9) |
 | 2.6 Packets | `U-reconcile-packet`, `U-org-packets` |
-| 2.7 Runtimes and seat homes | `U-seat-home`, `R-exec-server`, `U-harness-responses`, `U-puppet-runtime` |
+| 2.7 Runtimes and seat homes | `U-seat-home`, `R-exec-server`, `U-thinking-seats` (the broker's shell-free door), `U-harness-responses`, `U-puppet-runtime` |
 | 2.8 Cells | `U-cell-linux` (`U-contain-seats`' Linux provider), `U-execution-environment`, `U-cell-windows` |
 | 2.9 Broker and verbs | `U-org-assignments`, `U-org-verbs` |
 | 2.10 Relay | `U-org-assignments` (deliveries), `U-org-chief` (the owner's words), `U-org-verbs` (boundaries' assessor sets) |
