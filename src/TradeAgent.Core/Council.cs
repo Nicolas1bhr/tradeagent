@@ -59,6 +59,10 @@ public static class CouncilRoles
     /// it no order permission, and the Strategist teams under it none either. A caller that proved no
     /// role at all is not the chair by default — see <c>AgentContext.Role</c> — so an unknown or
     /// absent role answers false here rather than falling through <see cref="Or"/> to Operations.
+    ///
+    /// <para><b>Never by headship, never from the chart</b> (ORDER-001; <c>docs/ORCHESTRATION.md</c> § 8,
+    /// <c>U-org-rights</c>): a position that heads a unit — Research of its division, a third position of its team —
+    /// gains nothing here, and nothing in <c>OrgStore</c> is read. It is the exact string <c>operations</c>.</para>
     /// </summary>
     public static bool MayPlaceOrders(string? role) => role == Operations;
 
@@ -105,8 +109,11 @@ public static class CouncilRoles
     public static bool IsPositionId(string? id) =>
         id is { Length: > 0 }
         && id.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
-        && Array.IndexOf(ReservedDeviceNames, id) < 0
+        && !IsReservedDeviceName(id)
         && !Db.OrgStore.IsAppPrincipal(id);
+
+    /// <summary>Whether <paramref name="id"/> is a device name Windows reserves, in the only case a position id admits.</summary>
+    public static bool IsReservedDeviceName(string? id) => id is not null && Array.IndexOf(ReservedDeviceNames, id) >= 0;
 
     /// <summary>The names Windows reserves for devices, in the only case <see cref="IsPositionId"/> admits.</summary>
     static readonly string[] ReservedDeviceNames =
