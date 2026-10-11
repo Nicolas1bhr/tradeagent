@@ -1955,7 +1955,7 @@ public sealed class MissionLoop
         // DEFERRED BEFORE ANYTHING IS WRITTEN: no admission row, no wake consumed, no scan taken. A computer that cannot
         // hold the launch backs off as a ledger refusal does and the card says why (RULING 2); the Operations Director's
         // order-capable turn holds every other launch until it ends (ORDER-001), and the loop looks again shortly.
-        if (conversation is ILaunchGate gate && gate.Barred() is { } bar) return Barred(role, bar, events);
+        if (conversation is ILaunchGate look && look.Barred() is { } bar) return Barred(role, bar, events);
 
         // ---- yield to the scanner ----------------------------------------------------------------
         // Nothing of THIS turn is running at this line: the previous turn's process has exited and
@@ -2011,6 +2011,17 @@ public sealed class MissionLoop
 
         var known = await _host.SituationAsync(role, ct);
 
+        // ---- the launch's place, taken BEFORE the ledger is asked (U-grant-tree fix pass 1) -------
+        // The look above is only a look: another launch can be issued between it and here — the owner's chat turn, or the
+        // other role — and the register would then refuse this one only after BeginTurn had written its row, reserved its
+        // spend and consumed its wakes. So the grant is issued now, atomically under the register's lock; a refusal here is
+        // deferred exactly as the look's is, with nothing written and every wake still owed. The claim is given back on
+        // every way out that does not launch it (admission refused, the lease taken, nothing left to answer).
+        string? withheld = null;
+        var gate = conversation as ILaunchGate;
+        if (gate?.Claim(out withheld) is { } claimRefused) return Barred(role, claimRefused, events);
+        using var claimed = new ClaimHeld(gate);
+
         // THE HOLDOUT, ASKED AGAIN AT THE RENDER (U-reconcile-packet, review 1): a window declared while this turn was
         // being composed closes the tape wake it holds without this turn, and the packet names nothing of it. A turn
         // nothing else woke, and nobody typed into, is not launched.
@@ -2025,9 +2036,9 @@ public sealed class MissionLoop
         {
             Role = role,
             Attempt = attemptId,
-            // ORDER-001 (U-grant-tree): a launch of the Operations Director that would start beside another attempt is told
-            // so in the prompt the ledger hashes. A look — the grant decides, and refuses the order in the same words.
-            OrdersWithheld = (conversation as ILaunchGate)?.OrdersWithheldNow(),
+            // ORDER-001 (U-grant-tree): a launch of the Operations Director that starts beside another attempt is told so in
+            // the prompt the ledger hashes — in the words of the grant it was issued above, which refuses the order the same way.
+            OrdersWithheld = withheld,
             // WHAT TRADEAGENT DID TO THIS ROLE'S LAST TURN, if it cut it. Read here rather than
             // removed: a turn the ledger then refuses never runs, and consuming the notice into a
             // message nobody sent would lose it.
@@ -3218,6 +3229,19 @@ public sealed class MissionLoop
 
         Changed?.Invoke();
         return bar.Lasting ? Backoff(errors) : _options.BusyRetry;
+    }
+
+    /// <summary>
+    /// Gives a launch's claim back at the end of the turn's scope (<see cref="ILaunchGate.Unclaim"/>): a no-op once the
+    /// launch took it, and the release on every way out that never launched.
+    /// </summary>
+    readonly struct ClaimHeld(ILaunchGate? gate) : IDisposable
+    {
+        public void Dispose()
+        {
+            try { gate?.Unclaim(); }
+            catch (Exception) { /* a claim nobody can give back is revoked with its register; it never blocks the loop */ }
+        }
     }
 
     /// <summary>Doubling from <see cref="MissionOptions.FirstBackoff"/>, capped at the same ceiling.</summary>

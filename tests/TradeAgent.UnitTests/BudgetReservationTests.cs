@@ -6,6 +6,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -580,6 +581,46 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A LAUNCH HELD BY A RACE IS STILL REFUSED BEFORE ANYTHING IS WRITTEN (<c>U-grant-tree</c> fix pass 1, review P1
+    /// MissionLoop:1933). The Research Director's turn passes the loop's look; the Operations Director's order-capable
+    /// launch is issued after that look and before the ledger is asked. The research launch may not start beside it — and
+    /// a refused launch writes no attempt row, reserves nothing and consumes no wake: the grant is decided before admission.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_held_by_a_launch_issued_after_the_loops_look_writes_no_row_and_keeps_its_wake()
+    {
+        TestEnv.EnsureLauncher();
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("review:race", MissionEventKind.Review, now, role: CouncilRoles.Research);
+        var meter = Meter(50m, () => now);
+        var grants = new AgentGrants();
+        var dir = Path.Combine(TestEnv.Home, $"race-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(dir);
+        var manifest = new RuntimeManifest
+        {
+            Id = "race-probe", DisplayName = "race probe", Executable = "race-probe",
+            ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"], TaskArgs = ["{prompt}"]
+        };
+        var research = new AgentSession(manifest, () => Path.Combine(dir, "never-started"), () => dir,
+            () => new Dictionary<string, string>(), new AgentPresence(), role: CouncilRoles.Research, grants: grants);
+        AgentGrant? chair = null;
+        var host = new RaceHost(meter, research, events,
+            // AFTER THE LOOK, BEFORE THE LEDGER: the chair's order-capable launch is issued while the research turn is composed.
+            onSituation: () => chair ??= grants.Issue(CouncilRoles.Operations, "attempt-chair-raced"));
+        var loop = new MissionLoop(host, new MissionOptions(), now: () => now);
+
+        try { await loop.TurnAsync(); }
+        finally { chair?.Dispose(); }
+
+        Assert.NotNull(chair);
+        using (var c = _db.Cmd("SELECT COUNT(*) FROM ai_attempt"))
+            Assert.True(Convert.ToInt32(c.ExecuteScalar()) == 0, "a launch refused for the chair's order permission wrote an attempt row");
+        Assert.Null(events.Get("review:race")!.ConsumedBy);
+        Assert.Contains(host.BarTold, b => b.Why.Contains("attempt-chair-raced") && !b.Lasting);
+    }
+
+    /// <summary>
     /// A COMPUTER THAT CANNOT HOLD THE LAUNCH (<c>U-grant-tree</c>, RULING 2): nothing is written and the wake stays owed, as
     /// above, and the loop backs off as from a ledger refusal — the card saying what it waits for, in the reason's own words.
     /// </summary>
@@ -946,6 +987,31 @@ public class BudgetReservationTests : IDisposable
         }
     }
 
+    /// <summary>A host whose one conversation is a real session, and which runs a step while the turn is composed (U-grant-tree).</summary>
+    sealed class RaceHost(TurnMeter meter, IAgentConversation conversation, MissionEventStore events, Action onSituation) : IMissionHost
+    {
+        public IAgentConversation? Conversation => conversation;
+        public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"race-home-{Guid.NewGuid():n}");
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        public MissionEventStore? Events => events;
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct)
+        {
+            onSituation();
+            return Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+        }
+
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => meter.Begin(prompt, wakes, role);
+
+        public List<(string Role, string Why, bool Lasting)> BarTold { get; } = [];
+
+        public void LaunchBarred(string role, string why, bool lasting)
+        {
+            lock (BarTold) BarTold.Add((role, why, lasting));
+        }
+    }
+
     /// <summary>A host built without a launch ledger: it keeps the interface's own no-ledger admission.</summary>
     sealed class NoLedgerHost : IMissionHost
     {
@@ -973,7 +1039,14 @@ public class BudgetReservationTests : IDisposable
         public string? Withheld { get; set; }
 
         public LaunchBar? Barred() => Bar;
-        public string? OrdersWithheldNow() => Withheld;
+
+        public LaunchBar? Claim(out string? ordersWithheld)
+        {
+            ordersWithheld = Withheld;
+            return null;
+        }
+
+        public void Unclaim() { }
 
         public bool Busy => false;
         public IReadOnlyList<ChatTurn> History => _history.ToArray();

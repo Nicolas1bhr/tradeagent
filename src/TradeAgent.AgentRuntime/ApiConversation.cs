@@ -674,8 +674,17 @@ public interface ILaunchGate
     /// <summary>Why a launch may not start now, or null.</summary>
     LaunchBar? Barred();
 
-    /// <summary>Why a launch issued now would hold no order permission its role has, or null.</summary>
-    string? OrdersWithheldNow();
+    /// <summary>
+    /// TAKES THE NEXT LAUNCH'S PLACE NOW, BEFORE ANYTHING IS ADMITTED (<c>U-grant-tree</c> fix pass 1): the launch grant is
+    /// issued — order permission decided — atomically under the register's lock, and held for the launch that follows. A
+    /// refusal is returned, never thrown: nothing was taken, and the caller writes no row and consumes no wake. On a
+    /// claim, <paramref name="ordersWithheld"/> is why the launch holds no order permission its role has, or null — the
+    /// grant's own words, for the turn's message.
+    /// </summary>
+    LaunchBar? Claim(out string? ordersWithheld);
+
+    /// <summary>Gives back a claim no launch took — admission refused, or the turn never started. Nothing when none is held.</summary>
+    void Unclaim();
 }
 
 public interface IAdmittedConversation
