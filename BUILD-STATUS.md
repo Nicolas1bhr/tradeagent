@@ -9989,3 +9989,39 @@ plain push (scan skipped); seat A scanned each branch after — hits were Cancel
 **Tests box:** NOT RUN — `ready → NO - the machine does not answer`.
 **NOT done, NOT verified:** the brief's NOT-claimed list (E2 neighbours → `U-referee-neighbours`; family PBO "no family"; E4 and the queue's order → v2c); enforcement of any figure;
 the full local suites (CI ran them); a near-constant stream's moments (by design, untested); byte-identity against the base build itself (shown against a stream-less lineage).
+
+## 2026-10-11 — U-referee-v2b landed: the one INCONCLUSIVE path into paper — a version whose refusal says nothing about its edge gets at most a third of an envelope's paper slots, one per campaign lineage at a time across every envelope, one 90-day term per version, charged one trial; it confers no live authority and the verdict path is unchanged
+
+Built under build-fleet seat A from `docs/briefs/U-referee-v2b.md` (EDGE § 4.5 "one INCONCLUSIVE path into paper … at most a third of paper slots and one per family at a time",
+`EDGE-FACTORY.md:213-215`; § 6.5's second capped path; R10 #1 (b)/(e)): one builder (opus/high) reported `31438f26` (code `03fe9b23` on `f1bdd2d2`); the Codex review found two
+real defects → a FRESH fixer (opus/high) reported `05e662a2` (code `5870b369`). Seat A STACKED it by hand on U-referee-v2a's landing tip `abeae1d5` (one CONTRACTS conflict:
+both paragraphs kept, v2a's first) at `cbd79718` (Release build 0 warnings 0 errors on the stack), restacked on v2a's re-prepped `b894247f` at `1a2eb9ee` after seat B's code landings (patch-id identical `30107b4b5341`); land.sh v2 prep rebased it onto v2a's record `9c5eb85f`. Merge `4c96f2bc` (ff-only): 10 commits.
+On main: item 1 `ed6e8955`, item 2 `2081bd0e`, item 3 `c4a406af` + its surface fix `bb185bf7`, item 4 `530410d9`, report `4b0335a8`, fix 1 `b0c03ac6`, fix 2 `89c38279`,
+CONTRACTS `e84a22d2`, fix report `4c96f2bc`. **Schema: none** (main 33 after v2a): the marker and the term ride `allocation.policy_version` and `effective_to`. MONEY PATH (the paper authorisation).
+**What it does.** `Strategy.Inconclusive.Of` (closed vocabulary): a standing `refused`, never invalidated, for `no-trade-on-the-holdout`, or `not-profitable-after-costs` over a holdout
+under 365 days (`CampaignStore.HoldoutSpan`; an unreadable end counts as short); `the-holdout-run-did-not-complete` never. After its paper-eligible pass the sweep offers each
+inconclusive version a PAPER row under `AllocationPolicy.InconclusiveV1`, oldest verdict first; `Allocations.RecordPaper` decides in its one write: ⌊max_deployments/3⌋ per envelope
+(none below three slots), one per campaign lineage root across every envelope (`CampaignStore.LineageRoot`, the family's stand-in, named on the row's reason), one term per version
+ever, `effective_to` = from + 90 days exactly, and a trial left — charged once (`IncubationsCharged` in the total `TrialsCharged`, never refunded); a spent budget refuses in words
+and writes nothing. `Authorises`' paper arm reads an InconclusiveV1 row ONLY through its open term (same promotion, still inconclusive); V1 rows unchanged; every live reader still
+refuses a paper row. Research's note says "inconclusive quota". CONTRACTS paragraph after the stop rule; USER-GUIDE one sentence; no op, verb or argument asks for a slot.
+**Deviations, accepted by seat A:** the holdout passed as a TimeSpan; the charge counted in the TOTAL `TrialsCharged`, out of neither pot (a campaign's exploration reserve defaults to
+its whole budget, so a pot would refuse every slot); the class read through private helpers. **Sweep change beyond the triage, RULED ACCEPTED by seat A:** the paper-eligible pass now
+skips a version only on a row that `Authorises`, not on any standing row — otherwise a stale InconclusiveV1 slot would strand a newer favourable verdict for 90 days; it writes no
+row the paper-eligible rule did not already earn, every envelope ceiling in `RecordPaper` still applies (the stale row still counts — the reading that can only refuse), and the test
+asserts the new V1 row authorises.
+**Codex review 1** (`fleet/records/U-referee-v2b-review-triage.md`), both REAL, both FIXED red-first with a mutant each: (1) an InconclusiveV1 row authorised through a later favourable
+verdict — RED `Expected: False Actual: True`, after: false under paper-eligible and promoted, dispatch `ALLOCATION_NONE`; (2) the lineage fence read one envelope — RED `Expected: 0
+Actual: 1` with a real second envelope (a second gateway on SIM-002 over one ledger), after: refused in words, nothing charged. **Codex re-review of the fix:** no defects found.
+**RED before** (builder): (a) `Expected: "too-few-events" Actual: null`; (b)–(f) 5 of 14 failed (`Expected: 2 Actual: 0`, `Expected: 1 Actual: 0` ×2, `Assert.Contains() Failure`).
+**Mutant** (the lineage check emptied) ⇒ (b) red: A1 and A2 on paper, B1 out; restored.
+**Live readers, re-run:** The_live_press_still_refuses, The_live_writer_refuses, A_paper_allocation_never_authorises_a_live_dispatch, …another_connector_mode_or_account, (e): 5/5
+(`ALLOCATION_NONE` in LIVE_AUTONOMOUS). **(g):** Referee.cs and PromotionStore.cs untouched; `InconclusiveTests` pins both policy shas and `RefereeFeedback.Text` to the base.
+**Gate.** Builder: Release 0/0; 17/17 + 14/14 ×3; CI 38112832508 all 12 jobs. Fixer: Release 0/0; PaperAllocationGate 16/16, Inconclusive 2/2, RefereeVerdict 15/15 ×3; CI 38115382529
+all 11 jobs. **Landing CI** (the stack on v2a): CARRIED from run 38118586678 at `1a2eb9ee` — every job success: windows 1–5 9/4/8/9/6 min, ubuntu 13, macos 15, linux-host 20, packages.
+**Names vs main:** 2535 → 2544, removed 0. **Scan:** the builder pushed its report with a plain push (scan skipped) — seat A scanned the branch after: one hit "Tailscale" (the tests-box line, a judged
+false positive); the fixer's push showed 3 hits, all prose of a brief main had since removed (clean against its base); the stack's dispatch scanned clean.
+**Tests box:** NOT RUN — `ready → NO - the machine does not answer`.
+**OWNER-FACING NOTE:** the Safety card grants ONE paper slot (`PaperDeploymentsPerEnvelope`), so from the UI the quota holds none today; only a ledger grant of ≥ 3 reaches it — owed card
+`U-envelope-slots` (after v2c). **NOT done, NOT verified:** v2c (the queue's order by E2/E3, the remembered-holdout flag); a family (`U-experiments-op`); replacement, retirement, renewal
+(`U-incubator`); an agent request op (none, by design); fix 1's commit built alone (only the tip); the full local suites (CI ran them).
