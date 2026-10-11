@@ -298,8 +298,12 @@ public class CellLinuxTests
 
     // ---- IPC, the user manager and the network --------------------------------------------------------------------
 
+    /// <summary>
+    /// ROW (d), FIRST HALF: the gateway pipe's own name and an abstract name, both listening, both reachable from outside — and
+    /// neither from the cell. The second half, the user manager, is its own row below, so the watched mutant shows each red.
+    /// </summary>
     [LinuxFact]
-    public async Task A_cell_cannot_reach_any_named_or_abstract_socket_or_the_user_manager()
+    public async Task A_cell_cannot_reach_the_gateway_pipe_or_an_abstract_socket()
     {
         PlatformIsACells();
         var w = new World("ipc");
@@ -323,13 +327,26 @@ public class CellLinuxTests
             """);
         var control = await Outside("/usr/bin/python3", "-I", connect, pipePath, abstractName);
         Says(control, "gateway-pipe-connected", "abstract-connected");
-        var manager = await Outside("/usr/bin/systemd-run", "--user", "--wait", "--quiet", "/bin/true");
-        Require(manager.Code == 0, $"a user systemd manager for this account (loginctl enable-linger): systemd-run --user said {manager.Err.Trim()}");
 
         var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", connect, pipePath, abstractName);
         Says(ran, "gateway-pipe-denied errno=13", "abstract-denied errno=13");
+    }
 
-        // THE SURVEY'S ESCAPE: the user manager runs a command OUTSIDE the cell that copies the ledger into the workspace.
+    /// <summary>
+    /// ROW (d), SECOND HALF — THE SURVEY'S ESCAPE, the reason the <c>socket(AF_UNIX)</c> rule exists: without it a cell asked the
+    /// user's systemd manager to run a command OUTSIDE the cell, and that command copied a planted <c>state/</c> ledger into the
+    /// workspace. The manager is real (lingering) and does run the same command for the test's own user outside the cell.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_cannot_escape_through_the_user_manager_to_read_the_ledger()
+    {
+        PlatformIsACells();
+        var w = new World("manager");
+        var outsideCopy = Path.Combine(w.Root, "outside-copy");
+        var manager = await Outside("/usr/bin/systemd-run", "--user", "--wait", "--quiet", "/bin/sh", "-c", $"cat '{World.Ledger}' > '{outsideCopy}'");
+        Require(manager.Code == 0 && File.Exists(outsideCopy),
+            $"a user systemd manager for this account that runs a command outside (loginctl enable-linger): systemd-run --user said {manager.Err.Trim()}");
+
         var leak = Path.Combine(w.Ws, "leak");
         var escape = await InCell(w.Policy(), "/bin/sh", "-c",
             $"systemd-run --user --wait --quiet /bin/sh -c \"cat '{World.Ledger}' > '{leak}'\"; echo systemd-run-rc=$?");
