@@ -129,7 +129,11 @@ public static class AgentArgs
     /// <c>U-prompt-stdin</c>): its slot carries <see cref="RuntimeManifest.StdinMarker"/> and the turn writes the prompt to the
     /// child's stdin, so the argv a seat is verified on at its admission is the argv it starts with.</para>
     /// </summary>
-    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model)
+    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model) =>
+        For(manifest, prompt, resuming, model, out _);
+
+    /// <param name="promptInArgv">Whether the command line built carries the prompt — measured on it, see <see cref="Build"/>.</param>
+    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model, out bool promptInArgv)
     {
         var template =
             resuming && manifest.ResumeArgs.Length > 0 ? manifest.ResumeArgs :
@@ -138,7 +142,18 @@ public static class AgentArgs
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
-            ModelArgs(manifest, model), SeatArgs(manifest), manifest.PromptOnStdin ? manifest.StdinMarker : null);
+            ModelArgs(manifest, model), SeatArgs(manifest), manifest.PromptOnStdin, manifest.StdinMarker, out promptInArgv);
+    }
+
+    /// <summary>
+    /// Whether this runtime's command line carries the prompt, fresh or resumed — measured on the argv this build makes for it, so
+    /// a line that says so (the agent runtime's row, <c>U-prompt-stdin</c>) says what the launch does, not what the manifest claims.
+    /// </summary>
+    public static bool CarriesPrompt(RuntimeManifest manifest)
+    {
+        For(manifest, "", resuming: false, model: null, out var fresh);
+        For(manifest, "", resuming: true, model: null, out var resumed);
+        return fresh || resumed;
     }
 
     /// <summary>
@@ -157,13 +172,28 @@ public static class AgentArgs
             ? []
             : [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
 
-    /// <param name="stdinMarker">
-    /// THE PROMPT TRAVELS ON STDIN when this is not null (<c>U-prompt-stdin</c>): the slot carries the marker — or nothing, when
-    /// the marker is empty — and <paramref name="prompt"/> is not on the command line at all; the caller writes it to the child's
-    /// stdin. Null is a runtime that cannot read stdin, whose prompt is the slot, as it always was, and whose attempts say so.
+    /// <param name="promptOnStdin">
+    /// THE PROMPT TRAVELS ON STDIN when this is true (<c>U-prompt-stdin</c>), and then it is NEVER on the command line: the slot
+    /// carries <paramref name="stdinMarker"/>, or nothing at all when there is none — empty and null alike, since an override file
+    /// can write an explicit null into it — and the caller writes the prompt to the child's stdin. False is a runtime that cannot
+    /// read stdin, whose prompt is the slot, as it always was, and whose attempts say so.
+    /// </param>
+    /// <param name="promptInArgv">
+    /// WHETHER THE COMMAND LINE BUILT CARRIES THE PROMPT, MEASURED ON IT rather than read off the manifest: the same command built
+    /// for a prompt one character longer, compared word for word. A line that does not change with the prompt does not carry it;
+    /// one that does, does. What an attempt records and whether its prompt is written to stdin both follow this.
     /// </param>
     public static List<string> Build(string[] template, string prompt, string? jsonFlag, string[] unattended,
-        string[]? modelArgs = null, string[]? seatArgs = null, string? stdinMarker = null)
+        string[]? modelArgs, string[]? seatArgs, bool promptOnStdin, string? stdinMarker, out bool promptInArgv)
+    {
+        var args = Assemble(template, prompt, jsonFlag, unattended, modelArgs, seatArgs, promptOnStdin, stdinMarker);
+        promptInArgv = !args.SequenceEqual(
+            Assemble(template, prompt + "\0", jsonFlag, unattended, modelArgs, seatArgs, promptOnStdin, stdinMarker), StringComparer.Ordinal);
+        return args;
+    }
+
+    static List<string> Assemble(string[] template, string prompt, string? jsonFlag, string[] unattended,
+        string[]? modelArgs, string[]? seatArgs, bool promptOnStdin, string? stdinMarker)
     {
         var flags = new List<string>();
         if (!string.IsNullOrWhiteSpace(jsonFlag))
@@ -172,24 +202,27 @@ public static class AgentArgs
         if (seatArgs is not null) flags.AddRange(seatArgs.Where(a => !string.IsNullOrEmpty(a)));
         if (modelArgs is not null) flags.AddRange(modelArgs.Where(a => !string.IsNullOrEmpty(a)));
 
+        // THE ONE DECISION, MADE ONCE: what stands where the message goes. On stdin, the marker or nothing — never the prompt.
+        var marker = promptOnStdin ? (string.IsNullOrEmpty(stdinMarker) ? [] : new[] { stdinMarker }) : null;
+
         var promptIndex = Array.FindIndex(template, a => a.Contains("{prompt}", StringComparison.Ordinal));
         var args = new List<string>();
 
         for (var i = 0; i < template.Length; i++)
         {
             if (i == promptIndex) args.AddRange(flags);
-            if (stdinMarker is null) args.Add(template[i].Replace("{prompt}", prompt));
+            if (marker is null) args.Add(template[i].Replace("{prompt}", prompt));
             // THE SLOT IS THE MARKER, WHOLE: never the prompt, and never a template word with the prompt spliced into it.
             else if (i != promptIndex) args.Add(template[i]);
-            else if (stdinMarker.Length > 0) args.Add(stdinMarker);
+            else args.AddRange(marker);
         }
 
         // A template with no placeholder still has to carry the message somewhere — or say where it went instead.
         if (promptIndex < 0)
         {
             args.AddRange(flags);
-            if (stdinMarker is null) args.Add(prompt);
-            else if (stdinMarker.Length > 0) args.Add(stdinMarker);
+            if (marker is null) args.Add(prompt);
+            else args.AddRange(marker);
         }
 
         return args;
@@ -587,7 +620,7 @@ public sealed class AgentSession(
 
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
         // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
-        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: RequestedModel);
+        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: RequestedModel, out var promptInArgv);
 
         // THE SEAT'S PROFILE, VERIFIED AS IT STARTS, fresh or resumed (U-seat-home): the pin, the deny set on this very argv, the
         // config file, the home's and the workspace's inventory, and the CLI's own report. Checked again here although the meter
@@ -608,7 +641,7 @@ public sealed class AgentSession(
         {
             _sessionExists = false;
             _threadId = null;
-            args = AgentArgs.For(manifest, message, resuming: false, model: RequestedModel);
+            args = AgentArgs.For(manifest, message, resuming: false, model: RequestedModel, out promptInArgv);
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
 
@@ -659,7 +692,8 @@ public sealed class AgentSession(
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
         // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.
         _canon = Canon.SeenByCli(psi.WorkingDirectory, role, appFiles ?? AppFileManifest.Shared);
-        _promptIn = manifest.PromptOnStdin ? AgentArgs.OnStdin : AgentArgs.InArgv;
+        // MEASURED ON THE COMMAND LINE THAT STARTS, not read off the manifest: an attempt says what its argv carried.
+        _promptIn = promptInArgv ? AgentArgs.InArgv : AgentArgs.OnStdin;
 
         // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
@@ -680,7 +714,7 @@ public sealed class AgentSession(
             // End-of-file on stdin, at once — after the prompt, for a runtime that reads it there. See the comment on
             // RedirectStandardInput above. Written beside the reads below rather than before them: a child that answers
             // before it has read a long prompt would otherwise fill its stdout pipe while the app is still writing.
-            var feed = manifest.PromptOnStdin
+            var feed = !promptInArgv
                 ? Task.Run(() => FeedAsync(process, message), CancellationToken.None)
                 : CloseInput(process);
 

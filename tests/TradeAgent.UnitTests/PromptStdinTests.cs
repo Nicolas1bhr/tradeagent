@@ -160,6 +160,106 @@ public class PromptStdinTests
         }
     }
 
+    /// <summary>
+    /// A RUNTIME WHOSE MANIFEST SAYS STDIN NEVER CARRIES THE PROMPT ON ITS COMMAND LINE, WHATEVER STANDS FOR ITS MARKER, and its
+    /// attempt says what the command line actually carried. Read through the real <c>runtimes.json</c> reader, which writes an
+    /// explicit JSON <c>null</c> into the marker: codex's shape (true, "-"), OpenCode's (true, ""), the null shape (true, null) —
+    /// the slot gets the marker or nothing, never the prompt — and a runtime that cannot read stdin (false), whose prompt is on
+    /// its command line and whose attempt says so.
+    /// </summary>
+    [Fact]
+    public async Task A_stdin_runtime_never_carries_the_prompt_on_its_command_line_whatever_stands_for_its_marker()
+    {
+        const string Prompt = "Owner-words-4c8e read the inbox first";
+        var rows = new (bool OnStdin, string MarkerJson, string Argv)[]
+        {
+            (true, "\"-\"", "--json -"),
+            (true, "\"\"", "--json"),
+            (true, "null", "--json"),
+            (false, "\"\"", $"--json {Prompt}")
+        };
+        try
+        {
+            foreach (var (onStdin, markerJson, expected) in rows)
+            {
+                var row = $"({onStdin}, {markerJson})";
+                var (script, rec) = StreamRecorder($"marker-{onStdin}-{markerJson.Trim('"')}");
+                File.WriteAllText(RuntimeCatalog.OverridePath,
+                    "[{\"id\":\"probe-stdin\",\"display_name\":\"Probe runtime\",\"executable\":" +
+                    System.Text.Json.JsonSerializer.Serialize(script) +
+                    ",\"exec_args\":[\"{prompt}\"],\"resume_args\":[\"{prompt}\"],\"json_flag\":\"--json\"," +
+                    $"\"prompt_on_stdin\":{(onStdin ? "true" : "false")},\"stdin_marker\":{markerJson}}}]");
+                var manifest = RuntimeCatalog.Require("probe-stdin");
+                if (markerJson == "null") Assert.Null(manifest.StdinMarker);
+
+                using var db = TestEnv.NewDb();
+                var meter = new TurnMeter(db, () => 100m, runtimeId: () => "probe-stdin",
+                    recordPath: Path.Combine(rec.Dir, "turns.jsonl"), live: new LiveAttempts());
+                var session = new AgentSession(manifest, () => script, () => rec.Dir, () => new Dictionary<string, string>(),
+                    presence: new AgentPresence()) { Admit = _ => TradeAgent.Core.Db.AiAdmission.NoLedger };
+                using (meter.Attach(session, CouncilRoles.Operations))
+                    await session.SendAsync(Prompt);
+
+                // Quotes dropped: cmd.exe's echo prints the quoting the command line was given, which is not the question.
+                var line = Assert.Single(rec.Argv()).Replace("\"", "", StringComparison.Ordinal);
+                Assert.True(expected == line, $"{row}: the command line was \"{line}\"");
+                Assert.True((onStdin ? Prompt : "") == rec.Stdin(), $"{row}: stdin carried \"{rec.Stdin()}\"");
+                Assert.True(Context(db).TryGetProperty("prompt_in", out var promptIn), $"{row}: no prompt_in");
+                Assert.True((onStdin ? AgentArgs.OnStdin : AgentArgs.InArgv) == promptIn.GetString(),
+                    $"{row}: the attempt says \"{promptIn.GetString()}\" of a command line \"{line}\"");
+            }
+        }
+        finally { if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath); }
+    }
+
+    /// <summary>
+    /// THE SEAT'S CHECK READS A MISSING MARKER AS NO MARKER, never as a crash: the shipped codex manifest with the null an override
+    /// file can write into its marker still starts, its slot empty and its prompt on stdin.
+    /// </summary>
+    [Fact]
+    public async Task A_seat_whose_marker_is_null_starts_with_its_prompt_on_stdin_and_not_on_its_command_line()
+    {
+        var (codex, exe, rec) = Recorder(nameof(A_seat_whose_marker_is_null_starts_with_its_prompt_on_stdin_and_not_on_its_command_line));
+        codex.StdinMarker = null!;
+        var session = SeatHomeTests.Session(codex, exe, rec.Dir, new SeatHomeTests.FakeProbe());
+        const string Prompt = "Seat-words-6d0b: hold, read the inbox";
+
+        var ended = await SeatHomeTests.Turn(session, Prompt);
+
+        Assert.True(ended.ExitCode == 0, $"the turn ended {ended.ExitCode}: {ended.Raw}");
+        Assert.DoesNotContain(rec.Argv(), a => a.Contains("6d0b", StringComparison.Ordinal));
+        Assert.Equal(Prompt, rec.Stdin());
+        Assert.Equal(AgentArgs.OnStdin, ended.PromptIn);
+    }
+
+    /// <summary>
+    /// A recorder that also answers like a runtime: its command line to <c>argv.txt</c>, its stdin to <c>stdin.txt</c>, then one
+    /// completed turn on stdout so the meter closes the attempt.
+    /// </summary>
+    static (string Script, Recording Rec) StreamRecorder(string name)
+    {
+        var dir = Path.Combine(TestEnv.Home, "prompt-stdin", $"{name}-{Guid.NewGuid():n}"[..32]);
+        Directory.CreateDirectory(dir);
+        var argv = Path.Combine(dir, "argv.txt");
+        var stdin = Path.Combine(dir, "stdin.txt");
+        var payload = Path.Combine(dir, "stream.txt");
+        File.WriteAllText(payload, """{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}""" + "\n");
+        string script;
+        if (OperatingSystem.IsWindows())
+        {
+            script = Path.Combine(dir, "runtime.cmd");
+            File.WriteAllText(script,
+                $"@echo off\r\necho %* >> \"{argv}\"\r\nfindstr \"^\" > \"{stdin}\"\r\ntype \"{payload}\"\r\nexit /b 0\r\n");
+        }
+        else
+        {
+            script = Path.Combine(dir, "runtime.sh");
+            File.WriteAllText(script, $"#!/bin/sh\necho \"$*\" >> \"{argv}\"\ncat > \"{stdin}\"\ncat \"{payload}\"\nexit 0\n");
+            File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return (script, new Recording(dir));
+    }
+
     /// <summary>The newest attempt's <c>context</c>, as the app wrote it.</summary>
     static System.Text.Json.JsonElement Context(TradeAgent.Core.Db.Database db)
     {

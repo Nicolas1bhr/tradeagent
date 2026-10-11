@@ -235,7 +235,8 @@ public static class SeatProfile
 
         // THE PROMPT'S SLOT CARRIES THE STDIN MARKER, NEVER THE PROMPT (U-prompt-stdin): a seat's packet on its command line is
         // readable by every process of the user, a confined cell included. The admission's argv and the start's are one argv.
-        if (manifest.PromptOnStdin && manifest.StdinMarker.Length > 0 && !MarksStdin(manifest, argv))
+        // A missing marker (empty, or the null an override file can write) is no marker: Build leaves the slot empty then.
+        if (manifest.PromptOnStdin && !string.IsNullOrEmpty(manifest.StdinMarker) && !MarksStdin(manifest, argv))
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: the command it built for {manifest.DisplayName} does not carry " +
                 $"\"{manifest.StdinMarker}\" where the message goes, the sign that the message travels on its input and not on its command line. " +
