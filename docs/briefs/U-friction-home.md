@@ -8,3 +8,17 @@ GatewayDeniedException "there is no file at 'strategies/friction-<guid>.strategy
 **Never:** a retry, a raised timeout, a weakened/deleted/renamed test, a [Skip], "flake".
 **Schema:** none. **Money path:** no. **Evidence:** the research stream path's tests (the product path only if the cause is there).
 **Gate:** BUILDER-PROMPT-v2 (Release 0 warnings; touched classes 3×; CI every job; names 0 removed; tests box line; `## Report` ≤ 20 lines).
+
+## Report
+**Tip (code):** 0d97e0dd on 1970f86a. **Cause (product defect, found):** `WorkspaceBuilder.MoveOlderLayout` (compat code for a pre-council install) moved every `workspace/<SubDir>` into the chair's `workspace/agent/<SubDir>`. `research` is one of those SubDirs, and `workspace/research` IS the Research Director's home, so the first chair start with no `agent/research/` moved that role's whole home (programs, STRATEGY-LANGUAGE.md) into the chair's folder, and the role's own build then recreated it empty. In tests, the first `StartTheAiAsync` in the process (ResumeOnStartTests, MaterialPassExclusionTests) is the remover. Proof: a kept home (`TA_TEST_KEEP_HOME=1`, PaperFriction+MaterialPassExclusion) held 3 `friction-*.strategy` files under `workspace/agent/research/strategies`. Third sighting's trx (38133547987): the failing test (10:55:25.982–26.701) overlaps ResumeOnStartTests' first AI-starting tests (25.012–26.715).
+**Item (fix), done:** I deleted `MoveOlderLayout` (and with it the deletion of the stale `workspace/AGENTS.md`), under CLAUDE.md's no-backward-compat rule. Nothing outside a role's own home is moved or deleted at start. Deviation from the brief: the fix is in product code, and test isolation was left alone.
+**RED before:** `CouncilRoleTests.A_start_never_moves_the_research_directors_files_into_the_chairs_folder` [FAIL] "the Research Director's program is no longer at …/council-5749d5eb…/research/strategies/mine.strategy".
+**Mutant:** I re-added only the move of `workspace/research` into the chair's home. It went red with the same message: "Failed: 1, Passed: 5, Total: 6". After restoring: "Passed: 6".
+**After the fix:** in a kept home, `workspace/agent/research` was empty and all 4 friction programs were in `workspace/research/strategies`.
+**Gate 1:** Release `--no-incremental`: "0 Warning(s)", "0 Error(s)".
+**Gate 2 (3×):** CouncilRole, PaperFriction, MaterialPassExclusion and ResearchLibrary classes: "Passed! - Failed: 0, Passed: 21" three times.
+**Gate 3:** CI run 38133704634 at 0d97e0d, every job green: ubuntu, macOS, windows 1–5, package, package-linux, linux-host.
+**Gate 3b:** the review is in scratch `friction/U-friction-home-review.md`. I have not acted on it.
+**Gate 4:** `names.sh main` shows 15 "removed", all from main's newer train B3 (3430404b), which is not on this branch. Against the actual base, `names.sh 1970f86a u-friction-home` gives "removed: 0", "added: 1", sets 2580 → 2581.
+**Tests box:** NOT RUN — the machine does not answer.
+**Not done:** U-resolve-says-why item 1 is not absorbed here, because File.Exists did not lie: the file really was gone. The stress loop (6× PaperFriction+MaterialPassExclusion+ResumeOnStart on the unfixed code) did not go red locally, so the deterministic test and the kept home are the reproduction. Not rebased onto the new main.
