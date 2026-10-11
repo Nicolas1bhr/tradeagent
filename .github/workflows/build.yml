@@ -34,7 +34,7 @@ jobs:
   # (its steps only on a push) so that it is `success`, never `skipped`, on a dispatch run: land.sh carries only
   # from a run whose every job is success, and a skipped job would end every carry. A deduped push run has all
   # its other jobs skipped, so land.sh can never carry from it. Not named test*: it builds nothing.
-  tested-before:
+  dedupe-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -67,8 +67,8 @@ jobs:
   # so every shard the file names is a windows job by construction, with no second list here to drift from it.
   # Not named test*: land.sh reads every test* job's build log for its 0 Warning(s) line, and this builds nothing.
   shard-plan:
-    needs: tested-before
-    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
+    needs: dedupe-gate
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -92,8 +92,8 @@ jobs:
   # so each platform still runs every test exactly once, and the Timing category, its one retry and its record in
   # exactly one job.
   test:
-    needs: [tested-before, shard-plan]
-    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' && needs.shard-plan.result == 'success' }}
+    needs: [dedupe-gate, shard-plan]
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.shard-plan.result == 'success' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.shard-plan.outputs.matrix) }}
@@ -227,8 +227,8 @@ jobs:
   # same tree and tests nothing, and waiting for the suites only put its four minutes after the slowest of
   # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
   package:
-    needs: tested-before
-    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
+    needs: dedupe-gate
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -282,8 +282,8 @@ jobs:
   # adds nothing to how long a branch's CI takes. A release is still cut by hand from a green run.
   # PINNED: the runner image and the SDK both, so what this job proves is the same thing on every branch.
   package-linux:
-    needs: tested-before
-    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' }}
+    needs: dedupe-gate
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -327,8 +327,8 @@ jobs:
   # mapped to 127.0.0.1 before the app starts — no exchange is ever asked from a US runner, and the one source
   # that answers is the job's own loopback server. It reads the app's home with sqlite3 -readonly, never the pipe.
   linux-host:
-    needs: [tested-before, package-linux]
-    if: ${{ !cancelled() && needs.tested-before.outputs.skip != 'true' && needs.package-linux.result == 'success' }}
+    needs: [dedupe-gate, package-linux]
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
