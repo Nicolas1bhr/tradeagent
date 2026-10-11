@@ -10,6 +10,8 @@ packet's "what is wanted") and `U-research-ledger` (rung 31; its `List` is "what
 - A boundary's deadline wakes nobody (`MissionLoop.cs:2219-2229`, `:2248-2263`) while canon v1 says the directors are "woken once" for it (`Canon.cs:252-253`, hashed ◆); `next.json` cannot reach a deadline more
   than 30 minutes away (`MissionLoop.cs:111`).
 - The Situation (`MissionLoop.cs:658-752`) carries owner messages, deliveries, wake causes, boundaries and account lines — no belief and no objective (R21 row `:49`).
+**Re-checked at dispatch (main `e989bfa4`, seat B 11:0x):** both dependencies LANDED (`U-research-ledger` rung 31; `U-reconcile-wakes` record 02b6a608). Canon is v2 (`Canon.cs:38`), "woken once" at `:253`;
+`next.json`'s 30 minutes `MissionLoop.cs:111`; "Why you are awake" now `:755` — the Situation and the deadline/boundary ranges MOVED with U-reconcile-wakes: grep them; `TapeHoldout.Pipe` `:114-118`; ledger `List` `ResearchLedger.cs:340`.
 Read first: `CLAUDE.md`; VISION § 6.7; R21 §§ 2-3; `docs/briefs/U-research-ledger.md` and its landing record; `U-reconcile-wakes`' record; `MissionLoop.cs:500-760`, `:2200-2420`; `TapeCollector.cs`;
 `TapeHoldout.cs`; `Canon.cs:240-260`, `:440-520`; ◆ `Core/Db/ResearchLedger.cs`.
 Must NOT: add a pipe op, verb, arg, pipe-writable setting, table, rung or migration, or an agent-declared watch (survey J2: not until a role's record shows an owned event it missed); give `TapeCollector` a
