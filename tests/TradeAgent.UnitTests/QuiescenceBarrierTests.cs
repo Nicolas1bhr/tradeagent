@@ -1,3 +1,4 @@
+using TradeAgent.Security;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -83,7 +84,7 @@ public class QuiescenceBarrierTests
         };
         // Built without a launch ledger, and saying so: see AgentRuntimeProbe.SessionOverStream.
         return new AgentSession(manifest, () => script, () => dir,
-            () => new Dictionary<string, string>(), presence: presence)
+            () => new Dictionary<string, string>(), presence: presence, grants: new AgentGrants())
         {
             Admit = _ => AiAdmission.NoLedger
         };

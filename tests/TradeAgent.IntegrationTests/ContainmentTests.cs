@@ -1,6 +1,7 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -52,8 +53,9 @@ public class ContainmentTests
         };
 
         // Built without a launch ledger, and saying so: a conversation with no admission refuses (U-admission-fail-closed).
+        // A register of its own: the assembly's chair grant is order-capable, and no other launch is issued beside it.
         var session = new AgentSession(manifest, () => Shell, () => probe.Dir,
-            () => new Dictionary<string, string>(), new AgentPresence())
+            () => new Dictionary<string, string>(), new AgentPresence(), grants: new AgentGrants())
         {
             Admit = _ => AiAdmission.NoLedger
         };
@@ -100,7 +102,7 @@ public class ContainmentTests
 
         var session = new AgentSession(manifest, () => Shell, () => dir,
             () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(),
-            launchRefusal: () => armed ? refusal : null)
+            grants: new AgentGrants(), launchRefusal: () => armed ? refusal : null)
         {
             Admit = _ => AiAdmission.NoLedger   // built without a launch ledger, explicitly
         };

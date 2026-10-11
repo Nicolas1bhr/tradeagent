@@ -61,6 +61,13 @@ public enum ErrorCode
     // configuration refusing an UNCONTAINED runtime: this is a contained launch that was asked for and is never downgraded to a
     // bare one, and the repair is the machine's, not the owner's trading switch.
     CELL_UNAVAILABLE,
+    // ONE AI LAUNCH HELD BACK WHILE THE OPERATIONS DIRECTOR'S TURN HOLDS ORDER PERMISSION (U-grant-tree, ORDER-001). Not
+    // CONTAINMENT_REQUIRED, which is a configuration the owner changes: this ends by itself when that turn ends.
+    LAUNCH_HELD,
+    // THIS COMPUTER CANNOT HOLD THE AI'S PROCESSES IN A CONTAINER OF THEIR OWN, so nothing is started (U-grant-tree,
+    // RULING 2): a launch the app cannot contain could present nothing the gateway would serve, and would spend the
+    // owner's allowance on work the app will not accept.
+    CONTAINMENT_UNAVAILABLE,
     // A TURN THAT REACHED ITS OWN BOUND, and stopped before the request that would have passed it.
     // Its own code because it is not a failure and not a refusal of anything the owner asked for: the
     // turn did work, that work is kept, and the repair is either a larger allowance on the Safety
@@ -938,6 +945,8 @@ public static class Errors
         [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
         [ErrorCode.AI_SEAT_REFUSED]                = ("TradeAgent did not start the AI, because the AI's own settings are not the ones TradeAgent gave it.", "The message names what is out of place and where. Nothing else about the AI is changed.", false),
         [ErrorCode.CELL_UNAVAILABLE]               = ("TradeAgent did not start a program that was to run in a cell, because this computer cannot confine it the way a cell requires.", "Nothing was started and nothing else changed. A cell needs Linux with Landlock ABI 6 or newer (kernel 6.12 or later); the technical detail names what this computer has.", false),
+        [ErrorCode.LAUNCH_HELD]                    = ("TradeAgent held back one AI launch while the Operations Director's turn holds permission to trade.", "No action needed. It starts as soon as that turn ends.", false),
+        [ErrorCode.CONTAINMENT_UNAVAILABLE]        = ("TradeAgent cannot hold the AI assistant's programs in a container of their own on this computer, so it did not start them.", "Restart TradeAgent: it puts back what it needs to hold the AI as it starts. If this stays, reinstall TradeAgent.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
         // turn starts fresh. The two boxes named here are the ones on the Safety page.

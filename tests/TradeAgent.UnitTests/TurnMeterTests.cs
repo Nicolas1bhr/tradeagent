@@ -1,3 +1,4 @@
+using TradeAgent.Security;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
@@ -101,7 +102,7 @@ internal static class AgentRuntimeProbe
         // (U-admission-fail-closed), so a probe session nothing meters takes the explicit no-ledger path. A test that
         // meters it attaches a TurnMeter, which replaces this with the real gate.
         return new AgentSession(built, () => script, () => workspace ?? dir, () => new Dictionary<string, string>(),
-            presence: new AgentPresence(), model: model, appFiles: appFiles)
+            presence: new AgentPresence(), model: model, grants: new AgentGrants(), appFiles: appFiles)
         {
             Admit = _ => AiAdmission.NoLedger
         };

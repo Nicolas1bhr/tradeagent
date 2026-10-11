@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- No assembly-wide chair grant here: see TestEnv.Init. These tests launch agents through the shared register. -->
+    <DefineConstants>$(DefineConstants);NO_TEST_CHAIR</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
     <ProjectReference Include="../../src/TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />

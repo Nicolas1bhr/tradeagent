@@ -510,6 +510,87 @@ public class LaunchGrantTests
         }
     }
 
+    // ---- U-grant-tree: ORDER-001 — order permission never stands beside another unconfined attempt -----------------
+
+    /// <summary>
+    /// (e) THE CHAIR LAUNCHED BESIDE A RUNNING RESEARCH ATTEMPT. Research's process is live and nothing confines it, so the
+    /// Operations launch that starts beside it may read and answer and may not trade — refused at the order with the
+    /// role's own code, in words that say why.
+    /// </summary>
+    [Fact]
+    public async Task Operations_launched_beside_a_running_research_attempt_may_not_trade_and_is_told_why()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-research-running");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-chair-beside");
+        await using var client = await Raw.ConnectAsync(pipe);
+        var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
+        Assert.True(hello.Ok, $"the chair's launch should still be served — it may read and answer: {hello.Error?.Message}");
+
+        var buy = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Buy, Token = IpcToken.Ensure(), Session = "operations", RequestId = "grant-overlap-1",
+            Args = new() { ["symbol"] = JsonSerializer.SerializeToElement("ES"), ["quantity"] = JsonSerializer.SerializeToElement("1") }
+        });
+
+        Assert.False(buy.Ok, "the chair's launch placed an order while the Research Director's unconfined launch ran beside it");
+        Assert.Equal(nameof(ErrorCode.ROLE_MAY_NOT_TRADE), buy.Error?.Code);
+        Assert.Contains("attempt-research-running", buy.Error?.Message);
+        Assert.Contains("may not place, change or cancel an order", buy.Error?.Message);
+
+        var positions = await client.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure(), Session = "operations" });
+        Assert.True(positions.Ok, "a read by the chair's launch was refused; only the order is");
+    }
+
+    /// <summary>
+    /// (f) WHILE THE CHAIR HOLDS ORDER PERMISSION, NO OTHER LAUNCH STARTS. The register refuses to issue the Research
+    /// Director's grant at all — a typed refusal, before any process could exist — and issues it once the chair's turn
+    /// has ended.
+    /// </summary>
+    [Fact]
+    public void No_other_launch_starts_while_operations_holds_order_permission()
+    {
+        var grants = new AgentGrants();
+        var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-chair-trading");
+
+        var refused = Assert.Throws<TradeAgentException>(() => grants.Issue(CouncilRoles.Research, "attempt-research-later"));
+        Assert.Equal("LAUNCH_HELD", refused.Code.ToString());
+        Assert.Contains("attempt-chair-trading", refused.Message);
+
+        chair.Dispose();   // the chair's turn ends: its grace is no neighbour
+        using var research = grants.Issue(CouncilRoles.Research, "attempt-research-later");
+        Assert.Equal(CouncilRoles.Research, research.Role);
+    }
+
+    /// <summary>
+    /// (h) GUARD: THE IN-PROCESS HARNESS IS NO PROCESS AND NOBODY'S NEIGHBOUR. An Operations call through
+    /// <see cref="GatewayPipeServer.CallAsync"/> — no token, no grant — trades as it always did while a research launch's
+    /// grant is live in the register.
+    /// </summary>
+    [Fact]
+    public async Task The_in_process_harness_trades_as_before()
+    {
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), NewPipe()) { Grants = grants };
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-research-beside-harness");
+
+        var buy = await server.CallAsync(new IpcRequest
+        {
+            Op = Ops.Buy, Session = "operations", RequestId = "harness-buy-1",
+            Args = new() { ["symbol"] = JsonSerializer.SerializeToElement("ES"), ["quantity"] = JsonSerializer.SerializeToElement("1") }
+        }, CouncilRoles.Operations, "attempt-harness-1");
+
+        Assert.True(buy.Ok, $"the in-process harness's Operations call was refused: {buy.Error?.Code} {buy.Error?.Message}");
+    }
+
     /// <summary>A container that gives one answer, for the checks that must refuse whatever the container says.</summary>
     sealed class Answers(MembershipVerdict verdict) : AttemptContainer
     {
@@ -593,6 +674,7 @@ public class LaunchGrantTests
     {
         try { File.Delete(Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         try { File.Delete(ToolDeployer.DeployedHashFile); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        TestEnv.EnsureLauncher();   // the home's own launcher back, which every later launch is held by (U-grant-tree)
     }
 
     /// <summary>
