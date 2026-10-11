@@ -847,4 +847,62 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         Assert.Equal(0, gw.Campaigns.TrialsCharged(CampaignOf(gw, version)));
         await gw.DisposeAsync();
     }
+
+    /// <summary>
+    /// AN INCONCLUSIVE SLOT AUTHORISES ONLY THROUGH ITS OWN TERM, never through a later favourable verdict (fix of the
+    /// review's finding 1). The term is granted on a no-trade refusal; the version is then judged paper-eligible, and later
+    /// promoted, under fresh campaigns. The standing is the version's newest, so the inconclusive row's own verdict is no
+    /// longer the one it was written for — and the row authorises nothing, in PAPER, whatever the newer verdict says. A row
+    /// for the newer verdict is the sweep's job, under <see cref="AllocationPolicy.V1"/>, and that row does authorise.
+    /// THE MUTANT, the paper arm's <c>promoted || paper-eligible || term open</c> restored, goes red on the first arm.
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_slot_never_authorises_through_a_later_favourable_verdict()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 3);
+        var version = Judged(db, PromotionVerdict.Refused, 170, PromotionReason.NoTrade, at: At.AddHours(-2));
+        Assert.Equal(1, gw.AllocatePaperDue(At));
+        var slot = gw.Allocations.For(version).Single();
+        var inTerm = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At)!;
+
+        // A LATER PAPER-ELIGIBLE VERDICT on the same version, under a fresh campaign.
+        Judged(db, PromotionVerdict.PaperEligible, 170, at: At.AddHours(1));
+        var eligible = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At.AddHours(1))!;
+        var eligibleListed = gw.Allocations.PaperStanding(At.AddHours(1)).Single(s => s.Allocation.VersionId == version);
+        var dispatched = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "inconclusive-then-eligible", By(version)));
+
+        // AND A LATER PROMOTION still.
+        Judged(db, PromotionVerdict.Promoted, 170, at: At.AddHours(2));
+        var promoted = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At.AddHours(2))!;
+
+        // THE SWEEP WRITES THE NEWER VERDICT'S OWN ROW, and that one authorises.
+        var swept = gw.AllocatePaperDue(At.AddHours(3));
+        var own = gw.Allocations.StandingForPaper(version, gw.Connector.Id, envelope.AccountId, At.AddHours(3))!;
+
+        log.WriteLine($"in its term          : {inTerm.Authorises} ({inTerm.Promotion.State})");
+        log.WriteLine($"after paper-eligible : {eligible.Authorises} ({eligible.Promotion.State}), listed {eligibleListed.Authorises}");
+        log.WriteLine($"dispatch             : {dispatched}");
+        log.WriteLine($"after promoted       : {promoted.Authorises} ({promoted.Promotion.State})");
+        log.WriteLine($"sweep                : {swept}, its own row {own.Allocation.PolicyVersion} {own.Authorises}");
+
+        Assert.True(inTerm.Authorises);
+        Assert.Equal(PromotionState.PaperEligible, eligible.Promotion.State);
+        Assert.Equal(slot.Id, eligible.Allocation.Id);
+        Assert.False(eligible.Authorises);
+        Assert.False(eligibleListed.Authorises);
+        Assert.False(dispatched.StartsWith("ok", StringComparison.Ordinal), dispatched);
+        Assert.Equal(PromotionState.Promoted, promoted.Promotion.State);
+        Assert.Equal(slot.Id, promoted.Allocation.Id);
+        Assert.False(promoted.Authorises);
+        Assert.Empty(conn.Placed);
+
+        Assert.Equal(1, swept);
+        Assert.Equal(AllocationPolicy.V1, own.Allocation.PolicyVersion);
+        Assert.True(own.Authorises);
+        Assert.Null(gw.Allocations.StandingForLive(version, At.AddHours(3)));
+        await gw.DisposeAsync();
+    }
 }

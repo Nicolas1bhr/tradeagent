@@ -252,10 +252,21 @@ public sealed record AllocationStanding(
     /// <para><b>It only ever narrows.</b> A close and a reduce never ask it
     /// (<c>TradingGateway.AllocationCeilingOrThrow</c>), so nothing here can stop a position being
     /// flattened.</para>
+    ///
+    /// <para><b>An inconclusive row answers through its term and nothing else</b> (<c>U-referee-v2b</c>): the standing is
+    /// the version's NEWEST, so a later favourable verdict would otherwise authorise a row written for the refusal before
+    /// it — a row the quota counted, charged and bounded as inconclusive. A favourable verdict gets its own
+    /// <see cref="AllocationPolicy.V1"/> row from the sweep.</para>
     /// </summary>
     public bool Authorises => Allocation.IsPaper
-        ? Envelope is not null && (Promotion.IsPromoted || Promotion.IsPaperEligible || InconclusiveTermOpen)
+        ? Envelope is not null && (IsInconclusiveRow
+            ? InconclusiveTermOpen
+            : Promotion.IsPromoted || Promotion.IsPaperEligible)
         : Promotion.IsPromoted && Promotion.LiveRefusal is null;
+
+    /// <summary>A row written under <see cref="AllocationPolicy.InconclusiveV1"/>.</summary>
+    bool IsInconclusiveRow =>
+        string.Equals(Allocation.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal);
 
     /// <summary>
     /// WHICH INCONCLUSIVE CLASS THE VERDICT UNDER THIS ROW IS, read at <see cref="ReadAt"/> by the paper readers
@@ -276,7 +287,7 @@ public sealed record AllocationStanding(
     /// </summary>
     bool InconclusiveTermOpen =>
         Allocation.IsPaper
-        && string.Equals(Allocation.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)
+        && IsInconclusiveRow
         && Strategy.Inconclusive.IsKnown(InconclusiveClass)
         && Promotion.Promotion is { } promotion
         && string.Equals(promotion.Id, Allocation.PromotionId, StringComparison.Ordinal)

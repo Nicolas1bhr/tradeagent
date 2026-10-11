@@ -365,8 +365,10 @@ public sealed class TradingGateway : IAsyncDisposable
                      .Distinct(StringComparer.Ordinal))
         {
             // ALREADY IN IT: nothing to do, and no note. The sweep runs on every tick, so an
-            // allocation that is already standing must cost nobody a second paid turn.
-            if (_allocations.StandingForPaper(versionId, Connector.Id, account, now) is not null) continue;
+            // allocation that is already standing must cost nobody a second paid turn. A standing row that authorises
+            // nothing is not "in it": an inconclusive slot whose version has since been judged favourably answers only
+            // through its own term (`AllocationStanding.Authorises`), and the newer verdict gets its own row here.
+            if (_allocations.StandingForPaper(versionId, Connector.Id, account, now) is { Authorises: true }) continue;
 
             var standing = Promotions.Standing(versionId);
             if (standing is not { Promotion: { } promotion } || (!standing.IsPromoted && !standing.IsPaperEligible))
