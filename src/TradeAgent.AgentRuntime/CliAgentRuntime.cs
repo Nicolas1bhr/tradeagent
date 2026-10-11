@@ -828,15 +828,6 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         await StartAsync(ct);
     }
 
-    public async Task<string> ExecuteTaskAsync(string prompt, CancellationToken ct = default)
-    {
-        var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
-        var template = manifest.TaskArgs.Length > 0 ? manifest.TaskArgs : manifest.ExecArgs;
-        var args = AgentArgs.Build(template, prompt, jsonFlag: null, manifest.UnattendedArgs);
-        var r = await Run(exe, args, TimeSpan.FromMinutes(15), ct);
-        return string.IsNullOrWhiteSpace(r.StdOut) ? r.StdErr : r.StdOut;
-    }
-
     public async Task<HealthState> GetHealthAsync(CancellationToken ct = default)
     {
         var exe = ResolveExecutable();

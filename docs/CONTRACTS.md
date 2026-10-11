@@ -251,7 +251,7 @@ still falls back to the practice simulator, which is the one platform where bein
 ## `IAgentRuntime` — `src/TradeAgent.AgentRuntime/IAgentRuntime.cs`
 
 Detect · Install · Update · GetVersion · BeginAuthentication · GetAuthenticationState ·
-CreateEnvironment · Start · Stop · Restart · ExecuteTask · GetHealth · Capabilities.
+CreateEnvironment · Start · Stop · Restart · GetHealth · Capabilities.
 
 `CliAgentRuntime` implements all of it from a `RuntimeManifest`, so OpenCode, Codex and anything later
 are the same code with different data. Runtime-specific awkwardness stays inside the manifest.

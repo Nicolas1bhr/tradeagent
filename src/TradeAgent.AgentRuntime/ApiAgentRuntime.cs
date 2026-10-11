@@ -222,20 +222,6 @@ public sealed class ApiAgentRuntime(
     }
 
     /// <summary>
-    /// One turn, start to finish, with no tools offered at all — the verification path, not the
-    /// conversation. A fresh conversation each time so nothing about it joins a role's history.
-    /// </summary>
-    public async Task<string> ExecuteTaskAsync(string prompt, CancellationToken ct = default)
-    {
-        var probe = new ApiConversation(manifest, CouncilRoles.Operations, () => _workspace, key,
-            model: () => RequestedModel, tools: () => WorkerTools.None, attempt: () => null,
-            allowance: allowance, requestTimeout: requestTimeout ?? DefaultRequestTimeout,
-            transport: transport);
-        await probe.SendMissionAsync(prompt, ct);
-        return string.Join("\n", probe.History.Where(t => t.Role is ChatRole.Ai or ChatRole.System).Select(t => t.Text));
-    }
-
-    /// <summary>
     /// READY when a key is held and FAILED when none is. There is nothing else to ask: no program to
     /// version, no process to be alive, and contacting the provider to find out would be a paid
     /// request nobody asked for.

@@ -95,8 +95,5 @@ public interface IAgentRuntime
         Func<IReadOnlyDictionary<string, string>> environment, Func<string?> model) =>
         OpenConversation();
 
-    /// <summary>Runs one task to completion and returns its output. Used for verification, not conversation.</summary>
-    Task<string> ExecuteTaskAsync(string prompt, CancellationToken ct = default);
-
     Task<HealthState> GetHealthAsync(CancellationToken ct = default);
 }
