@@ -1,0 +1,43 @@
+# U-org-principals — a third position is a row, not a constant: its own home, conversation, attempts and keys, never folded into the chair — representable, never runnable on its own
+**Arrow closed:** fixed roles → positions, first half: identity, homes and ledger authors (`docs/ORCHESTRATION.md` §§ 2.1, 2.12, § 10's table; `docs/ORGANISATION.md` §§ 2, 15; R12 § 5 O2;
+R18 § 4 split it; the second half is `U-org-rights`). **Depends on `U-org-ledger`** (landed `33017817`). **Dispatch** beside or after `U-reconcile-packet` and `U-admission-fail-closed` (seat B, 2026-10-11: rebase over whichever has landed; the conflicts below are M/L); M0 attempt 4 does not wait for it (R21, R22). **Protects:** ORG-001 (a position grants no system privilege); "refuse, never guess" (an
+unknown id is refused, never folded); ORDER-001 untouched (`MayPlaceOrders` is `U-org-rights`' and stays `operations`). Opus, high. **No schema change** (the kind is DERIVED from the chart, never stored — ORCHESTRATION § 2.1 as amended `402f4d8b`; the seam in item 4 is ruled by the orchestrator, 2026-10-11).
+**REPRESENTABLE, NEVER RUNNABLE (fail closed; ORCHESTRATION § 2.3):** this unit gives a position identity, home and keys and makes NOTHING runnable. No position but the legacy pair launches until `U-thinking-seats` (the activation gate, CARD, which depends on this unit) exists: item 4 ships the seam that gate fills, and today it refuses every other id.
+**`perception` stays a meter role that is no position (U-decision-port, landed):** it reaches `AiAttemptStore.Begin` directly (`TypeSafeWire.cs:292-307`), never `TurnMeter` — item 1's check sits on the
+position paths, never in `Begin`; `Fence` (`CouncilRelay.cs:497-511`), `Refuse` (`AiAttemptStore.cs:301-302`), `ComposeRecovery` and `Totals`' app-principal skip (`:453-457`) are unchanged; its test (e) stays green (R22).
+**Today (SOURCE at `9b6298db`; code unchanged since `fd7174ee`, re-grepped at `3cfb6ef7`; NOT runtime-verified):** 167 `CouncilRoles.` lines in 34 src files, 1,083 in 99 test files. `Or` folds an
+UNKNOWN role into the chair (`Core/Council.cs:53`) and keys the meter's open slot and staged close (`TurnMeter.cs:1210`, used `:533, 677, 692, 778, 868-870, 1202`), the loop's session and error
+counters (`MissionLoop.cs:1395-1416`), its cap flags (`:2677`) and `MissionEvent.For` (`MissionEventStore.cs:208`); (wording-only uses and the NULL-folding
+`COALESCE(role,$chair)` reads of history stay). `HomeDir` sends an unknown role to the chair's folder (`Council.cs:80`;
+`Paths.RoleHome("x")` = `workspace/agent`, `Paths.cs:50`), so its CLI would resume the chair's codex session (`resume --last` is cwd-scoped, `RuntimeManifest.cs:588-591`). The ledger's author floor
+is `IsKnown` (`ResearchLedger.cs:484-489`; list filter `:344-346`; the pipe's `LedgerAuthor` `GatewayPipeServer.cs:4130-4136`, called `:3829, 3842`) though the column already references
+`org_position` (`Database.cs:1913`). `AppHost.ConversationFor` (`:278-302`) opens a conversation for ANY role string — the one door the loop (`MissionLoop.cs:1706-1707`) and the Chat page take.
+**Observable result:** a third position seeded by a TEST with raw SQL through `Database.Cmd` (`Database.cs:129`, as `DispatchRecoveryTests.cs:294` writes rows) gets its own home (`org/<id>`), canon
+file, open-attempt slot, loop counters and ledger authorship keyed by its exact id — and opens NO conversation: the seam refuses it in words; an id that is not an active position is refused or
+quarantined with a reason, never folded into the chair; the legacy pair's every test name and outcome is unchanged.
+Read first: `CLAUDE.md`; `docs/ORCHESTRATION.md` §§ 2.1, 2.3 (the activation gate), 2.12, 8; `docs/ORGANISATION.md` §§ 2, 13–14; R12 § 1 seams 1–6, § 5 O2; R18 § 1.3; `Council.cs`, `OrgStore.cs`
+(whole); `AppHost.cs:250-330`; `ResearchLedger.cs:330-350, 475-490`; `GatewayPipeServer.cs:3820-3850, 4120-4140`. Items, one commit each, one-sentence messages:
+1. `CouncilRoles.All`, `Default` and `Or` stay the legacy pair — history (a NULL role is the chair's), the boundary ceremony (`BoundaryStore.cs:423, 602, 622, 818`, unchanged), the default share
+   (`Trading.cs:310-314`; `TurnMeter.cs:592, 933`) until `U-org-envelopes`, wording (`AiAttemptStore.cs:303`, which O4 rewrites; `DailyReports.cs:1170`); every LIVE key above takes the exact
+   position id; an id that is not an active position is refused or quarantined with a reason. The slot is ONE lease per position (§ 2.5); re-keying per-launch state by attempt and the single
+   `_minted` slot (`TurnMeter.cs:542, 841, 947`) are `U-org-lanes`'.
+2. Homes: `CouncilRoles.HomeDir` stays static — `operations` → `agent`, `research` → `research`, any other id → `org/<id>`, the id checked as `[a-z0-9-]+` and not a Windows reserved device name
+   (§ 2.1); a failing id is refused (thrown), never mapped, never a path read from a row; `org_position.home_dir` records the same value (seed `Database.cs:2331-2340`). Builders and walkers take
+   the active positions: `WorkspaceBuilder` (`HomeOf :54`, `Build :80, :100`; `BuildAll :131-133` gains an optional positions argument, default the legacy pair), `AgentSupervisor` (`:88, :150`, the
+   only callers), `MaterialScanner.RolePaths` (`:116-119`, static today; from the scanner's own `Database`, ctor `:31`, used `:178`), `AppHost.HomeFor` (`:312-313`); `Paths.EnsureAllVerbose`
+   (`Paths.cs:117`; `AppHost.cs:652`) is left. The canon goes into the position's own home (`Canon.cs:83, 98`); `RolePart` (`:140-145`) stays `""` for it (its role part is `U-org-packets`').
+   `CouncilRelay.Reconcile` (`:250`) STAYS on the legacy pair: `U-org-rights` extends it with the hold, so no third position's output is relayed before it can be held.
+3. Ledger authors: `ResearchLedger.Author` and `List`'s filter accept an ACTIVE position and still refuse an app principal and nobody; `LedgerAuthor` resolves the grant's role through ONE
+   gateway helper (`TradingGateway` holds a `Database`, `:21`) — an active position or the existing refusal — which `U-org-rights` reuses for `Backtests.RoleOf` and lens-propose.
+4. The seam for `U-thinking-seats`: `OrgStore.Standing(string id)` → `PositionStanding(Id, UnitId, Status, Kind, IsLegacy, HomeDir)` or null (Kind derived: `head` where a unit's `head_position_id`
+   is the id, `staff` in a `staff` unit, else `member`); `PositionActivation.Refusal(string id, PositionStanding? s)` → null ONLY for the legacy pair (their existing two-role behaviour), a sentence
+   for every other id ("not an active position" / "no activation gate in this build — U-thinking-seats"), called FIRST in `AppHost.ConversationFor`, so nothing opens and no row is written.
+   `U-thinking-seats` replaces its body (capability × seat assurance) and keeps the signature.
+5. Source compatibility only to keep the diff small (no release is owed any, `CLAUDE.md`): optional arguments — `new MaterialScanner(` 64 sites, `new MissionLoop(` 71, `new TurnMeter(` 29 (src + tests); a test that still breaks is rewritten in place, name kept.
+Red-first tests: (a) `A_third_positions_home_is_its_own_not_the_chairs` (quoted red at base: `workspace/agent`); (b) `A_third_positions_open_attempt_is_keyed_by_its_own_id` (red: the chair's slot,
+`TurnMeter.cs:870, 1210`); (e) `An_unknown_principal_is_refused_not_folded_into_the_chair`; (g) `A_third_position_writes_ledger_entries_under_its_own_id` (red: "is not a council role",
+`ResearchLedger.cs:486`; an app principal still refused); (h) `A_third_position_opens_no_conversation_before_the_activation_gate` (red at base: one opens, in `workspace/agent`; via `ComposeTheAi`,
+`AppHost.cs:891-896`). Mutants to watch red and quote: `Or` back in `TurnMeter.Key` ⇒ (b); the `HomeDir` fallback to `agent` ⇒ (a); `Refusal` null for every active position ⇒ (h).
+Conflicts (re-check at dispatch): `U-reconcile-packet` (in flight: `MissionLoop.cs`, `Canon.cs`, `ResearchLedger.cs`) — M, rebase; `U-admission-fail-closed` (in flight: `TurnMeter.Begin`'s catch
+`:874`, its callers) — L, item 1 keys inside the same method; `U-tape-read` landed (`e2f4daf8`): its `WorkspaceBuilder` overlap is gone. Gate: SPEED MODE (`fleet/SPEED-MODE.md` § 4) — rebase on
+`main` first; Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all three platforms; tests box `ready` once or NOT RUN; names vs `main` 0 removed (both set sizes printed). `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
