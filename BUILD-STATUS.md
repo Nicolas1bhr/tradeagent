@@ -9954,3 +9954,38 @@ canon bytes unchanged (it reads tool names and ops, never tool text).
 the skip-Buy mutant still stays green — JUDGED NOT A DEFECT: with sell offering buy's arguments, skipping buy's specs yields the IDENTICAL offered schema (an equivalent mutant; seat B's brief example was wrong);
 the per-op mutants that change the output (skip backtest, drop capital) go red.
 **Not claimed:** not run against a real provider's schema validator; tests box NOT RUN (did not answer). Scan exclusions (judged, by phrase): `"attempt-args").Token` in a test; the tests-box line's "asleep, off Tailscale".
+
+## 2026-10-11 — U-referee-v2a landed at RUNG 33: every verdict also measures its version's research evidence — E2's eight sub-periods and E3's effective trials, noise ceiling and deflated Sharpe over the lineage's trial streams, each with the power of its own gate; below that power a gate answers inconclusive, never a pass; all SHOWN, none enforced, no verdict changes
+
+Built under build-fleet seat A from `docs/briefs/U-referee-v2a.md` (EDGE § 4.5 E2/E3 and "the referee computes the power of its own gates", `EDGE-FACTORY.md:204-205`, `:211-212`; R04 move 3;
+part of `U-referee-v2`, split with v2b): one builder (opus/high) reported `5d058106` (code `3ca6ee5a` on `f1bdd2d2`); the Codex review found one real defect and owed one check →
+a FRESH fixer (opus/high) reported `9dcdc26c` (code `bbc2961e`); land.sh v2 prep rebased it onto `5056d972` and, after seat B's code landings, onto `10e26930` (patch-id identical `4af82dbb1ec5`). Merge `b894247f` (ff-only): 8 commits.
+On main: item 1 `f01964f6`, item 2 (rung) `fa0816d9`, item 3 `801bc8c7`, report `1720f85f`, fix A `949f7629`, fix B `7a99209b`, CONTRACTS `3aed10af`, fix report `b894247f`.
+**Schema: rung 33** (`DatabaseSchemaVersion = 33`), its own `if (have < 33)` block after 32's, stamp last: `referee_research` (keyed campaign, version, method; first writer wins,
+`ON CONFLICT DO NOTHING`; names its candidate run and the candidate's friction and trace shas) and `referee_research_trial` (the trial runs read). Written inside the verdict's
+one `db.Write` — the measurement lands with the promotion or not at all; nothing updates or deletes either table.
+**What it does.** `Deflation.cs` (pure, `Version = 1`): `StandardNormal`, `Deflation`, `BlockTest`, `GatePower`, `GateStatus` — matches R04 :72 (0.90, E[max_100] 2.53) and
+`R10-calc/cascade_power.py` (6 E2 + 6 E3 rows quoted in the tests). Candidate = the 1× stream with most known days; E2 = 8 equal blocks over KNOWN days; E3 = N_eff, the noise
+ceiling and DSR. Status words: `inconclusive` below the gate's power or with an unknown figure; `enforceable — not enforced by this build` at or above it; no "pass".
+The daily report shows the figures beside each verdict (research data only). `ScoringPolicyV1`/`PaperPolicyV1`, both policy texts, `EvaluatorVersion`, the promotion id and
+`RefereeFeedback.Text` unchanged. CONTRACTS "The verdict" states it; AGENTS.md unchanged.
+**Deviations, accepted by seat A:** (1) the DSR gate discriminates from 444 days at N_eff 2, not ≈429 — A's ruling P(pass|SR2) − P(pass|SR0) ≥ 0.50 subtracts 0.015;
+(2) `referee_research_trial` and the two shas added — EDGE 6.2 needs the trial runs read and the candidate's identity; the brief's column list had neither.
+**Codex review 1 (`fleet/records/U-referee-v2a-review-triage.md`):** REAL — the report printed recorded figures without re-checking today's holdout → FIXED (A): `ResearchEvidence.Withheld`
+asks `StrategyStore.HeldBack` at each read of the candidate and every streamed trial (a run gone from the ledger is withheld too); the line then says "Research evidence withheld: …"
+and shows no figure; the rows' bytes unchanged (asserted). JUDGED by design — the research row inside the verdict's write; the owed check (B) showed no-stream and constant-stream
+verdicts record without throwing and leave the promotion row, holdout note and `RefereeFeedback.Text` byte-identical (vs a lineage with no trial, the closest honest comparison),
+but a constant stream recorded figures made of rounding error (DSR 1, SR 1.5e15) → FIXED: `Varies` checks the values themselves, so such a stream's moments are NULL ("DSR unknown —
+inconclusive"), never NaN/∞ text.
+**Codex re-review of the fix:** one finding — the constant-stream change kept `Deflation.Version`/`ResearchEvidence.Version` at 1. JUDGED NOT A DEFECT: no build that wrote a v1 row
+was ever released or landed (rung 33 exists on main only from this merge), so no home holds a row under the earlier method; the version names this landed method.
+**RED before / mutants** (evidence path): power check removed → (c) `Expected: "inconclusive" Actual: "enforceable — not enforced by this build"`; HeldBack removed → (g)
+`Expected: "run-inside" Actual: "run-over"`; `_research.Record` removed → (e) `Assert.Single() Failure: The collection was empty`; fix A and fix B each RED before, quoted in the fix report.
+**Gate.** Builder: Release `--no-incremental` 0 warnings 0 errors; 47/47 ×3; CI 38113402103 every job. Fixer: Release 0/0; Deflation|Block|RefereeVerdict|DailyReport|HoldoutLedger|
+BacktestLedger 62/62 ×3; CI 38115369547 every job. **Landing CI:** run 38118568353 at `b894247f` (dispatched by prep after main moved; run 38117178753 at `abeae1d5` also green, stale base) — every job success: windows 1–5 10/5/10/5/6 min, ubuntu 12, macos 15, linux-host 20, packages.
+**Wall time** (scratch): a verdict over 200,000 held-back minute bars — 5 trials 0.60 s → 0.57 s; 200 trials 0.50 s → 0.95 s (+0.45 s).
+**Names vs main:** 2523 → 2535, removed 0. **Scan:** CancellationToken hits `stop: before.Token`, `stop: during.Token` judged false, excluded by name. Both legs pushed a report-only commit with a
+plain push (scan skipped); seat A scanned each branch after — hits were CancellationTokens only; land.sh check scanned again.
+**Tests box:** NOT RUN — `ready → NO - the machine does not answer`.
+**NOT done, NOT verified:** the brief's NOT-claimed list (E2 neighbours → `U-referee-neighbours`; family PBO "no family"; E4 and the queue's order → v2c); enforcement of any figure;
+the full local suites (CI ran them); a near-constant stream's moments (by design, untested); byte-identity against the base build itself (shown against a stream-less lineage).
