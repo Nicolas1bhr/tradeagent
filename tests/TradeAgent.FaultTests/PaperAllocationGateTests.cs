@@ -960,17 +960,17 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     // ---- U-referee-v2c: the paper queue's order -------------------------------------------------------
 
     /// <summary>
-    /// THE VERDICT'S RESEARCH MEASUREMENT AS <c>ResearchEvidence.Record</c> WOULD HAVE WRITTEN IT — only its DSR matters to
+    /// THE VERDICT'S RESEARCH MEASUREMENT AS <c>ResearchEvidence.Record</c> WOULD HAVE WRITTEN IT, under this build's evaluator — only its DSR matters to
     /// the queue; <paramref name="candidate"/> names the run it read (null: none).
     /// </summary>
     static void ResearchRow(Database db, string version, double? dsr, string? candidate = null) => db.Write(_ =>
     {
         using var c = db.Cmd("""
-            INSERT INTO referee_research(campaign_id, version_id, method, candidate_run_id, days, blocks_known, blocks_positive,
-              trials_m, trials_unstreamed, n_eff, dsr, blocks_power, dsr_power, blocks_status, dsr_status, at)
-            SELECT campaign_id, version_id, $m, $run, 400, 8, 6, 1, 0, 1, $dsr, '0.5', '0.5', 'inconclusive', 'inconclusive', $at
+            INSERT INTO referee_research(campaign_id, version_id, method, evaluator_version, candidate_run_id, days, blocks_known,
+              blocks_positive, trials_m, trials_unstreamed, n_eff, dsr, blocks_power, dsr_power, blocks_status, dsr_status, at)
+            SELECT campaign_id, version_id, $m, $eval, $run, 400, 8, 6, 1, 0, 1, $dsr, '0.5', '0.5', 'inconclusive', 'inconclusive', $at
               FROM strategy_promotion WHERE version_id=$ver
-            """, ("$m", ResearchEvidence.Version), ("$run", candidate), ("$ver", version),
+            """, ("$m", ResearchEvidence.Version), ("$eval", Referee.EvaluatorVersion), ("$run", candidate), ("$ver", version),
             ("$dsr", dsr?.ToString("R", System.Globalization.CultureInfo.InvariantCulture)), ("$at", At.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Assert.Equal(1, c.ExecuteNonQuery());
         return 0;
@@ -980,11 +980,11 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     static void Sealed(Database db, string version, bool remembered) => db.Write(_ =>
     {
         using var c = db.Cmd("""
-            INSERT INTO referee_holdout(campaign_id, version_id, method, research_row, holdout_days, z_status, alpha_j,
-              wealth_before, wealth_after, addis_status, remembered, at)
-            SELECT campaign_id, version_id, $m, 1, 60, 'inconclusive', '0.01', '0.125', '0.08', 'inconclusive', $rem, $at
+            INSERT INTO referee_holdout(campaign_id, version_id, method, evaluator_version, research_row, holdout_days, z_status,
+              alpha_j, wealth_before, wealth_after, addis_status, remembered, at)
+            SELECT campaign_id, version_id, $m, $eval, 1, 60, 'inconclusive', '0.01', '0.125', '0.08', 'inconclusive', $rem, $at
               FROM strategy_promotion WHERE version_id=$ver
-            """, ("$m", RefereeHoldout.Version), ("$ver", version), ("$rem", remembered ? 1 : 0), ("$at", At.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+            """, ("$m", RefereeHoldout.Version), ("$eval", Referee.EvaluatorVersion), ("$ver", version), ("$rem", remembered ? 1 : 0), ("$at", At.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Assert.Equal(1, c.ExecuteNonQuery());
         return 0;
     });

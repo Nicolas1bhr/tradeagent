@@ -71,6 +71,14 @@ public sealed record ResearchEvidenceRow(
     /// </summary>
     public int? TrialsOtherSemantics { get; init; }
 
+    /// <summary>
+    /// THE EVALUATOR THE MEASUREMENT WAS TAKEN UNDER (rung 36, the measurement's identity with its campaign, version and
+    /// method): <see cref="Strategy.Referee.EvaluatorVersion"/> of the build that recorded it, or null for one from before
+    /// the rung — unknown. Read back only: <see cref="ResearchEvidence.Record"/> writes this build's constant and never this
+    /// value, and <see cref="ResearchEvidence.Of"/> serves only this build's.
+    /// </summary>
+    public string? EvaluatorVersion { get; internal init; }
+
     /// <summary>The order the paper queue will read (<c>U-referee-v2c</c>): the DSR, an unknown one last.</summary>
     public double Rank => Dsr ?? double.NegativeInfinity;
 }
@@ -97,7 +105,9 @@ public sealed record ResearchEvidenceRow(
 /// carries reaches it.</para>
 ///
 /// <para><b>What is written</b>, by <see cref="Record"/> only, inside the verdict's own write: one row per (campaign,
-/// version, method), first writer wins, and its trials. Nothing updates or deletes either, and no clause of any policy
+/// version, method, evaluator — this build's <see cref="Referee.EvaluatorVersion"/>, rung 36), first writer wins, and its
+/// trials; every read serves this build's evaluator's row only, so a verdict asked again under another evaluator is
+/// measured under its own and never served an earlier one's. Nothing updates or deletes either, and no clause of any policy
 /// reads them: <c>ScoringPolicyV1</c>, <c>PaperPolicyV1</c>, the promotion and <c>RefereeFeedback.Text</c> are what they
 /// were. A changed method is a new <see cref="Version"/> on new rows.</para>
 /// </summary>
@@ -128,7 +138,7 @@ public sealed class ResearchEvidence(Database db)
     readonly StrategyStore _strategies = new(db);
     readonly DatasetStore _datasets = new(db);
 
-    const string Cols = "campaign_id, version_id, method, candidate_run_id, friction_sha256, trace_sha256, days, blocks_known, "
+    const string Cols = "campaign_id, version_id, method, evaluator_version, candidate_run_id, friction_sha256, trace_sha256, days, blocks_known, "
         + "blocks_positive, trials_m, trials_unstreamed, n_eff, sr, skew, kurtosis, sr0, dsr, ceiling, blocks_power, dsr_power, "
         + "blocks_status, dsr_status, at, trials_other_semantics";
 
@@ -182,7 +192,8 @@ public sealed class ResearchEvidence(Database db)
             if (candidate is null)
                 return new ResearchEvidenceRow(campaignId, versionId, Version, null, null, null, 0, 0, 0, read.Count, unstreamed,
                     clusters.NEff, null, null, null, null, null, null, GatePower.Blocks(0), GatePower.Dsr(0, clusters.NEff),
-                    GateStatus.NoStream, GateStatus.NoStream, at, trialRows) { TrialsOtherSemantics = other };
+                    GateStatus.NoStream, GateStatus.NoStream, at, trialRows)
+                { TrialsOtherSemantics = other, EvaluatorVersion = Referee.EvaluatorVersion };
 
             var deflated = Deflation.Of(candidate.Days, trials);
             var blocks = BlockTest.Of(candidate.Days);
@@ -193,7 +204,8 @@ public sealed class ResearchEvidence(Database db)
                 deflated.NEff, deflated.Candidate?.Sr, deflated.Candidate?.Skew, deflated.Candidate?.Kurtosis, deflated.Sr0,
                 deflated.Dsr, deflated.Ceiling, blocksPower, dsrPower,
                 GatePower.Status(blocksPower, blocks.Known == BlockTest.Count),
-                GatePower.Status(dsrPower, deflated.Dsr is not null), at, trialRows) { TrialsOtherSemantics = other };
+                GatePower.Status(dsrPower, deflated.Dsr is not null), at, trialRows)
+            { TrialsOtherSemantics = other, EvaluatorVersion = Referee.EvaluatorVersion };
         });
 
     /// <summary>
@@ -218,7 +230,8 @@ public sealed class ResearchEvidence(Database db)
     /// <summary>
     /// RECORDS one measurement and its trials — called inside the verdict's own write (<c>Referee.Verdict</c>), so it lands
     /// with the promotion or not at all. First writer wins: a measurement already recorded for the (campaign, version,
-    /// method) stands, and this writes nothing. True when this call recorded it — what the verdict's write asks before it
+    /// method) under this build's evaluator stands, and this writes nothing. The evaluator written is this build's
+    /// <see cref="Referee.EvaluatorVersion"/>, never <see cref="ResearchEvidenceRow.EvaluatorVersion"/>. True when this call recorded it — what the verdict's write asks before it
     /// seals a holdout record beside it (<c>U-referee-v2c</c>).
     /// </summary>
     internal bool Record(ResearchEvidenceRow row) => db.Write(_ =>
@@ -226,11 +239,12 @@ public sealed class ResearchEvidence(Database db)
         ArgumentNullException.ThrowIfNull(row);
         using var insert = db.Cmd($"""
             INSERT INTO referee_research({Cols})
-            VALUES($camp,$ver,$method,$run,$friction,$trace,$days,$bk,$bp,$m,$un,$neff,$sr,$skew,$kurt,$sr0,$dsr,$ceil,
+            VALUES($camp,$ver,$method,$eval,$run,$friction,$trace,$days,$bk,$bp,$m,$un,$neff,$sr,$skew,$kurt,$sr0,$dsr,$ceil,
                    $bpow,$dpow,$bstat,$dstat,$at,$other)
-            ON CONFLICT(campaign_id, version_id, method) DO NOTHING
+            ON CONFLICT(campaign_id, version_id, method, evaluator_version) DO NOTHING
             """,
-            ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method), ("$run", row.CandidateRunId),
+            ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method), ("$eval", Referee.EvaluatorVersion),
+            ("$run", row.CandidateRunId),
             ("$friction", row.FrictionSha256), ("$trace", row.TraceSha256), ("$days", row.Days),
             ("$bk", row.BlocksKnown), ("$bp", row.BlocksPositive), ("$m", row.TrialsM), ("$un", row.TrialsUnstreamed),
             ("$neff", row.NEff), ("$sr", Text(row.Sr)), ("$skew", Text(row.Skew)), ("$kurt", Text(row.Kurtosis)),
@@ -243,21 +257,27 @@ public sealed class ResearchEvidence(Database db)
         foreach (var trial in row.Trials)
         {
             using var c = db.Cmd("""
-                INSERT INTO referee_research_trial(campaign_id, version_id, method, ordinal, run_id, cluster, reading)
-                VALUES($camp,$ver,$method,$ord,$run,$cluster,$reading)
+                INSERT INTO referee_research_trial(campaign_id, version_id, method, evaluator_version, ordinal, run_id, cluster, reading)
+                VALUES($camp,$ver,$method,$eval,$ord,$run,$cluster,$reading)
                 """,
-                ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method), ("$ord", trial.Ordinal),
+                ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method),
+                ("$eval", Referee.EvaluatorVersion), ("$ord", trial.Ordinal),
                 ("$run", trial.RunId), ("$cluster", trial.Cluster), ("$reading", trial.Reading));
             c.ExecuteNonQuery();
         }
         return true;
     });
 
-    /// <summary>The measurement recorded for one version under one campaign at this build's method, or null.</summary>
+    /// <summary>
+    /// The measurement recorded for one version under one campaign at this build's method and under this build's
+    /// evaluator, or null — another evaluator's, or one from before rung 36 (unknown), is never served for this build's.
+    /// </summary>
     public ResearchEvidenceRow? Of(long campaignId, string versionId) => db.Read(_ =>
     {
-        using var c = db.Cmd($"SELECT {Cols} FROM referee_research WHERE campaign_id=$camp AND version_id=$ver AND method=$m",
-            ("$camp", campaignId), ("$ver", versionId), ("$m", Version));
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM referee_research
+             WHERE campaign_id=$camp AND version_id=$ver AND method=$m AND evaluator_version=$eval
+            """, ("$camp", campaignId), ("$ver", versionId), ("$m", Version), ("$eval", Referee.EvaluatorVersion));
         return ReadRows(c).FirstOrDefault();
     });
 
@@ -286,10 +306,10 @@ public sealed class ResearchEvidence(Database db)
         return null;
     });
 
-    /// <summary>Every measurement recorded, any method, oldest first.</summary>
+    /// <summary>Every measurement recorded, any method and any evaluator (<see cref="ResearchEvidenceRow.EvaluatorVersion"/> says which), oldest first.</summary>
     public IReadOnlyList<ResearchEvidenceRow> All() => db.Read(_ =>
     {
-        using var c = db.Cmd($"SELECT {Cols} FROM referee_research ORDER BY at, campaign_id, version_id, method");
+        using var c = db.Cmd($"SELECT {Cols} FROM referee_research ORDER BY at, campaign_id, version_id, method, evaluator_version");
         return (IReadOnlyList<ResearchEvidenceRow>)ReadRows(c);
     });
 
@@ -299,13 +319,14 @@ public sealed class ResearchEvidence(Database db)
         using (var r = c.ExecuteReader())
             while (r.Read())
                 heads.Add(new ResearchEvidenceRow(
-                    r.GetInt64(0), r.GetString(1), r.GetInt32(2), Sql.S(r.GetValue(3)), Sql.S(r.GetValue(4)),
-                    Sql.S(r.GetValue(5)), r.GetInt32(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
-                    r.GetInt32(11), Number(r.GetValue(12)), Number(r.GetValue(13)), Number(r.GetValue(14)),
-                    Number(r.GetValue(15)), Number(r.GetValue(16)), Number(r.GetValue(17)), Number(r.GetValue(18))!.Value,
-                    Number(r.GetValue(19))!.Value, r.GetString(20), r.GetString(21), Sql.Time(r.GetString(22)), [])
+                    r.GetInt64(0), r.GetString(1), r.GetInt32(2), Sql.S(r.GetValue(4)), Sql.S(r.GetValue(5)),
+                    Sql.S(r.GetValue(6)), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10), r.GetInt32(11),
+                    r.GetInt32(12), Number(r.GetValue(13)), Number(r.GetValue(14)), Number(r.GetValue(15)),
+                    Number(r.GetValue(16)), Number(r.GetValue(17)), Number(r.GetValue(18)), Number(r.GetValue(19))!.Value,
+                    Number(r.GetValue(20))!.Value, r.GetString(21), r.GetString(22), Sql.Time(r.GetString(23)), [])
                 {
-                    TrialsOtherSemantics = r.IsDBNull(23) ? null : r.GetInt32(23)
+                    EvaluatorVersion = Sql.S(r.GetValue(3)),
+                    TrialsOtherSemantics = r.IsDBNull(24) ? null : r.GetInt32(24)
                 });
 
         var rows = new List<ResearchEvidenceRow>(heads.Count);
@@ -313,8 +334,9 @@ public sealed class ResearchEvidence(Database db)
         {
             using var t = db.Cmd("""
                 SELECT ordinal, run_id, cluster, reading FROM referee_research_trial
-                 WHERE campaign_id=$camp AND version_id=$ver AND method=$m ORDER BY ordinal
-                """, ("$camp", head.CampaignId), ("$ver", head.VersionId), ("$m", head.Method));
+                 WHERE campaign_id=$camp AND version_id=$ver AND method=$m AND evaluator_version IS $eval ORDER BY ordinal
+                """, ("$camp", head.CampaignId), ("$ver", head.VersionId), ("$m", head.Method),
+                ("$eval", head.EvaluatorVersion));
             var trials = new List<ResearchTrialRow>();
             using var r = t.ExecuteReader();
             while (r.Read()) trials.Add(new ResearchTrialRow(r.GetInt32(0), r.GetString(1), r.GetInt32(2), r.GetString(3)));

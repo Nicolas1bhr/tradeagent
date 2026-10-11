@@ -372,7 +372,10 @@ public static class Versions
     /// never from a caller's value. No backfill: a run recorded before the rung has NULL — unknown — and research evidence
     /// counts it as a trial without using its returns, the refusal a build owes another evaluator's figures; and
     /// <c>referee_research.trials_other_semantics</c>, how many trials a measurement read so, NULL on one recorded before
-    /// the rung, which applied no such check.</para>
+    /// the rung, which applied no such check. And the evaluator joins the measurement's identity: <c>referee_research</c>,
+    /// <c>referee_research_trial</c> and <c>referee_holdout</c> are rebuilt keyed (campaign, version, method,
+    /// <c>evaluator_version</c>) in one transaction before the stamp, every row kept with NULL — unknown, read as another
+    /// evaluator's — and every reader reads this build's evaluator only.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 36;
 

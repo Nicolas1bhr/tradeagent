@@ -2135,14 +2135,145 @@ public sealed class Database : IDisposable
             // NULL, which is unknown, and research evidence counts it as a trial whose returns it does not use — never a
             // guess that it was this build's.
             //
-            // AND ONE ON THE MEASUREMENT: `referee_research.trials_other_semantics`, how many of its trials it read so,
-            // written by `ResearchEvidence.Record` in the verdict's own insert. A measurement recorded before this rung has
-            // NULL — it applied no such check — and is never re-read as having applied one: counting its trials' labels
-            // now would call every unstreamed trial of it "other semantics", since every run before the rung is NULL.
-            // Added only where the tables lack them and the stamp last, because the rungs run in autocommit and a crash
-            // before the stamp runs this again.
+            // AND THE EVALUATOR JOINS THE MEASUREMENT'S IDENTITY (the review's P1): `referee_research`, its trials and the
+            // sealed `referee_holdout` were one row per (campaign, version, method), first writer wins — so a verdict asked
+            // again under another evaluator had its measurement discarded by the key, was served the earlier evaluator's,
+            // and was never sealed. They are REBUILT keyed (campaign, version, method, evaluator_version): the label is
+            // written only by `ResearchEvidence.Record` and `RefereeHoldout.Record`, from this build's constant, and every
+            // reader reads only this build's. EVERY ROW IS KEPT, copied as it was: a row from before this rung gets NULL —
+            // unknown, read as another evaluator's and never as this build's — and none is dropped or re-measured. With it,
+            // `referee_research.trials_other_semantics`, how many of a measurement's trials it read as measured under other
+            // semantics: NULL on a measurement from before the rung, which applied no such check and is never re-read as
+            // having applied one (counting its trials' labels now would call every unstreamed trial of it "other
+            // semantics", since every run before the rung is NULL).
+            //
+            // ONE TRANSACTION, the stamp after it: the old tables are renamed aside, the new ones made under the old names,
+            // every row copied, the old ones dropped, then COMMIT — so a crash before the commit leaves the rung-35 tables
+            // as they were, and a crash between the commit and the stamp finds `evaluator_version` already on
+            // `referee_research` and runs none of it again. Foreign keys are off only for the rebuild (SQLite's own
+            // procedure for changing a table's key), because the rename moves the trials' reference with it. The run's column
+            // is added only where the table lacks it, for the same crash.
             AddColumnIfMissing("strategy_run", "evaluator_version", "TEXT");
-            AddColumnIfMissing("referee_research", "trials_other_semantics", "INTEGER");
+
+            if (ReadInt("SELECT COUNT(*) FROM pragma_table_info('referee_research') WHERE name='evaluator_version'") is not > 0)
+            {
+                Exec("PRAGMA foreign_keys=OFF;");
+                try
+                {
+                    Exec("BEGIN IMMEDIATE;");
+                    try
+                    {
+                        Exec("""
+                        ALTER TABLE referee_research_trial RENAME TO referee_research_trial_35;
+                        ALTER TABLE referee_research RENAME TO referee_research_35;
+                        ALTER TABLE referee_holdout RENAME TO referee_holdout_35;
+
+                        CREATE TABLE referee_research(
+                          campaign_id            INTEGER NOT NULL REFERENCES strategy_campaign(id),
+                          version_id             TEXT NOT NULL REFERENCES strategy_version(id),
+                          method                 INTEGER NOT NULL,
+                          evaluator_version      TEXT,
+                          candidate_run_id       TEXT REFERENCES strategy_run(id),
+                          friction_sha256        TEXT,
+                          trace_sha256           TEXT,
+                          days                   INTEGER NOT NULL,
+                          blocks_known           INTEGER NOT NULL,
+                          blocks_positive        INTEGER NOT NULL,
+                          trials_m               INTEGER NOT NULL,
+                          trials_unstreamed      INTEGER NOT NULL,
+                          n_eff                  INTEGER NOT NULL,
+                          sr                     TEXT,
+                          skew                   TEXT,
+                          kurtosis               TEXT,
+                          sr0                    TEXT,
+                          dsr                    TEXT,
+                          ceiling                TEXT,
+                          blocks_power           TEXT NOT NULL,
+                          dsr_power              TEXT NOT NULL,
+                          blocks_status          TEXT NOT NULL,
+                          dsr_status             TEXT NOT NULL,
+                          at                     TEXT NOT NULL,
+                          trials_other_semantics INTEGER,
+                          PRIMARY KEY(campaign_id, version_id, method, evaluator_version)
+                        );
+                        CREATE TABLE referee_research_trial(
+                          campaign_id       INTEGER NOT NULL,
+                          version_id        TEXT NOT NULL,
+                          method            INTEGER NOT NULL,
+                          evaluator_version TEXT,
+                          ordinal           INTEGER NOT NULL,
+                          run_id            TEXT NOT NULL,
+                          cluster           INTEGER NOT NULL,
+                          reading           TEXT NOT NULL CHECK(reading IN ('streamed','no-stream','held-back')),
+                          PRIMARY KEY(campaign_id, version_id, method, evaluator_version, run_id),
+                          FOREIGN KEY(campaign_id, version_id, method, evaluator_version)
+                            REFERENCES referee_research(campaign_id, version_id, method, evaluator_version)
+                        );
+                        CREATE TABLE referee_holdout(
+                          campaign_id       INTEGER NOT NULL REFERENCES strategy_campaign(id),
+                          version_id        TEXT NOT NULL REFERENCES strategy_version(id),
+                          method            INTEGER NOT NULL,
+                          evaluator_version TEXT,
+                          research_row      INTEGER NOT NULL,
+                          holdout_days      INTEGER NOT NULL,
+                          sr_h              TEXT,
+                          skew_h            TEXT,
+                          kurtosis_h        TEXT,
+                          z                 TEXT,
+                          z_status          TEXT NOT NULL,
+                          e_h               TEXT,
+                          p_h               TEXT,
+                          alpha_j           TEXT NOT NULL,
+                          wealth_before     TEXT NOT NULL,
+                          wealth_after      TEXT NOT NULL,
+                          addis_status      TEXT NOT NULL
+                                            CHECK(addis_status IN ('rejected','candidate','tested','discarded','inconclusive')),
+                          author_attempt    TEXT,
+                          author_model      TEXT,
+                          model_cutoff      TEXT,
+                          cutoff_source     TEXT,
+                          remembered        INTEGER NOT NULL CHECK(remembered IN (0,1)),
+                          at                TEXT NOT NULL,
+                          PRIMARY KEY(campaign_id, version_id, method, evaluator_version)
+                        );
+
+                        INSERT INTO referee_research(campaign_id, version_id, method, evaluator_version, candidate_run_id,
+                          friction_sha256, trace_sha256, days, blocks_known, blocks_positive, trials_m, trials_unstreamed, n_eff,
+                          sr, skew, kurtosis, sr0, dsr, ceiling, blocks_power, dsr_power, blocks_status, dsr_status, at,
+                          trials_other_semantics)
+                        SELECT campaign_id, version_id, method, NULL, candidate_run_id, friction_sha256, trace_sha256, days,
+                          blocks_known, blocks_positive, trials_m, trials_unstreamed, n_eff, sr, skew, kurtosis, sr0, dsr,
+                          ceiling, blocks_power, dsr_power, blocks_status, dsr_status, at, NULL
+                          FROM referee_research_35;
+                        INSERT INTO referee_research_trial(campaign_id, version_id, method, evaluator_version, ordinal, run_id,
+                          cluster, reading)
+                        SELECT campaign_id, version_id, method, NULL, ordinal, run_id, cluster, reading
+                          FROM referee_research_trial_35;
+                        INSERT INTO referee_holdout(campaign_id, version_id, method, evaluator_version, research_row,
+                          holdout_days, sr_h, skew_h, kurtosis_h, z, z_status, e_h, p_h, alpha_j, wealth_before, wealth_after,
+                          addis_status, author_attempt, author_model, model_cutoff, cutoff_source, remembered, at)
+                        SELECT campaign_id, version_id, method, NULL, research_row, holdout_days, sr_h, skew_h, kurtosis_h, z,
+                          z_status, e_h, p_h, alpha_j, wealth_before, wealth_after, addis_status, author_attempt, author_model,
+                          model_cutoff, cutoff_source, remembered, at
+                          FROM referee_holdout_35;
+
+                        DROP TABLE referee_research_trial_35;
+                        DROP TABLE referee_research_35;
+                        DROP TABLE referee_holdout_35;
+                        """);
+                        Exec("COMMIT;");
+                    }
+                    catch
+                    {
+                        Exec("ROLLBACK;");
+                        throw;
+                    }
+                }
+                finally
+                {
+                    Exec("PRAGMA foreign_keys=ON;");
+                }
+            }
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','36') ON CONFLICT(key) DO UPDATE SET value='36';");
         }

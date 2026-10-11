@@ -9,7 +9,7 @@ namespace TradeAgent.Core.Db;
 /// <c>internal</c>, because every figure on it was computed from the held-back months and none of them may cross.
 ///
 /// <para>The research measurement it read (<see cref="ResearchRow"/>, the method of the <c>referee_research</c> row under
-/// the same campaign and version), the holdout's <see cref="HoldoutDays"/> known days and their per-day
+/// the same campaign, version and evaluator), the holdout's <see cref="HoldoutDays"/> known days and their per-day
 /// <see cref="SrH"/>, <see cref="SkewH"/> and raw <see cref="KurtosisH"/>, the fidelity <see cref="Z"/> and its status, the
 /// betting e-value <see cref="EH"/>, p_h = 1 − PSR(0) (<see cref="PH"/>), the α-wealth step, the author and its cutoff, and
 /// the flag. A figure that is not a number is null — never 0.</para>
@@ -71,11 +71,11 @@ public sealed record RememberedFlag(long CampaignId, string VersionId, DateTimeO
 ///
 /// <para><b>The α-wealth is the lineage's and every campaign's over the same months</b>: the verdicts
 /// <c>CampaignStore.JudgementsSpent</c> counts, in charge order (<c>CampaignStore.JudgementsCharged</c>); each earlier one is
-/// read by its recorded step at this method, and one with none — before this rung, or stopped before its write — counts
-/// as tested, not rejected, not discarded (<see cref="AlphaWealth"/>). A renewal never resets it.</para>
+/// read by its recorded step at this method under this build's evaluator, and one with none — before this rung, stopped
+/// before its write, or sealed only under another evaluator — counts as tested, not rejected, not discarded (<see cref="AlphaWealth"/>). A renewal never resets it.</para>
 ///
-/// <para><b>Append-only, written only by the app</b>: <see cref="Record"/> inserts one row per (campaign, version, method)
-/// in the verdict's write, first writer wins, and nothing updates or deletes a row; no op and no verb reaches it. A
+/// <para><b>Append-only, written only by the app</b>: <see cref="Record"/> inserts one row per (campaign, version, method,
+/// evaluator — this build's <see cref="Referee.EvaluatorVersion"/>, rung 36) in the verdict's write, first writer wins, and nothing updates or deletes a row; no op and no verb reaches it. A
 /// verdict before the rung has none and gains none. A changed method is a new <see cref="Version"/> on new rows.</para>
 /// </summary>
 public sealed class RefereeHoldout(Database db)
@@ -119,7 +119,8 @@ public sealed class RefereeHoldout(Database db)
 
     /// <summary>
     /// THE α-WEALTH HISTORY BEFORE ONE VERDICT: the recorded step of every judgement charged before it over the same
-    /// months, in charge order — <see cref="AlphaWealth.Tested"/> for one with no step at this method.
+    /// months, in charge order — <see cref="AlphaWealth.Tested"/> for one with no step at this method under this build's
+    /// evaluator.
     /// </summary>
     internal IReadOnlyList<string> History(long campaignId, string versionId) => db.Read(_ =>
     {
@@ -129,8 +130,9 @@ public sealed class RefereeHoldout(Database db)
         {
             if (verdict.CampaignId == campaignId && string.Equals(verdict.VersionId, versionId, StringComparison.Ordinal)) break;
             using var c = db.Cmd(
-                "SELECT addis_status FROM referee_holdout WHERE campaign_id=$camp AND version_id=$ver AND method=$m",
-                ("$camp", verdict.CampaignId), ("$ver", verdict.VersionId), ("$m", Version));
+                "SELECT addis_status FROM referee_holdout WHERE campaign_id=$camp AND version_id=$ver AND method=$m "
+                + "AND evaluator_version=$eval",
+                ("$camp", verdict.CampaignId), ("$ver", verdict.VersionId), ("$m", Version), ("$eval", Referee.EvaluatorVersion));
             history.Add(c.ExecuteScalar() as string ?? AlphaWealth.Tested);
         }
         return (IReadOnlyList<string>)history;
@@ -138,15 +140,17 @@ public sealed class RefereeHoldout(Database db)
 
     /// <summary>
     /// RECORDS one sealed row — inside the verdict's own write (<c>Referee.Verdict</c>), so it lands with the promotion or
-    /// not at all. First writer wins: a row already recorded for the (campaign, version, method) stands.
+    /// not at all. First writer wins: a row already recorded for the (campaign, version, method) under this build's
+    /// evaluator stands. The evaluator written is this build's <see cref="Referee.EvaluatorVersion"/>, never a caller's.
     /// </summary>
     internal void Record(SealedHoldoutRow row) => db.Write(_ =>
     {
         ArgumentNullException.ThrowIfNull(row);
         using var insert = db.Cmd($"""
-            INSERT INTO referee_holdout({Cols})
-            VALUES($camp,$ver,$method,$research,$days,$sr,$skew,$kurt,$z,$zs,$e,$p,$a,$wb,$wa,$as,$att,$model,$cut,$src,$rem,$at)
-            ON CONFLICT(campaign_id, version_id, method) DO NOTHING
+            INSERT INTO referee_holdout({Cols}, evaluator_version)
+            VALUES($camp,$ver,$method,$research,$days,$sr,$skew,$kurt,$z,$zs,$e,$p,$a,$wb,$wa,$as,$att,$model,$cut,$src,$rem,$at,
+                   $eval)
+            ON CONFLICT(campaign_id, version_id, method, evaluator_version) DO NOTHING
             """,
             ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method), ("$research", row.ResearchRow),
             ("$days", row.HoldoutDays), ("$sr", Text(row.SrH)), ("$skew", Text(row.SkewH)), ("$kurt", Text(row.KurtosisH)),
@@ -154,30 +158,36 @@ public sealed class RefereeHoldout(Database db)
             ("$a", Text(row.AlphaJ)), ("$wb", Text(row.WealthBefore)), ("$wa", Text(row.WealthAfter)),
             ("$as", row.AddisStatus), ("$att", row.AuthorAttempt), ("$model", row.AuthorModel),
             ("$cut", row.ModelCutoff?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), ("$src", row.CutoffSource),
-            ("$rem", row.Remembered ? 1 : 0), ("$at", Sql.T(row.At)));
+            ("$rem", row.Remembered ? 1 : 0), ("$at", Sql.T(row.At)), ("$eval", Referee.EvaluatorVersion));
         return insert.ExecuteNonQuery();
     });
 
-    /// <summary>The sealed row of one verdict at this method, or null. Internal: no surface reads it, only this unit's tests.</summary>
+    /// <summary>
+    /// The sealed row of one verdict at this method under this build's evaluator, or null. Internal: no surface reads it,
+    /// only this unit's tests.
+    /// </summary>
     internal SealedHoldoutRow? SealedOf(long campaignId, string versionId) => db.Read(_ =>
     {
-        using var c = db.Cmd($"SELECT {Cols} FROM referee_holdout WHERE campaign_id=$camp AND version_id=$ver AND method=$m",
-            ("$camp", campaignId), ("$ver", versionId), ("$m", Version));
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM referee_holdout
+             WHERE campaign_id=$camp AND version_id=$ver AND method=$m AND evaluator_version=$eval
+            """, ("$camp", campaignId), ("$ver", versionId), ("$m", Version), ("$eval", Referee.EvaluatorVersion));
         using var r = c.ExecuteReader();
         return r.Read() ? Read(r) : null;
     });
 
     /// <summary>
     /// WHETHER ONE VERDICT'S HOLDOUT MAY BE REMEMBERED BY ITS AUTHOR — the flag, its two dates and the model, and no
-    /// figure — or null: no sealed row at this method (a verdict before rung 35, or none at all).
+    /// figure — or null: no sealed row at this method under this build's evaluator (a verdict before rung 35, one sealed
+    /// only under another evaluator, or none at all) — which the paper queue reads as "may be", never as "cannot".
     /// </summary>
     public RememberedFlag? Flag(long campaignId, string versionId) => db.Read(_ =>
     {
         using var c = db.Cmd("""
             SELECT c.holdout_from, h.author_model, h.model_cutoff, h.remembered
               FROM referee_holdout h JOIN strategy_campaign c ON c.id = h.campaign_id
-             WHERE h.campaign_id=$camp AND h.version_id=$ver AND h.method=$m
-            """, ("$camp", campaignId), ("$ver", versionId), ("$m", Version));
+             WHERE h.campaign_id=$camp AND h.version_id=$ver AND h.method=$m AND h.evaluator_version=$eval
+            """, ("$camp", campaignId), ("$ver", versionId), ("$m", Version), ("$eval", Referee.EvaluatorVersion));
         using var r = c.ExecuteReader();
         if (!r.Read()) return null;
         return new RememberedFlag(campaignId, versionId, Sql.Time(r.GetString(0)), Sql.S(r.GetValue(1)),
