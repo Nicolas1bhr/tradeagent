@@ -668,7 +668,10 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             return $". Research evidence withheld: this verdict's measurement read run {Short(withheld.RunId)}, which is held "
                    + $"back now, so not one of its figures is shown — {withheld.Why}";
         static string F(double? x) => x is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) : "unknown";
-        var trials = $"M {e.TrialsM} ({e.TrialsUnstreamed} without a readable stream), N_eff {e.NEff}";
+        // HOW MANY OF THE UNSTREAMED WERE MEASURED UNDER OTHER EVALUATION SEMANTICS (U-evidence-evaluator-label), when the
+        // measurement read any so; nothing for none, and nothing for a measurement recorded before rung 36, which never asked.
+        var other = e.TrialsOtherSemantics is int n && n > 0 ? $", of which {n} {Core.Db.ResearchEvidence.OtherSemantics}" : "";
+        var trials = $"M {e.TrialsM} ({e.TrialsUnstreamed} without a readable stream{other}), N_eff {e.NEff}";
         if (e.CandidateRunId is null)
             return $". Research evidence (research streams only, shown and not enforced): {Core.Strategy.GateStatus.NoStream} for this "
                    + $"version in its lineage; {trials}";

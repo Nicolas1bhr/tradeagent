@@ -2626,6 +2626,12 @@ in-process reader, and the pipe server never calls it.
 FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to, and
 the capital is what the run starts with; declared no capital, it starts with 10,000.
 
+**A run names the evaluator it was measured under, and its id carries it** (`U-evidence-evaluator-label`, rung 36):
+`strategy_run.evaluator_version` is written only by `StrategyStore.RecordRun`, from `Referee.EvaluatorVersion` and never
+from a caller's value — a row from before the rung is NULL, unknown — and `RunIdFor` hashes the same constant after the
+execution model, so the same request under another evaluator is another run (a new row, its own streams, a new trial
+charge), never an older row answering for new semantics.
+
 **A fee or a slippage the run does not declare is TradeAgent's venue cost model's, number by number**
 (`U-paper-friction`, `Backtests.Friction`). A declared number always wins, zero included; a number left
 out takes `VenueFriction` for the **dataset's** recorded venue — the venue's published standard taker
@@ -4069,7 +4075,12 @@ figure made of rounding. The owner's report adds it to each verdict's line — r
 :309); no op, verb or answer field reaches it — and asks `StrategyStore.HeldBack` again AT EACH READ of the candidate and
 every trial the measurement read through a stream (`ResearchEvidence.Withheld`): one held back now, by a holdout set after
 the verdict or a dataset gone, and the line says the measurement is withheld, which run and why, and shows no figure; the
-recorded rows are not touched. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
+recorded rows are not touched. **A trial measured under other evaluation semantics is a trial and no returns**
+(`U-evidence-evaluator-label`, rung 36): `Measure` reads a run whose `evaluator_version` is not this build's, or is NULL,
+as `no-stream` — counted in M and clustered alone, the reading that only lowers the deflated figures, never the candidate
+— records how many it read so in `referee_research.trials_other_semantics` (NULL on a measurement before the rung, which
+never asked), and the report's line says "of which N measured under other evaluation semantics" when N > 0; `U-referee-v2c`'s sealed
+record and the queue's rank inherit it through `Measure`. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
 
 **One INCONCLUSIVE path into paper** (`U-referee-v2b`, EDGE § 4.5). A refusal is inconclusive when it says nothing about the
 version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `refused` — never invalidated — whose reason is

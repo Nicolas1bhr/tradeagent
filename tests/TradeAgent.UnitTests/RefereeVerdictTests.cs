@@ -1059,6 +1059,11 @@ public class RefereeVerdictTests
         Assert.Equal(expected with { Trials = [], TrialsOtherSemantics = 2 }, e with { Trials = [] });
         Assert.Equal(expected.Trials, e.Trials);
 
+        Assert.Contains("M 3 (2 without a readable stream, of which 2 measured under other evaluation semantics), N_eff 3",
+            VerdictLine(w), StringComparison.Ordinal);
+        Assert.Contains("M 3 (2 without a readable stream), N_eff 3", VerdictLine(bare), StringComparison.Ordinal);
+        Assert.DoesNotContain(ResearchEvidence.OtherSemantics, VerdictLine(bare), StringComparison.Ordinal);
+
         // A MEASUREMENT RECORDED BEFORE THE RUNG APPLIED NO SUCH CHECK: unknown, and the report claims none.
         w.Db.Write(_ =>
         {
@@ -1066,6 +1071,7 @@ public class RefereeVerdictTests
             return c.ExecuteNonQuery();
         });
         Assert.Null(RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!.TrialsOtherSemantics);
+        Assert.Contains("M 3 (2 without a readable stream), N_eff 3", VerdictLine(w), StringComparison.Ordinal);
     }
 
     /// <summary>
