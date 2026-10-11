@@ -365,8 +365,14 @@ public static class Versions
     /// e-value and p_h, the α-wealth step, the author's model and published cutoff, and the remembered-holdout flag. No
     /// surface reads a figure of it; written only by <c>RefereeHoldout.Record</c> in the verdict's own write, first writer
     /// wins, never updated or deleted; a verdict before the rung has none and gains none.</para>
+    ///
+    /// <para><b>36 — the evaluator a run was measured under</b> (<c>U-evidence-evaluator-label</c>, the orchestrator's rung 36,
+    /// after <c>U-referee-v2c</c>'s 35): <c>strategy_run.evaluator_version</c>, the <c>Referee.EvaluatorVersion</c> of the
+    /// build that recorded the run, written by <c>StrategyStore.RecordRun</c> in the run's own insert from that constant and
+    /// never from a caller's value. No backfill: a run recorded before the rung has NULL — unknown — and research evidence
+    /// counts it as a trial without using its returns, the refusal a build owes another evaluator's figures.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 35;
+    public const int DatabaseSchemaVersion = 36;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

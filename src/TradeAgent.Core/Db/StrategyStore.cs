@@ -174,6 +174,19 @@ public sealed record StrategyRunRow(
     /// such line and reads back with this null.</para>
     /// </summary>
     public string? FrictionSource { get; init; }
+
+    /// <summary>
+    /// THE EVALUATOR THIS RUN WAS MEASURED UNDER (<c>U-evidence-evaluator-label</c>, rung 36): the
+    /// <see cref="Strategy.Referee.EvaluatorVersion"/> of the build that recorded it, or null — unknown — for a run recorded
+    /// before the rung.
+    ///
+    /// <para><b>Read back, never written from here.</b> <see cref="StrategyStore.RecordRun"/> writes this build's constant
+    /// whatever a row carries, so no caller can label a run with semantics it was not measured under; the setter is
+    /// internal only so the store can read the column back. The run's id hashes the same constant
+    /// (<c>BacktestRequest.RunIdFor</c>), so a row recorded under another evaluator is never the row a request of this
+    /// build reads as its own.</para>
+    /// </summary>
+    public string? EvaluatorVersion { get; internal init; }
 }
 
 /// <summary>
@@ -276,7 +289,9 @@ public sealed class StrategyStore(Database db)
         "fault_reason, bars, trades, wins, intents, fills, exposure_bars, missing_minutes, faults, " +
         "gross_pnl, fees, net_pnl, max_drawdown, trace_sha256, created_at, role, attempt, " +
         // LAST, so every positional read above it keeps its index. See `StrategyRunRow.IncrementSource`.
-        "increment_source";
+        "increment_source, " +
+        // LAST AGAIN, at rung 36. See `StrategyRunRow.EvaluatorVersion`.
+        "evaluator_version";
 
     /// <summary>
     /// The interpreter build a version row and a promotion record: the app's own version and the
@@ -376,6 +391,10 @@ public sealed class StrategyStore(Database db)
     /// (<c>U-trial-returns</c>): a run already recorded keeps the streams it was first recorded with, or none, and a
     /// re-run over the same bytes writes nothing. A stream naming another run, or a missing one that carries a day, is
     /// the caller's defect and is refused before anything is written. The referee's holdout run passes none.</para>
+    ///
+    /// <para><b>And the evaluator it was measured under</b> (<c>U-evidence-evaluator-label</c>, rung 36): this build's
+    /// <see cref="Strategy.Referee.EvaluatorVersion"/>, always — never <see cref="StrategyRunRow.EvaluatorVersion"/> off the
+    /// row handed in. A run already recorded keeps the label it was first recorded with, like everything else of it.</para>
     /// </summary>
     public string RecordRun(StrategyRunRow run, IReadOnlyList<StrategyTradeRow> trades,
         IReadOnlyList<StrategyStreamRow>? streams = null)
@@ -403,7 +422,7 @@ public sealed class StrategyStore(Database db)
             INSERT INTO strategy_run({RunCols})
             VALUES($id,$ver,$ds,$sha,$from,$to,$model,$outcome,$fault,$bars,$trades,$wins,$intents,
                    $fills,$exposure,$missing,$faults,$gross,$fees,$net,$dd,$trace,$at,$role,$attempt,
-                   $incsrc)
+                   $incsrc,$eval)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", run.Id), ("$ver", run.VersionId), ("$ds", run.DatasetId), ("$sha", run.DatasetSha256),
@@ -418,7 +437,9 @@ public sealed class StrategyStore(Database db)
             ("$net", run.NetPnl is { } n ? Sql.D(n) : null),
             ("$dd", run.MaxDrawdown is { } d ? Sql.D(d) : null),
             ("$trace", run.TraceSha256), ("$at", Sql.T(run.CreatedAt)),
-            ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", Provenance(run)));
+            ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", Provenance(run)),
+            // THIS BUILD'S EVALUATOR, never the row's: a caller cannot label a run with semantics it was not measured under.
+            ("$eval", Strategy.Referee.EvaluatorVersion));
 
         if (insert.ExecuteNonQuery() == 0) return run.Id;
 
@@ -866,7 +887,8 @@ public sealed class StrategyStore(Database db)
                 r.IsDBNull(23) ? null : r.GetString(23), r.IsDBNull(24) ? null : r.GetString(24))
             {
                 IncrementSource = Increment(r.IsDBNull(25) ? null : r.GetString(25)),
-                FrictionSource = Friction(r.IsDBNull(25) ? null : r.GetString(25))
+                FrictionSource = Friction(r.IsDBNull(25) ? null : r.GetString(25)),
+                EvaluatorVersion = r.IsDBNull(26) ? null : r.GetString(26)
             });
         return rows;
     }

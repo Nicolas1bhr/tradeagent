@@ -2122,6 +2122,24 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','35') ON CONFLICT(key) DO UPDATE SET value='35';");
         }
 
+        if (have < 36)
+        {
+            // THE EVALUATOR A RUN WAS MEASURED UNDER — `U-evidence-evaluator-label`, the orchestrator's rung 36, after v2c's 35.
+            // A run's figures and its streams are what `Referee.EvaluatorVersion`'s backtest, metrics and scoring made of its
+            // bars, and nothing on the row said which: a verdict under a later evaluator could have deflated its own figures
+            // over streams an earlier one measured, as if one semantics had produced both.
+            //
+            // ONE COLUMN, written by `StrategyStore.RecordRun` in the run's own insert from this build's constant and never
+            // from a caller's value; the run's id hashes the same constant, so the same request under another evaluator is
+            // another run and never this row answering for it. NO BACKFILL: a run recorded before this rung has NULL, which
+            // is unknown, and research evidence counts it as a trial whose returns it does not use — never a guess that it
+            // was this build's. Added only where the table lacks it and the stamp last, because the rungs run in autocommit
+            // and a crash before the stamp runs this again.
+            AddColumnIfMissing("strategy_run", "evaluator_version", "TEXT");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','36') ON CONFLICT(key) DO UPDATE SET value='36';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
