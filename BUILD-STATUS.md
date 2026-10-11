@@ -10401,3 +10401,31 @@ NO box run (busy at every later try).
 — ADVISORY while any unconfined seat shares the host and user, as is binary integrity (a hash-to-exec swap remains); the ownership check proves nothing for root (the product never
 runs elevated); the Windows owner-only ACL test was never shown red. **OWED (CRED-001 protection lights, § 15):** macOS ACL entries survive 0700 on seat folders; explicit
 grants on an existing `codex/auth.json` survive the Windows folder ACL. Reviews: fleet/tmp/A-org/u-seat-home-build/, fleet/tmp/A-org/u-seat-home-fix/ (re-reviews 1-3).
+
+## U-org-principals (O2a) — a third position is a row, not a constant: its own home, keys and ledger authorship, never folded into the chair; representable and never runnable until the activation gate exists (landed 2026-10-11, seat B)
+
+**Landed** solo (`land.sh` v2) on `main` at tip `c1ba3ada` (on `dce3d67d`, after `U-reconcile-packet` and `U-seat-home`). CI run **38168563647** at `95772f76` CARRIED (build tree equal outside bookkeeping
+paths): all 12 jobs success; `land.sh check` VERDICT PASS (names removed 0, scan clean). **No schema rung** (a position's kind is DERIVED from the chart, ORCHESTRATION § 2.1 as amended 402f4d8b).
+**Canon v4:** ops `f438c049…742ecf`, research `575865b5…1365a5`; main's v3 (ops `08fd3106…`, research `c5a1dc57…`) kept exactly. Proof: the six legacy canons rendered from main's v3 and from this tree differ
+in exactly one line each (the stamp "v3" → "v4"), byte-identical with the stamp set back; all twelve guides identical (fleet/tmp/B-scratch/u-org-principals-fix2/proof-diff.txt, proof-sha.txt).
+**What changed:**
+1. Live keys take the EXACT position id: `TurnMeter.Key`, `MissionLoop.KeyOf`, `MissionEvent.For` = `role ?? Default`; `TurnMeter.Begin` refuses in words any name that is not an active position (app
+   principal, dormant, unknown), writing no row, reservation or wake — before seat-home's seat check. `CouncilRoles.All/Default/Or` stay the legacy pair (history, ceremony, default share).
+2. Homes: `HomeDir` — operations → `agent`, research → `research`, any other id → `org/<id>` (id `[a-z0-9-]+`, not a Windows device name, not an app principal, else INVALID_REQUEST); builders and
+   the supervisor take the active positions; the canon follows the home. `AgentReach.InboxFrom(role)` gives the owner's real inbox from any home (`../../inbox` from `org/<id>`), used by the reach, the
+   canon/guide slot `{{inbox_dir}}`, the Situation and the inbox-wake line. Seat-home's per-seat-class CODEX_HOME (`<home>/seat-home`) is a separate place; no overlap.
+3. Ledger authors: `ResearchLedger.Author`/`List` accept an ACTIVE position, refuse an app principal, a dormant position or nobody; the pipe resolves through `TradingGateway.ActivePositionOf`.
+4. THE SEAM seat A's `U-thinking-seats` fills — TWO pieces (orchestrator's ruling): `OrgStore.Standing(id) → PositionStanding?(Id, UnitId, Status, Kind, IsLegacy, HomeDir)` with
+   `PositionActivation.Refusal(id, standing)` (null only for the active legacy pair) called FIRST in `AppHost.ConversationFor`; and `IMissionHost.ActivationRefusal`, whose DEFAULT fails closed
+   (null only for the legacy pair) so a host without a seam refuses a non-legacy wake instead of folding it into its default conversation; the loop steps over a refused position (interim — O3
+   replaces it with a recorded settle, ORCHESTRATION § 2.5).
+**Deviation, accepted:** `MaterialScanner.RolePaths` walks every position's home whatever its status — a dormant position's files are still evidence on disk and must not be stamped removed.
+**Evidence:** RED at base, quoted: (a) Expected "org/pos-7f3a90c1" Actual "agent"; (e) "a launch under 'nobody-here' was admitted"; (g) "is not a council role"; (h) "a conversation opened for
+pos-7f3a90c1, in …/workspace/agent"; fix 1: "a wake for 'nobody-here' was run through the host's default conversation: 1 sent"; the canon naming `../inbox` from `org/<id>`. MUTANTS red: `Or` back in
+`Key`; the `HomeDir` fallback to `agent`; `Refusal` null for every active position; the loop step-over removed; the default `ActivationRefusal` back to null. Release 0 warnings each pass; touched
+classes 3× (final: Unit "Passed: 131", Integration "Passed: 5"); names 2649 → 2657, removed 0. Tests box FULL suite GREEN on fix 1's tree (run 20261011-195218-9d8cc45b: Unit 1750/1750, Fault 498/498,
+Integration 692 + 1 not run; the box owner's files unchanged); the rebase pass NOT RUN there (CI covers the merged tree).
+**Review (Codex `gpt-6.1-sol`, high):** build review 2 REAL (no-seam host folded an unknown wake; a position's canon named a wrong inbox) → fixed red-first by a fresh fixer; re-review CLEAN. Pass 2
+was a rebase + canon renumber (v3 collided with `U-reconcile-packet`'s v3), judged by seat B at landing.
+**NOT done (owed, named):** `Backtests.RoleOf` and `lens-propose` still use `IsKnown` (O2b's); a nameless `Begin` is still the chair's without a status check (O2b); the owner's card says "../inbox"
+(owed light: plain words). **NOT VERIFIED:** no app run; no position beyond the legacy pair has ever been activated (by design — nothing can be until `U-thinking-seats`).
