@@ -119,6 +119,9 @@ public sealed class SeatPlan
     /// <summary>The MCP servers the app itself configures. None today, so any server is refused.</summary>
     public string[] McpAllowlist { get; set; } = [];
 
+    /// <summary>What a seat whose home holds no credential is refused with: the owner's next step, in his words.</summary>
+    public string SignedOut { get; set; } = "TradeAgent keeps its own AI sign-in. Sign in again.";
+
     /// <summary>
     /// The deny set's KEYS — its <c>--disable</c>/<c>--enable</c>/<c>-c</c> pairs — which the probe commands take; the flags without a
     /// value (<c>--ignore-user-config</c> and its kind) belong to <c>exec</c> only.
@@ -670,7 +673,10 @@ public static class RuntimeCatalog
                     "unified_exec", "unified_exec_tty", "unified_exec_zsh_fork", "view_image", "write_stdin_approval"
                 ],
                 McpArgs = ["mcp", "list", "--json"],
-                McpAllowlist = []
+                McpAllowlist = [],
+                // PART 1 OF 2: the dashboard's own Sign-in for the seat home is U-seat-signin; until it lands, this sentence is
+                // what the owner reads instead of a turn that fails for no reason he can see.
+                SignedOut = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again."
             },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux

@@ -258,6 +258,64 @@ public class SeatHomeTests
         Assert.DoesNotContain("resume", execs[2]);
     }
 
+    /// <summary>
+    /// (f) A SEAT HOME WITH NO CREDENTIAL REFUSES THE LAUNCH WITH SIGN-IN IN WORDS — the fresh start every owner gets once, since
+    /// the app no longer runs under his own <c>~/.codex</c> and copies nothing out of it.
+    /// </summary>
+    [Fact]
+    public async Task A_seat_home_without_a_credential_refuses_with_sign_in_in_words()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_seat_home_without_a_credential_refuses_with_sign_in_in_words));
+        var session = Session(codex, exe, Path.GetDirectoryName(exe)!, new FakeProbe(signedIn: false));
+        const string Words = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again.";
+
+        var verdict = session.CheckSeat();
+        Assert.True(verdict.Refused);
+        Assert.Equal(ErrorCode.AI_AUTH_REQUIRED, verdict.Code);
+        Assert.Equal(Words, verdict.Refusal);
+
+        var ended = await Turn(session);
+        Assert.Contains(Words, ended.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain(Argv(dump), line => line.StartsWith("exec", StringComparison.Ordinal));
+        Assert.False(File.Exists(Path.Combine(codex.Seat!.Root, "codex", "auth.json")));
+    }
+
+    /// <summary>
+    /// (g) THE SIGN-IN STATUS, THE SIGN-IN AND THE PASTED KEY ALL RUN IN THE SEAT HOME — the three starts that read or write the
+    /// credential, so the one sign-in lands where every seat reads it and never in the owner's own home.
+    /// </summary>
+    [Fact]
+    public async Task Sign_in_status_and_api_key_all_run_in_the_seat_home()
+    {
+        var (codex, exe, dump) = Seat(nameof(Sign_in_status_and_api_key_all_run_in_the_seat_home));
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe());
+        var root = codex.Seat!.Root;
+
+        void InTheSeatHome(string what)
+        {
+            var env = ReadEnv(dump);
+            Assert.True(Path.Combine(root, "codex") == env.GetValueOrDefault("CODEX_HOME"), $"{what}: CODEX_HOME {env.GetValueOrDefault("CODEX_HOME")}");
+            Assert.True(Path.Combine(root, "home") == env.GetValueOrDefault("HOME"), $"{what}: HOME {env.GetValueOrDefault("HOME")}");
+            File.Delete(dump);
+        }
+
+        Assert.Equal(AuthState.Authenticated, await rt.GetAuthenticationStateAsync());
+        InTheSeatHome("login status");
+
+        await rt.SignInWithApiKeyAsync("sk-FAKE-0000");
+        InTheSeatHome("login --with-api-key");
+
+        try
+        {
+            await rt.BeginAuthenticationAsync();
+            for (var i = 0; i < 100 && !File.Exists(dump); i++) await Task.Delay(50);
+            InTheSeatHome("login");
+        }
+        finally { await rt.StopAsync(); }
+
+        Assert.Equal(["login status", "login --with-api-key", "login"], Argv(dump));
+    }
+
     internal static AgentSession Session(RuntimeManifest codex, string exe, string workspace, ISeatProbe probe) =>
         new(codex, () => exe, () => workspace, () => new Dictionary<string, string>(), presence: new AgentPresence(), seatProbe: probe);
 
@@ -273,12 +331,12 @@ public class SeatHomeTests
     }
 
     /// <summary>The CLI's own report, canned: by default exactly the allowlist on, the deny set off, no server.</summary>
-    internal sealed class FakeProbe(string? features = null, string mcp = "[]") : ISeatProbe
+    internal sealed class FakeProbe(string? features = null, string mcp = "[]", bool signedIn = true) : ISeatProbe
     {
         public const string Allowed = "shell_tool   stable   true\nunified_exec   stable   true\nview_image   stable   true\n";
         public int Reads;
 
-        public SeatReading Reading { get; } = new(features ?? Allowed + "plugins   stable   false\n", mcp);
+        public SeatReading Reading { get; } = new(features ?? Allowed + "plugins   stable   false\n", mcp, signedIn);
 
         public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
         {
@@ -327,11 +385,14 @@ public class SeatHomeTests
         if (OperatingSystem.IsWindows())
         {
             var bat = Path.Combine(dir, "codex.cmd");
-            File.WriteAllText(bat, $"@echo off\r\nset > \"{dump}\"\r\necho %* >> \"{argv}\"\r\necho codex-cli {version}\r\n");
+            // The pasted key is READ, as codex reads it, so the app's write never meets a pipe already closed.
+            File.WriteAllText(bat, $"@echo off\r\nset > \"{dump}\"\r\necho %* >> \"{argv}\"\r\n"
+                + "if \"%2\"==\"--with-api-key\" set /p KEY=\r\n" + $"echo codex-cli {version}\r\n");
             return (bat, dump);
         }
         var sh = Path.Combine(dir, "codex");
-        File.WriteAllText(sh, $"#!/bin/sh\nenv > \"{dump}\"\necho \"$*\" >> \"{argv}\"\necho 'codex-cli {version}'\n");
+        File.WriteAllText(sh, $"#!/bin/sh\nenv > \"{dump}\"\necho \"$*\" >> \"{argv}\"\n"
+            + "[ \"$2\" = \"--with-api-key\" ] && read -r KEY\n" + $"echo 'codex-cli {version}'\n");
         File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return (sh, dump);
     }
