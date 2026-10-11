@@ -704,7 +704,15 @@ public sealed class AppHost : IAsyncDisposable
                 _tape = TapeStore.TryOpen(Paths.TapeFile, Gateway.Log);
                 if (_tape is not null)
                 {
-                    Tape = new TapeCollector(_tape, () => Gateway.Settings.RecordMarketContext);
+                    // WHAT THE TAPE STORED NEW IS TOLD HERE, and the app decides who owns it (U-reconcile-packet): the
+                    // collector holds no database, `TapeWakes` raises Research's one coalesced wake — never inside a
+                    // holdout window, never an item's text — and this only pokes a sleeping loop, as `data` does.
+                    var db = _db;
+                    Tape = new TapeCollector(_tape, () => Gateway.Settings.RecordMarketContext,
+                        stored: arrival =>
+                        {
+                            if (TapeWakes.Raise(db, arrival, DateTimeOffset.UtcNow)) Mission?.Wake();
+                        });
                     if (Tape.CatalogProblem is { } unreadable) Gateway.Log.Activity("Market context: " + unreadable, "warn");
                     foreach (var refused in Tape.Refused) Gateway.Log.Activity("Market context: " + refused, "warn");
                     Tape.Start();

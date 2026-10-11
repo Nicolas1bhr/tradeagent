@@ -91,7 +91,37 @@ public static class MissionEventKind
     /// pays for, and these are the two.</para>
     /// </summary>
     public const string Boundary = "boundary";
+
+    /// <summary>
+    /// A CONSEQUENTIAL BOUNDARY'S DEADLINE IS NEAR AND THIS DIRECTOR HAS NOT ASSESSED IT (<c>U-reconcile-packet</c>).
+    ///
+    /// <para>Raised by the loop's own schedule, never by an agent: ONE row per boundary and director, keyed
+    /// <see cref="MissionEventIds.Deadline"/>, due a quarter of the boundary's window before its deadline, and closed
+    /// without a turn (<see cref="MissionEventStore.WithdrawDeadline"/>) once the director has assessed it or the
+    /// boundary is settled. The boundary's opening wake is the first call; this is the one reminder, because a director
+    /// that missed it would otherwise leave the decision to the app's default, and <c>next.json</c> cannot reach a
+    /// deadline more than half an hour away.</para>
+    /// </summary>
+    public const string Deadline = "deadline";
+
+    /// <summary>
+    /// THE TAPE STORED SOMETHING NEW THAT RESEARCH OWNS (<c>U-reconcile-packet</c>): an exchange announcement, or a
+    /// reading of a series an active deployment of one of its versions declares as a feature input — and only one
+    /// whose source time is outside every holdout window the role's own reads are refused.
+    ///
+    /// <para>Raised by the app through the collector's delegate, never by an agent, and COALESCED: at most one untaken
+    /// row per role (<see cref="MissionEventStore.RaiseCoalesced"/>), so a busy series buys at most one turn per turn
+    /// taken. Its payload is <see cref="TapeWakePayload"/> — source, series, subject and count — and never an item's
+    /// text: a tape item is untrusted data, and the turn reads it with the tape's own read, under the holdout.</para>
+    /// </summary>
+    public const string Tape = "tape";
 }
+
+/// <summary>
+/// WHAT A <see cref="MissionEventKind.Tape"/> WAKE SAYS, AND ALL IT SAYS: which source and series, which subject when the
+/// new items are all of one (null when they span several), and how many — never an item's text, its URL or a figure.
+/// </summary>
+public sealed record TapeWakePayload(string Source, string Series, string? Subject, int Count);
 
 /// <summary>
 /// WHAT BECAME OF A WAKE.
@@ -143,8 +173,10 @@ public static class MissionEventDisposition
     /// <summary>
     /// A SCHEDULED LOOK THE APP CLOSED BECAUSE THE ROLE IT WAS FOR HELD NO OPEN WORK
     /// (<see cref="MissionEventStore.WithdrawLooks"/>, <c>U-reconcile-wakes</c>). Consumed by no launch, so nothing can
-    /// serve it, and the detail says why. Only the app's own payload-less look is ever closed this way: a look is the
-    /// app paying for the clock, and a role that owns nothing open has nothing for the clock to find.
+    /// serve it, and the detail says why. Only two of the app's own wakes are ever closed this way: its payload-less look
+    /// — a look is the app paying for the clock, and a role that owns nothing open has nothing for the clock to find — and
+    /// a deadline wake whose director has assessed the boundary or whose boundary is settled
+    /// (<see cref="MissionEventStore.WithdrawDeadline"/>, <c>U-reconcile-packet</c>).
     /// </summary>
     public const string Withdrawn = "withdrawn";
 }
@@ -311,6 +343,19 @@ public static class MissionEventIds
     /// function of the fact and a repeat of either is still free.
     /// </summary>
     public static string Boundary(string boundaryId) => $"{MissionEventKind.Boundary}:{boundaryId}";
+
+    /// <summary>
+    /// THE DEADLINE WAKE, KEYED BY THE BOUNDARY AND THE DIRECTOR — <c>deadline:&lt;boundary&gt;:&lt;role&gt;</c> — so each
+    /// director is reminded once per boundary, and a schedule that runs every pass raises an id the table already holds.
+    /// </summary>
+    public static string Deadline(string boundaryId, string role) => $"{MissionEventKind.Deadline}:{boundaryId}:{role}";
+
+    /// <summary>
+    /// THE TAPE WAKE, KEYED BY THE FETCH THAT STORED WHAT IT IS ABOUT (<c>TapeAppend.FetchId</c>). Coalesced on top of
+    /// that by the store, so a second fetch while one is untaken raises nothing at all.
+    /// </summary>
+    public static string Tape(long fetchId) =>
+        $"{MissionEventKind.Tape}:{fetchId.ToString(CultureInfo.InvariantCulture)}";
 }
 
 /// <summary>
@@ -527,6 +572,41 @@ public sealed class MissionEventStore(Database db)
         using var c = db.Cmd(
             "SELECT 1 FROM mission_event WHERE kind=$k AND consumed_at IS NULL LIMIT 1", ("$k", kind));
         return c.ExecuteScalar() is not null;
+    });
+
+    /// <summary>
+    /// RAISES <paramref name="e"/> ONLY WHEN ITS ROLE HAS NO UNTAKEN WAKE OF ITS KIND, and answers whether it went in
+    /// (<c>U-reconcile-packet</c>). One statement, inside the write lock, so two collectors' loops storing at the same
+    /// instant cannot both find none and both raise: this is what makes a busy tape one paid turn per turn taken.
+    /// </summary>
+    public bool RaiseCoalesced(MissionEvent e) => db.Write(_ =>
+    {
+        using var c = db.Cmd($"""
+            INSERT INTO mission_event({Cols})
+            SELECT $id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role,NULL
+             WHERE NOT EXISTS (SELECT 1 FROM mission_event
+                                WHERE kind=$kind AND consumed_at IS NULL AND COALESCE(role,$chair) = $for)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            ("$id", e.Id), ("$kind", e.Kind), ("$created", Sql.T(e.CreatedAt)), ("$due", Sql.T(e.DueAt)),
+            ("$payload", e.Payload), ("$role", e.Role), ("$chair", CouncilRoles.Default), ("$for", e.For));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
+    /// CLOSES ONE UNTAKEN <see cref="MissionEventKind.Deadline"/> WAKE WITHOUT A TURN, consumed by no launch and
+    /// <see cref="MissionEventDisposition.Withdrawn"/> with <paramref name="why"/> — the director has assessed the
+    /// boundary, or it is settled. The guard is the statement's: only an untaken deadline wake is ever closed here.
+    /// </summary>
+    public bool WithdrawDeadline(string id, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, disposition=$withdrawn, disposition_detail=$why
+             WHERE id=$id AND kind=$deadline AND consumed_at IS NULL
+            """,
+            ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
+            ("$id", id), ("$deadline", MissionEventKind.Deadline));
+        return c.ExecuteNonQuery() == 1;
     });
 
     /// <summary>The same question for one role, so the chair's pending review does not stand in for

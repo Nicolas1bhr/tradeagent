@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -250,7 +250,7 @@ public static class Canon
         ### The consequential boundary
 
         TradeAgent opens one itself when something consequential happens — a strategy version judged by
-        the referee today — and both directors are woken once for it. Your `## Situation` names the open
+        the referee today — and both directors are woken for it. Your `## Situation` names the open
         ones, what each is about, the deadline, and **the answer TradeAgent will write on its own if you
         say nothing**. You cannot open one, close one, or change what it will decide.
 

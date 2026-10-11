@@ -98,6 +98,7 @@ public sealed class TapeCollector : IAsyncDisposable
     readonly Func<DateTimeOffset> _now;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
     readonly string? _baseUrl;
+    readonly Action<TapeArrival>? _stored;
     readonly CancellationTokenSource _stopping = new();
     readonly Lock _gate = new();
     readonly ConcurrentDictionary<string, RowState> _rows = new(StringComparer.Ordinal);
@@ -116,6 +117,11 @@ public sealed class TapeCollector : IAsyncDisposable
     /// not the built-in one.
     /// </param>
     /// <param name="catalog">The rows to record. Null reads <see cref="TapeSourceCatalog.Read"/> once, here.</param>
+    /// <param name="stored">
+    /// Told what each fetch stored NEW — subjects and source times, never a payload — after its transaction committed
+    /// (<c>U-reconcile-packet</c>). The app decides there whether a role owns it and raises its wake; this collector
+    /// holds no database. A listener that throws loses that one notice and never the look.
+    /// </param>
     public TapeCollector(
         TapeStore store,
         Func<bool>? enabled = null,
@@ -123,9 +129,11 @@ public sealed class TapeCollector : IAsyncDisposable
         TimeSpan? requestTimeout = null,
         Func<DateTimeOffset>? now = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        TapeSourceCatalogRead? catalog = null)
+        TapeSourceCatalogRead? catalog = null,
+        Action<TapeArrival>? stored = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _stored = stored;
         _enabled = enabled ?? (() => true);
         _now = now ?? (() => DateTimeOffset.UtcNow);
         _delay = delay ?? ((d, ct) => Task.Delay(d, ct));
@@ -278,6 +286,7 @@ public sealed class TapeCollector : IAsyncDisposable
                 {
                     delivered++;
                     stored += appended.Stored;
+                    if (appended.Stored > 0) Tell(row, series, appended.FetchId);
                 }
                 else problem ??= $"{series.Id}{(symbol is null ? "" : " " + symbol)}: {note}";
 
@@ -289,6 +298,22 @@ public sealed class TapeCollector : IAsyncDisposable
 
         state.LastError = problem;
         return new TapeTick(false, attempts, delivered, stored, throttled);
+    }
+
+    /// <summary>
+    /// TELLS THE LISTENER WHAT ONE FETCH STORED NEW, read back from the tape by the fetch's own id — subjects and source
+    /// times only. Never throws: a notice that could not be read or delivered is one wake not raised, and the next new
+    /// item raises its own.
+    /// </summary>
+    void Tell(TapeSourceEntry row, TapeSeriesEntry series, long fetchId)
+    {
+        if (_stored is null) return;
+        try
+        {
+            var items = _store.ObservationsOf(fetchId).Select(o => new TapeArrived(o.Subject, o.SourceTime)).ToList();
+            if (items.Count > 0) _stored(new TapeArrival(row.Id, series.Id, row.Parser, fetchId, items));
+        }
+        catch (Exception) { /* the look stands; only this notice is lost */ }
     }
 
     /// <summary>

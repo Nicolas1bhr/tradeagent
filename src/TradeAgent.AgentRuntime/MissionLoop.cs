@@ -2090,6 +2090,11 @@ public sealed class MissionLoop
                         BringLookForward(events, role, now);
                 }
 
+                // A BOUNDARY'S DEADLINE IS NEAR AND THIS DIRECTOR HAS NOT ASSESSED IT (U-reconcile-packet): one
+                // reminder per boundary and director, raised here on the app's own clock and closed without a turn
+                // once it is answered.
+                Deadlines(events, role, now);
+
                 // NOT A SETTING. The allowance the AI works under is the owner's day, and the moment
                 // it becomes a new one is a fact about the world rather than a preference — a role
                 // that stopped at its share has to be told when it may work again, and nothing else
@@ -2112,6 +2117,41 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// THE DEADLINE WAKES OF <paramref name="role"/> (<c>U-reconcile-packet</c>): for every open boundary it has not
+    /// assessed, one wake keyed <c>deadline:&lt;boundary&gt;:&lt;role&gt;</c>, due a quarter of the boundary's window
+    /// before its deadline — raised once, because the id is the boundary's and the director's; and every untaken one
+    /// whose boundary this director has assessed, or that is no longer open, closed without a turn. The boundary's own
+    /// opening wake stays the first call; this is the one reminder before TradeAgent writes its default.
+    ///
+    /// <para>Never throws: a reminder not raised leaves the boundary's own line in every turn's Situation, and the
+    /// deadline is applied by the sweep either way.</para>
+    /// </summary>
+    void Deadlines(MissionEventStore events, string role, DateTimeOffset now)
+    {
+        if (_host.Boundaries is not { } boundaries) return;
+        try
+        {
+            var open = boundaries.OpenFor(role);
+            foreach (var b in open)
+            {
+                if (b.Assessed) continue;
+                var window = b.Row.DeadlineAt - b.Row.OpenedAt;
+                var due = b.Row.DeadlineAt - TimeSpan.FromTicks(Math.Max(0, window.Ticks) / 4);
+                events.RaiseDue(MissionEventIds.Deadline(b.Row.Id, role), MissionEventKind.Deadline, now, due,
+                    Json.Write(new BoundaryTask(b.Row.Id, b.Row.Kind, b.Row.Entity, b.Row.DeadlineAt)), role);
+            }
+
+            var owed = open.Where(b => !b.Assessed).Select(b => MissionEventIds.Deadline(b.Row.Id, role)).ToHashSet();
+            foreach (var e in events.Pending(MissionEventKind.Deadline, role))
+                if (!owed.Contains(e.Id))
+                    events.WithdrawDeadline(e.Id, now,
+                        $"{CouncilRoles.Title(role)} has assessed the boundary, or it is settled, so TradeAgent did "
+                        + "not pay for the reminder");
+        }
+        catch (Exception) { /* the boundary's line still names it; the sweep applies the deadline either way */ }
     }
 
     /// <summary>
@@ -2498,6 +2538,8 @@ public sealed class MissionLoop
         MissionEventKind.Brief => "a brief from the Operations Director arrived in `in/`",
         MissionEventKind.Verdict => "TradeAgent's referee answered on a strategy version",
         MissionEventKind.Boundary => "a consequential boundary opened and it is waiting on your assessment",
+        MissionEventKind.Deadline => "a consequential boundary you have not assessed is near its deadline",
+        MissionEventKind.Tape => "TradeAgent stored something new on the tape that your work reads",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };

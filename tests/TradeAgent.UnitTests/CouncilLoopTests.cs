@@ -1050,7 +1050,9 @@ public partial class CouncilLoopTests
     /// for a wake that may never come on a quiet installation.</para>
     ///
     /// <para>The two turns before it are the two the boundary bought when it opened: two assessments are
-    /// two turns (:63), and the third tick is not a third one.</para>
+    /// two turns (:63). Since <c>U-reconcile-packet</c> (canon v3) each director that has not assessed it is
+    /// reminded ONCE, a quarter of the window before the deadline — two more turns, and the deadline itself is
+    /// still not a turn.</para>
     /// </summary>
     [Fact]
     public async Task The_loop_settles_a_boundary_at_its_deadline_without_launching_anything()
@@ -1070,11 +1072,22 @@ public partial class CouncilLoopTests
         Assert.Equal(1, Launches(db, CouncilRoles.Operations));
         Assert.Equal(1, Launches(db, CouncilRoles.Research));
 
-        // NOTHING IS DUE, AND THE LOOP SLEEPS UNTIL THE DEADLINE — not until the queue's next tick,
-        // which on an installation with the heartbeat off is nothing at all.
+        // THE ONE REMINDER EACH (U-reconcile-packet): neither director has assessed it, so each is woken once a
+        // quarter of the window before the deadline — the loop sleeps until then, and both are taken.
         now = boundary.DeadlineAt.AddSeconds(-20);
         var wait = await loop.TurnAsync();
-        Assert.Equal(TimeSpan.FromSeconds(20), wait);
+        Assert.Equal(TimeSpan.FromSeconds(5), wait);
+        now = boundary.DeadlineAt.AddSeconds(-15);
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+        Assert.Equal(2, Launches(db, CouncilRoles.Operations));
+        Assert.Equal(2, Launches(db, CouncilRoles.Research));
+
+        // NOTHING IS DUE, AND THE LOOP SLEEPS UNTIL THE DEADLINE — not until the queue's next tick,
+        // which on an installation with the heartbeat off is nothing at all.
+        now = boundary.DeadlineAt.AddSeconds(-10);
+        wait = await loop.TurnAsync();
+        Assert.Equal(TimeSpan.FromSeconds(10), wait);
         Assert.True(host.Boundaries.ById(boundary.Id)!.IsOpen);
 
         // AT THE DEADLINE: the policy's default, written by the app, with no third launch anywhere.
@@ -1084,9 +1097,9 @@ public partial class CouncilLoopTests
         var settled = host.Boundaries.ById(boundary.Id)!;
         Assert.Equal(BoundaryDisposition.Deploy, settled.Disposition);
         Assert.Equal(BoundaryAuthor.Policy, settled.DisposedBy);
-        Assert.Equal(1, Launches(db, CouncilRoles.Operations));
-        Assert.Equal(1, Launches(db, CouncilRoles.Research));
-        Assert.Equal(2, host.Opened.Count);
+        Assert.Equal(2, Launches(db, CouncilRoles.Operations));
+        Assert.Equal(2, Launches(db, CouncilRoles.Research));
+        Assert.Equal(4, host.Opened.Count);
     }
 
     /// <summary>

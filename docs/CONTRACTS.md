@@ -1362,7 +1362,7 @@ position with the mark used and where it came from, the connection epoch, both p
 instants — and **never updated**. `LossBudgetOrThrow` and the approval path refuse `LOSS_BUDGET_REACHED`
 off that record **before reading anything**, and ahead of the zero check, because a budget set to
 zero after a breach is the widest widening there is. A closure also opens ONE `BoundaryKind.LossBudget`
-boundary per `{account}:{utcDay}` through `CouncilBoundaries.Open` — both directors woken once, default
+boundary per `{account}:{utcDay}` through `CouncilBoundaries.Open` — both directors woken at its opening, default
 disposition `hold` — so repeated refusals cannot manufacture senior spend. **Nothing is sent**: no
 close, no cancel, no order leaves the gateway because of a breach, and every surface says NOTHING WAS
 CLOSED FOR YOU. `status` carries `loss_day_closed_at` and `loss_symbols_closed`, absent rather than
@@ -2159,6 +2159,19 @@ payload-less looks closed without a turn (`withdrawn`, consumed by no launch, th
 the statement refuses every other wake), and a host that cannot say keeps the clock. The day's renewal is
 raised only for a role whose allowance stopped it (`AdmitsAnotherTurn` false). No op, verb, argument,
 setting or agent-written file opens an objective or a wake; `next.json` stays the agent's one request.
+
+**What a role owns on the tape and on a boundary's clock wakes it.** (`U-reconcile-packet`; no rung.) A `tape`
+wake is raised for Research when the collector stores a new exchange announcement, or a new reading of a
+series an ACTIVE deployment of one of its versions declares as a feature input (read back from the version it
+runs) — and only for items whose source time is outside every window `TapeHoldout.Pipe` refuses Research's own
+reads, a dataset with no recorded end held with no end. It is coalesced (one untaken row per role, one
+statement, `RaiseCoalesced`), keyed by the fetch, and its payload is source, series, subject and count — never an
+item's text, address or a figure; the collector holds no database and tells the app through a delegate. A
+`deadline` wake is raised by the loop's schedule for each open boundary a director has not assessed, keyed
+`deadline:<boundary>:<role>`, due a quarter of the window before `deadline_at` — once per boundary and
+director — and closed `withdrawn` without a turn once the director has assessed it or the boundary is settled.
+Canon v3 says so ("both directors are woken for it"). NOT claimed: that an announcement matters, that GDELT's
+archive rows wake anyone (its recorder tells nobody), or that a wake reaches a turn the allowance refuses.
 
 **A pass that could not read everything is not complete** (`U-inbox-unreadable`): a tracked folder the
 disk would not say is there, a folder it would not list or a listed file it would not describe — read

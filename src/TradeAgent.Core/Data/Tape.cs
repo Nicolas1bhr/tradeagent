@@ -158,6 +158,16 @@ public sealed record TapeArchiveBatch
 public sealed record TapeAppend(long FetchId, int Items, int Stored, int Revised, int Unchanged);
 
 /// <summary>
+/// WHAT ONE FETCH STORED NEW, as the collector hands it to whoever listens (<c>U-reconcile-packet</c>): the row it was
+/// asked under, its parser, the fetch, and each new item's subject and source time — and never its payload. The
+/// listener decides who owns it; the collector holds no database and decides nothing.
+/// </summary>
+public sealed record TapeArrival(string Source, string Series, string Parser, long FetchId, IReadOnlyList<TapeArrived> Items);
+
+/// <summary>One item a fetch stored new: its subject and its source time. No text.</summary>
+public sealed record TapeArrived(string Subject, DateTimeOffset SourceTime);
+
+/// <summary>
 /// ONE SPELLING OF A JSON VALUE, SO THAT "THE SAME PAYLOAD" MEANS THE SAME BYTES.
 ///
 /// <para>Objects with their keys in ordinal order, no whitespace, arrays in the order served, and —
