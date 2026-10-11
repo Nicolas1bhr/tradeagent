@@ -104,8 +104,8 @@ public sealed record CellPolicy
 
     /// <summary>
     /// What makes this policy one no cell may run under, or null. Every path absolute; no path that is, or is above, the app's
-    /// home; none beneath its <c>state/</c> or its cell policies; a workspace that is a directory; environment names a program
-    /// can read; ports a port can be.
+    /// home; none beneath its <c>state/</c> or its cell policies; a workspace that is a directory; no read-only input inside, equal
+    /// to or containing the workspace; environment names a program can read; ports a port can be.
     /// </summary>
     public string? Problem(string? appHome = null)
     {
@@ -121,6 +121,14 @@ public sealed record CellPolicy
                 if (guarded.Refuses(form) is { } why) return $"the cell's {what} {p} {why}";
         }
         if (!System.IO.Directory.Exists(Workspace)) return $"the cell's workspace {Workspace} is not a directory";
+        // A READ-ONLY INPUT THAT OVERLAPS THE WORKSPACE IS NOT READ-ONLY (triage #4): Landlock adds up the rights of every rule along
+        // a path, so an input inside the workspace keeps the workspace's write rights, and one that contains it is written through it.
+        foreach (var ro in ReadOnly)
+            foreach (var r in Forms(ro))
+                foreach (var w in Forms(Workspace))
+                    if (Within(r, w) || Within(w, r))
+                        return $"the cell's read-only input {ro} lies inside, is, or contains its workspace {Workspace}, where the cell may " +
+                               "write, so it would not stay read-only";
         foreach (var (name, value) in Environment)
             if (name.Length == 0 || name.Contains('=') || name.Contains('\0') || value.Contains('\0'))
                 return $"the cell's environment variable '{name}' cannot be passed to a program";
