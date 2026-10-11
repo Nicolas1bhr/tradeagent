@@ -257,6 +257,12 @@ public sealed record TurnContext
     /// </summary>
     public int? ObjectivesVersion { get; init; }
 
+    /// <summary>
+    /// HOW THE TURN'S PROMPT REACHED THE RUNTIME (<c>U-prompt-stdin</c>): <c>stdin</c>, or the sentence naming a runtime that cannot
+    /// read it and was given the prompt on its command line. Absent on a turn that launched no process. No rung.
+    /// </summary>
+    public string? PromptIn { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -752,7 +758,8 @@ public sealed class TurnMeter
             CanonSha256 = ended.Canon?.Sha256,
             CanonAppOwn = ended.Canon?.AppOwn,
             CanonOverride = ended.Canon?.OverrideBeside,
-            ObjectivesVersion = RoleObjectives.Version
+            ObjectivesVersion = RoleObjectives.Version,
+            PromptIn = ended.PromptIn
         };
 
     /// <summary>

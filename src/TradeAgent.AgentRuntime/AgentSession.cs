@@ -106,6 +106,16 @@ internal static partial class Ansi
 /// </summary>
 public static class AgentArgs
 {
+    /// <summary>What an attempt records when its prompt travelled on the runtime's stdin (<c>U-prompt-stdin</c>).</summary>
+    public const string OnStdin = "stdin";
+
+    /// <summary>
+    /// What an attempt records when its runtime cannot read stdin and the prompt rode on the command line, where every process
+    /// of the user can read it. Today a custom manifest's legacy path; a gate that must not run such a seat reads
+    /// <see cref="RuntimeManifest.PromptOnStdin"/>.
+    /// </summary>
+    public const string InArgv = "prompt in argv (runtime cannot read stdin)";
+
     /// <summary>
     /// THE ARGV FOR ONE TURN, first message or resumed, from one method so the two cannot drift.
     ///
@@ -266,6 +276,9 @@ public sealed class AgentSession(
     /// carried out on <see cref="TurnEnded"/>. Null until a turn launches; reset with every turn.
     /// </summary>
     CanonSeen? _canon;
+
+    /// <summary>How the turn in flight handed over its prompt (<see cref="AgentTurnEnded.PromptIn"/>); null until it launches.</summary>
+    string? _promptIn;
 
     /// <summary>The runtime profile the last admission verified, taken by the start that follows it (<c>U-seat-home</c>).</summary>
     string? _admittedProfile;
@@ -508,6 +521,7 @@ public sealed class AgentSession(
         SetBusy(true);
         _survivors = null;
         _canon = null;
+        _promptIn = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -549,7 +563,9 @@ public sealed class AgentSession(
                 // the next launch while any of these is the same process and still running.
                 Survivors = _survivors,
                 // AND THE CANON IT WAS LAUNCHED UNDER, as found on disk the moment before the process started.
-                Canon = _canon
+                Canon = _canon,
+                // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
+                PromptIn = _promptIn
             });
         }
     }
@@ -643,6 +659,7 @@ public sealed class AgentSession(
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
         // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.
         _canon = Canon.SeenByCli(psi.WorkingDirectory, role, appFiles ?? AppFileManifest.Shared);
+        _promptIn = manifest.PromptOnStdin ? AgentArgs.OnStdin : AgentArgs.InArgv;
 
         // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has

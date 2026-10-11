@@ -247,6 +247,13 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// system text as sent — and written into the attempt's <c>context</c> by <see cref="TurnMeter"/>.
     /// </summary>
     public CanonSeen? Canon { get; init; }
+
+    /// <summary>
+    /// HOW THE TURN'S PROMPT REACHED THE RUNTIME (<c>U-prompt-stdin</c>): <see cref="AgentArgs.OnStdin"/>, or
+    /// <see cref="AgentArgs.InArgv"/> for a runtime whose manifest cannot take it on stdin — said on every such attempt rather
+    /// than fed to argv in silence — or null where no process was launched. Written into the attempt's <c>context</c>.
+    /// </summary>
+    public string? PromptIn { get; init; }
 }
 
 /// <summary>
