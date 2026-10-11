@@ -236,8 +236,11 @@ public sealed class AgentSession(
         try
         {
             // ON THE POOL, because the meter that asks is synchronous and may be on the window's thread.
-            return Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, CancellationToken.None))
+            var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, CancellationToken.None))
                 .GetAwaiter().GetResult();
+            // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
+            Volatile.Write(ref _admittedProfile, verdict.Profile);
+            return verdict;
         }
         catch (Exception ex)
         {
@@ -250,6 +253,12 @@ public sealed class AgentSession(
     /// carried out on <see cref="TurnEnded"/>. Null until a turn launches; reset with every turn.
     /// </summary>
     CanonSeen? _canon;
+
+    /// <summary>The runtime profile the last admission verified, taken by the start that follows it (<c>U-seat-home</c>).</summary>
+    string? _admittedProfile;
+
+    /// <summary>The runtime profile the CLI session this conversation resumes was opened under, or null for none yet.</summary>
+    string? _sessionProfile;
 
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
@@ -556,6 +565,23 @@ public sealed class AgentSession(
         // checked it before admitting the turn: a host with no meter starts turns too, and this is the last moment before the start.
         var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
+
+        // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
+        // line would run under a profile its row does not name.
+        if (Interlocked.Exchange(ref _admittedProfile, null) is { } admitted && seat.Profile is { } now && admitted != now)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                "TradeAgent did not start the AI: its own settings changed between the moment the turn was recorded and its start. " +
+                "The next turn checks them again.");
+
+        // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by
+        // another build or with another deny set, and the turn starts a fresh one instead — the files are the memory.
+        if (_sessionExists && seat.Profile != _sessionProfile)
+        {
+            _sessionExists = false;
+            _threadId = null;
+            args = AgentArgs.For(manifest, message, resuming: false, model: RequestedModel);
+        }
+        if (!_sessionExists) _sessionProfile = seat.Profile;
 
         var psi = new ProcessStartInfo
         {

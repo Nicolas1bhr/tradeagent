@@ -128,7 +128,36 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {server}, and the AI's profile allows no tool " +
                 "server TradeAgent did not configure.");
 
-        return new SeatVerdict(null, null, reading);
+        return new SeatVerdict(null, null, reading) { Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading) };
+    }
+
+    /// <summary>
+    /// THE RUNTIME PROFILE A LAUNCH RAN UNDER, as one SHA-256 (lower-case hex): the program's own hash and the pinned version, the
+    /// seat's argv minus its template, prompt and model (the stream flag, the unattended flags and the deny set — the same for a
+    /// first turn and a resume), the config file's bytes, and the CLI's two reports verbatim. Written on the launch's
+    /// <c>ai_attempt</c> row; one deny flag moved is another profile, and so is another release.
+    /// </summary>
+    public static string ProfileHash(RuntimeManifest manifest, string exe, byte[] config, SeatReading reading)
+    {
+        var seat = manifest.Seat;
+        var argv = new List<string>();
+        if (!string.IsNullOrWhiteSpace(manifest.JsonFlag)) argv.AddRange(manifest.JsonFlag.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        argv.AddRange(manifest.UnattendedArgs);
+        argv.AddRange(seat?.ArgsFor(SeatPlan.CliClass) ?? []);
+
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Part(string label, ReadOnlySpan<byte> bytes)
+        {
+            sha.AppendData(Encoding.UTF8.GetBytes($"{label}:{bytes.Length}:"));
+            sha.AppendData(bytes);
+        }
+        Part("exe", Encoding.UTF8.GetBytes(Sha256Of(exe)));
+        Part("version", Encoding.UTF8.GetBytes(manifest.Install.Version ?? ""));
+        Part("argv", Encoding.UTF8.GetBytes(string.Join('\0', argv)));
+        Part("config", config);
+        Part("features", Encoding.UTF8.GetBytes(reading.Features));
+        Part("mcp", Encoding.UTF8.GetBytes(reading.Mcp));
+        return Convert.ToHexStringLower(sha.GetHashAndReset());
     }
 
     /// <summary>Whether <paramref name="argv"/> holds <paramref name="deny"/> as one unbroken run, in order.</summary>
@@ -257,6 +286,9 @@ public static class SeatProfile
 /// </summary>
 public sealed record SeatVerdict(string? Refusal, ErrorCode? Code, SeatReading? Reading)
 {
+    /// <summary>The runtime profile a launch under this verdict runs with (<see cref="SeatProfile.ProfileHash"/>), or null.</summary>
+    public string? Profile { get; init; }
+
     /// <summary>A runtime with no seat profile: nothing refused, nothing read.</summary>
     public static readonly SeatVerdict None = new(null, null, null);
 

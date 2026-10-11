@@ -2278,6 +2278,20 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','36') ON CONFLICT(key) DO UPDATE SET value='36';");
         }
 
+        if (have < 37)
+        {
+            // THE RUNTIME PROFILE A LAUNCH RAN UNDER — `U-seat-home`, the orchestrator's rung 37, after 36. Every codex seat now runs in
+            // the app's own seat home under a default-deny profile verified before the launch is admitted, and the launch ledger did not
+            // say which profile: a turn under the owner's own ~/.codex and one under the deny set read the same.
+            //
+            // ONE COLUMN, written by `AiAttemptStore.Begin` in the row's own insert from the verdict the admission computed, and never
+            // updated. NO BACKFILL: a launch recorded before this rung has NULL — unknown, never a guess that it ran under a profile it
+            // may not have. Added only where the table lacks it, so a crash between the ALTER and the stamp reopens cleanly.
+            AddColumnIfMissing("ai_attempt", "runtime_profile", "TEXT");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','37') ON CONFLICT(key) DO UPDATE SET value='37';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

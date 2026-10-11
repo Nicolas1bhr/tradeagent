@@ -82,6 +82,13 @@ public sealed record AiAttempt
     public string? Role { get; init; }
 
     /// <summary>
+    /// THE RUNTIME PROFILE THIS LAUNCH RAN UNDER (<c>U-seat-home</c>, rung 37): one SHA-256 over the pinned program, the seat's deny
+    /// set, its config file and the CLI's own feature and MCP report, verified before the launch was admitted. Written once, in
+    /// this row's insert, and never updated. Null on a row from before the rung and on a launch with no seat profile.
+    /// </summary>
+    public string? RuntimeProfile { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -260,7 +267,7 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash, role
+        input_hash, role, runtime_profile
         """;
 
     /// <summary>
@@ -302,12 +309,12 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash,$role)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
-            ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role));
+            ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile));
         c.ExecuteNonQuery();
         if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
         return new AiAdmission { Id = a.Id, ResumesAt = admit?.ResumesAt ?? default };
@@ -565,7 +572,8 @@ public sealed class AiAttemptStore(Database db)
         Context = Sql.S(r.GetValue(17)),
         PolicyVersion = Sql.S(r.GetValue(18)),
         InputHash = Sql.S(r.GetValue(19)),
-        Role = Sql.S(r.GetValue(20))
+        Role = Sql.S(r.GetValue(20)),
+        RuntimeProfile = Sql.S(r.GetValue(21))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);
