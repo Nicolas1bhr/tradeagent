@@ -228,9 +228,39 @@ public static class DecisionRequests
             return $"the instrument '{instrument.Id}' has no address a request can go to";
 
         if (request.Questions is not { Count: > 0 } questions) return "a call asks at least one question";
+        var limits = instrument.Limits;
+        if (QuestionsRefusal(questions, limits) is { } asked) return asked;
+
+        var sha = TapeJson.Sha256(QuestionsJson(questions));
+        if (request.Schema is null || !string.Equals(request.Schema.Sha, sha, StringComparison.Ordinal))
+            return "the questions do not hash to the schema reference the call carries, so the record could not say what was asked";
+        if (string.IsNullOrWhiteSpace(request.Schema.Id) || request.Schema.Version < 1)
+            return "the schema reference names no id or no version";
+
+        if (request.Sources.Count > MaxSources) return $"a call carries at most {MaxSources} source references";
+        if (request.Sources.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxSourceChars))
+            return $"a source reference is empty or longer than {MaxSourceChars} characters";
+
+        string state;
+        try { state = CanonicalState(request.State); }
+        catch (JsonException ex) { return "the state is not one JSON value: " + ex.Message; }
+        catch (ArgumentException ex) { return ex.Message; }
+
+        return BytesRefusal(Encoding.UTF8.GetByteCount(state), questions, limits, instrument.Id);
+    }
+
+    /// <summary>
+    /// THE REASON THESE QUESTIONS MAY NOT BE ASKED UNDER <paramref name="limits"/>, or null when they may: how many, their
+    /// names, and each kind's own bounds. ONE HELPER, shared by <see cref="Refusal"/> and a lens's parse
+    /// (<c>Core.Perception.Lens</c>, <c>U-lenses</c>), so a lens is refused in exactly the words the port would refuse
+    /// its call in — and a lens that registers is one the port takes.
+    /// </summary>
+    public static string? QuestionsRefusal(IReadOnlyDictionary<string, DecisionQuestion>? questions, DecisionLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        if (questions is not { Count: > 0 }) return "a call asks at least one question";
         if (questions.Count > MaxQuestions) return $"a call asks at most {MaxQuestions} questions; this one asks {questions.Count}";
 
-        var limits = instrument.Limits;
         foreach (var (name, q) in questions)
         {
             if (!IsName(name))
@@ -266,30 +296,27 @@ public static class DecisionRequests
             }
         }
 
-        var sha = TapeJson.Sha256(QuestionsJson(questions));
-        if (request.Schema is null || !string.Equals(request.Schema.Sha, sha, StringComparison.Ordinal))
-            return "the questions do not hash to the schema reference the call carries, so the record could not say what was asked";
-        if (string.IsNullOrWhiteSpace(request.Schema.Id) || request.Schema.Version < 1)
-            return "the schema reference names no id or no version";
+        return null;
+    }
 
-        if (request.Sources.Count > MaxSources) return $"a call carries at most {MaxSources} source references";
-        if (request.Sources.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > MaxSourceChars))
-            return $"a source reference is empty or longer than {MaxSourceChars} characters";
-
-        string state;
-        try { state = CanonicalState(request.State); }
-        catch (JsonException ex) { return "the state is not one JSON value: " + ex.Message; }
-        catch (ArgumentException ex) { return ex.Message; }
-
-        var stateBytes = Encoding.UTF8.GetByteCount(state);
-        var sizes = questions.Select(kv => Encoding.UTF8.GetByteCount(QuestionJson(kv.Value))).ToList();
+    /// <summary>
+    /// THE REASON A STATE OF <paramref name="stateBytes"/> BYTES AND THESE QUESTIONS ARE TOO LARGE FOR <paramref name="limits"/>,
+    /// or null when they fit — the byte bounds <see cref="Refusal"/> states, shared with a lens's parse, which checks its
+    /// DECLARED state cap here so a registered lens never builds a state its call would be refused for.
+    /// </summary>
+    public static string? BytesRefusal(long stateBytes, IReadOnlyDictionary<string, DecisionQuestion> questions, DecisionLimits limits,
+        string instrument)
+    {
+        ArgumentNullException.ThrowIfNull(questions);
+        ArgumentNullException.ThrowIfNull(limits);
+        var sizes = questions.Select(kv => (long)Encoding.UTF8.GetByteCount(QuestionJson(kv.Value))).ToList();
+        if (sizes.Count == 0) return "a call asks at least one question";
         if (stateBytes + sizes.Sum() > limits.MaxRequestTokens)
-            return $"the state and questions are {stateBytes + sizes.Sum():N0} bytes; {instrument.Id} takes {limits.MaxRequestTokens:N0} tokens "
+            return $"the state and questions are {stateBytes + sizes.Sum():N0} bytes; {instrument} takes {limits.MaxRequestTokens:N0} tokens "
                    + "a request, and a request larger than that in bytes is refused before sending";
         if (stateBytes + sizes.Max() > limits.MaxStateAndQuestionTokens)
-            return $"the state and the longest question are {stateBytes + sizes.Max():N0} bytes; {instrument.Id} takes "
+            return $"the state and the longest question are {stateBytes + sizes.Max():N0} bytes; {instrument} takes "
                    + $"{limits.MaxStateAndQuestionTokens:N0} tokens for them, and a request larger than that in bytes is refused before sending";
-
         return null;
     }
 

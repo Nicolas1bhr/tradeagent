@@ -250,6 +250,27 @@ public static class DecisionInstruments
         instrumentId is not null && ShippedLimits.TryGetValue(instrumentId, out var limits) ? limits : null;
 
     /// <summary>
+    /// THE STRICTEST OF THE BUILT-IN INSTRUMENTS' LIMITS, bound by bound — the smallest budget, the fewest options and
+    /// levels, the most levels a Score must have — read from this build's rows and from nothing a file says. What a lens is
+    /// checked against when it registers (<c>U-lenses</c>), so a registered lens is one EVERY built-in instrument takes,
+    /// whichever one the owner chose.
+    /// </summary>
+    public static DecisionLimits StrictestBuiltInLimits { get; } = Strictest(ShippedLimits.Values);
+
+    static DecisionLimits Strictest(IEnumerable<DecisionLimits> all)
+    {
+        var list = all.ToList();
+        return new DecisionLimits
+        {
+            MaxRequestTokens = list.Min(l => l.MaxRequestTokens),
+            MaxStateAndQuestionTokens = list.Min(l => l.MaxStateAndQuestionTokens),
+            MaxChoiceOptions = list.Min(l => l.MaxChoiceOptions),
+            MinScoreLevels = list.Max(l => l.MinScoreLevels),
+            MaxScoreLevels = list.Min(l => l.MaxScoreLevels)
+        };
+    }
+
+    /// <summary>
     /// THE ANSWERED ID THAT MAKES A CALL TO <paramref name="instrumentId"/> EVIDENCE, or null because it is no built-in
     /// instrument and nothing it answers can be. The tape's store reads this and nothing else.
     /// </summary>
