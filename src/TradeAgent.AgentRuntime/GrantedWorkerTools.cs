@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -455,8 +456,7 @@ public sealed class GrantedWorkerTools(
             + "folder over its own bars and computes every figure itself, so it places no order and "
             + "proves no fill — it is a reason to test something, never a record of a trade. "
             + "Run 'schema' for the full description of every operation and its arguments.",
-            Schema(("op", "string", "One of: " + string.Join(", ", TradeOps)),
-                   ("request_id", "string", "Idempotency key for a mutating op. Reuse it to retry safely."))),
+            OpsSchema(TradeOps, GatewaySchema.Ops())),
 
         new(Data,
             "Historical market data TradeAgent holds: 'data-list' for what there is and where every "
@@ -469,33 +469,113 @@ public sealed class GrantedWorkerTools(
             + "first, at most 5,000 rows; a flagged item comes without its text, and GDELT's rows carry the "
             + "citation its terms require. Nothing here collects or changes data; the account owner does "
             + "that in TradeAgent.",
-            Schema(("op", "string", "data-list, data-bars or data-tape"),
-                   ("pair", "string", "For data-bars, e.g. BTCUSDT"),
-                   ("from", "string", "ISO-8601 date or instant, inclusive"),
-                   ("to", "string", "ISO-8601 date or instant, inclusive"),
-                   ("source", "string", "For data-tape: the tape source, e.g. binance-um-oi. 'data-list' names them"),
-                   ("series", "string", "For data-tape: the source's series, when it records more than one"),
-                   ("subject", "string", "For data-tape: one subject, e.g. BTCUSDT. Omit it for every subject"),
-                   ("as_of", "string", "For data-tape: only rows that had arrived by this ISO-8601 instant"),
-                   ("limit", "string", "For data-tape: how many rows, 1 to 5000; 1000 when omitted"),
-                   ("before", "string", "For data-tape: an answer's next_before, to continue it"))),
+            OpsSchema(DataOps, GatewaySchema.Ops())),
 
         new(Report,
             "The account owner's daily report for a local day, exactly as they read it. It is a READ: "
             + "there is no operation that writes, rewrites or deletes one, because it is the record "
             + "your work is judged by.",
-            Schema(("day", "string", "A local calendar day, yyyy-MM-dd. Omit for today.")))
+            OpsSchema(ReportOps, GatewaySchema.Ops()))
     ];
 
     /// <summary>
     /// A JSON-schema object for the provider's tool contract. Nothing is REQUIRED: a missing argument
     /// is answered in words by the tool that needed it, which is a better failure than a model being
     /// told its call was malformed by a validator it cannot see.
+    ///
+    /// <para><b>A dictionary, not an anonymous object</b> (<c>U-harness-trade-args</c>): it goes onto the wire through
+    /// <see cref="Json.Write"/>, whose snake_case naming policy rewrites a C# property's name and leaves a dictionary's
+    /// keys alone — so an anonymous <c>additionalProperties</c> reached the provider as <c>additional_properties</c>, a
+    /// keyword no JSON schema has, and the tools never told the provider they take nothing else.</para>
     /// </summary>
-    static object Schema(params (string Name, string Type, string Description)[] fields) => new
+    static Dictionary<string, object> Schema(params (string Name, string Type, string Description)[] fields) =>
+        Object(fields.ToDictionary(f => f.Name, f => (object)Property(f.Type, f.Description), StringComparer.Ordinal));
+
+    static Dictionary<string, object> Object(Dictionary<string, object> properties) => new(StringComparer.Ordinal)
     {
-        type = "object",
-        properties = fields.ToDictionary(f => f.Name, f => (object)new { type = f.Type, description = f.Description }),
-        additionalProperties = false
+        ["type"] = "object",
+        ["properties"] = properties,
+        ["additionalProperties"] = false
     };
+
+    static Dictionary<string, object> Property(string type, string description, IReadOnlyList<string>? choices = null)
+    {
+        var property = new Dictionary<string, object>(StringComparer.Ordinal) { ["type"] = type, ["description"] = description };
+        if (choices is not null) property["enum"] = choices.ToArray();
+        return property;
+    }
+
+    /// <summary>
+    /// THE PARAMETERS OF A TOOL THAT CARRIES OPS, FROM THE ONE DESCRIPTION OF THEM (<c>U-harness-trade-args</c>): <c>op</c>,
+    /// an enum of exactly <paramref name="ops"/>; <c>request_id</c> where one of them is mutating; and the union of every
+    /// argument <paramref name="described"/> declares for them, each typed as the pipe reads it and described by the ops
+    /// that take it — the full text of each stays in <c>schema</c>, because these bytes ride every API turn.
+    ///
+    /// <para><b>It widens what a provider may SEND, never what the gateway ACCEPTS.</b> Every argument here is handed on
+    /// to the gateway by <see cref="Fields"/>, whose own parsers read it and whose per-op refusal of an argument an op does
+    /// not take is unchanged; a property offered here is one some op of this tool declares, and nothing else is.</para>
+    ///
+    /// <para><b>Types as the pipe reads them.</b> <c>string</c> and <c>number</c> are JSON schema's own — the pipe's strict
+    /// number reader (<see cref="IpcRequest.Dec"/>) reads a JSON number — and <c>bool</c>, read by the gateway's named
+    /// flag as true or false only, is JSON schema's <c>boolean</c>. A type this map does not know, an op with no
+    /// description, and one argument name declared with two types across one tool's ops are refusals here, at build
+    /// time, never a guess: the provider would be told one type and the gateway would read the other.</para>
+    /// </summary>
+    internal static Dictionary<string, object> OpsSchema(IReadOnlyList<string> ops, IReadOnlyList<GatewaySchema.OpSpec> described)
+    {
+        var properties = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["op"] = Property("string", "The operation. 'schema' describes each and its arguments.", ops)
+        };
+        if (ops.Any(Ops.IsMutating))
+            properties["request_id"] = Property("string", "Idempotency key for a mutating op. Reuse it to retry safely.");
+
+        var union = new List<(string Name, string Type, List<string> Ops)>();
+        foreach (var op in ops)
+        {
+            var spec = described.SingleOrDefault(o => o.Op == op)
+                       ?? throw new InvalidOperationException($"'{op}' has no description in the gateway's schema, so its arguments cannot be offered.");
+            foreach (var arg in ArgsOf(spec, described))
+            {
+                var type = JsonType(op, arg);
+                // `request_id` IS THE HARNESS'S OWN, consumed before the op's arguments are handed on (Fields); buy also
+                // declares it, and it is offered once, above, for every mutating op — with its type held to the same rule.
+                if (arg.Name == "request_id")
+                {
+                    if (type != "string") throw TwoTypes(arg.Name, "string", type, op);
+                    continue;
+                }
+                var at = union.FindIndex(u => u.Name == arg.Name);
+                if (at < 0) union.Add((arg.Name, type, [op]));
+                else if (union[at].Type != type) throw TwoTypes(arg.Name, union[at].Type, type, op);
+                else if (!union[at].Ops.Contains(op)) union[at].Ops.Add(op);
+            }
+        }
+
+        foreach (var (name, type, takenBy) in union)
+            properties[name] = Property(type, $"For {string.Join(", ", takenBy)}.");
+        return Object(properties);
+    }
+
+    /// <summary>
+    /// The arguments one op takes. <c>sell</c> declares none and says "Same arguments as buy": the gateway reads both with
+    /// one parser (<c>ParsePlace</c>), so it is offered buy's — and named beside buy on each of them.
+    /// </summary>
+    static GatewaySchema.ArgSpec[] ArgsOf(GatewaySchema.OpSpec spec, IReadOnlyList<GatewaySchema.OpSpec> described) =>
+        spec.Op == Ops.Sell && spec.Args.Length == 0
+            ? described.SingleOrDefault(o => o.Op == Ops.Buy)?.Args ?? []
+            : spec.Args;
+
+    static string JsonType(string op, GatewaySchema.ArgSpec arg) => arg.Type switch
+    {
+        "string" => "string",
+        "number" => "number",
+        "bool" => "boolean",
+        _ => throw new InvalidOperationException(
+            $"'{arg.Name}' of '{op}' is declared as '{arg.Type}', a type the harness has no JSON-schema type for.")
+    };
+
+    static InvalidOperationException TwoTypes(string name, string one, string other, string op) => new(
+        $"'{name}' is declared as {one} and, by '{op}', as {other} on one tool: the provider would be offered one and the "
+        + "gateway would read the other, so it is offered neither and this build refuses to start the harness.");
 }
