@@ -90,7 +90,7 @@ public class BarHoldoutOverPipeTests(ITestOutputHelper log)
         public async Task<Raw> Dial(string? role)
         {
             var client = await Raw.ConnectAsync(Pipe);
-            var grant = role is null ? null : Grants.Issue(role, "attempt-bar-holdout").Token;
+            var grant = role is null ? null : Grants.IssueHere(role, "attempt-bar-holdout").Token;
             var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return client;

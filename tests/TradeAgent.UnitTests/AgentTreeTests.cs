@@ -623,6 +623,9 @@ public class AgentTreeTests : IDisposable
     {
         if (OperatingSystem.IsWindows()) return;
 
+        // HELD, as every launch now must be to be bound at all (U-grant-tree): a grant whose launch nothing holds stays
+        // pending and serves nobody, so the grace this test reads is a held launch's.
+        DeployLauncher();
         var dir = NewDir("failed");
         var sh = WriteScript(dir, $"echo \"${AgentGrants.Variable}\" > \"{dir}/grant\"\necho 'done'\n");
         var manifest = new RuntimeManifest

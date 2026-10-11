@@ -72,7 +72,7 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
         public async Task<Raw> Dial(string? role, string attempt = "attempt-ledger")
         {
             var client = await Raw.ConnectAsync(Pipe);
-            var grant = role is null ? null : Grants.Issue(role, attempt).Token;
+            var grant = role is null ? null : Grants.IssueHere(role, attempt).Token;
             var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return client;

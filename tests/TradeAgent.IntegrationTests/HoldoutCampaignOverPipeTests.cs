@@ -81,7 +81,7 @@ public class HoldoutCampaignOverPipeTests(ITestOutputHelper log)
         public async Task<Raw> Dial(string role)
         {
             var client = await Raw.ConnectAsync(Pipe);
-            var grant = Grants.Issue(role, "attempt-holdout-campaign").Token;
+            var grant = Grants.IssueHere(role, "attempt-holdout-campaign").Token;
             var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return client;

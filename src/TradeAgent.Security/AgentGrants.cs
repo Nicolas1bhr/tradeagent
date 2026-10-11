@@ -16,6 +16,12 @@ public enum GrantState
     /// <summary>A token this app issued, whose turn is over.</summary>
     Expired,
 
+    /// <summary>
+    /// A token this app issued whose launch it has not yet bound to the container it made for it (<c>U-grant-tree</c>):
+    /// minted before the process exists, and served to nobody until the app has proved it holds that process.
+    /// </summary>
+    Pending,
+
     /// <summary>A live grant. <see cref="GrantVerdict.Grant"/> says whose.</summary>
     Valid
 }
@@ -53,6 +59,12 @@ public sealed class AgentGrant : IDisposable
     public string Role { get; }
     public string AttemptId { get; }
     public DateTimeOffset Expires { get; internal set; }
+
+    /// <summary>
+    /// THE CONTAINER THE APP PROVED IT HOLDS FOR THIS ATTEMPT, or null while the grant is PENDING (<c>U-grant-tree</c>).
+    /// Set once, by <see cref="AgentGrants.Bind"/>, and never changed: a grant is worth one launch of one container.
+    /// </summary>
+    public AttemptContainer? Container { get; internal set; }
 
     /// <summary>Ends the turn: the grant lives only for the grace after this.</summary>
     public void Dispose() => _owner.EndTurn(this);
@@ -160,6 +172,27 @@ public sealed class AgentGrants
     }
 
     /// <summary>
+    /// BINDS A GRANT TO THE CONTAINER THE APP PROVED IT HOLDS FOR ITS ATTEMPT (<c>U-grant-tree</c>). False when the
+    /// register holds no live grant by that token, or the grant is already bound — once, and never to a second container.
+    /// </summary>
+    public bool Bind(string? token, AttemptContainer container)
+    {
+        ArgumentNullException.ThrowIfNull(container);
+        if (token is null) return false;
+        lock (_gate)
+        {
+            foreach (var g in _live)
+            {
+                if (!Same(g.Token, token)) continue;
+                if (g.Container is not null || g.Expires <= _now()) return false;
+                g.Container = container;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Takes a grant out of the register outright. The turn is over and nothing is in flight.
     ///
     /// <para><see cref="Ended"/> is raised for the token whether or not this register held it, so that
@@ -220,6 +253,14 @@ public sealed class AgentGrants
             return new GrantVerdict(GrantState.Expired, null,
                 $"the launch grant presented expired at {found.Expires:u}");
 
+        // PENDING IS A REFUSAL (U-grant-tree). The grant is minted before its process exists and put in that process's
+        // environment; until the app has bound it to the container it proved it holds, there is nothing a peer could be
+        // inside, so nothing may present it.
+        if (found.Container is null)
+            return new GrantVerdict(GrantState.Pending, null,
+                $"the launch grant presented (attempt {Shown(found.AttemptId)}) is not yet bound to the container " +
+                "TradeAgent made for its attempt, so nothing may present it");
+
         return new GrantVerdict(GrantState.Valid, found, "");
     }
 
@@ -231,6 +272,8 @@ public sealed class AgentGrants
     /// </summary>
     public static bool SameToken(string? a, string? b) =>
         a is not null && b is not null && Same(a, b);
+
+    static string Shown(string attemptId) => attemptId.Length > 0 ? attemptId : "none";
 
     static bool Same(string a, string b) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));

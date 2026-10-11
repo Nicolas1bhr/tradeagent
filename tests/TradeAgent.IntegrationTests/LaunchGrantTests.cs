@@ -67,7 +67,7 @@ public class LaunchGrantTests
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
         server.Start();
 
-        using var research = grants.Issue(CouncilRoles.Research, "attempt-r1");
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-r1");
         await using var client = await Raw.ConnectAsync(pipe);
         var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = research.Token });
         Assert.True(hello.Ok);
@@ -97,7 +97,7 @@ public class LaunchGrantTests
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
         server.Start();
 
-        using var chair = grants.Issue(CouncilRoles.Operations, "attempt-o1");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-o1");
         await using var client = await Raw.ConnectAsync(pipe);
         await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
 
@@ -121,7 +121,7 @@ public class LaunchGrantTests
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
         server.Start();
 
-        var grant = grants.Issue(CouncilRoles.Operations, "attempt-expired", TimeSpan.FromMinutes(5));
+        var grant = grants.IssueHere(CouncilRoles.Operations, "attempt-expired", TimeSpan.FromMinutes(5));
         now = now.AddHours(1);
 
         await using var client = await Raw.ConnectAsync(pipe);
@@ -178,7 +178,7 @@ public class LaunchGrantTests
         };
         server.Start();
 
-        using var chair = grants.Issue(CouncilRoles.Operations, "attempt-o2");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-o2");
         await using var client = await Raw.ConnectAsync(pipe);
         var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
 
@@ -232,7 +232,7 @@ public class LaunchGrantTests
             await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants, Peer = rule };
             server.Start();
 
-            using var research = grants.Issue(CouncilRoles.Research, "attempt-peer-1");
+            using var research = grants.IssueHere(CouncilRoles.Research, "attempt-peer-1");
             var (code, stdout, stderr) = await RunAsync(deployed, pipe, research.Token, "data", "list", "--json");
 
             Assert.True(code == 0,
@@ -270,7 +270,7 @@ public class LaunchGrantTests
             };
             server.Start();
 
-            using var research = grants.Issue(CouncilRoles.Research, "attempt-peer-2");
+            using var research = grants.IssueHere(CouncilRoles.Research, "attempt-peer-2");
             var (code, stdout, _) = await RunAsync(copy, pipe, research.Token, "data", "list", "--json");
 
             Assert.True(code != 0, $"a copy of the trade command at {copy} presented a launch grant and was served: {stdout}");
@@ -314,7 +314,7 @@ public class LaunchGrantTests
             };
             server.Start();
 
-            using var research = grants.Issue(CouncilRoles.Research, "attempt-peer-3");
+            using var research = grants.IssueHere(CouncilRoles.Research, "attempt-peer-3");
             var (code, stdout, _) = await RunAsync(copy, pipe, research.Token, "data", "list", "--json");
 
             Assert.True(code != 0, $"a copy of the trade command inside the agent's workspace ({copy}) presented a launch grant and was served: {stdout}");
@@ -325,6 +325,239 @@ public class LaunchGrantTests
             Undeploy();
             try { Directory.Delete(inside, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
+    }
+
+    // ---- U-grant-tree: a grant is served only to a peer inside the container the app made for its attempt ----------
+
+    /// <summary>
+    /// (a) THE TOKEN WITHOUT THE CONTAINER IS NOTHING. A real launch, held as the product holds one — a Windows job, or a
+    /// session the deployed trade command made — and its grant bound to that container; then THIS process, which is not
+    /// in it, presents the live token. Refused, in words naming the attempt.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_replayed_from_outside_its_attempts_container_is_refused()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+
+        Deploy();
+        ContainedProcess? contained = null;
+        try
+        {
+            contained = ProcessContainment.Start(Sleeper());
+            Assert.NotNull(contained.Container);
+            await HeldWithin(contained, TimeSpan.FromSeconds(30));
+
+            await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+            server.Start();
+            using var research = grants.Issue(CouncilRoles.Research, "attempt-replayed");
+            Assert.True(grants.Bind(research.Token, contained.Container!));
+
+            await using var client = await Raw.ConnectAsync(pipe);
+            var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = research.Token });
+
+            Assert.False(hello.Ok, "a process outside the attempt's container presented its live grant and was served");
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), hello.Error?.Code);
+            Assert.Contains("attempt-replayed", hello.Error?.Message);
+        }
+        finally
+        {
+            contained?.Dispose();
+            Undeploy();
+        }
+    }
+
+    /// <summary>
+    /// (b) PENDING UNTIL BOUND. A grant is minted before its process exists; until the app binds it to the container it
+    /// proved it holds, nothing may present it — and once bound, a peer inside is served.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_is_refused_until_the_app_binds_it_to_its_held_container()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        using var research = grants.Issue(CouncilRoles.Research, "attempt-pending");
+        Assert.Equal(GrantState.Pending, grants.Verify(research.Token).State);
+        await using (var early = await Raw.ConnectAsync(pipe))
+        {
+            var hello = await early.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = research.Token });
+            Assert.False(hello.Ok, "a grant nobody had bound to a container was served");
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), hello.Error?.Code);
+        }
+
+        Assert.True(grants.Bind(research.Token, TestProcessContainer.Instance));
+        await using var late = await Raw.ConnectAsync(pipe);
+        var bound = await late.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = research.Token });
+        Assert.True(bound.Ok, $"the bound grant, presented from inside its container, was refused: {bound.Error?.Message}");
+    }
+
+    /// <summary>
+    /// (c) A PID HANDED ON. The peer the kernel names started AFTER the connection was accepted, so it is not the process
+    /// that connected — whatever container it is in. The container here admits everyone, so only that check can refuse.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_started_after_the_connection_was_accepted_is_refused()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            Grants = grants,
+            PeerFactsOf = p => PeerImage.Facts(p) is { } real ? real with { Start = ProcessClock.Now() + 1_000_000_000UL } : null
+        };
+        server.Start();
+
+        using var chair = grants.Issue(CouncilRoles.Operations, "attempt-late-peer");
+        Assert.True(grants.Bind(chair.Token, new Answers(MembershipVerdict.Member)));
+
+        await using var client = await Raw.ConnectAsync(pipe);
+        var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
+
+        Assert.False(hello.Ok, "a peer that started after its connection was accepted was served the grant");
+        Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), hello.Error?.Code);
+        Assert.Contains("started after", hello.Error?.Message);
+    }
+
+    /// <summary>
+    /// (d) A LOOKUP THAT FAILS IS A REFUSAL. The kernel would not name the peer; and, separately, the container could not
+    /// say whether the peer is inside. Neither is a pass.
+    /// </summary>
+    [Fact]
+    public async Task A_lookup_that_fails_refuses_the_grant()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+
+        var silent = NewPipe();
+        var grants = new AgentGrants();
+        await using (var server = new GatewayPipeServer(gw, IpcToken.Ensure(), silent) { Grants = grants, PeerFactsOf = _ => null })
+        {
+            server.Start();
+            using var chair = grants.Issue(CouncilRoles.Operations, "attempt-unnamed");
+            Assert.True(grants.Bind(chair.Token, new Answers(MembershipVerdict.Member)));
+            await using var client = await Raw.ConnectAsync(silent);
+            var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
+            Assert.False(hello.Ok, "a peer the kernel would not name was served the grant");
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), hello.Error?.Code);
+        }
+
+        var unsure = NewPipe();
+        var other = new AgentGrants();
+        await using (var server = new GatewayPipeServer(gw, IpcToken.Ensure(), unsure) { Grants = other })
+        {
+            server.Start();
+            using var chair = other.Issue(CouncilRoles.Operations, "attempt-unknown");
+            Assert.True(other.Bind(chair.Token, new Answers(MembershipVerdict.Unknown("the job could not be asked"))));
+            await using var client = await Raw.ConnectAsync(unsure);
+            var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
+            Assert.False(hello.Ok, "a container that could not say was read as a yes");
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), hello.Error?.Code);
+            Assert.Contains("the job could not be asked", hello.Error?.Message);
+        }
+    }
+
+    /// <summary>
+    /// (g) GUARD: THE PRODUCT'S OWN CASE, FOR REAL ON EVERY RUNNER. The deployed trade command, started as the app starts a
+    /// launch — held in a Windows job, or in the session the deployed command makes for it — with its grant bound to that
+    /// container right after the start, says hello under the peer-image rule AppHost configures, and is served.
+    /// </summary>
+    [Fact]
+    public async Task A_process_the_attempt_started_is_accepted()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+
+        var deployed = Deploy();
+        ContainedProcess? contained = null;
+        try
+        {
+            await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants, Peer = Containment.PeerRuleNow() };
+            server.Start();
+            using var research = grants.Issue(CouncilRoles.Research, "attempt-inside");
+
+            var psi = TradePsi(deployed, pipe, research.Token, "data", "list", "--json");
+            contained = ProcessContainment.Start(psi);
+            Assert.NotNull(contained.Container);
+            Assert.True(grants.Bind(research.Token, contained.Container!));
+
+            var so = contained.Process.StandardOutput.ReadToEndAsync();
+            var se = contained.Process.StandardError.ReadToEndAsync();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            await contained.Process.WaitForExitAsync(cts.Token);
+            var stdout = await so;
+
+            Assert.True(contained.Process.ExitCode == 0,
+                $"the attempt's own trade command, inside its container, was not served (exit {contained.Process.ExitCode}): " +
+                $"{Said(stdout)} {await se}");
+            using var doc = JsonDocument.Parse(stdout);
+            Assert.True(doc.RootElement.GetProperty("ok").GetBoolean(), stdout);
+        }
+        finally
+        {
+            contained?.Dispose();
+            Undeploy();
+        }
+    }
+
+    /// <summary>A container that gives one answer, for the checks that must refuse whatever the container says.</summary>
+    sealed class Answers(MembershipVerdict verdict) : AttemptContainer
+    {
+        public override string Name => "a container that answers one way";
+        public override MembershipVerdict Contains(PeerFacts peer) => verdict;
+    }
+
+    /// <summary>A process that waits half a minute and does nothing else: the attempt whose container (a) replays from outside.</summary>
+    static ProcessStartInfo Sleeper()
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", "ping -n 60 127.0.0.1 > nul" } }
+            : new ProcessStartInfo("/bin/sleep") { ArgumentList = { "60" } };
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = psi.RedirectStandardError = true;
+        DotnetRoot(psi);
+        return psi;
+    }
+
+    /// <summary>The deployed trade command as a launch would run it: the pipe and grant in its environment, output captured.</summary>
+    static ProcessStartInfo TradePsi(string exe, string pipe, string grant, params string[] args)
+    {
+        var psi = new ProcessStartInfo(exe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        psi.Environment["TRADEAGENT_PIPE"] = pipe;
+        psi.Environment[AgentGrants.Variable] = grant;
+        DotnetRoot(psi);
+        return psi;
+    }
+
+    /// <summary>The deployed command is framework-dependent; it — and the launcher, which is the same program — is told where .NET is.</summary>
+    static void DotnetRoot(ProcessStartInfo psi)
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
+            psi.Environment["DOTNET_ROOT"] = Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
+    }
+
+    /// <summary>On macOS and Linux the session is the launcher's to make; waits until it is proved (Windows: held at start).</summary>
+    static async Task HeldWithin(ContainedProcess contained, TimeSpan bound)
+    {
+        var until = DateTime.UtcNow + bound;
+        while (!contained.Held && DateTime.UtcNow < until) await Task.Delay(50);
+        Assert.True(contained.Held, $"the launch was not held within {bound.TotalSeconds:0} s: {contained.Mechanism}");
     }
 
     /// <summary>

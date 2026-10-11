@@ -84,7 +84,7 @@ public class MidpointEvidenceTests(ITestOutputHelper log)
         var hello = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Hello, Token = IpcToken.Ensure(),
-            Grant = grants.Issue(CouncilRoles.Operations, "attempt-1").Token
+            Grant = grants.IssueHere(CouncilRoles.Operations, "attempt-1").Token
         });
         Assert.True(hello.Ok, Json.Write(hello.Error));
 

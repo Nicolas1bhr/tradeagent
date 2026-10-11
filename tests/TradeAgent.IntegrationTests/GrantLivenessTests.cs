@@ -142,7 +142,7 @@ public class GrantLivenessTests(ITestOutputHelper log)
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
         server.Start();
 
-        var chair = grants.Issue(CouncilRoles.Operations, "attempt-liveness", TimeSpan.FromMinutes(5));
+        var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-liveness", TimeSpan.FromMinutes(5));
         await using var client = await Raw.ConnectAsync(pipe);
         var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = chair.Token });
         Assert.True(hello.Ok, $"the chair's own grant was refused at hello: {hello.Error?.Code}");

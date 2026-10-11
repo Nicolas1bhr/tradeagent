@@ -703,6 +703,11 @@ public sealed class AgentSession(
         var process = contained.Process;
         _current = contained;
 
+        // THE GRANT IS BOUND TO WHAT HOLDS THE LAUNCH, NOW AND NEVER BEFORE (U-grant-tree). Until this line it is pending
+        // and the pipe serves it to nobody; from it, only to a peer inside this container — the job the process was put
+        // in, or the session the launcher makes. A launch that is not held is never bound, so its grant serves nothing.
+        if (contained.Container is { } container) register.Bind(launch.Token, container);
+
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
         // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened as the turn
         // starts and closed by the finally below AFTER the teardown — never by the leader's exit, which says
