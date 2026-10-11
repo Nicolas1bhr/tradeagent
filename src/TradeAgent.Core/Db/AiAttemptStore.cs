@@ -194,6 +194,23 @@ public sealed record AiAdmission
     /// <summary>What <see cref="Ceiling"/> says for the owner's whole-day limit.</summary>
     public const string Day = "day";
 
+    /// <summary>
+    /// What <see cref="Ceiling"/> says when the LAUNCH LEDGER refused: the row that reserves the turn could not be
+    /// written, or there was no ledger to write it to. Neither the day's limit nor a role's share ran out, so a caller
+    /// that reads this must not send the owner to the Safety page.
+    /// </summary>
+    public const string Ledger = "ledger";
+
+    /// <summary>
+    /// THE REFUSAL FOR A LAUNCH WHOSE ROW COULD NOT BE WRITTEN — never an admission. A turn the ledger did not take is a
+    /// turn whose cost no ceiling sees, so it is not started, it consumes no wake, and the reason to take it stays owed.
+    /// </summary>
+    public static AiAdmission LedgerRefused(string cause) => new()
+    {
+        Refusal = Labels.LaunchLedgerUnwritable(cause),
+        Ceiling = Ledger
+    };
+
     /// <summary>By how much this launch would have passed that ceiling. Never negative.</summary>
     public decimal Over { get; init; }
 

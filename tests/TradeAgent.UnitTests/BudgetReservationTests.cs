@@ -457,6 +457,116 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// THE LEDGER WILL NOT TAKE A ROW, HONESTLY: the INSERT itself throws, inside the transaction that would have
+    /// reserved the turn and consumed its wakes, exactly as a full disk or a locked file does. Reads still work,
+    /// so what is under test is the write and nothing else. <see cref="LedgerTakesRows"/> lifts it.
+    /// </summary>
+    void LedgerRefusesRows() => _db.Write(_ =>
+    {
+        using var c = _db.Cmd("""
+            CREATE TRIGGER refuse_ai_attempt BEFORE INSERT ON ai_attempt
+            BEGIN SELECT RAISE(ABORT, 'the disk would not take the row'); END
+            """);
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>The ledger's sentence, carrying what the ledger said; the driver wraps the trigger's words in its own.</summary>
+    static void AssertSaysTheLedger(string? said)
+    {
+        var sentence = Labels.LaunchLedgerUnwritable("\0");
+        Assert.NotNull(said);
+        Assert.StartsWith(sentence[..sentence.IndexOf('\0')], said);
+        Assert.EndsWith(sentence[(sentence.IndexOf('\0') + 1)..], said);
+        Assert.Contains("the disk would not take the row", said);
+    }
+
+    void LedgerTakesRows() => _db.Write(_ =>
+    {
+        using var c = _db.Cmd("DROP TRIGGER refuse_ai_attempt");
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// A LAUNCH WHOSE ADMISSION CANNOT BE WRITTEN IS REFUSED (<c>U-admission-fail-closed</c>). It used to be
+    /// "unrecorded" and admitted: the turn ran, its cost went into no row, and the day's cap never saw it. Refused,
+    /// it names the ledger — not the day's limit, not a role's share — and leaves its wake owed.
+    /// </summary>
+    [Fact]
+    public void A_launch_whose_admission_cannot_be_written_is_refused_and_consumes_no_wake()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("owner:1", MissionEventKind.Owner, now);
+        var meter = Meter(50m, () => now);
+        LedgerRefusesRows();
+
+        var admission = meter.Begin("## Situation", ["owner:1"], CouncilRoles.Operations);
+
+        Assert.False(admission.Admitted, "a launch the ledger would not record was admitted");
+        Assert.Null(admission.Id);
+        Assert.Equal(AiAdmission.Ledger, admission.Ceiling);
+        AssertSaysTheLedger(admission.Refusal);
+        Assert.Null(events.Get("owner:1")!.ConsumedBy);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+    }
+
+    /// <summary>
+    /// AND THE LOOP STARTS NO PROCESS FOR IT: nothing is sent, the wake stays owed, the wait is the loop's refusal
+    /// retry and not a busy loop — and once the ledger takes rows again the very next look launches the turn.
+    /// </summary>
+    [Fact]
+    public async Task The_mission_loop_starts_no_process_when_the_ledger_will_not_take_the_row()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("owner:1", MissionEventKind.Owner, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var options = new MissionOptions();
+        var loop = new MissionLoop(host, options, now: () => now);
+        LedgerRefusesRows();
+
+        var wait = await loop.TurnAsync();
+
+        Assert.Empty(host.Conv.Sent);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.Null(events.Get("owner:1")!.ConsumedBy);
+        Assert.True(wait >= options.BusyRetry, $"the loop came back after {wait}, faster than its refusal retry");
+
+        LedgerTakesRows();
+        await loop.TurnAsync();
+
+        Assert.Single(host.Conv.Sent);
+        Assert.NotNull(events.Get("owner:1")!.ConsumedBy);
+        Assert.NotEqual(MissionLoop.Unrecorded, events.Get("owner:1")!.ConsumedBy);
+    }
+
+    /// <summary>
+    /// THE OWNER'S TYPED TURN IS HELD WHEN ITS ADMISSION CANNOT BE WRITTEN, exactly as a capped one is: no process,
+    /// their words kept for the next turn, and the last line says it was the ledger — not the day's limit.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_typed_turn_is_held_when_its_admission_cannot_be_written()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(50m, () => now);
+        var marker = Path.Combine(TestEnv.Home, $"ran-{Guid.NewGuid():n}.txt");
+        var chat = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, marker: marker);
+        using var metering = meter.Attach(chat, CouncilRoles.Operations);
+        LedgerRefusesRows();
+
+        await chat.SendAsync("what are you doing?");
+
+        Assert.False(File.Exists(marker), "the AI tool was started for a turn the ledger never recorded");
+        Assert.Null(chat.ThreadId);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.ENDED)));
+        Assert.Contains("what are you doing?", chat.TakeTyped());
+        var said = chat.History[^1];
+        Assert.Equal(ChatRole.System, said.Role);
+        AssertSaysTheLedger(said.Text);
+    }
+
+    /// <summary>
     /// THE RESERVATION CHARGES INPUT AT THE DEARER OF THE TWO RATES THE SAME TOKENS CAN BE BILLED AT.
     ///
     /// <c>gpt-5.6-sol</c>, on this build's own shipped list, costs 4.00 per million input and 5.00
