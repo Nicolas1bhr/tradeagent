@@ -557,7 +557,7 @@ public sealed class AgentSession(
         // agent's PATH; losing them is how the agent ends up reading its own instructions about a
         // command it cannot run.
         var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
-        AgentEnvironment.Apply(psi, env, manifest.KeepEnvironment);
+        AgentEnvironment.Apply(psi, env, manifest);
 
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
         // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.

@@ -43,6 +43,44 @@ public sealed class InstallPlan
 }
 
 /// <summary>
+/// THE SEAT PROFILE A RUNTIME'S EVERY PROCESS RUNS UNDER (<c>U-seat-home</c>; <c>docs/ORCHESTRATION.md</c> § 2.7): the app-owned
+/// home, the environment that points the CLI at it, and the default-deny argv every turn carries. Null for a runtime that has none,
+/// and then nothing here applies.
+///
+/// <para>Data, because the vendor's flags and file names are the vendor's: a renamed feature is a one-line fix in
+/// <c>runtimes.json</c>. Not a sandbox — the CLI still runs as the owner's user (§ 2.7: integrity ADVISORY while seats are
+/// unconfined). What it removes is the owner's own agent configuration — his plugins, MCP servers, notify hook, skills and sign-in —
+/// arriving in a seat nobody configured it for.</para>
+/// </summary>
+public sealed class SeatPlan
+{
+    /// <summary>The seat home's root. <c>{seatHome}</c> is <see cref="Paths.SeatHome"/>; a test points it at its own folder.</summary>
+    public string Home { get; set; } = "{seatHome}";
+
+    /// <summary>
+    /// What EVERY process of this runtime is started with — a turn, a resume, the version probe, the sign-in status, a sign-in, a
+    /// pasted key — applied after the whitelist and after TradeAgent's own variables, so nothing inherited can stand in for it.
+    /// <c>{seatHome}</c> is <see cref="Home"/>.
+    /// </summary>
+    public Dictionary<string, string> Environment { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>The seat home resolved: <see cref="Home"/> with <c>{seatHome}</c> replaced.</summary>
+    public string Root => Resolve(Home, Paths.SeatHome);
+
+    /// <summary><see cref="Environment"/> with <c>{seatHome}</c> replaced by <see cref="Root"/>.</summary>
+    public IReadOnlyDictionary<string, string> ResolvedEnvironment()
+    {
+        var root = Root;
+        return Environment.ToDictionary(kv => kv.Key, kv => Resolve(kv.Value, root), StringComparer.Ordinal);
+    }
+
+    static string Resolve(string value, string root) =>
+        value.Contains("{seatHome}", StringComparison.Ordinal)
+            ? Path.GetFullPath(value.Replace("{seatHome}", root, StringComparison.Ordinal).Replace('/', Path.DirectorySeparatorChar))
+            : value;
+}
+
+/// <summary>
 /// How a runtime accepts a key the user pastes into TradeAgent's own window.
 ///
 /// This exists because of the no-terminal rule, not in spite of it. OpenCode's interactive sign-in
@@ -323,6 +361,9 @@ public sealed class RuntimeManifest
     /// </summary>
     public string[] KeepEnvironment { get; set; } = [];
 
+    /// <summary>The app-owned home and default-deny profile every process of this runtime runs under, or null for none.</summary>
+    public SeatPlan? Seat { get; set; }
+
     /// <summary>
     /// WHERE THE APP-OWNED HARNESS SENDS ITS REQUESTS, or empty for a runtime that is a program on
     /// this machine rather than an endpoint.
@@ -496,10 +537,16 @@ public static class RuntimeCatalog
         {
             Id = "codex",
             DisplayName = "OpenAI Codex CLI",
-            // Where Codex keeps its own state and its auth.json. Unset on an ordinary machine — the
-            // CLI then uses ~/.codex — and honoured here so an install that DOES set it keeps
-            // working once the agent's environment became a whitelist.
-            KeepEnvironment = ["CODEX_HOME"],
+            // NOTHING INHERITED: the CLI reads CODEX_HOME and HOME, and both are the app's own seat home (U-seat-home). This used to
+            // pass an inherited CODEX_HOME, and the whitelist passed the owner's HOME, so every seat ran under ~/.codex — measured
+            // 2026-10-11 under a copy of it: the ChatGPT app's REPLs offered to the model and every prompt sent to its notify hook.
+            KeepEnvironment = [],
+            Seat = new SeatPlan
+            {
+                // ON WINDOWS USERPROFILE STILL CROSSES: whether codex takes its home from it or from the known-folder API is
+                // NOT VERIFIED (owed to U-cell-windows), and the whitelist's other programs need it.
+                Environment = new(StringComparer.Ordinal) { ["CODEX_HOME"] = "{seatHome}/codex", ["HOME"] = "{seatHome}/home" }
+            },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux
                 ? "Codex signs in with your ChatGPT account on another device: open the address below on your phone " +

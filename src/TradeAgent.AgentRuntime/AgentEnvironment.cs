@@ -124,4 +124,19 @@ public static class AgentEnvironment
 
         foreach (var (k, v) in additions) psi.Environment[k] = v;
     }
+
+    /// <summary>
+    /// THE ONE SEAM EVERY PROCESS OF A RUNTIME PASSES: the whitelist, the vendor's own names, TradeAgent's additions — and then,
+    /// for a runtime with a <see cref="RuntimeManifest.Seat"/>, the seat home made ready and its variables set LAST, so an
+    /// inherited <c>CODEX_HOME</c> or the owner's <c>HOME</c> can never stand in for it (<c>U-seat-home</c>).
+    /// </summary>
+    public static void Apply(ProcessStartInfo psi, IReadOnlyDictionary<string, string> additions, RuntimeManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        Apply(psi, additions, manifest.KeepEnvironment);
+        if (manifest.Seat is not { } seat) return;
+
+        SeatProfile.Prepare(seat);
+        foreach (var (k, v) in seat.ResolvedEnvironment()) psi.Environment[k] = v;
+    }
 }

@@ -471,7 +471,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             StandardErrorEncoding = Encoding.UTF8
         };
         SetCommand(psi, exe, manifest.AuthArgs);
-        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
+        AgentEnvironment.Apply(psi, _env, manifest);
 
         var contained = ProcessContainment.Start(psi);
         var process = contained.Process;
@@ -620,7 +620,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
             };
             SetCommand(psi, exe, plan.StdinArgs);
-            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
+            AgentEnvironment.Apply(psi, _env, manifest);
 
             // THE WINDOW BEFORE THE PROCESS, so they are disposed the other way round: the process — and
             // with it the whole tree — first, then the window. Never closed by the leader's exit alone, which
@@ -796,7 +796,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 StandardErrorEncoding = Encoding.UTF8
             };
             SetCommand(psi, exe, manifest.InteractiveArgs);
-            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
+            AgentEnvironment.Apply(psi, _env, manifest);
             _session = ProcessContainment.Start(psi);
             Presence(_session.Process, presence);
         }
@@ -864,7 +864,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
         };
         SetCommand(psi, exe, args);
-        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
+        AgentEnvironment.Apply(psi, _env, manifest);
 
         // The window before the process, so the tree's teardown is disposed first and the window after it —
         // the same order as the key sign-in above and every turn (U-agent-tree).
