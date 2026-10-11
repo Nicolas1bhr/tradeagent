@@ -565,20 +565,22 @@ public static class GatewaySchema
                 new("limit", "number", false, $"How many entries, a whole number from 1 to {Core.Db.ResearchLedger.MaxEntries}; {Core.Db.ResearchLedger.MaxEntries} when omitted."),
                 new("before", "number", false, "An entry id: serve only entries before it. Pass an answer's 'next_before' to continue it.")
             ]),
-        new(Core.Ops.LedgerShow, "trade ledger show <entry> [--before R]", false,
-            "ONE LEDGER ENTRY IN FULL — a READ, for every role: its revisions newest first, its links, the entries about it, "
-            + "and — read now, never stored — the promotion and deployment ids of the versions its linked runs ran. A LINK is "
-            + "TRADEAGENT'S: it says TradeAgent answered a request asked under this entry with that record — 'run', a "
-            + "backtest's run id, or 'promotion', a verdict's — at the revision it was asked under, for the attempt that "
-            + "asked; it does not say the record supports the entry, and not every record that bears on it is linked. Ids "
-            + "only, never a figure: 'trade run trades' reads a run, and 'trade verdict' answers a judged version again and "
-            + "charges nothing. A confidence its author did not state reads 'unknown'. At most "
-            + $"{Core.Db.ResearchLedger.MaxRevisions} revisions and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call: when "
-            + "'more' is true 'before' set to its 'next_before' continues the revisions exactly; the links and the entries "
-            + $"about it are the newest {Core.Db.ResearchLedger.MaxLinks} of each, with how many there are in all.",
+        new(Core.Ops.LedgerShow, "trade ledger show <entry> [--part P] [--before C]", false,
+            "ONE LEDGER ENTRY IN FULL — a READ, for every role: its revisions, its links and the entries about it, each "
+            + "newest first, and — read now, never stored — the version each linked run ran with that version's promotion "
+            + "and deployment ids. A LINK is TRADEAGENT'S: it says TradeAgent answered a request asked under this entry with "
+            + "that record — 'run', a backtest's run id, or 'promotion', a verdict's — at the revision it was asked under, "
+            + "for the attempt that asked; it does not say the record supports the entry, and not every record that bears "
+            + "on it is linked. Ids only, never a figure: 'trade run trades' reads a run, and 'trade verdict' answers a "
+            + "judged version again and charges nothing. A confidence its author did not state reads 'unknown'. At most "
+            + $"{Core.Db.ResearchLedger.MaxRevisions} revisions, {Core.Db.ResearchLedger.MaxLinks} links, "
+            + $"{Core.Db.ResearchLedger.MaxAbout} entries about it and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call: "
+            + "when 'more' is true the answer stopped there, and asking again with the arguments in its 'next' continues "
+            + "exactly — every revision, link and entry about it is reached that way.",
             [
                 new("entry", "number", true, "The entry's id."),
-                new("before", "number", false, "A revision number: serve only revisions before it. Pass an answer's 'next_before' to continue it.")
+                new("part", "string", false, "revisions | links | about — the list the answer begins at; revisions when omitted. Pass an answer's 'next'."),
+                new("before", "number", false, "In that list, serve only rows before it — a revision number, or the cursor an answer's 'next' names.")
             ]),
 
         new(Core.Ops.Buy,  "trade buy <symbol> <qty>",  true, "Buy. Market unless you pass --limit or --stop.",

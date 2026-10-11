@@ -336,7 +336,7 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
                 ["entry", "text", "mark", "why", "confidence", "status"]),
             [Ops.LedgerList] = ("trade ledger list [--author R] [--kind K] [--status S] [--limit N] [--before E]",
                 ["author", "kind", "status", "limit", "before"]),
-            [Ops.LedgerShow] = ("trade ledger show <entry> [--before R]", ["entry", "before"])
+            [Ops.LedgerShow] = ("trade ledger show <entry> [--part P] [--before C]", ["entry", "part", "before"])
         };
         Assert.Equal(["ledger-add", "ledger-revise", "ledger-list", "ledger-show"], forms.Keys);
 
@@ -394,7 +394,8 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
             foreach (var call in new[]
                      {
                          $$"""{"op":"ledger-revise","entry":{{harnessEntry}},"text":"over July too","mark":"hypothesis","why":"one month is thin"}""",
-                         """{"op":"ledger-list","author":"research"}""", $$"""{"op":"ledger-show","entry":{{harnessEntry}}}"""
+                         """{"op":"ledger-list","author":"research"}""", $$"""{"op":"ledger-show","entry":{{harnessEntry}}}""",
+                         $$"""{"op":"ledger-show","entry":{{harnessEntry}},"part":"about","before":{{harnessEntry}}}"""
                      })
             {
                 var answer = await tools.InvokeAsync(new ToolRequest("t2", GrantedWorkerTools.Trade, call));
@@ -430,7 +431,8 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
                  {
                      new[] { "ledger", "revise", id, "a", "fill", "is", "only", "the", "app's", "--mark", "claim", "--why", "said better", "--confidence", "0.9", "--json" },
                      ["ledger", "list", "--author", "operations", "--json"],
-                     ["ledger", "show", id, "--json"]
+                     ["ledger", "show", id, "--json"],
+                     ["ledger", "show", id, "--part", "links", "--before", "1", "--json"]
                  })
         {
             var ran = await Build.RunTradeAsync(argv);
@@ -521,14 +523,17 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
         for (var r = 2; r <= 105; r++)
             rig.Gw.Ledger.Revise(CouncilRoles.Research, "attempt-i", many, $"revision {r}", LedgerMark.Claim, "again", null, null);
         var shown = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", many))));
-        Assert.Equal((105, 100, true, "limit", 6), (shown.GetProperty("revision_count").GetInt32(),
-            shown.GetProperty("count").GetInt32(), shown.GetProperty("more").GetBoolean(),
-            shown.GetProperty("capped_by").GetString(), shown.GetProperty("next_before").GetInt32()));
-        Assert.Contains("'before' set to 'next_before' continues the revisions exactly", shown.GetProperty("note").GetString()!,
+        Assert.Equal((105, 100, true, "limit"), (shown.GetProperty("revision_count").GetInt32(),
+            shown.GetProperty("revisions").GetArrayLength(), shown.GetProperty("more").GetBoolean(),
+            shown.GetProperty("capped_by").GetString()));
+        Assert.Equal((many, "revisions", 6L), (shown.GetProperty("next").GetProperty("entry").GetInt64(),
+            shown.GetProperty("next").GetProperty("part").GetString(), shown.GetProperty("next").GetProperty("before").GetInt64()));
+        Assert.Contains("asking again with the arguments in 'next' continues exactly", shown.GetProperty("note").GetString()!,
             StringComparison.Ordinal);
-        var older = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", many), ("before", 6))));
+        var older = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", many), ("part", "revisions"), ("before", 6))));
         Assert.Equal([5, 4, 3, 2, 1], older.GetProperty("revisions").EnumerateArray().Select(r => r.GetProperty("revision").GetInt32()));
         Assert.False(older.GetProperty("more").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, older.GetProperty("next").ValueKind);
 
         var heavy = big[0];
         for (var r = 2; r <= 40; r++)
@@ -538,5 +543,73 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
         Assert.Equal("bytes", capped.GetProperty("capped_by").GetString());
         Assert.True(Encoding.UTF8.GetByteCount(capped.GetRawText()) <= ResearchLedger.MaxReadBytes + 1_024,
             $"a show of {Encoding.UTF8.GetByteCount(capped.GetRawText()):N0} bytes");
+    }
+
+    // ---- every reference a show names is reachable ------------------------------------------------------------------
+
+    /// <summary>
+    /// EVERY REFERENCE A SHOW NAMES IS REACHABLE (the fix pass, finding 3): an entry with two revisions, 101 linked runs
+    /// and 101 entries about it is read whole by following each answer's <c>next</c> — every revision, every link and every
+    /// entry about it once, newest first, the oldest link and the oldest entry about it included — each list stopping at
+    /// its count bound and saying so. A part outside the vocabulary is refused. RED before the fix: <c>part</c> was not an
+    /// argument, and links and entries about stopped at the newest 100 with no way past them.
+    /// </summary>
+    [Fact]
+    public async Task Every_reference_a_show_names_is_reachable_by_paging()
+    {
+        await using var rig = await Ready();
+        await using var wire = await rig.Dial(CouncilRoles.Research);
+        var entry = rig.Gw.Ledger.Add(CouncilRoles.Research, "attempt-p", LedgerKind.Hypothesis, "one belief, asked under often",
+            LedgerMark.Hypothesis, null, null, null).Id;
+        rig.Gw.Ledger.Revise(CouncilRoles.Research, "attempt-p", entry, "still held", LedgerMark.Claim, "asked again", null, null);
+        var ask = rig.Gw.Ledger.Ask(entry, CouncilRoles.Research);
+        var runs = Enumerable.Range(0, 101).Select(i => $"run-{i:D3}").ToList();
+        var app = new LedgerLinks(rig.Db);   // the app's writer, built here as the gateway builds it: no run is needed for a link to exist
+        foreach (var run in runs) Assert.True(app.Link(ask, LedgerRecord.Run, run, "attempt-p"));
+        var about = new List<long>();
+        for (var i = 0; i < 101; i++)
+            about.Add(rig.Gw.Ledger.Add(i % 2 == 0 ? CouncilRoles.Operations : CouncilRoles.Research, "attempt-p",
+                LedgerKind.Kill, $"against it, {i}", LedgerMark.Claim, null, entry, null).Id);
+
+        var revisions = new List<int>();
+        var links = new List<string>();
+        var abouts = new List<long>();
+        var args = new List<(string, object?)> { ("entry", entry) };
+        for (var page = 1; ; page++)
+        {
+            Assert.True(page <= 10, "the show never finished");
+            var answer = await wire.SendAsync(Frame(Ops.LedgerShow, [.. args]));
+            Assert.True(answer.Ok, Json.Write(answer.Error));
+            var d = Data(answer);
+            Assert.Equal((2, 101, 101), (d.GetProperty("revision_count").GetInt32(), d.GetProperty("link_count").GetInt32(),
+                d.GetProperty("about_count").GetInt32()));
+            revisions.AddRange(d.GetProperty("revisions").EnumerateArray().Select(r => r.GetProperty("revision").GetInt32()));
+            links.AddRange(d.GetProperty("links").EnumerateArray().Select(l => l.GetProperty("id").GetString()!));
+            abouts.AddRange(d.GetProperty("about_it").EnumerateArray().Select(a => a.GetProperty("entry").GetInt64()));
+            log.WriteLine($"page {page} from {string.Join(", ", args.Skip(1))}: {d.GetProperty("revisions").GetArrayLength()} revisions, "
+                + $"{d.GetProperty("links").GetArrayLength()} links, {d.GetProperty("about_it").GetArrayLength()} about it, "
+                + $"capped by {d.GetProperty("capped_by")}, next {d.GetProperty("next")}");
+
+            var next = d.GetProperty("next");
+            if (next.ValueKind == JsonValueKind.Null)
+            {
+                Assert.False(d.GetProperty("more").GetBoolean());
+                break;
+            }
+            Assert.True(d.GetProperty("more").GetBoolean());
+            Assert.Equal("limit", d.GetProperty("capped_by").GetString());
+            Assert.Equal(entry, next.GetProperty("entry").GetInt64());
+            args = [("entry", entry), ("part", next.GetProperty("part").GetString())];
+            if (next.TryGetProperty("before", out var cursor)) args.Add(("before", cursor.GetInt64()));
+        }
+
+        Assert.Equal([2, 1], revisions);
+        Assert.Equal(Enumerable.Reverse(runs), links);
+        Assert.Equal("run-000", links[^1]);
+        about.Reverse();
+        Assert.Equal(about, abouts);
+
+        Refused(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", entry), ("part", "derived"))),
+            "'derived' is not a part of a show");
     }
 }

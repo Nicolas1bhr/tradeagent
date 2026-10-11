@@ -94,16 +94,38 @@ public sealed record LedgerAboutRow(long Id, string Kind, string Author, int Rev
 public sealed record LedgerListed(LedgerEntryRow Entry, LedgerRevisionRow Latest, int Revisions, int Links);
 
 /// <summary>
-/// ONE ENTRY AS <c>show</c> READS IT, in one snapshot: the entry; its revisions newest first, from the one before the
-/// asked revision down, at most <see cref="ResearchLedger.MaxRevisions"/> + 1 so a reader can tell there are more; its
-/// links and the entries about it, newest first, at most <see cref="ResearchLedger.MaxLinks"/> and
-/// <see cref="ResearchLedger.MaxAbout"/> with their totals; and, DERIVED AT READ and never stored, the promotion and
-/// deployment ids of the versions its linked runs were runs of.
+/// THE THREE LISTS A <c>show</c> PAGES, in the order one answer serves them: an entry's revisions, its links, and the
+/// entries about it. A show begins at one of them, from a cursor in it, and goes on to the ones after it from their
+/// newest; whatever a bound stopped is continued by asking again from that list and its cursor.
+/// </summary>
+public static class LedgerPart
+{
+    public const string Revisions = "revisions", Links = "links", About = "about";
+
+    public static readonly string[] All = [Revisions, Links, About];
+
+    public static bool IsKnown(string? s) => s is not null && Array.IndexOf(All, s) >= 0;
+}
+
+/// <summary>
+/// ONE LINK AS <c>show</c> NAMES IT: the link the app wrote and, DERIVED AT READ and never stored, the version its run was
+/// a run of, with that version's promotion and deployment ids, newest first, at most
+/// <see cref="ResearchLedger.MaxDerived"/> of each beside how many there are — the rest are the verdict's and the
+/// deployments' own reads. A link to a promotion, or to a run the strategy ledger does not hold, derives nothing.
+/// </summary>
+public sealed record LedgerShownLink(
+    LedgerLinkRow Link, string? Version, IReadOnlyList<string> Promotions, int PromotionCount,
+    IReadOnlyList<string> Deployments, int DeploymentCount);
+
+/// <summary>
+/// ONE ENTRY AS <c>show</c> READS IT, in one snapshot: the entry, the totals of its three lists, and each list's next page
+/// newest first — from the cursor in the list the show began at, from the newest in the ones after it, none of the ones
+/// before it — at most <see cref="ResearchLedger.MaxRevisions"/>, <see cref="ResearchLedger.MaxLinks"/> and
+/// <see cref="ResearchLedger.MaxAbout"/> of each + 1, so a reader can tell there are more.
 /// </summary>
 public sealed record LedgerShown(
     LedgerEntryRow Entry, int RevisionCount, IReadOnlyList<LedgerRevisionRow> Revisions,
-    int LinkCount, IReadOnlyList<LedgerLinkRow> Links, int AboutCount, IReadOnlyList<LedgerAboutRow> About,
-    IReadOnlyList<string> Versions, IReadOnlyList<string> Promotions, IReadOnlyList<string> Deployments);
+    int LinkCount, IReadOnlyList<LedgerShownLink> Links, int AboutCount, IReadOnlyList<LedgerAboutRow> About);
 
 /// <summary>
 /// THE ENTRY A REQUEST WAS ASKED UNDER, AS THE APP CHECKED IT — and the only thing a link can be written with.
@@ -171,11 +193,14 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     /// <summary>The most revisions one show answers; the rest are reached with its <c>before</c>.</summary>
     public const int MaxRevisions = 100;
 
-    /// <summary>The most links one show names, newest first, beside how many there are.</summary>
+    /// <summary>The most links one show names, newest first; the rest are reached with its <c>before</c>.</summary>
     public const int MaxLinks = 100;
 
-    /// <summary>The most entries about one entry a show names, newest first, beside how many there are.</summary>
+    /// <summary>The most entries about one entry a show names, newest first; the rest are reached with its <c>before</c>.</summary>
     public const int MaxAbout = 100;
+
+    /// <summary>The most promotion ids, and deployment ids, a show derives for one linked run's version, beside how many.</summary>
+    public const int MaxDerived = 100;
 
     /// <summary>The most bytes one read answers, entries or revisions as the reader measures them.</summary>
     public const long MaxReadBytes = 64 * 1024;
@@ -350,31 +375,41 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     }
 
     /// <summary>
-    /// ONE ENTRY, ITS REVISIONS FROM BEFORE <paramref name="before"/> DOWN, ITS LINKS AND WHAT IS ABOUT IT — or null when there
-    /// is no such entry. See <see cref="LedgerShown"/>. A read in one snapshot.
+    /// ONE ENTRY AND THE NEXT PAGE OF ITS LISTS, beginning at <paramref name="part"/> from before <paramref name="before"/>
+    /// (a revision number, a link's id or an entry's id; null is the newest) — or null when there is no such entry. See
+    /// <see cref="LedgerShown"/>. A read in one snapshot.
     /// </summary>
-    public LedgerShown? Show(long entry, int? before) => db.Read(_ =>
+    public LedgerShown? Show(long entry, string part, long? before) => db.Read(_ =>
     {
+        if (!LedgerPart.IsKnown(part)) throw new ArgumentOutOfRangeException(nameof(part), part, "not a part of a show");
         if (Entry(entry) is not { } row) return null;
+        var at = Array.IndexOf(LedgerPart.All, part);
+        long? From(string list) => list == part ? before : null;
 
         var revisions = new List<LedgerRevisionRow>();
-        using (var c = db.Cmd($"""
-            SELECT {RevisionCols} FROM ledger_revision
-             WHERE entry_id=$e AND ($before IS NULL OR revision < $before)
-             ORDER BY revision DESC LIMIT $n
-            """, ("$e", entry), ("$before", before), ("$n", MaxRevisions + 1)))
-        using (var rd = c.ExecuteReader())
+        if (at <= 0)
+        {
+            using var c = db.Cmd($"""
+                SELECT {RevisionCols} FROM ledger_revision
+                 WHERE entry_id=$e AND ($before IS NULL OR revision < $before)
+                 ORDER BY revision DESC LIMIT $n
+                """, ("$e", entry), ("$before", From(LedgerPart.Revisions)), ("$n", MaxRevisions + 1));
+            using var rd = c.ExecuteReader();
             while (rd.Read()) revisions.Add(RevisionOf(rd, 0));
+        }
 
         var links = new List<LedgerLinkRow>();
-        using (var c = db.Cmd("""
-            SELECT id, entry_id, revision, record_kind, record_id, attempt, at FROM ledger_link
-             WHERE entry_id=$e ORDER BY id DESC LIMIT $n
-            """, ("$e", entry), ("$n", MaxLinks)))
-        using (var rd = c.ExecuteReader())
+        if (at <= 1)
+        {
+            using var c = db.Cmd("""
+                SELECT id, entry_id, revision, record_kind, record_id, attempt, at FROM ledger_link
+                 WHERE entry_id=$e AND ($before IS NULL OR id < $before) ORDER BY id DESC LIMIT $n
+                """, ("$e", entry), ("$before", From(LedgerPart.Links)), ("$n", MaxLinks + 1));
+            using var rd = c.ExecuteReader();
             while (rd.Read())
                 links.Add(new LedgerLinkRow(rd.GetInt64(0), rd.GetInt64(1), rd.GetInt32(2), rd.GetString(3),
                     rd.GetString(4), Sql.S(rd.GetValue(5)), Sql.Time(rd.GetValue(6))));
+        }
 
         var about = new List<LedgerAboutRow>();
         using (var c = db.Cmd("""
@@ -383,37 +418,47 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
               JOIN ledger_revision r
                 ON r.entry_id = e.id
                AND r.revision = (SELECT MAX(revision) FROM ledger_revision WHERE entry_id = e.id)
-             WHERE e.about = $e ORDER BY e.id DESC LIMIT $n
-            """, ("$e", entry), ("$n", MaxAbout)))
+             WHERE e.about = $e AND ($before IS NULL OR e.id < $before) ORDER BY e.id DESC LIMIT $n
+            """, ("$e", entry), ("$before", From(LedgerPart.About)), ("$n", MaxAbout + 1)))
         using (var rd = c.ExecuteReader())
             while (rd.Read())
                 about.Add(new LedgerAboutRow(rd.GetInt64(0), rd.GetString(1), rd.GetString(2), rd.GetInt32(3),
                     rd.GetString(4), rd.GetString(5), Sql.Time(rd.GetValue(6))));
 
-        // DERIVED AT READ, NEVER STORED: the versions the linked runs were runs of, and what the app has recorded about
-        // those versions since — their promotions and their deployments, by id. A field of an app record is read where
-        // it lives, at the moment it is asked for, and nothing of it is written here.
-        var versions = Strings("""
-            SELECT DISTINCT r.version_id FROM ledger_link l JOIN strategy_run r ON r.id = l.record_id
-             WHERE l.entry_id = $e AND l.record_kind = 'run' ORDER BY r.version_id LIMIT $n
-            """, entry);
-        var promotions = Strings("""
-            SELECT DISTINCT p.id FROM ledger_link l
-              JOIN strategy_run r ON r.id = l.record_id
-              JOIN strategy_promotion p ON p.version_id = r.version_id
-             WHERE l.entry_id = $e AND l.record_kind = 'run' ORDER BY p.id LIMIT $n
-            """, entry);
-        var deployments = Strings("""
-            SELECT DISTINCT d.id FROM ledger_link l
-              JOIN strategy_run r ON r.id = l.record_id
-              JOIN strategy_deployment d ON d.version_id = r.version_id
-             WHERE l.entry_id = $e AND l.record_kind = 'run' ORDER BY d.id LIMIT $n
-            """, entry);
-
         return new LedgerShown(row, Count("SELECT COUNT(*) FROM ledger_revision WHERE entry_id=$e", entry), revisions,
-            Count("SELECT COUNT(*) FROM ledger_link WHERE entry_id=$e", entry), links,
-            Count("SELECT COUNT(*) FROM ledger_entry WHERE about=$e", entry), about, versions, promotions, deployments);
+            Count("SELECT COUNT(*) FROM ledger_link WHERE entry_id=$e", entry), Derive(links),
+            Count("SELECT COUNT(*) FROM ledger_entry WHERE about=$e", entry), about);
     });
+
+    /// <summary>
+    /// DERIVED AT READ, NEVER STORED: the version each linked run was a run of, and what the app has recorded about that
+    /// version since — its promotions and its deployments, by id, newest first. A field of an app record is read where it
+    /// lives, at the moment it is asked for, and nothing of it is written here. Inside <see cref="Show"/>'s snapshot.
+    /// </summary>
+    List<LedgerShownLink> Derive(List<LedgerLinkRow> links)
+    {
+        var byVersion = new Dictionary<string, (List<string> P, int Pn, List<string> D, int Dn)>(StringComparer.Ordinal);
+        var shown = new List<LedgerShownLink>(links.Count);
+        foreach (var link in links)
+        {
+            string? version = null;
+            if (link.RecordKind == LedgerRecord.Run)
+            {
+                using var c = db.Cmd("SELECT version_id FROM strategy_run WHERE id=$r", ("$r", link.RecordId));
+                version = Sql.S(c.ExecuteScalar());
+            }
+            if (version is null) { shown.Add(new LedgerShownLink(link, null, [], 0, [], 0)); continue; }
+
+            if (!byVersion.TryGetValue(version, out var d))
+                byVersion[version] = d = (
+                    Strings("SELECT id FROM strategy_promotion WHERE version_id=$v ORDER BY at DESC, id LIMIT $n", version),
+                    Count("SELECT COUNT(*) FROM strategy_promotion WHERE version_id=$v", version),
+                    Strings("SELECT id FROM strategy_deployment WHERE version_id=$v ORDER BY started_at DESC, id LIMIT $n", version),
+                    Count("SELECT COUNT(*) FROM strategy_deployment WHERE version_id=$v", version));
+            shown.Add(new LedgerShownLink(link, version, d.P, d.Pn, d.D, d.Dn));
+        }
+        return shown;
+    }
 
     // ---- the writes' one row ------------------------------------------------------------------------------------------
 
@@ -517,9 +562,15 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
-    List<string> Strings(string sql, long entry)
+    int Count(string sql, string version)
     {
-        using var c = db.Cmd(sql, ("$e", entry), ("$n", MaxLinks));
+        using var c = db.Cmd(sql, ("$v", version));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    List<string> Strings(string sql, string version)
+    {
+        using var c = db.Cmd(sql, ("$v", version), ("$n", MaxDerived));
         using var rd = c.ExecuteReader();
         var list = new List<string>();
         while (rd.Read()) list.Add(rd.GetString(0));

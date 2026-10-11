@@ -3876,10 +3876,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
-    /// ONE ENTRY IN FULL: its revisions newest first from before <c>before</c> — bounded by
-    /// <see cref="ResearchLedger.MaxRevisions"/> and by what is left of <see cref="ResearchLedger.MaxReadBytes"/> once the
-    /// rest of the answer is written, a revision never split — its links, the entries about it, and the promotion and
-    /// deployment ids of the versions its linked runs ran, read now and never stored. Ids, never a figure.
+    /// ONE ENTRY AND THE NEXT PAGE OF ITS THREE LISTS — its revisions, its links and the entries about it, each newest
+    /// first — beginning at <c>part</c> (revisions when omitted) from before <c>before</c>, then the lists after it from
+    /// their newest. Bounded per list by <see cref="ResearchLedger.MaxRevisions"/>, <see cref="ResearchLedger.MaxLinks"/>
+    /// and <see cref="ResearchLedger.MaxAbout"/>, and by <see cref="ResearchLedger.MaxReadBytes"/>; a row is never split,
+    /// and an answer a bound stopped says which, with <c>next</c>: the arguments that continue it exactly, from the list
+    /// and the row it stopped at. Every reference is reachable that way, the oldest link and the oldest entry about it
+    /// included. A run link carries, read now and never stored, the version it ran and that version's promotion and
+    /// deployment ids. Ids, never a figure.
     /// </summary>
     object LedgerShow(IpcRequest req)
     {
@@ -3887,44 +3891,62 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var entry = LedgerId(req, "entry")
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "'entry' is required: the id of the entry to show, as 'ledger-add' or 'ledger-list' answered it.");
+        var part = req.Str("part") ?? LedgerPart.Revisions;
+        if (!LedgerPart.IsKnown(part))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{part}' is not a part of a show: 'part' is {string.Join(", ", LedgerPart.All[..^1])} or {LedgerPart.All[^1]} — "
+                + "the list an answer begins at, as a show that stopped names it in 'next'.");
         var before = LedgerId(req, "before");
-        if (before is > int.MaxValue)
+        if (part == LedgerPart.Revisions && before is > int.MaxValue)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"'before' is a revision number, and no entry has {before.Value.ToString(CultureInfo.InvariantCulture)} revisions.");
 
-        var shown = gateway.Ledger.Show(entry, (int?)before)
+        var shown = gateway.Ledger.Show(entry, part, before)
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"there is no entry {entry.ToString(CultureInfo.InvariantCulture)} in the research ledger — 'ledger-list' names them.");
 
         var e = shown.Entry;
-        var links = shown.Links.Select(l => new LedgerReplyLink(l.RecordKind, l.RecordId, l.Revision, l.Attempt, l.At)).ToList();
-        var about = shown.About.Select(a => new LedgerReplyAbout(a.Id, a.Kind, a.Author, a.Revision, a.Mark, a.Status, a.CreatedAt)).ToList();
-        var derived = new LedgerReplyDerived(shown.Versions, shown.Promotions, shown.Deployments);
-
-        // THE REST OF THE ANSWER FIRST, so the revisions are bounded by what is left of the budget.
         var frame = new LedgerShowReply(e.Id, e.Kind, e.Author, e.About, e.Source, e.CreatedAt, e.Attempt,
-            shown.RevisionCount, before, 0, false, null, null, shown.LinkCount, links, shown.AboutCount, about, derived,
-            LedgerShowNote, []);
+            shown.RevisionCount, shown.LinkCount, shown.AboutCount, part, before, false, null, null, LedgerShowNote, [], [], []);
         long spent = Encoding.UTF8.GetByteCount(Json.Write(frame));
 
-        var revisions = new List<LedgerReplyRevision>();
-        string? cappedBy = null;
-        foreach (var r in shown.Revisions)
-        {
-            if (revisions.Count == ResearchLedger.MaxRevisions) { cappedBy = TapeReader.CappedByLimit; break; }
-            var shaped = Revision(r);
-            var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped));
-            if (revisions.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = TapeReader.CappedByBytes; break; }
-            revisions.Add(shaped);
-            spent += cost;
-        }
+        // THE LISTS IN ORDER, FROM THE ONE ASKED: whole rows while every bound holds; the first row a bound stops ends the
+        // answer, and `next` begins the next one there.
+        var served = 0;
+        (string Part, long? Before, string By)? stop = null;
+        var revisions = Serve(LedgerPart.Revisions, shown.Revisions, ResearchLedger.MaxRevisions, Revision, r => r.Revision, measured: true);
+        var links = stop is null ? Serve(LedgerPart.Links, shown.Links, ResearchLedger.MaxLinks, LinkOf, l => l.Link.Id, measured: false) : [];
+        var about = stop is null ? Serve(LedgerPart.About, shown.About, ResearchLedger.MaxAbout, AboutOf, a => a.Id, measured: false) : [];
 
-        var more = cappedBy is not null;
         return frame with
         {
-            Count = revisions.Count, More = more, CappedBy = cappedBy, NextBefore = more ? revisions[^1].Revision : null,
-            Revisions = revisions
+            More = stop is not null, CappedBy = stop?.By,
+            Next = stop is { } s ? new LedgerShowNext(e.Id, s.Part, s.Before) : null,
+            Revisions = revisions, Links = links, AboutIt = about
         };
+
+        List<TReply> Serve<TRow, TReply>(string list, IReadOnlyList<TRow> rows, int max, Func<TRow, TReply> shape,
+            Func<TRow, long> cursor, bool measured)
+        {
+            var into = new List<TReply>();
+            long? last = list == part ? before : null;
+            foreach (var row in rows)
+            {
+                if (into.Count == max) { stop = (list, last, TapeReader.CappedByLimit); break; }
+                var shaped = shape(row);
+                var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped)) + (into.Count > 0 ? 1 : 0);
+                if (measured && served > 0 && spent + cost > ResearchLedger.MaxReadBytes)
+                {
+                    stop = (list, last, TapeReader.CappedByBytes);
+                    break;
+                }
+                into.Add(shaped);
+                spent += cost;
+                served++;
+                last = cursor(row);
+            }
+            return into;
+        }
     }
 
     /// <summary>
@@ -4031,6 +4053,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     static LedgerReplyRevision Revision(LedgerRevisionRow r) =>
         new(r.Revision, r.At, r.Attempt, r.Text, r.Mark, Said(r.Confidence), r.Status, r.Why);
 
+    static LedgerReplyLink LinkOf(LedgerShownLink l) =>
+        new(l.Link.RecordKind, l.Link.RecordId, l.Link.Revision, l.Link.Attempt, l.Link.At, l.Version, l.Promotions,
+            l.PromotionCount, l.Deployments, l.DeploymentCount);
+
+    static LedgerReplyAbout AboutOf(LedgerAboutRow a) =>
+        new(a.Id, a.Kind, a.Author, a.Revision, a.Mark, a.Status, a.CreatedAt);
+
     /// <summary>What a written entry or revision says about itself, once.</summary>
     const string LedgerWrittenNote =
         "Recorded as YOUR CLAIM, under your role and this attempt — never a measurement. A confidence you did not state "
@@ -4050,13 +4079,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>What a show says about itself, once.</summary>
     static readonly string LedgerShowNote =
         "ONE ENTRY — its author's claim, never a measurement — with its revisions newest first, each as its author said it "
-        + "then. A LINK is TradeAgent's: it says TradeAgent answered a request asked under this entry, at that revision, for "
-        + "that attempt, with that record — a 'run' or a 'promotion', by id — and not that the record supports the entry or "
-        + "that every record bearing on it is linked. 'derived' is read now from the linked runs and never stored: the "
-        + "versions they ran, and those versions' promotion and deployment ids. Ids only, never a figure. At most "
-        + $"{ResearchLedger.MaxRevisions} revisions and {ResearchLedger.MaxReadBytes.ToString("N0", CultureInfo.InvariantCulture)} "
-        + "bytes a call: when 'more' is true, asking again with 'before' set to 'next_before' continues the revisions "
-        + $"exactly; 'links' and 'about_it' are the newest {ResearchLedger.MaxLinks} of each, beside how many there are.";
+        + "then, its links and the entries about it. A LINK is TradeAgent's: it says TradeAgent answered a request asked "
+        + "under this entry, at that revision, for that attempt, with that record — a 'run' or a 'promotion', by id — and "
+        + "not that the record supports the entry or that every record bearing on it is linked. A run link's 'version', "
+        + "'promotions' and 'deployments' are read now and never stored. Ids only, never a figure. At most "
+        + $"{ResearchLedger.MaxRevisions} revisions, {ResearchLedger.MaxLinks} links and {ResearchLedger.MaxAbout} entries "
+        + $"about it, and {ResearchLedger.MaxReadBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes, a call: when "
+        + "'more' is true the answer stopped there — 'capped_by' says which bound — and asking again with the arguments "
+        + "in 'next' continues exactly, until 'next' is null.";
 
     /// <summary>
     /// <inheritdoc cref="LedgerAdd"/>
@@ -4099,14 +4129,20 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Source,
         DateTimeOffset CreatedAt,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
-        int RevisionCount,
+        int RevisionCount, int LinkCount, int AboutCount,
+        string Part,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Before,
-        int Count, bool More,
+        bool More,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CappedBy,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? NextBefore,
-        int LinkCount, IReadOnlyList<LedgerReplyLink> Links,
-        int AboutCount, IReadOnlyList<LedgerReplyAbout> AboutIt,
-        LedgerReplyDerived Derived, string Note, IReadOnlyList<LedgerReplyRevision> Revisions);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] LedgerShowNext? Next,
+        string Note, IReadOnlyList<LedgerReplyRevision> Revisions, IReadOnlyList<LedgerReplyLink> Links,
+        IReadOnlyList<LedgerReplyAbout> AboutIt);
+
+    /// <summary>
+    /// <inheritdoc cref="LedgerShow"/> The arguments that continue a show a bound stopped, exactly as <c>ledger-show</c>
+    /// takes them; <c>before</c> is left out when the list begins at its newest.
+    /// </summary>
+    sealed record LedgerShowNext(long Entry, string Part, long? Before);
 
     /// <inheritdoc cref="LedgerShow"/>
     sealed record LedgerReplyRevision(
@@ -4119,15 +4155,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     sealed record LedgerReplyLink(
         string Kind, string Id, int Revision,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Attempt,
-        DateTimeOffset At);
+        DateTimeOffset At,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Version,
+        IReadOnlyList<string> Promotions, int PromotionCount, IReadOnlyList<string> Deployments, int DeploymentCount);
 
     /// <inheritdoc cref="LedgerShow"/>
     sealed record LedgerReplyAbout(long Entry, string Kind, string Author, int Revision, string Mark, string Status,
         DateTimeOffset CreatedAt);
-
-    /// <inheritdoc cref="LedgerShow"/>
-    sealed record LedgerReplyDerived(IReadOnlyList<string> Versions, IReadOnlyList<string> Promotions,
-        IReadOnlyList<string> Deployments);
 
     /// <summary>
     /// Whether a frame this build could not read is one that never named its version. Asked only on

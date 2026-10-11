@@ -430,8 +430,10 @@ static void Usage()
       trade ledger revise <entry> <text> --mark M --why W [--confidence P] [--status S]
                      a new revision of one of your own entries; the earlier ones are kept
       trade ledger list [--author R] [--kind K] [--status S] [--limit N] [--before E]
-      trade ledger show <entry> [--before R]         its revisions, and the runs and verdicts
-                     TradeAgent linked to it — ask for them with --entry on backtest or verdict
+      trade ledger show <entry> [--part P] [--before C]
+                     its revisions, the entries about it, and the runs and verdicts TradeAgent
+                     linked to it — ask for them with --entry on backtest or verdict; an answer
+                     that stopped names the --part and --before that continue it
 
     --tif is one of Day, GoodTillCancel, ImmediateOrCancel, FillOrKill. Spell it exactly; case does
     not matter, and anything else is refused rather than treated as Day, because a misspelled

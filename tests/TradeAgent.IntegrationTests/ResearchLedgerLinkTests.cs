@@ -255,7 +255,7 @@ public class ResearchLedgerLinkTests(ITestOutputHelper log)
         Assert.Equal(2, shown.GetProperty("link_count").GetInt32());
         Assert.Equal([("run", runB), ("run", run)], shown.GetProperty("links").EnumerateArray()
             .Select(l => (l.GetProperty("kind").GetString(), l.GetProperty("id").GetString())));
-        Assert.Contains(versionA, shown.GetProperty("derived").GetProperty("versions").EnumerateArray().Select(v => v.GetString()));
+        Assert.Contains(versionA, shown.GetProperty("links").EnumerateArray().Select(l => l.GetProperty("version").GetString()));
 
         // THE REAL CLI, ON THE DEFAULT PIPE, AS THE ASSEMBLY'S OWN LAUNCH OF THE OPERATIONS DIRECTOR.
         var chair = Entry(w, CouncilRoles.Operations);
