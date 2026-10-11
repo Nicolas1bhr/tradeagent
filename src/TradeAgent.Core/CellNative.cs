@@ -189,8 +189,14 @@ public static class CellNative
         return Fail($"execve {program}");
     }
 
+    /// <summary>
+    /// A TEST SEAM, in-process only: called with each path just before the ruleset opens it, so a test can retarget a symlink the
+    /// policy's check already passed. Nothing outside this assembly's tests can set it; the cell stage never does.
+    /// </summary>
+    internal static Action<string>? BeforeGrantOpen;
+
     /// <summary>The ruleset's descriptor, or -1 with the failure: every right handled, each policy path granted only its own.</summary>
-    static int Ruleset(CellPolicy policy, out Failure? failed)
+    internal static int Ruleset(CellPolicy policy, out Failure? failed)
     {
         Failure? failure = null;
         failed = null;
@@ -203,6 +209,7 @@ public static class CellNative
 
         bool Grant(string p, ulong rights, bool required)
         {
+            BeforeGrantOpen?.Invoke(p);
             if (!Directory.Exists(p) && !File.Exists(p))
             {
                 if (!required) return true;          // a root this machine does not have grants nothing
