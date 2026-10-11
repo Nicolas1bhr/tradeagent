@@ -142,7 +142,66 @@ public static class SeatProfile
         if (OperatingSystem.IsWindows()) return;
         try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(path, ex.Message); }
+        if (OperatingSystem.IsMacOS()) NoExtendedAcl(path);
     }
+
+    /// <summary>
+    /// macOS: <paramref name="path"/> LEFT WITH NO EXTENDED ACL ENTRY (<c>U-seat-acl</c>; CRED-001). macOS keeps these apart from the mode
+    /// bits — <c>everyone allow read</c> on a folder survives <c>chmod 0700</c>, and an inheritable one is copied onto every file made in
+    /// it, the <c>auth.json</c> codex writes at sign-in included. Read and cleared on the path itself, never through a link
+    /// (<c>acl_get_link_np</c>, <c>acl_set_link_np</c>), and read again: an entry still there, or a clear the system refused, is the
+    /// refusal in words. A volume that keeps no ACLs at all has none to clear.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("macos")]
+    static void NoExtendedAcl(string path)
+    {
+        if (!HasExtendedAcl(path)) return;
+        var empty = acl_init(0);
+        if (empty == IntPtr.Zero) throw NotPrivate(path, Errno("acl_init"));
+        try
+        {
+            if (acl_set_link_np(path, AclTypeExtended, empty) != 0) throw NotPrivate(path, Errno("acl_set_link_np"));
+        }
+        finally { acl_free(empty); }
+        if (HasExtendedAcl(path)) throw NotPrivate(path, "an access entry was still there after it was cleared");
+
+        static bool HasExtendedAcl(string path)
+        {
+            var acl = acl_get_link_np(path, AclTypeExtended);
+            if (acl == IntPtr.Zero)
+            {
+                var errno = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+                if (errno is ENOENT or ENOTSUP or EOPNOTSUPP) return false; // none; or a volume that keeps none
+                throw NotPrivate(path, Errno("acl_get_link_np", errno));
+            }
+            try { return acl_get_entry(acl, AclFirstEntry, out _) == 0; }
+            finally { acl_free(acl); }
+        }
+    }
+
+    static string Errno(string call, int? errno = null)
+    {
+        var e = errno ?? System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+        return $"{call}: {System.Runtime.InteropServices.Marshal.GetPInvokeErrorMessage(e)} (errno {e})";
+    }
+
+    // <sys/acl.h> on macOS: ACL_TYPE_EXTENDED, ACL_FIRST_ENTRY; <sys/errno.h>: ENOENT ("no ACL" from acl_get_*), ENOTSUP, EOPNOTSUPP.
+    const int AclTypeExtended = 0x00000100, AclFirstEntry = 0, ENOENT = 2, ENOTSUP = 45, EOPNOTSUPP = 102;
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib", SetLastError = true)]
+    static extern IntPtr acl_get_link_np([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, int type);
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib", SetLastError = true)]
+    static extern int acl_set_link_np([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, int type, IntPtr acl);
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib", SetLastError = true)]
+    static extern IntPtr acl_init(int count);
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib", SetLastError = true)]
+    static extern int acl_get_entry(IntPtr acl, int entryId, out IntPtr entry);
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib")]
+    static extern int acl_free(IntPtr obj);
 
     /// <summary>The refusal for a seat-home file or folder this account cannot make its own alone, naming it, why, and the repair.</summary>
     static TradeAgentException NotPrivate(string path, string why) =>
@@ -183,7 +242,11 @@ public static class SeatProfile
                     $"this account's alone. Nothing was written or started. Remove {at} and TradeAgent makes its own folder there.");
             }
         }
-        if (ours) return;
+        if (ours)
+        {
+            if (OperatingSystem.IsMacOS()) NoExtendedAcl(at);
+            return;
+        }
         throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
             $"TradeAgent will not use the AI's own home while {at} belongs to another account{(owner is null ? "" : $" ({owner})")}: " +
             "whoever owns it could change the AI's settings and read its sign-in. Nothing was written or started. Remove " +
