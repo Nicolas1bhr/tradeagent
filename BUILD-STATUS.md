@@ -10112,3 +10112,26 @@ equal to `913374b2`; only bookkeeping paths differ). **Names vs main:** 2569 →
 **Tests box:** NOT RUN — the machine does not answer.
 **NOT done, NOT verified:** enforcing z / ADDIS / E_h; e-LOND and E7 (`U-live-tiers`); a family (`U-experiments-op`); more UI paper slots (`U-envelope-slots`, the owner's); serving any
 of it to agents (never); a VACUUM pin (owed); the full local suites (CI ran them).
+
+## U-red-says-why — an emergency's wall-clock red says what it measured: the runner's own stall is named beside the ceiling, every ceiling goes through one assert, and CI's Timing retry stays the whole category (landed 2026-10-11, seat B; moved from seat P)
+
+**Landed** in `land.sh` v3's train `B3` (first of two, then U-owner-words-delegated) on `main` `43c894a4`: stacked tip `ccaf04fd` (18 commits: the build, review-1 fixes, pass 2, the pass-3 revert, the reports).
+CI run **38130339835** at the train's tip `8a4f4c39`: every job success (see the train's check). No rung. Tests + `build.yml` only; nothing in `src/`.
+**What changed (items kept):**
+1. `tests/Shared/RunnerStallWitness.cs` (linked in `tests/Directory.Build.props`): a dedicated thread and a pool tick read the test's clock, so a red reports "the runner's ticks across it: dedicated N ms,
+   pool N ms late"; worst and last kept under one lock (race test, 200k races, RED on the two independent reads 3/3). RED first against a witness reading `Stopwatch` instead of its clock.
+2. All 13 wall-clock ceilings go through `TimedCall.AssertUnder`; causes nothing measured became comments; bounds, order and other asserts unchanged. Stopped host (kill -STOP/-CONT 9.84 s): BEFORE "…it is
+   still on the full deadline"; AFTER "…took 11.71s against a 6s ceiling. … The runner's ticks across it: dedicated 9854 ms, pool 9852 ms late". MUTANT (`AtasConnector.cs:146` without `CancelAll`,
+   reverted): "…took 9.75s … dedicated 2 ms, pool 5 ms late" — a real stall and a real regression now read differently.
+4. The shard check reads ` className=` only from `TestMethod` lines, newlines flattened, tab-safe: a StdOut printing `className="Ns.NotATest"` no longer fails a shard; a misplaced class still does.
+**Item 3 NOT DONE — reverted (seat B's decision 09:37, the orchestrator agreed):** the narrowed Timing retry (`.github/ci/timing-retry.sh`, re-running only attempt 1's failed tests from its trx) was built and
+fixed twice; each Codex review found a new way an awk-read trx lets a red turn green (a crashed project with no trx; a passing Theory row standing in for a failed one; namespace prefixes; then multiline traits,
+shared display names, non-ASCII prefixes). The benefit was minutes on a red; the risk a hidden red. Pass 3 (`b6900923`) restores the base whole-category retry byte-for-byte (`git diff f1bdd2d2 HEAD --
+.github/ci/timing-retry.sh` empty; `build.yml` differs from main only by item 4's lines). Reviews: fleet/tmp/B-scratch/U-red-says-why/review.md, …-fix-review.md, …-fix2-review.md, u-red-says-why-3 (no defects).
+**Evidence:** pass 3 Release `--no-incremental` 0 warnings; RunnerStallWitnessTests 3/3 ×3, ConnectorSendDeadlineTests 51/51 ×3; branch CI 38127473841 green 11/11; names 2564 → 2572, removed 0.
+**JUDGED RED, first sighting (LAND_JUDGED_RED=38126064304):** the same pass-3 sha's earlier run went red on macOS in `PaperFrictionTests.A_research_run_keeps_daily_net_returns_at_1x_and_2x_the_venue_cost`
+("there is no file at 'strategies/friction-….strategy'" on a repeat `Backtests.Run`); the test never reaches this diff (tests/CI only, no RunnerStallWitness use) and the same sha's run 38127473841 passed every job.
+Seat A surveys it (U-trial-returns' test, evidence) — a first sighting, not "a flake".
+**Scan:** phrase exclusions for the stop-handle lines of item 1 ('stop token', 'token.s handle', '_stop\.Token', 'token source is not disposed'), each read and judged — a cancellation handle, no secret.
+**OWED:** a narrowed Timing retry needs a real trx parser and a per-result-id comparison on all three runners; not worth its risk until the Timing step is its own shard (with U-timing-shard).
+Not done: the 2 InRange bounds and the lower bounds (outside the brief's 13 ceilings). Tests box NOT RUN (the machine did not answer).
