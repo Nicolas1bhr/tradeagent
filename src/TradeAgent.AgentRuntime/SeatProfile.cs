@@ -86,7 +86,7 @@ public static class SeatProfile
 
         Prepare(seat);
 
-        if (await PinRefusalAsync(manifest, exe, c => probe.VersionAsync(manifest, exe, c), ct) is { } notThePin)
+        if (PinRefusal(manifest, exe) is { } notThePin)
             return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notThePin);
 
         var deny = seat.ArgsFor(SeatPlan.CliClass);
@@ -256,27 +256,26 @@ public static class SeatProfile
     }
 
     /// <summary>
-    /// NULL WHEN <paramref name="exe"/> IS THE PIN, or the refusal in words naming the file, both hashes and both versions and the
-    /// repair. <paramref name="versionOf"/> asks the program its version, and is asked only for a file that is not the pin.
+    /// NULL WHEN <paramref name="exe"/> IS THE PIN, or the refusal in words naming the file, its SHA-256 and the pin's, the pinned
+    /// version, and the repair. <b>A program that is not the pin is never run</b> — not even with <c>--version</c> to name what it
+    /// is: running it to describe it would be running exactly what the pin exists to keep from running. Its version is therefore
+    /// "unknown — not run"; the only version the words state is the pinned one, from the manifest entry the hash is held against.
     /// </summary>
-    public static async Task<string?> PinRefusalAsync(RuntimeManifest manifest, string exe,
-        Func<CancellationToken, Task<string?>> versionOf, CancellationToken ct)
+    public static string? PinRefusal(RuntimeManifest manifest, string exe)
     {
-        if (manifest.Install.ExecutableSha256 is not { Length: > 0 } pin || IsPin(manifest, exe)) return null;
+        if (manifest.Install.ExecutableSha256 is not { Length: > 0 } pin) return null;
 
         string found;
         try { found = Sha256Of(exe); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { found = $"unreadable: {ex.Message}"; }
-
-        string? version;
-        try { version = await versionOf(ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { version = null; }
+        if (string.Equals(found, pin.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
 
         var repair = manifest.Install.Kind is InstallKind.Download or InstallKind.Npm or InstallKind.Winget
             ? "Install the AI assistant again from TradeAgent and it puts that exact version in its own folder."
             : "TradeAgent cannot install it on this computer, so that exact version has to be the one this computer finds.";
         return $"TradeAgent starts the AI only from {manifest.DisplayName} {manifest.Install.Version ?? "(pinned)"}, SHA-256 {pin.Trim()}. " +
-               $"The program it found, {exe}, is version {version ?? "unknown"}, SHA-256 {found}, so it was not started. {repair}";
+               $"The program it found, {exe}, has SHA-256 {found}, version unknown — not run: TradeAgent never runs a program " +
+               $"that is not the pin, not even to ask its version. {repair}";
     }
 
     static bool SameBytes(string path, byte[] bytes)
@@ -326,9 +325,6 @@ public interface ISeatProbe
 {
     /// <summary>The feature report and the MCP server list, run under the seat home with the deny set's keys.</summary>
     Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct);
-
-    /// <summary>What the program says its version is, or null — asked only of a program that is not the pin, for the words.</summary>
-    Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct);
 }
 
 /// <summary>
@@ -361,14 +357,6 @@ public sealed class CliSeatProbe : ISeatProbe
                 : exit == 0;
         }
         return new SeatReading(features, mcp, signedIn);
-    }
-
-    public async Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct)
-    {
-        var (exit, stdout, stderr) = await Run(manifest, exe, manifest.VersionArgs, Paths.SeatHome, ct);
-        var text = string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
-        var m = System.Text.RegularExpressions.Regex.Match(text, @"\d+\.\d+(\.\d+)?");
-        return exit == 0 && m.Success ? m.Value : null;
     }
 
     static async Task<string> Read(RuntimeManifest manifest, string exe, string[] args, string cwd, CancellationToken ct)
