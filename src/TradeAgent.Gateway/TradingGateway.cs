@@ -368,6 +368,20 @@ public sealed class TradingGateway : IAsyncDisposable
     public const string PaperAllocatorRole = "allocator";
 
     /// <summary>
+    /// THE ACTIVE POSITION A CALLER'S LAUNCH GRANT PROVED, or null (<c>U-org-principals</c>): the role string when the
+    /// chart holds a position by exactly that id and it is active — the legacy pair or any other — and null for an app
+    /// principal, a dormant or ended position, an unknown name, nobody, or a chart that could not be read. The one
+    /// gateway helper for "under which position is this written"; it grants no privilege of its own (ORG-001), and order
+    /// permission stays <see cref="CouncilRoles.MayPlaceOrders"/>.
+    /// </summary>
+    public string? ActivePositionOf(string? role)
+    {
+        if (role is null || OrgStore.IsAppPrincipal(role)) return null;
+        try { return new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active } ? role : null; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// THE APP'S OWN POLICY, RUN ON A CLOCK RATHER THAN ON A PRESS: every version whose verdict stands
     /// as <c>promoted</c> or <c>paper_eligible</c>, with no paper allocation yet, is put into the
     /// standing envelope while it has room. Answers how many it wrote.

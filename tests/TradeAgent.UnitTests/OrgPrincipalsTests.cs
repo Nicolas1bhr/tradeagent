@@ -147,6 +147,43 @@ public class OrgPrincipalsTests : IDisposable
         Assert.Equal(CouncilRoles.Operations, new MissionEvent { Id = "y", Kind = MissionEventKind.Review }.For);
     }
 
+    // ---- (g) ledger authorship ------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) A THIRD POSITION WRITES LEDGER ENTRIES UNDER ITS OWN ID. RED at base: the author floor was
+    /// <c>CouncilRoles.IsKnown</c>, "is not a council role", though the column already references <c>org_position</c>.
+    /// An app principal, a dormant position and nobody are still refused.
+    /// </summary>
+    [Fact]
+    public async Task A_third_position_writes_ledger_entries_under_its_own_id()
+    {
+        using var db = TestEnv.NewDb();
+        Seat(db, Third);
+        Seat(db, "pos-dormant", status: OrgPositionStatus.Dormant);
+        var ledger = new ResearchLedger(db);
+
+        var entry = ledger.Add(Third, "attempt-t", LedgerKind.Lesson, "a lesson of my own", LedgerMark.Claim, null, null, null);
+        Assert.Equal(Third, entry.Author);
+        var revised = ledger.Revise(Third, "attempt-t2", entry.Id, "still mine", LedgerMark.Claim, "more seen", null, null);
+        Assert.Equal(2, revised.Revision);
+        Assert.Equal([entry.Id], ledger.List(Third, null, null, null, 10).Select(l => l.Entry.Id));
+
+        foreach (var who in AppPrincipals.All.Append("").Append("pos-dormant").Append("nobody-here"))
+        {
+            var refused = Assert.Throws<TradeAgentException>(() => ledger.Add(who, "attempt-x", LedgerKind.Lesson,
+                "a lesson", LedgerMark.Claim, null, null, null));
+            Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Code);
+        }
+        Assert.Throws<TradeAgentException>(() => ledger.List("pos-dormant", null, null, null, 10));
+
+        // THE PIPE'S AUTHOR IS THE GATEWAY'S ONE ANSWER: the active position the grant proved, or nobody.
+        await using var gateway = new TradingGateway(db, new FakeConnector(new FakeBroker()), new HealthRegistry());
+        Assert.Equal(Third, gateway.ActivePositionOf(Third));
+        Assert.Equal(CouncilRoles.Research, gateway.ActivePositionOf(CouncilRoles.Research));
+        foreach (var who in AppPrincipals.All.Append("pos-dormant").Append("nobody-here").Append(null))
+            Assert.Null(gateway.ActivePositionOf(who));
+    }
+
     static RuntimeManifest ProbeRuntime()
     {
         var dir = Path.Combine(TestEnv.Home, $"principals-probe-{Guid.NewGuid():n}");

@@ -4123,14 +4123,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         DateTimeOffset RegisteredAt, string ValidatorVersion, JsonElement Definition);
 
     /// <summary>
-    /// THE ROLE AN ENTRY IS WRITTEN UNDER: the council role the caller's launch grant proved, or a refusal — the rule
-    /// <see cref="Backtests.RoleOf"/> applies to a run (<see cref="CouncilRoles.IsKnown"/>), in the ledger's own words. A
-    /// connection that proved no role is nobody, and an in-process operator is not a council role.
+    /// THE POSITION AN ENTRY IS WRITTEN UNDER: the active position the caller's launch grant proved
+    /// (<see cref="TradingGateway.ActivePositionOf"/>, the gateway's one answer to that question), or a refusal in the
+    /// ledger's own words. A connection that proved no role is nobody, and an in-process operator is not a position.
     /// </summary>
-    static string LedgerAuthor(AgentContext ctx) =>
-        CouncilRoles.IsKnown(ctx.Role)
-            ? ctx.Role!
-            : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+    string LedgerAuthor(AgentContext ctx) =>
+        gateway.ActivePositionOf(ctx.Role)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "an entry is written under the role whose launch wrote it, and this connection presented no launch grant — "
                 + "so there is no role to write it under. TradeAgent puts the grant in the environment of the process it "
                 + "starts; a caller holding only the machine token is authenticated and is nobody. Nothing was written.");

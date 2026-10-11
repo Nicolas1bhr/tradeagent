@@ -341,9 +341,9 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     {
         if (limit is < 1 or > MaxEntries)
             throw new ArgumentOutOfRangeException(nameof(limit), limit, $"a list serves 1 to {MaxEntries} entries");
-        if (author is not null && !CouncilRoles.IsKnown(author))
-            throw Refused($"'{author}' is not a council role, so no entry is written under it: 'author' is "
-                + $"{string.Join(" or ", CouncilRoles.All)}.");
+        if (author is not null && !IsActivePosition(author))
+            throw Refused($"'{author}' is not a council role or an active position, so no entry is written under it: "
+                + $"'author' is {string.Join(" or ", CouncilRoles.All)}, or another active position's id.");
         if (kind is not null) Kind(kind);
         if (status is not null) Status(status);
 
@@ -477,16 +477,22 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     // ---- the checks, each a refusal in words --------------------------------------------------------------------------
 
     /// <summary>
-    /// THE AUTHOR IS A COUNCIL ROLE, the one the launch grant proved — never an app principal (the referee, the allocator,
-    /// perception), never nobody. The pipe asks the grant first; this is the store's own floor under it, and the column's
-    /// reference to a position is the database's.
+    /// THE AUTHOR IS AN ACTIVE POSITION, the one the launch grant proved — the legacy pair or any other the chart holds as
+    /// active (<c>U-org-principals</c>) — never an app principal (the referee, the allocator, perception), never a dormant
+    /// or ended position, never nobody. The pipe asks the grant first; this is the store's own floor under it, and the
+    /// column's reference to a position is the database's.
     /// </summary>
-    static void Author(string author)
+    void Author(string author)
     {
-        if (!CouncilRoles.IsKnown(author))
-            throw Refused($"'{author}' is not a council role, and an entry is written under the role whose launch wrote "
-                + "it: an app principal never writes one, and a caller that proved no role cannot. Nothing was written.");
+        if (!IsActivePosition(author))
+            throw Refused($"'{author}' is not a council role or an active position, and an entry is written under the "
+                + "position whose launch wrote it: an app principal never writes one, and a caller that proved no role "
+                + "cannot. Nothing was written.");
     }
+
+    /// <summary>Whether a name is an active position of the chart — never an app principal, whatever a row says.</summary>
+    bool IsActivePosition(string name) =>
+        !OrgStore.IsAppPrincipal(name) && new OrgStore(db).Position(name) is { Status: OrgPositionStatus.Active };
 
     static void Kind(string kind)
     {
