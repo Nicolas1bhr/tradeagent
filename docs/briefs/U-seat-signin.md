@@ -6,7 +6,7 @@ red-first and ONE watched mutant.** Seat A; opus/high (credentials). **No rung.*
 (`RuntimeManifest.cs:325`), `AuthStateArgs` (:326), `StdinArgs` (:174), the browser URL by `AuthUrlPattern` (:407), the device-code shape (RUN 0.160.1: a link and a
 one-time code "expires in 15 minutes"; Linux signs in with `login --device-auth`); `CliAgentRuntime.BeginAuthenticationAsync` (:491), `SignInWithApiKeyAsync`
 (:634-643), `GetAuthenticationStateAsync` (state at :750) — all now under the seat home (U-seat-home's `Apply`). But the only caller is onboarding
-(`OnboardingView.cs:418`, the only `src/TradeAgent.App` file naming `BeginAuthenticationAsync`): an owner who already onboarded meets U-seat-home's refusal
+(`OnboardingView.cs`, the only `src/TradeAgent.App` file naming `BeginAuthenticationAsync`: the step's state check `:417-418`, the sign-in UI `:780-850` — the pasted key `:791`, `BeginAuthenticationAsync` `:815`, the device code `:817-850`): an owner who already onboarded meets U-seat-home's refusal
 `SignedOut` ("TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again." — `RuntimeManifest.cs:679`) with NO button behind it.
 The fleet's observed-run audit reads `~/.codex/sessions` (`fleet/charters/M-milestones.md:36`), which no seat writes any more.
 **Observable result:** whenever the seat home holds no credential (`login status` under it exits ≠ 0), the dashboard shows ONE "AI sign-in" card —
@@ -14,8 +14,8 @@ not only onboarding — offering the browser sign-in, the device code (link + co
 under the seat home with `CreateNoWindow`, never a console; the card disappears when status turns 0. The Doctor page has a row for the seat home
 (present, signed in or not, profile hash, pinned version). Nothing reads or copies the owner's `~/.codex`.
 Read first: `CLAUDE.md` (no terminal; two presses for what removes permission; the dashboard tree is built once and updated in place; Theme.cs only);
-U-seat-home's record in `BUILD-STATUS.md` (grep -n 'U-seat-home —'); the survey §§ 3-4; `OnboardingView.cs:380-460`; the dashboard's card pattern
-(`grep -rn 'class .*Card' src/TradeAgent.App`); `CliAgentRuntime.cs:440-480, 595-630, 700-720`; `Diagnostics/Doctor.cs` (its row pattern).
+U-seat-home's record in `BUILD-STATUS.md` (grep -n 'U-seat-home —'); the survey §§ 3-4; `OnboardingView.cs:410-420, 770-860`; the dashboard's card pattern
+(`grep -rn 'class .*Card' src/TradeAgent.App`); `CliAgentRuntime.cs:491-605` (BeginAuthenticationAsync), `:624-745` (SignInWithApiKeyAsync), `:746-766` (GetAuthenticationStateAsync); `src/TradeAgent.Diagnostics/Doctor.cs` (its row pattern).
 Items, one commit each, one-sentence messages:
 1. **A seat-home sign-in state the app polls cheaply:** `SeatSignIn.State()` = `login status` under the seat home (the same `Apply` env as every
    codex process), cached with the existing refresh cadence; never on the UI thread; a failure to run status reads as "unknown", shown as such.
@@ -41,4 +41,4 @@ after a FAKE api-key sign-in into a throwaway seat home (a fake key, never a rea
 Out of scope: the headless Linux host's presentation of the device code beyond the app's own window (`U-linux-host`); OpenCode's home; any seat class.
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all three
 platforms; the Codex review with the CI wait; names vs `main` 0 removed). `## Report` ≤ 20 lines appended here.
-**Seat A at dispatch:** Codex commands for evidence only with a throwaway `CODEX_HOME`+`HOME` and the mock provider (`fleet/tmp/A-org/seat-home/mock/`); a FAKE key only; the local Colima VM is OFF-LIMITS.
+**Seat A at dispatch (main `c8004ffc`, pointers re-checked — OnboardingView's and CliAgentRuntime's ranges corrected):** Codex commands for evidence only with a throwaway `CODEX_HOME`+`HOME` and the mock provider (`fleet/tmp/A-org/seat-home/mock/`); a FAKE key only; the local Colima VM is OFF-LIMITS.
