@@ -86,8 +86,14 @@ public static class SeatProfile
     /// <summary>
     /// REFUSES A SEAT HOME FOLDER THAT BELONGS TO ANOTHER ACCOUNT, and makes each one owner-only. On Linux and macOS the folder is
     /// set to <c>0700</c> — which only its owner may do, so a refused change IS a foreign owner (.NET states no owner there), and the
-    /// credential the seat home keeps is then out of other accounts' reach. On Windows its owner is read from its security descriptor:
-    /// this account, or the Administrators group for an elevated process (which is whom Windows makes the owner of what that creates).
+    /// credential the seat home keeps is then out of other accounts' reach. On Windows its owner is read from its security descriptor —
+    /// this account, or the Administrators group for an elevated process (which is whom Windows makes the owner of what that creates) —
+    /// and its access list is replaced by a protected one granting only this account, that owner and SYSTEM, so an entry granting
+    /// another account access does not survive.
+    ///
+    /// <para><b>NOT PROVED FOR ROOT.</b> A process running as root may change any folder's mode, so on Linux and macOS a root
+    /// process cannot tell a foreign folder from its own here. TradeAgent installs per user and never asks for elevation
+    /// (<c>CLAUDE.md</c>), so its seats do not run as root; a build that does would need the owner read from <c>stat</c>.</para>
     /// </summary>
     static void OwnedHere(string at)
     {
@@ -117,9 +123,23 @@ public static class SeatProfile
             if (sid is null) return false;
             owner = sid.Value;
             using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
-            if (me.User is { } user && sid.Equals(user)) return true;
-            return sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
-                && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            if (me.User is not { } user) return false;
+            var ours = sid.Equals(user)
+                || (sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
+                    && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
+            if (!ours) return false;
+
+            // OWNER-ONLY: a protected list — nothing inherited, nothing kept — granting this account, the owner and SYSTEM.
+            var only = new System.Security.AccessControl.DirectorySecurity();
+            only.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            const System.Security.AccessControl.InheritanceFlags both =
+                System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
+            foreach (var who in new[] { user, sid, new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null) }.Distinct())
+                only.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(who,
+                    System.Security.AccessControl.FileSystemRights.FullControl, both,
+                    System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+            new DirectoryInfo(at).SetAccessControl(only);
+            return true;
         }
         catch (UnauthorizedAccessException) { return false; }
         catch (InvalidOperationException) { return false; }

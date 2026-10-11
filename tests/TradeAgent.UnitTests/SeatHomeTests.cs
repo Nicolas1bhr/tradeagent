@@ -291,6 +291,60 @@ public class SeatHomeTests
         if (!OperatingSystem.IsWindows()) Assert.Equal(mode, File.GetUnixFileMode(foreign));
     }
 
+    /// <summary>
+    /// EVERY SEAT HOME FOLDER IS MADE OWNER-ONLY BEFORE ANYTHING IS WRITTEN IN IT (the second re-review, 2026-10-11; CRED-001): a
+    /// folder this account owns but that grants another account access would let that account change the AI's settings and read its
+    /// sign-in. Opened to everyone first — mode 0777, or an entry granting Everyone Modify on Windows — and owner-only after one start.
+    /// </summary>
+    [Fact]
+    public async Task Every_seat_home_folder_is_made_owner_only()
+    {
+        var (codex, exe, _) = Seat(nameof(Every_seat_home_folder_is_made_owner_only));
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe());
+        Assert.True((await rt.DetectAsync()).Installed);
+        var root = codex.Seat!.Root;
+        string[] folders = [root, Path.Combine(root, "codex"), Path.Combine(root, "home")];
+
+        foreach (var folder in folders) OpenToEveryone(folder);
+        Assert.True((await rt.DetectAsync()).Installed);
+        foreach (var folder in folders) Assert.False(OpenToOthers(folder), $"{folder} still grants another account access");
+    }
+
+    static readonly System.Security.Principal.SecurityIdentifier Everyone =
+        OperatingSystem.IsWindows() ? new(System.Security.Principal.WellKnownSidType.WorldSid, null) : null!;
+
+    static void OpenToEveryone(string folder)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(folder, (UnixFileMode)0b111_111_111);
+            return;
+        }
+        var info = new DirectoryInfo(folder);
+        var acl = info.GetAccessControl();
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(Everyone, System.Security.AccessControl.FileSystemRights.Modify,
+            System.Security.AccessControl.AccessControlType.Allow));
+        info.SetAccessControl(acl);
+        Assert.True(OpenToOthers(folder));
+    }
+
+    static bool OpenToOthers(string folder)
+    {
+        if (!OperatingSystem.IsWindows())
+            return (File.GetUnixFileMode(folder) & (UnixFileMode)0b000_111_111) != 0;
+        return GrantsEveryone(folder);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static bool GrantsEveryone(string folder)
+    {
+        foreach (System.Security.AccessControl.FileSystemAccessRule rule in new DirectoryInfo(folder).GetAccessControl()
+                     .GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier)))
+            if (rule.IdentityReference.Equals(Everyone) && rule.AccessControlType == System.Security.AccessControl.AccessControlType.Allow)
+                return true;
+        return false;
+    }
+
     /// <summary>Removes a test's seat home, unlinking any link in it without following it.</summary>
     static void DeleteSeatHome(string root)
     {
