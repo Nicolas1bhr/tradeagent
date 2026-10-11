@@ -657,12 +657,19 @@ public sealed class CampaignStore(Database db)
     /// both count here — under campaign X, and under campaign Y with X as its home — and <c>COUNT(*)</c> read that as two
     /// trials of X's budget for one peek. A run id hashes its version, its bars and its execution model, so one id is one
     /// question asked once.</para>
+    ///
+    /// <para><b>And every inconclusive paper slot charged to its lineage</b> (<c>U-referee-v2b</c>): one trial per version
+    /// that has ever held an <see cref="AllocationPolicy.InconclusiveV1"/> row whose verdict was taken under this campaign
+    /// or one it was renewed from (<see cref="IncubationsCharged"/>). Counted from the allocation ledger, which has no update
+    /// and no delete, so a charge is never refunded and an ended term still costs what it cost.</para>
     /// </summary>
     public int TrialsCharged(long campaignId) => TrialsCharged(campaignId, null, null);
 
     /// <summary>
     /// How many charged runs of ONE POT this campaign has registered — the exploration reserve, or
-    /// the rest of the trial budget. The two together are <see cref="TrialsCharged(long)"/>.
+    /// the rest of the trial budget. The two together, with <see cref="IncubationsCharged"/>, are
+    /// <see cref="TrialsCharged(long)"/>: an inconclusive slot is not a run and comes out of neither pot, only out of the
+    /// whole budget, which it can only tighten.
     /// </summary>
     public int TrialsCharged(long campaignId, bool exploration) => TrialsCharged(campaignId, exploration, null);
 
@@ -678,8 +685,76 @@ public sealed class CampaignStore(Database db)
             + "AND ($e IS NULL OR exploration=$e) AND ($run IS NULL OR run_id<>$run) "
             + "AND (campaign_id=$id OR charged_to=$id)",
             ("$id", campaignId), ("$e", exploration is { } pot ? pot ? 1 : 0 : null), ("$run", exceptRun));
-        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture)
+               + (exploration is null ? IncubationsCharged(campaignId) : 0);
     });
+
+    // ---- the inconclusive quota's charge (`U-referee-v2b`) ------------------------------------------
+
+    /// <summary>
+    /// HOW MANY INCONCLUSIVE PAPER SLOTS THIS CAMPAIGN'S LINEAGE HAS BEEN CHARGED: the distinct versions that have ever
+    /// held an <see cref="AllocationPolicy.InconclusiveV1"/> row whose promotion was taken under this campaign or one it
+    /// was renewed from (<see cref="Lineage"/>). Every row ever written, standing or ended — the ledger keeps them all.
+    /// </summary>
+    public int IncubationsCharged(long campaignId) => db.Read(_ =>
+    {
+        var lineage = Lineage(campaignId).ToHashSet();
+        if (lineage.Count == 0) return 0;
+
+        using var c = db.Cmd("""
+            SELECT DISTINCT p.campaign_id, a.version_id
+              FROM strategy_allocation a JOIN strategy_promotion p ON p.id = a.promotion_id
+             WHERE a.policy_version = $policy
+            """, ("$policy", AllocationPolicy.InconclusiveV1));
+
+        var versions = new HashSet<string>(StringComparer.Ordinal);
+        using var r = c.ExecuteReader();
+        while (r.Read())
+            if (lineage.Contains(r.GetInt64(0))) versions.Add(r.GetString(1));
+        return versions.Count;
+    });
+
+    /// <summary>
+    /// WHY AN INCONCLUSIVE PAPER SLOT FOR THIS VERSION, JUDGED UNDER THIS CAMPAIGN, WOULD NOT BE CHARGED — in words — or
+    /// null because it would. The slot costs one trial of the verdict's campaign; a campaign this ledger does not hold, or
+    /// one whose trial budget is spent, refuses it, and nothing is written. Read inside the allocation ledger's write
+    /// (<c>Allocations.RecordPaper</c>), so the count and the row are one transaction.
+    /// </summary>
+    public string? IncubationRefusal(long campaignId, string versionId) => db.Read(_ =>
+    {
+        if (ById(campaignId) is not { } campaign)
+            return $"the campaign {campaignId} version {Short(versionId)} was judged under is not in this installation's "
+                   + "ledger, so there is no trial budget to charge an inconclusive paper slot to and nothing was written.";
+
+        var spent = TrialsCharged(campaignId);
+        if (spent < campaign.TrialBudget) return null;
+
+        return $"campaign {campaign.Id} has spent all {campaign.TrialBudget} of its trials — "
+               + $"{IncubationsCharged(campaignId)} of them on inconclusive paper slots — so version {Short(versionId)} was "
+               + "not given an inconclusive paper slot and nothing was written. A slot is charged one trial to the campaign its "
+               + "verdict was taken under, once, and never refunded, so observing a version the referee could not judge is "
+               + "paid for out of the same budget as every other attempt. What is left is a renewal, which the account owner "
+               + "authorises in TradeAgent's own window.";
+    });
+
+    /// <summary>
+    /// THE HOLDOUT A VERDICT UNDER THIS CAMPAIGN SPANNED: the campaign's <c>holdout_from</c> to the close of its dataset's
+    /// last bar — or null when that end cannot be read (<see cref="Close"/>), which <c>Strategy.Inconclusive</c> reads as
+    /// short. What decides whether a loss is inconclusive.
+    /// </summary>
+    public TimeSpan? HoldoutSpan(long campaignId) => db.Read<TimeSpan?>(_ =>
+        ById(campaignId) is { } campaign && Close(campaign.HoldoutDatasetId, new Dictionary<long, DateTimeOffset?>()) is { } close
+            ? close - campaign.HoldoutFrom
+            : null);
+
+    /// <summary>
+    /// THE ROOT OF THIS CAMPAIGN'S RENEWAL LINEAGE — the eldest campaign <see cref="Lineage"/> reaches — or null for a
+    /// campaign this ledger does not hold. Two campaigns with one root are one lineage: the stand-in for a family the
+    /// inconclusive quota allows one slot at a time (no family exists in this build; that is <c>U-experiments-op</c>).
+    /// </summary>
+    public long? LineageRoot(long campaignId) => Lineage(campaignId) is { Count: > 0 } chain ? chain[^1] : null;
+
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
     /// <summary>Every trial registered against this campaign, oldest first.</summary>
     public IReadOnlyList<TrialRow> Trials(long campaignId) => db.Read(_ =>
