@@ -31,8 +31,54 @@ public sealed record DoctorReport(DateTimeOffset At, IReadOnlyList<CheckResult> 
 /// "Check everything". Every result carries a plain-language action, because a raw exception is not
 /// guidance for someone who cannot read a stack trace.
 /// </summary>
-public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = true)
+public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = true, ISeatProbe? seatProbe = null)
 {
+    /// <summary>The Checks page's row for the app's own AI home (<c>U-seat-signin</c>).</summary>
+    public const string SeatHomeRow = "AI seat home";
+
+    /// <summary>
+    /// THE APP'S AI SEAT HOME, AS ONE ROW (<c>U-seat-signin</c>; <c>docs/ORCHESTRATION.md</c> § 2.7): where it is, whether it is signed
+    /// in, the pinned version, and the runtime-profile hash <c>U-seat-home</c> records on every launch's <c>ai_attempt</c> row
+    /// (<see cref="SeatProfile.ProfileHash"/> over the same program, config bytes and the CLI's own two reports) — so the owner, or
+    /// whoever audits a run, can match the home on this machine to the launches in the ledger.
+    ///
+    /// <para>NO CREDENTIAL CONTENT AND NO ACCOUNT: the status command's words are never shown — only whether it answered signed in.
+    /// Every process it starts is the runtime's own (no window, the seat home applied); a program that is not the pin is not run,
+    /// and the row says so.</para>
+    /// </summary>
+    public static async Task<CheckResult> SeatHomeCheck(RuntimeManifest manifest, string exe, ISeatProbe probe, CancellationToken ct = default)
+    {
+        if (manifest.Seat is not { } seat) return CheckResult.Ok(SeatHomeRow, $"{manifest.DisplayName} keeps no seat home of TradeAgent's own");
+        var root = seat.Root;
+        var pinned = $"{manifest.DisplayName} {manifest.Install.Version ?? "(no version pinned)"} pinned";
+
+        if (SeatProfile.PinRefusal(manifest, exe) is { } notThePin)
+            return CheckResult.Warn(SeatHomeRow, $"{root} · not checked: {notThePin}",
+                "Install the AI assistant again from Settings; TradeAgent runs only the version it was built for.",
+                ErrorCode.AI_VERSION_UNSUPPORTED);
+
+        try { SeatProfile.Prepare(seat); }
+        catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_SEAT_REFUSED)
+        {
+            return CheckResult.Bad(SeatHomeRow, $"{root} · refused: {ex.Message}", "Do what the sentence says, then check again.",
+                ErrorCode.AI_SEAT_REFUSED);
+        }
+
+        SeatReading reading;
+        try { reading = await probe.ReadAsync(manifest, exe, root, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return CheckResult.Warn(SeatHomeRow, $"{root} · {pinned} · could not be read: {ex.Message}",
+                "Check again; if it stays, restart TradeAgent.", ErrorCode.AI_SEAT_REFUSED);
+        }
+
+        var profile = SeatProfile.ProfileHash(manifest, exe, SeatProfile.ConfigBytes(seat), reading);
+        var detail = $"{root} · {(reading.SignedIn ? "signed in" : "not signed in")} · {pinned} · profile {profile}";
+        return reading.SignedIn
+            ? CheckResult.Ok(SeatHomeRow, detail)
+            : CheckResult.Warn(SeatHomeRow, detail, "Sign in from the AI sign-in card on the Dashboard.", ErrorCode.AI_AUTH_REQUIRED);
+    }
+
     public async Task<DoctorReport> RunAsync(CancellationToken ct = default)
     {
         var r = new List<CheckResult>();
@@ -119,6 +165,8 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
                 continue;
             }
             r.Add(CheckResult.Ok($"{manifest.DisplayName}", $"{d.Version} at {d.Path}"));
+            if (manifest.Seat is not null && d.Path is { } exe)
+                r.Add(await SeatHomeCheck(manifest, exe, seatProbe ?? CliSeatProbe.Instance, ct));
             if (!manifest.Verified)
                 r.Add(CheckResult.Warn($"{manifest.DisplayName} commands",
                     "the install and sign-in commands in this build have not been confirmed against the vendor's current documentation",
