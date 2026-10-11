@@ -412,6 +412,15 @@ public interface IMissionHost
     void VendorLimitReached(string role, VendorHold hold) { }
 
     /// <summary>
+    /// Told once per DISTINCT CAUSE: the launch ledger refused a turn (<see cref="AiAdmission.Ledger"/>), whatever kind of
+    /// wake it was answering — a fill, a review, the inbox, the owner. <paramref name="refusal"/> is the admission's own
+    /// sentence, carrying what the ledger said. The loop knows the transition and backs off; the host owns the words and
+    /// the log, exactly as it does for <see cref="SpendCapReached"/>, so a ledger that stays broken writes one line and
+    /// not one per look (<c>U-admission-fail-closed</c>).
+    /// </summary>
+    void LaunchLedgerRefused(string role, string refusal) { }
+
+    /// <summary>
     /// OPENS THE DURABLE RECORD OF THE TURN ABOUT TO RUN AND COMMITS ITS COST — called by the loop
     /// immediately before the CLI is started, and for no other reason.
     ///
@@ -1141,6 +1150,9 @@ public sealed class MissionLoop
     DateTimeOffset? _nextTurnAt;
     string? _waitingFor;
 
+    /// <summary>The launch ledger's last refusal the host was told of, so a ledger that stays broken is one line.</summary>
+    string? _ledgerRefusalTold;
+
     /// <summary>
     /// THE ROLES WITH A TURN IN FLIGHT RIGHT NOW — the turn lease, and the whole of it.
     ///
@@ -1830,7 +1842,8 @@ public sealed class MissionLoop
         // the ledger is where that is settled. Nothing was written, the wakes stayed unconsumed and
         // no process was started, so this returns exactly as a capped turn does: the reason to take
         // a turn is still owed one, at midnight or once the owner raises the limit — or, when it was
-        // the LEDGER that would not take the row, at the next look (U-admission-fail-closed).
+        // the LEDGER that would not take the row, at the next look after the loop's failure backoff
+        // (U-admission-fail-closed; see LedgerRefused).
         //
         // BEFORE the `finally` below exists, so a refused turn commits no transition: there is no
         // launch to close, nothing was published and no wake was consumed. The id minted above is
@@ -1844,9 +1857,17 @@ public sealed class MissionLoop
             if (events is not null && admission.Refusal is { Length: > 0 } why)
                 BlockOwnerMessages(events, why);
 
+            // THE LEDGER'S REFUSAL IS SAID WHATEVER WOKE THE LOOP — a fill, a review, the inbox — and
+            // not only onto an owner's message, which is the one wake that already carried it.
+            if (admission.Ceiling == AiAdmission.Ledger) return LedgerRefused(role, admission);
+
             Changed?.Invoke();
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
+
+        // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
+        // is a new event and is told.
+        lock (_gate) _ledgerRefusalTold = null;
 
         // THE ID THE ROW ACTUALLY CARRIES. Null is a host BUILT WITHOUT A LEDGER (AiAdmission.NoLedger)
         // and nothing else — a ledger that would not take the row refused above — and then the minted
@@ -2704,6 +2725,38 @@ public sealed class MissionLoop
         // A resume time already behind us would busy-spin the loop against a total that is about to
         // roll over anyway. One BusyRetry is the smallest honest wait.
         return wait > TimeSpan.Zero ? wait : _options.BusyRetry;
+    }
+
+    /// <summary>
+    /// THE LAUNCH LEDGER WOULD NOT TAKE THIS TURN'S ROW (<see cref="AiAdmission.Ledger"/>), so nothing was started and
+    /// the wakes stay owed. It is said on the card — what the loop waits for and the ledger's own cause, held in memory so
+    /// it shows even when the database takes no write at all — and told to the host ONCE PER DISTINCT CAUSE, which writes
+    /// the activity line; a ledger that stays broken is one line, not one per look. It is counted as a failed turn and
+    /// backed off from like one — 30 s doubling to <see cref="MissionOptions.MaxDelay"/> — rather than retried at
+    /// <see cref="MissionOptions.BusyRetry"/>, and the first turn the ledger takes again resets the run.
+    /// </summary>
+    TimeSpan LedgerRefused(string role, AiAdmission admission)
+    {
+        var why = admission.Refusal ?? AiAdmission.NoLedgerOpen.Refusal!;
+        bool told;
+        int errors;
+        lock (_gate)
+        {
+            told = string.Equals(_ledgerRefusalTold, why, StringComparison.Ordinal);
+            _ledgerRefusalTold = why;
+            errors = Failed(role);
+            _role = role;
+            _waitingFor = admission.Cause is { Length: > 0 } cause
+                ? $"the launch ledger to take this turn's record again (it said: {cause})"
+                : "the launch ledger to take this turn's record again";
+        }
+
+        if (!told)
+            try { _host.LaunchLedgerRefused(role, why); }
+            catch (Exception) { /* a line about a ledger that cannot be written is never worth the loop */ }
+
+        Changed?.Invoke();
+        return Backoff(errors);
     }
 
     /// <summary>Doubling from <see cref="MissionOptions.FirstBackoff"/>, capped at the same ceiling.</summary>

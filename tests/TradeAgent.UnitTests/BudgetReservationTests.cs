@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -542,6 +543,112 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A LEDGER REFUSAL REACHES THE OWNER WHATEVER WOKE THE LOOP (<c>U-admission-fail-closed</c>, fix pass 1, review P1).
+    /// It used to be written only onto due Owner messages, so a turn a fill, a review or the inbox asked for was refused in
+    /// silence: the owner saw an unexplained wait. Now the host is told, with the ledger's own words and the cause, and the
+    /// app writes that into the activity log; the wake stays owed and the loop backs off as from any failed turn.
+    /// </summary>
+    [Fact]
+    public async Task A_ledger_refusal_reaches_the_owner_on_a_wake_that_is_not_theirs()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("fill:1", MissionEventKind.Fill, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var options = new MissionOptions();
+        var loop = new MissionLoop(host, options, now: () => now);
+        LedgerRefusesRows();
+
+        var wait = await loop.TurnAsync();
+
+        Assert.Empty(host.Conv.Sent);
+        Assert.Null(events.Get("fill:1")!.ConsumedBy);
+        var told = Assert.Single(host.LedgerTold);
+        AssertSaysTheLedger(told.Refusal);
+        Assert.Equal(options.FirstBackoff, wait);
+    }
+
+    /// <summary>
+    /// AND A LEDGER THAT STAYS BROKEN WRITES ONE LINE, NOT ONE PER LOOK. Look after look is refused for the same cause:
+    /// the owner is told once, the card says what the loop is waiting for and why, and each wait is longer than the one
+    /// before — the failure backoff, not the five-second busy retry. Once the ledger takes rows again the next look
+    /// launches the turn the wake was owed, and the run of failures is over.
+    /// </summary>
+    [Fact]
+    public async Task A_ledger_that_stays_broken_is_told_once_and_backs_off_until_it_takes_rows_again()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("review:1", MissionEventKind.Review, now);
+        var meter = Meter(50m, () => now);
+        var host = new StaleHost(meter) { Wakes = events };
+        var options = new MissionOptions();
+        var waits = new List<TimeSpan>();
+        var loop = new MissionLoop(host, options, now: () => now, delay: (d, ct) =>
+        {
+            lock (waits) waits.Add(d);
+            return Task.Delay(1, ct);
+        });
+        LedgerRefusesRows();
+
+        loop.Start();
+        string? card = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            card ??= loop.Status.WaitingFor;
+            lock (waits) if (waits.Count >= 4 && card is not null) break;
+            await Task.Delay(1);
+        }
+        TimeSpan[] refused;
+        lock (waits) refused = [.. waits.Take(4)];
+
+        LedgerTakesRows();
+        deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while ((host.Conv.Sent.Count == 0 || loop.Status.State == MissionState.Working)
+               && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(1);
+        var after = loop.Status;
+        await loop.PauseAsync();
+
+        Assert.Equal(4, refused.Length);
+        Assert.Equal(options.FirstBackoff, refused[0]);
+        for (var i = 1; i < refused.Length; i++)
+            Assert.True(refused[i] > refused[i - 1], $"look {i + 1} waited {refused[i]} after {refused[i - 1]}");
+        Assert.NotNull(card);
+        Assert.Contains("launch ledger", card);
+        Assert.Contains("the disk would not take the row", card);
+        AssertSaysTheLedger(Assert.Single(host.LedgerTold).Refusal);
+
+        Assert.Single(host.Conv.Sent);
+        Assert.NotNull(events.Get("review:1")!.ConsumedBy);
+        Assert.Equal(0, after.ConsecutiveErrors);
+    }
+
+    /// <summary>
+    /// THE APP WRITES THE LEDGER'S REFUSAL WHERE THE OWNER LOOKS for what the software did: one activity line, naming the
+    /// role and carrying the ledger's sentence with its cause.
+    /// </summary>
+    [Fact]
+    public async Task The_apps_mission_host_writes_a_ledger_refusal_into_the_activity_log()
+    {
+        using var db = TestEnv.NewDb();
+        var app = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            IMissionHost mission = new AppHost.MissionHost(app);
+            mission.LaunchLedgerRefused(CouncilRoles.Research,
+                AiAdmission.LedgerRefused("the disk would not take the row").Refusal!);
+
+            var line = Assert.Single(app.Gateway.Log.RecentActivity(), r => r.Text.Contains("launch ledger"));
+            Assert.Contains(CouncilRoles.Title(CouncilRoles.Research), line.Text);
+            Assert.Contains("the disk would not take the row", line.Text);
+        }
+        finally { await app.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE OWNER'S TYPED TURN IS HELD WHEN ITS ADMISSION CANNOT BE WRITTEN, exactly as a capped one is: no process,
     /// their words kept for the next turn, and the last line says it was the ledger — not the day's limit.
     /// </summary>
@@ -718,6 +825,14 @@ public class BudgetReservationTests : IDisposable
         public MissionEventStore? Wakes { get; init; }
 
         public MissionEventStore? Events => Wakes;
+
+        /// <summary>What the loop told the owner about a launch ledger that refused, as the app's activity log gets it.</summary>
+        public List<(string Role, string Refusal)> LedgerTold { get; } = [];
+
+        public void LaunchLedgerRefused(string role, string refusal)
+        {
+            lock (LedgerTold) LedgerTold.Add((role, refusal));
+        }
     }
 
     /// <summary>A host built without a launch ledger: it keeps the interface's own no-ledger admission.</summary>

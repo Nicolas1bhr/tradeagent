@@ -1794,6 +1794,16 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         /// <summary>
+        /// The one activity line the owner gets when the launch ledger refuses a turn, whatever woke the loop — the
+        /// ledger's own sentence and cause, under the role it held. Once per distinct cause; the loop decides that.
+        /// </summary>
+        public void LaunchLedgerRefused(string role, string refusal)
+        {
+            host.Gateway.Log.Activity($"{CouncilRoles.Title(role)}: {refusal}", "warn");
+            host.Changed?.Invoke();
+        }
+
+        /// <summary>
         /// The loop's own pass, run inside its exclusion — so it records the workspace directly rather
         /// than through <see cref="AppHost.ScanMaterials"/>, which would find that exclusion taken and
         /// refuse.
