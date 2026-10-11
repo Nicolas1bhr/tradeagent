@@ -132,6 +132,68 @@ public static class PeerImage
     }
 
     /// <summary>
+    /// WHICH PROCESS IS ON THE OTHER END, AND SINCE WHEN (<c>U-grant-tree</c>) — the facts a launch grant's container is
+    /// asked about, or null when the kernel will not say, which every caller reads as a refusal.
+    ///
+    /// <para>Windows: <c>GetNamedPipeClientProcessId</c>, then the creation time through a handle held while it is read.
+    /// macOS: <c>LOCAL_PEERPID</c>. Linux: <c>SO_PEERPIDFD</c> where the kernel answers it (6.5 and later) — a descriptor
+    /// that names the connecting process itself, so the pid read off it and the start read after are re-checked against
+    /// it and a process that exited in between is a null, not a stranger's start — and <c>SO_PEERCRED</c> otherwise. The
+    /// start is <see cref="Core.ProcessTable"/>'s on macOS and Linux. On every platform the caller also compares the start
+    /// with the moment the connection was accepted: a pid the kernel handed on after that names a process that never
+    /// connected.</para>
+    /// </summary>
+    public static PeerFacts? Facts(NamedPipeServerStream pipe)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                return GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var id) && WindowsStart((int)id) is { } created
+                    ? new PeerFacts((int)id, created, DateTimeOffset.UtcNow) { Source = "GetNamedPipeClientProcessId" }
+                    : null;
+
+            var handle = pipe.SafePipeHandle;
+            var held = false;
+            try
+            {
+                handle.DangerousAddRef(ref held);
+                var socket = (int)handle.DangerousGetHandle();
+                if (OperatingSystem.IsMacOS())
+                    return Darwin.PeerPid(socket) is { } pid && Core.ProcessTable.Read(pid) is { Zombie: false } e
+                        ? new PeerFacts(pid, e.Start, DateTimeOffset.UtcNow) { Source = "LOCAL_PEERPID" }
+                        : null;
+                if (OperatingSystem.IsLinux()) return LinuxPeer.Facts(socket);
+                return null;
+            }
+            finally { if (held) handle.DangerousRelease(); }
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// A process's creation time on Windows as a FILETIME — <see cref="Core.ProcessClock"/>'s unit there — or null when it
+    /// cannot be opened or read. Public because the job's membership check reads the same number of the same process.
+    /// </summary>
+    public static ulong? WindowsStart(int pid)
+    {
+        if (!OperatingSystem.IsWindows() || pid <= 0) return null;
+        var h = OpenProcess(0x1000, false, (uint)pid);   // PROCESS_QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) return null;
+        try { return WindowsStartOf(h); }
+        finally { CloseHandle(h); }
+    }
+
+    /// <summary>The creation time of the process behind an open handle, or null.</summary>
+    public static ulong? WindowsStartOf(IntPtr process) =>
+        OperatingSystem.IsWindows() && GetProcessTimes(process, out var created, out _, out _, out _) && created > 0
+            ? (ulong)created
+            : null;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+
+    /// <summary>
     /// The hash of a file on disk, or null when it cannot be read.
     ///
     /// Cached on (path, length, last write) because this runs once per connection and the file is a
@@ -342,6 +404,47 @@ public static class PeerImage
         /// is refused; one this process may not read throws, and that is null too.
         /// </summary>
         internal static string? ImagePathOf(int pid) => new FileInfo($"/proc/{pid}/exe").LinkTarget;
+
+        const int SO_PEERPIDFD = 77;
+
+        /// <summary>
+        /// The peer's facts: through <c>SO_PEERPIDFD</c> when this kernel answers it, through <c>SO_PEERCRED</c> when it
+        /// does not. With the pidfd the pid is the descriptor's own (<c>/proc/self/fdinfo</c>), read again after the start
+        /// is read, so a process that exited and whose pid was handed on in between is a null rather than a stranger.
+        /// </summary>
+        internal static PeerFacts? Facts(int socket)
+        {
+            if (!GenericSocketNumbers) return null;
+            var length = (uint)sizeof(int);
+            if (getsockint(socket, SOL_SOCKET, SO_PEERPIDFD, out int pidfd, ref length) == 0 && length == sizeof(int) && pidfd >= 0)
+            {
+                try
+                {
+                    if (PidOf(pidfd) is not { } pid || Core.ProcessTable.Read(pid) is not { Zombie: false } e) return null;
+                    return PidOf(pidfd) == pid ? new PeerFacts(pid, e.Start, DateTimeOffset.UtcNow) { Source = "SO_PEERPIDFD" } : null;
+                }
+                finally { close(pidfd); }
+            }
+
+            return PeerPid(socket) is { } p && Core.ProcessTable.Read(p) is { Zombie: false } entry
+                ? new PeerFacts(p, entry.Start, DateTimeOffset.UtcNow) { Source = "SO_PEERCRED" }
+                : null;
+        }
+
+        /// <summary>The pid a pidfd names, or null once its process has exited (the kernel then says -1).</summary>
+        static int? PidOf(int pidfd)
+        {
+            foreach (var line in File.ReadLines($"/proc/self/fdinfo/{pidfd}"))
+                if (line.StartsWith("Pid:", StringComparison.Ordinal))
+                    return int.TryParse(line.AsSpan(4).Trim(), out var pid) && pid > 0 ? pid : null;
+            return null;
+        }
+
+        [DllImport("libc", SetLastError = true, EntryPoint = "getsockopt")]
+        static extern int getsockint(int socket, int level, int option, out int value, ref uint length);
+
+        [DllImport("libc", SetLastError = true)]
+        static extern int close(int fd);
 
         /// <summary>
         /// unix(7): <c>struct ucred { pid_t pid; uid_t uid; gid_t gid; }</c> — three 32-bit fields, as
