@@ -2309,31 +2309,72 @@ public sealed class Database : IDisposable
             // stays in the day's total and in no subtree. The CREATE is IF NOT EXISTS and the fill is one statement over the rows
             // that have no chain yet, ON CONFLICT DO NOTHING, so a crash between these statements and the stamp reruns the rung
             // over what is there and writes nothing twice.
-            Exec("""
-            CREATE TABLE IF NOT EXISTS ai_attempt_funding(
-              attempt_id TEXT NOT NULL REFERENCES ai_attempt(id),
-              unit_id    TEXT NOT NULL REFERENCES org_unit(id),
-              depth      INTEGER NOT NULL CHECK(depth >= 0),
-              PRIMARY KEY(attempt_id, unit_id),
-              UNIQUE(attempt_id, depth)
-            );
-            CREATE INDEX IF NOT EXISTS ix_attempt_funding_unit ON ai_attempt_funding(unit_id, attempt_id);
-            """);
-            using (var fill = Cmd("""
-                WITH RECURSIVE line(attempt_id, unit_id, depth) AS (
-                  SELECT a.id, p.unit_id, 0
-                    FROM ai_attempt a JOIN org_position p ON p.id = COALESCE(a.role, $chair)
-                   WHERE NOT EXISTS (SELECT 1 FROM ai_attempt_funding f WHERE f.attempt_id = a.id)
-                  UNION ALL
-                  SELECT l.attempt_id, u.parent_id, l.depth + 1
-                    FROM line l JOIN org_unit u ON u.id = l.unit_id
-                   WHERE u.parent_id IS NOT NULL AND l.depth < 64
-                )
-                INSERT INTO ai_attempt_funding(attempt_id, unit_id, depth)
-                SELECT attempt_id, unit_id, depth FROM line WHERE true
-                ON CONFLICT DO NOTHING
-                """, ("$chair", CouncilRoles.Default)))
-                fill.ExecuteNonQuery();
+            //
+            // A CHAIN IS NEVER CUT SHORT. The walk up the chart stops at the root or at a guard that exists ONLY to stop a loop:
+            // the chart's own number of units, past which a line of parents must have revisited one — the chart keeps no depth
+            // limit (VISION § 3), so a deep chain is recorded whole. A line that reaches the guard loops, and the rung REFUSES in a
+            // sentence naming the unit and the depth rather than charging the attempt to part of its chain: the table, the check
+            // and the fill are one transaction, rolled back on the refusal, so the home is left at 37 exactly as it was, and the
+            // same home climbs the rung once its chart is repaired.
+            Exec("BEGIN IMMEDIATE;");
+            try
+            {
+                Exec("""
+                CREATE TABLE IF NOT EXISTS ai_attempt_funding(
+                  attempt_id TEXT NOT NULL REFERENCES ai_attempt(id),
+                  unit_id    TEXT NOT NULL REFERENCES org_unit(id),
+                  depth      INTEGER NOT NULL CHECK(depth >= 0),
+                  PRIMARY KEY(attempt_id, unit_id),
+                  UNIQUE(attempt_id, depth)
+                );
+                CREATE INDEX IF NOT EXISTS ix_attempt_funding_unit ON ai_attempt_funding(unit_id, attempt_id);
+                """);
+
+                var guard = ReadInt("SELECT COUNT(*) FROM org_unit") ?? 0;
+                using (var walk = Cmd("""
+                    WITH RECURSIVE walk(position_id, start_unit, unit_id, depth) AS (
+                      SELECT DISTINCT p.id, p.unit_id, p.unit_id, 0
+                        FROM ai_attempt a JOIN org_position p ON p.id = COALESCE(a.role, $chair)
+                       WHERE NOT EXISTS (SELECT 1 FROM ai_attempt_funding f WHERE f.attempt_id = a.id)
+                      UNION ALL
+                      SELECT w.position_id, w.start_unit, u.parent_id, w.depth + 1
+                        FROM walk w JOIN org_unit u ON u.id = w.unit_id
+                       WHERE u.parent_id IS NOT NULL AND w.depth < $guard
+                    )
+                    SELECT position_id, start_unit, depth FROM walk WHERE depth >= $guard ORDER BY start_unit, position_id LIMIT 1
+                    """, ("$chair", CouncilRoles.Default), ("$guard", guard)))
+                using (var looped = walk.ExecuteReader())
+                    if (looped.Read())
+                        throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                            $"schema 38 cannot record the funding chain of position '{looped.GetString(0)}': the line of parents above " +
+                            $"unit '{looped.GetString(1)}' reaches depth {looped.GetInt64(2)}, past the {guard} units on the chart, so it " +
+                            "loops. The depth guard is the chart's own size and exists only to stop a loop; a chain is never cut short. " +
+                            "This home is left at schema 37, untouched; repair the loop in org_unit and reopen it with this build " +
+                            $"(schema {Versions.DatabaseSchemaVersion}).");
+
+                using (var fill = Cmd("""
+                    WITH RECURSIVE line(attempt_id, unit_id, depth) AS (
+                      SELECT a.id, p.unit_id, 0
+                        FROM ai_attempt a JOIN org_position p ON p.id = COALESCE(a.role, $chair)
+                       WHERE NOT EXISTS (SELECT 1 FROM ai_attempt_funding f WHERE f.attempt_id = a.id)
+                      UNION ALL
+                      SELECT l.attempt_id, u.parent_id, l.depth + 1
+                        FROM line l JOIN org_unit u ON u.id = l.unit_id
+                       WHERE u.parent_id IS NOT NULL AND l.depth < $guard
+                    )
+                    INSERT INTO ai_attempt_funding(attempt_id, unit_id, depth)
+                    SELECT attempt_id, unit_id, depth FROM line WHERE true
+                    ON CONFLICT DO NOTHING
+                    """, ("$chair", CouncilRoles.Default), ("$guard", guard)))
+                    fill.ExecuteNonQuery();
+
+                Exec("COMMIT;");
+            }
+            catch
+            {
+                Exec("ROLLBACK;");
+                throw;
+            }
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','38') ON CONFLICT(key) DO UPDATE SET value='38';");
         }
