@@ -282,6 +282,18 @@ public partial class CouncilLoopTests
             var p = new PublicationStore(_db).Get(publicationId);
             return p is null ? null : new MissionDelivery(p.Id, p.Kind, p.Role, p.Content);
         }
+
+        /// <summary>
+        /// WHETHER THIS HOST SAYS WHAT EACH ROLE OWNS (<c>U-reconcile-wakes</c>). Off by default, so every test
+        /// written before it keeps the host it was written against — one that cannot say, and keeps the clock.
+        /// </summary>
+        public bool Owns { get; set; }
+
+        /// <summary>The chair's book as this host last read it, or null for a book it has not read.</summary>
+        public IReadOnlyList<string>? Book { get; set; } = [];
+
+        public IReadOnlyList<RoleObjective>? Objectives(string role) =>
+            Owns ? RoleObjectives.Open(_db, role, Book) : null;
     }
 
     /// <summary>How long a boundary in these tests stays open. A day compressed to a minute.</summary>
