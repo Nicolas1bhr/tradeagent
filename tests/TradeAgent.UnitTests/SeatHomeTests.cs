@@ -31,6 +31,8 @@ public class SeatHomeTests
         var codex = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
         var (exe, dump) = EnvDumper(nameof(A_codex_seat_runs_under_the_app_seat_home_never_the_owners));
         codex.Executable = exe;
+        // THE SCRIPT IS THE PIN here: a program that is not the pin is never run, not even by the version probe this test watches.
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
 
         var owners = Path.Combine(TestEnv.Home, "the-owners-codex-home");
         var inherited = Environment.GetEnvironmentVariable("CODEX_HOME");
@@ -87,9 +89,9 @@ public class SeatHomeTests
     }
 
     /// <summary>
-    /// (d) A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT AND IS HANDED NOTHING. The version probe may ask it what it
-    /// is — that is how the words name its version — and nothing else is started from it: not the sign-in status, and not the
-    /// pasted key, which would otherwise go on stdin to whatever program sat first on PATH.
+    /// (d) A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT AND IS HANDED NOTHING: not the sign-in status, and not the
+    /// pasted key, which would otherwise go on stdin to whatever program sat first on PATH. Its version is "unknown — not run":
+    /// nothing is started from it, not even the version probe (the review's P1, below).
     /// </summary>
     [Fact]
     public async Task A_binary_that_is_not_the_pin_is_refused_naming_both_hashes()
@@ -103,19 +105,60 @@ public class SeatHomeTests
 
         var detected = await rt.DetectAsync();
         Assert.False(detected.Installed);
-        foreach (var said in new[] { pin, found, "0.160.1", "9.9.9", exe }) Assert.Contains(said, detected.Reason, StringComparison.Ordinal);
+        foreach (var said in new[] { pin, found, "0.160.1", "version unknown — not run", exe }) Assert.Contains(said, detected.Reason, StringComparison.Ordinal);
 
         var key = await Assert.ThrowsAsync<TradeAgentException>(() => rt.SignInWithApiKeyAsync("sk-FAKE-0000"));
         Assert.Equal(ErrorCode.AI_VERSION_UNSUPPORTED, key.Code);
-        foreach (var said in new[] { pin, found, "0.160.1", "9.9.9" }) Assert.Contains(said, key.Message, StringComparison.Ordinal);
+        foreach (var said in new[] { pin, found, "0.160.1", "version unknown — not run" }) Assert.Contains(said, key.Message, StringComparison.Ordinal);
         Assert.Equal(AuthState.NotAuthenticated, await rt.GetAuthenticationStateAsync());
 
-        // Only the version probe ever ran it.
-        Assert.All(Argv(dump), line => Assert.Equal("--version", line));
+        // Nothing ever ran it.
+        Assert.Empty(Argv(dump));
 
         // The pin itself is the program, wherever it was found.
         codex.Install.ExecutableSha256 = found.ToUpperInvariant();
         Assert.True((await rt.DetectAsync()).Installed);
+    }
+
+    /// <summary>
+    /// A PROGRAM THAT IS NOT THE PIN IS NEVER RUN, NOT EVEN TO ASK ITS VERSION (the review's P1 on the fix pass, 2026-10-11). The
+    /// first pass ran a hash-mismatched file with <c>--version</c> to put its version in the refusal — which is running exactly the
+    /// program the pin exists to keep from running — and then said it "was not started". Here the script writes a marker on ANY run;
+    /// every door that could start it is knocked on, and the marker never appears. The refusal names its SHA-256, the pin's, the
+    /// pinned version, and its own version as "unknown — not run".
+    /// </summary>
+    [Fact]
+    public async Task A_binary_that_is_not_the_pin_is_never_run_not_even_for_its_version()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_binary_that_is_not_the_pin_is_never_run_not_even_for_its_version), version: "9.9.9");
+        var pin = new string('b', 64);
+        codex.Install.Version = "0.160.1";
+        codex.Install.ExecutableSha256 = pin;
+        var found = SeatProfile.Sha256Of(exe);
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe());
+
+        var detected = await rt.DetectAsync();
+        Assert.False(detected.Installed);
+        foreach (var said in new[] { pin, found, "0.160.1", "version unknown — not run", exe }) Assert.Contains(said, detected.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("9.9.9", detected.Reason, StringComparison.Ordinal);
+
+        Assert.Null(await rt.GetVersionAsync());
+        Assert.Equal(HealthState.DEGRADED, await rt.GetHealthAsync());
+        Assert.Equal(AuthState.NotAuthenticated, await rt.GetAuthenticationStateAsync());
+        await Assert.ThrowsAsync<TradeAgentException>(() => rt.SignInWithApiKeyAsync("sk-FAKE-0000"));
+
+        // The turn's own door, with the CLI's REAL probe behind it: the pin is checked before anything is asked of the program.
+        var workspace = Path.Combine(Path.GetDirectoryName(exe)!, "role-home");
+        Directory.CreateDirectory(workspace);
+        var session = Session(codex, exe, workspace, CliSeatProbe.Instance);
+        var verdict = session.CheckSeat();
+        Assert.Equal(ErrorCode.AI_VERSION_UNSUPPORTED, verdict.Code);
+        Assert.Contains("version unknown — not run", verdict.Refusal, StringComparison.Ordinal);
+        var ended = await Turn(session);
+        Assert.Contains("version unknown — not run", ended.Raw, StringComparison.Ordinal);
+
+        Assert.False(File.Exists(dump), $"the program that is not the pin was run: {string.Join(" | ", Argv(dump))}");
+        Assert.Empty(Argv(dump));
     }
 
     /// <summary>
@@ -344,8 +387,6 @@ public class SeatHomeTests
             Interlocked.Increment(ref Reads);
             return Task.FromResult(Reading);
         }
-
-        public Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct) => Task.FromResult<string?>("9.9.9");
     }
 
     /// <summary>

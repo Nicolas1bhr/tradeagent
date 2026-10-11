@@ -77,8 +77,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     ///
     /// <para><b>A PINNED PLAN TAKES THE PIN WHEREVER IT IS</b> (<c>U-seat-home</c>): the first file, in the same order, whose SHA-256
     /// is <see cref="InstallPlan.ExecutableSha256"/> — the managed copy or one on PATH. With none, the first file found is still
-    /// returned, so the version probe can say what it is; every other start refuses it in words naming both hashes and both
-    /// versions (<see cref="SeatProfile.PinRefusalAsync"/>).</para>
+    /// returned, so the words can name the file and its hash; nothing is ever started from it, the version probe included
+    /// (<see cref="SeatProfile.PinRefusal"/>).</para>
     /// </summary>
     public string? ResolveExecutable()
     {
@@ -247,27 +247,23 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 $"{manifest.DisplayName} is not on this computer");
 
         var managed = exe.StartsWith(Paths.Tools, StringComparison.Ordinal);
+        // A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT, and is not run to say so: the probe refuses it before any start,
+        // in words naming both hashes, and the managed install then puts the pinned one in place.
         var (version, refused) = await ProbeVersionAsync(exe, ct);
-        if (version is null) return new RuntimeDetection(false, exe, null, managed, refused);
-
-        // A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT, and says why in both hashes and both versions: the managed
-        // install then puts the pinned one in place, which is what an owner who presses Install expects.
-        return await SeatProfile.PinRefusalAsync(manifest, exe, _ => Task.FromResult<string?>(version), ct) is { } notThePin
-            ? new RuntimeDetection(false, exe, version, managed, notThePin)
+        return version is null
+            ? new RuntimeDetection(false, exe, null, managed, refused)
             : new RuntimeDetection(true, exe, version, managed);
     }
 
     /// <summary>
-    /// REFUSES A START FROM A PROGRAM THAT IS NOT THE PIN, in words naming both hashes and both versions — every start this class
-    /// makes but the version probe, which is how the words get the program's own version (<c>U-seat-home</c>).
+    /// REFUSES A START FROM A PROGRAM THAT IS NOT THE PIN, in words naming both hashes — every start this class makes, the version
+    /// probe included (<c>U-seat-home</c>): a program that is not the pin is never run, not even to ask what it is.
     /// </summary>
-    async Task RequirePinAsync(string exe, CancellationToken ct)
+    void RequirePin(string exe)
     {
-        if (await SeatProfile.PinRefusalAsync(manifest, exe, c => GetVersionOfAsync(exe, c), ct) is { } refusal)
+        if (SeatProfile.PinRefusal(manifest, exe) is { } refusal)
             throw new TradeAgentException(ErrorCode.AI_VERSION_UNSUPPORTED, refusal);
     }
-
-    async Task<string?> GetVersionOfAsync(string exe, CancellationToken ct) => (await ProbeVersionAsync(exe, ct)).Version;
 
     public async Task<string?> GetVersionAsync(CancellationToken ct = default)
     {
@@ -311,6 +307,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     async Task<(string? Version, string? Refused)> ProbeVersionAsync(string exe, CancellationToken ct)
     {
+        // NOT THE PIN, NOT RUN (U-seat-home): the version a refusal states is the pinned one, never one asked of this file.
+        if (SeatProfile.PinRefusal(manifest, exe) is { } notThePin) return (null, notThePin);
+
         ProcResult r;
         try { r = await Run(exe, manifest.VersionArgs, VersionDeadline, ct, agentWork: false); }
         catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_AUTH_TIMEOUT && !ct.IsCancellationRequested)
@@ -494,7 +493,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
                 $"{manifest.DisplayName} has no sign-in command in its manifest");
 
-        await RequirePinAsync(exe, ct);
+        RequirePin(exe);
         StopLogin();
 
         var psi = new ProcessStartInfo
@@ -653,7 +652,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         {
             var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
             // THE KEY GOES TO THE PINNED PROGRAM OR TO NONE: a file on PATH that is not the pin is not handed a credential.
-            await RequirePinAsync(exe, ct);
+            RequirePin(exe);
             var psi = new ProcessStartInfo
             {
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -750,7 +749,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         // NOT SIGNED IN FOR A SEAT while the program is not the pin: nothing is started from it, and the sign-in it leads to says
         // why in words.
-        if (await SeatProfile.PinRefusalAsync(manifest, exe, c => GetVersionOfAsync(exe, c), ct) is not null)
+        if (SeatProfile.PinRefusal(manifest, exe) is not null)
             return AuthState.NotAuthenticated;
 
         var r = await Run(exe, manifest.AuthStateArgs, TimeSpan.FromSeconds(30), ct, agentWork: false);
@@ -827,7 +826,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         // would leave the owner unable to see WHY the AI will not start.
         if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
             throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
-        await RequirePinAsync(exe, ct);
+        RequirePin(exe);
 
         if (manifest.InteractiveArgs.Length > 0 && _session is not { Process.HasExited: false })
         {
