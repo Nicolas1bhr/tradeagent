@@ -138,6 +138,14 @@ public static class MissionEventDisposition
     /// match is exact by construction, and the sooner look's id is the detail.</para>
     /// </summary>
     public const string Superseded = "superseded";
+
+    /// <summary>
+    /// A SCHEDULED LOOK THE APP CLOSED BECAUSE THE ROLE IT WAS FOR HELD NO OPEN WORK
+    /// (<see cref="MissionEventStore.WithdrawLooks"/>, <c>U-reconcile-wakes</c>). Consumed by no launch, so nothing can
+    /// serve it, and the detail says why. Only the app's own payload-less look is ever closed this way: a look is the
+    /// app paying for the clock, and a role that owns nothing open has nothing for the clock to find.
+    /// </summary>
+    public const string Withdrawn = "withdrawn";
 }
 
 /// <summary>
@@ -595,6 +603,47 @@ public sealed class MissionEventStore(Database db)
             }
             return true;
         });
+
+    /// <summary>
+    /// CLOSES <paramref name="role"/>'S PENDING SCHEDULED LOOKS, consumed by no launch and
+    /// <see cref="MissionEventDisposition.Withdrawn"/> with <paramref name="why"/>, and answers how many
+    /// (<c>U-reconcile-wakes</c>). The loop calls it for a role that holds no open objective, so a look raised while
+    /// it had work is not paid for after the work is done.
+    ///
+    /// <para><b>The guard is the statement's</b>, as <see cref="BringLookForward"/>'s is: only an unconsumed
+    /// <see cref="MissionEventKind.Review"/> with NO payload, for this role. The owner's words, a delivery, a fill, an
+    /// order, the renewal, a role's own request, a boundary, the owner's own press — a review WITH a payload — and the
+    /// other role's look are never touched, whatever a caller asks.</para>
+    /// </summary>
+    public int WithdrawLooks(string role, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, disposition=$withdrawn, disposition_detail=$why
+             WHERE kind=$review AND payload IS NULL AND consumed_at IS NULL
+               AND COALESCE(role,$chair) = $role
+            """,
+            ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
+            ("$review", MissionEventKind.Review), ("$chair", CouncilRoles.Default), ("$role", role));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// EVERY WAKE OF ONE KIND FOR ONE ROLE THAT NO TURN HAS TAKEN YET, due or not, oldest first — what that role is
+    /// still owed: an owner's message nobody has answered (a blocked one included, which is still owed its turn), a
+    /// verdict nobody has read. A row a turn took is that turn's: if the turn was lost, a look would not see the row
+    /// either, so it opens nothing here.
+    /// </summary>
+    public List<MissionEvent> Pending(string kind, string role) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {Cols} FROM mission_event WHERE kind=$k AND COALESCE(role,$chair) = $role "
+            + "AND consumed_at IS NULL ORDER BY created_at, rowid",
+            ("$k", kind), ("$chair", CouncilRoles.Default), ("$role", role));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    });
 
     /// <summary>
     /// Marks events consumed on their own, for a caller with no attempt to open — a turn the

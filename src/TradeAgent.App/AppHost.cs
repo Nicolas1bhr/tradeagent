@@ -501,6 +501,13 @@ public sealed class AppHost : IAsyncDisposable
             : null;
 
     /// <summary>When the last mission turn was composed, so the next one can say what is new since.</summary>
+    /// <summary>
+    /// THE CHAIR'S BOOK AS THE LAST SITUATION READ IT — one line per open position — or null where none has been read
+    /// or the last read failed. What <see cref="RoleObjectives"/> is handed, so a role's look is decided without a
+    /// broker call (<c>U-reconcile-wakes</c>).
+    /// </summary>
+    string[]? _lastBook;
+
     /// <summary>When each role's Situation last listed the owner's new material — see <see cref="RoleInboxMarks"/>.</summary>
     readonly RoleInboxMarks _inboxSeen = new(DateTimeOffset.UtcNow);
 
@@ -1704,6 +1711,13 @@ public sealed class AppHost : IAsyncDisposable
         /// rather than off the recipient's disk: the row is what the app committed, and the file is
         /// a copy of it that an agent could have edited.
         /// </summary>
+        /// <summary>
+        /// WHAT <paramref name="role"/> OWNS THAT IS OPEN, from the ledgers and from the chair's book as the last
+        /// Situation read it (<see cref="AppHost._lastBook"/>) — never a broker call: the loop asks on every pass.
+        /// </summary>
+        public IReadOnlyList<RoleObjective>? Objectives(string role) =>
+            host._db is { } db ? RoleObjectives.Open(db, role, Volatile.Read(ref host._lastBook)) : null;
+
         public MissionDelivery? Delivered(string publicationId)
         {
             try
@@ -1806,8 +1820,14 @@ public sealed class AppHost : IAsyncDisposable
             {
                 held = await host.Gateway.PositionsAsync(ct);
                 positions = held.Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0} at {p.AveragePrice}").ToArray();
+                Volatile.Write(ref host._lastBook, held.Where(p => p.Quantity != 0)
+                    .Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0}").ToArray());
             }
-            catch (Exception ex) { positions = [$"could not be read — {ex.Message}"]; }
+            catch (Exception ex)
+            {
+                positions = [$"could not be read — {ex.Message}"];
+                Volatile.Write(ref host._lastBook, null);     // an unread book is not an empty one
+            }
 
             // The day's loss is worked out from the positions ALREADY read above rather than from a
             // second round trip: a turn that asked the platform the same question twice would pay a
