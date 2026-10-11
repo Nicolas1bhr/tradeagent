@@ -163,7 +163,9 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   right, and the chief — before it exists, the owner — heads their divisions' organisational work. **No unconfined neighbour:** on a host where any
   position other than the legacy pair is active, the legacy pair run confined too, or not there; every class below holds only where no unconfined
   seat shares the host and user (a neighbour's shell can rewrite `state/`, `runtimes.json` and any seat's home, and read any seat's environment). Assurance-required work never falls back to a degraded
-  start: today's bare-start fallbacks (§ 1, Containment) refuse instead, for such work.
+  start: today's bare-start fallbacks (§ 1, Containment) refuse instead, for such work. **And literally, as he answered:** until the host offers a
+  PROVEN executor cell class, no position other than the legacy pair activates on ANY real-model seat — a broker-only head included, though it
+  would pass the capability minimum (the thinking-seats survey, 2026-10-11); puppet seats, which run no model, are exempt (§ 7).
 - **Fences.** Every authority-changing transition — a subtree put to sleep, a mandate cancelled, a position retired, a seat replaced, a veto — bumps
   the generation of every grant it touches; the broker checks the generation on every operation; a running attempt under a stale generation is
   ended with its process tree, and its outputs are quarantined at completion, never published. Fences and the circuit breaker act on the
@@ -258,8 +260,13 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   viable and MEDIATED (`docs/research/2026-10-11/R-exec-server.md`, the dev Mac, a mock model): with `CODEX_EXEC_SERVER_URL=none`, the host-reaching
   features off, `agents.enabled=false` and the app's tools as a loopback HTTP MCP server, no host-reaching tool is offered and 17 calls to tools not
   offered were refused on both tool modes; flags alone are not enough (with a local environment present, `apply_patch` wrote a host file); the
-  offered surface is verified at every launch, since a runtime update or the account's default model changes it. Thinking seats therefore need
-  neither `U-harness-responses` nor an API key.
+  offered surface is verified at every launch, since a runtime update or the account's default model changes it. It holds only on a model with
+  classic tools: a code-mode-only model (gpt-6-astra) keeps its code-mode `exec` even with the code-mode host disabled, so model-written code
+  would run inside the process that holds the login (Law 2, § 2.8) — a thinking seat pins a classic-tools model and refuses any offered surface
+  containing `exec`; codex lists no offered tools itself, so the surface is read from a cached dry run against a loopback mock, keyed by binary,
+  argument template and model (the thinking-seats survey, 2026-10-11). Thinking seats therefore need neither `U-harness-responses` nor an API
+  key. **Seat classes live in code:** a class's pin and deny set are never read from `runtimes.json`, which replaces a manifest whole and stays
+  the vendor-commands data file (`CLAUDE.md`).
 - **Native delegation** (the factory plan's level A) only where the profile says so, inside one attempt and its envelope, charged to it, with no
   rows; durable delegation is a mandate (§ 2.2).
 - **Usage:** what the provider reports; otherwise the reservation stands.
@@ -395,7 +402,7 @@ Each table lands with its unit, on the next free rung, in landing order; none is
 
 ## 5. Seat types — what each property's enforcement class is, or is meant to become
 
-| Property | Legacy pair, CLI, unconfined (today → after the named unit) | Thinking seat, API harness (TARGET) | Thinking seat, codex broker-only (TARGET; viable, MEDIATED — `R-exec-server`) | Doing seat, confined cell (TARGET, per provider) |
+| Property | Legacy pair, CLI, unconfined (today → after the named unit) | Thinking seat, API harness (TARGET) | Thinking seat, codex broker-only (TARGET; MEDIATED on a classic-tools model — `R-exec-server`; a code-mode-only model refused) | Doing seat, confined cell (TARGET, per provider) |
 |---|---|---|---|---|
 | Decision rights at the verbs | refused: no org verb runs on an unconfined seat (§ 2.3) | hard (brokered) | mediated | hard |
 | AI admission | hard, once `U-admission-fail-closed` lands | hard | hard | hard |
