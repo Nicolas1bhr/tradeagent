@@ -1996,6 +1996,64 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','32') ON CONFLICT(key) DO UPDATE SET value='32';");
         }
 
+        if (have < 33)
+        {
+            // THE REFEREE'S RESEARCH EVIDENCE — `U-referee-v2a` (docs/EDGE-FACTORY.md § 4.5, E2 and E3: "computed and SHOWN").
+            // It runs after 32, `U-trial-returns`' rung, whose streams it reads; the two share no table.
+            //
+            // ONE ROW PER (campaign, version, method): what a verdict measured of the version's RESEARCH evidence before its
+            // holdout run — the candidate stream it read (its run, friction and trace shas), E2's eight blocks, and E3's M,
+            // N_eff, the candidate's moments, SR0, the deflated Sharpe ratio and the noise ceiling, each gate's power and its
+            // status — and `referee_research_trial`, one row per trial it read, with its cluster and how it was read. Every
+            // decimal is TEXT and an unknown one NULL, never 0. Nothing here is a clause: no verdict reads it.
+            //
+            // APPEND-ONLY, WRITTEN ONLY BY THE APP: `ResearchEvidence.Record` inserts them inside the verdict's own write,
+            // first writer wins, and nothing updates or deletes a row; no op and no verb reaches either. A verdict recorded
+            // before this rung has no row and gains none — no backfill. `IF NOT EXISTS` throughout and the stamp last, because
+            // the rungs run in autocommit and a crash before the stamp runs this again over what it already made.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS referee_research(
+              campaign_id       INTEGER NOT NULL REFERENCES strategy_campaign(id),
+              version_id        TEXT NOT NULL REFERENCES strategy_version(id),
+              method            INTEGER NOT NULL,
+              candidate_run_id  TEXT REFERENCES strategy_run(id),
+              friction_sha256   TEXT,
+              trace_sha256      TEXT,
+              days              INTEGER NOT NULL,
+              blocks_known      INTEGER NOT NULL,
+              blocks_positive   INTEGER NOT NULL,
+              trials_m          INTEGER NOT NULL,
+              trials_unstreamed INTEGER NOT NULL,
+              n_eff             INTEGER NOT NULL,
+              sr                TEXT,
+              skew              TEXT,
+              kurtosis          TEXT,
+              sr0               TEXT,
+              dsr               TEXT,
+              ceiling           TEXT,
+              blocks_power      TEXT NOT NULL,
+              dsr_power         TEXT NOT NULL,
+              blocks_status     TEXT NOT NULL,
+              dsr_status        TEXT NOT NULL,
+              at                TEXT NOT NULL,
+              PRIMARY KEY(campaign_id, version_id, method)
+            );
+            CREATE TABLE IF NOT EXISTS referee_research_trial(
+              campaign_id INTEGER NOT NULL,
+              version_id  TEXT NOT NULL,
+              method      INTEGER NOT NULL,
+              ordinal     INTEGER NOT NULL,
+              run_id      TEXT NOT NULL,
+              cluster     INTEGER NOT NULL,
+              reading     TEXT NOT NULL CHECK(reading IN ('streamed','no-stream','held-back')),
+              PRIMARY KEY(campaign_id, version_id, method, run_id),
+              FOREIGN KEY(campaign_id, version_id, method) REFERENCES referee_research(campaign_id, version_id, method)
+            );
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','33') ON CONFLICT(key) DO UPDATE SET value='33';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

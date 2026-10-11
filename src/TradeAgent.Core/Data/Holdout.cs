@@ -86,6 +86,13 @@ public sealed class BarAudience
     /// the one public door onto a <see cref="BarAudience"/>.
     /// </summary>
     internal static BarAudience PaperRunner { get; } = new(false, "the paper runner");
+
+    /// <summary>
+    /// THE REFEREE'S RESEARCH EVIDENCE (<c>U-referee-v2a</c>): what a verdict reads of the version's research streams before
+    /// its holdout run. It NEVER reads the holdout — a run whose bars or reads a window reaches now is not read at all — and
+    /// it is internal for the reason <see cref="PaperRunner"/> is: <see cref="Pipe"/> stays the one public door.
+    /// </summary>
+    internal static BarAudience ResearchEvidence { get; } = new(false, "the referee's research evidence");
 }
 
 /// <summary>

@@ -78,6 +78,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     readonly Promotions _promotions = new(db);
     readonly PublicationStore _publications = new(db);
     readonly VenueStore _venues = new(db, now);
+    readonly ResearchEvidence _research = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>
@@ -134,6 +135,9 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
     /// <summary>The campaign ledger this referee charges against. Read-only for a caller.</summary>
     public CampaignStore Campaigns => _campaigns;
+
+    /// <summary>What each verdict measured of its version's research evidence (<c>U-referee-v2a</c>). Read-only for a caller.</summary>
+    public ResearchEvidence Research => _research;
 
     /// <summary>
     /// ASKS FOR A FINAL VERDICT ON ONE VERSION, AND CHARGES IT BEFORE ANYTHING RUNS.
@@ -376,6 +380,12 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 $"the recorded source of version {versionId} parses to {program.StrategyId}, which is a "
                 + "different program. TradeAgent judges the program the id names and nothing else.");
 
+        // THE VERSION'S RESEARCH EVIDENCE, MEASURED NOW — after the charge, before the holdout run (U-referee-v2a): E2's
+        // blocks and E3's deflation over the lineage's research streams, read under an audience that never reads the
+        // holdout. SHOWN, never a clause: nothing below reads it, and it is written only in the verdict's own write, so a
+        // verdict that is stopped or not judged records none.
+        var research = _research.Measure(campaign.Id, version.Id, _campaigns.Lineage(campaign.Id), default);
+
         // THE CAMPAIGN'S PINNED MODEL, which the charge above carried out of its own transaction. Never a
         // default chosen here: the frictionless fallback that stood on this line is what made every
         // BTC-priced verdict a `no-trade` that still spent a judgement.
@@ -498,6 +508,10 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 DataFreshness = program.Freshness?.DataFreshness,
                 MaxDecisionAge = program.Freshness?.MaxDecisionAge
             });
+
+            // THE RESEARCH EVIDENCE MEASURED BEFORE THE RUN, in this write and at the verdict's instant (U-referee-v2a):
+            // first writer wins, as the promotion's own insert does.
+            _research.Record(research with { At = at });
 
             // AND WHAT THE CALLER WRITES BESIDE IT, IN THIS WRITE: the research ledger's link, when the verdict was asked
             // under an entry (U-research-ledger). A `refused` verdict is recorded here like any other, so it is linked
