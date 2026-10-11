@@ -85,6 +85,59 @@ public class SeatHomeTests
         }
     }
 
+    /// <summary>
+    /// (d) A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT AND IS HANDED NOTHING. The version probe may ask it what it
+    /// is — that is how the words name its version — and nothing else is started from it: not the sign-in status, and not the
+    /// pasted key, which would otherwise go on stdin to whatever program sat first on PATH.
+    /// </summary>
+    [Fact]
+    public async Task A_binary_that_is_not_the_pin_is_refused_naming_both_hashes()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_binary_that_is_not_the_pin_is_refused_naming_both_hashes), version: "9.9.9");
+        var pin = new string('a', 64);
+        codex.Install.Version = "0.160.1";
+        codex.Install.ExecutableSha256 = pin;
+        var found = SeatProfile.Sha256Of(exe);
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence());
+
+        var detected = await rt.DetectAsync();
+        Assert.False(detected.Installed);
+        foreach (var said in new[] { pin, found, "0.160.1", "9.9.9", exe }) Assert.Contains(said, detected.Reason, StringComparison.Ordinal);
+
+        var key = await Assert.ThrowsAsync<TradeAgentException>(() => rt.SignInWithApiKeyAsync("sk-FAKE-0000"));
+        Assert.Equal(ErrorCode.AI_VERSION_UNSUPPORTED, key.Code);
+        foreach (var said in new[] { pin, found, "0.160.1", "9.9.9" }) Assert.Contains(said, key.Message, StringComparison.Ordinal);
+        Assert.Equal(AuthState.NotAuthenticated, await rt.GetAuthenticationStateAsync());
+
+        // Only the version probe ever ran it.
+        Assert.All(Argv(dump), line => Assert.Equal("--version", line));
+
+        // The pin itself is the program, wherever it was found.
+        codex.Install.ExecutableSha256 = found.ToUpperInvariant();
+        Assert.True((await rt.DetectAsync()).Installed);
+    }
+
+    /// <summary>
+    /// THE SHIPPED CODEX MANIFEST pointed at a script and at a seat home of this test's own: only the program, the pin and the
+    /// home's root change — the environment, the deny set and the config file are the build's own data.
+    /// </summary>
+    internal static (RuntimeManifest Codex, string Exe, string Dump) Seat(string name, string version = "0.160.1")
+    {
+        var codex = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
+        var (exe, dump) = EnvDumper(name, version);
+        codex.Executable = exe;
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
+        codex.Seat!.Home = Path.Combine(Path.GetDirectoryName(exe)!, "seat-home");
+        return (codex, exe, dump);
+    }
+
+    /// <summary>Every command line the script was started with, one per line, in order.</summary>
+    internal static string[] Argv(string dump)
+    {
+        var log = Path.Combine(Path.GetDirectoryName(dump)!, "argv.txt");
+        return File.Exists(log) ? [.. File.ReadAllLines(log).Select(l => l.Trim()).Where(l => l.Length > 0)] : [];
+    }
+
     static bool Pair(List<string> argv, string flag, string value)
     {
         for (var i = 0; i + 1 < argv.Count; i++)
@@ -93,19 +146,20 @@ public class SeatHomeTests
     }
 
     /// <summary>A program that writes its whole environment to a file and answers a version, on either platform.</summary>
-    internal static (string Exe, string Dump) EnvDumper(string name)
+    internal static (string Exe, string Dump) EnvDumper(string name, string version = "0.160.1")
     {
         var dir = Path.Combine(TestEnv.Home, "seat", $"{name}-{Guid.NewGuid():n}"[..40]);
         Directory.CreateDirectory(dir);
         var dump = Path.Combine(dir, "env.txt");
+        var argv = Path.Combine(dir, "argv.txt");
         if (OperatingSystem.IsWindows())
         {
             var bat = Path.Combine(dir, "codex.cmd");
-            File.WriteAllText(bat, $"@echo off\r\nset > \"{dump}\"\r\necho codex-cli 0.160.1\r\n");
+            File.WriteAllText(bat, $"@echo off\r\nset > \"{dump}\"\r\necho %* >> \"{argv}\"\r\necho codex-cli {version}\r\n");
             return (bat, dump);
         }
         var sh = Path.Combine(dir, "codex");
-        File.WriteAllText(sh, $"#!/bin/sh\nenv > \"{dump}\"\necho 'codex-cli 0.160.1'\n");
+        File.WriteAllText(sh, $"#!/bin/sh\nenv > \"{dump}\"\necho \"$*\" >> \"{argv}\"\necho 'codex-cli {version}'\n");
         File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return (sh, dump);
     }

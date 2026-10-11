@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using TradeAgent.Core;
 
@@ -62,6 +64,60 @@ public static class SeatProfile
             }
         }
         return new UTF8Encoding(false).GetBytes(string.Join("\n", lines) + "\n");
+    }
+
+    // ---- the pin ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// What each program file hashed to, keyed on its path and remembered against its length and last write: a launch hashes the
+    /// program once per change rather than once per start, and a file replaced in place is hashed again.
+    /// </summary>
+    static readonly ConcurrentDictionary<string, (long Length, DateTime Written, string Sha)> Hashes = new(StringComparer.Ordinal);
+
+    /// <summary>SHA-256, lower-case hex, of the file at <paramref name="path"/>.</summary>
+    public static string Sha256Of(string path)
+    {
+        var info = new FileInfo(path);
+        var (length, written) = (info.Length, info.LastWriteTimeUtc);
+        if (Hashes.TryGetValue(path, out var known) && known.Length == length && known.Written == written) return known.Sha;
+
+        using var stream = File.OpenRead(path);
+        var sha = Convert.ToHexStringLower(SHA256.HashData(stream));
+        Hashes[path] = (length, written, sha);
+        return sha;
+    }
+
+    /// <summary>Whether <paramref name="exe"/> is the plan's pinned program — always, for a plan that pins none.</summary>
+    public static bool IsPin(RuntimeManifest manifest, string exe)
+    {
+        if (manifest.Install.ExecutableSha256 is not { Length: > 0 } pin) return true;
+        try { return string.Equals(Sha256Of(exe), pin.Trim(), StringComparison.OrdinalIgnoreCase); }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// NULL WHEN <paramref name="exe"/> IS THE PIN, or the refusal in words naming the file, both hashes and both versions and the
+    /// repair. <paramref name="versionOf"/> asks the program its version, and is asked only for a file that is not the pin.
+    /// </summary>
+    public static async Task<string?> PinRefusalAsync(RuntimeManifest manifest, string exe,
+        Func<CancellationToken, Task<string?>> versionOf, CancellationToken ct)
+    {
+        if (manifest.Install.ExecutableSha256 is not { Length: > 0 } pin || IsPin(manifest, exe)) return null;
+
+        string found;
+        try { found = Sha256Of(exe); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { found = $"unreadable: {ex.Message}"; }
+
+        string? version;
+        try { version = await versionOf(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { version = null; }
+
+        var repair = manifest.Install.Kind is InstallKind.Download or InstallKind.Npm or InstallKind.Winget
+            ? "Install the AI assistant again from TradeAgent and it puts that exact version in its own folder."
+            : "TradeAgent cannot install it on this computer, so that exact version has to be the one this computer finds.";
+        return $"TradeAgent starts the AI only from {manifest.DisplayName} {manifest.Install.Version ?? "(pinned)"}, SHA-256 {pin.Trim()}. " +
+               $"The program it found, {exe}, is version {version ?? "unknown"}, SHA-256 {found}, so it was not started. {repair}";
     }
 
     static bool SameBytes(string path, byte[] bytes)

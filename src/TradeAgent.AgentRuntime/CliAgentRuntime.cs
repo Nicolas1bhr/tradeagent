@@ -74,15 +74,36 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// Windows an npm-installed CLI puts a <c>.cmd</c> shim on PATH rather than the name in the
     /// manifest, so matching only the exact filename meant a machine with the tool installed and
     /// signed in still reported it missing.
+    ///
+    /// <para><b>A PINNED PLAN TAKES THE PIN WHEREVER IT IS</b> (<c>U-seat-home</c>): the first file, in the same order, whose SHA-256
+    /// is <see cref="InstallPlan.ExecutableSha256"/> — the managed copy or one on PATH. With none, the first file found is still
+    /// returned, so the version probe can say what it is; every other start refuses it in words naming both hashes and both
+    /// versions (<see cref="SeatProfile.PinRefusalAsync"/>).</para>
     /// </summary>
     public string? ResolveExecutable()
     {
-        if (string.IsNullOrWhiteSpace(manifest.Executable)) return null;
+        string? first = null;
+        foreach (var candidate in Candidates())
+        {
+            if (!manifest.Install.Pinned) return candidate;
+            first ??= candidate;
+            if (SeatProfile.IsPin(manifest, candidate)) return candidate;
+        }
+        return first;
+    }
+
+    /// <summary>Every file that could be this runtime's program, in the order <see cref="ResolveExecutable"/> prefers them.</summary>
+    IEnumerable<string> Candidates()
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Executable)) yield break;
 
         // An absolute path in the manifest is taken as given: that is how an override pins a
         // vendor's real binary when the shim on PATH is not runnable.
         if (Path.IsPathRooted(manifest.Executable))
-            return File.Exists(manifest.Executable) ? manifest.Executable : null;
+        {
+            if (File.Exists(manifest.Executable)) yield return manifest.Executable;
+            yield break;
+        }
 
         var home = Path.Combine(Paths.Tools, manifest.Id);
 
@@ -90,14 +111,14 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         if (manifest.Install.ExecutableInArchive is { Length: > 0 } inside)
         {
             var declared = Path.Combine(home, inside.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(declared)) return declared;
+            if (File.Exists(declared)) yield return declared;
         }
 
         foreach (var dir in ManagedDirectories(home))
             foreach (var name in NameCandidates())
             {
                 var candidate = Path.Combine(dir, name);
-                if (File.Exists(candidate)) return candidate;
+                if (File.Exists(candidate)) yield return candidate;
             }
 
         var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
@@ -105,15 +126,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         {
             foreach (var name in NameCandidates())
             {
-                try
-                {
-                    var candidate = Path.Combine(dir.Trim(), name);
-                    if (File.Exists(candidate)) return candidate;
-                }
-                catch (ArgumentException) { /* a malformed PATH entry is not our problem */ }
+                string candidate;
+                try { candidate = Path.Combine(dir.Trim(), name); }
+                catch (ArgumentException) { continue; /* a malformed PATH entry is not our problem */ }
+                if (File.Exists(candidate)) yield return candidate;
             }
         }
-        return null;
     }
 
     /// <summary>The install directory, its npm bin, and one level of subdirectory inside it.</summary>
@@ -230,10 +248,26 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         var managed = exe.StartsWith(Paths.Tools, StringComparison.Ordinal);
         var (version, refused) = await ProbeVersionAsync(exe, ct);
-        return version is null
-            ? new RuntimeDetection(false, exe, null, managed, refused)
+        if (version is null) return new RuntimeDetection(false, exe, null, managed, refused);
+
+        // A PROGRAM THAT IS NOT THE PIN IS NOT INSTALLED FOR A SEAT, and says why in both hashes and both versions: the managed
+        // install then puts the pinned one in place, which is what an owner who presses Install expects.
+        return await SeatProfile.PinRefusalAsync(manifest, exe, _ => Task.FromResult<string?>(version), ct) is { } notThePin
+            ? new RuntimeDetection(false, exe, version, managed, notThePin)
             : new RuntimeDetection(true, exe, version, managed);
     }
+
+    /// <summary>
+    /// REFUSES A START FROM A PROGRAM THAT IS NOT THE PIN, in words naming both hashes and both versions — every start this class
+    /// makes but the version probe, which is how the words get the program's own version (<c>U-seat-home</c>).
+    /// </summary>
+    async Task RequirePinAsync(string exe, CancellationToken ct)
+    {
+        if (await SeatProfile.PinRefusalAsync(manifest, exe, c => GetVersionOfAsync(exe, c), ct) is { } refusal)
+            throw new TradeAgentException(ErrorCode.AI_VERSION_UNSUPPORTED, refusal);
+    }
+
+    async Task<string?> GetVersionOfAsync(string exe, CancellationToken ct) => (await ProbeVersionAsync(exe, ct)).Version;
 
     public async Task<string?> GetVersionAsync(CancellationToken ct = default)
     {
@@ -367,7 +401,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         var plan = manifest.Install;
         string? url = null;
 
-        if (plan.GitHubRepo is { Length: > 0 } repo && plan.AssetPattern is { Length: > 0 } pattern)
+        // A PINNED PLAN DOWNLOADS ITS OWN URL AND NOTHING ELSE: the newest release is not the pin, and a package manager's copy
+        // would be refused at the first start.
+        if (plan.Pinned && plan.Url is { Length: > 0 } exact) url = exact.Replace("{version}", plan.Version ?? "");
+        else if (plan.GitHubRepo is { Length: > 0 } repo && plan.AssetPattern is { Length: > 0 } pattern)
         {
             progress?.Report($"Looking up the newest version of {manifest.DisplayName}");
             url = await Downloader.ResolveGitHubAssetAsync(repo, pattern, ct, ReleaseApi);
@@ -402,14 +439,14 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 relay, ct);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide)
+        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide && !plan.Pinned)
         {
             // Declared fallback: the vendor also publishes this as an npm package, and TradeAgent
             // has its own Node, so a broken or moved archive is not the end of the road.
             progress?.Report($"The download did not work ({ex.Message}). Trying the package version instead.");
             await InstallByNpmAsync(target, progress, relay, ct);
         }
-        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 })
+        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } || plan.Pinned)
         {
             // OFF WINDOWS THERE IS NO SECOND ROAD, and the refusal is the ARCHIVE'S. TradeAgent's private Node is
             // a Windows zip, so the package fallback could only end in Node's own refusal — which used to tell the
@@ -457,6 +494,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
                 $"{manifest.DisplayName} has no sign-in command in its manifest");
 
+        await RequirePinAsync(exe, ct);
         StopLogin();
 
         var psi = new ProcessStartInfo
@@ -614,6 +652,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         if (plan.StdinArgs.Length > 0)
         {
             var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
+            // THE KEY GOES TO THE PINNED PROGRAM OR TO NONE: a file on PATH that is not the pin is not handed a credential.
+            await RequirePinAsync(exe, ct);
             var psi = new ProcessStartInfo
             {
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -708,6 +748,11 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         if (exe is null) return AuthState.Unknown;
         if (manifest.AuthStateArgs.Length == 0) return AuthState.Unknown;
 
+        // NOT SIGNED IN FOR A SEAT while the program is not the pin: nothing is started from it, and the sign-in it leads to says
+        // why in words.
+        if (await SeatProfile.PinRefusalAsync(manifest, exe, c => GetVersionOfAsync(exe, c), ct) is not null)
+            return AuthState.NotAuthenticated;
+
         var r = await Run(exe, manifest.AuthStateArgs, TimeSpan.FromSeconds(30), ct, agentWork: false);
         // Both runtimes print this through a terminal renderer, so the answer arrives wrapped in
         // colour codes that a pattern like "3 credentials" would never match.
@@ -782,6 +827,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         // would leave the owner unable to see WHY the AI will not start.
         if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
             throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
+        await RequirePinAsync(exe, ct);
 
         if (manifest.InteractiveArgs.Length > 0 && _session is not { Process.HasExited: false })
         {
