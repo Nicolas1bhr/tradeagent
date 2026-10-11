@@ -272,8 +272,11 @@ public static class CellNative
         // OPENED FIRST, THEN JUDGED, AND THE DESCRIPTOR JUDGED IS THE ONE GRANTED (triage #2): the policy's check ran on paths, and
         // a path can be retargeted after it — by another cell sharing the workspace — so what is checked here is where the open
         // descriptor really leads, against the app's protected set in every spelling, and that same descriptor goes to the kernel.
+        // The same for the overlap rule (triage #4): a read-only input is judged against where the workspace's descriptor really
+        // led, so a workspace symlink retargeted onto an input after the check cannot hand that input the workspace's write rights.
         var guarded = CellPolicy.Guarded.Of();
-        bool Grant(string p, ulong rights, bool required)
+        string? workspace = null;
+        bool Grant(string p, ulong rights, bool required, bool readOnly = false)
         {
             BeforeGrantOpen?.Invoke(p);
             var name = Utf8(p);
@@ -296,6 +299,9 @@ public static class CellNative
             var why = target is null || !target.StartsWith('/') || target.EndsWith(" (deleted)", StringComparison.Ordinal)
                 ? "names no path the kernel can show"
                 : stat is null ? "could not be examined" : guarded.Refuses(target);
+            if (why is null && readOnly && workspace is not null &&
+                (CellPolicy.Within(target!, workspace) || CellPolicy.Within(workspace, target!)))
+                why = $"lies inside, is, or contains the workspace's real {workspace}, where the cell may write, so it would not stay read-only";
             if (why is not null)
             {
                 close(parent);
@@ -303,6 +309,7 @@ public static class CellNative
                 return false;
             }
             if (stat!.Value.Type != S_IFDIR) rights &= FsFileRights;
+            if (required) workspace ??= target;
             var rule = Zeroed(12);                   // struct landlock_path_beneath_attr is packed: u64 rights, s32 fd
             Marshal.WriteInt64(rule, 0, (long)rights);
             Marshal.WriteInt32(rule, 8, parent);
@@ -313,7 +320,7 @@ public static class CellNative
         }
 
         var ok = Grant(policy.Workspace, handled, required: true);
-        foreach (var p in policy.ReadOnly) ok = ok && Grant(p, FsReadFile | FsReadDir, required: false);
+        foreach (var p in policy.ReadOnly) ok = ok && Grant(p, FsReadFile | FsReadDir, required: false, readOnly: true);
         foreach (var p in policy.Executable) ok = ok && Grant(p, FsExecute | FsReadFile | FsReadDir, required: false);
         foreach (var (p, rights) in Devices) ok = ok && Grant(p, rights, required: false);
         foreach (var port in policy.TcpPorts)

@@ -172,6 +172,35 @@ public class CellGrantTests
         Assert.True(fd < 0, $"a Landlock ruleset was built granting {link}, which by then led to {Paths.State}");
         Assert.Contains("lies inside TradeAgent's state", failure!.Sentence);
     }
+
+    /// <summary>The overlap rule on descriptors too: a workspace symlink retargeted onto a read-only input after the check is refused (re-review).</summary>
+    [LinuxKernelFact]
+    public void A_workspace_retargeted_onto_a_read_only_input_after_the_check_is_refused()
+    {
+        var root = Path.Combine(TestEnv.Home, "cellgrant-ws-" + Guid.NewGuid().ToString("n")[..8]);
+        var realWs = Path.Combine(root, "realws");
+        var ro = Path.Combine(root, "ro");
+        Directory.CreateDirectory(realWs);
+        Directory.CreateDirectory(ro);
+        var ws = Path.Combine(root, "ws");
+        File.CreateSymbolicLink(ws, realWs);
+        var policy = new CellPolicy(ws, [ro], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")]);
+        Assert.Null(policy.Problem());
+
+        CellNative.BeforeGrantOpen = p =>
+        {
+            if (p != ws) return;
+            File.Delete(ws);
+            File.CreateSymbolicLink(ws, ro);
+        };
+        int fd;
+        CellNative.Failure? failure;
+        try { fd = CellNative.Ruleset(policy, out failure); }
+        finally { CellNative.BeforeGrantOpen = null; }
+
+        Assert.True(fd < 0, $"a Landlock ruleset was built with the workspace {ws} leading onto the read-only input {ro}");
+        Assert.Contains("would not stay read-only", failure!.Sentence);
+    }
 }
 
 /// <summary>
