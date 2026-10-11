@@ -374,6 +374,80 @@ public class BacktestLedgerTests(Xunit.Abstractions.ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// (a, <c>U-evidence-evaluator-label</c>) A RUN RECORDS THE EVALUATOR IT RAN UNDER, AND A ROW FROM BEFORE THE RUNG IS
+    /// UNKNOWN. <c>RecordRun</c> writes this build's <see cref="Referee.EvaluatorVersion"/> whatever the row handed in says —
+    /// a forged label is not what lands — and a second account of the run leaves the first label alone. A home at rung 34
+    /// has no column; opened by this build it gains one, its run reads back NULL (unknown, never this build's), and a
+    /// crash before rung 36's stamp runs it again over what is there with every label in place. Nothing in <c>src</c>
+    /// updates a run row. RED on the base: the row had no label to read.
+    /// </summary>
+    [Fact]
+    public void A_run_records_the_evaluator_it_ran_under_and_a_row_from_before_the_rung_is_unknown()
+    {
+        var file = Path.Combine(TestEnv.Home, $"evaluator-rung-{Guid.NewGuid():n}.db");
+        var program = Parsed();
+        using (var db = new Database(file))
+        {
+            var store = new StrategyStore(db);
+            store.RecordVersion(Version(program));
+            var dataset = Dataset(db);
+            store.RecordRun(Run("run-old", program.StrategyId, dataset), []);
+        }
+
+        // A HOME AT RUNG 34: no label column, the stamp before this unit's rung.
+        using (var raw = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "ALTER TABLE strategy_run DROP COLUMN evaluator_version; UPDATE meta SET value='34' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var db = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), Scalar(db, "SELECT value FROM meta WHERE key='schema_version'"));
+            var store = new StrategyStore(db);
+            Assert.Null(store.RunById("run-old")!.EvaluatorVersion);
+
+            // A FORGED LABEL ON THE ROW HANDED IN IS NOT WHAT LANDS: this build's constant is.
+            store.RecordRun(Run("run-new", program.StrategyId, store.RunById("run-old")!.DatasetId) with
+                { EvaluatorVersion = "backtest=0;metrics=0;scoring=0" }, []);
+            Assert.Equal(Referee.EvaluatorVersion, store.RunById("run-new")!.EvaluatorVersion);
+
+            // THE SECOND ACCOUNT OF A RUN RECORDED BEFORE THE RUNG LABELS NOTHING: the row is what it was.
+            store.RecordRun(Run("run-old", program.StrategyId, store.RunById("run-old")!.DatasetId), []);
+            Assert.Null(store.RunById("run-old")!.EvaluatorVersion);
+        }
+
+        // A CRASH BETWEEN THE RUNG'S STATEMENT AND ITS STAMP: the column and every label in place, the stamp one lower.
+        using (var raw = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "UPDATE meta SET value='35' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var rerun = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), Scalar(rerun, "SELECT value FROM meta WHERE key='schema_version'"));
+            var store = new StrategyStore(rerun);
+            Assert.Null(store.RunById("run-old")!.EvaluatorVersion);
+            Assert.Equal(Referee.EvaluatorVersion, store.RunById("run-new")!.EvaluatorVersion);
+        }
+
+        // NO WRITER BUT THE ONE INSERT: nothing in src updates or replaces a run row.
+        var rewrite = new Regex(@"(UPDATE\s+strategy_run\b|REPLACE\s+INTO\s+strategy_run\b|INSERT\s+OR\s+\w+\s+INTO\s+strategy_run\b)",
+            RegexOptions.IgnoreCase);
+        var writers = Directory.GetFiles(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (f, i, line)))
+            .Where(l => rewrite.IsMatch(l.line))
+            .Select(l => $"{Path.GetFileName(l.f)}:{l.i + 1}: {l.line.Trim()}")
+            .ToList();
+        Assert.True(writers.Count == 0, string.Join("\n", writers));
+    }
+
     static string? Scalar(Database db, string sql) => db.Read(_ =>
     {
         using var c = db.Cmd(sql);
