@@ -3936,6 +3936,28 @@ told in a later turn that a stopped verdict is owed — both as after a crash. T
 on the pipe the stop is the server's, fired only when it is disposed; on the harness it is the turn's, fired only in
 process (Pause, the Chat page's Stop, the quit); and no op cancels a request.
 
+**One INCONCLUSIVE path into paper** (`U-referee-v2b`, EDGE § 4.5). A refusal is inconclusive when it says nothing about the
+version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `refused` — never invalidated — whose reason is
+`no-trade-on-the-holdout` (too few events), or `not-profitable-after-costs` over a holdout under **365 days**, the span being
+the campaign's `holdout_from` to its dataset's last close (`CampaignStore.HoldoutSpan`) and an end that cannot be read
+counting as short. `the-holdout-run-did-not-complete` is never inconclusive: the strategy faulted. After its paper-eligible
+pass the app's sweep (`TradingGateway.AllocatePaperDue`) offers each inconclusive version a PAPER row under
+`AllocationPolicy.InconclusiveV1`, oldest verdict first, and `Allocations.RecordPaper` decides inside its one write: the
+envelope's standing rows under that policy, other versions', are fewer than ⌊`max_deployments` / 3⌋ (none below three slots
+— the owner's card grants one, so it holds none today); none of them stands for a version judged under the same campaign
+lineage (`CampaignStore.LineageRoot` — the family's stand-in until `U-experiments-op`, named on the row's reason
+"inconclusive quota: <class>; lineage <root>"; a lineage that cannot be read refuses); the version has never held such a
+row — **one term per version**, so an ended term ends it and renewal is `U-incubator`'s; and the verdict's campaign has a
+trial left. The row is the envelope's share with `effective_to` exactly **90 days** after `effective_from`, and it is
+**charged once**: `TrialsCharged` counts, besides runs, every version that has ever held such a row whose promotion's
+campaign is in the lineage (`IncubationsCharged`, out of neither pot, only the whole budget), from a ledger with no update
+or delete, so a charge is never refunded; a spent budget refuses the slot in words and writes nothing. `Authorises` gains
+one arm, paper only: the row is `InconclusiveV1`, its promotion is still the one it names and still inconclusive, and the
+term is open. The verdict path is untouched — `Referee`, `PromotionRow`, both policy texts, `Promotions.Standing` and
+`RefereeFeedback.Text` are byte-identical (`InconclusiveTests` pins the shas) — so the refusal stays refused and confers
+nothing live: no live reader reads a paper row. Research's note says "inconclusive quota", no figure. Schema: none — the
+marker and the term ride `policy_version` and `effective_to`. No op, verb or argument asks for a slot.
+
 **The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
 **after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
 against when the run was made, so months that predate the freeze are refused whatever the figures say.

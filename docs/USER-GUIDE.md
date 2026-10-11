@@ -1187,7 +1187,11 @@ want one, and how many days it runs for, then press twice — the button turns r
 what the second press does. After that, whenever TradeAgent's own referee finds a version favourable
 on months it was never shown, TradeAgent puts that version into the grant by itself and tells its
 research role, without asking you again: that is the whole point of the card, because a strategy
-cannot earn the forward evidence that promotes it until something runs it forward. What it cannot do
+cannot earn the forward evidence that promotes it until something runs it forward. A version the referee could not judge
+either way — it traded nothing on the held-back months, or lost over less than a year of them — may also go in, but only
+inside a grant of three or more runs at a time (this card grants one, so not today): at most a third of the runs, one per
+line of research at a time, once, for 90 days, each charged one of its campaign's research trials, and its verdict stays
+refused. What it cannot do
 is anything else. The account must be a practice account on **both** your platform's word and the
 account's own, and TradeAgent must be in *Practice* when you press — stricter than it is for a single
 order, because this grant is spent while you are not watching. Nothing written under it is capital,
