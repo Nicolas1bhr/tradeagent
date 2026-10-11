@@ -69,6 +69,7 @@ public class LensTests(ITestOutputHelper log)
         { "an unknown key", With(l => l["schedule"] = "hourly"), "'schedule' is not a key of a lens" },
         { "a missing key", With(l => l.Remove("state")), "a lens has no 'state'" },
         { "over 16 KiB", With(l => Q(l, "urgent")["instructions"] = new string('w', Lens.MaxDefinitionBytes)), "a lens holds at most 16,384 bytes" },
+        { "over 16 KiB once stored", Valid.Replace("Does the notice take effect within a day?", new string('\u00e9', 3000), StringComparison.Ordinal), "as it is stored and hashed" },
         { "a Choice of one option the port refuses", With(l => Q(l, "kind")["criteria"] = new JsonObject { ["other"] = null }), "has 1 options; a Choice has between 2 and 255" },
         { "a Score of eleven levels the port refuses", With(l => Q(l, "reach")["criteria"] = new JsonArray([.. Enumerable.Range(0, 11).Select(i => (JsonNode)$"level {i}")])), "has 11 levels; a Score has between 2 and 10" },
         { "a question name the port refuses", With(l => { var q = Q(l, "urgent").DeepClone(); l["questions"]!.AsObject().Remove("urgent"); l["questions"]!["Urgent"] = q; }), "'Urgent' is not a question name" },

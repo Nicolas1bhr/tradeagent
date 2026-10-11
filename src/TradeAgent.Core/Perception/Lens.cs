@@ -70,7 +70,11 @@ public sealed class Lens
     /// </summary>
     public const string ValidatorVersion = "lens-v1";
 
-    /// <summary>The most a definition's text may hold, in UTF-8 bytes.</summary>
+    /// <summary>
+    /// The most a definition may hold, in UTF-8 bytes — as given, and again as STORED: <see cref="Canonical"/>, the spelling
+    /// the tape keeps and <see cref="LensSha"/> hashes, escapes text outside plain ASCII and can be the larger, so the cap
+    /// holds there too and nothing registers that would not parse back.
+    /// </summary>
     public const int MaxDefinitionBytes = 16 * 1024;
 
     /// <summary>The most fields one lens's state may read.</summary>
@@ -243,6 +247,10 @@ public sealed class Lens
                                     + string.Join(", ", EscapeOptions) + ", so an item that fits no option is never forced into one");
 
         var lens = new Lens(name, new LensTarget(target.Source, target.Series, target.Fields), fields, questions);
+        var stored = Encoding.UTF8.GetByteCount(lens.Canonical);
+        if (stored > MaxDefinitionBytes)
+            return LensParse.No($"a lens holds at most {MaxDefinitionBytes:N0} bytes as it is stored and hashed, and this one's stored "
+                                + $"spelling is {stored:N0} — text outside plain ASCII is stored escaped, up to six bytes a character");
         if (DecisionRequests.BytesRefusal(LensState.CapBytes(lens), questions, limits, "the strictest built-in instrument") is { } big)
             return LensParse.No("at its declared caps, " + big);
 
