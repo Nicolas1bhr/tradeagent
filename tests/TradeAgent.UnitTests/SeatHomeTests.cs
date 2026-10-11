@@ -42,6 +42,16 @@ public class SeatHomeTests
         Assert.Equal(Path.Combine(seat, "codex"), env.GetValueOrDefault("CODEX_HOME"));
         Assert.Equal(Path.Combine(seat, "home"), env.GetValueOrDefault("HOME"));
         Assert.DoesNotContain(env.Values, v => v.Contains(owners, StringComparison.Ordinal));
+
+        // AND THE CLI'S OWN CONFIG FILE IS THE APP'S, rewritten before every start: a seat that edits it is undone.
+        var config = SeatProfile.ConfigPath(codex.Seat!)!;
+        Assert.Equal(SeatProfile.ConfigBytes(codex.Seat!), File.ReadAllBytes(config));
+        File.AppendAllText(config, "chatgpt_base_url = \"http://127.0.0.1:9/\"\n");
+        await new CliAgentRuntime(codex, presence: new AgentPresence()).DetectAsync();
+        Assert.Equal(SeatProfile.ConfigBytes(codex.Seat!), File.ReadAllBytes(config));
+        Assert.Contains("features.plugins = false\nfeatures.remote_plugin = false",
+            File.ReadAllText(config), StringComparison.Ordinal);
+        Assert.Contains("mcp_servers = {}", File.ReadAllText(config), StringComparison.Ordinal);
     }
 
     /// <summary>
