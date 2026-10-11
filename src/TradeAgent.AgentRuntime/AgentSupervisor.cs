@@ -89,7 +89,10 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,
                 detection.Installed
-                    ? $"{manifest.DisplayName} {detection.Version}"
+                    // AND A RUNTIME WHOSE COMMAND LINE CARRIES THE PROMPT SAYS SO HERE, on the line the owner reads as it is
+                    // launched (U-prompt-stdin): every process of the user can read a command line. Measured on the argv this
+                    // build makes for it, not taken from the manifest's word.
+                    ? $"{manifest.DisplayName} {detection.Version}" + (AgentArgs.CarriesPrompt(manifest) ? $"; {AgentArgs.InArgv}" : "")
                     // The program's own words where there are any: a runtime whose file is on the
                     // disk and whose launcher will not start is not "not installed", and this row is
                     // the only thing the owner sees about it.

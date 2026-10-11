@@ -233,6 +233,50 @@ public class PromptStdinTests
     }
 
     /// <summary>
+    /// (d, THE LAUNCH) A RUNTIME WHOSE COMMAND LINE CARRIES THE PROMPT IS NAMED ON THE LINE THE OWNER READS AS IT IS LAUNCHED: the
+    /// agent runtime's row says "prompt in argv (runtime cannot read stdin)" beside its name and version, and a runtime that reads
+    /// stdin says nothing of the kind. The record in the attempt's row is not a line anybody reads at the launch.
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_whose_command_line_carries_the_prompt_says_so_on_its_launch_line()
+    {
+        foreach (var onStdin in new[] { false, true })
+        {
+            var dir = Path.Combine(TestEnv.Home, "prompt-stdin", $"launch-{onStdin}-{Guid.NewGuid():n}"[..32]);
+            Directory.CreateDirectory(dir);
+            string exe;
+            if (OperatingSystem.IsWindows())
+            {
+                exe = Path.Combine(dir, "probe.cmd");
+                File.WriteAllText(exe, "@echo off\r\necho probe 1.2.3\r\nexit /b 0\r\n");
+            }
+            else
+            {
+                exe = Path.Combine(dir, "probe.sh");
+                File.WriteAllText(exe, "#!/bin/sh\necho probe 1.2.3\nexit 0\n");
+                File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            var manifest = new RuntimeManifest
+            {
+                Id = "probe-launch", DisplayName = "Probe runtime", Executable = exe, VersionArgs = [],
+                ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"], PromptOnStdin = onStdin, StdinMarker = onStdin ? "-" : ""
+            };
+            var health = new HealthRegistry();
+
+            await new AgentSupervisor(health).PrepareAsync(manifest, new WorkspaceContext(
+                ConnectorName: "Simulator (built in)", ConnectorIsPaper: true, AccountId: "SIM-001",
+                Mode: TradingMode.PAPER, ExecutionAvailable: true, ExecutionBlockedReason: null,
+                Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }));
+
+            var row = health.Get(Components.AgentRuntime);
+            Assert.Equal(HealthState.READY, row.State);
+            Assert.StartsWith("Probe runtime 1.2.3", row.Detail, StringComparison.Ordinal);
+            if (onStdin) Assert.DoesNotContain("prompt in argv", row.Detail, StringComparison.Ordinal);
+            else Assert.Contains(AgentArgs.InArgv, row.Detail, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// A recorder that also answers like a runtime: its command line to <c>argv.txt</c>, its stdin to <c>stdin.txt</c>, then one
     /// completed turn on stdout so the meter closes the attempt.
     /// </summary>
