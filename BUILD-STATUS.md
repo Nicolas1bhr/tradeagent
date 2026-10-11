@@ -9912,3 +9912,22 @@ names 2453 → 2454, removed 0 (at landing: the train 2512 → 2519, removed 0).
 body, not the headers; nothing outlives disposal.
 **Not claimed / not done:** tests box NOT RUN (`win-test.sh ready`: the machine did not answer); full local suites (CI's); any change to the wire.
 Scan exclusions (judged, by phrase): `kept.InputTokens`, `_release.Token`, the report line naming them, and the tests-box line's "asleep, off Tailscale" (a tool's message, no host).
+
+## U-shard-rebalance — the five windows test shards rebalanced on the mean per-class minutes of six runs on the work disk, every test still run exactly once (landed 2026-10-11, seat B; inherited from seat P)
+
+**Landed** at `3cde2c28` (code tip `577a1761`, report `737539c0`; first stacked) on `main` `5056d972`, in `land.sh` v3's train `B2` (first of two, then U-harness-trade-args): CI run **38116390482** at the train's tip `d38cc6d9`: all 11 jobs success (windows shards 1–5 10/9/5/6/12 min, ubuntu 12, macos 15, linux-host 20; every test job 0 Warning(s)), CARRIED to the stacked tip; `land.sh train-check` VERDICT PASS (its own run 38114107185 green; 38115640424 cancelled when the train superseded it). No local suite (CI only). No rung.
+Builder sonnet/high, one pass. `.github/ci/test-shards.txt` only (plus its header): no test, category, Timing step, filter, check or job changed.
+**What changed:** class lines moved between shards 2–5 so each shard's larger serial sum (Fault or Integration, run one test at a time) is even, on the MEAN of six windows runs on D: (38098873084, 38111240442,
+38112135298, 38112158847, 38112348577, 38112363314); the header names them. Predicted F/I serial sums shards 2–5: 341/381, 367/379, 345/380, 378/379 s (old partition on the same means: 303/328, 301/301, 302/348,
+524/542 — old shard 5 was the outlier). Deviation: two commits for the one item — `42f7e500` balanced on ONE run, which its own branch run 38112363314 showed too noisy (a class moved 2 s → 323 s between runs),
+so `577a1761` re-balanced on the six-run mean.
+**Evidence (the builder's report):** Release `--no-incremental` 0 warnings; branch CI 38114107185 at `577a1761` green 11/11, no `##[warning]`, every shard's exactness check green (2: 42/42, 3: 38/38, 4: 35/35, 1: 2/2,
+5: complement); names 2512 → 2512, removed 0. EXACTLY ONCE (the U-ci-shards method, trx (class, test) multiset of shards 1–5 incl. Timing's first attempt vs main run 38112348577): 2919 vs 2919, 0 missing,
+0 duplicated, 0 extra; 2918 Passed + 1 NotExecuted in both.
+**NOT shown — the wall-time gain:** runner speed varies ~2.5× between runs (the same classes; shard 4's sums 409 s vs 961 s on an equal-load shard in one run), so one run's minutes are runner speed. Before
+(main 38112348577) 10.5/5.1/4.1/7.8/6.2 min; after (38114107185) 10.4/9.1/9.3/4.3/5.0. What the data supports: the means are now within 4 %; old shard 5 was the outlier. The brief's target (longest shard
+≤ 8 min) is NOT MET and not reachable by partitioning: shard 1 is 10.4 min in every run because the Timing category alone is ~8.5 min (the Timing step was out of scope).
+**Review (Codex `gpt-6.1-sol`, high, on `8b4b06e3`):** no correctness defect; its one note (Timing keeps shard 1 over 8 min) judged a target limit. The re-balance commit `577a1761` is settled by the exactly-once
+proof and the exactness check, not re-reviewed (a lines-only move).
+**Seat B's judgement:** LANDED as no worse and better balanced on the mean; 5 shards kept (4 would lengthen 2–5 without moving shard 1). OWED card: a Timing split (its own job, or Timing spread over shards) — the real
+lever on the run's wall time; with U-ci-dedupe or after U-red-says-why (both touch build.yml). Tests box NOT RUN (CI-only unit).
