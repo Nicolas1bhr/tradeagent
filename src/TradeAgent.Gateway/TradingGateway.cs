@@ -407,6 +407,14 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// The inconclusive class of a standing over its verdict's holdout span, or null — the reading
+    /// <see cref="Allocations.RecordPaper"/> re-asks inside its write.
+    /// </summary>
+    string? InconclusiveOf(PromotionStanding standing) =>
+        Core.Strategy.Inconclusive.Of(standing,
+            standing.Promotion is { } promotion ? Campaigns.HoldoutSpan(promotion.CampaignId) : null);
+
+    /// <summary>
     /// THE ONE INCONCLUSIVE PATH INTO PAPER (<c>U-referee-v2b</c>, <c>docs/EDGE-FACTORY.md</c> § 4.5), after the
     /// paper-eligible pass: every version whose refusal stands INCONCLUSIVE (<c>Strategy.Inconclusive</c>), oldest verdict
     /// first, is offered a slot under <see cref="AllocationPolicy.InconclusiveV1"/> for <c>Inconclusive.Term</c> — and
@@ -425,7 +433,7 @@ public sealed class TradingGateway : IAsyncDisposable
             .Select(p => p.VersionId)
             .Distinct(StringComparer.Ordinal)
             .Select(v => Promotions.Standing(v))
-            .Where(s => s.Promotion is not null && _allocations.InconclusiveOf(s) is not null)
+            .Where(s => s.Promotion is not null && InconclusiveOf(s) is not null)
             .OrderBy(s => s.Promotion!.At)
             .ThenBy(s => s.Promotion!.Id, StringComparer.Ordinal)
             .ToList();
@@ -452,7 +460,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 envelope.ShareOf(envelope.MaxQuantity),
                 envelope.MaxNotional is { } notional ? envelope.ShareOf(notional) : null,
                 envelope.Currency, now, now + Core.Strategy.Inconclusive.Term,
-                $"inconclusive quota: {_allocations.InconclusiveOf(standing)}; lineage {lineage}", now)
+                $"inconclusive quota: {InconclusiveOf(standing)}; lineage {lineage}", now)
             {
                 Scope = AllocationScope.Paper,
                 ConnectorId = Connector.Id,

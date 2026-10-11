@@ -658,9 +658,10 @@ public sealed class Allocations(Database db)
 
     /// <summary>
     /// WHICH INCONCLUSIVE CLASS THIS STANDING IS, over its verdict's holdout span (<see cref="CampaignStore.HoldoutSpan"/>),
-    /// or null because it is not inconclusive. The one reading the quota's writer, its sweep and its readers share.
+    /// or null because it is not inconclusive. The reading the quota's writer and its readers share; the sweep asks the same
+    /// two facts (<c>TradingGateway.InconclusiveOf</c>). Private: this ledger's public surface is its two writes and its reads.
     /// </summary>
-    public string? InconclusiveOf(PromotionStanding standing) =>
+    string? InconclusiveOf(PromotionStanding standing) =>
         Strategy.Inconclusive.Of(standing,
             standing.Promotion is { } promotion ? _campaigns.HoldoutSpan(promotion.CampaignId) : null);
 
