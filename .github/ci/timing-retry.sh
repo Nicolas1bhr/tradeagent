@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # THE TIMING CATEGORY'S ONE RETRY, AND WHAT IT RE-RUNS (U-red-says-why): `build.yml`'s "Test the timing category".
 #
+#   timing-retry.sh trx <name>                  the trx path attempt 1 must have written for EVERY test project that
+#                                               runs Timing tests, one per line, derived from the repo (see EVERY PROJECT)
 #   timing-retry.sh filter <trx>...             the VSTest filter for the second attempt, on stdout: the Timing tests
 #                                               the first attempt's trx files list as FAILED, and nothing else. Exit 1,
 #                                               nothing on stdout and an ::error on stderr, when they name no failed
@@ -18,6 +20,15 @@
 # element, whose className and name are the class and the METHOD — so a failed row re-runs every row of that method,
 # matched as FullyQualifiedName=<class>.<method> (xUnit gives every row the method's name). Exact, never ~: a
 # substring would re-run a method whose name merely contains another's.
+#
+# EVERY PROJECT (the second review of this unit, finding 1). The first attempt runs the whole solution, so a crashed or
+# aborted test project writes no trx at all, and a glob over the trx files that exist cannot see it: another project's
+# failed test is then retried, passes, and the step goes green over a project nobody judged. So the list of trx files
+# is NEVER the files present: `trx <name>` derives it from the repo — every test project TradeAgent.sln lists under
+# tests\ whose sources declare a Timing trait (a line that begins with `[` and names "Timing") — and the step passes
+# exactly that list to `filter` and `verify`, where a missing, empty or unreadable one fails the step (FAIL-CLOSED below).
+# A project whose trait this does not recognise is a project the step does not require a trx from: declare the trait
+# as an attribute line, as every Timing test does today.
 #
 # NOTHING NAMED, NOTHING RE-RUN. A first attempt that failed without a failed result in its trx — a crash, an abort,
 # a host that died, no trx at all — is not a timing red that a second attempt can judge, and re-running the whole
@@ -38,7 +49,7 @@
 # Attribute values are XML-decoded (&lt; &gt; &amp; &quot; &apos;) in one left-to-right pass before they are used.
 set -euo pipefail
 
-usage() { echo "usage: timing-retry.sh filter <trx>... | timing-retry.sh verify <attempt-1 trx>... -- <retry trx>..." >&2; exit 2; }
+usage() { echo "usage: timing-retry.sh trx <name> | timing-retry.sh filter <trx>... | timing-retry.sh verify <attempt-1 trx>... -- <retry trx>..." >&2; exit 2; }
 err() { echo "::error title=The timing retry cannot be trusted::$*" >&2; }
 
 # parse <strict 0|1> <trx>: one "<outcome><TAB><class>.<method>" line per result, on stdout; nonzero (and an ::error on
@@ -121,10 +132,29 @@ failed_methods() {
   printf '%s\n' "$all" | awk -F'\t' 'NF == 2 && $1 != "Passed" && $1 != "NotExecuted" { print $2 }' | sort -u
 }
 
+# timing_trx <name>: tests/<project>/TestResults/<name> for every test project the solution lists that declares a Timing
+# test. Nothing found is an error: a repo that names no Timing project has nothing for a retry to be judged against.
+timing_trx() {
+  local name=$1 csproj dir found=0
+  [ -f TradeAgent.sln ] || { err "TradeAgent.sln is not here, so the test projects the Timing step runs cannot be listed."; return 1; }
+  while IFS= read -r csproj; do
+    dir=$(dirname "$csproj")
+    [ -d "$dir" ] || { err "the solution lists '$csproj', which does not exist, so the test projects the Timing step runs cannot be listed."; return 1; }
+    if grep -rqE --include='*.cs' --exclude-dir=bin --exclude-dir=obj '^[[:space:]]*\[.*"Timing"' "$dir"; then
+      printf '%s/TestResults/%s\n' "$dir" "$name"; found=1
+    fi
+  done < <(tr -s '\\/' '//' < TradeAgent.sln | sed -n 's|^Project(.*= "[^"]*", "\(tests/[^"]*\.csproj\)".*|\1|p' | sort -u)
+  [ $found -eq 1 ] || { err "no test project in TradeAgent.sln declares a Timing test, so there is no trx to require."; return 1; }
+}
+
 [ $# -ge 1 ] || usage
 mode=$1
 shift
 case "$mode" in
+  trx)
+    [ $# -eq 1 ] || usage
+    timing_trx "$1" || exit 1
+    ;;
   filter)
     [ $# -ge 1 ] || usage
     names=$(failed_methods "$@") || exit 1
