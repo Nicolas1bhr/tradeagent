@@ -176,6 +176,40 @@ public partial class CouncilLoopTests
         Assert.DoesNotContain("Async", member, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A REQUEST NOT YET AT THE BROKER IS STILL OPEN WORK. A request the chair placed that waits for the owner's
+    /// approval, or was written and not yet dispatched, has not reached a final state, and the chair keeps its look
+    /// over it with an empty book and nothing else open.
+    ///
+    /// <para>RED at a2e839e6 (review 1, finding 1): the objective read <c>ExecutionRequestStore.Open()</c>, which
+    /// leaves out <c>CREATED</c> and <c>AWAITING_APPROVAL</c>, so the chair's look was withdrawn.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionState.CREATED)]
+    [InlineData(ExecutionState.AWAITING_APPROVAL)]
+    public async Task A_request_waiting_before_the_broker_keeps_operations_look(ExecutionState state)
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var requests = new ExecutionRequestStore(db);
+        requests.TryCreate(new ExecutionRequest
+        {
+            RequestId = "chair-1", ConnectorId = "fake", AccountId = "SIM-001", Instrument = "ES",
+            Intent = RequestIntent.PLACE, ParametersJson = "{}", ClientOrderId = "TA-chair-1",
+            CreatedAt = DateTimeOffset.UtcNow, State = ExecutionState.CREATED, Mode = TradingMode.PAPER
+        });
+        if (state != ExecutionState.CREATED) requests.Transition("chair-1", ExecutionState.CREATED, state);
+
+        Assert.Contains(new RoleObjective(RoleObjectives.RequestFinal, "chair-1"),
+            RoleObjectives.Open(db, CouncilRoles.Operations, []));
+
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        var now = Noon();
+        await new MissionLoop(host, HalfHourLooks, now: () => now).TurnAsync();
+        Assert.True(host.Events!.HasUnconsumed(MissionEventKind.Review, CouncilRoles.Operations),
+            $"the chair's request at {state} raised no look");
+    }
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
