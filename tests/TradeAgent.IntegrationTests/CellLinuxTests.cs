@@ -188,7 +188,8 @@ public class CellLinuxTests
         var ran = await InCell(w.Policy(), "/bin/sh", "-c",
             $"cat '{input}' && echo; " +
             $"echo x >> '{input}' 2>/dev/null && echo append-open || echo append-denied; " +
-            $": > '{input}' 2>/dev/null && echo truncate-open || echo truncate-denied; " +
+            // In a subshell: a failed redirection on the special built-in `:` ends a POSIX shell, and the rows after it with it.
+            $"( : > '{input}' ) 2>/dev/null && echo truncate-open || echo truncate-denied; " +
             $"rm -f '{input}' 2>/dev/null && echo unlink-open || echo unlink-denied; " +
             $"echo x > '{w.Ro}/new' 2>/dev/null && echo create-open || echo create-denied");
         Says(ran, "shared-input", "append-denied", "truncate-denied", "unlink-denied", "create-denied");
