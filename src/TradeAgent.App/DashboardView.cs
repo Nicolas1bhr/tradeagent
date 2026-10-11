@@ -107,6 +107,10 @@ sealed class DashboardPage
     readonly Button _agentButton;
 
     readonly PerformanceCard _performance = new();
+    readonly SeatSignInCard _signIn;
+
+    /// <summary>The "AI sign-in" card on this page (<c>U-seat-signin</c>), for a test to read and press.</summary>
+    internal SeatSignInCard SignIn => _signIn;
     readonly StackPanel _unconfirmed = new() { Spacing = Theme.S5 };
     readonly Border _unconfirmedCard;
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
@@ -246,6 +250,15 @@ sealed class DashboardPage
         _guidance.TextWrapping = TextWrapping.Wrap;
         _guidance.MinHeight = 72;
 
+        // THE SEAT HOME'S SIGN-IN, any time after onboarding (U-seat-signin): built once here, updated in place on the tick.
+        _signIn = new SeatSignInCard(new SeatSignInSources
+        {
+            Service = host.SeatSignIn,
+            Open = url => MainWindow.OpenPath(url, m => Ui.ReportError?.Invoke(m)),
+            Activity = line => host.Gateway.Log.Activity(line),
+            Ui = work => Dispatcher.UIThread.Post(work)
+        });
+
         var aiCard = Ui.Col(Theme.S3,
             _missionState,
             _missionCounts,
@@ -260,11 +273,13 @@ sealed class DashboardPage
                      + "it cannot give it permission to do anything the Safety page has not."),
             _guidance,
             Ui.With(Ui.Row(Theme.S2, Ui.Secondary("Save guidance", SaveGuidance)),
-                r => r.Margin = new Thickness(0, Theme.S2, 0, 0)));
+                r => r.Margin = new Thickness(0, Theme.S2, 0, 0)),
+            Ui.With(_signIn.SignedIn, c => c.Margin = new Thickness(0, Theme.S4, 0, 0)));
 
         var left = Ui.Col(Theme.S6,
             _unconfirmedCard,
             _approvalsCard,
+            _signIn.Root,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
             Ui.Section("The AI's own work", aiCard),
             _performance.Root);
@@ -298,6 +313,7 @@ sealed class DashboardPage
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
         RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
+        _signIn.Update();
         RefreshApprovals(waiting);
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
