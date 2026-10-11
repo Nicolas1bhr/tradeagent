@@ -376,8 +376,13 @@ public static class Versions
     /// <c>referee_research_trial</c> and <c>referee_holdout</c> are rebuilt keyed (campaign, version, method,
     /// <c>evaluator_version</c>) in one transaction before the stamp, every row kept with NULL — unknown, read as another
     /// evaluator's — and every reader reads this build's evaluator only.</para>
+    ///
+    /// <para><b>37 — the runtime profile a launch ran under</b> (<c>U-seat-home</c>, the orchestrator's rung 37, after 36):
+    /// <c>ai_attempt.runtime_profile</c>, one SHA-256 over the pinned program, the seat's deny set, its config file and the CLI's
+    /// own feature and MCP report, verified before the launch was admitted; written by <c>AiAttemptStore.Begin</c> in the row's own
+    /// insert and never updated. No backfill: a launch recorded before the rung has NULL — unknown.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 36;
+    public const int DatabaseSchemaVersion = 37;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

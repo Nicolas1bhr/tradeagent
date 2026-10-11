@@ -857,7 +857,9 @@ public sealed class TurnMeter
             State = AiAttemptState.LAUNCHED,
             PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture),
             InputHash = HashOf(prompt),
-            Role = role
+            Role = role,
+            // THE PROFILE THE SEAT WAS VERIFIED UNDER, above, before this row existed (U-seat-home). Written here and nowhere else.
+            RuntimeProfile = seat.Profile
         };
 
         AiAdmission admission;

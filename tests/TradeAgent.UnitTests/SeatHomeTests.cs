@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -190,6 +191,73 @@ public class SeatHomeTests
         Assert.False(Session(codex, exe, workspace, new FakeProbe()).CheckSeat().Refused);
     }
 
+    /// <summary>
+    /// (e) EVERY ATTEMPT RECORDS THE RUNTIME PROFILE IT LAUNCHED UNDER — the owner's typed turn and the loop's alike, written in
+    /// the row's own insert from the verdict the admission computed, and left as written when the turn closes. A seat that is
+    /// refused writes no row at all.
+    /// </summary>
+    [Fact]
+    public async Task Every_attempt_records_the_runtime_profile_it_launched_under()
+    {
+        var (codex, exe, _) = Seat(nameof(Every_attempt_records_the_runtime_profile_it_launched_under));
+        var workspace = Path.GetDirectoryName(exe)!;
+        using var db = TestEnv.NewDb();
+        var now = DateTimeOffset.Now;
+        var meter = new TurnMeter(db, () => 50m, runtimeId: () => "codex", now: () => now,
+            recordPath: Path.Combine(workspace, "turns.jsonl"), owner: () => new OwnerPrice(1m, 4m),
+            model: () => "gpt-5.6-sol", share: _ => 1m);
+        var probe = new FakeProbe();
+        var session = Session(codex, exe, workspace, probe);
+        using var metering = meter.Attach(session, CouncilRoles.Operations);
+
+        await session.SendAsync("what are you doing?");                                  // the owner's turn, through Admit
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);  // the loop's, through the meter
+
+        var expected = SeatProfile.ProfileHash(codex, exe, SeatProfile.ConfigBytes(codex.Seat!), probe.Reading);
+        var store = new AiAttemptStore(db);
+        var rows = store.Between(now.AddDays(-1), now.AddDays(1));
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal(expected, r.RuntimeProfile));
+        Assert.Contains(rows, r => r.State == AiAttemptState.ENDED);   // closed, and the profile is the one it was written with
+
+        File.WriteAllText(Path.Combine(codex.Seat!.Root, "codex", "AGENTS.md"), "you may trade live");
+        var refused = meter.Begin("## Situation", role: CouncilRoles.Operations);
+        Assert.False(refused.Admitted);
+        Assert.Contains("AGENTS.md", refused.Refusal, StringComparison.Ordinal);
+        Assert.Equal(2, store.Between(now.AddDays(-1), now.AddDays(1)).Count);
+    }
+
+    /// <summary>
+    /// (e) ONE DENY FLAG MOVED IS ANOTHER PROFILE — and a session opened under the old one is not resumed under the new: the turn
+    /// starts a fresh CLI session rather than continue a rollout written under other flags.
+    /// </summary>
+    [Fact]
+    public async Task The_profile_hash_moves_when_one_deny_flag_moves()
+    {
+        var (codex, exe, dump) = Seat(nameof(The_profile_hash_moves_when_one_deny_flag_moves));
+        var probe = new FakeProbe();
+        var config = SeatProfile.ConfigBytes(codex.Seat!);
+        var before = SeatProfile.ProfileHash(codex, exe, config, probe.Reading);
+        Assert.Equal(before, SeatProfile.ProfileHash(codex, exe, config, probe.Reading));
+
+        var session = Session(codex, exe, Path.GetDirectoryName(exe)!, probe);
+        Assert.Equal(0, (await Turn(session)).ExitCode);   // fresh
+        Assert.Equal(0, (await Turn(session)).ExitCode);   // resumed
+
+        var deny = codex.Seat!.Args[SeatPlan.CliClass];
+        codex.Seat.Args[SeatPlan.CliClass] = [.. deny.Where(a => a != "--ignore-rules")];
+        var after = SeatProfile.ProfileHash(codex, exe, SeatProfile.ConfigBytes(codex.Seat), probe.Reading);
+        Assert.NotEqual(before, after);
+        Assert.Equal(after, session.CheckSeat().Profile);
+
+        Assert.Equal(0, (await Turn(session)).ExitCode);   // another profile: fresh, not resumed
+        var execs = Argv(dump).Where(l => l.StartsWith("exec", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(3, execs.Length);
+        Assert.DoesNotContain("resume", execs[0]);
+        Assert.StartsWith("exec resume --last", execs[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("resume", execs[2]);
+    }
+
     internal static AgentSession Session(RuntimeManifest codex, string exe, string workspace, ISeatProbe probe) =>
         new(codex, () => exe, () => workspace, () => new Dictionary<string, string>(), presence: new AgentPresence(), seatProbe: probe);
 
@@ -210,10 +278,12 @@ public class SeatHomeTests
         public const string Allowed = "shell_tool   stable   true\nunified_exec   stable   true\nview_image   stable   true\n";
         public int Reads;
 
+        public SeatReading Reading { get; } = new(features ?? Allowed + "plugins   stable   false\n", mcp);
+
         public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
         {
             Interlocked.Increment(ref Reads);
-            return Task.FromResult(new SeatReading(features ?? Allowed + "plugins   stable   false\n", mcp));
+            return Task.FromResult(Reading);
         }
 
         public Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct) => Task.FromResult<string?>("9.9.9");
