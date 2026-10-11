@@ -78,7 +78,7 @@ public class TapeOverPipeTests(ITestOutputHelper log)
             c._r = new StreamReader(c._pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
             c._w = new StreamWriter(c._pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
 
-            var grant = role is null ? null : rig.Grants.Issue(role, "attempt-tape-" + role).Token;
+            var grant = role is null ? null : rig.Grants.IssueHere(role, "attempt-tape-" + role).Token;
             var hello = await c.SendAsync(new IpcRequest { Op = Ops.Hello, Grant = grant });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return c;

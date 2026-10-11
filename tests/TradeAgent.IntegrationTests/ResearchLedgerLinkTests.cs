@@ -83,7 +83,7 @@ public class ResearchLedgerLinkTests(ITestOutputHelper log)
             var client = await Raw.ConnectAsync(Pipe);
             var hello = await client.SendAsync(new IpcRequest
             {
-                Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = Grants.Issue(role, attempt).Token
+                Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = Grants.IssueHere(role, attempt).Token
             });
             Assert.True(hello.Ok, Json.Write(hello.Error));
             return client;

@@ -38,7 +38,7 @@ public class VenueOverPipeTests(ITestOutputHelper log)
         server.Start();
 
         var client = await Raw.ConnectAsync(pipe);
-        var grant = role is null ? null : grants.Issue(role, attempt).Token;
+        var grant = role is null ? null : grants.IssueHere(role, attempt).Token;
         var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
         Assert.True(hello.Ok, Json.Write(hello.Error));
 

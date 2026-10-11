@@ -45,6 +45,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     public Func<NamedPipeServerStream, string?> PeerImagePath { get; init; } = Security.PeerImage.ClientPath;
 
+    /// <summary>
+    /// WHICH PROCESS IS ON THE OTHER END, AND SINCE WHEN (<c>U-grant-tree</c>): what a launch grant's container is asked
+    /// about. Overridable so a test can hand the check an answer the kernel will not give on demand — a peer that started
+    /// after the accept, a lookup that failed; the product never sets it.
+    /// </summary>
+    public Func<NamedPipeServerStream, Security.PeerFacts?> PeerFactsOf { get; init; } = Security.PeerImage.Facts;
+
     const int MaxFrameBytes = 1 << 20;
 
     /// <summary>
@@ -155,6 +162,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             get { lock (_gate) return _grant; }
             set { lock (_gate) _grant = value; }
         }
+
+        /// <summary>
+        /// WHEN THE CONNECTION WAS ACCEPTED, in the kernel's own unit for a process's start (<see cref="ProcessClock"/>).
+        /// A peer that started after this moment is a pid handed on, not the process that connected (<c>U-grant-tree</c>).
+        /// </summary>
+        public ulong Accepted { get; init; }
 
         /// <summary>A frame is being handled from now until <see cref="LeaveCall"/>.</summary>
         public void EnterCall() { lock (_gate) _inCall = true; }
@@ -630,7 +643,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 await server.WaitForConnectionAsync(ct);
                 var s = server;
                 server = null; // ownership moves to the handler
-                var state = new Connected();
+                var state = new Connected { Accepted = ProcessClock.Now() };
                 _live[s] = state;
                 // The HANDLER token, not the accept token: a connection already taken is served to
                 // the end even though the door has closed.
@@ -764,7 +777,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     // the token, the turn must not be over, and the program holding the handle must
                     // be TradeAgent's own trade command, as the kernel names it on every platform; a
                     // kernel that will not say is a refusal.
-                    if (GrantRefusal(pipe, req, out grant) is { } grantRefusal)
+                    if (GrantRefusal(pipe, req, state.Accepted, out grant) is { } grantRefusal)
                     {
                         gateway.Log.Engineering("Ipc", "grant_rejected", "warn", session: req.Session,
                             requestId: req.RequestId ?? req.Id);
@@ -1065,7 +1078,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// will not, the verdict is "could not be identified" and the grant is refused: the kernel's
     /// silence is a refusal, never a pass.
     /// </summary>
-    IpcResponse? GrantRefusal(NamedPipeServerStream pipe, IpcRequest req, out Security.AgentGrant? grant)
+    IpcResponse? GrantRefusal(NamedPipeServerStream pipe, IpcRequest req, ulong accepted, out Security.AgentGrant? grant)
     {
         grant = null;
         var verdict = Grants.Verify(req.Grant);
@@ -1083,8 +1096,34 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     $"this connection presented a launch grant, and {why}");
         }
 
+        // THE PEER MUST BE INSIDE THE CONTAINER THE APP MADE FOR THIS ATTEMPT (U-grant-tree), on every platform and with no
+        // setting that turns it off. The token alone proves only that something read an environment, and a process of the
+        // same user can. Asked after the image rule, so a copied trade command is still refused by name.
+        if (ContainerRefusal(pipe, accepted, verdict.Grant!) is { } outside)
+            return IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED,
+                $"this connection presented the launch grant of the {CouncilRoles.Title(verdict.Grant!.Role)}'s attempt " +
+                $"{verdict.Grant.AttemptId}, and {outside} — it is served only to a process inside " +
+                $"{verdict.Grant.Container?.Name ?? "the container TradeAgent made for that attempt"}");
+
         grant = verdict.Grant;
         return null;
+    }
+
+    /// <summary>
+    /// Null when the peer is proved inside the grant's container, and the reason otherwise. The kernel must name the peer;
+    /// the peer must have started no later than the moment its connection was accepted (a pid handed on since is not the
+    /// process that connected); and the container must answer Member — Outside and Unknown are both refusals.
+    /// </summary>
+    string? ContainerRefusal(NamedPipeServerStream pipe, ulong accepted, Security.AgentGrant grant)
+    {
+        if (grant.Container is not { } container) return "it is not yet bound to a container";
+        if (PeerFactsOf(pipe) is not { } peer)
+            return "the operating system would not say which process is holding this connection";
+        if (accepted == 0 || peer.Start > accepted)
+            return $"process {peer.Pid}, which the kernel names as the peer, started after the connection was accepted, " +
+                   "so it is not the process that connected";
+        var verdict = container.Contains(peer);
+        return verdict.Is == Security.Membership.Member ? null : verdict.Why;
     }
 
     /// <summary>

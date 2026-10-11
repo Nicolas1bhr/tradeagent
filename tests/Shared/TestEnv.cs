@@ -55,7 +55,10 @@ public static class TestEnv
         //
         // Tests that are ABOUT the grant build their own register and speak the wire themselves, so
         // this cannot make one of them pass.
-        Chair = AgentGrants.Shared.Issue(CouncilRoles.Operations, "test-attempt");
+        //
+        // BOUND TO THIS TEST PROCESS (U-grant-tree): a grant is served only to a peer inside the container
+        // it was bound to, and the test process and the `trade` children it starts are this launch's.
+        Chair = AgentGrants.Shared.IssueHere(CouncilRoles.Operations, "test-attempt");
         Environment.SetEnvironmentVariable(AgentGrants.Variable, Chair.Token);
     }
 

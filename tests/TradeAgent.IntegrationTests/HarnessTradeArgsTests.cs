@@ -218,7 +218,7 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
         // type is the defect.
         var role = CouncilRoles.Operations;
         var tools = new GrantedWorkerTools(role, () => Paths.RoleHome(role), () => "attempt-args", () => server);
-        await using var wire = await Raw.DialAsync(pipe, grants.Issue(role, "attempt-args").Token);
+        await using var wire = await Raw.DialAsync(pipe, grants.IssueHere(role, "attempt-args").Token);
         var written = await wire.SendAsync(new IpcRequest
         {
             Op = Ops.LedgerAdd, Session = "args", RequestId = "args-entry",

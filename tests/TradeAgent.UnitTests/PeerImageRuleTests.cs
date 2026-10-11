@@ -115,7 +115,7 @@ public class LaunchGrantRegisterTests
     public void A_grant_names_the_role_and_the_attempt_it_was_minted_for()
     {
         var grants = new AgentGrants();
-        using var g = grants.Issue(CouncilRoles.Research, "turn-20260912-abc");
+        using var g = grants.IssueHere(CouncilRoles.Research, "turn-20260912-abc");
         var v = grants.Verify(g.Token);
 
         Assert.Equal(GrantState.Valid, v.State);
@@ -128,7 +128,7 @@ public class LaunchGrantRegisterTests
     {
         var now = DateTimeOffset.UtcNow;
         var grants = new AgentGrants(() => now);
-        var g = grants.Issue(CouncilRoles.Operations, "turn-1");
+        var g = grants.IssueHere(CouncilRoles.Operations, "turn-1");
 
         g.Dispose();                                    // the turn ended
         Assert.Equal(GrantState.Valid, grants.Verify(g.Token).State);   // a call already in flight
@@ -144,8 +144,8 @@ public class LaunchGrantRegisterTests
     public void One_roles_token_is_not_another_roles()
     {
         var grants = new AgentGrants();
-        using var chair = grants.Issue(CouncilRoles.Operations, "a");
-        using var research = grants.Issue(CouncilRoles.Research, "b");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "a");
+        using var research = grants.IssueHere(CouncilRoles.Research, "b");
 
         Assert.Equal(CouncilRoles.Operations, grants.Verify(chair.Token).Grant!.Role);
         Assert.Equal(CouncilRoles.Research, grants.Verify(research.Token).Grant!.Role);
