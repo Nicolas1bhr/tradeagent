@@ -1014,6 +1014,61 @@ public class RefereeVerdictTests
     }
 
     /// <summary>
+    /// (c, <c>U-evidence-evaluator-label</c>) RESEARCH EVIDENCE COUNTS A TRIAL MEASURED UNDER OTHER SEMANTICS, BUT USES NONE
+    /// OF ITS RETURNS. Beside the candidate's 139-day stream, two trials of the lineage carry streams their runs' labels say
+    /// another evaluator measured — one labelled <c>backtest=1</c>, one recorded before rung 36 (NULL, unknown) — and the
+    /// first is the version's own with a 300-day stream, which as this build's would have been the candidate. Both are read <c>no-stream</c>, counted in
+    /// M and clustered alone, and every figure the verdict records is the figure of the same lineage whose two trials had
+    /// no stream at all: not one of their returns reached the deflation. The record says how many were read so, the report
+    /// names them, and a lineage with none says nothing of it. RED on the base: the 300-day stream was the candidate.
+    /// </summary>
+    [Fact]
+    public async Task Research_evidence_counts_a_trial_measured_under_other_semantics_but_uses_none_of_its_returns()
+    {
+        var bare = await Given(frozenAt: Bar0);
+        using var _1 = bare.Db;
+        StreamedRun(bare, "candidate", 139, 11);
+        StreamedRun(bare, "foreign", 0, 0);
+        StreamedRun(bare, "unknown", 0, 0, OtherVersion(bare));
+        Assert.True(RefereeOf(bare).Verdict(bare.VersionId, bare.Campaign.Id).Promoted);
+        var expected = RefereeOf(bare).Research.Of(bare.Campaign.Id, bare.VersionId)!;
+        Assert.Equal(0, expected.TrialsOtherSemantics);
+
+        var w = await Given(frozenAt: Bar0);
+        using var _2 = w.Db;
+        var candidate = StreamedRun(w, "candidate", 139, 11);
+        var foreign = StreamedRun(w, "foreign", 300, 13);
+        var unknown = StreamedRun(w, "unknown", 139, 14, OtherVersion(w));
+        w.Db.Write(_ =>
+        {
+            using var c = w.Db.Cmd("UPDATE strategy_run SET evaluator_version = CASE id WHEN $f THEN 'backtest=1;metrics=1;scoring=1' "
+                + "ELSE NULL END WHERE id IN ($f, $u)", ("$f", foreign), ("$u", unknown));
+            return c.ExecuteNonQuery();
+        });
+        Assert.Equal(300, new StrategyStore(w.Db).StreamsOf(foreign).Single().Days.Count);
+
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        var e = RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!;
+        Assert.Equal(candidate, e.CandidateRunId);
+        Assert.Equal((3, 2, 3), (e.TrialsM, e.TrialsUnstreamed, e.NEff));
+        Assert.Equal(2, e.TrialsOtherSemantics);
+        Assert.Equal(ResearchEvidence.NoStream, e.Trials.Single(t => t.RunId == foreign).Reading);
+        Assert.Equal(ResearchEvidence.NoStream, e.Trials.Single(t => t.RunId == unknown).Reading);
+
+        // NOT ONE OF THEIR RETURNS: every figure is the lineage's whose two trials had no stream.
+        Assert.Equal(expected with { Trials = [], TrialsOtherSemantics = 2 }, e with { Trials = [] });
+        Assert.Equal(expected.Trials, e.Trials);
+
+        // A MEASUREMENT RECORDED BEFORE THE RUNG APPLIED NO SUCH CHECK: unknown, and the report claims none.
+        w.Db.Write(_ =>
+        {
+            using var c = w.Db.Cmd("UPDATE referee_research SET trials_other_semantics = NULL");
+            return c.ExecuteNonQuery();
+        });
+        Assert.Null(RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!.TrialsOtherSemantics);
+    }
+
+    /// <summary>
     /// A HOLDOUT SET AFTER A VERDICT WITHHOLDS ITS RECORDED RESEARCH EVIDENCE FROM THE REPORT, AND THE RECORD STANDS. The
     /// owner downloads the same bars again and holds back minutes the candidate's research window covers: the run is held
     /// back now (<c>StrategyStore.HeldBack</c>), so its DSR, blocks and ceiling — figures of those minutes — leave the

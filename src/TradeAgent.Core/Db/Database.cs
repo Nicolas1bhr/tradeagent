@@ -2129,13 +2129,20 @@ public sealed class Database : IDisposable
             // bars, and nothing on the row said which: a verdict under a later evaluator could have deflated its own figures
             // over streams an earlier one measured, as if one semantics had produced both.
             //
-            // ONE COLUMN, written by `StrategyStore.RecordRun` in the run's own insert from this build's constant and never
-            // from a caller's value; the run's id hashes the same constant, so the same request under another evaluator is
-            // another run and never this row answering for it. NO BACKFILL: a run recorded before this rung has NULL, which
-            // is unknown, and research evidence counts it as a trial whose returns it does not use — never a guess that it
-            // was this build's. Added only where the table lacks it and the stamp last, because the rungs run in autocommit
-            // and a crash before the stamp runs this again.
+            // ONE COLUMN ON THE RUN, written by `StrategyStore.RecordRun` in the run's own insert from this build's constant
+            // and never from a caller's value; the run's id hashes the same constant, so the same request under another
+            // evaluator is another run and never this row answering for it. NO BACKFILL: a run recorded before this rung has
+            // NULL, which is unknown, and research evidence counts it as a trial whose returns it does not use — never a
+            // guess that it was this build's.
+            //
+            // AND ONE ON THE MEASUREMENT: `referee_research.trials_other_semantics`, how many of its trials it read so,
+            // written by `ResearchEvidence.Record` in the verdict's own insert. A measurement recorded before this rung has
+            // NULL — it applied no such check — and is never re-read as having applied one: counting its trials' labels
+            // now would call every unstreamed trial of it "other semantics", since every run before the rung is NULL.
+            // Added only where the tables lack them and the stamp last, because the rungs run in autocommit and a crash
+            // before the stamp runs this again.
             AddColumnIfMissing("strategy_run", "evaluator_version", "TEXT");
+            AddColumnIfMissing("referee_research", "trials_other_semantics", "INTEGER");
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','36') ON CONFLICT(key) DO UPDATE SET value='36';");
         }
