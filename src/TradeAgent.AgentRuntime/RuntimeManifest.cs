@@ -95,6 +95,43 @@ public sealed class SeatPlan
     /// </summary>
     public string ConfigFile { get; set; } = "";
 
+    /// <summary>
+    /// Paths under <see cref="Home"/> that must NOT exist when a seat starts: what the CLI would read as instructions, skills,
+    /// plugins, rules or hooks if a seat wrote it there — the home is shared by every seat and writable by each.
+    /// </summary>
+    public string[] Forbidden { get; set; } = [];
+
+    /// <summary>Names that must NOT exist in the seat's working directory: a project config the CLI would load, or its skills.</summary>
+    public string[] WorkspaceForbidden { get; set; } = [];
+
+    /// <summary>The CLI's own report of its features, run under the seat home with the deny set's keys. Empty for none.</summary>
+    public string[] FeaturesArgs { get; set; } = [];
+
+    /// <summary>
+    /// The features that may be ON. Every line of <see cref="FeaturesArgs"/>' output whose last word is <c>true</c> must name one of
+    /// these: a new release that switches something on by default, or a key that stopped working, refuses rather than runs.
+    /// </summary>
+    public string[] FeatureAllowlist { get; set; } = [];
+
+    /// <summary>The CLI's own list of its MCP servers as JSON, run the same way. Empty for none.</summary>
+    public string[] McpArgs { get; set; } = [];
+
+    /// <summary>The MCP servers the app itself configures. None today, so any server is refused.</summary>
+    public string[] McpAllowlist { get; set; } = [];
+
+    /// <summary>
+    /// The deny set's KEYS — its <c>--disable</c>/<c>--enable</c>/<c>-c</c> pairs — which the probe commands take; the flags without a
+    /// value (<c>--ignore-user-config</c> and its kind) belong to <c>exec</c> only.
+    /// </summary>
+    public string[] KeyArgs()
+    {
+        var args = ArgsFor(CliClass);
+        var keys = new List<string>();
+        for (var i = 0; i + 1 < args.Length; i++)
+            if (args[i] is "--disable" or "--enable" or "-c" or "--config") { keys.Add(args[i]); keys.Add(args[++i]); }
+        return [.. keys];
+    }
+
     /// <summary>The deny set of <paramref name="seatClass"/>, or none.</summary>
     public string[] ArgsFor(string seatClass) => Args.TryGetValue(seatClass, out var a) ? a : [];
 
@@ -609,7 +646,31 @@ public static class RuntimeCatalog
                         "-c", "shell_environment_policy.inherit=\"all\"", "-c", "shell_environment_policy.set={}"
                     ]
                 },
-                ConfigFile = "codex/config.toml"
+                ConfigFile = "codex/config.toml",
+                // WHAT A SEAT MUST NOT FIND IN ITS HOME OR WORKSPACE. $CODEX_HOME/AGENTS.md is injected into every turn even under
+                // the deny set (survey case (d)); $HOME/.agents/skills is a skill root even with CODEX_HOME set (case (c)); a
+                // workspace .codex/config.toml with no trust entry is loaded and its MCP server spawned (cases (a), (c)). The
+                // workspace's own AGENTS.md is the canon and is NOT here. INTEGRITY ADVISORY: a seat runs as the owner's user and
+                // can write any of these between this check and its start; only confinement closes that (ORCHESTRATION § 2.7).
+                Forbidden =
+                [
+                    "codex/AGENTS.md", "codex/AGENTS.override.md", "codex/plugins", "codex/skills", "codex/rules", "codex/hooks.json",
+                    "home/.agents", "home/.codex"
+                ],
+                WorkspaceForbidden = [".codex", ".agents"],
+                // 0.04 s and 0.03 s on this Mac (survey § 4). Under the deny set's keys, RUN 2026-10-11 over an empty home, exactly
+                // these were on — the allowlist is that run's list, and anything else on is a release or a key that changed.
+                FeaturesArgs = ["features", "list"],
+                FeatureAllowlist =
+                [
+                    "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
+                    "guardian_approval", "guardian_reuse_parent_compaction", "in_app_dictation", "item_ids", "mentions_v2",
+                    "resize_all_images", "shell_snapshot", "shell_tool", "sleep_tool", "sqlite", "steer", "system_proxy_fallback",
+                    "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server", "unbounded_connection_retries",
+                    "unified_exec", "unified_exec_tty", "unified_exec_zsh_fork", "view_image", "write_stdin_approval"
+                ],
+                McpArgs = ["mcp", "list", "--json"],
+                McpAllowlist = []
             },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux
