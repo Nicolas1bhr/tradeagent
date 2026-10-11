@@ -313,7 +313,8 @@ public class SeatHomeTests
         }
         finally { await rt.StopAsync(); }
 
-        Assert.Equal(["login status", "login --with-api-key", "login"], Argv(dump));
+        // The sign-in is the platform's own: `login` here, `login --device-auth` on Linux.
+        Assert.Equal(["login status", "login --with-api-key", string.Join(' ', codex.AuthArgs)], Argv(dump));
     }
 
     internal static AgentSession Session(RuntimeManifest codex, string exe, string workspace, ISeatProbe probe) =>
