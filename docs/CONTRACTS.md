@@ -2133,6 +2133,23 @@ AI made this", which is what it did for every app file before this. An `app` row
 row raises one `inbox:` wake counting those rows; a new `Agent` row (a role's own write) or `App` row (the
 app's files and deliveries, which wake by their own `task:`) is recorded as before and wakes nobody.
 
+**Each role is woken for what it owns.** (`U-reconcile-wakes`; no rung.) Every wake names its role: the
+owner's words, the inbox, the "work on its own" press and every fill and finished order are Operations' —
+except a fill or a finished order of a paper deployment's request (its id is a `deployment_op` row), which
+wakes nobody: that run's observation is its forward-run note, raised for Research and quoted in the turn it
+buys like a report. The Situation lists new inbox material to each role since ITS OWN last Situation. The
+scheduled look (`MissionReviewMinutes`, the FASTEST pace — `U-quiet-review` slows it to 8× while only looks
+wake a role) is raised only for a role with an open objective (`AgentRuntime/RoleObjectives.cs`, version 1,
+written into every attempt's context as `objectives_version`): kinds in code, instances derived at read from
+the rows that open them — for Operations an owner message no turn has taken, a non-deployment request not
+final, a position in the book the host's last Situation read (an unread book counts as one; never a broker
+call from the schedule), an open boundary it has not assessed; for Research its standing research mandate,
+an untaken verdict, an open deployment and an unassessed boundary. A role with none has its pending
+payload-less looks closed without a turn (`withdrawn`, consumed by no launch, the reason in the detail —
+the statement refuses every other wake), and a host that cannot say keeps the clock. The day's renewal is
+raised only for a role whose allowance stopped it (`AdmitsAnotherTurn` false). No op, verb, argument,
+setting or agent-written file opens an objective or a wake; `next.json` stays the agent's one request.
+
 **A pass that could not read everything is not complete** (`U-inbox-unreadable`): a tracked folder the
 disk would not say is there, a folder it would not list or a listed file it would not describe — read
 through `WorkspaceReads`, which says absent only when the disk does — leaves both window keys

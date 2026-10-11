@@ -466,9 +466,14 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
-    /// HOW OFTEN THE AI IS WOKEN WHEN NOTHING HAS HAPPENED, in minutes. 0 is off, and then only a
-    /// real event — the owner typing, material arriving, a fill, an order settling, the day turning
-    /// over — starts a turn.
+    /// THE FASTEST THE AI IS WOKEN WHEN NOTHING HAS HAPPENED, in minutes. 0 is off, and then only a
+    /// real event — the owner typing, material arriving, a fill, an order settling, a report or a verdict
+    /// arriving, the day turning over for a role its allowance stopped — starts a turn.
+    ///
+    /// <para>It is the fastest pace, not the pace: while only looks wake a role the next is raised at twice
+    /// the last, up to eight of these (<c>U-quiet-review</c>), and a role is looked at only while it has
+    /// open work it owns — an owner's message, an order or a position for the chair, the standing research
+    /// mandate for Research (<c>RoleObjectives</c>, <c>U-reconcile-wakes</c>).</para>
     ///
     /// The AI takes a turn because something happened. That leaves the case where nothing has, which
     /// is not the same as there being nothing worth doing: the research, the backtests and the

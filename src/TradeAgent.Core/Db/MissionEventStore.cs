@@ -84,9 +84,10 @@ public static class MissionEventKind
     /// wake is deduplicated by the boundary, so a re-proposed promotion raises an id the table already
     /// holds and buys neither director a turn.</para>
     ///
-    /// <para>TWO rows per boundary, one per role, for the reason new material is two rows: one row
-    /// consumed by whichever director reached it first would silently deny the other the turn the
-    /// protocol requires it to take. "Two assessments are two turns" (:63) is a count of what the owner
+    /// <para>TWO rows per boundary, one per role: one row consumed by whichever director reached it
+    /// first would silently deny the other the turn the protocol requires it to take. (New material is
+    /// ONE row, the chair's — <c>AppHost.InboxWake</c>; each role's Situation lists it since that role's
+    /// own last turn.) "Two assessments are two turns" (:63) is a count of what the owner
     /// pays for, and these are the two.</para>
     /// </summary>
     public const string Boundary = "boundary";

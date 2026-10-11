@@ -491,8 +491,11 @@ public static class Labels
         $"Saved. One turn now sets aside up to {reservation}: {input:N0} input tokens and "
         + $"{output:N0} output tokens.";
 
-    /// <summary>How often the AI is woken when nothing has happened, and the press that writes it.</summary>
-    public const string ReviewEvery = "Wake the AI to look around every, minutes (0 = only when something happens)";
+    /// <summary>
+    /// How often, AT MOST, the AI is woken when nothing has happened, and the press that writes it. The fastest pace:
+    /// the look slows while nothing happens and is raised only for a role with open work it owns.
+    /// </summary>
+    public const string ReviewEvery = "Wake the AI to look around at most every, minutes (0 = only when something happens)";
 
     public const string SaveReviewEvery = "Save how often it looks";
 

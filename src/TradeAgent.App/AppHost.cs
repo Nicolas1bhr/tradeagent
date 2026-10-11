@@ -1798,7 +1798,9 @@ public sealed class AppHost : IAsyncDisposable
                 // WHAT THE APP REFUSED AND PUT BACK SINCE THIS ROLE LAST TURNED. A plan restored
                 // under an agent that is not told is the app editing its memory behind its back,
                 // and the next turn would spend itself wondering where its work went.
-                Restored = host._db is { } db ? WorkspaceRevisions.Notices(db, role) : []
+                Restored = host._db is { } db ? WorkspaceRevisions.Notices(db, role, putBack: true) : [],
+                // AND WHAT IT REFUSED AND PUT NOTHING BACK OVER, under a header that is true of it.
+                NotRestored = host._db is { } kept ? WorkspaceRevisions.Notices(kept, role, putBack: false) : []
             };
 
         /// <summary>The chair's, where no role is named.</summary>
