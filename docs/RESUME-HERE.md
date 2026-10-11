@@ -15,6 +15,21 @@ heartbeat first; in a meeting, arm nothing), then the four blocks right after th
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
+**2026-10-12 01:5x — FROZEN on the owner's word, mid-build; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("AFTER ANY COMPACTION / FROZEN"),
+then `fleet/handoff/A.md` and `B.md`.** The owner: "once usage limit resets (this window), i'd like you freeze the work, bolt everything down so we can
+perfectly resume later today". **Landed 2026-10-11 pm → 10-12 (the in-app orchestration build, seats A and B):** `U-ci-dedupe` (record `ba27ce63`; a
+main push whose tree a green dispatch run proved skips its jobs — proven on a code landing too) · `U-admission-fail-closed` (`7ef727a0`; a launch whose
+admission cannot be written is refused, visibly, on every wake kind) · `U-reconcile-packet` (`06ebf6e7`; canon v3) · `U-seat-home` (rung 37, `133759b5`; no
+seat runs under the owner's `~/.codex`) · O2a `U-org-principals` (`7be8bec7`; canon v4; a third position is a row with its own home; the two-piece activation
+seam) · `U-cell-linux-a` (`c8004ffc`; the first Linux confinement, 21/21 rows on CI's kernel 6.17/Landlock ABI 7) · `U-prompt-stdin` (`521c5fc9`; no prompt
+in any argv). **Docs:** `docs/ORCHESTRATION.md` amended through `7509521a` (R-exec-server; the Linux launcher stack; no real-model organisation seat before a
+PROVEN executor cell on the host; thinking seats pin a classic-tools model; the refusal taxonomy — the owner's words never settled by a refusal);
+`docs/FLEET.md` `cdd8e62b` (full send; no wrap-up; immaculate handoffs). **In flight, frozen (branches pushed unless said):** O2b `U-org-rights` — landing
+CI green, re-prep and land · O4 `U-org-envelopes` (rung 38) — fix pass CI green, its report owed, then land · `U-grant-tree` — fix pass mid-item-4, UNPUSHED
+commits and uncommitted edits in its worktree · `U-seat-signin` — built and green, its triaged fixer next · `U-seat-acl` — CI red to read · READY:
+O3 `U-org-wakes`, `U-thinking-seats-a` (rung 39), `U-puppet-runtime`. **For the owner:** the five Linux-host cell questions and the nine of 2026-10-09;
+M-org0 when testing may start; GitHub Pro/Team (CI's 20 jobs bound all night).
+
 **2026-10-11, afternoon — the in-app orchestration becomes the first priority; docs only (`docs/ORCHESTRATION.md`;
 `docs/research/2026-10-11/R23-orchestration-first.md`).** The owner: "we need to have the orchestration dialed in, as well build out as can be. this is a
 priority over all the others … lets start arching out that genuine in app ai orchestration and get it right from the get go." **The architecture:** one
