@@ -33,3 +33,23 @@ Conflicts: `U-org-envelopes` (O4) extends `AiAttemptStore.Begin`'s rule — this
 `U-seat-home` touches launch environments, not admission.
 Gate and report per `fleet/BUILDER-PROMPT-v2.md`: rebase on `main` first; Release `--no-incremental` 0 warnings; touched classes 3×; branch CI all three
 platforms; names vs `main` 0 removed (renames declared); `## Report` ≤ 20 lines appended here. No push to main, no merge.
+
+## Report
+Tip: code `6658cbe2` (CI'd); this report is the next commit. Base `3cfb6ef7` (rebase on `main`: already up to date).
+Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` → `0 Warning(s)` `0 Error(s)`.
+Gate 2, 3× each, all exit 0: Unit {BudgetReservation, HarnessBudget, MissionLoop, MissionOwnerMessage, QuiescenceBarrier, TurnMeter}Tests `Passed! - Failed: 0, Passed: 90` ×3; Integration ContainmentTests `Passed! - Failed: 0, Passed: 2` ×3.
+Gate 3: CI run 38151081360 `success`, every job green: ubuntu, macos, windows 1–5, package, package-linux, linux-host.
+Gate 4: names.sh main → `sets: base 2612 tip 2619` `removed: 0` `added: 7`. Rename declared: `AiAdmission.Unrecorded` → `AiAdmission.NoLedger`. It is a field, not a test name.
+Item 1 DONE (`b2cf3a70`): the catch in `TurnMeter.Begin` returns `AiAdmission.LedgerRefused(ex.Message)`: new `Ceiling = AiAdmission.Ledger`, and the sentence is `Labels.LaunchLedgerUnwritable`. The ungated `_attempts.Begin(opened)` in `Record` is left as it was, with a comment saying it records a turn that already ran and admits nothing.
+Item 2 DONE (`6658cbe2`): `MissionHost.BeginTurn` with no meter returns `NoLedgerOpen`, a refusal on the ledger. A null `Admit` in `AgentSession` or `ApiConversation` also refuses, and the doc comments are rewritten. `NoLedger` is now only the default of `IMissionHost.BeginTurn` and the value test hosts set explicitly. The loop's `recorded is null` branch is documented as no-ledger only.
+Deviation: test helpers that send without a meter now set `Admit = _ => AiAdmission.NoLedger` (SessionOverStream, QuiescenceBarrier.ChatSession, 2 ContainmentTests sessions). Without it, a null Admit now refuses and 11 tests went red. Their names and assertions are unchanged.
+RED before the fix, at base behaviour: (a) `a launch the ledger would not record was admitted`; (b) `Assert.Empty() Failure` (the Situation was sent); (c) `the AI tool was started for a turn the ledger never recorded`. With the fallbacks set back to admit: `a launch with no meter to reserve it was admitted`, `the AI tool was started for a turn no meter reserved`, and the harness test's `Assert.Empty() Failure` (a request reached the provider).
+Mutant: the catch restored to `catch (Exception) { return AiAdmission.Unrecorded; }` → `Failed: 3, Passed: 0` ((a), (b), (c) red). It was reverted and is not committed.
+Guard (d): `A_host_built_without_a_ledger_still_runs_its_turns_through_the_explicit_value` is green. The existing test hosts are green and their names are kept.
+Production paths that could reach the missing admission (grep):
+- No meter: `new AppHost()` (TradeAgentApp.cs:34) has no meter until `ComposeTheAi` sets one (AppHost.cs:828). `Meter?.Attach` (AppHost.cs:93, 299) leaves `Admit` null when there is no meter.
+- Null `Admit`: when a runtime changes, `_metering?.Dispose()` (AppHost.cs:88) or `held.Metering?.Dispose()` (AppHost.cs:292) runs Detach (TurnMeter.cs:1099), which nulls `Admit`, while ChatView's `_bound` can still send on the old conversation.
+- All of these now refuse.
+tests box: NOT RUN — the machine does not answer
+NOT done or verified: `ApiAgentRuntime.ExecuteTaskAsync` sends through `SendMissionAsync` with no admission; it has no caller in `src` (grep) and is outside this brief. The refusal path was not run in the real app, and no full local suite was run (CI ran it).
+Review: `fleet/tmp/B-scratch/u-admission-fail-closed/U-admission-fail-closed-review.md`. Not acted on.
