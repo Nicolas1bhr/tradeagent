@@ -174,13 +174,16 @@ jobs:
       # filters match by substring, so a class whose name contains a listed one could run in two shards, and this
       # is where that would show. A WARNING for a listed class that ran nothing here: a class renamed or deleted
       # leaves a stale line, while its tests, under their new name, run in the last shard.
+      # THE CLASS NAMES COME FROM TestMethod ELEMENTS ONLY: newlines are flattened before the split on
+      # '<', so every line starts at a tag, and a test whose captured output PRINTS `className="..."`
+      # (escaped text, never a tag) is not read as a class that ran.
       - name: Check that this shard ran exactly its classes
         if: ${{ !cancelled() && matrix.shard && steps.suite.outcome != 'skipped' }}
         shell: bash
         run: |
           set -euo pipefail
-          { cat tests/*/TestResults/results.trx 2>/dev/null || true; } | tr '<' '\n' \
-            | { grep -o 'className="[^"]*"' || true; } | cut -d'"' -f2 | sort -u \
+          { cat tests/*/TestResults/results.trx 2>/dev/null || true; } | tr '\r\n' '  ' | tr '<' '\n' \
+            | { grep '^TestMethod ' || true; } | { grep -o ' className="[^"]*"' || true; } | cut -d'"' -f2 | sort -u \
             | .github/ci/shard-filter.sh check "${{ matrix.shard }}" -
 
       - uses: actions/upload-artifact@v7
