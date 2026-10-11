@@ -11,3 +11,20 @@ Items, one commit each, one-sentence messages: 1. **The rung (36)** and `RecordR
 **Schema: main RUNG 36** (assigned by the orchestrator, after v2c's 35): one column `strategy_run.evaluator_version TEXT NULL`; its own `if (have < 36)` block, stamp last; no backfill (NULL = unknown is the refusal). **AGENTS.md unchanged.**
 **Class:** evidence (the referee path) — opus; the milestone's evidence review reads items 1–3.
 **Gate and report:** the fleet's builder prompt (speed mode): rebase on `main`; Release `--no-incremental` 0 warnings; touched classes 3× locally, the full suite on CI via `fleet/bin/ci-dispatch.sh` (every job green, run id quoted); names 0 removed; the tests box run or its NOT RUN line; `## Report` ≤ 20 lines; no push to `main`.
+
+## Report
+Tip `ed7fb4cf` (code; this report commits on top). Rebased on main `e989bfa4`: 35 is NOT on main, so 36's block sits after 34's and `DatabaseSchemaVersion` is 36 — the manager re-stacks behind v2c. `Referee.EvaluatorVersion` not bumped.
+Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` → `0 Warning(s)` `0 Error(s)`.
+Gate 2 (3× each, suite lock): BacktestLedgerTests `Passed: 8` ×3; RefereeVerdictTests `Passed: 23` ×3; BacktestDeterminismTests `Passed: 6` ×3; FeatureProgramBacktestTests `Passed: 8` ×3; FeatureProgramGoldenVectorTests `Passed: 2` ×3.
+Gate 3: CI run 38129573205 red (FeatureProgramGoldenVectorTests: its pins carry run ids, which moved) → fixed `ed7fb4cf`; CI run 38131030559 `success`, all 11 jobs green.
+Gate 4: names.sh → `removed: 0`, `[Fact]/[Theory] base: 2515  tip: 2518`.
+1. Rung 36 + RecordRun's label: done (`e19d7ff2`). Writes the constant, never `StrategyRunRow.EvaluatorVersion` (internal init, read back only); NULL before the rung.
+2. RunIdFor hashes the evaluator: done (`76af246b`) — sixth line after the model, features seventh; seam `internal RunIdFor(versionId, evaluator)`. Pinned ids recomputed outside the build in Python (BacktestDeterminismTests, FeatureProgramBacktestTests' PinnedV1RunId); golden-vector run ids re-pinned (`ed7fb4cf`), every program id, value digest and trace unchanged. Test name `Two_tapes_two_run_ids_and_v1_run_ids_unchanged` kept (no rename).
+3. Measure: done (`ccb48cf6`). Label not this build's, or NULL → `no-stream`, counted in M, clustered alone, never the candidate. DEVIATION: rung 36 adds a second column, `referee_research.trials_other_semantics` (NULL = measured before the rung). The `reading` CHECK cannot take a new value without a table rebuild, and working the count out from labels at read time would re-read every pre-rung measurement as having applied the check, because every pre-rung run is NULL.
+4. Words: done (`20384f75`): CONTRACTS "The backtest" + the verdict's research paragraph; the report says "(U without a readable stream, of which N measured under other evaluation semantics)" when N > 0.
+RED-before: (a) on base src `error CS1061: 'StrategyRunRow' does not contain a definition for 'EvaluatorVersion'`; (b) composition without the evaluator → `Assert.NotEqual() Failure: Strings are equal`; (c) = the mutant below (base behaviour). Extra mutant on item 1 (RecordRun writes the row's label) → (a) `Expected: "backtest=2;metrics=1;scoring=1" Actual: "backtest=0;metrics=0;scoring=0"`.
+Mutant (brief): Measure's label check → `if (false)` ⇒ (c) `Assert.Equal() Failure: Strings differ Expected: "run-candidate" Actual: "run-foreign"`.
+(d): RefereeVerdictTests' existing byte checks green, unchanged.
+Review: `/private/tmp/claude-501/-Users-nicolasbeeckman-Projects-ai-trading-software-for-mihael/c651f5ce-bffa-4313-be4f-a72133a34282/scratchpad/label/U-evidence-evaluator-label-review.md` (not acted on; it ran against tip `20384f75`, before the re-pin).
+Tests box: NOT RUN — `win-test.sh ready` exit 1, "ready : NO - the machine does not answer" (ssh timed out).
+Not done / not verified: no gateway-level test of the new trial charge for the same request under another evaluator (store and id level only); the v2c sealed record and rank inheriting the check, not verifiable until 35 lands; no full local suite (CI's).
