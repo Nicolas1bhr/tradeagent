@@ -629,6 +629,72 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// THE OWNER'S MESSAGES TO <paramref name="role"/> THAT A TURN CAN STILL CLOSE, oldest first (review 1, finding
+    /// 2): every one no turn has taken — a due row is the next turn's, whatever standing reason it carries — and every
+    /// one a launch took that has no outcome yet while that launch is still LAUNCHED (its turn's commit settles it)
+    /// or a restart declared it LOST (the loop re-raises its words, <see cref="LostOwnerWords"/>). A message taken by
+    /// a launch that ENDED without an outcome, or by none the ledger holds, is not here: no turn can close it.
+    /// </summary>
+    public List<MissionEvent> OwnerWordsOpen(string role) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event e
+             WHERE e.kind = $owner AND COALESCE(e.role, $chair) = $role
+               AND (e.consumed_at IS NULL
+                    OR ((e.disposition IS NULL OR e.disposition = $blocked)
+                        AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by
+                                     AND a.state IN ('LAUNCHED', 'LOST'))))
+             ORDER BY e.created_at, e.rowid
+            """,
+            ("$owner", MissionEventKind.Owner), ("$chair", CouncilRoles.Default), ("$role", role),
+            ("$blocked", MissionEventDisposition.Blocked));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    });
+
+    /// <summary>
+    /// THE OWNER'S MESSAGES A LOST TURN TOOK: consumed by a launch a restart declared LOST
+    /// (<see cref="AiAttemptStore.LoseOpen"/>), with no outcome written. The loop settles each one
+    /// <see cref="MissionEventDisposition.Failed"/> — the turn that took it ran and was lost — and re-raises its words
+    /// once, as it does a failed turn's (<see cref="SettleLost"/>).
+    /// </summary>
+    public List<MissionEvent> LostOwnerWords() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event e
+             WHERE e.kind = $owner AND e.consumed_at IS NOT NULL
+               AND (e.disposition IS NULL OR e.disposition = $blocked)
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by AND a.state = 'LOST')
+             ORDER BY e.created_at, e.rowid
+            """, ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    });
+
+    /// <summary>
+    /// SETTLES ONE MESSAGE A LOST TURN TOOK <see cref="MissionEventDisposition.Failed"/>, with
+    /// <paramref name="detail"/>, and answers whether THIS call did it. Only a row <see cref="LostOwnerWords"/> would
+    /// still return is written, so two passes racing over it settle it once and only the winner re-raises the words.
+    /// It is a turn's outcome, not the app's: the launch ran and was lost, which is what <c>failed</c> says.
+    /// </summary>
+    public bool SettleLost(string id, string detail) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition = $failed, disposition_detail = $detail
+             WHERE id = $id AND kind = $owner AND consumed_at IS NOT NULL
+               AND (disposition IS NULL OR disposition = $blocked)
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = mission_event.consumed_by AND a.state = 'LOST')
+            """,
+            ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id),
+            ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
     /// EVERY WAKE OF ONE KIND FOR ONE ROLE THAT NO TURN HAS TAKEN YET, due or not, oldest first — what that role is
     /// still owed: an owner's message nobody has answered (a blocked one included, which is still owed its turn), a
     /// verdict nobody has read. A row a turn took is that turn's: if the turn was lost, a look would not see the row

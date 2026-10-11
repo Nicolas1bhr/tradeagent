@@ -38,7 +38,7 @@ public static class RoleObjectives
     /// </summary>
     public const int Version = 1;
 
-    /// <summary>Operations: every message the owner typed has an outcome — a turn's, or the app's.</summary>
+    /// <summary>Operations: every message the owner typed reaches a turn, and that turn's outcome is written.</summary>
     public const string OwnerAnswered = "owner-message-answered";
 
     /// <summary>
@@ -100,13 +100,12 @@ public static class RoleObjectives
         switch (role)
         {
             case CouncilRoles.Operations:
-                // OPEN UNTIL THE WORDS HAVE AN OUTCOME, not until a launch took them: a launch consumes the message
-                // in its own write, and a crash after that write leaves it consumed with nothing made of it. Only
-                // a turn's outcome (answered, failed — re-raised once —, delegated) or the app's (superseded)
-                // closes it; `blocked` is a standing reason, not an outcome.
-                foreach (var e in events.OfKind(MissionEventKind.Owner))
-                    if (e.For == role && e.Disposition is null or MissionEventDisposition.Blocked)
-                        open.Add(new RoleObjective(OwnerAnswered, e.Id));
+                // OPEN WHILE A TURN CAN STILL CLOSE IT, not only until a launch took it (review 1, finding 2): a
+                // message no turn has taken, and one a launch took that has no outcome yet while that launch is in
+                // flight or was lost — the loop re-raises a lost turn's words to the chair's next turn, and that
+                // turn's outcome closes both. Nothing is open that no turn can close.
+                foreach (var e in events.OwnerWordsOpen(role))
+                    open.Add(new RoleObjective(OwnerAnswered, e.Id));
 
                 // EVERY STATE THE STATE MACHINE CAN STILL LEAVE, from the machine itself: a request written and
                 // not yet dispatched, or waiting for the owner's approval, has not reached a final state either.

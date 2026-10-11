@@ -75,14 +75,11 @@ public class RoleObjectivesTests
         Assert.Equal([new RoleObjective(RoleObjectives.PositionWatched, RoleObjectives.UnreadBook)],
             RoleObjectives.Open(db, CouncilRoles.Operations, null));
 
-        // THE OWNER'S WORDS open the chair's objective until a turn's outcome is written — taking them is not
-        // answering them (review 1, finding 2).
+        // THE OWNER'S WORDS open the chair's objective until a turn takes them.
         Assert.True(events.RecordOwnerMessage("how is it going?", at));
         var owner = Assert.Single(RoleObjectives.Open(db, CouncilRoles.Operations, []));
         Assert.Equal(RoleObjectives.OwnerAnswered, owner.Kind);
         events.Consume([owner.Entity], "turn-1", at);
-        Assert.Equal([owner], RoleObjectives.Open(db, CouncilRoles.Operations, []));
-        events.Settle(owner.Entity, MissionEventDisposition.Answered);
         Assert.Empty(RoleObjectives.Open(db, CouncilRoles.Operations, []));
 
         // A BOUNDARY opens both directors' until each has assessed it.

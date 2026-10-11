@@ -2144,8 +2144,9 @@ restart move nothing, and a role with no such launch is listed everything presen
 scheduled look (`MissionReviewMinutes`, the FASTEST pace — `U-quiet-review` slows it to 8× while only looks
 wake a role) is raised only for a role with an open objective (`AgentRuntime/RoleObjectives.cs`, version 1,
 written into every attempt's context as `objectives_version`): kinds in code, instances derived at read from
-the rows that open them — for Operations an owner message with no outcome yet (a launch taking it is not
-one, so a turn lost after the launch consumed it keeps the look), a non-deployment request in any non-final
+the rows that open them — for Operations an owner message a turn can still close (one no turn has taken,
+or one taken by a launch still in flight or declared LOST — the loop settles a lost turn's message `failed`
+and re-raises its words once, so the chair's next admitted turn is shown them first), a non-deployment request in any non-final
 state (`CREATED` and `AWAITING_APPROVAL` included), a position in the book the host's last Situation read (an
 unread book counts as one, and a fill the ledger records after the read leaves it unread; never a broker
 call from the schedule), an open boundary it has not assessed; for Research its standing research mandate,
