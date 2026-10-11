@@ -403,6 +403,78 @@ public sealed class TradingGateway : IAsyncDisposable
                           + "came with it.");
         }
 
+        return written + AllocateInconclusiveDue(envelope, account, now);
+    }
+
+    /// <summary>
+    /// THE ONE INCONCLUSIVE PATH INTO PAPER (<c>U-referee-v2b</c>, <c>docs/EDGE-FACTORY.md</c> § 4.5), after the
+    /// paper-eligible pass: every version whose refusal stands INCONCLUSIVE (<c>Strategy.Inconclusive</c>), oldest verdict
+    /// first, is offered a slot under <see cref="AllocationPolicy.InconclusiveV1"/> for <c>Inconclusive.Term</c> — and
+    /// <see cref="Allocations.RecordPaper"/> decides, inside its write: a third of the envelope's slots, none below three,
+    /// one per campaign lineage at a time, one term per version, one trial charged to the verdict's campaign. A version
+    /// that has ever held such a slot is not offered another. Answers how many it wrote.
+    ///
+    /// <para><b>The refusal stays refused.</b> Nothing here re-judges a verdict, widens a ceiling or reaches a live mode:
+    /// the row is the envelope's share, scoped to paper, and no live reader reads it.</para>
+    /// </summary>
+    int AllocateInconclusiveDue(PaperEnvelopeRow envelope, string account, DateTimeOffset now)
+    {
+        var written = 0;
+
+        var due = Promotions.All(PaperSweepLooksBack)
+            .Select(p => p.VersionId)
+            .Distinct(StringComparer.Ordinal)
+            .Select(v => Promotions.Standing(v))
+            .Where(s => s.Promotion is not null && _allocations.InconclusiveOf(s) is not null)
+            .OrderBy(s => s.Promotion!.At)
+            .ThenBy(s => s.Promotion!.Id, StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var standing in due)
+        {
+            var promotion = standing.Promotion!;
+            var versionId = promotion.VersionId;
+
+            // ALREADY ON PAPER, OR ITS ONE TERM ALREADY HELD: nothing to offer, and no note.
+            if (_allocations.StandingForPaper(versionId, Connector.Id, account, now) is not null) continue;
+            if (_allocations.For(versionId).Any(a =>
+                    string.Equals(a.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal)))
+                continue;
+
+            if (InstrumentOf(versionId) is not { } instrument
+                || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
+                continue;
+
+            if (Campaigns.LineageRoot(promotion.CampaignId) is not { } lineage) continue;
+
+            var result = _allocations.RecordPaper(new AllocationRow(
+                "", versionId, promotion.Id, AllocationPolicy.InconclusiveV1,
+                envelope.ShareOf(envelope.MaxQuantity),
+                envelope.MaxNotional is { } notional ? envelope.ShareOf(notional) : null,
+                envelope.Currency, now, now + Core.Strategy.Inconclusive.Term,
+                $"inconclusive quota: {_allocations.InconclusiveOf(standing)}; lineage {lineage}", now)
+            {
+                Scope = AllocationScope.Paper,
+                ConnectorId = Connector.Id,
+                Mode = TradingMode.PAPER.ToString(),
+                AccountId = account,
+                EnvelopeId = envelope.Id
+            }, now);
+
+            // A FULL QUOTA, A LINEAGE ALREADY ON PAPER OR A SPENT POT IS NOT NEWS: `RecordPaper` says why in words, and
+            // here the next version is simply not put anywhere.
+            if (!result.Ok || result.Allocation is not { } allocation) continue;
+
+            written++;
+            TellResearch(allocation, envelope, now);
+            _log.Activity($"TradeAgent put strategy version {Short(versionId)} on PAPER on account {account} under the "
+                          + "inconclusive quota — the referee could not judge it either way — for "
+                          + $"{Core.Strategy.Inconclusive.Term.TotalDays:0} days, up to "
+                          + $"{AllocationRow.Num(allocation.MaxQuantity)} at a time, inside the paper envelope you "
+                          + "granted, charged one trial of its campaign. Its verdict stays refused; no capital and no "
+                          + "live authority came with it.");
+        }
+
         return written;
     }
 
@@ -446,13 +518,23 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     void TellResearch(AllocationRow allocation, PaperEnvelopeRow envelope, DateTimeOffset now)
     {
+        // THE INCONCLUSIVE QUOTA SAYS SO, AND NO FIGURE (`U-referee-v2b`): the class of the refusal is not said, nor the
+        // holdout's length — only that the verdict stays refused and the slot ends with its term.
+        var quota = string.Equals(allocation.PolicyVersion, AllocationPolicy.InconclusiveV1, StringComparison.Ordinal);
+        var until = allocation.EffectiveTo is { } to && to < envelope.ExpiresAt ? to : envelope.ExpiresAt;
+
         var content =
             $"Version {Short(allocation.VersionId)} is allocated to PAPER on account {envelope.AccountId} "
             + $"at {envelope.ConnectorId}, in {envelope.Symbol}, up to "
             + $"{AllocationRow.Num(allocation.MaxQuantity)} at a time"
             + (allocation.MaxNotional is { } n and > 0m
                 ? $" and {Labels.Money(n, allocation.Currency)}" : "")
-            + $", until {envelope.ExpiresAt:yyyy-MM-dd}. TradeAgent wrote this itself, under the paper "
+            + $", until {until:yyyy-MM-dd}"
+            + (quota
+                ? ", under the inconclusive quota: the referee could not make its verdict discriminate, the verdict "
+                  + "stays refused, the slot is charged one trial of its campaign and ends with its term"
+                : "")
+            + ". TradeAgent wrote this itself, under the paper "
             + "envelope the account owner granted; there is no command that asks for one and none that "
             + "widens it. It carries NO LIVE AUTHORITY and no capital: it authorises nothing in a "
             + "real-money mode, on any other platform or on any other account. Nothing runs it yet — "
