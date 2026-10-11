@@ -2146,7 +2146,11 @@ wake a role) is raised only for a role with an open objective (`AgentRuntime/Rol
 written into every attempt's context as `objectives_version`): kinds in code, instances derived at read from
 the rows that open them — for Operations an owner message a turn can still close (one no turn has taken,
 or one taken by a launch still in flight or declared LOST — the loop settles a lost turn's message `failed`
-and re-raises its words once, so the chair's next admitted turn is shown them first), a non-deployment request in any non-final
+and re-raises its words once, so the chair's next admitted turn is shown them first. A brief naming the lost
+launch is still published at start (`Relay.Reconcile()` runs first) but does not mark the message `delegated`,
+so the order of the two passes changes nothing. A message taken by a launch that ENDED, or by one with no meter
+row, and left with no outcome is settled `failed` ("ended without an outcome") and re-raised once the same way,
+in one commit and never while a turn of its role is in flight; a retry is settled and never raised again), a non-deployment request in any non-final
 state (`CREATED` and `AWAITING_APPROVAL` included), a position in the book the host's last Situation read (an
 unread book counts as one, and a fill the ledger records after the read leaves it unread; never a broker
 call from the schedule), an open boundary it has not assessed; for Research its standing research mandate,
@@ -2433,7 +2437,11 @@ a TURN made of a wake. The other three are outcomes the app reaches WITHOUT one,
 `MissionEventStore.SettleWithoutTurn` refuses the first two for exactly that reason: `delegated` (the
 launch that consumed the owner's message published a brief — the detail is that publication's id, a
 measured co-occurrence and never a reading of either text; `Settle` will not overwrite it, because the
-relay runs before the loop settles), `blocked` (nothing could take it and the detail is why; the row
+relay runs before the loop settles. The launch is the id an agent-written FILE NAME carries, so the statement
+itself requires what the link measures (`U-owner-words-delegated`): a launch `ai_attempt` holds as `ENDED` —
+never `LOST`, never one it holds no row for — whose role is the brief's, over a message with no outcome yet
+(none, or `blocked`); it never overwrites `answered`, `failed` or a lost turn's settlement, and no file
+settles, hides or rewrites a message's outcome), `blocked` (nothing could take it and the detail is why; the row
 stays UNCONSUMED, so the message is still owed a turn) and `superseded` (the same words arrived again
 before anybody looked, and the detail is the later event's id — EXACT text only, because "the same
 subject" is a judgment this software is not entitled to make).
