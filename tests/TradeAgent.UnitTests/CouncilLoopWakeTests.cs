@@ -308,6 +308,47 @@ public partial class CouncilLoopTests
             e => Json.Read<MissionOwnerMessage>(e.Payload ?? "")?.RetryOf == owner.Id);
     }
 
+    /// <summary>
+    /// THE LOST WORDS COME FIRST WHATEVER THE BACKLOG (pass 3, item 3). A turn is handed the oldest
+    /// <see cref="MissionEventStore.BatchLimit"/> due wakes, and the retry is written at the recovery: fifty fills the
+    /// chair is owed from the downtime, all older than the retry, pushed the owner's words out of the chair's next turn.
+    ///
+    /// <para>RED at bda825ef: the chair's next turn did not carry the words.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_lost_words_reach_the_chairs_next_turn_whatever_the_backlog()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+        const string said = "close the ES position before the weekend";
+        Assert.True(events.RecordOwnerMessage(said, now));
+        var owner = Assert.Single(events.OfKind(MissionEventKind.Owner));
+
+        var lost = TurnMeter.IdMintedAt(now);
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = lost, StartedAt = now, ReservedCost = 0.10m, Role = CouncilRoles.Operations
+        }, [owner.Id]).Admitted);
+        Assert.NotNull(new TurnMeter(db, () => 100m, now: () => now.AddMinutes(1), live: new LiveAttempts(),
+            recordPath: Path.Combine(root, "turns.jsonl")));
+
+        // THE BACKLOG: a full batch of the chair's fills, every one older than the recovery.
+        for (var i = 0; i < MissionEventStore.BatchLimit; i++)
+            Assert.True(events.Raise($"fill:backlog-{i}", MissionEventKind.Fill, now.AddSeconds(61 + i),
+                role: CouncilRoles.Operations));
+
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        await new MissionLoop(host, HalfHourLooks, now: () => now.AddMinutes(3)).TurnAsync();
+
+        var (role, prompt) = Assert.Single(host.Opened);
+        Assert.Equal(CouncilRoles.Operations, role);
+        Assert.True(prompt.Contains(said, StringComparison.Ordinal), "the chair's next turn does not carry the words");
+        Assert.True(prompt.IndexOf(said, StringComparison.Ordinal)
+                    < prompt.IndexOf("Why you are awake", StringComparison.Ordinal), "the owner's words are not first");
+    }
+
     static void Sql(Database db, string sql) => db.Write(_ =>
     {
         using var c = db.Cmd(sql);
