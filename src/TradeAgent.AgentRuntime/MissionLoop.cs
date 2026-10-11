@@ -2511,14 +2511,15 @@ public sealed class MissionLoop
     /// <summary>
     /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the chair's next turn — carrying which message it retries and why. A
     /// message that is itself a retry is left as it is: the owner can see both rows and ask again in their own words.
+    /// Answers false only when the retry was owed and its row did not go in.
     /// </summary>
-    void RetryOnce(MissionEventStore events, MissionEvent e, string failure)
+    bool RetryOnce(MissionEventStore events, MissionEvent e, string failure)
     {
         var said = Json.Read<MissionOwnerMessage>(e.Payload ?? "");
-        if (said is null || said.RetryOf is not null) return;
+        if (said is null || said.RetryOf is not null) return true;
 
         var seq = events.NextOwnerSequence();
-        events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
+        return events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
             Json.Write(said with { RetryOf = e.Id, Failure = failure }),
             CouncilRoles.Operations);   // the chair's, as the message it retries was
     }
@@ -2538,13 +2539,24 @@ public sealed class MissionLoop
     /// <para>Read off the app's own two ledgers — the wake queue and the launch ledger's LOST rows, which only the
     /// meter writes — and nothing an agent writes settles or raises anything here. Run before the schedule, so the
     /// retry is due on this very pass. Never throws: the words stay where they are, and the next pass tries again.</para>
+    ///
+    /// <para><b>THE SETTLEMENT AND THE RETRY ARE ONE COMMIT</b> (pass 3, item 1), its sequence number allocated inside
+    /// it: a crash, or a retry row that does not go in, rolls the settlement back, so the message is still LOST and
+    /// unsettled and the next pass recovers it. Two passes over one message settle it once — only a row still LOST and
+    /// unsettled is written — and only that pass re-raises it.</para>
     /// </summary>
     void RecoverLostOwnerWords(MissionEventStore events)
     {
         try
         {
             foreach (var e in events.LostOwnerWords())
-                if (events.SettleLost(e.Id, LostTurn)) RetryOnce(events, e, LostTurn);
+                events.InOneCommit(() =>
+                {
+                    if (!events.SettleLost(e.Id, LostTurn)) return false;
+                    if (!RetryOnce(events, e, LostTurn))
+                        throw new InvalidOperationException($"the retry of {e.Id} was not written");
+                    return true;
+                });
         }
         catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
     }

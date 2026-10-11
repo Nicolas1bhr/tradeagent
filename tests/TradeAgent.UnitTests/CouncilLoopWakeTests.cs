@@ -259,6 +259,61 @@ public partial class CouncilLoopTests
         Assert.All(events.OfKind(MissionEventKind.Owner), e => Assert.NotNull(e.Disposition));
     }
 
+    /// <summary>
+    /// THE LOST WORDS' SETTLEMENT AND THEIR RETRY ARE ONE COMMIT (pass 3, item 1). A process killed after the original
+    /// was settled <c>failed</c> and before its retry was written left a message no later pass recovers — it is no
+    /// longer LOST-and-unsettled — and no row carrying the words: the owner's question gone, with its receipt shown.
+    /// The kill is a trigger that refuses the retry's row, exactly where the process would have died; the restart
+    /// drops it.
+    ///
+    /// <para>RED at bda825ef: the chair was never woken for the words again — "Assert.Single() Failure: The collection was empty".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_crash_between_settling_the_lost_words_and_writing_their_retry_leaves_them_owed()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+        const string said = "close the ES position before the weekend";
+        Assert.True(events.RecordOwnerMessage(said, now));
+        var owner = Assert.Single(events.OfKind(MissionEventKind.Owner));
+
+        var lost = TurnMeter.IdMintedAt(now);
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = lost, StartedAt = now, ReservedCost = 0.10m, Role = CouncilRoles.Operations
+        }, [owner.Id]).Admitted);
+        Assert.NotNull(new TurnMeter(db, () => 100m, now: () => now.AddMinutes(1), live: new LiveAttempts(),
+            recordPath: Path.Combine(root, "turns.jsonl")));
+        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(db).Get(lost)!.State);
+
+        // THE KILL: the retry's row is refused, so the pass dies between the settlement and the retry.
+        Sql(db, "CREATE TRIGGER killed_before_the_retry BEFORE INSERT ON mission_event WHEN NEW.kind = 'owner' "
+                + "BEGIN SELECT RAISE(ABORT, 'the process was killed before the retry was written'); END");
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        await new MissionLoop(host, HalfHourLooks, now: () => now.AddMinutes(2)).TurnAsync();
+
+        // THE RESTART.
+        Sql(db, "DROP TRIGGER killed_before_the_retry");
+        var opened = await Quiet(host, HalfHourLooks, now.AddMinutes(3), TimeSpan.FromHours(4));
+        var chair = opened.Where(o => o.Role == CouncilRoles.Operations).ToList();
+        var count = $"{chair.Count} chair turns in four quiet hours";
+
+        var turn = Assert.Single(chair);
+        Assert.True(turn.Prompt.Contains(said, StringComparison.Ordinal), count);
+        Assert.True(turn.Prompt.IndexOf(said, StringComparison.Ordinal)
+                    < turn.Prompt.IndexOf("Why you are awake", StringComparison.Ordinal), "the owner's words are not first");
+        Assert.Single(events.OfKind(MissionEventKind.Owner),
+            e => Json.Read<MissionOwnerMessage>(e.Payload ?? "")?.RetryOf == owner.Id);
+    }
+
+    static void Sql(Database db, string sql) => db.Write(_ =>
+    {
+        using var c = db.Cmd(sql);
+        return c.ExecuteNonQuery();
+    });
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
