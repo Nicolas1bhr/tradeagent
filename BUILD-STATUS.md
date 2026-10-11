@@ -10429,3 +10429,42 @@ Integration 692 + 1 not run; the box owner's files unchanged); the rebase pass N
 was a rebase + canon renumber (v3 collided with `U-reconcile-packet`'s v3), judged by seat B at landing.
 **NOT done (owed, named):** `Backtests.RoleOf` and `lens-propose` still use `IsKnown` (O2b's); a nameless `Begin` is still the chair's without a status check (O2b); the owner's card says "../inbox"
 (owed light: plain words). **NOT VERIFIED:** no app run; no position beyond the legacy pair has ever been activated (by design — nothing can be until `U-thinking-seats`).
+
+
+## U-cell-linux-a — the Linux cell launcher: no_new_privs, seccomp and Landlock on one thread, then execve, refusing below Landlock ABI 6 and never starting a cell bare; its 21 benchmark rows proven on CI's ubuntu runner; no rung (landed 2026-10-11, seat A)
+
+**Landed** solo (`land.sh` v2) on `main` `0efd6a30`: MERGE_SHA `8d7d8b22` (fixer's report tip `bd80b74d`, code `ed408023` on `a09937da`; builder pass 1 tip `c0157758`).
+A protection — CRED-001, the `state/` ledgers and the holdout, AUTH-001, no terminal. **No rung.** This unit wires NO seat: nothing runs in a cell until `U-cell-linux-c`.
+On main, in order: `b3880821` CellPolicy + CellPlatform · `1b4d7bdd` CellNative.Enter · `8a952cef` the launcher's cell stage · `660287f1` ProcessContainment.Start(psi, cell)
+· `f1d44728` the benchmark rows · `1471d8a9` Cell steps in the ubuntu job · `0a599f3d`, `6e218216` test fixes · `540cbed7` report · `2dda9a2b` row (d) split · `ff18523d` red
+first for the review · `7151a9fb` socketpair stream/seqpacket only · `44ec0533` protected set in every spelling · `7a8bacef` read-only input overlapping the workspace
+refused · `eb9d86eb` grant the descriptor judged · `7cf1e383` per-launch policy file removed, owner checked · `6d29bc05` · `6cfb7ae5` the re-review's three · `8d7d8b22` report.
+Built by a3aad06a60e252e17 (pass 1) and a fresh fixer a0161f342f3fd340f (fix pass 1, its re-review included).
+**CI:** run **38170920602** at `ed408023`, every job success (dedupe-gate, shard-plan, package, package-linux, test windows 1-5, ubuntu, macos, linux-host), CARRIED to
+`8d7d8b22` (build tree equal outside the bookkeeping list; main moved only by docs since, `a09937da` → `0efd6a30`); `land.sh check` VERDICT PASS. Names 2657 → 2693,
+removed 0. Scan: judged false positives excluded by name — the planted dummy fixtures the rows prove a cell cannot read (the ledger, holdout, owner-login and
+outside-environment markers and their constants), two prose lines, and root's own account file used as the foreign-owned example.
+**What changed:** `trade --spawn-contained --cell <policy>` keeps the supervisor and starts `trade --cell-exec`, which refuses a platform below Landlock ABI 6 (or
+without landlock in the LSM list) naming the kernel, the ABI found and the minimum, refuses a policy file that is not the app's own (in `Paths.Home/cells`, no link,
+no group/other write, hash = name, owned by this account), then sets no_new_privs → seccomp (`socket()` only for TCP over IPv4/IPv6; `socketpair()` only AF_UNIX
+stream/seqpacket; io_uring, keyrings, bpf, perf, userfaultfd denied; another arch killed) → Landlock (every fs right of the ABI handled, RESOLVE_UNIX from ABI 9; TCP
+connect only to granted ports; abstract sockets and signals scoped) on one thread, closes fds above 2 on exec and execs with the policy's environment only. Each
+grant is opened first (O_PATH|O_NOFOLLOW), its real target judged against the protected set (home and above, `state/`, `cells/`) in every spelling, and THAT
+descriptor granted; a read-only input inside, equal to or containing the workspace is refused by path and by descriptor. `ProcessContainment.Start(psi, cell)`
+throws `CELL_UNAVAILABLE` and never starts the program bare. One policy file per launch, removed on exit (launcher) and on kill (app).
+**ASSURANCE PROFILE — PROVEN on CI's ubuntu-24.04, kernel 6.17.0-1022-azure x86_64, Landlock ABI 7, LSM lockdown,capability,landlock,yama,apparmor,ima,evm
+(21/21 rows, each with an outside control):** the workspace read, written and run in; inputs read-only; `state/` and the owner's login neither read nor written; no
+symlink, hardlink, rename or `..` escape; descendants and a setsid daemon stay confined; no persistence in the home; no gateway pipe and no abstract socket; no
+`systemd-run --user` escape to the ledger; TCP only to a granted port; no UDP, netlink or packet socket; no datagram socketpair, a stream pair works and its end
+reaches no pathname socket; no io_uring; no signal, trace or environment read of an outside process; no terminal, NNP and a seccomp filter; the policy's
+environment only; a foreign policy file refused; below ABI 6 refused; never a bare start; the policy file removed after exit. RECORDED GAP (a row asserts it):
+a cell CAN read another process's command line — closed for prompts by `U-prompt-stdin` (in flight). Class for a SEAT: none yet (no seat wired; the grant
+binding is `U-cell-linux-b`, route (a) `U-cell-linux-c`); macOS and Windows: no cell, refused.
+**Evidence:** RED before the fixes — unit `Expected: 327693 Actual: 2147418112` (datagram pair, x64 and arm64), two `Sub-string not found`, and on CI 38167984274
+"a Landlock ruleset was built granting …/input, which by then led to …/state". WATCHED MUTANT (AF_UNIX allowed; CI 38170963861 on throwaway `d5734a76`, its
+other jobs cancelled by seat A after the ubuntu job): BOTH halves of row (d) red — `gateway-pipe-connected` and `Sub-string found "systemd-run-rc=0"`; 19/21.
+Release `--no-incremental` 0 warnings; touched classes 3×.
+**Tests box:** `ed408023` GREEN on real Windows (Unit 1785 / 8 not run, Integration 692 / 22 not run — the Cell rows, Fault 498, timing 6+91+18; his files unchanged).
+**NOT VERIFIED:** the datagram-pair row red on a real kernel (BPF interpreter only); aarch64 cells (interpreter and header only); ABI 9's RESOLVE_UNIX on a real
+kernel; the re-review's three fixes were not shown red first; the owner's Linux host (`U-cell-linux-e`, on his word only). **OWED:** a policy file left by a crash of
+BOTH the app and the supervisor is not swept (→ `U-cell-linux-b`'s restart sweep). Reviews: fleet/tmp/A-org/u-cell-linux-a-build/, u-cell-linux-a-fix/ (re-review).
