@@ -220,8 +220,12 @@ public sealed record AiAdmission
     public static AiAdmission LedgerRefused(string cause) => new()
     {
         Refusal = Labels.LaunchLedgerUnwritable(cause),
-        Ceiling = Ledger
+        Ceiling = Ledger,
+        Cause = cause
     };
+
+    /// <summary>What the launch ledger said when it refused (<see cref="Ledger"/>), on its own; null for any other answer.</summary>
+    public string? Cause { get; init; }
 
     /// <summary>By how much this launch would have passed that ceiling. Never negative.</summary>
     public decimal Over { get; init; }
