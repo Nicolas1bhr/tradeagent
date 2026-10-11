@@ -17,6 +17,7 @@ on:
       - 'docs/EDGE-FACTORY.md'
       - 'docs/VISION.md'
       - 'docs/PRINCIPLES.md'
+      - 'docs/ORCHESTRATION.md'
       - 'CLAUDE.md'
       - 'manager-prompt.md'
       - 'docs/briefs/**/*.md'
