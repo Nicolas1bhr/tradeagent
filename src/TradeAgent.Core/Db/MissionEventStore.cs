@@ -117,6 +117,15 @@ public static class MissionEventKind
     /// is asked again when the wake is admitted and when its packet is rendered (<see cref="TapeWakeRow"/>).</para>
     /// </summary>
     public const string Tape = "tape";
+
+    /// <summary>
+    /// A POSITION'S OUTPUT THE APP HELD, AND NEVER A WAKE (<c>U-org-rights</c>). A position after the legacy pair has no
+    /// recipient until <c>U-org-assignments</c> gives it a mandate's issuer, so what it stages in <c>out/</c> passes the
+    /// relay's fence, is recorded as the app's own copy and published to nobody — and this row is that disposition. It
+    /// is written CONSUMED, by no launch (<see cref="MissionEventStore.Hold"/>), so it is never due, buys nobody a turn and
+    /// makes no launch look woken; the writer's next Situation reads it (<c>CouncilRelay.HeldNotices</c>).
+    /// </summary>
+    public const string Output = "output";
 }
 
 /// <summary>
@@ -190,6 +199,14 @@ public static class MissionEventDisposition
     /// (<see cref="MissionEventStore.WithdrawDeadline"/>, <c>U-reconcile-packet</c>).
     /// </summary>
     public const string Withdrawn = "withdrawn";
+
+    /// <summary>
+    /// AN OUTPUT PUBLISHED TO NOBODY (<see cref="MissionEventKind.Output"/>, <c>U-org-rights</c>): a position after the
+    /// legacy pair staged it, the relay's fence attributed it to that position's launch, and it was recorded and handed to
+    /// no one, because no recipient exists for it until <c>U-org-assignments</c>. The detail says so. An outcome the app
+    /// reached without a turn, like <see cref="Withdrawn"/>; never a claim about a turn.
+    /// </summary>
+    public const string Held = "held";
 }
 
 /// <summary>
@@ -311,6 +328,12 @@ public static class MissionEventIds
 
     /// <summary>The task a publication delivered to a role. Uniquely keyed BY THE PUBLICATION.</summary>
     public static string Task(string publicationId) => $"task:{publicationId}";
+
+    /// <summary>
+    /// THE HOLD OF ONE PUBLICATION (<see cref="MissionEventKind.Output"/>): keyed by the publication, whose id already
+    /// hashes its role, kind and text, so a re-run of the relay over the same file holds it once.
+    /// </summary>
+    public static string Held(string publicationId) => $"{MissionEventKind.Output}:{publicationId}";
 
     /// <summary>
     /// THE VERDICT WAKE, KEYED BY THE PROMOTION AND NOT BY THE NOTE THAT CARRIES IT.
@@ -1015,6 +1038,45 @@ public sealed class MissionEventStore(Database db)
         using var c = db.Cmd($"SELECT {Cols} FROM mission_event WHERE id=$id", ("$id", id));
         using var r = c.ExecuteReader();
         return r.Read() ? Read(r) : null;
+    });
+
+    /// <summary>
+    /// RECORDS THAT THE APP HELD ONE PUBLICATION — published to nobody — as a row born CONSUMED by no launch, with
+    /// <see cref="MissionEventDisposition.Held"/> and why (<c>U-org-rights</c>). Never due, never a wake, and never
+    /// <c>consumed_by</c> a launch, so <see cref="AiAttemptStore.LastWoken"/> does not mistake the writer's turn for one a
+    /// wake bought. Idempotent by <see cref="MissionEventIds.Held"/>; runs inside whatever transaction is open on this
+    /// thread, which is how a turn's hold shares the commit that closes its launch.
+    /// </summary>
+    public bool Hold(string publicationId, string role, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd($"""
+            INSERT INTO mission_event({Cols})
+            VALUES($id,$kind,$at,$at,$payload,$at,NULL,$held,$role,$why)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            ("$id", MissionEventIds.Held(publicationId)), ("$kind", MissionEventKind.Output), ("$at", Sql.T(at)),
+            ("$payload", Json.Write(new MissionTask(publicationId, MissionEventKind.Output, role))),
+            ("$held", MissionEventDisposition.Held), ("$role", role), ("$why", why));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
+    /// <paramref name="role"/>'S HELD OUTPUTS SINCE <paramref name="since"/> (all of them where null), newest first, at
+    /// most <paramref name="limit"/>: what its next Situation says the app did with what it staged.
+    /// </summary>
+    public List<MissionEvent> HeldSince(string role, DateTimeOffset? since, int limit) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event
+             WHERE kind=$kind AND role=$role AND disposition=$held AND ($since IS NULL OR created_at > $since)
+             ORDER BY created_at DESC, rowid DESC LIMIT $limit
+            """,
+            ("$kind", MissionEventKind.Output), ("$role", role), ("$held", MissionEventDisposition.Held),
+            ("$since", since is { } t ? Sql.T(t) : null), ("$limit", limit));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
     });
 
     /// <summary>Every event of a kind, oldest first. For the screens and for a test reading rows back.</summary>
