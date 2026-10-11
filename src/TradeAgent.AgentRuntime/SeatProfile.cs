@@ -128,6 +128,12 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {server}, and the AI's profile allows no tool " +
                 "server TradeAgent did not configure.");
 
+        // A FRESH START, REFUSED IN WORDS: the seat home holds no credential until the owner signs in from TradeAgent. Nothing is
+        // copied from his own ~/.codex — no migration (CLAUDE.md) — and a seat that ran signed out would fail as a turn, which reads
+        // like the AI thinking rather than like the button he has to press.
+        if (!reading.SignedIn)
+            return SeatVerdict.Refuse(ErrorCode.AI_AUTH_REQUIRED, seat.SignedOut);
+
         return new SeatVerdict(null, null, reading) { Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading) };
     }
 
@@ -307,8 +313,11 @@ public interface ISeatLaunch
     SeatVerdict CheckSeat();
 }
 
-/// <summary>What the CLI itself said about a seat: its feature report and its MCP server list, verbatim.</summary>
-public sealed record SeatReading(string Features, string Mcp);
+/// <summary>
+/// What the CLI itself said about a seat: its feature report and its MCP server list, verbatim, and whether its sign-in status
+/// under the seat home answered signed in. Only the two reports enter the profile hash; a sign-in is not part of the profile.
+/// </summary>
+public sealed record SeatReading(string Features, string Mcp, bool SignedIn = true);
 
 /// <summary>
 /// THE CLI ASKED ABOUT ITS OWN SEAT, behind an interface because CI has no codex: a test hands a fake, the product the real one.
@@ -339,7 +348,19 @@ public sealed class CliSeatProbe : ISeatProbe
         var keys = seat.KeyArgs();
         var features = seat.FeaturesArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.FeaturesArgs, .. keys], workingDirectory, ct);
         var mcp = seat.McpArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.McpArgs, .. keys], workingDirectory, ct);
-        return new SeatReading(features, mcp);
+
+        // THE SIGN-IN, UNDER THE SEAT HOME: `login status` exits 0 signed in and 1 not (measured, the manifest's AuthStateArgs). It
+        // reads the app's own config.toml, written above by the environment seam, so cli_auth_credentials_store="file" holds.
+        var signedIn = true;
+        if (manifest.AuthStateArgs.Length > 0)
+        {
+            var (exit, stdout, stderr) = await Run(manifest, exe, manifest.AuthStateArgs, workingDirectory, ct);
+            signedIn = manifest.AuthStateSuccessPattern is { } pattern
+                ? System.Text.RegularExpressions.Regex.IsMatch(Ansi.Strip(stdout + "\n" + stderr), pattern,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                : exit == 0;
+        }
+        return new SeatReading(features, mcp, signedIn);
     }
 
     public async Task<string?> VersionAsync(RuntimeManifest manifest, string exe, CancellationToken ct)
