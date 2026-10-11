@@ -10261,3 +10261,21 @@ refusal naming both layouts and the repair, with the in-app fresh-start path); (
 `workspace/agent/research` and an emptier `workspace/research`. NOT VERIFIED for the owner's homes or the M0 attempts → OWED read-only card `U-moved-research-audit` (his machines only
 on his word); nothing here moves them back.
 **NOT done, NOT verified:** the older-layout refusal (owed); the audit (owed); test homes are still shared per process (no isolation change — the remover is gone).
+
+## U-ci-dedupe — a push to main whose build tree a successful dispatched run already tested skips its jobs and names that run, so a landing no longer re-tests a tree land.sh has proven green (landed 2026-10-11, seat B)
+
+**Landed** solo (`land.sh` v2) on `main` `670d6757`: rebased tip `dfc5d47e` (reported `bdd07ab6`, code `75a54362`). CI run **38137709046** at that tip: every job success, CARRIED; `land.sh check`
+VERDICT PASS. No rung. CI only: `.github/ci/tested-before.sh` + `.github/workflows/build.yml`; no test, shard, timeout or package content changed. Builder sonnet/high, one pass.
+**What changed:**
+1. Job `tested-before` (permissions `actions: read`, `contents: read`): on a push to main its steps list the newest 50 successful FIRST-ATTEMPT `workflow_dispatch` runs of build.yml, and for each
+   compare its head tree with this push's outside `on.push.paths-ignore` (the mirror of fleet/bin/bookkeeping-paths.txt that land.sh's drift guard compares), requiring every job `success`; the
+   first match outputs `skip=true` + `tested_by=<run>` and the summary names the run, its sha and the filter. Any failure (lookup, filter, timeout, fetch) ⇒ `skip=false`: it fails closed by running.
+2. Every other job `needs:` it with `if: !cancelled() && needs.tested-before.outputs.skip != 'true'` (test and linux-host also need shard-plan/package-linux success).
+   DEVIATION, accepted: the gate JOB always runs and only its steps are push-only, because land.sh's carry needs every job `success` — a skipped gate job would end every carry. A deduped push
+   run has every other job `skipped`, so land.sh can never carry FROM one.
+**Evidence:** Release `--no-incremental` 0 warnings; `bash -n` clean (shellcheck not installed — NOT RUN). Local proof (TB_RUNS=100): main 80945a60, 3430404b, 4fa0f0c2 → run 38132029331; 1970f86a,
+913374b2 → 38129113502; b55fc552 → 38102722770; code commit 49cf67e4 → skip=false; a scratch Versioning.cs edit → skip=false. Branch CI 38133792860 12/12 green. Names vs base 3430404b 2595/2595, removed 0.
+**Review (Codex `gpt-6.1-sol`, high):** one P2 — the script's `git diff -- .` is relative to the current directory, so a LOCAL run from a subdirectory could say skip=true; CI runs at the repo root
+and cannot reach it → OWED light card.
+**Scan:** the variable name `GH_TOKEN` (no value) excluded by that phrase.
+**NOT VERIFIED:** a real deduped main push (its summary and skipped jobs) and the checkout/fetch inside a runner — the NEXT landing's record observes the first one. Tests box NOT RUN (CI-only unit).
