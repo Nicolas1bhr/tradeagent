@@ -36,3 +36,11 @@ Tip: code `75a54362` (CI run 38133792860, workflow_dispatch, ALL 12 jobs success
 - Local proof (`TB_RUNS=100`): 80945a60 -> tested_by=38132029331 (93aaa4dd); 3430404b -> 38132029331; 1970f86a -> 38129113502 (d871f212); 4fa0f0c2 -> 38132029331; b55fc552 -> 38102722770 (e6e2672d); 913374b2 -> 38129113502. Code commit with no equal tree (49cf67e4, and a scratch commit editing Versioning.cs): `skip=false`.
 - Independent review: `fleet/tmp/B-scratch/u-ci-dedupe/U-ci-dedupe-review.md` (not acted on): one P2 — `git diff -- .` is relative to the cwd, so a LOCAL run from a subdirectory could report skip=true (CI runs from the repo root, so not reachable there).
 - NOT verified: the first real main push (observed in the NEXT landing's record, not claimable here); a real deduped push run's summary and its skipped jobs; the checkout/fetch of a candidate sha inside a runner (only locally).
+
+## Fix pass (seat A, 2026-10-11)
+- `land.sh check` read the gate job `tested-before` as a test job (names starting `test*`) and failed it for a missing "0 Warning(s)" line; the job is renamed `dedupe-gate` (key, every `needs:` and `needs.dedupe-gate.*` expression); the script file keeps its name `.github/ci/tested-before.sh`.
+- Job keys now: dedupe-gate, shard-plan, test, package, package-linux, linux-host; only `test` starts with `test`, and it prints a dotnet build summary.
+- `docs/ORCHESTRATION.md` added to on.push.paths-ignore (grep of src, tests, tools, packaging, .github finds only that line); `fleet/bin/bookkeeping-paths.txt` is for seat A at the merge.
+- CI run 38149744637 (workflow_dispatch, tip 6894d342): all 12 jobs success; `dedupe-gate` success with its checkout and gate steps skipped (push-only).
+- names.sh main u-ci-dedupe: removed 0 (sets base 2612 tip 2612). Tests box: NOT RUN, CI tooling only.
+- Independent review (`fleet/tmp/A-org/ci-dedupe/U-ci-dedupe-review.md`): confirms the rename closes the check; one P2 asking for a regression test of land.sh's predicate, which is fleet tooling outside this unit (not acted on).
