@@ -286,6 +286,20 @@ public static class Labels
         + "Nothing was sent to the AI tool. The split is on the Safety page.";
 
     /// <summary>
+    /// THE SAME REFUSAL FROM A UNIT'S ENVELOPE (<c>U-org-envelopes</c>): one unit of the launch's funding chain has no room for
+    /// it. It names the unit, its envelope and its room, and no currency — this layer does not know one.
+    /// </summary>
+    public static string UnitEnvelopeReached(string unit, decimal envelope, decimal room, decimal reservation) =>
+        $"{Capitalised(unit)} has {Amount(room)} left of its {Amount(envelope)} envelope of today's AI spending limit, and this "
+        + $"turn reserves {Amount(reservation)}, so it was not started. Nothing was sent to the AI tool. It starts again after "
+        + "midnight, or sooner if that envelope is widened.";
+
+    /// <summary>An amount in a refusal: invariant, two places at least, never a currency symbol this layer cannot know.</summary>
+    static string Amount(decimal value) => value.ToString("0.00##", System.Globalization.CultureInfo.InvariantCulture);
+
+    static string Capitalised(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    /// <summary>
     /// THE SAME REFUSAL FROM PERCEPTION'S OWN BUDGET (<c>U-decision-port</c>): a decision model's call refused because
     /// perception's daily budget has no room for it. Its own sentence because it is no council role's share — the split on
     /// the Safety page does not hold it — and nothing was charged, because a refused call reserves nothing.
