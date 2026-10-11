@@ -2439,7 +2439,9 @@ launch that consumed the owner's message published a brief — the detail is tha
 measured co-occurrence and never a reading of either text; `Settle` will not overwrite it, because the
 relay runs before the loop settles. The launch is the id an agent-written FILE NAME carries, so the statement
 itself requires what the link measures (`U-owner-words-delegated`): a launch `ai_attempt` holds as `ENDED` —
-never `LOST`, never one it holds no row for — whose role is the brief's, over a message with no outcome yet
+never `LOST`, never one it holds no row for — whose role is the brief's and to which `publication.attempt`
+attributes the brief (an agenda whose bytes another turn published first is that turn's row, so the link is
+refused and the words fall to the wake queue's once-only hand-on), over a message with no outcome yet
 (none, or `blocked`); it never overwrites `answered`, `failed` or a lost turn's settlement, and no file
 settles, hides or rewrites a message's outcome), `blocked` (nothing could take it and the detail is why; the row
 stays UNCONSUMED, so the message is still owed a turn) and `superseded` (the same words arrived again

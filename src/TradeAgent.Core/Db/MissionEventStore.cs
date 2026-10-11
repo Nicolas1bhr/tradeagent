@@ -867,7 +867,11 @@ public sealed class MissionEventStore(Database db)
     /// the statement itself refuses everything but the one case the link measures: the launch is in
     /// <c>ai_attempt</c> and ENDED — never LOST (its words are the loop's to re-raise,
     /// <see cref="LostOwnerWords"/>), never a launch the ledger does not hold — and the publication is
-    /// a brief by that launch's own role. It writes only where the message has no outcome yet (NULL,
+    /// a brief by that launch's own role that the ledger ATTRIBUTES to that launch (<c>publication.attempt</c>). A
+    /// publication's id is the hash of its role, kind and text, never of its launch, so a finished turn whose agenda has
+    /// the same bytes as one another turn published first names a row that is the other turn's; the link is refused,
+    /// and the words fall to the once-only hand-on (<see cref="UnansweredOwnerWords"/>) — the fail-safe outcome, never a
+    /// measurement that is false. It writes only where the message has no outcome yet (NULL,
     /// or <see cref="MissionEventDisposition.Blocked"/>, the standing reason a message waited before a
     /// turn took it), so <c>answered</c>, <c>failed</c> and a lost turn's settlement are never
     /// overwritten. Whatever a caller names, an agent's file cannot settle, hide or rewrite the
@@ -884,6 +888,7 @@ public sealed class MissionEventStore(Database db)
                AND (disposition IS NULL OR disposition = $blocked)
                AND EXISTS (SELECT 1 FROM ai_attempt a JOIN publication p ON p.id = $pub
                             WHERE a.id = $attempt AND a.state = 'ENDED'
+                              AND p.attempt = a.id
                               AND p.kind = $brief AND p.role = COALESCE(a.role, $chair))
             """,
             ("$d", MissionEventDisposition.Delegated), ("$pub", publicationId),

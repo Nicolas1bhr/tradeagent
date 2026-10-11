@@ -257,6 +257,51 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (g) A BRIEF WHOSE BYTES ANOTHER TURN PUBLISHED FIRST DELEGATES NOTHING. A publication's id is the hash of its role,
+    /// kind and text, never of its launch, so a finished turn that stages an agenda identical to one a LOST turn already
+    /// published names a row the ledger attributes to that other turn. Linking the finished turn's message to it would make
+    /// "this attempt produced this publication" false; the link is refused, and the words fall to the once-only hand-on.
+    ///
+    /// <para>RED at 4afe0cd8: the guard joined the publication by id alone and marked the finished turn's message
+    /// <c>delegated</c> to the lost turn's brief.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_brief_whose_bytes_another_turn_published_first_delegates_nothing()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+
+        // TURN A took the owner's first message, published the agenda, and was lost.
+        var (_, lost) = TakenBy(db, CouncilRoles.Operations, now);
+        var brief = Brief(db, now, lost);
+        Assert.NotNull(new TurnMeter(db, () => 100m, now: () => now.AddMinutes(1), live: new LiveAttempts(),
+            recordPath: Path.Combine(root, "turns.jsonl")));
+        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(db).Get(lost)!.State);
+
+        // TURN B took the second message, ENDED, and staged an agenda with the same bytes.
+        const string second = "and the NQ one too";
+        var (owner, ended) = TakenBy(db, CouncilRoles.Operations, now.AddMinutes(2), second);
+        Ended(db, ended, now.AddMinutes(3));
+
+        Assert.Equal(0, events.Delegated(ended, brief.Id));
+        StageAgenda(root, ended);
+        new CouncilRelay(db, r => WorkspaceBuilder.HomeOf(root, r)).Reconcile();
+        Assert.Equal(lost, new PublicationStore(db).Get(brief.Id)!.Attempt);
+        Assert.Null(events.Get(owner.Id)!.Disposition);
+
+        // AND THE WORDS ARE HANDED ON, ONCE.
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        await Quiet(host, HalfHourLooks, now.AddMinutes(4), TimeSpan.FromHours(4));
+
+        var settled = events.Get(owner.Id)!;
+        Assert.Equal(MissionEventDisposition.Failed, settled.Disposition);
+        Assert.Contains("ended without an outcome", settled.DispositionDetail ?? "", StringComparison.Ordinal);
+        Assert.Single(RetriesOf(events, owner.Id));
+    }
+
+    /// <summary>
     /// (f) A FINISHED TURN'S BRIEF STILL DELEGATES THE WORDS IT TOOK — the legitimate path kept, through the relay's own
     /// committed transition: the launch closed ENDED, its agenda published, and the loop's <c>answered</c> after it does
     /// not erase which brief the message became.
