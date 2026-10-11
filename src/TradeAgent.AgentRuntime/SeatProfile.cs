@@ -93,8 +93,8 @@ public static class SeatProfile
     /// <summary>
     /// EVERY FOLDER BELOW <paramref name="root"/>, PARENTS FIRST, AND THE CREDENTIAL AND SETTINGS FILES, MADE OWNER-ONLY. A folder
     /// that is a link, a junction or another reparse point is stepped over, never entered: what it points to is not the seat home.
-    /// Measured on the dev Mac (U-seat-acl's report): the walk costs milliseconds on a home with thousands of session files, since
-    /// it lists folders only.
+    /// Measured on the dev Mac (U-seat-acl): a whole preparation took 17-19 ms over a home of 377 folders and 4,032 session files
+    /// (0.3 ms over an empty one) — the walk lists folders only, and the files below them keep their folders' lists.
     /// </summary>
     static void PrivateBelow(string root, SeatPlan seat)
     {
