@@ -815,6 +815,17 @@ public sealed class MissionEventStore(Database db)
     /// deciding that a brief is ABOUT a message is a judgment, and a disposition that rests on one is
     /// not evidence. The report prints the pair and lets the owner draw the conclusion.</para>
     ///
+    /// <para><b>A MEASUREMENT OF A FINISHED TURN, AND ONLY OVER NO OUTCOME</b>
+    /// (<c>U-owner-words-delegated</c>). The attempt is the id an agent-written FILE NAME carries, so
+    /// the statement itself refuses everything but the one case the link measures: the launch is in
+    /// <c>ai_attempt</c> and ENDED — never LOST (its words are the loop's to re-raise,
+    /// <see cref="LostOwnerWords"/>), never a launch the ledger does not hold — and the publication is
+    /// a brief by that launch's own role. It writes only where the message has no outcome yet (NULL,
+    /// or <see cref="MissionEventDisposition.Blocked"/>, the standing reason a message waited before a
+    /// turn took it), so <c>answered</c>, <c>failed</c> and a lost turn's settlement are never
+    /// overwritten. Whatever a caller names, an agent's file cannot settle, hide or rewrite the
+    /// owner's message's outcome.</para>
+    ///
     /// <para>The FIRST publication of a turn keeps the link, so re-running the relay over the same
     /// files writes nothing the second time.</para>
     /// </summary>
@@ -823,10 +834,15 @@ public sealed class MissionEventStore(Database db)
         using var c = db.Cmd("""
             UPDATE mission_event SET disposition=$d, disposition_detail=$pub
              WHERE kind=$owner AND consumed_by=$attempt
-               AND (disposition IS NULL OR disposition <> $d)
+               AND (disposition IS NULL OR disposition = $blocked)
+               AND EXISTS (SELECT 1 FROM ai_attempt a JOIN publication p ON p.id = $pub
+                            WHERE a.id = $attempt AND a.state = 'ENDED'
+                              AND p.kind = $brief AND p.role = COALESCE(a.role, $chair))
             """,
             ("$d", MissionEventDisposition.Delegated), ("$pub", publicationId),
-            ("$owner", MissionEventKind.Owner), ("$attempt", attemptId));
+            ("$owner", MissionEventKind.Owner), ("$attempt", attemptId),
+            ("$blocked", MissionEventDisposition.Blocked), ("$brief", MissionEventKind.Brief),
+            ("$chair", CouncilRoles.Default));
         return c.ExecuteNonQuery();
     });
 

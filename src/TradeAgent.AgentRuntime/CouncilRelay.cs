@@ -416,6 +416,11 @@ public sealed class CouncilRelay
             // messages were consumed by the turn that wrote the agenda, and a pass reconciling that
             // turn's leftovers after a restart must not move the link onto a later launch.
             //
+            // AND THE NAME IS AN AGENT'S, so it settles nothing by itself (U-owner-words-delegated):
+            // the store links only a launch the ledger holds as ENDED, of this brief's role, over a
+            // message with no outcome yet. A LOST turn's agenda is still published here — the work is
+            // real — but its owner's words stay the loop's to re-raise, whichever runs first.
+            //
             // Idempotent, like everything else in this pass: the first publication of a turn keeps
             // the link and a re-run writes nothing.
             if (kind == PublicationKind.Brief)

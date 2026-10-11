@@ -180,16 +180,32 @@ public class OwnerDispositionTests
         var at = Midday();
         events.RecordOwnerMessage("look into the opening range", at);
         var id = events.OfKind(MissionEventKind.Owner)[0].Id;
-        events.Consume([id], "attempt-7", at);
 
-        Assert.Equal(1, events.Delegated("attempt-7", "pub-abc"));
+        // A FINISHED TURN AND ITS BRIEF, as the link now requires (U-owner-words-delegated): the
+        // launch that consumed the message ENDED, and the publication is a brief by its role.
+        var attempts = new AiAttemptStore(db);
+        Assert.True(attempts.Begin(new AiAttempt
+        {
+            Id = "attempt-7", StartedAt = at, ReservedCost = 0.10m, Role = CouncilRoles.Operations
+        }, [id]).Admitted);
+        Assert.True(attempts.End("attempt-7", 0, at, null, null, null, null, null, null, null, null, null));
+        const string brief = "Research: look into the opening range.";
+        var pub = Publication.IdOf(CouncilRoles.Operations, PublicationKind.Brief, brief);
+        new PublicationStore(db).Commit(new Publication
+        {
+            Id = pub, Role = CouncilRoles.Operations, Attempt = "attempt-7", Kind = PublicationKind.Brief,
+            Recipients = CouncilRoles.Research, Classification = PublicationClass.Council, CreatedAt = at,
+            Content = brief
+        }, at);
+
+        Assert.Equal(1, events.Delegated("attempt-7", pub));
         Assert.Equal(MissionEventDisposition.Delegated, events.Get(id)!.Disposition);
 
         // The turn ALSO replied, and the ordinary outcome must not erase which brief it became: the
         // relay publishes before the loop settles, so without the guard `answered` lands last.
         events.Settle(id, MissionEventDisposition.Answered);
         Assert.Equal(MissionEventDisposition.Delegated, events.Get(id)!.Disposition);
-        Assert.Equal("pub-abc", events.Get(id)!.DispositionDetail);
+        Assert.Equal(pub, events.Get(id)!.DispositionDetail);
     }
 
     [Fact]
