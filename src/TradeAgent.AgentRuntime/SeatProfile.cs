@@ -104,6 +104,15 @@ public static class SeatProfile
         {
             try { new DirectoryInfo(at).UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute; ours = true; }
             catch (UnauthorizedAccessException) { ours = false; }
+            // NOT MADE OWNER-ONLY FOR ANOTHER REASON — a read-only disk (macOS answers EROFS for its sealed system volume before it
+            // asks who owns the folder), or anything else: a folder that cannot be made private is refused the same way, never used.
+            catch (IOException ex)
+            {
+                throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                    $"TradeAgent will not use the AI's own home while {at} cannot be made private to this account ({ex.Message}): it " +
+                    "may belong to another account or sit on a disk that cannot be changed, and the AI's settings and sign-in must be " +
+                    $"this account's alone. Nothing was written or started. Remove {at} and TradeAgent makes its own folder there.");
+            }
         }
         if (ours) return;
         throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
