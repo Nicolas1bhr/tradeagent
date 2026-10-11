@@ -4,6 +4,18 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
+/// A fact about a cell policy's POSIX paths: run on macOS and Linux; skipped on Windows, where a cell is refused at the platform
+/// (<see cref="CellPlatform.Refusal"/>, proved there by <see cref="CellLaunchTests"/>) and <c>/usr</c> is not an absolute path.
+/// </summary>
+public sealed class UnixFactAttribute : FactAttribute
+{
+    public UnixFactAttribute()
+    {
+        if (OperatingSystem.IsWindows()) Skip = "a cell policy names POSIX paths; on Windows no cell starts, which CellLaunchTests proves";
+    }
+}
+
+/// <summary>
 /// THE CELL POLICY IS AN APP-OWNED FILE NAMED BY ITS HASH, AND A POLICY THAT WOULD GRANT THE APP'S OWN HOME IS REFUSED
 /// (<c>U-cell-linux-a</c> item 1). Every OS: nothing here confines anything; it is the policy's form and its refusals.
 /// </summary>
@@ -19,7 +31,7 @@ public class CellPolicyTests
     static CellPolicy Policy(string workspace, params string[] readOnly) =>
         new(workspace, readOnly, CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin"), new("HOME", workspace)], [8443]);
 
-    [Fact]
+    [UnixFact]
     public void A_policy_file_is_named_by_its_hash_and_reads_back_whole()
     {
         var ws = Dir("ws");
@@ -34,7 +46,7 @@ public class CellPolicyTests
         Assert.Equal([8443], back.TcpPorts);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_policy_file_changed_after_it_was_written_is_refused()
     {
         var path = Policy(Dir("ws")).Write(Dir("cells"));
@@ -45,7 +57,7 @@ public class CellPolicyTests
         Assert.Contains("does not hash to its name", ex.Message);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_policy_that_grants_the_app_home_or_its_state_is_refused()
     {
         var ws = Dir("ws");
