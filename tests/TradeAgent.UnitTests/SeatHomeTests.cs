@@ -257,6 +257,40 @@ public class SeatHomeTests
         Assert.Equal(before, Fixture());
     }
 
+    /// <summary>
+    /// A SEAT HOME FOLDER THAT BELONGS TO ANOTHER ACCOUNT IS REFUSED, AND NOTHING IS WRITTEN IN IT OR STARTED (the re-review's P1,
+    /// 2026-10-11; CRED-001). Not a link, so the link check passes it; but whoever owns it can replace the config the app writes and
+    /// read the credential it keeps. The foreign folder is one every machine has and no test account owns: the system's own
+    /// (<c>/usr</c>; <c>System32</c>, owned by TrustedInstaller). Its mode is unchanged afterwards and the program never ran.
+    /// </summary>
+    [Fact]
+    public async Task A_seat_home_owned_by_another_account_is_refused()
+    {
+        // AS ROOT EVERY FOLDER IS THE PROCESS'S OWN: there is no foreign owner to refuse, and the check would make /usr owner-only.
+        if (!OperatingSystem.IsWindows() && Environment.IsPrivilegedProcess) return;
+
+        var (codex, exe, dump) = Seat(nameof(A_seat_home_owned_by_another_account_is_refused));
+        var foreign = OperatingSystem.IsWindows() ? Environment.GetFolderPath(Environment.SpecialFolder.System) : "/usr";
+        var mode = OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(foreign);
+        codex.Seat!.Home = foreign;
+
+        var detected = await new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe()).DetectAsync();
+        Assert.False(detected.Installed, $"a seat home in {foreign} was taken");
+        Assert.Contains(foreign, detected.Reason, StringComparison.Ordinal);
+        Assert.Contains("another account", detected.Reason, StringComparison.Ordinal);
+
+        var workspace = Path.Combine(Path.GetDirectoryName(exe)!, "role-home");
+        Directory.CreateDirectory(workspace);
+        var verdict = Session(codex, exe, workspace, new FakeProbe()).CheckSeat();
+        Assert.True(verdict.Refused);
+        Assert.Equal(ErrorCode.AI_SEAT_REFUSED, verdict.Code);
+        Assert.Contains("another account", verdict.Refusal, StringComparison.Ordinal);
+
+        Assert.Empty(Argv(dump));
+        Assert.False(Directory.Exists(Path.Combine(foreign, "codex")));
+        if (!OperatingSystem.IsWindows()) Assert.Equal(mode, File.GetUnixFileMode(foreign));
+    }
+
     /// <summary>Removes a test's seat home, unlinking any link in it without following it.</summary>
     static void DeleteSeatHome(string root)
     {
