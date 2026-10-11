@@ -90,6 +90,16 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Task.FromResult(!Faults.Disconnected);
 
     /// <summary>
+    /// The call that will not let go: the test's <see cref="FaultProfile.Hold"/> when it set one, else
+    /// <see cref="FaultProfile.UncancellableLatencyMs"/> as a plain delay. Neither takes the token.
+    /// </summary>
+    async Task TheUncancellableWait()
+    {
+        if (Faults.Hold is { } hold) await hold();
+        else if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
+    }
+
+    /// <summary>
     /// Simulates the wire. Read paths fail loudly when disconnected; they never invent data.
     ///
     /// <paramref name="mutating"/> is what makes this connector able to answer the question the
@@ -109,7 +119,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         await HonourTheOperationDeadline(ct, op, mutating);
 
         await TheCancellableWait(Faults.LatencyMs, ct, op, mutating);
-        if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
+        await TheUncancellableWait();
         if (Faults.Disconnected)
         {
             // In-process and provable: the simulator was never reached.
@@ -356,7 +366,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
             await TheCancellableWait(Faults.LatencyMs, ct, "place", mutating: true);
         }
         else if (Faults.LatencyMs > 0) await Sleep(TimeSpan.FromMilliseconds(Faults.LatencyMs), ct);
-        if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
+        await TheUncancellableWait();
         if (Faults.Disconnected)
         {
             TransportLedger.Record(TransportOutcome.NothingWritten);

@@ -300,6 +300,24 @@ public sealed class FaultProfile
     public Func<TimeSpan, CancellationToken, Task>? Wait { get; set; }
 
     /// <summary>
+    /// HOLD — an uninterruptible call whose END THE TEST DECIDES, where <see cref="UncancellableLatencyMs"/>
+    /// has the clock decide it.
+    ///
+    /// Awaited exactly where the uncancellable delay is, and like that delay it IGNORES the
+    /// cancellation token: a cancelled token does not release it, only the task it returns does. A
+    /// test that needs "the call is still in flight when disposal lands, and finishes only after I
+    /// have looked" says so with a latch here instead of sleeping per call and racing the runner's
+    /// speed against the emergency budget. When set it REPLACES the uncancellable delay (the two are
+    /// not summed); the worst case the connector reports is not derived from it — a test that holds
+    /// calls declares <c>WorstCaseOperationPath</c> itself. Null is the product: the delay path,
+    /// unchanged.
+    ///
+    /// It is not <see cref="Wait"/>: that models a LATE but cancellable wait. This models a call
+    /// that will not let go, for as long as the test says.
+    /// </summary>
+    public Func<Task>? Hold { get; set; }
+
+    /// <summary>
     /// Consumes one use of a one-shot fault. LOCKED, because a sweep issues its legs concurrently:
     /// read-then-decrement across four legs in flight can hand the same single use to two of them
     /// and leave a third fault unconsumed, which shows up as a test that mostly passes.
