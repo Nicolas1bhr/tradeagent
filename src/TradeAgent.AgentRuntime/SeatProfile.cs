@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text;
+using TradeAgent.Core;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -20,5 +22,52 @@ public static class SeatProfile
         Directory.CreateDirectory(seat.Root);
         foreach (var (name, value) in seat.ResolvedEnvironment())
             if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) Directory.CreateDirectory(value);
+
+        // THE CLI'S OWN CONFIG FILE, WRITTEN BY THE APP BEFORE EVERY START. A turn ignores it (--ignore-user-config), but `login`,
+        // `features` and `mcp` take no such flag, and a seat can write this file: a seat-written chatgpt_base_url would steer the
+        // next sign-in. Published whole through a rename, so a reader sees the old bytes or the new ones and never half of either.
+        if (ConfigPath(seat) is { } path)
+        {
+            var bytes = ConfigBytes(seat);
+            if (!SameBytes(path, bytes)) OwnerOnlyFile.Write(path, bytes);
+        }
+    }
+
+    /// <summary>Where <see cref="SeatPlan.ConfigFile"/> is, or null for a plan with none.</summary>
+    public static string? ConfigPath(SeatPlan seat) =>
+        seat.ConfigFile is { Length: > 0 } rel
+            ? Path.GetFullPath(Path.Combine(seat.Root, rel.Replace('/', Path.DirectorySeparatorChar)))
+            : null;
+
+    /// <summary>
+    /// THE CONFIG FILE'S BYTES: the <see cref="SeatPlan.CliClass"/> deny set's keys as TOML, one per line — <c>-c key=value</c> as
+    /// <c>key = value</c>, <c>--disable name</c> as <c>features.name = false</c>, <c>--enable name</c> as <c>= true</c>. The flags
+    /// with no key (<c>--ignore-user-config</c> and its kind) have no line. UTF-8, no byte-order mark, LF.
+    /// </summary>
+    public static byte[] ConfigBytes(SeatPlan seat)
+    {
+        var lines = new List<string> { "# Written by TradeAgent before every start of this AI seat. Any change here is replaced." };
+        var args = seat.ArgsFor(SeatPlan.CliClass);
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--disable" when i + 1 < args.Length: lines.Add($"features.{args[++i]} = false"); break;
+                case "--enable" when i + 1 < args.Length: lines.Add($"features.{args[++i]} = true"); break;
+                case "-c" or "--config" when i + 1 < args.Length:
+                    var pair = args[++i];
+                    var eq = pair.IndexOf('=', StringComparison.Ordinal);
+                    if (eq > 0) lines.Add($"{pair[..eq].Trim()} = {pair[(eq + 1)..].Trim()}");
+                    break;
+            }
+        }
+        return new UTF8Encoding(false).GetBytes(string.Join("\n", lines) + "\n");
+    }
+
+    static bool SameBytes(string path, byte[] bytes)
+    {
+        try { return File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes); }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 }

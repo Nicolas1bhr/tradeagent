@@ -124,8 +124,14 @@ public static class AgentArgs
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
-            ModelArgs(manifest, model));
+            ModelArgs(manifest, model), SeatArgs(manifest));
     }
+
+    /// <summary>
+    /// THE SEAT'S DENY SET, on the first turn and on every resume alike (<c>U-seat-home</c>), or nothing for a runtime with no
+    /// seat profile. One class today, <see cref="SeatPlan.CliClass"/>.
+    /// </summary>
+    public static string[] SeatArgs(RuntimeManifest manifest) => manifest.Seat?.ArgsFor(SeatPlan.CliClass) ?? [];
 
     /// <summary>
     /// The model flag as this runtime spells it, or nothing at all. Nothing when the runtime has no
@@ -138,12 +144,13 @@ public static class AgentArgs
             : [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
 
     public static List<string> Build(string[] template, string prompt, string? jsonFlag, string[] unattended,
-        string[]? modelArgs = null)
+        string[]? modelArgs = null, string[]? seatArgs = null)
     {
         var flags = new List<string>();
         if (!string.IsNullOrWhiteSpace(jsonFlag))
             flags.AddRange(jsonFlag.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         flags.AddRange(unattended.Where(a => !string.IsNullOrEmpty(a)));
+        if (seatArgs is not null) flags.AddRange(seatArgs.Where(a => !string.IsNullOrEmpty(a)));
         if (modelArgs is not null) flags.AddRange(modelArgs.Where(a => !string.IsNullOrEmpty(a)));
 
         var promptIndex = Array.FindIndex(template, a => a.Contains("{prompt}", StringComparison.Ordinal));

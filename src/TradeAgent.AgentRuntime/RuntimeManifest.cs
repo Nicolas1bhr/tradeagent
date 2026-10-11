@@ -64,6 +64,25 @@ public sealed class SeatPlan
     /// </summary>
     public Dictionary<string, string> Environment { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>The one seat class today: a CLI seat that runs commands. A broker-only class is a row here (<c>U-thinking-seats</c>).</summary>
+    public const string CliClass = "cli";
+
+    /// <summary>
+    /// THE DENY SET, BY SEAT CLASS: argv every turn of that class carries before its prompt, on the first turn AND on every resume
+    /// (<see cref="AgentArgs.For"/>) — a resumed CLI is a fresh process that remembers none of the first one's flags.
+    /// </summary>
+    public Dictionary<string, string[]> Args { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The CLI's own config file, relative to <see cref="Home"/>, that the app WRITES before every start — or empty for none. Its
+    /// keys are the <c>-c key=value</c> and <c>--disable</c>/<c>--enable</c> pairs of the <see cref="CliClass"/> deny set, because
+    /// the commands that sign in and probe take no flag that ignores the file, and a seat-written file would otherwise steer them.
+    /// </summary>
+    public string ConfigFile { get; set; } = "";
+
+    /// <summary>The deny set of <paramref name="seatClass"/>, or none.</summary>
+    public string[] ArgsFor(string seatClass) => Args.TryGetValue(seatClass, out var a) ? a : [];
+
     /// <summary>The seat home resolved: <see cref="Home"/> with <c>{seatHome}</c> replaced.</summary>
     public string Root => Resolve(Home, Paths.SeatHome);
 
@@ -545,7 +564,37 @@ public static class RuntimeCatalog
             {
                 // ON WINDOWS USERPROFILE STILL CROSSES: whether codex takes its home from it or from the known-folder API is
                 // NOT VERIFIED (owed to U-cell-windows), and the whitelist's other programs need it.
-                Environment = new(StringComparer.Ordinal) { ["CODEX_HOME"] = "{seatHome}/codex", ["HOME"] = "{seatHome}/home" }
+                Environment = new(StringComparer.Ordinal) { ["CODEX_HOME"] = "{seatHome}/codex", ["HOME"] = "{seatHome}/home" },
+                // THE DENY SET, proved on codex-cli 0.160.1 on 2026-10-11 against a local mock provider over a HOSTILE home (a copy
+                // of the owner's config, plugins and skills, survey case (d)): exit 0 under --strict-config — so every key is one
+                // the CLI knows — 4 tools offered (exec_command, write_stdin, request_user_input, view_image) where an EMPTY home
+                // offered 12, and no child process fresh or resumed. --ignore-user-config is the one flag that keeps a seat-written
+                // config.toml's MCP servers out: -c mcp_servers={} merges, it does not clear. Never --ephemeral: resume reads the
+                // rollout. NOT forced_login_method="chatgpt", which the survey listed: 0.160.1 then refuses the pasted key this
+                // manifest offers ("API key login is disabled. Use ChatGPT login instead.", rc 1, RUN 2026-10-11).
+                Args = new(StringComparer.Ordinal)
+                {
+                    [SeatPlan.CliClass] =
+                    [
+                        "--ignore-user-config", "--ignore-rules", "--strict-config",
+                        "--disable", "apps", "--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing",
+                        "--disable", "browser_use", "--disable", "browser_use_external", "--disable", "browser_use_full_cdp_access",
+                        "--disable", "computer_use", "--disable", "in_app_browser", "--disable", "in_app_chat",
+                        "--disable", "in_app_local_automation", "--disable", "multi_agent", "--disable", "multi_agent_v2",
+                        "--disable", "memories", "--disable", "hooks", "--disable", "image_generation", "--disable", "goals",
+                        "--disable", "tool_suggest", "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
+                        "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "daemon_auto_start",
+                        "--disable", "auth_elicitation", "--disable", "tool_call_mcp_elicitation", "--disable", "worktrees",
+                        "--disable", "code_mode_host", "--disable", "in_app_updates",
+                        "-c", "mcp_servers={}", "-c", "marketplaces={}", "-c", "notify=[]", "-c", "web_search=\"disabled\"",
+                        "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false",
+                        "-c", "include_apps_instructions=false", "-c", "check_for_update_on_startup=false",
+                        "-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "history.persistence=\"none\"",
+                        "-c", "cli_auth_credentials_store=\"file\"", "-c", "mcp_oauth_credentials_store=\"file\"",
+                        "-c", "shell_environment_policy.inherit=\"all\"", "-c", "shell_environment_policy.set={}"
+                    ]
+                },
+                ConfigFile = "codex/config.toml"
             },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux
