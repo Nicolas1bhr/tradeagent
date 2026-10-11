@@ -10183,3 +10183,23 @@ TapeStoreTests 41/41 ×3, LensOverPipeTests 1/1 ×3; branch CI 38127947502 and 3
 **Scan:** seven judged false positives excluded by PHRASE (model-token limits, `token_supply_change`, the pipe's machine-token refusal text, a grant's `.Token`, the `api_key` refusal case, a "suite token" notice).
 **OWED CARD — BLOCKS U-annotator:** the holdout at the lens boundary: `LensState.For`'s raw-observation overload can build a state from a held observation, and `RecordDecision`'s re-check does not apply
 `TapeHoldout` (it needs the main database's `DatasetStore`). Not reachable today: nothing runs a lens and the port's only caller goes through `TapeAsOf`. Quarantine is re-checked. Tests box NOT RUN; UI path not exercised.
+
+## 2026-10-11 — U-prove-phase4 landed (train A5): the Linux host harness's kill -9 phase waits for the RESTARTED process before it counts a tape row, and every condition of the recovery — the killed process gone, systemd's restart confirmed, a loopback row from the new process — must hold within the one 30 s from the kill; no false red from the killed process's last row, no false green from a late restart
+
+Built under build-fleet seat A from `docs/briefs/U-prove-phase4.md` (seat P's first sighting, run 38095346946: `packaging/linux/ci/prove.sh` phase 4 counted a row the killed
+process committed in its last instant). One builder (sonnet/high) reported `8da80f10`; the brief's rule was wrong (a baseline read after the restart waits a whole 60 s cadence
+— run 38125438221 red) and the builder declared the deviation: the baseline is read once the killed pid is gone, before the restart check. Codex review → 2 real (a separate 5 s
+/proc deadline tighter than the budget; `recorded_after_ms` overstated) → fresh fixer 1 (sonnet/high) `433e8b2f`: ONE loop bounded by 30 s from the kill polls all three, the row's
+time taken when first seen. Its re-review found a REGRESSION the fix added — a FALSE GREEN (the loop broke on success before its deadline check; a restart confirmed at 31 s passed)
+→ fresh fixer 2 (sonnet/high) `61e83ed7`: after the loop `restart_ms ≤ 30000` too. Re-review of fix 2: no defects. Triage: `fleet/records/U-prove-phase4-review-triage.md`.
+Landed in TRAIN A5 (land.sh v3, three units on one CI run, onto main `af1a7a6f`). On main: `19dfe720` (item), `736055ef` (report), `76932c43` (fix 1), `764ffb12` (fix report),
+`14326989` (fix 2), `3165085d` (fix 2 report). **Schema: none.** Tooling/harness only — nothing under src/ or tests/.
+**RED/green (fix 2, mock harness on a virtual clock, not committed):** base, restart 31000 ms + row 29000 ms → "PASS: … started (31000 ms after the kill) and recorded again 29000 ms
+after the kill", exit 0 (the false green); fixed → "FAIL: systemd's restart was confirmed only 31000 ms after kill -9 (the budget is 30000 ms)", exit 1; restart 25000 + row 29000 →
+PASS, exit 0. Reviewer's own mocked check: base PASS → HEAD FAIL; exactly 30000 ms passes.
+**Phase-4 PASS lines (linux-host job):** builder run 38126470868 "restarted it as 4466 … started (11236 ms after the kill) and recorded again 11249 ms after the kill"; fix 1 run
+38128130528 "… 4729 … 11554 ms … 11531 ms"; fix 2 run 38129941333 "… 4733 … started (11551 ms after the kill) and recorded again 11528 ms after the kill".
+**Gate.** `bash -n` ok each pass; shellcheck NOT RUN (not installed). Branch CI green: 38126470868, 38128130528, 38129941333 (every job, linux-host included).
+**Landing CI (train A5):** run 38135936547 at the stacked tip `f4778fd4` (train A5, onto `af1a7a6f`) — every job success: windows 1–5 10/9/11/5/9 min, ubuntu 13, macos 15, linux-host 20, packages. **Names vs main:** train [Fact]/[Theory] 2547 → 2553, removed 0. **Scan:** clean at landing. **Tests box:** NOT RUN — the machine does not answer (a Linux-host unit).
+**NOT verified:** the original race reproduced on demand (timing; removed by construction); review 1's finding 2 (baseline read under a slow harness — judged not real in practice:
+the restarted app's first row comes ~11 s after the kill, the baseline read milliseconds after /proc empties); a real slow-harness run of the new failure messages; one green run per pass is one sample.
