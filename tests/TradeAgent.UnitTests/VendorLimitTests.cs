@@ -100,6 +100,10 @@ public class VendorLimitTests : IDisposable
         m.ResumeArgs = ["{prompt}"];
         m.UnattendedArgs = [];
         m.ModelArgs = [];
+        // No seat profile: these tests read the vendor's refusal off a recording, and the seat home, its deny set, its probe and
+        // its pin are SeatHomeTests' (U-seat-home).
+        m.Seat = null;
+        m.Install.ExecutableSha256 = null;
         return m;
     }
 

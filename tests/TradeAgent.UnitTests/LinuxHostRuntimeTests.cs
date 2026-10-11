@@ -1,6 +1,7 @@
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -96,9 +97,20 @@ public class LinuxHostRuntimeTests(ITestOutputHelper output)
             var wanted = LinuxAsset(runtime, cpu);
             using var fake = new FakeArchive();
             PublishRelease(fake, manifest.Install.GitHubRepo!);
-            fake.PublishFile($"/download/{wanted}", runtime == "codex"
+            var archive = runtime == "codex"
                 ? TarGz(("bin/", null), ("bin/codex", Program("codex-cli 9.9.2")), ("codex-package.json", null))
-                : TarGz(("opencode", Program("9.9.3"))));
+                : TarGz(("opencode", Program("9.9.3")));
+            fake.PublishFile($"/download/{wanted}", archive);
+
+            // A PINNED PLAN (U-seat-home) downloads its own address and nothing else, checked against its archive digest, and
+            // the program it unpacks is the pin: the plan's asset NAME is still the build's own, served here by the stand-in.
+            if (manifest.Install.Pinned)
+            {
+                Assert.EndsWith($"/releases/download/rust-v{manifest.Install.Version}/{wanted}", manifest.Install.Url, StringComparison.Ordinal);
+                manifest.Install.Url = $"{fake.BaseUrl}/download/{wanted}";
+                manifest.Install.Sha256 = Convert.ToHexStringLower(SHA256.HashData(archive));
+                manifest.Install.ExecutableSha256 = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Program("codex-cli 9.9.2"))));
+            }
 
             // Its own folder under tools/, so nothing another test installs is found instead.
             manifest.Id = $"{runtime}-{cpu}-{Guid.NewGuid():n}"[..32].ToLowerInvariant();
@@ -132,6 +144,9 @@ public class LinuxHostRuntimeTests(ITestOutputHelper output)
         Assert.Equal(new[] { "login", "--device-auth" }, codex.AuthArgs);
 
         codex.Executable = DeviceAuthStub(VendorPrompt("https://auth.openai.com/codex/device", "QRM4-KX27P"));
+        // The stub is the pin, so the sign-in starts it (U-seat-home); its seat home is the test's own.
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(codex.Executable);
+        codex.Seat!.Home = Path.Combine(Path.GetDirectoryName(codex.Executable)!, "seat-home");
         // ITS OWN PRESENCE REGISTER, never the process-wide one: the login it starts is an agent process, the shared
         // register is sticky, and every later scan in this test process would read an owner's file as the agent's
         // (CI run 37921982682: MaterialLedgerTests red on all three runners).

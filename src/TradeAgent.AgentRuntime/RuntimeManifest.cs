@@ -30,6 +30,21 @@ public sealed class InstallPlan
     /// <summary>Expected SHA-256 of the download, when the publisher pins one. Optional.</summary>
     public string? Sha256 { get; set; }
 
+    /// <summary>The vendor's version this plan pins, e.g. <c>0.160.1</c>, or null for a plan that pins none.</summary>
+    public string? Version { get; set; }
+
+    /// <summary>
+    /// THE PIN: SHA-256, lower-case hex, of the PROGRAM ITSELF — the file a seat is started from, not the archive it came in — or
+    /// null for none (<c>U-seat-home</c>). With one set, <see cref="CliAgentRuntime.ResolveExecutable"/> prefers the file that
+    /// hashes to it wherever it is, the managed copy or one on PATH, and nothing but the version probe is started from any other:
+    /// a seat refuses it in words naming both hashes and both versions. A pinned plan downloads exactly its <see cref="Url"/>,
+    /// checked against <see cref="Sha256"/>, and never asks for the newest release or falls back to a package manager.
+    /// </summary>
+    public string? ExecutableSha256 { get; set; }
+
+    /// <summary>Whether this plan pins the program (<see cref="ExecutableSha256"/>).</summary>
+    public bool Pinned => ExecutableSha256 is { Length: > 0 };
+
     public string? ArchiveEntry { get; set; }
 
     /// <summary>
@@ -895,7 +910,10 @@ public static class RuntimeCatalog
             GitHubRepo = "openai/codex",
             AssetPattern = @"^codex-package-x86_64-pc-windows-msvc\.tar\.gz$",
             ExecutableInArchive = "bin/codex.exe",
-            Url = "https://github.com/openai/codex/releases/latest/download/codex-package-x86_64-pc-windows-msvc.tar.gz",
+            Url = $"{CodexRelease}/codex-package-x86_64-pc-windows-msvc.tar.gz",
+            Sha256 = "25c6fe4e46d5bff939312fc46de67ace37561f6f1f89b409af63fd8cc6098425",
+            Version = CodexVersion,
+            ExecutableSha256 = "9e7c59c05cc1ce5677b1f94e835b2ac038ca3be14504e78d558eacdb0ea3f55d",
             NpmPackage = "@openai/codex",
             ManualUrl = "https://developers.openai.com/codex/cli/"
         },
@@ -905,12 +923,34 @@ public static class RuntimeCatalog
             GitHubRepo = "openai/codex",
             AssetPattern = $@"^codex-package-{LinuxCpu(on, "x86_64", "aarch64")}-unknown-linux-musl\.tar\.gz$",
             ExecutableInArchive = "bin/codex",
-            Url = $"https://github.com/openai/codex/releases/latest/download/codex-package-{LinuxCpu(on, "x86_64", "aarch64")}-unknown-linux-musl.tar.gz",
+            Url = $"{CodexRelease}/codex-package-{LinuxCpu(on, "x86_64", "aarch64")}-unknown-linux-musl.tar.gz",
+            Sha256 = LinuxCpu(on, "340801565906a7028f6baaa9ab6853addaef221f0016a1417a7c1ffdd96c21f0",
+                "dff0954438fa455c2197ddb1f421d8d68625d98de610f76bedb6e5bc837ea35b"),
+            Version = CodexVersion,
+            ExecutableSha256 = LinuxCpu(on, "f34a4d2301892ae96c90097786bfe5dc269f187b6f69faf42a7b357b8c081e35", "fbbaec80443919f86dd63648a0b62759cf6f1d0e09310602fde96885e0bceb3e"),
             NpmPackage = "@openai/codex",
             ManualUrl = "https://developers.openai.com/codex/cli/"
         },
+        // NOTHING TO INSTALL ON A MAC, AND STILL A PIN: the program is found on PATH, and a seat runs it only when it is this
+        // release's own build for the processor — the binary inside codex-package-{cpu}-apple-darwin.tar.gz.
+        { Os: HostOs.MacOS, Arch: Architecture.Arm64 } => new InstallPlan
+        {
+            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "09fa44fdc37a5fc70dc1ace31235f90468a2e193d0e85f7552eab068ea2582be"
+        },
+        { Os: HostOs.MacOS, Arch: Architecture.X64 } => new InstallPlan
+        {
+            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "8757e2a2869f0d9aafe576757a23ecf5774c1b7054a2580833dbde930197eafc"
+        },
         _ => new InstallPlan { Kind = InstallKind.None }
     };
+
+    /// <summary>
+    /// THE CODEX RELEASE EVERY SEAT RUNS (<c>U-seat-home</c>): one tag, not <c>latest</c>, so the deny set proved against it is the
+    /// deny set the seat gets. Each archive's SHA-256 is GitHub's own <c>digest</c> for the asset (read 2026-10-11); each program's
+    /// is of the file unpacked from that archive the same day. A new release is a data change here, proved again first.
+    /// </summary>
+    const string CodexVersion = "0.160.1";
+    const string CodexRelease = "https://github.com/openai/codex/releases/download/rust-v" + CodexVersion;
 
     /// <summary>The vendor's own word for a Linux computer's processor.</summary>
     static string LinuxCpu(HostPlatform on, string x64, string arm64) => on.Arch == Architecture.Arm64 ? arm64 : x64;
