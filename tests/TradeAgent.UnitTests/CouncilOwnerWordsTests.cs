@@ -175,6 +175,88 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (d) A TURN THAT ENDED WITHOUT AN OUTCOME HANDS THE OWNER'S WORDS ON, ONCE. A launch that ENDED and left the
+    /// message it took with no disposition, and one with no meter row behind it, are settled <c>failed</c> with the
+    /// app's own sentence and their words re-raised once, in one commit — so the chair's next turn is shown them first,
+    /// and four quiet hours buy that one turn and no look after it.
+    ///
+    /// <para>RED at base c4a6f2d8: neither message was an objective nor re-raised, so no chair turn ever quoted them.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_turn_that_ended_without_an_outcome_hands_the_owners_words_on_once()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+
+        var (ended, a) = TakenBy(db, CouncilRoles.Operations, now);
+        Ended(db, a, now.AddMinutes(1));
+
+        const string unmetered = "and the NQ one too";
+        Assert.True(events.RecordOwnerMessage(unmetered, now.AddMinutes(2)));
+        var unrecorded = events.OfKind(MissionEventKind.Owner).Last();
+        Assert.Equal(1, events.Consume([unrecorded.Id], MissionLoop.Unrecorded, now.AddMinutes(2)));
+
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        var opened = await Quiet(host, HalfHourLooks, now.AddMinutes(3), TimeSpan.FromHours(4));
+
+        var turn = Assert.Single(opened, o => o.Role == CouncilRoles.Operations);
+        foreach (var (e, said) in new[] { (ended, Said), (unrecorded, unmetered) })
+        {
+            var settled = events.Get(e.Id)!;
+            Assert.Equal(MissionEventDisposition.Failed, settled.Disposition);
+            Assert.Contains("ended without an outcome", settled.DispositionDetail ?? "", StringComparison.Ordinal);
+            Assert.Single(RetriesOf(events, e.Id));
+            Assert.True(turn.Prompt.IndexOf(said, StringComparison.Ordinal) is >= 0 and var at
+                        && at < turn.Prompt.IndexOf("Why you are awake", StringComparison.Ordinal),
+                $"the chair's next turn does not carry \"{said}\" first");
+        }
+        Assert.Empty(RoleObjectives.Open(db, CouncilRoles.Operations, []));
+    }
+
+    /// <summary>
+    /// (e) A RETRY THAT ENDS WITHOUT AN OUTCOME IS NOT RE-RAISED AGAIN. The once rule holds on this path as on a failed
+    /// or lost turn's: the retry is settled <c>failed</c>, and no third row carries the words — the owner sees both and
+    /// asks again in their own words.
+    ///
+    /// <para>RED at base c4a6f2d8: the retry stayed unsettled for ever, no outcome and no objective.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_retry_that_ends_without_an_outcome_is_not_re_raised_again()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+
+        Assert.True(events.RecordOwnerMessage(Said, now));
+        var original = Assert.Single(events.OfKind(MissionEventKind.Owner));
+        Assert.Equal(1, events.Consume([original.Id], $"turn-{Guid.NewGuid():n}", now));
+        Assert.True(events.Settle(original.Id, MissionEventDisposition.Failed, "the runtime fell over"));
+        var said = Json.Read<MissionOwnerMessage>(original.Payload!)!;
+        var retryId = MissionEventIds.Owner(events.NextOwnerSequence());
+        Assert.True(events.Raise(retryId, MissionEventKind.Owner, now.AddMinutes(1),
+            Json.Write(said with { RetryOf = original.Id, Failure = "the runtime fell over" }), CouncilRoles.Operations));
+
+        var attempt = $"turn-{Guid.NewGuid():n}";
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = attempt, StartedAt = now.AddMinutes(2), ReservedCost = 0.10m, Role = CouncilRoles.Operations
+        }, [retryId]).Admitted);
+        Ended(db, attempt, now.AddMinutes(3));
+
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        await Quiet(host, HalfHourLooks, now.AddMinutes(4), TimeSpan.FromHours(4));
+
+        var retry = events.Get(retryId)!;
+        Assert.Equal(MissionEventDisposition.Failed, retry.Disposition);
+        Assert.Contains("ended without an outcome", retry.DispositionDetail ?? "", StringComparison.Ordinal);
+        Assert.Empty(RetriesOf(events, retryId));
+        Assert.Equal(2, events.OfKind(MissionEventKind.Owner).Count);
+    }
+
+    /// <summary>
     /// (f) A FINISHED TURN'S BRIEF STILL DELEGATES THE WORDS IT TOOK — the legitimate path kept, through the relay's own
     /// committed transition: the launch closed ENDED, its agenda published, and the loop's <c>answered</c> after it does
     /// not erase which brief the message became.

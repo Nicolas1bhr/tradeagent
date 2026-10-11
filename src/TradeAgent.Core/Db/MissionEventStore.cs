@@ -638,7 +638,8 @@ public sealed class MissionEventStore(Database db)
     /// 2): every one no turn has taken — a due row is the next turn's, whatever standing reason it carries — and every
     /// one a launch took that has no outcome yet while that launch is still LAUNCHED (its turn's commit settles it)
     /// or a restart declared it LOST (the loop re-raises its words, <see cref="LostOwnerWords"/>). A message taken by
-    /// a launch that ENDED without an outcome, or by none the ledger holds, is not here: no turn can close it.
+    /// a launch that ENDED without an outcome, or by none the ledger holds, is not here: no turn can close it, and the
+    /// loop settles it <c>failed</c> and re-raises its words once (<see cref="UnansweredOwnerWords"/>), so the retry is.
     /// </summary>
     public List<MissionEvent> OwnerWordsOpen(string role) => db.Read(_ =>
     {
@@ -698,6 +699,52 @@ public sealed class MissionEventStore(Database db)
             ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
         return c.ExecuteNonQuery() == 1;
     });
+
+    /// <summary>
+    /// THE OWNER'S MESSAGES A FINISHED TURN LEFT WITHOUT AN OUTCOME (<c>U-owner-words-delegated</c>): consumed by a
+    /// launch the ledger holds as ENDED — whose one committed transition (its close, its relay pass, its dispositions)
+    /// has already landed — or by a launch with no row at all, a turn whose record could not be written, and settled
+    /// by nothing. No turn can close one any more, so the loop settles it <see cref="MissionEventDisposition.Failed"/>
+    /// and re-raises its words once, as it does a lost turn's (<see cref="SettleUnanswered"/>). Read off the app's own
+    /// two ledgers; nothing an agent writes puts a message here or takes one out.
+    /// </summary>
+    public List<MissionEvent> UnansweredOwnerWords() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event e
+             WHERE {Unanswered("e")}
+             ORDER BY e.created_at, e.rowid
+            """, ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    });
+
+    /// <summary>
+    /// SETTLES ONE MESSAGE <see cref="UnansweredOwnerWords"/> WOULD STILL RETURN <see cref="MissionEventDisposition.Failed"/>,
+    /// with <paramref name="detail"/>, and answers whether THIS call did it — so two passes racing over it settle it
+    /// once and only the winner re-raises the words. A turn's outcome, not the app's: the launch took the words and
+    /// ended without saying what became of them, which is what <c>failed</c> says.
+    /// </summary>
+    public bool SettleUnanswered(string id, string detail) => db.Write(_ =>
+    {
+        using var c = db.Cmd($"""
+            UPDATE mission_event SET disposition = $failed, disposition_detail = $detail
+             WHERE id = $id AND {Unanswered("mission_event")}
+            """,
+            ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id),
+            ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>The one predicate both statements above share, over the row aliased <paramref name="e"/>.</summary>
+    static string Unanswered(string e) => $"""
+        {e}.kind = $owner AND {e}.consumed_at IS NOT NULL
+               AND ({e}.disposition IS NULL OR {e}.disposition = $blocked)
+               AND (EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = {e}.consumed_by AND a.state = 'ENDED')
+                    OR NOT EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = {e}.consumed_by))
+        """;
 
     /// <summary>
     /// RUNS <paramref name="body"/> AS ONE COMMIT: every write it makes through this store lands together or not at all,

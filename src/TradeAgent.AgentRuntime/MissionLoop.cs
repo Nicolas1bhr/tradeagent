@@ -1299,6 +1299,17 @@ public sealed class MissionLoop
         return new Turn(this, role);
     }
 
+    /// <summary>
+    /// HOLDS THE ROLE'S SLOT FOR A PASS OF THE LOOP'S OWN BOOKKEEPING, or answers null because that role is turning.
+    /// The slot only: unlike <see cref="Lease"/> it sets nothing the card reads, and a material pass does not refuse it.
+    /// </summary>
+    IDisposable? Hold(string role)
+    {
+        lock (_gate)
+            if (!_turning.Add(role)) return null;
+        return new Turn(this, role);
+    }
+
     sealed class Turn(MissionLoop loop, string role) : IDisposable
     {
         bool _dropped;
@@ -1638,6 +1649,7 @@ public sealed class MissionLoop
         if (events is not null)
         {
             RecoverLostOwnerWords(events);
+            RecoverUnansweredOwnerWords(events);
             Schedule(events);
             var due = RolesDue(events);
             if (due.Count == 0) return Idle(events);
@@ -2557,6 +2569,50 @@ public sealed class MissionLoop
                         throw new InvalidOperationException($"the retry of {e.Id} was not written");
                     return true;
                 });
+        }
+        catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
+    }
+
+    /// <summary>The failure the retry of words a finished turn left unsettled carries.</summary>
+    internal const string EndedWithoutOutcome =
+        "the turn that took this message ended without an outcome: TradeAgent saw it end, and nothing recorded what became of it";
+
+    /// <summary>
+    /// THE OWNER'S WORDS A FINISHED TURN LEFT WITHOUT AN OUTCOME, HANDED ON ONCE (<c>U-owner-words-delegated</c>). A
+    /// launch that ENDED — its close, its relay pass and its dispositions one commit — or one the ledger holds no row
+    /// for, and a message it took still unsettled: no turn can close it, so it is settled <c>failed</c> and its words
+    /// re-raised once, in one commit, exactly as <see cref="RecoverLostOwnerWords"/> does a lost turn's. A message that
+    /// is itself a retry is settled and not raised again (<see cref="RetryOnce"/>).
+    ///
+    /// <para><b>NEVER UNDER A TURN OF THE MESSAGE'S ROLE THAT IS STILL IN FLIGHT.</b> A launch whose row could not be
+    /// written consumes its wakes before its turn runs and settles them at its commit; between the two the message
+    /// reads exactly as an abandoned one. So the role's slot is held for the pass — a turn of that role in flight is
+    /// waited for by the next pass, and none can start while this one settles — and the rows are re-read inside it.
+    /// Read off the app's own ledgers; nothing an agent writes settles or raises anything here. Never throws.</para>
+    /// </summary>
+    void RecoverUnansweredOwnerWords(MissionEventStore events)
+    {
+        try
+        {
+            var roles = events.UnansweredOwnerWords().Select(e => e.Role ?? CouncilRoles.Default)
+                .Distinct(StringComparer.Ordinal).ToList();
+            foreach (var role in roles)
+            {
+                using var hold = Hold(role);
+                if (hold is null) continue;   // that role's turn is in flight; its own commit settles what it took
+
+                foreach (var e in events.UnansweredOwnerWords())
+                {
+                    if ((e.Role ?? CouncilRoles.Default) != role) continue;
+                    events.InOneCommit(() =>
+                    {
+                        if (!events.SettleUnanswered(e.Id, EndedWithoutOutcome)) return false;
+                        if (!RetryOnce(events, e, EndedWithoutOutcome))
+                            throw new InvalidOperationException($"the retry of {e.Id} was not written");
+                        return true;
+                    });
+                }
+            }
         }
         catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
     }
