@@ -8,6 +8,13 @@ public static class Paths
 {
     public static string Home { get; } = ResolveHome();
     public static string Tools { get; } = Sub("tools");
+
+    /// <summary>
+    /// THE ONE HOME EVERY CODEX SEAT RUNS IN (<c>U-seat-home</c>): <c>codex/</c> is its <c>CODEX_HOME</c> and <c>home/</c> its
+    /// <c>HOME</c>, both created and written by the app, never a copy of the owner's own <c>~/.codex</c>. One home, one sign-in,
+    /// every seat — see <c>SeatProfile</c>.
+    /// </summary>
+    public static string SeatHome { get; } = Sub("seat-home");
     /// <summary>
     /// The recorded tree: the owner's <see cref="Inbox"/> and the agent's <see cref="AgentHome"/>
     /// side by side. This is what the material scanner walks; it is not anybody's working directory.
