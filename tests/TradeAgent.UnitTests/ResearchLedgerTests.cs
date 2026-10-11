@@ -115,6 +115,36 @@ public class ResearchLedgerTests
             .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')));
     }
 
+    /// <summary>
+    /// A REVISION'S WRITE READS ONE ROW. <c>Revise</c> answers the revision it just wrote — the stored row, field for
+    /// field — and reads it alone: the entry's history is not materialised inside the write lock, however long it is.
+    /// RED before the fix: the body answered <c>Revisions(entry)[0]</c>, every revision read to return the newest.
+    /// </summary>
+    [Fact]
+    public void A_revision_s_write_reads_the_one_row_it_wrote()
+    {
+        using var db = TestEnv.NewDb();
+        var clock = At;
+        var ledger = new ResearchLedger(db, () => clock);
+        var entry = ledger.Add(CouncilRoles.Research, "attempt-r1", LedgerKind.Finding, "first", LedgerMark.Claim, null,
+            null, null);
+        for (var r = 2; r <= 30; r++)
+        {
+            clock = At.AddMinutes(r);
+            var written = ledger.Revise(CouncilRoles.Research, $"attempt-r{r}", entry.Id, $"revision {r}",
+                LedgerMark.Assumption, $"because {r}", r % 2 == 0 ? 0.25m : null, r % 3 == 0 ? LedgerStatus.Held : null);
+            Assert.Equal(ledger.Latest(entry.Id), written);
+            Assert.Equal((entry.Id, r, $"attempt-r{r}", $"revision {r}", $"because {r}"),
+                (written.EntryId, written.Revision, written.Attempt, written.Text, written.Why));
+        }
+
+        var source = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.Core", "Db", "ResearchLedger.cs"));
+        var start = source.IndexOf("public LedgerRevisionRow Revise(", StringComparison.Ordinal);
+        Assert.True(start > 0, "Revise is not in the store's file");
+        var end = source.IndexOf("    /// <summary>", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("Revisions(", source[start..end], StringComparison.Ordinal);
+    }
+
     // ---- (g) the ledger holds references, never copies ---------------------------------------------------------------
 
     /// <summary>

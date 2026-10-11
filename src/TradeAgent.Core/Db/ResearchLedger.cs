@@ -254,7 +254,7 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
 
             var last = Latest(entry)!;
             InsertRevision(entry, last.Revision + 1, _now(), attempt, said, mark, confidence, status ?? last.Status, because);
-            return Revisions(entry)[0];
+            return Latest(entry)!;   // the row just written, read alone: the history is not materialised in the write
         });
     }
 
