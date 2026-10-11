@@ -82,6 +82,67 @@ public class OrgEnvelopeTests : IDisposable
         Seat("pos-2", "team-2");
     }
 
+    // ---- (h) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (h) A POSITION WHOSE FUNDING CHAIN CANNOT BE READ IS REFUSED, never admitted on the day gate alone: a share that is not a
+    /// fraction, and a line of parents that loops. Nothing is written.
+    /// </summary>
+    [Fact]
+    public void A_position_whose_funding_chain_cannot_be_read_is_refused()
+    {
+        Unit("team-bad", OrgIds.Research, "half");
+        Seat("pos-bad", "team-bad");
+        Unit("loop-a", OrgIds.Research);
+        Unit("loop-b", "loop-a");
+        Exec("UPDATE org_unit SET parent_id='loop-b' WHERE id='loop-a'");
+        Seat("pos-loop", "loop-b");
+        var meter = Meter(10m);
+
+        foreach (var who in new[] { "pos-bad", "pos-loop" })
+        {
+            var refused = meter.Begin("## Situation", role: who);
+            Assert.False(refused.Admitted, $"{who} was admitted on a chain nobody could read");
+            Assert.Null(refused.Id);
+            Assert.Contains(who, refused.Refusal, StringComparison.Ordinal);
+        }
+        Assert.Equal(0, Count("SELECT COUNT(*) FROM ai_attempt"));
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Research).Admitted);   // the readable chain still runs
+    }
+
+    // ---- item 3: envelope resolution ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// ENVELOPES ARE FRACTIONS OF THE PARENT'S, the root's is the day's cap: a legacy division with no share reads its position's
+    /// split, a share is that fraction of the nearest envelope above, a unit with none has no separate cap, and a share that is
+    /// not a fraction between 0 and 1 is refused as damage.
+    /// </summary>
+    [Fact]
+    public void An_envelope_is_a_share_of_its_parents_and_a_legacy_division_reads_its_split()
+    {
+        static OrgUnitRow U(string id, string? parent, string? share) => new(id, parent,
+            parent is null ? OrgUnitKind.Root : OrgUnitKind.Team, null, OrgUnitStatus.Active, share, null, DateTimeOffset.UnixEpoch, null);
+        decimal Split(string role) => role == CouncilRoles.Research ? 0.25m : 0.75m;
+
+        var root = U(OrgIds.Root, null, null);
+        var research = U(OrgIds.Research, OrgIds.Root, null);
+        var sub = U("sub", OrgIds.Research, "0.5");
+        var open = U("open", "sub", null);
+        var team = U("team", "open", "0.1");
+
+        Assert.Equal(
+            [new FundedUnit("team", 0.2m), new FundedUnit("open", null), new FundedUnit("sub", 2m),
+             new FundedUnit(OrgIds.Research, 4m), new FundedUnit(OrgIds.Root, 16m)],
+            OrgEnvelopes.Resolve([team, open, sub, research, root], 16m, Split));
+        Assert.Equal([new FundedUnit(OrgIds.Operations, 12m), new FundedUnit(OrgIds.Root, 16m)],
+            OrgEnvelopes.Resolve([U(OrgIds.Operations, OrgIds.Root, null), root], 16m, Split));
+        Assert.Equal([new FundedUnit(OrgIds.Research, 8m), new FundedUnit(OrgIds.Root, 16m)],
+            OrgEnvelopes.Resolve([U(OrgIds.Research, OrgIds.Root, "0.5"), root], 16m, Split));   // a share set wins over the split
+
+        foreach (var bad in new[] { "half", "1.5", "-0.1", "1e-1", "" })
+            Assert.Throws<TradeAgentException>(() => OrgEnvelopes.Resolve([U("t", OrgIds.Root, bad), root], 16m, Split));
+    }
+
     // ---- item 1: the chain, recorded --------------------------------------------------------------------------------
 
     /// <summary>

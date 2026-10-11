@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 
 namespace TradeAgent.Core.Db;
@@ -164,6 +165,59 @@ public static class AppPrincipals
     public const string Perception = "perception";
 
     public static readonly string[] All = [Referee, Allocator, Perception];
+}
+
+/// <summary>
+/// ONE UNIT OF A LAUNCH'S FUNDING CHAIN, AND THE ENVELOPE IT ADMITS AGAINST (<c>U-org-envelopes</c>). <see cref="Envelope"/> null
+/// is a unit with no separate cap: its spend counts in the units above it, whose envelopes bind.
+/// </summary>
+public sealed record FundedUnit(string UnitId, decimal? Envelope);
+
+/// <summary>
+/// HOW A UNIT'S ENVELOPE IS RESOLVED (<c>docs/ORCHESTRATION.md</c> § 2.4): <c>envelope_share</c> is a FRACTION of the parent's
+/// envelope in the same currency and period, never an amount; the root's envelope is the owner's daily cap.
+///
+/// <para><b>A NULL share</b> on a legacy division (<see cref="OrgIds.Operations"/>, <see cref="OrgIds.Research"/>) is that
+/// division's position's share of the day — the split on the Safety page, today's behaviour, so the legacy pair admits
+/// exactly as it did; NULL anywhere else is no separate cap, and the unit spends inside the room of the units above it.
+/// A child of a unit with no cap of its own takes its fraction of the nearest envelope above it.</para>
+/// </summary>
+public static class OrgEnvelopes
+{
+    /// <summary>The legacy position whose share of the day a legacy division's NULL envelope reads, or null for any other unit.</summary>
+    public static string? LegacyRoleOf(string unitId) => unitId switch
+    {
+        OrgIds.Operations => CouncilRoles.Operations,
+        OrgIds.Research => CouncilRoles.Research,
+        _ => null
+    };
+
+    /// <summary>
+    /// THE ENVELOPES OF A LINE OF UNITS, nearest first and ending at the root, as <see cref="OrgStore.FundingLine"/> reads it:
+    /// resolved from the root down. A share that is not a fraction between 0 and 1 is damage, refused rather than guessed.
+    /// </summary>
+    public static IReadOnlyList<FundedUnit> Resolve(IReadOnlyList<OrgUnitRow> line, decimal cap, Func<string, decimal> legacyShare)
+    {
+        var resolved = new FundedUnit[line.Count];
+        var above = cap;
+        for (var i = line.Count - 1; i >= 0; i--)
+        {
+            var unit = line[i];
+            decimal? envelope = unit.IsRoot ? cap
+                : unit.EnvelopeShare is { } text ? Fraction(unit.Id, text) * above
+                : LegacyRoleOf(unit.Id) is { } role ? legacyShare(role) * above
+                : null;
+            resolved[i] = new FundedUnit(unit.Id, envelope);
+            if (envelope is { } e) above = e;
+        }
+        return resolved;
+    }
+
+    static decimal Fraction(string unitId, string text) =>
+        decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var share) && share is >= 0m and <= 1m
+            ? share
+            : throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                $"unit {unitId}'s envelope share '{text}' is not a fraction between 0 and 1");
 }
 
 /// <summary>One unit of the chart, as <c>org_unit</c> holds it.</summary>
@@ -342,6 +396,14 @@ public sealed class OrgStore(Database db)
             throw Damaged($"the line of parents above {unit.Id} ends at {line[^1].Id}, which is not the root");
         return line;
     });
+
+    /// <summary>
+    /// THE FUNDING CHAIN OF A POSITION WITH EACH UNIT'S ENVELOPE (<see cref="OrgEnvelopes.Resolve"/>) over the owner's daily
+    /// <paramref name="cap"/> and the legacy split <paramref name="legacyShare"/>. Throws where <see cref="FundingLine"/> does,
+    /// and on a share that is not a fraction.
+    /// </summary>
+    public IReadOnlyList<FundedUnit> FundingChain(string positionId, decimal cap, Func<string, decimal> legacyShare) =>
+        OrgEnvelopes.Resolve(FundingLine(positionId), cap, legacyShare);
 
     /// <summary>
     /// A UNIT AND EVERY UNIT BELOW IT, breadth first: the unit itself, then its children, then theirs. Empty for
