@@ -23,7 +23,7 @@ namespace TradeAgent.Tests.Unit;
 /// still a mutex, and two agent processes against one trading account is a race with real money in
 /// it precisely because the account is reached through that one gate and not through the loop.</para>
 /// </summary>
-public class CouncilLoopTests
+public partial class CouncilLoopTests
 {
     // ---- the world ---------------------------------------------------------------------------
 

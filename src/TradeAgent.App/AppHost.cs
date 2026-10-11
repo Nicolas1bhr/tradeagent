@@ -399,11 +399,16 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    public void RaiseWake(string id, string kind, string? payload = null)
+    /// <summary>
+    /// Raises one wake for the role named — every wake names whose work it is (<c>U-reconcile-wakes</c>).
+    /// The gateway's fills and orders arrive here with their role already decided, and a deployment's
+    /// never arrive at all.
+    /// </summary>
+    public void RaiseWake(string id, string kind, string? payload, string role)
     {
         try
         {
-            if (Wakes?.Raise(id, kind, DateTimeOffset.UtcNow, payload) == true) Mission?.Wake();
+            if (Wakes?.Raise(id, kind, DateTimeOffset.UtcNow, payload, role) == true) Mission?.Wake();
         }
         catch (Exception ex)
         {
@@ -496,7 +501,8 @@ public sealed class AppHost : IAsyncDisposable
             : null;
 
     /// <summary>When the last mission turn was composed, so the next one can say what is new since.</summary>
-    DateTimeOffset _lastSituationAt = DateTimeOffset.UtcNow;
+    /// <summary>When each role's Situation last listed the owner's new material — see <see cref="RoleInboxMarks"/>.</summary>
+    readonly RoleInboxMarks _inboxSeen = new(DateTimeOffset.UtcNow);
 
     /// <summary>
     /// Whether a newer TradeAgent has been published, and the machinery to install one.
@@ -1311,7 +1317,8 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         if (InboxWake(result, at) is { } wake)
-            RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload);
+            // THE CHAIR'S: the owner's material reaches the role the owner talks to first.
+            RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload, CouncilRoles.Operations);
 
         return result;
     }
@@ -1515,7 +1522,7 @@ public sealed class AppHost : IAsyncDisposable
         // started is not a new instruction — it takes the wakes that are already due and raises
         // none of its own.
         RaiseWake(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review,
-            Json.Write(new { because = "the owner set the AI to work on its own" }));
+            Json.Write(new { because = "the owner set the AI to work on its own" }), CouncilRoles.Operations);
         Changed?.Invoke();
     }
 
@@ -1766,7 +1773,7 @@ public sealed class AppHost : IAsyncDisposable
         /// spend, and a role handed the whole day's figure would plan against another role's money.
         /// </summary>
         public async Task<MissionSituation> SituationAsync(string role, CancellationToken ct) =>
-            (await SituationAsync(ct)) with
+            (await Compose(role, ct)) with
             {
                 Role = role,
                 Spend = SpendFor(role),
@@ -1780,11 +1787,15 @@ public sealed class AppHost : IAsyncDisposable
                 Restored = host._db is { } db ? WorkspaceRevisions.Notices(db, role) : []
             };
 
-        public async Task<MissionSituation> SituationAsync(CancellationToken ct)
+        /// <summary>The chair's, where no role is named.</summary>
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) => SituationAsync(CouncilRoles.Default, ct);
+
+        async Task<MissionSituation> Compose(string role, CancellationToken ct)
         {
             var status = await host.Gateway.StatusAsync(ct);
-            var since = host._lastSituationAt;
-            host._lastSituationAt = DateTimeOffset.UtcNow;
+            // SINCE THIS ROLE'S OWN LAST SITUATION (U-reconcile-wakes): a file listed to Research is
+            // still news to the chair, and the other way round.
+            var since = host._inboxSeen.Take(role, DateTimeOffset.UtcNow);
 
             // Positions come from the broker and the broker can be down. A turn told "positions: none"
             // because a call failed would be a turn reasoning about an account it cannot see, so the
@@ -1815,7 +1826,7 @@ public sealed class AppHost : IAsyncDisposable
                 Positions = positions,
                 OpenOrders = status.OpenRequests,
                 UnconfirmedRequests = status.UnreconciledRequests,
-                NewMaterial = NewInbox(since),
+                NewMaterial = host._db is { } inboxDb ? RoleInboxMarks.Arrived(inboxDb, since) : [],
                 Guidance = host.Gateway.Settings.Guidance,
                 Spend = host.SpendToday,
                 Loss = loss,
@@ -1941,26 +1952,6 @@ public sealed class AppHost : IAsyncDisposable
                 return newest is null ? null : host.Gateway.Datasets.Checked(newest);
             }
             catch (Exception) { return null; }
-        }
-
-        /// <summary>
-        /// What has turned up in the owner's folder since the last turn — BOTH words for it, because
-        /// the AI is being told a file exists, not being told who put it there. The distinction the
-        /// ledger keeps is the owner's to read on the Inbox page.
-        /// </summary>
-        IReadOnlyList<string> NewInbox(DateTimeOffset since)
-        {
-            try
-            {
-                var store = new MaterialStore(host._db!);
-                return store.Present(MaterialOrigin.Inbox).Concat(store.Present(MaterialOrigin.InboxUnattested))
-                    .Where(m => m.FirstSeenAt >= since)
-                    .OrderBy(m => m.FirstSeenAt)
-                    .Select(m => m.Name)
-                    .Take(50)
-                    .ToArray();
-            }
-            catch (Exception) { return []; }
         }
     }
 
