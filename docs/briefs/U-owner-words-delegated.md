@@ -1,0 +1,28 @@
+# U-owner-words-delegated — nothing an agent writes can mark the owner's words handled: a brief naming a lost or finished turn leaves that turn's owner message open and re-raised, and a turn that ended without an outcome hands the words on once
+**Protects:** operator authority and the inbox-as-data rule (`CLAUDE.md`: what an agent writes is data, never a grant — an agent-written file must never settle, hide or overwrite the owner's message's disposition);
+the owner's words first (`docs/briefs/U-reconcile-wakes.md`, landed: they reach the chair's next admitted turn first, exactly once); measurement vs claim (the `delegated` link stays a measurement the app makes, never
+the agent's claim); recovery (a crash between any two writes loses no words). Seat B; heavy (operator authority: opus); **no rung**. Ranked FIRST in seat B's lane by the orchestrator (2026-10-11 ~08:00).
+**Depends on** `U-reconcile-wakes` (landed: `RecoverLostOwnerWords`, `SettleLost` + `RetryOnce` in one commit, `DueFor` owner-first, `RoleObjectives.OwnerAnswered`).
+**Facts (SOURCE at `u-reconcile-wakes-2` `60c7dee9` = main after that landing; re-check by `grep -n` at dispatch).**
+- `AgentRuntime/CouncilRelay.cs:325-357`: a published file's `Attempt` is the id its FILE NAME carries (`AttemptIn`), fenced by `Fence` (:492-515): a row of the same role that is not LAUNCHED (ENDED **or LOST**)
+  publishes. Then for a `Brief` (:420-422) `_events.Delegated(p.Attempt!, p.Id)`.
+- `Core/Db/MissionEventStore.cs:821-831` `Delegated`: `UPDATE mission_event SET disposition='delegated' … WHERE kind=owner AND consumed_by=$attempt AND (disposition IS NULL OR disposition <> 'delegated')` —
+  it OVERWRITES `answered` and `failed` too, for whatever attempt the file names.
+- `AgentRuntime/MissionLoop.cs:1640`, `:2498-2560` (`RetryOnce`, `RecoverLostOwnerWords`); `MissionEventStore.cs:666-700` (`SettleLost`). Startup runs `Relay.Reconcile()` (`App/AppHost.cs:785`) BEFORE the loop's
+  recovery, so a brief naming a LOST attempt marks its owner message `delegated` first and recovery then skips it: the words are never re-raised.
+- `RoleObjectives.cs:108`: the owner objective is the PENDING owner wakes; an owner message consumed by a launch that ENDED without any disposition (or by a launch with no meter row) is neither an objective nor
+  re-raised (owed by U-reconcile-wakes' fix report).
+Must NOT: add a table, rung, migration, op, verb, argument or pipe-writable setting; let ANY agent-written file (brief, agenda, report, `next.json`, memory) settle, hide, re-raise or overwrite an owner message;
+change the quarantine fence's publish/leave/quarantine verdicts for anything but the delegation link; touch the canon template, `Canon.cs`, `WorkspaceBuilder`, `ledger_` tables; drop the owner's words from first place.
+Items, one commit each, one-sentence messages:
+1. **Delegation is the app's measurement of a FINISHED turn only.** `Delegated` writes only where the named attempt is ENDED (never LOST, never an unknown or another role's), and only over a NULL disposition —
+   never over `answered`, `failed` or a retry's row. Ordering at startup: recovery of LOST turns' owner words is not pre-empted by `Relay.Reconcile()` (either order gives the same result).
+2. **A finished turn that left the words without an outcome hands them on once.** An owner message consumed by an ENDED launch with no disposition after that launch's relay pass (or by a launch with no meter row)
+   is settled `failed` ("ended without an outcome") and re-raised ONCE in the same commit as `SettleLost`/`RetryOnce` do — the once rule held (a retry's own failure is not re-raised again).
+3. **The words:** CONTRACTS' wake queue and the brief/delegation paragraph say what delegation now requires; USER-GUIDE if it states it.
+Red-first tests (each quoted red at base): (a) `A_brief_naming_a_lost_turn_leaves_its_owner_message_open_and_re_raised` (the orchestrator's: the real startup order — `Relay.Reconcile()` then the loop's recovery);
+(b) `A_brief_never_overwrites_an_answered_or_failed_owner_message`; (c) `A_brief_naming_another_roles_or_an_unknown_turn_delegates_nothing`; (d) `A_turn_that_ended_without_an_outcome_hands_the_owners_words_on_once`;
+(e) `A_retry_that_ends_without_an_outcome_is_not_re_raised_again`; (f) `A_finished_turns_brief_still_delegates_the_words_it_took` (the legitimate path kept). Mutants, red and quoted: `Delegated`'s NULL-only guard
+removed ⇒ (b); the ENDED-only check removed ⇒ (a), (c).
+Gate: SPEED MODE (`fleet/SPEED-MODE.md` § 4) and BUILDER-PROMPT-v2 step 3b — rebase on `main` first; Release `--no-incremental` 0 warnings; touched classes 3×; the full suite on branch CI, all platforms; tests box
+`ready` once or NOT RUN; names vs `main` 0 removed (both set sizes). `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
