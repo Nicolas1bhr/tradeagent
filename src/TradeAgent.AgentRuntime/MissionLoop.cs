@@ -1015,8 +1015,11 @@ public sealed record MissionSituation
 public sealed record MissionDelivery(string Id, string Kind, string From, string Text)
 {
     /// <summary>The sentence that introduces it, naming the kind and who sent it.</summary>
-    public string Headline() =>
-        $"A {Kind} from the {CouncilRoles.Title(From)}, delivered to you by TradeAgent.";
+    public string Headline() => Kind == PublicationKind.Note
+        // TRADEAGENT'S OWN WORDS, not another role's: the paper allocator and the forward runner are
+        // the app, and naming them as though they were a director would be naming a colleague.
+        ? "A note TradeAgent wrote itself, delivered to you by TradeAgent."
+        : $"A {Kind} from the {CouncilRoles.Title(From)}, delivered to you by TradeAgent.";
 }
 
 /// <summary>
@@ -2328,8 +2331,12 @@ public sealed class MissionLoop
     IReadOnlyList<MissionDelivery> Delivered(IEnumerable<MissionEvent> wake)
     {
         var list = new List<MissionDelivery>();
+        // A NOTE IS QUOTED AS A DELIVERY TOO (U-reconcile-wakes): the paper allocation and the
+        // forward-run notes are TradeAgent's own words to Research about its versions, delivered to
+        // `in/` and charged a turn like any other — a turn told only "a note" would open the file
+        // the app already had in hand.
         foreach (var e in wake.Where(e => e.Kind is MissionEventKind.Report or MissionEventKind.Brief
-                     or MissionEventKind.Verdict))
+                     or MissionEventKind.Verdict or PublicationKind.Note))
         {
             try
             {
@@ -2343,7 +2350,25 @@ public sealed class MissionLoop
 
     /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>
     static string[] Reasons(IEnumerable<MissionEvent> wake) =>
-        [.. wake.Select(e => Reason(e.Kind)).Distinct()];
+        [.. wake.Select(Reason).Distinct()];
+
+    /// <summary>
+    /// THE PHRASE FOR ONE WAKE. A note's phrase depends on which note it is, and its id says so —
+    /// the app keys it by what it is about (<see cref="MissionEventIds.PaperAllocation"/>,
+    /// <see cref="MissionEventIds.PaperRun"/>); every other kind's phrase is the kind's.
+    /// </summary>
+    static string Reason(MissionEvent e) =>
+        e.Kind != PublicationKind.Note ? Reason(e.Kind)
+        : e.Id.StartsWith(PaperRunNote, StringComparison.Ordinal)
+            ? "TradeAgent's forward-run note arrived in `in/`"
+        : e.Id.StartsWith(PaperAllocationNote, StringComparison.Ordinal)
+            ? "TradeAgent's paper allocation note arrived in `in/`"
+        : Reason(e.Kind);
+
+    // The ids' own prefixes, taken from the functions that write them: `note:paper-run:` and
+    // `note:paper-allocation:`.
+    static readonly string PaperRunNote = MissionEventIds.PaperRun("", "")[..^1];
+    static readonly string PaperAllocationNote = MissionEventIds.PaperAllocation("");
 
     static string Reason(string kind) => kind switch
     {
@@ -2362,6 +2387,7 @@ public sealed class MissionLoop
         MissionEventKind.Brief => "a brief from the Operations Director arrived in `in/`",
         MissionEventKind.Verdict => "TradeAgent's referee answered on a strategy version",
         MissionEventKind.Boundary => "a consequential boundary opened and it is waiting on your assessment",
+        PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
 
@@ -2407,7 +2433,7 @@ public sealed class MissionLoop
                         Failure = ended?.Raw is { Length: > 0 } raw
                             ? raw[..Math.Min(raw.Length, 500)]
                             : "the turn ended without a reply"
-                    }));
+                    }), CouncilRoles.Operations);   // the chair's, as the message it retries was
             }
         }
         catch (Exception)

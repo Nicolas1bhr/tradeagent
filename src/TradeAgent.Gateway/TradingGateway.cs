@@ -67,14 +67,38 @@ public sealed class TradingGateway : IAsyncDisposable
     ///
     /// It grants nothing in either direction. Waking the AI is not permission to trade; the gateway
     /// re-checks every limit when an order actually arrives.
+    ///
+    /// <para><b>The fourth argument is the role the wake is for</b> (<c>U-reconcile-wakes</c>): every wake
+    /// names whose work it is, so no role is bought a turn for something it does not own.</para>
     /// </summary>
-    public Action<string, string, string?>? RaiseMissionWake { get; set; }
+    public Action<string, string, string?, string>? RaiseMissionWake { get; set; }
 
-    /// <summary>Raises one wake, never throwing into the caller — every call site is an event handler.</summary>
-    void Wake(string id, string kind, object? payload = null)
+    /// <summary>Raises one wake for <paramref name="role"/>, never throwing into the caller — every call site is an event handler.</summary>
+    void Wake(string id, string kind, string role, object? payload = null)
     {
-        try { RaiseMissionWake?.Invoke(id, kind, payload is null ? null : Json.Write(payload)); }
+        try { RaiseMissionWake?.Invoke(id, kind, payload is null ? null : Json.Write(payload), role); }
         catch (Exception ex) { _log.TryEngineering("Gateway", "mission_wake_failed", "warn", ex: ex); }
+    }
+
+    /// <summary>
+    /// WHOSE A FILL OR A FINISHED ORDER IS, or null because it is nobody's to be woken for
+    /// (<c>U-reconcile-wakes</c>).
+    ///
+    /// <para>A request a paper deployment placed — its id is a <c>deployment_op</c> row, written before
+    /// anything was dispatched — is the app's own run of a frozen Research version, and that run's
+    /// observation is its forward-run note, daily and at the end. Waking a director per fill of it would
+    /// make a busy paper run a clock that buys the chair a turn for every execution. Every other order
+    /// and fill — the chair's own, the owner's by hand, one the platform reports with no request this
+    /// app knows — is Operations': it is the book that role answers for.</para>
+    ///
+    /// <para>A lookup that fails answers Operations: a turn spent on a deployment's fill costs money, a
+    /// fill of the chair's own nobody was told about costs the book.</para>
+    /// </summary>
+    string? WakeRoleFor(string? requestId)
+    {
+        if (requestId is not { Length: > 0 }) return CouncilRoles.Operations;
+        try { return _deployments.OpById(requestId) is null ? CouncilRoles.Operations : null; }
+        catch (Exception) { return CouncilRoles.Operations; }
     }
 
     /// <summary>
@@ -2373,8 +2397,12 @@ public sealed class TradingGateway : IAsyncDisposable
             // ledger has two sources on purpose and the five-minute pull serves the same executions
             // again, so raising on every sighting would be a paid turn per pull per fill. The id is
             // the execution's, which makes even that harmless.
-            if (recorded)
-                Wake(MissionEventIds.Fill(x.ExecutionId), MissionEventKind.Fill,
+            //
+            // FOR THE ROLE WHOSE BOOK IT IS, and for nobody when a paper deployment placed it
+            // (WakeRoleFor). Only the wake's role is decided here: the row is written and the answer
+            // returned exactly as before.
+            if (recorded && WakeRoleFor(requestId) is { } role)
+                Wake(MissionEventIds.Fill(x.ExecutionId), MissionEventKind.Fill, role,
                     new { symbol = x.Symbol, side = x.Side.ToString(), quantity = x.Quantity });
 
             return recorded;
@@ -12507,8 +12535,9 @@ public sealed class TradingGateway : IAsyncDisposable
             // not: an order moving through WORKING and PARTIALLY_FILLED would otherwise buy a turn
             // per tick of the book. The id carries the state as well as the request, so a stream
             // that repeats the same transition — which a reconnecting bridge does — costs nothing.
-            if (OrderStateMachine.IsTerminal(to))
-                Wake(MissionEventIds.Order(req.RequestId, to.ToString()), MissionEventKind.Order,
+            // A deployment's request wakes nobody; every other one wakes Operations (WakeRoleFor).
+            if (OrderStateMachine.IsTerminal(to) && WakeRoleFor(req.RequestId) is { } role)
+                Wake(MissionEventIds.Order(req.RequestId, to.ToString()), MissionEventKind.Order, role,
                     new { request = req.RequestId, state = to.ToString() });
             return true;
         }
