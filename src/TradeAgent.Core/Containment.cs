@@ -44,6 +44,16 @@ public static class ContainedLaunch
     /// </summary>
     public const string Flag = "--spawn-contained";
 
+    /// <summary>
+    /// <c>trade --spawn-contained --cell &lt;policy-file&gt; &lt;program&gt; [args]</c>: the same supervisor, and the program it starts
+    /// is the cell stage (<see cref="CellStage"/>) which confines itself and becomes the program. A flag, not a verb: it opens no
+    /// pipe and grants nothing — it only takes away (AUTH-001).
+    /// </summary>
+    public const string CellFlag = "--cell";
+
+    /// <summary>The cell stage's own flag: <c>trade --cell-exec &lt;policy-file&gt; &lt;program&gt; [args]</c>. See <see cref="CellStage"/>.</summary>
+    public const string CellExecFlag = "--cell-exec";
+
     /// <summary>How often the supervisor asks whether the app that started it is still there.</summary>
     static readonly TimeSpan Watch = TimeSpan.FromMilliseconds(250);
 
@@ -57,9 +67,29 @@ public static class ContainedLaunch
     public static bool TryRun(IReadOnlyList<string> argv, TextWriter error, out int exitCode)
     {
         exitCode = 0;
+        if (argv.Count > 0 && argv[0] == CellExecFlag)
+        {
+            exitCode = CellStage.Run(argv.Skip(1).ToList(), error);
+            return true;
+        }
         if (argv.Count == 0 || argv[0] != Flag) return false;
 
-        if (argv.Count < 2)
+        // A CELL LAUNCH: the supervisor below is unchanged, and what it starts is the cell stage rather than the program.
+        string? cellPolicy = null;
+        var run = argv.Skip(1).ToList();
+        if (run.Count > 0 && run[0] == CellFlag)
+        {
+            if (run.Count < 3)
+            {
+                error.WriteLine($"trade: {Flag} {CellFlag} needs a policy file and a program to run");
+                exitCode = 2;
+                return true;
+            }
+            cellPolicy = run[1];
+            run = run.Skip(2).ToList();
+        }
+
+        if (run.Count < 1)
         {
             error.WriteLine($"trade: {Flag} needs a program to run");
             exitCode = 2;
@@ -96,14 +126,25 @@ public static class ContainedLaunch
         {
             // STDIO INHERITED, NOT REDIRECTED: the command writes into the pipes the app is reading, and
             // reads the stdin the app closed. Process.Start, never a managed fork.
-            var psi = new ProcessStartInfo(argv[1]) { UseShellExecute = false };
-            foreach (var a in argv.Skip(2)) psi.ArgumentList.Add(a);
+            var psi = new ProcessStartInfo(run[0]) { UseShellExecute = false };
+            if (cellPolicy is not null)
+            {
+                // THIS SAME PROGRAM AGAIN, AS THE CELL STAGE: a process of its own, because the stage ends by becoming the
+                // program and the supervisor has to outlive it.
+                var again = Self() ?? throw new InvalidOperationException("this program cannot name its own executable");
+                psi.FileName = again[0];
+                foreach (var a in again.Skip(1)) psi.ArgumentList.Add(a);
+                psi.ArgumentList.Add(CellExecFlag);
+                psi.ArgumentList.Add(cellPolicy);
+                psi.ArgumentList.Add(run[0]);
+            }
+            foreach (var a in run.Skip(1)) psi.ArgumentList.Add(a);
             command = Process.Start(psi) ?? throw new InvalidOperationException("the program did not start");
         }
         catch (Exception ex)
         {
-            error.WriteLine($"trade: could not run {argv[1]} ({ex.Message})");
-            exitCode = 127;
+            error.WriteLine($"trade: could not run {run[0]} ({ex.Message})");
+            exitCode = cellPolicy is null ? 127 : 126;
             return true;
         }
 
@@ -126,6 +167,113 @@ public static class ContainedLaunch
             exitCode = orphaned || !command.HasExited ? 128 + 9 : command.ExitCode;
         }
         return true;
+    }
+
+    /// <summary>
+    /// How to run this program again: its executable, and under the <c>dotnet</c> host the entry assembly beside it (how a test
+    /// drives <c>trade.dll</c>). Null when neither can be named.
+    /// </summary>
+    static IReadOnlyList<string>? Self()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe)) return null;
+        if (!string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase)) return [exe];
+        var name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+        var dll = name is null ? null : Path.Combine(AppContext.BaseDirectory, name + ".dll");
+        return dll is not null && File.Exists(dll) ? [exe, dll] : null;
+    }
+}
+
+/// <summary>
+/// THE CELL STAGE (<c>U-cell-linux-a</c> item 3): <c>trade --cell-exec &lt;policy-file&gt; &lt;program&gt; [args]</c>, started by the
+/// supervisor of a <see cref="ContainedLaunch.CellFlag"/> launch. It refuses a platform with a <see cref="CellPlatform.Refusal"/>,
+/// refuses a policy file that is not the app's own (anywhere but <see cref="CellPolicy.Directory"/>, a symlink, writable by anyone
+/// else, or not hashing to its name), finds the program on the policy's own <c>PATH</c>, moves into the workspace, and then
+/// <see cref="CellNative.Enter"/>: no_new_privs, seccomp, Landlock, execve. Every failure exits 126 naming the step, and nothing runs.
+///
+/// <para>It never opens the pipe, reads a grant or parses a verb: it only takes away (AUTH-001). And it inherits nothing into the
+/// cell: the program's environment is the policy's, whatever this process was started with.</para>
+/// </summary>
+public static class CellStage
+{
+    public const int Failed = 126;
+
+    /// <summary>Runs the stage. Returns only when it failed — the exit code — having said why on <paramref name="error"/>.</summary>
+    public static int Run(IReadOnlyList<string> argv, TextWriter error)
+    {
+        if (argv.Count < 2)
+        {
+            error.WriteLine($"trade: {ContainedLaunch.CellExecFlag} needs a policy file and a program to run");
+            return 2;
+        }
+
+        int Refuse(string why)
+        {
+            error.WriteLine($"trade: the cell was not entered: {why}");
+            error.Flush();
+            return Failed;
+        }
+
+        var platform = CellPlatform.Read();
+        if (platform.Refusal() is { } refusal) return Refuse(refusal);
+
+        CellPolicy policy;
+        try
+        {
+            if (AppOwned(argv[0]) is { } notOurs) return Refuse(notOurs);
+            policy = CellPolicy.Read(argv[0]);
+        }
+        catch (Exception ex) when (ex is TradeAgentException or IOException or UnauthorizedAccessException)
+        {
+            return Refuse(ex.Message);
+        }
+
+        var program = Resolve(argv[1], policy);
+        if (program is null) return Refuse($"{argv[1]} is not a program on the cell's PATH or in its workspace");
+
+        try { Directory.SetCurrentDirectory(policy.Workspace); }
+        catch (Exception ex) { return Refuse($"could not move into the workspace {policy.Workspace} ({ex.Message})"); }
+
+        error.Flush();
+        var failure = CellNative.Enter(policy, program, argv.Skip(2).ToList());
+        return Refuse(failure.Sentence);
+    }
+
+    /// <summary>Why <paramref name="path"/> is not a policy file the app wrote, or null when it is.</summary>
+    static string? AppOwned(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var info = new FileInfo(full);
+        if (!info.Exists) return $"the cell policy {full} does not exist";
+        if (info.LinkTarget is not null) return $"the cell policy {full} is a symlink";
+        var dir = CellNative.RealPath(CellPolicy.Directory);
+        var real = CellNative.RealPath(full);
+        if (dir is null || real is null || Path.GetDirectoryName(real) != dir)
+            return $"the cell policy {full} is not in TradeAgent's own cell folder {CellPolicy.Directory}";
+        if (!OperatingSystem.IsWindows() &&
+            (File.GetUnixFileMode(real) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+            return $"the cell policy {full} can be written by another account";
+        return null;
+    }
+
+    /// <summary>The program's absolute path: as given when it holds a slash (relative to the workspace), else the first match on the policy's PATH.</summary>
+    static string? Resolve(string program, CellPolicy policy)
+    {
+        if (program.Contains('/'))
+        {
+            var p = Path.GetFullPath(program, policy.Workspace);
+            return File.Exists(p) ? p : null;
+        }
+        var path = policy.Environment.FirstOrDefault(e => e.Key == "PATH").Value ?? "";
+        foreach (var dir in path.Split(':', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!Path.IsPathFullyQualified(dir)) continue;
+            var candidate = Path.Combine(dir, program);
+            if (File.Exists(candidate) && !OperatingSystem.IsWindows() &&
+                (File.GetUnixFileMode(candidate) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
+                return candidate;
+        }
+        return null;
     }
 }
 
