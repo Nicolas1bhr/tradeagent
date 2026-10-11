@@ -845,7 +845,7 @@ public sealed class TurnMeter
         // THE UNITS THAT FUND THIS LAUNCH, read from the chart before the transaction and recorded with the row inside it
         // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
         // no unit's envelope sees. No row, no reservation, no wake.
-        IReadOnlyList<string> funding;
+        IReadOnlyList<FundedUnit> funding;
         try { funding = FundingOf(role); }
         catch (Exception ex)
         {
@@ -880,7 +880,7 @@ public sealed class TurnMeter
             Role = role,
             // THE PROFILE THE SEAT WAS VERIFIED UNDER, above, before this row existed (U-seat-home). Written here and nowhere else.
             RuntimeProfile = seat.Profile,
-            Funding = funding
+            Funding = [.. funding.Select(u => u.UnitId)]
         };
 
         AiAdmission admission;
@@ -951,15 +951,23 @@ public sealed class TurnMeter
     }
 
     /// <summary>
-    /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root
-    /// (<see cref="OrgStore.FundingLine"/>). A launch with no role is the chair's, as its ledger row is — so its spend stays in
-    /// the chair's units, where the role-share rule always counted it. Throws where the chart cannot answer.
+    /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root,
+    /// each with its envelope as the owner has the cap and the split set at this instant (<see cref="OrgStore.FundingChain"/>).
+    /// A launch with NO role is the chair's, as its ledger row is, so its spend stays in the chair's units where the role-share
+    /// rule always counted it — and it has no envelope to fit, because a launch nobody was named for was never held to a share
+    /// (it keeps its rule, the day's). Throws where the chart cannot answer.
     /// </summary>
-    IReadOnlyList<string> FundingOf(string? role) => [.. new OrgStore(_db).FundingLine(Key(role)).Select(u => u.Id)];
+    IReadOnlyList<FundedUnit> FundingOf(string? role)
+    {
+        var org = new OrgStore(_db);
+        return role is null
+            ? [.. org.FundingLine(Key(role)).Select(u => new FundedUnit(u.Id, null))]
+            : org.FundingChain(role, Cap(), Share);
+    }
 
     IReadOnlyList<string>? FundingOrNone(string? role)
     {
-        try { return FundingOf(role); }
+        try { return [.. new OrgStore(_db).FundingLine(Key(role)).Select(u => u.Id)]; }
         catch (Exception) { return null; }
     }
 
