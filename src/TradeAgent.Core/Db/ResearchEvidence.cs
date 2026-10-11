@@ -8,7 +8,8 @@ namespace TradeAgent.Core.Db;
 /// <summary>
 /// ONE TRIAL A RESEARCH-EVIDENCE MEASUREMENT READ: its place in the lineage (<see cref="Ordinal"/>, by registration then
 /// run id), its run, the cluster it fell in, and how it was read — <see cref="ResearchEvidence.Streamed"/>,
-/// <see cref="ResearchEvidence.NoStream"/> (no run row, no 1× stream, a missing one, or one with no known day) or
+/// <see cref="ResearchEvidence.NoStream"/> (no run row, a run measured under other evaluation semantics, no 1× stream, a
+/// missing one, or one with no known day) or
 /// <see cref="ResearchEvidence.HeldBack"/> (a holdout window reaches the run now, so nothing of it was read).
 /// </summary>
 public sealed record ResearchTrialRow(int Ordinal, string RunId, int Cluster, string Reading);
@@ -61,6 +62,15 @@ public sealed record ResearchEvidenceRow(
     /// <summary>The family gate (CSCV-PBO over a family's trials): there are no families yet (<c>U-experiments-op</c>), so always this.</summary>
     public string FamilyStatus => GateStatus.Inconclusive;
 
+    /// <summary>
+    /// HOW MANY OF THE <see cref="TrialsUnstreamed"/> WERE RUNS MEASURED UNDER OTHER EVALUATION SEMANTICS
+    /// (<c>U-evidence-evaluator-label</c>, rung 36): a trial whose run's <c>evaluator_version</c> is not this build's
+    /// <see cref="Strategy.Referee.EvaluatorVersion"/>, or is unknown, counted in M and none of its returns used — or null
+    /// for a measurement recorded before the rung, which applied no such check. Init-only with a default, so no
+    /// construction site moved.
+    /// </summary>
+    public int? TrialsOtherSemantics { get; init; }
+
     /// <summary>The order the paper queue will read (<c>U-referee-v2c</c>): the DSR, an unknown one last.</summary>
     public double Rank => Dsr ?? double.NegativeInfinity;
 }
@@ -74,7 +84,10 @@ public sealed record ResearchEvidenceRow(
 /// (<c>strategy_trial.charged</c>, the campaign as peek or as cost — <c>CampaignStore.TrialsCharged</c>'s reading), ordered by
 /// first registration then run id. Each is read through its 1× stream (<c>U-trial-returns</c>) — unless a holdout window
 /// reaches its run NOW (<see cref="StrategyStore.HeldBack"/>, under <c>BarAudience.ResearchEvidence</c>, which never reads
-/// the holdout), when nothing of it is read. The candidate: of the VERSION'S streamed trials, the one with the most known
+/// the holdout), when nothing of it is read; or unless its run was measured under other evaluation semantics than this
+/// build's (<see cref="OtherSemantics"/>, <c>U-evidence-evaluator-label</c>), when it is <see cref="NoStream"/>: still a
+/// trial in M — the reading that can only lower the deflated figures — and none of its returns used, because returns one
+/// evaluator measured are not deflated as another's. The candidate: of the VERSION'S streamed trials, the one with the most known
 /// days (tie: the earliest recorded run, then run id); none, and every statistic is <see cref="GateStatus.NoStream"/>.
 /// The referee's own holdout run is no trial and keeps no stream, so nothing here reads a held-back bar, before the charge
 /// or after it.</para>
@@ -105,12 +118,19 @@ public sealed class ResearchEvidence(Database db)
     /// <summary>A trial a holdout window reaches now: nothing of it is read; counted in M, and clustered alone.</summary>
     public const string HeldBack = "held-back";
 
+    /// <summary>
+    /// WHY A TRIAL WITH A STREAM IS READ AS <see cref="NoStream"/> ALL THE SAME (<c>U-evidence-evaluator-label</c>): its run's
+    /// label (<c>strategy_run.evaluator_version</c>) is not this build's <see cref="Strategy.Referee.EvaluatorVersion"/>, or a
+    /// run recorded before rung 36 has none. Counted in <see cref="ResearchEvidenceRow.TrialsOtherSemantics"/>.
+    /// </summary>
+    public const string OtherSemantics = "measured under other evaluation semantics";
+
     readonly StrategyStore _strategies = new(db);
     readonly DatasetStore _datasets = new(db);
 
     const string Cols = "campaign_id, version_id, method, candidate_run_id, friction_sha256, trace_sha256, days, blocks_known, "
         + "blocks_positive, trials_m, trials_unstreamed, n_eff, sr, skew, kurtosis, sr0, dsr, ceiling, blocks_power, dsr_power, "
-        + "blocks_status, dsr_status, at";
+        + "blocks_status, dsr_status, at, trials_other_semantics";
 
     /// <summary>
     /// MEASURES the version's research evidence over <paramref name="lineage"/> (the verdict campaign and every campaign it
@@ -124,11 +144,21 @@ public sealed class ResearchEvidence(Database db)
             var holdout = TapeHoldout.Of(BarAudience.ResearchEvidence, _datasets);
 
             var read = new List<(string RunId, string Reading, StrategyRunRow? Run, StrategyStreamRow? Stream)>();
+            var other = 0;
             foreach (var runId in TrialRuns(lineage))
             {
                 var run = _strategies.RunById(runId);
                 if (run is null) { read.Add((runId, NoStream, null, null)); continue; }
                 if (_strategies.HeldBack(run, holdout) is not null) { read.Add((runId, HeldBack, run, null)); continue; }
+
+                // MEASURED UNDER OTHER EVALUATION SEMANTICS — another evaluator's label, or none from before rung 36: a trial,
+                // and none of its returns, which this build's evaluator did not measure.
+                if (!string.Equals(run.EvaluatorVersion, Referee.EvaluatorVersion, StringComparison.Ordinal))
+                {
+                    read.Add((runId, NoStream, run, null));
+                    other++;
+                    continue;
+                }
 
                 var stream = _strategies.StreamsOf(runId).FirstOrDefault(s => s.Multiple == 1);
                 read.Add(stream is { Missing: null } && stream.Days.Any(d => d.NetReturn is not null)
@@ -152,7 +182,7 @@ public sealed class ResearchEvidence(Database db)
             if (candidate is null)
                 return new ResearchEvidenceRow(campaignId, versionId, Version, null, null, null, 0, 0, 0, read.Count, unstreamed,
                     clusters.NEff, null, null, null, null, null, null, GatePower.Blocks(0), GatePower.Dsr(0, clusters.NEff),
-                    GateStatus.NoStream, GateStatus.NoStream, at, trialRows);
+                    GateStatus.NoStream, GateStatus.NoStream, at, trialRows) { TrialsOtherSemantics = other };
 
             var deflated = Deflation.Of(candidate.Days, trials);
             var blocks = BlockTest.Of(candidate.Days);
@@ -163,7 +193,7 @@ public sealed class ResearchEvidence(Database db)
                 deflated.NEff, deflated.Candidate?.Sr, deflated.Candidate?.Skew, deflated.Candidate?.Kurtosis, deflated.Sr0,
                 deflated.Dsr, deflated.Ceiling, blocksPower, dsrPower,
                 GatePower.Status(blocksPower, blocks.Known == BlockTest.Count),
-                GatePower.Status(dsrPower, deflated.Dsr is not null), at, trialRows);
+                GatePower.Status(dsrPower, deflated.Dsr is not null), at, trialRows) { TrialsOtherSemantics = other };
         });
 
     /// <summary>
@@ -197,7 +227,7 @@ public sealed class ResearchEvidence(Database db)
         using var insert = db.Cmd($"""
             INSERT INTO referee_research({Cols})
             VALUES($camp,$ver,$method,$run,$friction,$trace,$days,$bk,$bp,$m,$un,$neff,$sr,$skew,$kurt,$sr0,$dsr,$ceil,
-                   $bpow,$dpow,$bstat,$dstat,$at)
+                   $bpow,$dpow,$bstat,$dstat,$at,$other)
             ON CONFLICT(campaign_id, version_id, method) DO NOTHING
             """,
             ("$camp", row.CampaignId), ("$ver", row.VersionId), ("$method", row.Method), ("$run", row.CandidateRunId),
@@ -206,7 +236,8 @@ public sealed class ResearchEvidence(Database db)
             ("$neff", row.NEff), ("$sr", Text(row.Sr)), ("$skew", Text(row.Skew)), ("$kurt", Text(row.Kurtosis)),
             ("$sr0", Text(row.Sr0)), ("$dsr", Text(row.Dsr)), ("$ceil", Text(row.Ceiling)),
             ("$bpow", Text(row.BlocksPower)), ("$dpow", Text(row.DsrPower)),
-            ("$bstat", row.BlocksStatus), ("$dstat", row.DsrStatus), ("$at", Sql.T(row.At)));
+            ("$bstat", row.BlocksStatus), ("$dstat", row.DsrStatus), ("$at", Sql.T(row.At)),
+            ("$other", row.TrialsOtherSemantics));
         if (insert.ExecuteNonQuery() == 0) return false;
 
         foreach (var trial in row.Trials)
@@ -272,7 +303,10 @@ public sealed class ResearchEvidence(Database db)
                     Sql.S(r.GetValue(5)), r.GetInt32(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
                     r.GetInt32(11), Number(r.GetValue(12)), Number(r.GetValue(13)), Number(r.GetValue(14)),
                     Number(r.GetValue(15)), Number(r.GetValue(16)), Number(r.GetValue(17)), Number(r.GetValue(18))!.Value,
-                    Number(r.GetValue(19))!.Value, r.GetString(20), r.GetString(21), Sql.Time(r.GetString(22)), []));
+                    Number(r.GetValue(19))!.Value, r.GetString(20), r.GetString(21), Sql.Time(r.GetString(22)), [])
+                {
+                    TrialsOtherSemantics = r.IsDBNull(23) ? null : r.GetInt32(23)
+                });
 
         var rows = new List<ResearchEvidenceRow>(heads.Count);
         foreach (var head in heads)

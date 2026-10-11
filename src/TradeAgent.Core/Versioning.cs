@@ -370,7 +370,9 @@ public static class Versions
     /// after <c>U-referee-v2c</c>'s 35): <c>strategy_run.evaluator_version</c>, the <c>Referee.EvaluatorVersion</c> of the
     /// build that recorded the run, written by <c>StrategyStore.RecordRun</c> in the run's own insert from that constant and
     /// never from a caller's value. No backfill: a run recorded before the rung has NULL — unknown — and research evidence
-    /// counts it as a trial without using its returns, the refusal a build owes another evaluator's figures.</para>
+    /// counts it as a trial without using its returns, the refusal a build owes another evaluator's figures; and
+    /// <c>referee_research.trials_other_semantics</c>, how many trials a measurement read so, NULL on one recorded before
+    /// the rung, which applied no such check.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 36;
 
