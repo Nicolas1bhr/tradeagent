@@ -128,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          filter='Category!=Timing'
+          filter='Category!=Timing&Category!=Cell'
           if [ -n "${{ matrix.shard }}" ]; then
             shard=$(.github/ci/shard-filter.sh filter "${{ matrix.shard }}")
             filter="$filter&($shard)"
@@ -179,7 +179,7 @@ jobs:
           # correct if the trait ever lands outside the integration assembly. The two steps together
           # run every test exactly once.
           if dotnet test TradeAgent.sln -c Release --no-build \
-               --filter "Category=Timing" --logger "trx;LogFileName=results-timing.trx"; then
+               --filter "Category=Timing&Category!=Cell" --logger "trx;LogFileName=results-timing.trx"; then
             exit 0
           fi
 
@@ -197,7 +197,43 @@ jobs:
 
           echo "Re-running the timing category once; the failure above stands in the record either way."
           dotnet test TradeAgent.sln -c Release --no-build \
-            --filter "Category=Timing" --logger "trx;LogFileName=results-timing-retry.trx"
+            --filter "Category=Timing&Category!=Cell" --logger "trx;LogFileName=results-timing-retry.trx"
+
+      # THE LINUX CELL'S BENCHMARK ROWS (U-cell-linux-a) — in THIS job, the ubuntu entry only: no job of their own, because the
+      # 20 concurrent jobs GitHub gives the repository are shared by every seat's branch, and the rows take a minute or two. The
+      # Cell category is excluded from both test steps above on every platform and run here alone, so it still runs exactly once.
+      #
+      # THE PLATFORM FIRST, AND A RUNNER THAT CANNOT HOLD A CELL FAILS — never skips: the kernel, the Landlock ABI the kernel itself
+      # reports, and the active security modules are printed, and Landlock missing from the list or an ABI below 6 is a red run.
+      - name: Show the cell platform (Landlock ABI 6 or a red run)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lsm="$(cat /sys/kernel/security/lsm)"
+          abi="$(python3 -c 'import ctypes; l = ctypes.CDLL(None, use_errno=True); print(l.syscall(444, None, 0, 1))')"
+          echo "cell platform: kernel $(uname -r) ($(uname -m)); Landlock ABI $abi; LSM $lsm; apparmor_restrict_unprivileged_userns $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)"
+          case ",$lsm," in *,landlock,*) ;; *) echo "::error title=No Landlock::kernel $(uname -r): Landlock is not among the active security modules ($lsm)"; exit 1 ;; esac
+          [ "$abi" -ge 6 ] || { echo "::error title=Landlock below ABI 6::kernel $(uname -r) reports Landlock ABI $abi; a cell needs ABI 6"; exit 1; }
+
+      # THE ROWS RUN AS THE HOST WILL RUN THE APP: a system service with User= and Delegate=yes (packaging/linux/tradeagent.service's
+      # shape, U-cell-linux-b's cgroup), started with sudo because only root starts one — the app itself never uses sudo. Lingering
+      # gives the account a user systemd manager, so the `systemd-run --user` escape row is a real attempt against a real manager.
+      - name: Test the Linux cell rows
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          user="$(id -un)"; uid="$(id -u)"
+          sudo loginctl enable-linger "$user"
+          for _ in $(seq 1 30); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
+          [ -S "/run/user/$uid/bus" ] || { echo "::error::no user manager bus at /run/user/$uid/bus after enable-linger"; exit 1; }
+          sudo systemd-run --wait --pipe --quiet -p User="$user" -p Delegate=yes -p WorkingDirectory="$GITHUB_WORKSPACE" \
+            -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" \
+            -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
+              --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
