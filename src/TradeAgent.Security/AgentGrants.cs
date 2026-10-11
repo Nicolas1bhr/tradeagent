@@ -81,7 +81,7 @@ public sealed class AgentGrant : IDisposable
 
     public string Token { get; }
     public string Role { get; }
-    public string AttemptId { get; }
+    public string AttemptId { get; internal set; }
     public DateTimeOffset Expires { get; internal set; }
 
     /// <summary>
@@ -189,7 +189,8 @@ public sealed class AgentGrants
     /// launch issued while any other launch's grant is live — pending, bound, whatever its role — gets a grant WITHOUT order
     /// permission and the reason in <see cref="AgentGrant.OrdersWithheld"/>. A grant whose turn has ended is no neighbour:
     /// its tree was ended before the turn returned. The mission loop asks <see cref="HeldBy"/> first and defers rather than
-    /// meeting this line; this line is what holds when two launches race past that look.</para>
+    /// meeting this line; this line is what holds when two launches race past that look — and the loop and the owner's
+    /// chat call it BEFORE the ledger is asked (fix pass 1), so a launch it refuses has written no row and consumed no wake.</para>
     /// </summary>
     public AgentGrant Issue(string role, string attemptId, TimeSpan? life = null)
     {
@@ -229,17 +230,15 @@ public sealed class AgentGrants
     }
 
     /// <summary>
-    /// The sentence a launch of <paramref name="role"/> issued now would carry in <see cref="AgentGrant.OrdersWithheld"/>,
-    /// or null — so the turn's own message can say it holds no order permission before it is sent. A LOOK: the grant
-    /// decides, and a turn told it may trade that then may not is refused at the order in the same words.
+    /// STAMPS THE ATTEMPT ON A GRANT ISSUED BEFORE ITS ADMISSION (<c>U-grant-tree</c> fix pass 1): a launch's place is taken
+    /// before the ledger opens its attempt, so the attempt is written onto the grant once it exists — while the grant is
+    /// still pending and serves nobody, never after it is bound.
     /// </summary>
-    public string? WouldWithhold(string role)
+    public void Attribute(AgentGrant grant, string attemptId)
     {
-        List<string>? gone;
-        string? withheld;
-        lock (_gate) { gone = Prune(); withheld = Withheld(role); }
-        RaiseEnded(gone);
-        return withheld;
+        ArgumentNullException.ThrowIfNull(grant);
+        lock (_gate)
+            if (grant.Container is null) grant.AttemptId = attemptId ?? "";
     }
 
     /// <summary>

@@ -316,8 +316,57 @@ public sealed class AgentSession(
         return (grants ?? AgentGrants.Shared).HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
     }
 
+    /// <summary>
+    /// THE NEXT LAUNCH'S GRANT, ISSUED BEFORE ITS ADMISSION and held until <see cref="RunTurnAsync"/> takes it or
+    /// <see cref="Unclaim"/> gives it back (<c>U-grant-tree</c> fix pass 1). One at a time: a second claim while one is held
+    /// is a launch of this role already being prepared.
+    /// </summary>
+    AgentGrant? _claim;
+    readonly Lock _claimGate = new();
+
     /// <inheritdoc />
-    public string? OrdersWithheldNow() => (grants ?? AgentGrants.Shared).WouldWithhold(role);
+    /// <remarks>
+    /// <para><b>WHY BEFORE ADMISSION.</b> The look in <see cref="Barred"/> is only a look: an Operations launch issued after
+    /// it and before this launch's grant used to leave the register refusing this launch only once the ledger had already
+    /// written its row, reserved its spend and consumed its wakes — none of which a launch that never starts may do, and
+    /// none of which can be undone in an append-only ledger. So the grant itself is issued here, under the register's lock,
+    /// before the caller asks the ledger; <see cref="AgentGrants.Issue"/>'s refusal arrives while nothing has been written.</para>
+    /// </remarks>
+    public LaunchBar? Claim(out string? ordersWithheld)
+    {
+        ordersWithheld = null;
+        var register = grants ?? AgentGrants.Shared;
+        lock (_claimGate)
+        {
+            if (_claim is not null) return new LaunchBar(Labels.HeldWhileTheAiIsWorking, Lasting: false);
+            AgentGrant grant;
+            try { grant = register.Issue(role, ""); }
+            catch (TradeAgentException ex) when (ex.Code == ErrorCode.LAUNCH_HELD) { return new LaunchBar(ex.Message, Lasting: false); }
+            _claim = grant;
+            ordersWithheld = grant.OrdersWithheld;
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public void Unclaim()
+    {
+        AgentGrant? claim;
+        lock (_claimGate) { claim = _claim; _claim = null; }
+        // NO PROCESS EVER HELD IT: revoked outright, never given the grace a finished turn's grant has.
+        if (claim is not null) (grants ?? AgentGrants.Shared).Revoke(claim.Token);
+    }
+
+    /// <summary>The held claim, taken for the launch about to start, or null when nothing claimed one.</summary>
+    AgentGrant? TakeClaim()
+    {
+        lock (_claimGate)
+        {
+            var claim = _claim;
+            _claim = null;
+            return claim;
+        }
+    }
 
     /// <summary>
     /// THE CANON THE TURN IN FLIGHT WAS LAUNCHED UNDER, read in <see cref="RunTurnAsync"/> before the process starts and
@@ -449,9 +498,17 @@ public sealed class AgentSession(
             return;
         }
 
-        // THIS TURN HOLDS NO ORDER PERMISSION, AND IS TOLD SO IN ITS OWN MESSAGE (ORDER-001) — before the ledger hashes it,
-        // so the record is of the words actually sent.
-        if (OrdersWithheldNow() is { } withheld) message = LaunchBar.Told(withheld) + message;
+        // THE LAUNCH'S GRANT, DECIDED BEFORE THE LEDGER IS ASKED (fix pass 1): a launch the register refuses — another one
+        // issued since the look above holds order permission — is held exactly as the look's refusal is, with nothing written.
+        if (Claim(out var withheld) is { } held)
+        {
+            Hold(message, held.Why);
+            return;
+        }
+
+        // THIS TURN HOLDS NO ORDER PERMISSION, AND IS TOLD SO IN ITS OWN MESSAGE (ORDER-001) — in the grant's own words, before
+        // the ledger hashes it, so the record is of the words actually sent.
+        if (withheld is not null) message = LaunchBar.Told(withheld) + message;
 
         // THE OWNER'S TURN IS ADMITTED AND RESERVED LIKE ANY OTHER, BEFORE ANYTHING IS STARTED.
         //
@@ -463,9 +520,12 @@ public sealed class AgentSession(
         // person typing is not an exception to a bill they are the one paying.
         // NO ADMISSION ATTACHED IS A REFUSAL, NOT A PASS (U-admission-fail-closed): a conversation the meter is not
         // attached to — never attached, or detached when its runtime was replaced — has nothing to reserve its turn.
-        var admission = Admit?.Invoke(message) ?? AiAdmission.NoLedgerOpen;
+        AiAdmission admission;
+        try { admission = Admit?.Invoke(message) ?? AiAdmission.NoLedgerOpen; }
+        catch (Exception) { Unclaim(); throw; }
         if (!admission.Admitted)
         {
+            Unclaim();
             // NOT LAUNCHED, NOT LOST. Their words are held exactly as a message typed while the AI
             // is working is held, and the System line says which ceiling stopped it rather than
             // leaving a chat that simply went quiet.
@@ -573,6 +633,7 @@ public sealed class AgentSession(
         var exe = resolveExecutable();
         if (exe is null)
         {
+            Unclaim();
             raw = $"{manifest.DisplayName} is not installed, so the message was not sent.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
@@ -605,6 +666,8 @@ public sealed class AgentSession(
         }
         finally
         {
+            // A CLAIM THE TURN NEVER TOOK — it threw before its launch — is given back, not left holding the next one.
+            Unclaim();
             _current = null;
             _cts?.Dispose();
             _cts = null;
@@ -645,9 +708,15 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
 
         // A LAUNCH THIS COMPUTER CANNOT HOLD NEVER STARTS (U-grant-tree, RULING 2): its grant could be bound to nothing,
-        // so every request it made would be refused while the vendor billed for the turn. Before the grant is minted.
+        // so every request it made would be refused while the vendor billed for the turn.
+        // Before the grant is minted; a grant claimed before admission is given back by RunAsync.
         if (ProcessContainment.CannotHold() is { } unheld)
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, unheld);
+
+        // THE GRANT THIS LAUNCH WILL CARRY: the one claimed before its admission (Claim), or — for a caller that admitted
+        // nothing first — issued now, refused here as the hard line. Taken here, so every way out below ends it.
+        var register = grants ?? AgentGrants.Shared;
+        using var launch = TakeClaim() ?? register.Issue(role, "");
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
@@ -711,8 +780,8 @@ public sealed class AgentSession(
         // made once at prepare, and a token minted there would be one token for every turn of the
         // app's life. Disposed when the turn returns, which pulls its expiry in to the grace — see
         // AgentGrants.
-        var register = grants ?? AgentGrants.Shared;
-        using var launch = register.Issue(role, attempt?.Invoke() ?? "");
+        // THE ATTEMPT THE LEDGER OPENED FOR THIS LAUNCH, stamped on the grant while it is still pending.
+        register.Attribute(launch, attempt?.Invoke() ?? "");
 
         // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
         // as a copy of this process's, so everything TradeAgent was started with used to reach the
