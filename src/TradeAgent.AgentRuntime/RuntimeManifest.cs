@@ -101,6 +101,13 @@ public sealed class SeatPlan
     /// </summary>
     public string[] Forbidden { get; set; } = [];
 
+    /// <summary>
+    /// THE FILES THAT HOLD THE SEAT'S CREDENTIAL, relative to <see cref="Home"/>: made owner-only at every preparation like the folders
+    /// and <see cref="ConfigFile"/> (<c>U-seat-acl</c>; CRED-001), because a file's own access entries outlive any change to its folder's.
+    /// Everything else the CLI writes — session transcripts included — is covered by its folder's list. Data: a vendor's file names.
+    /// </summary>
+    public string[] PrivateFiles { get; set; } = [];
+
     /// <summary>Names that must NOT exist in the seat's working directory: a project config the CLI would load, or its skills.</summary>
     public string[] WorkspaceForbidden { get; set; } = [];
 
@@ -708,6 +715,12 @@ public static class RuntimeCatalog
                     ]
                 },
                 ConfigFile = "codex/config.toml",
+                // WHERE CODEX 0.160.1 KEEPS A SECRET IN A FILE, read in its source at rust-v0.160.1: the sign-in in
+                // `codex_home.join("auth.json")` (login/src/auth/storage.rs:155) and MCP OAuth tokens in
+                // `FALLBACK_FILENAME: &str = ".credentials.json"` under CODEX_HOME (rmcp-client/src/oauth.rs:819, :1062) — both stores
+                // pinned to "file" by the deny set. Its encrypted stores (`secrets/*.age`, secrets/src/local.rs:41-44, the key in the
+                // OS keyring) sit in the `secrets` folder, which the folder walk covers.
+                PrivateFiles = ["codex/auth.json", "codex/.credentials.json"],
                 // WHAT A SEAT MUST NOT FIND IN ITS HOME OR WORKSPACE. $CODEX_HOME/AGENTS.md is injected into every turn even under
                 // the deny set (survey case (d)); $HOME/.agents/skills is a skill root even with CODEX_HOME set (case (c)); a
                 // workspace .codex/config.toml with no trust entry is loaded and its MCP server spawned (cases (a), (c)). The
