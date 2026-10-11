@@ -342,11 +342,33 @@ public sealed class RuntimeManifest
     // These four replace the console window. One message is one non-interactive run of the CLI;
     // the first starts a session and the rest resume it.
 
-    /// <summary>One-shot run of a single message. "{prompt}" is replaced with the user's text.</summary>
+    /// <summary>
+    /// One-shot run of a single message. "{prompt}" marks the message's slot: the message itself where the runtime cannot read
+    /// it from stdin, <see cref="StdinMarker"/> where it can (<see cref="PromptOnStdin"/>).
+    /// </summary>
     public string[] ExecArgs { get; set; } = [];
 
     /// <summary>Same, but continuing the session the previous message started.</summary>
     public string[] ResumeArgs { get; set; } = [];
+
+    /// <summary>
+    /// WHETHER THIS RUNTIME READS THE TURN'S MESSAGE FROM STDIN, so it never rides on the command line (<c>U-prompt-stdin</c>,
+    /// <c>docs/ORCHESTRATION.md</c> § 2.7). A command line is readable by every process of the same user — a confined cell
+    /// included, through <c>/proc/&lt;pid&gt;/cmdline</c> — and capped (128 KiB per argument on Linux, 32,767 characters per
+    /// command line on Windows); stdin is neither.
+    ///
+    /// <para>False is a runtime TradeAgent cannot feed that way, and is said, not hidden: the attempt's record names "prompt in
+    /// argv (runtime cannot read stdin)" (<c>prompt_in</c> in <c>ai_attempt.context</c>), and a gate that must not run such a seat reads
+    /// this flag. Data, because whether a vendor reads stdin is the vendor's business: a CLI that learns to is a one-line change
+    /// in <c>runtimes.json</c>.</para>
+    /// </summary>
+    public bool PromptOnStdin { get; set; }
+
+    /// <summary>
+    /// What stands in the "{prompt}" slot when <see cref="PromptOnStdin"/>: codex's <c>-</c> ("read the instructions from stdin"),
+    /// or empty for a runtime that reads stdin when no message is given at all, whose slot is then left out.
+    /// </summary>
+    public string StdinMarker { get; set; } = "";
 
     /// <summary>
     /// Flag that turns stdout into a machine-readable event stream, so the window can show the AI's
@@ -596,6 +618,12 @@ public static class RuntimeCatalog
             TaskArgs = ["run", "{prompt}"],
             ExecArgs = ["run", "{prompt}"],
             ResumeArgs = ["run", "--continue", "{prompt}"],
+            // THE MESSAGE ON STDIN, NO ARGUMENT IN ITS PLACE (U-prompt-stdin). Read in OpenCode's own source at v1.19.0, the
+            // latest release on 2026-10-11 (packages/opencode/src/cli/cmd/run.ts): `run` reads stdin whenever it is not a
+            // terminal and, with no message argument, takes stdin as the message (`resolveRunInput`). NOT RUN: no OpenCode is on
+            // this Mac, and installing one to look was not done.
+            PromptOnStdin = true,
+            StdinMarker = "",
             // `--format json` — OpenCode has no `--json`. Each line carries type/timestamp/sessionID
             // plus a payload; assistant text is type "text" with the words at part.text.
             JsonFlag = "--format json",
@@ -767,6 +795,12 @@ public static class RuntimeCatalog
             // and the working directory is TradeAgent's own workspace, so "the last session" can
             // only ever mean a session TradeAgent itself started.
             ResumeArgs = ["exec", "resume", "--last", "{prompt}"],
+            // THE MESSAGE ON STDIN, `-` IN ITS SLOT (U-prompt-stdin): never on the command line, where every process of the
+            // user reads it. `codex exec --help`, codex-cli 0.160.1, a throwaway CODEX_HOME and HOME, 2026-10-11: "If not provided
+            // as an argument (or if `-` is used), instructions are read from stdin"; `codex exec resume --help`: "Prompt to send
+            // after resuming the session. If `-` is used, read from stdin".
+            PromptOnStdin = true,
+            StdinMarker = "-",
             JsonFlag = "--json",
             // THE VENDOR'S OWN REFUSAL, RECORDED. codex-cli 0.153.4 on macOS, 2026-10-01T18:20:07Z, run
             // once in a scratch folder while the owner's plan was limited:
@@ -911,6 +945,9 @@ public static class RuntimeCatalog
             Description = "Any command-line AI tool, described by a manifest. Developer-facing: the end user never edits this.",
             Executable = "",
             Install = new InstallPlan { Kind = InstallKind.None },
+            // Nothing is known about how an arbitrary tool reads its message, so it is given on the command line as before and
+            // every attempt says so (U-prompt-stdin); a manifest that knows better sets these two.
+            PromptOnStdin = false,
             Verified = false
         }
     ];
