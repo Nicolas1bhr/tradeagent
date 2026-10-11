@@ -246,6 +246,8 @@ while :; do
     fi
     if [ "$gone" = 1 ]; then sleep 1; else sleep 0.1; fi
 done
+# The loop breaks as soon as both are seen, which can be a late iteration past its own deadline check: each is bounded here.
+[ "$restart_ms" -le 30000 ] || fail "systemd's restart was confirmed only $restart_ms ms after kill -9 (the budget is 30000 ms)"
 [ "$recorded_after_ms" -le 30000 ] || fail "recorded again only $recorded_after_ms ms after kill -9"
 pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, started (${restart_ms} ms after the kill) and recorded again ${recorded_after_ms} ms after the kill"
 
