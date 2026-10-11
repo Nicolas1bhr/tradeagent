@@ -32,10 +32,18 @@ public static class CellNative
     const int LANDLOCK_RULE_PATH_BENEATH = 1, LANDLOCK_RULE_NET_PORT = 2;
 
     const ulong FsExecute = 1UL << 0, FsWriteFile = 1UL << 1, FsReadFile = 1UL << 2, FsReadDir = 1UL << 3,
-        FsTruncate = 1UL << 14, FsIoctlDev = 1UL << 15;
+        FsTruncate = 1UL << 14, FsIoctlDev = 1UL << 15, FsResolveUnix = 1UL << 16;
 
     /// <summary>Every filesystem right ABI 6 knows (bits 0–15: ABI 1's thirteen, REFER, TRUNCATE, IOCTL_DEV), all handled — so all denied unless a rule grants it.</summary>
     const ulong FsAll = (1UL << 16) - 1;
+
+    /// <summary>
+    /// The filesystem rights a ruleset handles on a kernel offering Landlock <paramref name="abi"/>: every right ABI 6 knows, and from
+    /// ABI 9 <c>RESOLVE_UNIX</c> too — the lookup of a pathname UNIX socket made outside the cell, so a cell connects or sends to
+    /// none outside its workspace even with a socket in hand (seccomp already refuses it one). A kernel refuses a right it does not
+    /// know, so an older ABI is never asked for it.
+    /// </summary>
+    internal static ulong HandledFs(int abi) => abi >= 9 ? FsAll | FsResolveUnix : FsAll;
 
     /// <summary>The rights that mean anything on a file rather than a directory; a rule on a file may carry only these.</summary>
     const ulong FsFileRights = FsExecute | FsWriteFile | FsReadFile | FsTruncate | FsIoctlDev;
@@ -56,16 +64,17 @@ public static class CellNative
     const uint EPERM = 1, EACCES = 13;
     const uint AuditArchX64 = 0xC000003E, AuditArchArm64 = 0xC00000B7;
     const uint X32SyscallBit = 0x40000000;
-    const uint AF_INET = 2, AF_INET6 = 10, SOCK_STREAM = 1, SOCK_NONBLOCK = 0x800, SOCK_CLOEXEC = 0x80000, IPPROTO_TCP = 6;
+    const uint AF_UNIX = 1, AF_INET = 2, AF_INET6 = 10, SOCK_STREAM = 1, SOCK_SEQPACKET = 5, SOCK_NONBLOCK = 0x800, SOCK_CLOEXEC = 0x80000,
+        IPPROTO_TCP = 6;
 
-    /// <summary>The system calls the filter reads by number. Only <c>socket</c> and the denied ones; everything else passes to Landlock.</summary>
-    sealed record Table(uint AuditArch, uint Socket, uint[] Denied);
+    /// <summary>The system calls the filter reads by number. Only <c>socket</c>, <c>socketpair</c> and the denied ones; everything else passes to Landlock.</summary>
+    sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint[] Denied);
 
     static Table? TableFor(Architecture arch) => arch switch
     {
         // io_uring_setup/enter/register, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd
-        Architecture.X64 => new(AuditArchX64, 41, [425, 426, 427, 250, 248, 249, 321, 298, 323]),
-        Architecture.Arm64 => new(AuditArchArm64, 198, [425, 426, 427, 219, 217, 218, 280, 241, 282]),
+        Architecture.X64 => new(AuditArchX64, 41, 53, [425, 426, 427, 250, 248, 249, 321, 298, 323]),
+        Architecture.Arm64 => new(AuditArchArm64, 198, 199, [425, 426, 427, 219, 217, 218, 280, 241, 282]),
         _ => null
     };
 
@@ -200,8 +209,9 @@ public static class CellNative
     {
         Failure? failure = null;
         failed = null;
+        var handled = HandledFs(LandlockAbi().Abi);
         var attr = Zeroed(24);
-        Marshal.WriteInt64(attr, 0, (long)FsAll);
+        Marshal.WriteInt64(attr, 0, (long)handled);
         Marshal.WriteInt64(attr, 8, (long)(NetBindTcp | NetConnectTcp));
         Marshal.WriteInt64(attr, 16, (long)(ScopeAbstractUnixSocket | ScopeSignal));
         var fd = (int)Syscall3(SysLandlockCreateRuleset, attr, 24, 0);
@@ -229,7 +239,7 @@ public static class CellNative
             return r == 0;
         }
 
-        var ok = Grant(policy.Workspace, FsAll, required: true);
+        var ok = Grant(policy.Workspace, handled, required: true);
         foreach (var p in policy.ReadOnly) ok = ok && Grant(p, FsReadFile | FsReadDir, required: false);
         foreach (var p in policy.Executable) ok = ok && Grant(p, FsExecute | FsReadFile | FsReadDir, required: false);
         foreach (var (p, rights) in Devices) ok = ok && Grant(p, rights, required: false);
@@ -252,8 +262,11 @@ public static class CellNative
     /// x64, the x32 numbers: EPERM. <c>io_uring_*</c>, the keyring calls, <c>bpf</c>, <c>perf_event_open</c>, <c>userfaultfd</c>:
     /// EPERM. <c>socket()</c>: allowed only for AF_INET or AF_INET6, type SOCK_STREAM (SOCK_NONBLOCK and SOCK_CLOEXEC masked off),
     /// protocol 0 or IPPROTO_TCP — Landlock then governs the port — and EACCES for every other family, type or protocol: AF_UNIX,
-    /// AF_NETLINK, AF_PACKET, AF_VSOCK, datagrams and ICMP among them. <c>socketpair()</c> is not <c>socket()</c> and passes: a pair
-    /// reaches no listener, and runtimes wake themselves with one. Everything else: allowed, and Landlock's.
+    /// AF_NETLINK, AF_PACKET, AF_VSOCK, datagrams and ICMP among them. <c>socketpair()</c>: allowed only for an AF_UNIX stream or
+    /// seqpacket pair (flags masked), which runtimes wake themselves with and whose ends reach only each other — a connected stream
+    /// end's <c>connect</c> and addressed <c>sendto</c> are EISCONN, a seqpacket end's address is ignored for its peer; a DATAGRAM
+    /// pair is EACCES, because its end can be connected or <c>sendto</c>'d to any pathname datagram listener on the host (journald,
+    /// <c>/dev/log</c>). Everything else: allowed, and Landlock's.
     /// </summary>
     internal static byte[] SeccompProgram(Architecture architecture)
     {
@@ -263,10 +276,13 @@ public static class CellNative
         b.Ld(0);
         if (architecture == Architecture.X64) b.Jge(X32SyscallBit, "eperm", null);
         foreach (var nr in t.Denied) b.Jeq(nr, "eperm", null);
-        b.Jeq(t.Socket, "socket", "allow");
+        b.Jeq(t.Socket, "socket", null);
+        b.Jeq(t.Socketpair, "socketpair", "allow");
         b.Label("socket").Ld(16).Jeq(AF_INET, "type", null).Jeq(AF_INET6, "type", "eacces");
         b.Label("type").Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, null, "eacces");
         b.Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_TCP, "allow", "eacces");
+        b.Label("socketpair").Ld(16).Jeq(AF_UNIX, null, "eacces");
+        b.Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "allow", null).Jeq(SOCK_SEQPACKET, "allow", "eacces");
         b.Label("allow").Ret(SeccompRetAllow);
         b.Label("eacces").Ret(SeccompRetErrno | EACCES);
         b.Label("eperm").Ret(SeccompRetErrno | EPERM);
