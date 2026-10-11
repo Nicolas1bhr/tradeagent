@@ -90,6 +90,63 @@ public class OrgPrincipalsTests : IDisposable
             new MaterialStore(db).Present(MaterialOrigin.Agent).Select(m => m.RelPath));
     }
 
+    // ---- (b) the meter's slot -------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (b) A THIRD POSITION'S OPEN ATTEMPT IS KEYED BY ITS OWN ID. RED at base: <c>TurnMeter.Key</c> was
+    /// <c>CouncilRoles.Or</c>, so the third position's launch took the chair's slot and the chair's open attempt — the
+    /// one its grant names — became the third position's.
+    /// </summary>
+    [Fact]
+    public void A_third_positions_open_attempt_is_keyed_by_its_own_id()
+    {
+        using var db = TestEnv.NewDb();
+        Seat(db, Third);
+        var meter = new TurnMeter(db, () => 5m, live: new LiveAttempts());
+
+        var chair = meter.Begin("## Situation", role: CouncilRoles.Operations).Id;
+        var third = meter.Begin("## Situation", role: Third).Id;
+        Assert.NotNull(chair);
+        Assert.NotNull(third);
+        Assert.NotEqual(chair, third);
+
+        Assert.Equal(chair, meter.OpenAttemptIdFor(CouncilRoles.Operations));
+        Assert.Equal(third, meter.OpenAttemptIdFor(Third));
+        Assert.Equal(Third, new AiAttemptStore(db).Get(third!)!.Role);
+    }
+
+    // ---- (e) refused, never folded --------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (e) AN UNKNOWN PRINCIPAL IS REFUSED, NOT FOLDED INTO THE CHAIR. RED at base: the meter admitted a launch under a
+    /// name no position holds and keyed it as the chair's; <c>HomeDir</c> mapped any string to the chair's folder.
+    /// </summary>
+    [Fact]
+    public void An_unknown_principal_is_refused_not_folded_into_the_chair()
+    {
+        using var db = TestEnv.NewDb();
+        Seat(db, "pos-dormant", status: OrgPositionStatus.Dormant);
+        var meter = new TurnMeter(db, () => 5m, live: new LiveAttempts());
+        var chair = meter.Begin("## Situation", role: CouncilRoles.Operations).Id;
+
+        foreach (var who in new[] { "nobody-here", "Research", "pos-dormant", AppPrincipals.Perception, AppPrincipals.Referee })
+        {
+            var admission = meter.Begin("## Situation", role: who);
+            Assert.False(admission.Admitted, $"a launch under '{who}' was admitted");
+            Assert.Null(admission.Id);
+            Assert.Equal(chair, meter.OpenAttemptIdFor(CouncilRoles.Operations));
+        }
+        Assert.Equal(1, Attempts(db));
+
+        // A HOME IS NEVER MAPPED FOR AN ID THAT FAILS THE CHECK: thrown, never the chair's folder.
+        foreach (var bad in new[] { "", "Research", "../agent", "org/x", "a b", "con", "nul", "com1", "lpt9", "referee" })
+            Assert.Throws<TradeAgentException>(() => CouncilRoles.HomeDir(bad));
+
+        // A WAKE FOR A NAME READS AS THAT NAME; ONLY A ROW THAT NAMES NONE IS THE CHAIR'S (history).
+        Assert.Equal("nobody-here", new MissionEvent { Id = "x", Kind = MissionEventKind.Review, Role = "nobody-here" }.For);
+        Assert.Equal(CouncilRoles.Operations, new MissionEvent { Id = "y", Kind = MissionEventKind.Review }.For);
+    }
+
     static RuntimeManifest ProbeRuntime()
     {
         var dir = Path.Combine(TestEnv.Home, $"principals-probe-{Guid.NewGuid():n}");

@@ -247,8 +247,11 @@ public sealed record MissionEvent
     /// </summary>
     public string? Role { get; init; }
 
-    /// <summary>The role this wake is for, with a row that names none reading as the chair's.</summary>
-    public string For => CouncilRoles.Or(Role);
+    /// <summary>
+    /// The position this wake is for, with a row that names none reading as the chair's — and a row that names one
+    /// reading as exactly that one, never folded into the chair (<c>U-org-principals</c>).
+    /// </summary>
+    public string For => Role ?? CouncilRoles.Default;
 
     public bool Consumed => ConsumedAt is not null;
 }

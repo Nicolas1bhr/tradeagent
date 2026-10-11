@@ -1558,25 +1558,31 @@ public sealed class MissionLoop
     /// <summary>Turns this role has resumed into its current CLI session.</summary>
     int Sessions(string role)
     {
-        lock (_gate) return _sessionTurns.TryGetValue(CouncilRoles.Or(role), out var n) ? n : 0;
+        lock (_gate) return _sessionTurns.TryGetValue(role, out var n) ? n : 0;
     }
+
+    /// <summary>
+    /// THE POSITION A COUNTER IS KEPT FOR: its exact id, and the chair's only where nothing is named — never a name
+    /// folded into the chair (<c>U-org-principals</c>).
+    /// </summary>
+    static string KeyOf(string? role) => role ?? CouncilRoles.Default;
 
     /// <summary>This role's run of failed turns, as the card and the backoff read it.</summary>
     int Errors(string? role)
     {
-        lock (_gate) return _consecutiveErrors.TryGetValue(CouncilRoles.Or(role), out var n) ? n : 0;
+        lock (_gate) return _consecutiveErrors.TryGetValue(KeyOf(role), out var n) ? n : 0;
     }
 
     /// <summary>One more failed turn for this role, and the new count.</summary>
     int Failed(string? role)
     {
-        lock (_gate) return _consecutiveErrors[CouncilRoles.Or(role)] = Errors(role) + 1;
+        lock (_gate) return _consecutiveErrors[KeyOf(role)] = Errors(role) + 1;
     }
 
     /// <summary>A clean turn, so this role's run of failures is over. Always zero.</summary>
     int Recovered(string? role)
     {
-        lock (_gate) return _consecutiveErrors[CouncilRoles.Or(role)] = 0;
+        lock (_gate) return _consecutiveErrors[KeyOf(role)] = 0;
     }
 
     /// <summary>True while the loop is taking turns of its own accord.</summary>
@@ -3035,7 +3041,7 @@ public sealed class MissionLoop
         // PER ROLE. The transition this reports is "this role stopped because there was no money
         // left for its next turn", and one flag between them said it once — for whichever role
         // reached its ceiling first — and then said nothing at all about the other.
-        var whose = CouncilRoles.Or(spend.Role);
+        var whose = KeyOf(spend.Role);
         if (spend.AdmitsAnotherTurn) { lock (_gate) _reportedCap[whose] = false; return null; }
 
         bool told;

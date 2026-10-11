@@ -826,6 +826,9 @@ public sealed class TurnMeter
         // reservation, before the wakes: a refused launch writes nothing and consumes nothing.
         if (StillRunning() is { } held) return held;
 
+        // A NAME THAT IS NOT AN ACTIVE POSITION IS REFUSED HERE, never keyed into the chair's slot.
+        if (NotAnActivePosition(role) is { } refused) return refused;
+
         // NOR FROM A SEAT WHOSE PROFILE IS NOT THE APP'S (U-seat-home), refused the same way: no row, no reservation, no wake.
         var seat = SeatOf(role);
         if (seat.Refused) return new AiAdmission { Refusal = seat.Refusal };
@@ -1236,11 +1239,33 @@ public sealed class TurnMeter
     }
 
     /// <summary>
-    /// WHICH OPEN ATTEMPT A TURN BELONGS TO. A launch with no role named is the chair's, for the
-    /// same reason a ledger row with no role is: the single agent the council replaced was
-    /// Operations, and a turn attributed to nobody is a bill nobody can allocate.
+    /// WHICH OPEN ATTEMPT A TURN BELONGS TO: the position's EXACT id (<c>U-org-principals</c>). A launch with no role
+    /// named is the chair's, for the same reason a ledger row with no role is: the single agent the council replaced
+    /// was Operations, and a turn attributed to nobody is a bill nobody can allocate. A NAME is never folded into the
+    /// chair — <see cref="Begin"/> refuses one that is not an active position, so no slot is ever opened under it.
     /// </summary>
-    static string Key(string? role) => CouncilRoles.Or(role);
+    static string Key(string? role) => role ?? CouncilRoles.Default;
+
+    /// <summary>
+    /// THE REFUSAL OF A LAUNCH UNDER A NAME THAT IS NOT AN ACTIVE POSITION, or null. An app principal is code and never
+    /// a position; an unknown, dormant or ended one is refused in words rather than charged to the chair, and a chart
+    /// that could not be read refuses too. Nothing is written and nothing is consumed.
+    /// </summary>
+    AiAdmission? NotAnActivePosition(string? role)
+    {
+        if (role is null) return null;
+        try
+        {
+            if (!OrgStore.IsAppPrincipal(role) && new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active })
+                return null;
+        }
+        catch (Exception) { /* a chart that cannot be read admits nobody by name */ }
+        return new AiAdmission
+        {
+            Refusal = $"'{role}' is not an active position, so no turn is launched under it and none is charged to "
+                      + "another position. Nothing was written."
+        };
+    }
 
     static string? Safe(Func<string?> f)
     {
