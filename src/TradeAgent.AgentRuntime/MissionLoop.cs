@@ -271,9 +271,16 @@ public interface IMissionHost
     /// <summary>
     /// WHY A POSITION MAY NOT TURN, in a sentence, or null when it may (<c>U-org-principals</c>): the host's activation
     /// seam. The loop steps over a position it refuses — its wakes stay due and unconsumed — so a wake for a position that
-    /// is representable and not runnable never holds the legacy pair's turns behind it. A host with no seam refuses nobody.
+    /// is representable and not runnable never holds the legacy pair's turns behind it.
+    ///
+    /// <para><b>A host with no seam fails closed</b> (ORCHESTRATION § 2.1): it refuses every id but the legacy pair, in a
+    /// sentence. Its <see cref="ConversationFor"/> and <see cref="HomeFor"/> defaults are the host's one conversation and
+    /// one home, so a default that refused nobody would fold any other id's wake into them — the chair's, in the app.</para>
     /// </summary>
-    string? ActivationRefusal(string role) => null;
+    string? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
+        ? null
+        : $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
+          + "opened for it and nothing is folded into this host's own.";
 
     /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous

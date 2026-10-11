@@ -247,6 +247,105 @@ public class OrgPrincipalsTests : IDisposable
         }
     }
 
+    // ---- (i) a host with no seam refuses, never folds -------------------------------------------------------------
+
+    /// <summary>
+    /// (i) A HOST WITH NO ACTIVATION SEAM REFUSES EVERY ID BUT THE LEGACY PAIR (ORCHESTRATION § 2.1: an id that is not an
+    /// active position is refused with a reason, never folded into the chair). RED at fix base: the default
+    /// <c>IMissionHost.ActivationRefusal</c> refused nobody, so a wake for an unknown id ran through the default
+    /// <c>ConversationFor</c> — the host's single conversation — in the default home. The legacy pair still turn.
+    /// </summary>
+    [Fact]
+    public async Task A_host_with_no_seam_refuses_a_non_legacy_wake_and_the_legacy_pair_still_turn()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        var conversation = new Recording();
+        IMissionHost host = new NoSeamHost(events, conversation);
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero });
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var strangers = MissionEventIds.ForRole(MissionEventIds.Review(earlier), "nobody-here");
+        events.Raise(strangers, MissionEventKind.Review, earlier, role: "nobody-here");
+
+        await loop.TurnAsync();
+        Assert.True(conversation.Sent.Count == 0,
+            $"a wake for 'nobody-here' was run through the host's default conversation: {conversation.Sent.Count} sent");
+        Assert.Empty(((NoSeamHost)host).Wakes);
+        Assert.False(events.Get(strangers)!.Consumed);
+
+        var chairs = MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Operations);
+        events.Raise(chairs, MissionEventKind.Review, earlier.AddSeconds(1), role: CouncilRoles.Operations);
+
+        await loop.TurnAsync();
+        Assert.Single(conversation.Sent);
+        var launched = Assert.Single(((NoSeamHost)host).Wakes);
+        Assert.Contains(chairs, launched);
+        Assert.DoesNotContain(strangers, launched);
+
+        // THE REFUSAL IS A REASON, naming the id; a third position with no seam to ask is refused the same way.
+        foreach (var stranger in new[] { "nobody-here", Third })
+        {
+            var refusal = host.ActivationRefusal(stranger);
+            Assert.NotNull(refusal);
+            Assert.Contains($"'{stranger}'", refusal, StringComparison.Ordinal);
+        }
+        Assert.Null(host.ActivationRefusal(CouncilRoles.Operations));
+        Assert.Null(host.ActivationRefusal(CouncilRoles.Research));
+    }
+
+    /// <summary>A loop's world with the wake queue and one conversation, and NO activation seam: every default kept.</summary>
+    sealed class NoSeamHost(MissionEventStore events, IAgentConversation conversation) : IMissionHost
+    {
+        public List<IReadOnlyList<string>> Wakes { get; } = [];
+
+        public IAgentConversation? Conversation => conversation;
+        public MissionEventStore? Events => events;
+        public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"no-seam-{Guid.NewGuid():n}");
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        {
+            Wakes.Add([.. wakes]);
+            return AiAdmission.NoLedger;
+        }
+    }
+
+    /// <summary>A conversation that records what it was sent and ends each turn at once.</summary>
+    sealed class Recording : IAgentConversation
+    {
+        public List<string> Sent { get; } = [];
+        public bool Busy => false;
+        public IReadOnlyList<ChatTurn> History => [];
+
+        public event Action<ChatTurn>? TurnAdded;
+        public event Action<string>? Delta;
+        public event Action? StateChanged;
+        public event Action<AgentTurnEnded>? TurnEnded;
+
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendAsync(string m, CancellationToken ct = default) => SendMissionAsync(m, ct);
+
+        public Task SendMissionAsync(string message, CancellationToken ct = default)
+        {
+            Sent.Add(message);
+            TurnAdded?.Invoke(new ChatTurn(ChatRole.Ai, "done", DateTimeOffset.UtcNow));
+            Delta?.Invoke("");
+            StateChanged?.Invoke();
+            TurnEnded?.Invoke(new AgentTurnEnded(0, TimeSpan.Zero, "done", DateTimeOffset.UtcNow));
+            return Task.CompletedTask;
+        }
+
+        public void Queue(string message) { }
+        public IReadOnlyList<string> TakeTyped() => [];
+        public Task CancelAsync() => Task.CompletedTask;
+        public Task StopAsync() => Task.CompletedTask;
+    }
+
     static RuntimeManifest ProbeRuntime()
     {
         var dir = Path.Combine(TestEnv.Home, $"principals-probe-{Guid.NewGuid():n}");
