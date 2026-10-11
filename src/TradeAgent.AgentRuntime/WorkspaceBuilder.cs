@@ -78,9 +78,11 @@ public static class WorkspaceBuilder
         Directory.CreateDirectory(Path.Combine(ws, MaterialScanner.InboxDir));
 
         var home = HomeOf(ws, ctx.Role);
-        // Only for the role whose home IS the old single workspace. A role added later has nothing
-        // at an older name to carry, and running this for it would move the chair's work into it.
-        if (ctx.Role == CouncilRoles.Operations) MoveOlderLayout(ws, home);
+        // NOTHING OUTSIDE THIS ROLE'S HOME IS MOVED OR DELETED HERE. The chair's start once carried an
+        // install from before the agent's home moved by moving every `workspace/<dir>` into
+        // `workspace/agent/<dir>` — and `workspace/research` is the Research Director's own home, so
+        // the first start whose chair folder had no `research/` moved that role's programs into the
+        // chair's (U-friction-home). An earlier layout is owed nothing while we build (CLAUDE.md).
         Directory.CreateDirectory(home);
         foreach (var d in SubDirs) Directory.CreateDirectory(Path.Combine(home, d));
         // WHERE THE JOURNAL'S OLDER ENTRIES GO. The app caps `trading/JOURNAL.md` and refuses one
@@ -129,38 +131,6 @@ public static class WorkspaceBuilder
     public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
         AppFileManifest? appFiles = null) =>
         CouncilRoles.All.ToDictionary(r => r, r => Build(ctx with { Role = r }, root, appFiles));
-
-    /// <summary>
-    /// Carries an install built before the agent's home moved. Its work sat directly in the
-    /// workspace; leaving it there would not lose the files but would strand them — unscanned,
-    /// invisible to the agent, and impossible to explain to the owner. Runs once: after the move
-    /// there is nothing at the old names to find.
-    ///
-    /// Nothing is overwritten and nothing is deleted. A directory that already exists at the new
-    /// name is left exactly as it is, and its old twin is left on disk rather than merged, because
-    /// a merge here would silently choose between two versions of a file.
-    /// </summary>
-    static void MoveOlderLayout(string ws, string home)
-    {
-        foreach (var d in SubDirs)
-        {
-            var was = Path.Combine(ws, d);
-            var now = Path.Combine(home, d);
-            if (!Directory.Exists(was) || Directory.Exists(now)) continue;
-            try
-            {
-                Directory.CreateDirectory(home);
-                Directory.Move(was, now);
-            }
-            catch (IOException) { }                 // a file open in it; the next start tries again
-            catch (UnauthorizedAccessException) { }
-        }
-
-        var oldAgents = Path.Combine(ws, "AGENTS.md");
-        try { if (File.Exists(oldAgents)) File.Delete(oldAgents); }
-        catch (IOException) { }                     // it is regenerated every start; a stale copy
-        catch (UnauthorizedAccessException) { }     // outside the agent's home is only clutter
-    }
 
     /// <summary>Environment handed to the agent process. The trade CLI is on PATH; no secrets are present.</summary>
     public static Dictionary<string, string> EnvironmentFor(string sessionId, string workspace)

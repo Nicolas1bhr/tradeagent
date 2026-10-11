@@ -120,9 +120,8 @@ public static class ResearchLibrary
     }
 
     /// <summary>
-    /// An IO failure here leaves the previous copy in place and is not fatal: the same reading
-    /// <c>WorkspaceBuilder.MoveOlderLayout</c> takes of a file somebody has open. The next start
-    /// writes it again.
+    /// An IO failure here leaves the previous copy in place and is not fatal: a file somebody has
+    /// open is left as it is. The next start writes it again.
     /// </summary>
     static void WriteFile(string path, string? text = null, byte[]? bytes = null, Action? record = null)
     {

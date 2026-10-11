@@ -129,6 +129,35 @@ public class CouncilRoleTests
     }
 
     /// <summary>
+    /// U-FRICTION-HOME, RED FIRST: THE CHAIR'S START LEAVES THE RESEARCH DIRECTOR'S FOLDER WHERE IT IS.
+    ///
+    /// <para>The Research Director's home is <c>workspace/research</c>, and the chair's start carried an
+    /// install from before the agent's home moved by moving every <c>workspace/&lt;dir&gt;</c> it found into
+    /// <c>workspace/agent/&lt;dir&gt;</c> — <c>research</c> among them. So the first start whose chair
+    /// folder had no <c>research/</c> yet moved the Research Director's WHOLE home, programs and all, into
+    /// the chair's, and the role's own start then made it a fresh empty one. Seen twice on CI (runs
+    /// 38126064304 and 38130672332) as <c>PaperFrictionTests</c>' own program missing on its second run:
+    /// the test assembly shares one workspace, and an <c>AppHost</c> test started the AI in between.</para>
+    /// </summary>
+    [Fact]
+    public void A_start_never_moves_the_research_directors_files_into_the_chairs_folder()
+    {
+        var root = Root();
+        var research = WorkspaceBuilder.HomeOf(root, CouncilRoles.Research);
+        var program = Path.Combine(research, "strategies", "mine.strategy");
+        Directory.CreateDirectory(Path.GetDirectoryName(program)!);
+        File.WriteAllText(program, "the Research Director's own program");
+
+        var homes = WorkspaceBuilder.BuildAll(Context(CouncilRoles.Operations), root);
+
+        Assert.Equal(research, homes[CouncilRoles.Research]);
+        Assert.True(File.Exists(program), $"the Research Director's program is no longer at {program}");
+        Assert.Equal("the Research Director's own program", File.ReadAllText(program));
+        Assert.False(File.Exists(Path.Combine(homes[CouncilRoles.Operations], "research", "strategies", "mine.strategy")),
+            "the Research Director's program was moved into the chair's folder");
+    }
+
+    /// <summary>
     /// The two columns and the two tables, additive at schema nine, and the reading a row that
     /// names no role gets: the chair's. The single agent this replaces WAS Operations.
     ///
