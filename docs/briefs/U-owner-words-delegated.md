@@ -41,3 +41,11 @@ RED at base c4a6f2d8 (tests built on base src): (a) "Expected: \"failed\" Actual
 Mutants: the NULL/blocked guard removed ⇒ only (b) red. The ENDED/role EXISTS clause removed ⇒ (a) and (c) red.
 Test changed: OwnerDispositionTests `A_message_delegated_into_a_brief_keeps_that_disposition…` now sets up an ENDED attempt and a real brief publication. The link it asserts now requires both, and its assertions are unchanged.
 NOT done or verified: no full local suite (CI's); tests box not run; a failed turn that also published a brief still both delegates and retries (pre-existing, untouched).
+
+## Fix report (review 1)
+Tip of code 25a6a90c (on 4afe0cd8, not rebased): `Delegated`'s guard requires `p.attempt = a.id`, so a brief whose bytes another turn published first delegates nothing and the words fall to the once-only hand-on; doc comment and CONTRACTS say so.
+1. Build Release `--no-incremental`: "0 Warning(s)" "0 Error(s)". 2. CouncilLoopTests + OwnerDispositionTests 3× via suite.sh: "Passed! - Failed: 0, Passed: 41" ×3.
+3. CI run 38128457013 at 25a6a90: success on every job (shard-plan, package, package-linux, test windows 1–5, macos, ubuntu, linux-host). Review (not acted on): `fleet/tmp/B-scratch/u-owner-words-delegated-fix1/fix1-review.md` — "No defects found".
+4. names.sh vs merge-base c4a6f2d8 "removed: 0" "added: 7" (base 2564, tip 2571; [Fact]/[Theory] 2510→2517); vs 4afe0cd8 "removed: 0" "added: 1". Vs main: "removed: 5" — all five are U-runner-maxhold-replay tests main gained after this branch's base; the landing's rebase brings them.
+RED at 4afe0cd8: `A_brief_whose_bytes_another_turn_published_first_delegates_nothing` "Expected: 0 Actual: 1". Mutant (attempt check removed): that test alone red, "Expected: 0 Actual: 1", "Failed: 1, Passed: 40".
+Findings 2, 3: judged not real by seat B (records/U-owner-words-delegated-review-triage.md).
