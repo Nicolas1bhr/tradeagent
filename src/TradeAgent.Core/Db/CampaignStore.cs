@@ -1161,19 +1161,39 @@ public sealed class CampaignStore(Database db)
         return (IReadOnlyList<CampaignOverMonths>)shared;
     });
 
-    /// <summary>Every verdict ever charged, as the market time it read: its campaign, its row's cutoff, its dataset's close.</summary>
-    List<(long CampaignId, DateTimeOffset From, DateTimeOffset? Until)> JudgementSpans(Dictionary<long, DateTimeOffset?> closes)
+    /// <summary>
+    /// THE JUDGEMENTS <see cref="JudgementsSpent"/> COUNTS, ONE ROW EACH, IN CHARGE ORDER — by when each was charged, then
+    /// campaign, then version (<c>U-referee-v2c</c>): the order the holdout's α-wealth is spent in, lineage-wide and across
+    /// every campaign over the same months, so a renewal never resets it.
+    /// </summary>
+    public IReadOnlyList<VerdictRow> JudgementsCharged(long campaignId) => db.Read(_ =>
     {
-        var rows = new List<(long CampaignId, DateTimeOffset From, long Dataset)>();
+        if (ById(campaignId) is not { } campaign) return (IReadOnlyList<VerdictRow>)[];
+
+        var lineage = Lineage(campaignId).ToHashSet();
+        var closes = new Dictionary<long, DateTimeOffset?>();
+        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+
+        return [.. JudgementSpans(closes)
+            .Where(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until))
+            .OrderBy(v => v.RequestedAt).ThenBy(v => v.CampaignId).ThenBy(v => v.VersionId, StringComparer.Ordinal)
+            .Select(v => new VerdictRow(v.CampaignId, v.VersionId, v.RequestedAt, v.From))];
+    });
+
+    /// <summary>Every verdict ever charged, as the market time it read: its campaign, its row's cutoff, its dataset's close.</summary>
+    List<(long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, DateTimeOffset? Until)> JudgementSpans(
+        Dictionary<long, DateTimeOffset?> closes)
+    {
+        var rows = new List<(long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, long Dataset)>();
         using (var c = db.Cmd("""
-            SELECT v.campaign_id, v.holdout_from, c.holdout_dataset_id
+            SELECT v.campaign_id, v.version_id, v.requested_at, v.holdout_from, c.holdout_dataset_id
               FROM strategy_verdict v JOIN strategy_campaign c ON c.id = v.campaign_id
             """))
         using (var r = c.ExecuteReader())
             while (r.Read())
-                rows.Add((r.GetInt64(0), Sql.Time(r.GetString(1)), r.GetInt64(2)));
+                rows.Add((r.GetInt64(0), r.GetString(1), Sql.Time(r.GetString(2)), Sql.Time(r.GetString(3)), r.GetInt64(4)));
 
-        return [.. rows.Select(v => (v.CampaignId, v.From, Close(v.Dataset, closes)))];
+        return [.. rows.Select(v => (v.CampaignId, v.VersionId, v.RequestedAt, v.From, Close(v.Dataset, closes)))];
     }
 
     /// <summary>

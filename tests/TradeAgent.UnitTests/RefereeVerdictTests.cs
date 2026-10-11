@@ -56,7 +56,7 @@ public class RefereeVerdictTests
         "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
         + "exit when close < 97\nentry when close > 103\n";
 
-    sealed record World(TradingGateway Gw, Database Db, DatasetRecord Set, CampaignRow Campaign, string VersionId);
+    internal sealed record World(TradingGateway Gw, Database Db, DatasetRecord Set, CampaignRow Campaign, string VersionId);
 
     /// <summary>
     /// A GATEWAY WITH REAL BARS ON DISK, A REAL CUTOFF, A REAL CAMPAIGN AND ONE ACCEPTED VERSION whose
@@ -66,7 +66,7 @@ public class RefereeVerdictTests
     /// exactly as <c>Backtests.Record</c> calls it — because <paramref name="frozenAt"/> is the fact
     /// under test in item 4 and a version recorded by a live backtest is frozen at the wall clock.</para>
     /// </summary>
-    static async Task<World> Given(DateTimeOffset? frozenAt = null, string program = ProfitableText,
+    internal static async Task<World> Given(DateTimeOffset? frozenAt = null, string program = ProfitableText,
         int bars = 120, int verdicts = 2, string evaluationClass = EvaluationClass.Research)
     {
         var (gw, _, db) = await TestEnv.Ready(s =>
@@ -1116,6 +1116,214 @@ public class RefereeVerdictTests
         Assert.Equal(GateStatus.Inconclusive, e.DsrStatus);
         Assert.Contains("DSR unknown — inconclusive", VerdictLine(flat), StringComparison.Ordinal);
     }
+
+    // ---- the sealed holdout record and the remembered-holdout flag (U-referee-v2c) ------------------------------------
+
+    /// <summary>The instant the fixture's holdout starts: the campaign's cutoff.</summary>
+    static DateTimeOffset HoldoutStart => Bar0.AddMinutes(HoldoutAtBar);
+
+    /// <summary>The fixture version's attempt, as the launch ledger would hold it: what TradeAgent asked for and what the runtime named.</summary>
+    static void Attempt(World w, string? requested, string? effective) => w.Db.Write(_ =>
+    {
+        using var c = w.Db.Cmd("""
+            INSERT INTO ai_attempt(id, started_at, runtime, requested_model, state, effective_model)
+            VALUES('attempt-1', $at, 'claude', $req, 'ENDED', $eff)
+            """, ("$at", Sql.T(Bar0)), ("$req", requested), ("$eff", effective));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// (c) AN UNKNOWN AUTHOR OR AN UNKNOWN CUTOFF FLAGS THE HOLDOUT AS REMEMBERED — and what TradeAgent ASKED for is never
+    /// read as the author.
+    ///
+    /// <para>Each version is frozen after its holdout starts, so its favourable verdict is paper-eligible and its holdout is
+    /// history the author's model may have been trained on. The flag is raised for a version whose attempt the ledger does
+    /// not hold, for an attempt whose runtime named no model even though TradeAgent requested one with a published cutoff
+    /// before the holdout (the mutant: <c>requested_model</c> read as the author), and for a model with no published cutoff;
+    /// it is lowered only for a named model whose published cutoff ends before the holdout starts. Q7 (a): any overlap at
+    /// all flags.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_author_or_cutoff_flags_the_holdout_as_remembered()
+    {
+        var frozen = HoldoutStart.AddMinutes(30);
+        var cases = new (string Name, Action<World>? Ledger, string? Model, bool Remembered)[]
+        {
+            ("no attempt in the ledger", null, null, true),
+            ("the runtime named no model", w => Attempt(w, "claude-opus-4-8", null), null, true),
+            ("no published cutoff", w => Attempt(w, null, "claude-opus-unpublished"), "claude-opus-unpublished", true),
+            ("a cutoff before the holdout", w => Attempt(w, null, "claude-opus-4-8"), "claude-opus-4-8", false),
+        };
+
+        foreach (var (name, ledger, model, remembered) in cases)
+        {
+            var w = await Given(frozenAt: frozen);
+            using var _ = w.Db;
+            ledger?.Invoke(w);
+
+            var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+            Assert.True(verdict.PaperEligible, $"{name}: {verdict.Promotion?.Reason ?? verdict.Why}");
+
+            var sealedRow = RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId);
+            Assert.NotNull(sealedRow);
+            Assert.Equal((name, remembered), (name, sealedRow!.Remembered));
+            Assert.Equal((name, model), (name, sealedRow.AuthorModel));
+            Assert.Equal("attempt-1", sealedRow.AuthorAttempt);
+
+            var flag = RefereeOf(w).Holdouts.Flag(w.Campaign.Id, w.VersionId)!;
+            Assert.Equal((name, remembered), (name, flag.Remembered));
+            Assert.Equal(HoldoutStart, flag.HoldoutFrom);
+            if (remembered)
+                Assert.Contains("holdout may be remembered", VerdictLineOf(w, "PAPER-ELIGIBLE"), StringComparison.Ordinal);
+            else
+            {
+                Assert.Equal(new DateOnly(2026, 1, 31), sealedRow.ModelCutoff);
+                Assert.Equal($"{ModelCutoffs.AnthropicModel("opus-4-8")} (read {ModelCutoffs.ReadOn})", sealedRow.CutoffSource);
+                Assert.DoesNotContain("remembered", VerdictLineOf(w, "PAPER-ELIGIBLE"), StringComparison.Ordinal);
+            }
+        }
+
+        // ANY OVERLAP FLAGS (Q7 (a)), TO THE DAY — and a holdout at or after the freeze never does, whatever the model.
+        var sol = ModelCutoffs.Of("gpt-6.1-sol")!;
+        var freeze = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        Assert.True(ModelCutoffs.Remembered(new DateTimeOffset(2026, 4, 30, 23, 59, 0, TimeSpan.Zero), freeze, sol));
+        Assert.False(ModelCutoffs.Remembered(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), freeze, sol));
+        Assert.True(ModelCutoffs.Remembered(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), freeze, null));
+        Assert.False(ModelCutoffs.Remembered(freeze, freeze, null));
+        Assert.Null(ModelCutoffs.Of(null));
+        Assert.Null(ModelCutoffs.Of("GPT-6.1-SOL"));
+    }
+
+    /// <summary>
+    /// (d) A HOLDOUT AFTER THE FREEZE IS NEVER FLAGGED: the author's model was trained before the version was written, so
+    /// it cannot reach months after it — not even with no attempt, no model and no cutoff, which flag a holdout before the
+    /// freeze. The verdict is promoted and its sealed row is written all the same, the flag down.
+    /// </summary>
+    [Fact]
+    public async Task A_holdout_after_the_freeze_is_never_flagged()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _ = w.Db;
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Promoted, verdict.Promotion?.Reason ?? verdict.Why);
+
+        var sealedRow = RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId)!;
+        Assert.False(sealedRow.Remembered);
+        Assert.Equal(("attempt-1", null, null), (sealedRow.AuthorAttempt, sealedRow.AuthorModel, sealedRow.ModelCutoff));
+        Assert.False(RefereeOf(w).Holdouts.Flag(w.Campaign.Id, w.VersionId)!.Remembered);
+        Assert.Equal("", RefereeOf(w).Holdouts.Flag(w.Campaign.Id, w.VersionId)!.Words);
+        Assert.DoesNotContain("remembered", VerdictLine(w), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (e) NO SEALED FIGURE REACHES THE NOTE, THE REPORT, THE SITUATION OR THE ANSWER.
+    ///
+    /// <para>A four-day holdout, so every figure is a number: the holdout's Sharpe ratio, skew and kurtosis, z, E_h, p_h,
+    /// α_j and the wealth after it. Each is read back from the sealed row and spelt every way a surface could spell it — the
+    /// round-trip text and two to six decimals — and none is in the note the research process is sent, the report
+    /// <c>trade report</c> serves, the Situation a turn is shown or the verdict the caller gets back. Only the flag is shown,
+    /// and it carries two dates and a model id.</para>
+    /// </summary>
+    [Fact]
+    public async Task No_sealed_figure_reaches_the_note_the_report_the_situation_or_the_answer()
+    {
+        var w = await Given(frozenAt: HoldoutStart.AddMinutes(30), bars: HoldoutAtBar + 4 * 1440);
+        using var _ = w.Db;
+        StreamedRun(w, "candidate", 139, 11);
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.PaperEligible, verdict.Promotion?.Reason ?? verdict.Why);
+        var row = RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId)!;
+        Assert.True(row.HoldoutDays >= 4, $"{row.HoldoutDays} known days");
+
+        double?[] sealedFigures = [row.SrH, row.SkewH, row.KurtosisH, row.Z, row.EH, row.PH, row.AlphaJ, row.WealthAfter];
+        Assert.All(sealedFigures, f => Assert.NotNull(f));
+        var spellings = sealedFigures
+            .SelectMany(f => new[] { "R", "0.00", "0.000", "0.0000", "0.00000", "0.000000" }
+                .Select(format => f!.Value.ToString(format, CultureInfo.InvariantCulture)))
+            .Where(s => s.TrimStart('-').Length >= 5)
+            .Distinct()
+            .ToList();
+        Assert.NotEmpty(spellings);
+
+        var standing = new Promotions(w.Db).Standing(w.VersionId);
+        var surfaces = new Dictionary<string, string>
+        {
+            ["note"] = RefereeFeedback.Text(verdict.Promotion!)
+                       + string.Concat(new PublicationStore(w.Db).By(Referee.RunRole).Select(p => p.Content)),
+            ["report"] = DailyReportText.Render(w.Gw.Reports.Compose(Midday())),
+            ["situation"] = new MissionSituation { Mode = "PAPER", Promoted = MissionSituation.PromotedLine(standing) }.Text(),
+            ["answer"] = System.Text.Json.JsonSerializer.Serialize(verdict) + verdict.Why,
+        };
+
+        foreach (var (surface, text) in surfaces)
+            foreach (var spelt in spellings)
+                Assert.False(text.Contains(spelt, StringComparison.Ordinal), $"the {surface} carries sealed figure {spelt}");
+
+        // THE FLAG IS SHOWN, AND IT IS TWO DATES AND A MODEL: no attempt in this ledger, so no model and no cutoff.
+        Assert.True(row.Remembered);
+        Assert.Contains($"holdout may be remembered: it starts {HoldoutStart.UtcDateTime:yyyy-MM-dd}",
+            surfaces["report"], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE SEALED TABLE ARRIVES AT RUNG 35, AND A CRASH BEFORE ITS STAMP RUNS IT AGAIN OVER WHAT IS THERE: a row written at
+    /// this build's stamp survives the rung running a second time, the stamp one lower, and the key holds — one row per
+    /// campaign, version and method, first writer wins.
+    /// </summary>
+    [Fact]
+    public async Task The_sealed_holdout_table_arrives_at_rung_35_and_reruns_over_its_rows()
+    {
+        Assert.True(Versions.DatabaseSchemaVersion >= 35, $"this build says {Versions.DatabaseSchemaVersion}");
+        var w = await Given(frozenAt: Bar0);
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        var before = RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId)!;
+        var file = w.Db.Read(c => c.DataSource);
+        await w.Gw.DisposeAsync();
+        w.Db.Dispose();
+
+        // A CRASH BETWEEN THE RUNG'S STATEMENTS AND ITS STAMP: the table and its row in place, the stamp one lower.
+        using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "UPDATE meta SET value='34' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var rerun = new Database(file))
+        {
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), rerun.Read(_ =>
+            {
+                using var c = rerun.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+                return (string)c.ExecuteScalar()!;
+            }));
+            var holdouts = new RefereeHoldout(rerun);
+            Assert.Equal(before, holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+
+            // FIRST WRITER WINS: a second row for the same campaign, version and method writes nothing.
+            holdouts.Record(before with { Remembered = true, AddisStatus = AlphaWealth.Rejected });
+            Assert.Equal(before, holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+        }
+
+        // AND ONE WRITER: nothing in src updates, deletes, replaces or inserts into the table but the one insert.
+        var rewrite = new System.Text.RegularExpressions.Regex(
+            @"(UPDATE\s+referee_holdout\b|DELETE\s+FROM\s+referee_holdout\b|REPLACE\s+INTO\s+referee_holdout\b"
+            + @"|INSERT\s+(OR\s+\w+\s+)?INTO\s+referee_holdout\b|DROP\s+TABLE\s+(IF\s+EXISTS\s+)?referee_holdout\b)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var writers = Directory.GetFiles(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(f => File.ReadAllLines(f).Select(line => (f, line)))
+            .Where(l => rewrite.IsMatch(l.line))
+            .Select(l => $"{Path.GetFileName(l.f)}: {l.line.Trim()}")
+            .ToList();
+        Assert.Equal(["RefereeHoldout.cs: INSERT INTO referee_holdout({Cols})"], writers);
+    }
+
+    /// <summary>The report's line for the world's verdict, by its verdict word.</summary>
+    static string VerdictLineOf(World w, string verdict) => Assert.Single(
+        DailyReportText.Render(w.Gw.Reports.Compose(Midday())).Split('\n'),
+        l => l.Contains($"{verdict} version {w.VersionId[..12]}", StringComparison.Ordinal));
 
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()

@@ -2073,6 +2073,55 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','34') ON CONFLICT(key) DO UPDATE SET value='34';");
         }
 
+        if (have < 35)
+        {
+            // THE REFEREE'S SEALED HOLDOUT RECORD — `U-referee-v2c`, the orchestrator's rung 35, after 34's (docs/EDGE-FACTORY.md
+            // § 4.5 E4; R04 :290's E4 record).
+            //
+            // ONE ROW PER (campaign, version, method): what a verdict computed of its HOLDOUT run and sealed — the research
+            // row it read (`research_row`, the method of `referee_research` under the same campaign and version), the
+            // holdout's known days and their moments, the fidelity z and its status, the betting e-value E_h, p_h, the
+            // α-wealth step (α_j, the wealth before and after, ADDIS's status), the author's attempt and model, that model's
+            // published cutoff and where it was read, and the remembered-holdout flag. Every decimal is TEXT and an unknown
+            // one NULL, never 0.
+            //
+            // SEALED: no surface reads a figure here — `RefereeHoldout.Flag` reads the flag, its dates and its model and
+            // nothing else — and no clause of any policy reads it. APPEND-ONLY, WRITTEN ONLY BY THE APP:
+            // `RefereeHoldout.Record` inserts it inside the verdict's own write, first writer wins, and nothing updates or
+            // deletes a row; no op and no verb reaches it. A verdict before this rung has no row and gains none. `IF NOT
+            // EXISTS` and the stamp last, because the rungs run in autocommit and a crash before the stamp runs this again.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS referee_holdout(
+              campaign_id    INTEGER NOT NULL REFERENCES strategy_campaign(id),
+              version_id     TEXT NOT NULL REFERENCES strategy_version(id),
+              method         INTEGER NOT NULL,
+              research_row   INTEGER NOT NULL,
+              holdout_days   INTEGER NOT NULL,
+              sr_h           TEXT,
+              skew_h         TEXT,
+              kurtosis_h     TEXT,
+              z              TEXT,
+              z_status       TEXT NOT NULL,
+              e_h            TEXT,
+              p_h            TEXT,
+              alpha_j        TEXT NOT NULL,
+              wealth_before  TEXT NOT NULL,
+              wealth_after   TEXT NOT NULL,
+              addis_status   TEXT NOT NULL
+                             CHECK(addis_status IN ('rejected','candidate','tested','discarded','inconclusive')),
+              author_attempt TEXT,
+              author_model   TEXT,
+              model_cutoff   TEXT,
+              cutoff_source  TEXT,
+              remembered     INTEGER NOT NULL CHECK(remembered IN (0,1)),
+              at             TEXT NOT NULL,
+              PRIMARY KEY(campaign_id, version_id, method)
+            );
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','35') ON CONFLICT(key) DO UPDATE SET value='35';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

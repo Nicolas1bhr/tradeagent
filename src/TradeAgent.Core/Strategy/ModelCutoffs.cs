@@ -43,7 +43,7 @@ public static class ModelCutoffs
     public const string AnthropicModels = "https://platform.claude.com/docs/en/models/overview";
 
     /// <summary>Anthropic's per-model page, for a legacy model the overview no longer tabulates.</summary>
-    static string AnthropicModel(string page) => $"https://platform.claude.com/docs/en/models/{page}/overview";
+    public static string AnthropicModel(string page) => $"https://platform.claude.com/docs/en/models/{page}/overview";
 
     /// <summary>OpenAI's models page: one knowledge cutoff per flagship model.</summary>
     public const string OpenAiModels = "https://developers.openai.com/api/docs/models";

@@ -79,6 +79,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     readonly PublicationStore _publications = new(db);
     readonly VenueStore _venues = new(db, now);
     readonly ResearchEvidence _research = new(db);
+    readonly RefereeHoldout _holdouts = new(db);
+    readonly AiAttemptStore _attempts = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>
@@ -138,6 +140,12 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
     /// <summary>What each verdict measured of its version's research evidence (<c>U-referee-v2a</c>). Read-only for a caller.</summary>
     public ResearchEvidence Research => _research;
+
+    /// <summary>
+    /// What each verdict sealed of its holdout (<c>U-referee-v2c</c>). A caller outside Core reads the remembered-holdout
+    /// flag and nothing else: every figure is internal.
+    /// </summary>
+    public RefereeHoldout Holdouts => _holdouts;
 
     /// <summary>
     /// ASKS FOR A FINAL VERDICT ON ONE VERSION, AND CHARGES IT BEFORE ANYTHING RUNS.
@@ -417,6 +425,12 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
         var at = _now();
 
+        // THE HOLDOUT'S DAYS AND ITS AUTHOR, FOR THE SEALED RECORD (U-referee-v2c): the days from the run's trace in memory,
+        // on the program's own grid and the judged capital — the referee's run keeps no stream — and the author read
+        // version → attempt → effective model. Nothing below the policies reads either; both are sealed in the write.
+        var days = DailyReturns.Of(run.Trace, BarGrid.For(program), judged.InitialCapital);
+        var author = Authorship.Of(_attempts, version, campaign.HoldoutFrom);
+
         // THE CAMPAIGN'S PRECOMMITTED POLICY IS ASKED FIRST AND IS UNCHANGED. Its answer decides
         // everything below, including whether a second standard is asked at all.
         var reason = ScoringPolicyV1.Reason(run, version.CreatedAt);
@@ -512,6 +526,11 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
             // THE RESEARCH EVIDENCE MEASURED BEFORE THE RUN, in this write and at the verdict's instant (U-referee-v2a):
             // first writer wins, as the promotion's own insert does.
             _research.Record(research with { At = at });
+
+            // AND WHAT IT SEALED OF THE HOLDOUT, in this write (U-referee-v2c): E4's fidelity, betting e-value and α-wealth
+            // step after every earlier judgement over the same months, and the remembered-holdout flag. Read by no surface
+            // and by no clause; first writer wins.
+            _holdouts.Record(_holdouts.Seal(campaign.Id, version.Id, research, days, author, at));
 
             // AND WHAT THE CALLER WRITES BESIDE IT, IN THIS WRITE: the research ledger's link, when the verdict was asked
             // under an entry (U-research-ledger). A `refused` verdict is recorded here like any other, so it is linked
