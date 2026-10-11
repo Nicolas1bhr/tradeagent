@@ -14,6 +14,7 @@
     <Compile Include="../Shared/TestHomeFramework.cs" Link="TestHomeFramework.cs" />
     <Compile Include="../Shared/Loopback.cs" Link="Loopback.cs" />
     <Compile Include="../Shared/TestTime.cs" Link="TestTime.cs" />
+    <Compile Include="../Shared/RunnerStallWitness.cs" Link="RunnerStallWitness.cs" />
     <Compile Include="../Shared/RecordingConnector.cs" Link="RecordingConnector.cs" />
     <Compile Include="../Shared/DayOnePrograms.cs" Link="DayOnePrograms.cs" />
     <Compile Include="../Shared/TapeReadings.cs" Link="TapeReadings.cs" />
