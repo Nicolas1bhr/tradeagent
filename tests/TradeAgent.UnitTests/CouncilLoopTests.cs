@@ -294,6 +294,10 @@ public partial class CouncilLoopTests
 
         public IReadOnlyList<RoleObjective>? Objectives(string role) =>
             Owns ? RoleObjectives.Open(_db, role, Book) : null;
+
+        /// <summary>The role's own open ledger entries, as the app reads them — only where this host says what each role owns.</summary>
+        public IReadOnlyList<LedgerListed>? Beliefs(string role) =>
+            Owns ? MissionSituation.OpenBeliefs(_db, role) : null;
     }
 
     /// <summary>How long a boundary in these tests stays open. A day compressed to a minute.</summary>

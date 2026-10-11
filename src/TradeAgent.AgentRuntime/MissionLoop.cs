@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -518,6 +519,13 @@ public interface IMissionHost
     /// drivable with no database at all, and a default of null keeps it so.
     /// </summary>
     MissionDelivery? Delivered(string publicationId) => null;
+
+    /// <summary>
+    /// WHAT <paramref name="role"/> BELIEVES, AS IT SAID IT: its own open entries in the research ledger, newest first
+    /// (<see cref="MissionSituation.OpenBeliefs"/>, <c>U-reconcile-packet</c>), or null where this host holds no ledger.
+    /// Every one is the role's claim; the Situation says so on every line and never mixes one into what changed.
+    /// </summary>
+    IReadOnlyList<LedgerListed>? Beliefs(string role) => null;
 }
 
 /// <summary>
@@ -634,6 +642,45 @@ public sealed record MissionSituation
     public IReadOnlyList<string> Wakes { get; init; } = [];
 
     /// <summary>
+    /// WHAT CHANGED: one line per observation this turn is answering, each with its entity — the request and its state,
+    /// the execution and what filled, the boundary and its deadline, the tape's source, series and count, the event's
+    /// id (<c>U-reconcile-packet</c>). At most <see cref="MissionEventStore.BatchLimit"/>, the most one turn is handed.
+    /// Rendered under <see cref="Wakes"/>, which it details; never an item's text and never a held figure.
+    /// </summary>
+    public IReadOnlyList<string> WhatChanged { get; init; } = [];
+
+    /// <summary>
+    /// WHAT THIS ROLE BELIEVES: its own open entries in the research ledger, newest first, or null where the host holds
+    /// no ledger (<c>U-reconcile-packet</c>). Rendered as the role's CLAIMS — every line says so — at most
+    /// <see cref="BeliefLimit"/> of them in at most <see cref="BeliefBytes"/>: the observed world is the app's record,
+    /// and nothing the role wrote is shown beside it as though it were measured.
+    /// </summary>
+    public IReadOnlyList<LedgerListed>? Believed { get; init; }
+
+    /// <summary>
+    /// WHAT IS WANTED: the work TradeAgent records as this role's (<see cref="RoleObjectives"/>), open now, or null
+    /// where the host cannot say. Rendered with the open boundaries and the owner's Guidance — the desired world, as
+    /// app data and the owner's own words, never anything the role wrote.
+    /// </summary>
+    public IReadOnlyList<RoleObjective>? Wanted { get; init; }
+
+    /// <summary>The most open entries one Situation shows.</summary>
+    public const int BeliefLimit = 10;
+
+    /// <summary>The most UTF-8 bytes the belief lines take, so a long ledger never crowds out the turn.</summary>
+    public const int BeliefBytes = 2 * 1024;
+
+    /// <summary>The most objective instances one Situation lists.</summary>
+    public const int WantedLimit = MissionEventStore.BatchLimit;
+
+    /// <summary>
+    /// THE ROLE'S OWN OPEN ENTRIES, newest first — one more than <see cref="BeliefLimit"/>, so the Situation can say there
+    /// are more. The read every host with a ledger makes; written by the role, so shown only as its claims.
+    /// </summary>
+    public static IReadOnlyList<LedgerListed> OpenBeliefs(Database db, string role) =>
+        new ResearchLedger(db).List(role, null, LedgerStatus.Open, null, BeliefLimit);
+
+    /// <summary>
     /// THE CONSEQUENTIAL BOUNDARIES OPEN TO THIS DIRECTOR, ONE LINE EACH, WITH THEIR DEADLINES.
     ///
     /// <para><c>docs/COUNCIL.md</c>:61-62. A director asked for an assessment has to be told which
@@ -695,8 +742,9 @@ public sealed record MissionSituation
     /// turns and the files are the only thing that crosses that boundary.
     /// </summary>
     public const string Continue =
-        "Continue your mission. Your memory is your files: read `PLAN.md` and `JOURNAL.md` first and " +
-        "update them before you finish.";
+        "Continue your mission from what changed, what you believe and what is wanted. `PLAN.md` and " +
+        "`JOURNAL.md` are your scratch: read them first and update them before you finish, and put a belief " +
+        "worth keeping in the research ledger as your claim.";
 
     public string Text()
     {
@@ -765,10 +813,29 @@ public sealed record MissionSituation
         if (Wakes.Count > 0)
             b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
 
-        // THE BOUNDARY, ABOVE THE STATE AND BELOW THE CAUSE. It is the one thing in this message with a
-        // DEADLINE attached and an answer TradeAgent will write on its own if nothing arrives, which is
-        // why it outranks the account lines: everything below is context, and this is owed work.
+        // WHAT CHANGED, UNDER THE CAUSE IT DETAILS (U-reconcile-packet): one line per observation, each with its
+        // entity, so the turn starts where the app's record points rather than re-reading the world.
+        if (WhatChanged.Count > 0)
+        {
+            b.AppendLine("- What changed, one line per observation TradeAgent recorded for you:");
+            foreach (var line in WhatChanged.Take(MissionEventStore.BatchLimit)) b.AppendLine($"  - {line}");
+        }
+
+        // WHAT YOU BELIEVE, apart from what changed: the role's own claims, never the observed world.
+        if (Believed is { } believed) AppendBeliefs(b, believed);
+
+        // WHAT IS WANTED: the work the app records as this role's, then the boundaries — the one thing in this
+        // message with a DEADLINE attached and an answer TradeAgent will write on its own if nothing arrives —
+        // and the owner's guidance. Owed work, above the account lines, which are context.
+        if (Wanted is { Count: > 0 } wanted)
+        {
+            b.AppendLine($"- What is wanted — the work TradeAgent records as yours (objectives v{RoleObjectives.Version}):");
+            foreach (var o in wanted.Take(WantedLimit)) b.AppendLine($"  - {Want(o)}");
+            if (wanted.Count > WantedLimit) b.AppendLine($"  - and {wanted.Count - WantedLimit} more of the same kinds.");
+        }
         foreach (var line in Boundaries) b.AppendLine($"- {line}");
+        if (!string.IsNullOrWhiteSpace(Guidance))
+            b.AppendLine($"- The owner's guidance: {Guidance.Trim()}");
 
         if (Role is { Length: > 0 } role)
             b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
@@ -798,12 +865,85 @@ public sealed record MissionSituation
         if (!string.IsNullOrWhiteSpace(Promoted)) b.AppendLine($"- {Promoted}");
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
-        if (!string.IsNullOrWhiteSpace(Guidance))
-            b.AppendLine($"- The owner's guidance: {Guidance.Trim()}");
 
         b.AppendLine().AppendLine(Continue);
         return b.ToString();
     }
+
+    /// <summary>The words every belief line starts with: what it is, before what it says.</summary>
+    public const string ClaimMark = "your claim";
+
+    /// <summary>
+    /// THE BELIEF LINES: at most <see cref="BeliefLimit"/> entries in at most <see cref="BeliefBytes"/>, each one marked
+    /// <see cref="ClaimMark"/> with its id, kind, how it is held and how sure its author said it was — unknown when it did
+    /// not say. A text that would not fit is cut where the budget ends, and the line says so; what is not shown is
+    /// counted, never dropped in silence.
+    /// </summary>
+    static void AppendBeliefs(StringBuilder b, IReadOnlyList<LedgerListed> believed)
+    {
+        if (believed.Count == 0)
+        {
+            b.AppendLine("- What you believe: you hold no open entry in the research ledger.");
+            return;
+        }
+
+        b.AppendLine("- What you believe — your open entries in the research ledger, newest first; each one is "
+                     + "your claim, never a measurement:");
+        var left = BeliefBytes;
+        var shown = 0;
+        foreach (var e in believed.Take(BeliefLimit))
+        {
+            var confidence = e.Latest.Confidence is { } c ? c.ToString("0.##", CultureInfo.InvariantCulture) : "unknown";
+            var head = $"  - {ClaimMark}, entry {e.Entry.Id} ({e.Entry.Kind}, held as {e.Latest.Mark}, confidence "
+                       + $"{confidence}): ";
+            const string cut = " … (cut here; the ledger holds the whole entry)";
+            var text = e.Latest.Text.ReplaceLineEndings(" ").Trim();
+            var room = left - Encoding.UTF8.GetByteCount(head) - Encoding.UTF8.GetByteCount(Environment.NewLine);
+            if (room < Encoding.UTF8.GetByteCount(cut) + 16) break;
+            if (Encoding.UTF8.GetByteCount(text) > room) text = Fit(text, room - Encoding.UTF8.GetByteCount(cut)) + cut;
+            var line = head + text;
+            b.AppendLine(line);
+            left -= Encoding.UTF8.GetByteCount(line) + Encoding.UTF8.GetByteCount(Environment.NewLine);
+            shown++;
+        }
+
+        var unshown = believed.Count - shown;
+        if (unshown > 0)
+            b.AppendLine(believed.Count > BeliefLimit
+                ? $"  - and more open entries of yours than are shown here ({shown} shown); the research ledger lists them."
+                : $"  - and {unshown} more open entr{(unshown == 1 ? "y" : "ies")} of yours; the research ledger lists them.");
+    }
+
+    /// <summary>The longest start of <paramref name="text"/> whose UTF-8 bytes fit in <paramref name="bytes"/>, never split inside a character.</summary>
+    static string Fit(string text, int bytes)
+    {
+        var n = 0;
+        var used = 0;
+        while (n < text.Length)
+        {
+            var step = char.IsSurrogatePair(text, n) ? 2 : 1;
+            var size = Encoding.UTF8.GetByteCount(text.AsSpan(n, step));
+            if (used + size > bytes) break;
+            used += size;
+            n += step;
+        }
+        return text[..n];
+    }
+
+    /// <summary>ONE OBJECTIVE INSTANCE IN WORDS, with its entity — what is wanted, never how.</summary>
+    static string Want(RoleObjective o) => o.Kind switch
+    {
+        RoleObjectives.OwnerAnswered => $"an answer to your owner's message `{o.Entity}`",
+        RoleObjectives.RequestFinal => $"request `{o.Entity}` in a final state",
+        RoleObjectives.PositionWatched => o.Entity == RoleObjectives.UnreadBook
+            ? "the book watched — TradeAgent has not read it"
+            : $"the position {o.Entity} watched",
+        RoleObjectives.BoundaryAssessed => $"your assessment of boundary `{o.Entity}` — its line follows",
+        RoleObjectives.VerdictRead => $"the referee's answer `{o.Entity}` read",
+        RoleObjectives.ForwardRunFollowed => $"the forward run of deployment `{o.Entity}` followed",
+        RoleObjectives.ResearchMandate => "your research mandate, standing: hypotheses, data and backtests",
+        _ => $"{o.Kind}: `{o.Entity}`"
+    };
 
     /// <summary>
     /// THE FILE NAME THIS TURN'S OUTPUT MUST CARRY. The app decides it, from the role and the
@@ -1788,7 +1928,13 @@ public sealed class MissionLoop
             Cut = CutBefore(role),
             OwnerMessages = [.. OwnerWords(wake), .. typed],
             Deliveries = Delivered(wake),
-            Wakes = Reasons(wake)
+            Wakes = Reasons(wake),
+            // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
+            // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
+            // the attempt keeps the prompt's hash and the wakes name their attempt.
+            WhatChanged = Observations(wake),
+            Believed = BeliefsOf(role),
+            Wanted = OpenObjectives(role)
         };
         var prompt = situation.Text();
 
@@ -2498,6 +2644,54 @@ public sealed class MissionLoop
         }
         return list;
     }
+
+    /// <summary>The role's own open entries from the host, or null where it holds none or cannot be read.</summary>
+    IReadOnlyList<LedgerListed>? BeliefsOf(string role)
+    {
+        try { return _host.Beliefs(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>WHAT CHANGED: one line per wake, in the order taken, each with its entity.</summary>
+    static string[] Observations(IEnumerable<MissionEvent> wake) =>
+        [.. wake.Take(MissionEventStore.BatchLimit).Select(Observation)];
+
+    /// <summary>
+    /// ONE OBSERVATION IN WORDS: the wake's phrase and what it is about — read from the app's own small payload where
+    /// it names more than the id does, and the id otherwise. A tape wake says source, series, subject and count and
+    /// never an item; a fill says what filled; a boundary says when TradeAgent decides it.
+    /// </summary>
+    static string Observation(MissionEvent e)
+    {
+        var id = e.Id.Split('#')[0];
+        string? detail = null;
+        try
+        {
+            detail = e.Kind switch
+            {
+                MissionEventKind.Fill when Json.Read<FillWake>(e.Payload ?? "") is { Symbol: { } symbol } f =>
+                    $"{f.Side} {f.Quantity?.ToString(CultureInfo.InvariantCulture)} {symbol}, execution `{id}`",
+                MissionEventKind.Order when Json.Read<OrderWake>(e.Payload ?? "") is { Request: { } request } o =>
+                    $"request `{request}` is {o.State}",
+                MissionEventKind.Tape when Json.Read<TapeWakePayload>(e.Payload ?? "") is { } t =>
+                    $"{t.Count} new item{(t.Count == 1 ? "" : "s")} of `{t.Source}/{t.Series}`"
+                    + (t.Subject is { } subject ? $", subject `{subject}`" : ", over more than one subject")
+                    + $" (`{id}`); TradeAgent counts more only once you have taken this",
+                MissionEventKind.Boundary or MissionEventKind.Deadline when Json.Read<BoundaryTask>(e.Payload ?? "") is { } t =>
+                    $"boundary `{t.Boundary}` ({t.Kind} of {t.Entity}), decided by TradeAgent at "
+                    + $"{t.DeadlineAt.LocalDateTime:yyyy-MM-dd HH:mm}",
+                _ => null
+            };
+        }
+        catch (Exception) { /* an unreadable payload is described by its id */ }
+        return $"{Reason(e)} — {detail ?? $"`{id}`"}";
+    }
+
+    /// <summary>The fill wake's payload as the gateway writes it.</summary>
+    sealed record FillWake(string? Symbol, string? Side, decimal? Quantity);
+
+    /// <summary>The order wake's payload as the gateway writes it.</summary>
+    sealed record OrderWake(string? Request, string? State);
 
     /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>
     static string[] Reasons(IEnumerable<MissionEvent> wake) =>

@@ -2173,6 +2173,17 @@ director — and closed `withdrawn` without a turn once the director has assesse
 Canon v3 says so ("both directors are woken for it"). NOT claimed: that an announcement matters, that GDELT's
 archive rows wake anyone (its recorder tells nobody), or that a wake reaches a turn the allowance refuses.
 
+**Every turn's Situation is a packet built from state.** (`U-reconcile-packet`.) Under the owner's words, the
+deliveries and the restored-file notices, "Why you are awake" heads **what changed** — one line per wake the turn
+took (at most `BatchLimit`, 50), each with its entity: the event id, what filled, the request and its state, the
+boundary and its deadline, the tape's source, series, subject and count — then **what you believe** — the role's
+OWN open entries in the research ledger, newest first, at most 10 in at most 2 KiB (a text cut is said, the rest
+counted), every line starting "your claim", never another role's and never inside what changed — then **what is
+wanted** — the open objective instances (`RoleObjectives`, v1), the boundary lines and the owner's Guidance. The
+role line, the attempt line and the state lines follow unchanged; the Continue sentence names the three and calls
+`PLAN.md`/`JOURNAL.md` scratch. The packet is not stored: the attempt keeps the prompt's hash and the wakes name
+their attempt. NOT claimed: that a belief is true, or that the role reads the packet before it acts.
+
 **A pass that could not read everything is not complete** (`U-inbox-unreadable`): a tracked folder the
 disk would not say is there, a folder it would not list or a listed file it would not describe — read
 through `WorkspaceReads`, which says absent only when the disk does — leaves both window keys

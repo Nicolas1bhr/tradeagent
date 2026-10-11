@@ -1753,6 +1753,10 @@ public sealed class AppHost : IAsyncDisposable
         public IReadOnlyList<RoleObjective>? Objectives(string role) =>
             host._db is { } db ? RoleObjectives.Open(db, role, Volatile.Read(ref host._lastBook)) : null;
 
+        /// <summary>THE ROLE'S OWN OPEN ENTRIES for the packet's "what you believe" (U-reconcile-packet): its claims, read from the ledger.</summary>
+        public IReadOnlyList<LedgerListed>? Beliefs(string role) =>
+            host._db is { } db ? MissionSituation.OpenBeliefs(db, role) : null;
+
         public MissionDelivery? Delivered(string publicationId)
         {
             try
