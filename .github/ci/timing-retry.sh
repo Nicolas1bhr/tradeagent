@@ -16,10 +16,13 @@
 # 37524459410's button row did exactly that, behind a FaultTests press test's red. "Red twice is red" is a fact
 # about one test; this makes the second attempt ask it of the tests that were red once, and only of them.
 #
-# A THEORY'S ROWS AT METHOD GRANULARITY. A failed result is joined, by its testId, to its definition's TestMethod
-# element, whose className and name are the class and the METHOD — so a failed row re-runs every row of that method,
-# matched as FullyQualifiedName=<class>.<method> (xUnit gives every row the method's name). Exact, never ~: a
-# substring would re-run a method whose name merely contains another's.
+# A THEORY'S ROWS: THE FILTER IS THE METHOD, THE VERDICT IS THE ROW. A failed result is joined, by its testId, to its
+# definition's TestMethod element, whose className and name are the class and the METHOD — so a failed row re-runs every
+# row of that method, matched as FullyQualifiedName=<class>.<method> (xUnit gives every row the method's name). Exact,
+# never ~: a substring would re-run a method whose name merely contains another's. But a method is not a row: `verify`
+# compares the full testName of the result (data row included, `Ns.C.M(x: 1)`), so a failed row counts as re-run only
+# when that very row is in the retry's trx, Passed; another row of the same method passing does not stand in for it
+# (the second review of this unit, finding 2).
 #
 # EVERY PROJECT (the second review of this unit, finding 1). The first attempt runs the whole solution, so a crashed or
 # aborted test project writes no trx at all, and a glob over the trx files that exist cannot see it: another project's
@@ -52,7 +55,7 @@ set -euo pipefail
 usage() { echo "usage: timing-retry.sh trx <name> | timing-retry.sh filter <trx>... | timing-retry.sh verify <attempt-1 trx>... -- <retry trx>..." >&2; exit 2; }
 err() { echo "::error title=The timing retry cannot be trusted::$*" >&2; }
 
-# parse <strict 0|1> <trx>: one "<outcome><TAB><class>.<method>" line per result, on stdout; nonzero (and an ::error on
+# parse <strict 0|1> <trx>: one "<outcome><TAB><class>.<method><TAB><testName>" line per result, on stdout; nonzero (and an ::error on
 # stderr) when the file cannot be trusted. strict=1 (the retry) also requires a definition for a PASSED result, since
 # the retry's set is compared as a whole; strict=0 (attempt 1) needs one only for a result that did not pass.
 parse() {
@@ -91,7 +94,7 @@ parse() {
       c = dec(attr($0, "className")); n = dec(attr($0, "name"))
       cls[id] = c; mth[id] = n; id = ""; next
     }
-    /^UnitTestResult[[:space:]]/ { nres++; rid[nres] = attr($0, "testId"); rout[nres] = attr($0, "outcome") }
+    /^UnitTestResult[[:space:]]/ { nres++; rid[nres] = attr($0, "testId"); rout[nres] = attr($0, "outcome"); rname[nres] = attr($0, "testName") }
     END {
       if (!started || !ended || !summary) bad("the trx is cut short (no TestRun start, closing </TestRun> or ResultSummary)")
       for (i = 1; i <= nres; i++) {
@@ -107,7 +110,14 @@ parse() {
           else if (strict) bad("the test " rid[i] " has a class or method name the filter cannot say exactly")
           continue
         }
-        printf "%s\t%s.%s\n", rout[i], cls[rid[i]], mth[rid[i]]
+        # The row identity: the full testName of the result, as the writer escaped it (both attempts come from the one writer,
+        # so the raw text compares). A failed result, or any result of the retry, without a usable one is refused.
+        if (rname[i] == "" || rname[i] ~ /[[:cntrl:]]/) {
+          if (!pass && !skip) bad("the failed test " rid[i] " has a testName the retry cannot be checked against")
+          else if (strict) bad("the result " rid[i] " has a testName the retry cannot be checked against")
+          continue
+        }
+        printf "%s\t%s.%s\t%s\n", rout[i], cls[rid[i]], mth[rid[i]], rname[i]
       }
       exit failed_parse ? 1 : 0
     }
@@ -129,7 +139,14 @@ all_of() {
 failed_methods() {
   local all
   all=$(all_of 0 "$@") || return 1
-  printf '%s\n' "$all" | awk -F'\t' 'NF == 2 && $1 != "Passed" && $1 != "NotExecuted" { print $2 }' | sort -u
+  printf '%s\n' "$all" | awk -F'\t' 'NF == 3 && $1 != "Passed" && $1 != "NotExecuted" { print $2 }' | sort -u
+}
+
+# failed_rows <trx>...: the sorted, distinct full testName (data row included) of every result that did not pass.
+failed_rows() {
+  local all
+  all=$(all_of 0 "$@") || return 1
+  printf '%s\n' "$all" | awk -F'\t' 'NF == 3 && $1 != "Passed" && $1 != "NotExecuted" { print $3 }' | sort -u
 }
 
 # timing_trx <name>: tests/<project>/TestResults/<name> for every test project the solution lists that declares a Timing
@@ -173,14 +190,16 @@ case "$mode" in
     done
     [ ${#first[@]} -ge 1 ] && [ ${#second[@]} -ge 1 ] || usage
     expected=$(failed_methods "${first[@]}") || exit 1
+    expected_rows=$(failed_rows "${first[@]}") || exit 1
     if [ -z "$expected" ]; then
       echo "::error title=The timing retry has nothing to verify::attempt 1's trx files name no failed test, so no retry can have been the right one." >&2
       exit 1
     fi
     ran=$(all_of 1 "${second[@]}") || exit 1
     # Every retried result Passed (a Theory's rows each), and the set of methods re-run equals the set that failed.
-    notpassed=$(printf '%s\n' "$ran" | awk -F'\t' 'NF == 2 && $1 != "Passed" { print $1 ": " $2 }' | sort -u)
-    reran=$(printf '%s\n' "$ran" | awk -F'\t' 'NF == 2 { print $2 }' | sort -u)
+    notpassed=$(printf '%s\n' "$ran" | awk -F'\t' 'NF == 3 && $1 != "Passed" { print $1 ": " $3 }' | sort -u)
+    reran=$(printf '%s\n' "$ran" | awk -F'\t' 'NF == 3 { print $2 }' | sort -u)
+    passed_rows=$(printf '%s\n' "$ran" | awk -F'\t' 'NF == 3 && $1 == "Passed" { print $3 }' | sort -u)
     if [ -n "$notpassed" ]; then
       echo "::error title=A retried timing test did not pass::${notpassed//$'\n'/; }" >&2
       exit 1
@@ -189,6 +208,12 @@ case "$mode" in
       missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$reran") | paste -sd ',' -)
       extra=$(comm -13 <(printf '%s\n' "$expected") <(printf '%s\n' "$reran") | paste -sd ',' -)
       echo "::error title=The timing retry did not re-run exactly the tests that failed::failed on attempt 1 and not re-run: [${missing}]; re-run though attempt 1 did not fail them: [${extra}]. The step is red." >&2
+      exit 1
+    fi
+    # Every row that failed on attempt 1 is itself in the retry, Passed: the other rows of a method cannot stand in for it.
+    unrun=$(comm -23 <(printf '%s\n' "$expected_rows") <(printf '%s\n' "$passed_rows"))
+    if [ -n "$unrun" ]; then
+      echo "::error title=A test row that failed on attempt 1 is not Passed in the retry::${unrun//$'\n'/; }. The step is red." >&2
       exit 1
     fi
     echo "The retry re-ran exactly the $(printf '%s\n' "$expected" | wc -l | tr -d ' ') test method(s) that failed on attempt 1, and each passed."
