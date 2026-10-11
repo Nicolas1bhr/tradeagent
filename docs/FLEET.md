@@ -86,6 +86,32 @@ so this orchestration position becomes the standard."
   written readable — and each was fixed and landed within the session (the resume block's checkpoint lists them).
 - **The third, 2026-10-09 00:00 → ~17:00:** fresh seats A and B (P and M closed); ~8 h lost overnight to the blocked heartbeat (above); seven units
   landed by the wind-down at 94 % of the week, among them an evidence leak in holdout campaigns and a paper run's book read against the account.
+- **The fourth, 2026-10-11 00:36 → 14:30, in speed mode** (the owner: "optimize for sheer building speed. obviously we cannot compromise on build
+  quality"): seats A and B (P until 06:2x), rotated near ~300k of context; twenty-two units landed, every one CI-green on all three platforms and reviewed by
+  Codex before landing; a red seen three times was traced to product code moving the Research Director's files, not called a flake (`U-friction-home`).
+
+## Speed mode — the standard since 2026-10-11 (proven over the fourth session)
+
+The operational text is `fleet/SPEED-MODE.md`, with the compact builder prompt `fleet/BUILDER-PROMPT-v2.md`; where they differ from this file, the charters or
+`fleet/BUILDER-PROMPT.md`, they win. Speed mode changes no protection, honesty rule, red-first or mutant burden, names check, scan, ff-only merge or record rule.
+
+- **Every leg names its model and effort.** Opus (high; xhigh for a broad evidence unit) for money, evidence, credentials, operator authority, the agent boundary
+  and schema rungs; Sonnet high for UI, docs, tests and rig, CI and tooling; Haiku low for mechanical waits and digests. Cache reads dominate a long leg, so a
+  small context and few turns save more than a cheaper model.
+- **An independent review of every unit's diff:** Codex (`gpt-6.1-sol`, read-only, outside Claude's quota, and only while no TradeAgent live run needs the
+  owner's plan), started by the builder with its CI wait. It caught more than twenty real defects before landing. The manager triages each finding: real → a
+  fresh fixer; not real → one line why. A re-review checks the fix and its regressions, not a fresh hunt; a unit whose third fix pass still finds in-scope work
+  goes to the orchestrator.
+- **Landing is on CI, not on the Mac.** `fleet/bin/land.sh` v2 carries a green run whose tree equals the rebased tip outside `fleet/bin/bookkeeping-paths.txt`;
+  v3 lands a train, several units on one CI run with one push and one record each. CI is sharded (`U-ci-shards`: ~66 → ~25 min), bookkeeping-only pushes skip
+  it; `U-ci-dedupe` (parked at the close) will skip a main push run whose tree a green dispatch run already proved. Run each `land.sh` phase as its own command
+  and read its exit code — never pipe one: on 2026-10-11 a chain piped into `tail` hid a failed check and a refused merge, and `record` pushed a false landing
+  record, reverted at once.
+- **Capacity.** The 5-hour window binds, and so do GitHub Free's 20 concurrent jobs (a sharded run needs 11). Measured: three seats and ~6 Opus legs ≈ 40–50 %
+  of the window an hour; two seats and ~4 legs ≈ 25 %; a hard freeze (no new leg of any class, landings only) ≈ 10 %. The orchestrator measures about every half
+  hour and freezes on the projection to the reset. Landing fixers go before new units. A code landing makes every other prepped unit run CI again, so prefer
+  trains and cancel a run the moment it can no longer carry.
+- **Never "a flake".** A red the diff cannot reach is named with its run id and judged at landing (`LAND_JUDGED_RED`); its second sighting makes it a unit.
 
 ## Grounding — read before acting, verify before trusting
 

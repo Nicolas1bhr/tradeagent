@@ -11,8 +11,8 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-11)
-and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode's rules: `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
+heartbeat first; in a meeting, arm nothing), then the three blocks right after this paragraph (R22, R21, R20), the newest checkpoint below (2026-10-11, the close)
+and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
 **2026-10-08, late evening — a second outside audit (canon and architecture drift), verified and answered; docs only
@@ -83,6 +83,28 @@ bounded experiment is testing it; one chief with a strategy council; a Security 
 invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. **It changes no unit before M-org1 — M0 is still next.**
 When briefed: `U-org-assignments` takes the mandate's shape (VISION § 6.1), `U-org-verbs` keeps the bounds as policy data under the earning rule (§ 3),
 `U-org-watcher` scopes its detectors per unit (§ 5.2).
+
+**Checkpoint 2026-10-11 14:28 CEST — the fourth session's close (the owner, 14:1x: "carefully wrap up this session. we'll start again soon, fresh").** Since
+the 10:40 checkpoint below: `U-referee-v2c` `1970f86a` (rung 35: every verdict seals its holdout's fidelity, betting e-value and alpha-wealth step in its first
+write and flags a holdout its authoring model may remember; the paper queue is ordered by research evidence, every flagged version after every unflagged one) ·
+train B3 `U-red-says-why` `4fa0f0c2` + `U-owner-words-delegated` `80945a60` (nothing an agent writes can mark the owner's words handled) · `U-lenses` `af1a7a6f`
+(`tape.db` rung 3: versioned, hashed lenses; nothing runs one yet) · train A5 `U-prove-phase4` `f350e0b5` (the Linux proof's kill -9 phase: the restarted app must
+record its start within 30 s, the false green closed) + `U-evidence-evaluator-label` `5f19f910` (rung 36: every run, and every research measurement, trial and
+sealed holdout row, names its evaluator; a row from before 36 reads as another evaluator's) + `U-friction-home` `670d6757` · `U-ci-dedupe` PARKED, not landed: `land.sh check` reads any job named `test*` as a test job and refused its new
+`tested-before` gate job (rename it, run CI again; branch `u-ci-dedupe` `dfc5d47e`, CI green); a phase chain piped into `tail` hid that refusal, `record` pushed
+a false landing record (`973f89d0`), and it was reverted at once (`6853e0bb`; no code merged). Twenty-two
+units this session, every one CI-green on all three platforms and Codex-reviewed before landing. **A product defect, found by refusing "a flake":** a test red
+seen on three branches was `WorkspaceBuilder.MoveOlderLayout`, compatibility code that on the chair's first start moved `workspace/research` — the Research
+Director's own home, programs included — into the chair's folder (since `89c5ad8e`, 2026-09-07); deleted under the no-backward-compat rule, red first with a watched
+mutant. Its effect on the owner's real homes and the M0 attempts is NOT VERIFIED (`U-moved-research-audit`, on his word). **Decided on the owner's behalf:** paper's
+fill lag (an order fills at the open two minutes on, protection rests from the fill minute + 2, the max hold closes at market then) rides ONE evaluator bump,
+`backtest=3` (`U-backtest-parity`, `docs/queue/`), which withdraws every verdict and ends every paper run by design — no unattended paper evidence exists yet; the
+runner's re-anchoring of a FIXED stop or target to the fill (`U-runner-fixed-levels`, survey first) is the next money-path unit, before the switch-on. **State:**
+main `6853e0bb`, schema 36, `tape.db` 3; no lock, no leg; `U-reconcile-packet` parked for its second fix pass. **NEXT:** seat A `U-backtest-parity` (opus/xhigh) →
+`S-runner-fixed-levels`; seat B `U-reconcile-packet` pass 2 → the lens-boundary holdout card (blocks `U-annotator`) → `U-timing-shard`; § 15 has the order and
+`fleet/handoff/ORCHESTRATOR.md` the fleet's state. **For the owner:** (a) GitHub Pro or Team — CI's 20 concurrent jobs bound the day (paid, his); (b)
+`U-envelope-slots` (one paper slot per envelope holds v2b's quota at zero from the UI); (c) may a read-only check look at his real homes for moved Research
+programs, and on which machines; (d) the nine Linux-host questions of 2026-10-09 (block below).
 
 **Checkpoint 2026-10-11 10:40 CEST — the fourth session under the orchestration standard, run in SPEED MODE (the owner, 2026-10-11 00:36: "optimize for sheer
 building speed. obviously we cannot compromise on build quality as having to go back and rebuild things would be disastrous").** Seats A (edge & evidence) and
