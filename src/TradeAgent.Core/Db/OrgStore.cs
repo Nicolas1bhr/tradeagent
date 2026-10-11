@@ -441,6 +441,15 @@ public sealed class OrgStore(Database db)
     }
 
     /// <summary>
+    /// THE REFUSAL OF A SPLIT THAT CANNOT FUND ITS OWN SEAT, or null: <paramref name="reservation"/> — what one turn of
+    /// <paramref name="seat"/> reserves — is larger than <paramref name="envelope"/>, the WHOLE envelope of
+    /// <paramref name="unitId"/> (R17 #1). The launch admission refuses with it (<see cref="AiAttemptStore.Begin"/>), and it is
+    /// here for <c>U-org-verbs</c> to refuse such a split before it is written: one check, two callers.
+    /// </summary>
+    public static string? Unfundable(string seat, string unitId, decimal envelope, decimal reservation) =>
+        reservation > envelope ? Labels.SeatExceedsEnvelope(seat, reservation, OrgEnvelopes.NameOf(unitId), envelope) : null;
+
+    /// <summary>
     /// WHETHER A ROLE STRING IS ONE OF THE APP'S OWN PRINCIPALS (<see cref="AppPrincipals"/>) — code writing under
     /// a name, never a position. Exact, as every role comparison in this product is.
     /// </summary>

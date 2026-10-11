@@ -294,6 +294,15 @@ public static class Labels
         + $"turn reserves {Amount(reservation)}, so it was not started. Nothing was sent to the AI tool. It starts again after "
         + "midnight, or sooner if that envelope is widened.";
 
+    /// <summary>
+    /// A SEAT WHOSE ONE TURN IS LARGER THAN ITS UNIT'S WHOLE ENVELOPE (<c>U-org-envelopes</c>; R17 #1): not a day that ran out but
+    /// a split that cannot fund its own seat, so midnight changes nothing. Names the seat, the reservation and the envelope.
+    /// </summary>
+    public static string SeatExceedsEnvelope(string seat, decimal reservation, string unit, decimal envelope) =>
+        $"'{seat}' reserves {Amount(reservation)} for one turn, more than the whole {Amount(envelope)} envelope of {unit}, so "
+        + "no turn of it can start under this split, today or after midnight. Nothing was sent to the AI tool. The envelope "
+        + "has to be widened, or the seat's turn allowance made smaller.";
+
     /// <summary>An amount in a refusal: invariant, two places at least, never a currency symbol this layer cannot know.</summary>
     static string Amount(decimal value) => value.ToString("0.00##", System.Globalization.CultureInfo.InvariantCulture);
 

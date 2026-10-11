@@ -166,6 +166,9 @@ public class OrgEnvelopeTests : IDisposable
         Assert.Null(refused.Id);
         Assert.Equal("team-1", refused.Ceiling);
         Assert.Equal(0.56m, refused.Over);   // 1.28 + 1.28 against 2.00
+        Assert.Contains("team-1", refused.Refusal, StringComparison.Ordinal);
+        Assert.Contains("2.00", refused.Refusal, StringComparison.Ordinal);   // its envelope
+        Assert.Contains("0.72", refused.Refusal, StringComparison.Ordinal);   // its room
 
         Assert.True(meter.Begin("## Situation", role: "pos-2").Admitted);
         Assert.Equal(2, Count("SELECT COUNT(*) FROM ai_attempt"));
@@ -264,6 +267,33 @@ public class OrgEnvelopeTests : IDisposable
         Assert.Equal(AiAttemptState.LOST, store.Get(second.Id!)!.State);
         Assert.Equal(["team-1", "sub-1", OrgIds.Research, OrgIds.Root], Chain(first.Id!));
         Assert.Equal(["team-2", "sub-1", OrgIds.Research, OrgIds.Root], Chain(second.Id!));
+    }
+
+    // ---- (e) ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (e) A SEAT WHOSE RESERVATION EXCEEDS ITS UNIT'S WHOLE ENVELOPE IS REFUSED BY NAME: a team with 0.1 of a 10.00 day has
+    /// 1.00, and a turn reserves 1.28 — a split that cannot fund its own seat, refused in a sentence naming the seat, the
+    /// reservation and the envelope, on an empty day.
+    /// </summary>
+    [Fact]
+    public void A_seat_whose_reservation_exceeds_its_units_whole_envelope_is_refused_by_name()
+    {
+        Unit("team-1", OrgIds.Research, "0.1");
+        Seat("pos-1", "team-1");
+        var meter = Meter(10m);
+
+        var refused = meter.Begin("## Situation", role: "pos-1");
+
+        Assert.False(refused.Admitted);
+        Assert.Equal("team-1", refused.Ceiling);
+        Assert.Equal(0.28m, refused.Over);
+        Assert.Contains("pos-1", refused.Refusal, StringComparison.Ordinal);
+        Assert.Contains("1.28", refused.Refusal, StringComparison.Ordinal);
+        Assert.Contains("1.00", refused.Refusal, StringComparison.Ordinal);
+        Assert.Equal(OrgStore.Unfundable("pos-1", "team-1", 1.00m, Reservation), refused.Refusal);
+        Assert.Null(OrgStore.Unfundable("pos-1", "team-1", Reservation, Reservation));   // a turn that fits exactly is fundable
+        Assert.Equal(0, Count("SELECT COUNT(*) FROM ai_attempt"));
     }
 
     // ---- (g) ---------------------------------------------------------------------------------------------------------

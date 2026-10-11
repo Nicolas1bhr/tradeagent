@@ -141,9 +141,9 @@ public class BudgetReservationTests : IDisposable
 
         Assert.False(refused.Admitted);
         // THE CEILING IS THE RESEARCH DIVISION, the unit the legacy share now funds (U-org-envelopes): its envelope is the
-        // split, 1.00, and the refusal names the unit rather than a folded role title.
+        // split, 1.00, and one turn reserves more than all of it — so the refusal names the seat, the turn and the envelope.
         Assert.Equal(OrgIds.Research, refused.Ceiling);
-        Assert.Equal(Labels.UnitEnvelopeReached("the Research division", 1.00m, 1.00m, Reservation), refused.Refusal);
+        Assert.Equal(Labels.SeatExceedsEnvelope(CouncilRoles.Research, Reservation, "the Research division", 1.00m), refused.Refusal);
         Assert.Equal(0.28m, refused.Over);          // 1.28 asked for against a 1.00 share
         Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
         Assert.True(meter.Today.AdmitsAnotherTurn); // the DAY is nowhere near its ceiling

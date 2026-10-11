@@ -349,8 +349,10 @@ public sealed class AiAttemptStore(Database db)
                     {
                         if (unit.Envelope is not { } envelope) continue;
                         var funded = Totals(rule.From, rule.To, null, unit.UnitId);
+                        if (OrgStore.Unfundable(rule.Role ?? CouncilRoles.Default, unit.UnitId, envelope, rule.Reservation) is { } never)
+                            return RefuseUnit(rule, unit.UnitId, envelope, funded, never);
                         if (funded.Spent + funded.Reserved + rule.Reservation > envelope)
-                            return RefuseUnit(rule, unit.UnitId, envelope, funded);
+                            return RefuseUnit(rule, unit.UnitId, envelope, funded, null);
                     }
             }
             else
@@ -403,7 +405,9 @@ public sealed class AiAttemptStore(Database db)
                 // sentence that names one would send the owner to a split that does not hold it.
                 : rule.Role == AppPrincipals.Perception
                     ? Labels.PerceptionBudgetReached
-                    : Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Or(rule.Role))),
+                    // NEVER FOLDED INTO THE CHAIR: a position is refused by its unit (RefuseUnit), and any other role
+                    // named here is named as itself (U-org-envelopes).
+                    : Labels.RoleShareReached(CouncilRoles.Title(rule.Role!)),
             Ceiling = global ? AiAdmission.Day : rule.Role,
             Over = over > 0m ? over : 0m,
             ResumesAt = rule.ResumesAt
@@ -412,14 +416,15 @@ public sealed class AiAttemptStore(Database db)
 
     /// <summary>
     /// THE REFUSAL BY A UNIT OF THE FUNDING CHAIN (<c>U-org-envelopes</c>): <see cref="AiAdmission.Ceiling"/> is the unit's id, and
-    /// the sentence names the unit, its envelope and the room it has left.
+    /// the sentence names the unit, its envelope and the room it has left — or, where one turn is larger than the unit's whole
+    /// envelope, <paramref name="never"/>: the sentence of a split that cannot fund its own seat, which midnight does not repair.
     /// </summary>
-    static AiAdmission RefuseUnit(AiAdmissionRule rule, string unitId, decimal envelope, AiAttemptTotals funded)
+    static AiAdmission RefuseUnit(AiAdmissionRule rule, string unitId, decimal envelope, AiAttemptTotals funded, string? never)
     {
         var room = envelope - funded.Spent - funded.Reserved;
         return new AiAdmission
         {
-            Refusal = Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation),
+            Refusal = never ?? Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation),
             Ceiling = unitId,
             Over = rule.Reservation - room,
             ResumesAt = rule.ResumesAt
