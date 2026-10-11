@@ -10468,3 +10468,37 @@ Release `--no-incremental` 0 warnings; touched classes 3×.
 **NOT VERIFIED:** the datagram-pair row red on a real kernel (BPF interpreter only); aarch64 cells (interpreter and header only); ABI 9's RESOLVE_UNIX on a real
 kernel; the re-review's three fixes were not shown red first; the owner's Linux host (`U-cell-linux-e`, on his word only). **OWED:** a policy file left by a crash of
 BOTH the app and the supervisor is not swept (→ `U-cell-linux-b`'s restart sweep). Reviews: fleet/tmp/A-org/u-cell-linux-a-build/, u-cell-linux-a-fix/ (re-review).
+
+
+## U-prompt-stdin — a turn's prompt and the owner's words reach the runtime on stdin, never on its command line, and every attempt records how its prompt travelled, measured on the argv actually built; no rung (landed 2026-10-11, seat A)
+
+**Landed** solo (`land.sh` v2) on `main` `e51ecb98`: MERGE_SHA `c701755e` (fixer's report tip `c70b68a3`, code `eb56df35` on `c8004ffc`; builder pass 1 tip `cec21487`, code
+`28e31beb` on `dce3d67d`). A protection — the agent boundary: assessor independence (`docs/ORCHESTRATION.md` § 2.10) and INBOX-001 (the owner's words are data a confined
+neighbour must not read); § 2.7's "a seat's prompt travels on stdin, never in its argv". **No rung.**
+On main, in order: `9ddf07e7` the manifest says as data whether a runtime reads stdin and what fills the slot · `ebf2c651` the prompt on stdin, the marker in the slot, the
+seat's argv check · `dbc294cf` `prompt_in` on every attempt · `500869bb` a prompt over the argv cap reaches the runtime whole · `ceb0241c` report · `ff378ee4` marker or
+nothing, never the prompt, `prompt_in` measured · `2f1ec709` the health row names a runtime fed through argv · `c701755e` report.
+Built by a04f56a059fbd0c6a (pass 1) and a fresh fixer aaac191b8961ab369 (fix pass 1).
+**CI:** run **38172932459** at `eb56df35`, every job success (dedupe-gate, shard-plan, package, package-linux, test windows 1-5, ubuntu, macos, linux-host), CARRIED to
+`c701755e` (build tree equal outside the bookkeeping list; main moved only by docs since `c8004ffc`); `land.sh check` VERDICT PASS. Names 2693 → 2702, removed 0. Scan:
+the canned usage-count field of the fake CLI's event lines (and the report naming it) judged a false positive, excluded by name. Run 38172315311 on the pre-rebase tip
+was cancelled by seat A when `U-cell-linux-a` moved main by code.
+**What changed:** `RuntimeManifest.PromptOnStdin` and `StdinMarker` are data: codex reads stdin with `-` in the slot (`codex exec --help` and `exec resume --help`, codex-cli
+0.160.1, throwaway homes), OpenCode reads stdin with nothing in the slot (read in its source v1.19.0, `run.ts` `resolveRunInput` — NOT RUN), a custom tool does not.
+`AgentArgs.Build` makes ONE decision: when the manifest says stdin the slot carries the marker or nothing — null and empty alike — never the prompt; `AgentSession` writes
+the prompt to the child's stdin (UTF-8, no BOM) and closes it; `SeatProfile.VerifyAsync` refuses a seat argv whose slot holds anything but the marker (null-safe). The
+attempt's `prompt_in` (`ai_attempt.context`) and the stdin feed follow `promptInArgv`, MEASURED on the argv actually built (the command built for the prompt and for the
+prompt plus one character, compared word by word) — never the manifest's claim; a runtime whose argv carries the prompt says "prompt in argv (runtime cannot read
+stdin)" on the "Agent runtime" health row at launch (`AgentSupervisor.PrepareAsync`, `AgentArgs.CarriesPrompt`) and on each of its attempts.
+**Evidence:** RED at base (pass 1): (a) `Assert.DoesNotContain() Failure: Sub-string found`, (b) `Expected: "first-turn-words-1111" Actual: ""`, (c) `stdin carried 0 of
+309999 characters`, (e, Windows' `.cmd` shim) `Filter matched in collection`. RED at the fix pass's rebased base: `(True, null): the command line was "--json
+Owner-words-4c8e read the inbox first"`, the seat row `the turn ended -1: Object reference not set …`, the health row `Sub-string not found`. WATCHED MUTANTS: codex
+with no marker (the prompt back in the slot) ⇒ (a) red `Expected: 0 Actual: -1`; a null marker falling back to argv ⇒ both null rows red; restored → green. Release
+`--no-incremental` 0 warnings; touched classes 3× `Passed: 34`, once more after the clean rebase. Mock run (fleet/tmp/A-org/u-prompt-stdin-build/ev/: U-seat-home's
+deny set, throwaway homes, a local mock model, the real codex 0.160.1): fresh and resumed turns exit 0; the mock's request bodies carry the prompt; none of the sampled
+process command lines does; the argv ends `… -`. A ~310 KB prompt (over Linux's 128 KiB per-argument cap) reaches the fake CLI whole.
+**What it closes:** the `/proc/<pid>/cmdline` gap `U-cell-linux-a`'s record names, for prompts — no built-in runtime carries a turn's packet or the owner's words in its
+argv. STILL OWED: the row "a cell cannot read another attempt's prompt" needs a seat launched in a cell (`U-cell-linux-c`).
+**Accepted deviation:** a broken pipe on the prompt write is ignored (an early-stopped reader no longer posts a chat line); the turn is judged by its exit and output.
+**Tests box:** NOT RUN — a run for another unit was in progress at both tries. **NOT VERIFIED:** OpenCode's stdin path on a real binary (none installed; none installed by
+the legs). Reviews: fleet/tmp/A-org/u-prompt-stdin-build/ (P1 + P2, triage fleet/records/U-prompt-stdin-review-triage.md), u-prompt-stdin-fix/ (re-review: no defects).
