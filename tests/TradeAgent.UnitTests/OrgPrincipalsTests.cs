@@ -294,6 +294,57 @@ public class OrgPrincipalsTests : IDisposable
         Assert.Null(host.ActivationRefusal(CouncilRoles.Research));
     }
 
+    // ---- (j) the canon's paths resolve from the position's own home -----------------------------------------------
+
+    /// <summary>
+    /// (j) EVERY PATH A POSITION'S CANON AND GUIDE NAME RESOLVES FROM ITS OWN HOME (VISION § 6.7: the canon's facts are
+    /// system truth generated from what the app grants). RED at fix base: the inbox was the prose <c>../inbox</c>, which
+    /// from <c>org/&lt;id&gt;</c> is <c>workspace/org/inbox</c> — a folder that is not the owner's. Every other path read is
+    /// inside the home; the legacy pair's homes resolve to the same real inbox.
+    /// </summary>
+    [Fact]
+    public void Every_path_a_positions_canon_names_resolves_from_its_own_home_and_the_inbox_is_the_owners()
+    {
+        var root = Root();
+        var inbox = Path.GetFullPath(Path.Combine(root, MaterialScanner.InboxDir));
+
+        foreach (var role in new[] { Third, CouncilRoles.Operations, CouncilRoles.Research })
+        {
+            var files = new AppFileManifest(Path.Combine(root, $"app-files-{role}.tsv"));
+            var home = WorkspaceBuilder.Build(Context(role), root, files);
+
+            foreach (var runtime in WorkspaceBuilder.RuntimesOf(role))
+            {
+                var reach = AgentReach.For(role, runtime);
+                var named = reach.Reads.Where(r => r != AgentReach.OwnFolder)
+                    .Concat(Canon.Render(Context(role), reach).Reads)
+                    .Concat(Canon.Guide(Context(role), reach).Reads)
+                    .Distinct().ToList();
+
+                if (runtime == RuntimeClass.Cli)
+                {
+                    Assert.True(reach.ReadsInbox, $"{role}·{runtime} reads no inbox");
+                    var path = Assert.Single(named, p => p.Split('/').Contains(".."));
+                    Assert.True(Path.GetFullPath(Path.Combine(home, path)) == inbox,
+                        $"{role}'s canon names `{path}` for the owner's inbox, which from {home} is "
+                        + $"{Path.GetFullPath(Path.Combine(home, path))}, not {inbox}");
+                    Assert.Contains($"`{path}`", File.ReadAllText(Path.Combine(home, Canon.CliFile)), StringComparison.Ordinal);
+                    Assert.Contains($"`{path}`", File.ReadAllText(Path.Combine(home, Canon.GuideFile)), StringComparison.Ordinal);
+                }
+
+                // EVERY OTHER PATH IT READS IS INSIDE ITS OWN HOME.
+                var homeFull = Path.GetFullPath(home) + Path.DirectorySeparatorChar;
+                foreach (var p in named.Where(p => !p.Split('/').Contains("..")))
+                    Assert.StartsWith(homeFull, Path.GetFullPath(Path.Combine(home, p)) + Path.DirectorySeparatorChar);
+            }
+
+            // AND THE TURN'S OWN BLOCK NAMES THE SAME INBOX, from the same home.
+            var told = new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER", Role = role, NewMaterial = ["a.pdf"] };
+            Assert.Contains($"`{AgentReach.InboxFrom(role)}`", told.Text(), StringComparison.Ordinal);
+            Assert.Equal(inbox, Path.GetFullPath(Path.Combine(home, AgentReach.InboxFrom(role))));
+        }
+    }
+
     /// <summary>A loop's world with the wake queue and one conversation, and NO activation seam: every default kept.</summary>
     sealed class NoSeamHost(MissionEventStore events, IAgentConversation conversation) : IMissionHost
     {

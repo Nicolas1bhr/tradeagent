@@ -888,7 +888,8 @@ public sealed record MissionSituation
         if (!string.IsNullOrWhiteSpace(Data)) b.AppendLine($"- {Data}");
         if (!string.IsNullOrWhiteSpace(Promoted)) b.AppendLine($"- {Promoted}");
         if (NewMaterial.Count > 0)
-            b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
+            b.AppendLine($"- New in `{AgentReach.InboxFrom(Role ?? CouncilRoles.Default)}` since your last turn: "
+                         + string.Join(", ", NewMaterial));
 
         b.AppendLine().AppendLine(Continue);
         return b.ToString();
@@ -2835,7 +2836,12 @@ public sealed class MissionLoop
     /// <see cref="MissionEventIds.PaperRun"/>); every other kind's phrase is the kind's.
     /// </summary>
     static string Reason(MissionEvent e) =>
-        e.Kind != PublicationKind.Note ? Reason(e.Kind)
+        // TRUE BY CONSTRUCTION: the app raises the inbox kind only for rows that arrived in the owner's inbox
+        // (ScanResult.Arrived), and a role's own plan and journal never raise it. Named as THIS position's own folder
+        // reaches it, computed from its home (AgentReach.InboxFrom), never a fixed `../inbox`.
+        e.Kind == MissionEventKind.Inbox
+            ? $"new material arrived in `{AgentReach.InboxFrom(e.Role ?? CouncilRoles.Default)}`"
+        : e.Kind != PublicationKind.Note ? Reason(e.Kind)
         : e.Id.StartsWith(PaperRunNote, StringComparison.Ordinal)
             ? "TradeAgent's forward-run note arrived in `in/`"
         : e.Id.StartsWith(PaperAllocationNote, StringComparison.Ordinal)
@@ -2850,8 +2856,7 @@ public sealed class MissionLoop
     static string Reason(string kind) => kind switch
     {
         MissionEventKind.Owner => "your owner typed something",
-        // TRUE BY CONSTRUCTION: the app raises this kind only for rows that arrived in the owner's
-        // inbox (ScanResult.Arrived). A role's own plan and journal never raise it.
+        // The card's words for an inbox wake (Waiting); a turn is told its own path by Reason(MissionEvent) above.
         MissionEventKind.Inbox => "new material arrived in `../inbox`",
         MissionEventKind.Data => "TradeAgent collected and validated a dataset — the Data line below "
                                  + "names it, and `trade data list` has its provenance",

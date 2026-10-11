@@ -364,7 +364,8 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
 
             // AND EVERY LIVE PAIR IS TOLD OF THEM (canon v2, item 4): its canon names the ledger's write, through a slot that
             // renders for its runtime and throws for a verb it cannot reach, and its guide names all four. From v2 on:
-            // v3 (U-reconcile-packet) changed one word of the boundary paragraph and kept the ledger's.
+            // v3 (U-reconcile-packet) changed one word of the boundary paragraph and kept the ledger's; v4 (U-org-principals)
+            // only made the inbox's path a generated slot.
             Assert.True(Canon.Version >= 2, $"canon v{Canon.Version} is older than the ledger's v2");
             foreach (var (role, runtime) in LivePairs)
                 foreach (var simulator in new[] { true, false })

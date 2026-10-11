@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -440,7 +440,7 @@ public static class Canon
           TradeAgent executes and records every call.
         - **Your tools:** {{tools}}.
         {{end}}
-        - **You read:** your own folder, `{{read in/}}` included{{if inbox}}, and `{{read ../inbox}}` — what the owner gave you. Read
+        - **You read:** your own folder, `{{read in/}}` included{{if inbox}}, and `{{inbox_dir}}` — what the owner gave you. Read
           it, copy out of it, do not write into it{{end}}.
         - **You write:**
           {{writes}}.
@@ -476,7 +476,7 @@ public static class Canon
 
         You are not sitting in a conversation waiting to be told what to do. A turn happens because
         something happened, and the `## Situation` block names it on the `Why you are awake` line: your
-        owner typed something, {{if inbox}}material arrived in `{{read ../inbox}}`, {{end}}an order filled or reached a final state,
+        owner typed something, {{if inbox}}material arrived in `{{inbox_dir}}`, {{end}}an order filled or reached a final state,
         a report, a brief, a verdict or a note arrived, a boundary opened or nears its deadline, the tape
         stored something your work reads, the day turned over, {{if wake}}you asked to be woken, {{end}}or it is a
         scheduled look and nothing else has happened.
@@ -724,7 +724,7 @@ public static class Canon
 
         ## The inbox — what the account owner hands you
 
-        `{{read ../inbox}}` is where the person you work for puts things for you: programs, installers,
+        `{{inbox_dir}}` is where the person you work for puts things for you: programs, installers,
         documents, spreadsheets, data, code, and notes about what they would like you to look at. **It
         is yours to open, read, run and experiment with, and it is worth checking** — the `## Situation`
         block names anything that has turned up since your last turn. It sits beside your directory
@@ -774,7 +774,7 @@ public static class Canon
         ## Where things belong
 
         {{if inbox}}
-        - `{{read ../inbox}}` — what the owner gave you. Read it, copy out of it, do not write into it.
+        - `{{inbox_dir}}` — what the owner gave you. Read it, copy out of it, do not write into it.
         {{end}}
         - `{{write trading/}}` — **`PLAN.md` and `JOURNAL.md` live here**, plus order plans and notes on what you
           actually did and why. These two files are your scratch, the research ledger holds what you believe,
@@ -890,6 +890,9 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "reference_path" => Read(ResearchLibrary.ReferencePath),
             "examples_dir" => Read(ResearchLibrary.ExamplesDir + "/").TrimEnd('/'),
             "first_example" => Read(ResearchLibrary.FirstExample),
+            // THE OWNER'S INBOX AS THIS SEAT'S OWN FOLDER REACHES IT, computed from its home and never written as prose:
+            // `../inbox` from `agent` is the owner's inbox, and from `org/<id>` it is a folder that is not (U-org-principals).
+            "inbox_dir" => Read(reach.Inbox),
             "agenda_lines" => $"{CouncilRelay.Limit(PublicationKind.Brief)}",
             "report_lines" => $"{CouncilRelay.Limit(PublicationKind.Report)}",
             "assessment_lines" => $"{CouncilRelay.Limit(PublicationKind.Assessment)}",
@@ -910,7 +913,7 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
     {
         "title", "version", "os", "platform", "account", "mode", "blocked_reason", "max_order_quantity", "max_notional",
         "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_lines",
-        "journal_lines", "archive_dir", "reference_path", "examples_dir", "first_example", "agenda_lines", "report_lines",
+        "journal_lines", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
         "assessment_lines", "challenge_lines", "wake_file", "wake_cap", "turns_per_session", "guide", "verbs", "tools",
         "writes", "handbacks"
     };

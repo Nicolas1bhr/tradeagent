@@ -41,8 +41,19 @@ public sealed record ReachHandBack(string Kind, string Path, int Lines);
 /// </summary>
 public sealed record AgentReach
 {
-    /// <summary>The owner's drop folder, as a seat's own folder sees it: one level up and beside it.</summary>
-    public const string Inbox = "../" + MaterialScanner.InboxDir;
+    /// <summary>
+    /// THE OWNER'S DROP FOLDER AS ONE POSITION'S OWN FOLDER REACHES IT, computed from where the app puts that folder
+    /// (<see cref="CouncilRoles.HomeDir"/>) and where it puts the inbox (<see cref="MaterialScanner.InboxDir"/>, beside the
+    /// homes under <c>workspace/</c>): <c>../inbox</c> from <c>agent</c> and <c>research</c>, <c>../../inbox</c> from
+    /// <c>org/&lt;id&gt;</c>. Never a fixed <c>../inbox</c>, which from a deeper home names a folder that is not the
+    /// owner's (<c>U-org-principals</c>).
+    /// </summary>
+    /// <exception cref="TradeAgentException">INVALID_REQUEST for an id that is not a position id, which has no home.</exception>
+    public static string InboxFrom(string role) =>
+        string.Concat(Enumerable.Repeat("../", CouncilRoles.HomeDir(role).Split('/').Length)) + MaterialScanner.InboxDir;
+
+    /// <summary>This seat's <see cref="InboxFrom"/>.</summary>
+    public string Inbox => InboxFrom(Role);
 
     /// <summary>The seat's own folder, as a read root: every relative path inside it.</summary>
     public const string OwnFolder = "";
@@ -64,7 +75,7 @@ public sealed record AgentReach
     /// </summary>
     public required bool RunsCode { get; init; }
 
-    /// <summary>Where it reads: <see cref="OwnFolder"/> for its whole folder, <see cref="Inbox"/> for the owner's drop folder.</summary>
+    /// <summary>Where it reads: <see cref="OwnFolder"/> for its whole folder, <see cref="InboxFrom"/> for the owner's drop folder.</summary>
     public required IReadOnlyList<string> Reads { get; init; }
 
     /// <summary>The top-level folders inside its own folder it writes into. Nothing outside its folder.</summary>
@@ -139,7 +150,7 @@ public sealed record AgentReach
                 Runtime = runtime,
                 Os = OsName(),
                 RunsCode = true,
-                Reads = [OwnFolder, Inbox],
+                Reads = [OwnFolder, InboxFrom(role)],
                 Writes = writes,
                 Walled = Containment.Sandbox().Ok,
                 WakeFile = MissionLoop.WakeFile,

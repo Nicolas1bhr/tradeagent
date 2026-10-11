@@ -271,7 +271,9 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (2, CouncilRoles.Operations, "605d04f7399cb4c2d63315c2ed9451537f71cc8cc496fb5ae38f44a6722eab63"),
         (2, CouncilRoles.Research, "1070e7c2c75d461d3377ed3269e922d3de7bd29953305b7869a590a87dcc9da1"),
         (3, CouncilRoles.Operations, "08fd310683edf11a7723020ce5c9b5ed46ede4b5ae1580a7f711c6609789d380"),
-        (3, CouncilRoles.Research, "c5a1dc574a331c63d645d2711ec7f19ed178f4f28dbc1df88735c3db0ca71c7e")
+        (3, CouncilRoles.Research, "c5a1dc574a331c63d645d2711ec7f19ed178f4f28dbc1df88735c3db0ca71c7e"),
+        (4, CouncilRoles.Operations, "f438c0494cf624ceed34eae590e12bc93513f50443a94c9e2115658c72742ecf"),
+        (4, CouncilRoles.Research, "575865b5c9904963bd46657c261cba8b7dbc0e7349a6bd30e544e53e971365a5")
     ];
 
     /// <summary>
@@ -473,7 +475,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
             Assert.Equal(Containment.Sandbox().Ok, reach.Walled);
             Assert.True(reach.RunsCode);
             Assert.Equal(AgentReach.OsName(), reach.Os);
-            Assert.Equal([AgentReach.OwnFolder, AgentReach.Inbox], reach.Reads);
+            Assert.Equal([AgentReach.OwnFolder, AgentReach.InboxFrom(role)], reach.Reads);
             Assert.Equal([.. WorkspaceBuilder.SubDirs, CouncilRoles.OutDir, AgentReach.TopFolder(MissionLoop.WakeFile)], reach.Writes);
             Assert.DoesNotContain(CouncilRoles.InDir, reach.Writes);
 
@@ -501,7 +503,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
             foreach (var dir in AgentReach.For(role, RuntimeClass.Cli).Writes.Except(reach.Writes))
                 Assert.NotNull(ToolPaths.Resolve(home.Dir, $"{dir}/x.md", GrantedWorkerTools.Writable).Refusal);
             Assert.NotNull(ToolPaths.Resolve(home.Dir, MissionLoop.WakeFile, GrantedWorkerTools.Writable).Refusal);
-            Assert.NotNull(ToolPaths.Resolve(home.Dir, $"{AgentReach.Inbox}/x.md").Refusal);
+            Assert.NotNull(ToolPaths.Resolve(home.Dir, $"{AgentReach.InboxFrom(role)}/x.md").Refusal);
             Assert.Equal([AgentReach.OwnFolder], reach.Reads);
 
             // NO WAKE IT CAN WRITE, and a session that is every turn: the harness sends its system text and the turn's
