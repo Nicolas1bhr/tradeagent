@@ -246,6 +246,16 @@ public class CellSeccompTests
         Assert.Equal(Eacces, Run(arch, audit, socketpair, inet, stream, 0));
     }
 
+    /// <summary>From Landlock ABI 9 the ruleset also handles RESOLVE_UNIX (bit 16), so a pathname socket outside the workspace cannot be looked up; below it, never asked for.</summary>
+    [Fact]
+    public void The_ruleset_handles_resolve_unix_from_abi_9_only()
+    {
+        Assert.Equal(0xFFFFUL, CellNative.HandledFs(6));
+        Assert.Equal(0xFFFFUL, CellNative.HandledFs(8));
+        Assert.Equal(0x1FFFFUL, CellNative.HandledFs(9));
+        Assert.Equal(0x1FFFFUL, CellNative.HandledFs(10));
+    }
+
     [Fact]
     public void An_x32_system_call_is_refused_on_x64()
     {
