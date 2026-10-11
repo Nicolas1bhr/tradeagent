@@ -295,7 +295,14 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         + "spends no second judgement.";
 
     /// <summary>
-    /// THE ROLE THIS CALLER PROVED IT IS, or a refusal. Never a default and never the folder's.
+    /// THE ACTIVE POSITION THIS CALLER PROVED IT IS, or a refusal. Never a default and never the folder's.
+    ///
+    /// <para><b>An active position, through the gateway's one answer</b> (<see cref="TradingGateway.ActivePositionOf"/>,
+    /// <c>U-org-rights</c>): the legacy pair or any other position the chart holds as active, by its exact id — so a third
+    /// position's run is recorded under its own id and its program read from its own home, <c>org/&lt;id&gt;</c>. An app
+    /// principal (the referee, the allocator, perception) is no position and keeps its own in-process path; a dormant or
+    /// ended position, an unknown name and nobody are refused. It grants no order permission: that stays
+    /// <see cref="CouncilRoles.MayPlaceOrders"/>, <c>operations</c>' alone.</para>
     ///
     /// <para>A backtest is recorded under a role, and the only honest source of that role is the launch
     /// grant the caller presented. <c>CouncilRoles.Or</c> — which reads a missing role as the chair,
@@ -308,9 +315,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     /// a lineage that role did not produce. A future in-process caller passes a role rather than being
     /// special-cased here.</para>
     /// </summary>
-    internal static string RoleOf(AgentContext caller)
+    internal string RoleOf(AgentContext caller)
     {
-        if (CouncilRoles.IsKnown(caller.Role)) return caller.Role!;
+        if (gateway.ActivePositionOf(caller.Role) is { } position) return position;
 
         throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
             "a backtest is recorded under the role that asked for it, and this connection presented no "
