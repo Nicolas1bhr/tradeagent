@@ -19,3 +19,17 @@ RED-first: write the test against a temporarily removed `deadline.CancelAfter(_h
 tripping); restore and quote green. That mutant is the one watched.
 Gate: SPEED MODE (`fleet/SPEED-MODE.md` § 4) — rebase on `main` first; Release `--no-incremental` 0 warnings; `DecisionPortTests` 3× through `suite.sh`; the full suite on branch CI, all three platforms;
 tests box `ready` once or NOT RUN; names vs `main` 0 removed (both set sizes). `## Report` ≤ 20 lines appended here. No push to `main`, no merge.
+
+## Report
+Tip: see `git log` (code tip ef7914f993; this report is the last commit, docs only). Tests only; nothing under `src/` changed.
+- Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` -> 0 Warning(s), 0 Error(s).
+- Gate 2: `DecisionPortTests` 3x via suite.sh: `Passed! Failed: 0, Passed: 8, Total: 8` x3; `SuiteReachesNoVendor`: Passed 13/13.
+- Gate 3: run 38110703372 on ef7914f: success, all 11 jobs (package, package-linux, shard-plan, 5 windows shards, macos, ubuntu, linux-host). Scan flagged 2 false positives (`kept.InputTokens`, `Timeout.Infinite, _release.Token`), excluded by phrase.
+- Gate 4: names.sh main u-wire-body-deadline -> "removed: 0", [Fact]/[Theory] base 2453, tip 2454 (+1).
+- Gate 5: tests box NOT RUN: `win-test.sh ready` -> "the machine does not answer (asleep, off Tailscale, or the share was removed)".
+- Item 1 (stalling host): done. `FakeProvider.StallsBody` writes 200, JSON type, chunked, flushes the first half of a valid body, holds the rest until Dispose (a CancellationTokenSource released first in Dispose).
+- Item 2 (test): done. `A_200_whose_body_stalls_ends_unanswered_timeout_at_the_wires_deadline`: wire timeout 2 s, no caller cancel, 20 s self-set ceiling via Task.WhenAny; asserts UNANSWERED, "timeout", HttpStatus 200, attempt ENDED with Cost == Reservation, not flying, tape record UNANSWERED/timeout/200.
+- RED before (mutant: line 401 `deadline.CancelAfter(_http.Timeout);` commented out, working tree only, reverted with git checkout, never committed): `Failed ... [25 s] Error Message: the call had not returned 20 s after a 2 s wire timeout: nothing bounds a body that stalls after a 200`; host marks `answering 200, 224 of 449 bytes, then holding the rest` / `first part flushed`.
+- GREEN with the guard restored: `Passed! Failed: 0, Passed: 1` (and 8/8 for the class x3).
+- Deviation: none of substance. Test sits right after the first (a) test, not at file end; asserts also that the host really flushed the first part.
+- NOT verified: tests box (down); only the one mutant of the brief was watched; full suite only on CI, not locally.
