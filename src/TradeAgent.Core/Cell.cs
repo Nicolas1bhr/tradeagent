@@ -109,9 +109,7 @@ public sealed record CellPolicy
     /// </summary>
     public string? Problem(string? appHome = null)
     {
-        var home = Full(appHome ?? Paths.Home);
-        var state = Path.Combine(home, "state");
-        var cells = Path.Combine(home, "cells");
+        var guarded = Guarded.Of(appHome);
 
         if (string.IsNullOrWhiteSpace(Workspace) || !Path.IsPathFullyQualified(Workspace))
             return $"the cell's workspace '{Workspace}' is not an absolute path";
@@ -120,12 +118,7 @@ public sealed record CellPolicy
             if (string.IsNullOrWhiteSpace(p) || !Path.IsPathFullyQualified(p) || p.Contains('\0'))
                 return $"the cell's {what} '{p}' is not an absolute path";
             foreach (var form in Forms(p))
-            {
-                if (Within(home, form))
-                    return $"the cell's {what} {p} would grant TradeAgent's own home {home}, which holds its state and the owner's logins";
-                if (Within(form, state) || Within(form, cells))
-                    return $"the cell's {what} {p} lies inside TradeAgent's state or its cell policies";
-            }
+                if (guarded.Refuses(form) is { } why) return $"the cell's {what} {p} {why}";
         }
         if (!System.IO.Directory.Exists(Workspace)) return $"the cell's workspace {Workspace} is not a directory";
         foreach (var (name, value) in Environment)
@@ -143,6 +136,36 @@ public sealed record CellPolicy
         yield return ("workspace", Workspace);
         foreach (var p in ReadOnly) yield return ("read-only input", p);
         foreach (var p in Executable) yield return ("program root", p);
+    }
+
+    /// <summary>
+    /// WHAT NO GRANT MAY REACH, IN EVERY SPELLING (triage #3): the app's home and everything above it, and its <c>state/</c> — the
+    /// ledgers, the holdout and the credentials all live there — and its cell policies, each as written AND as the kernel resolves
+    /// it. A home reached through a symlink is judged where it really is, so a grant naming the real <c>state/</c> is refused too.
+    /// </summary>
+    internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside)
+    {
+        public static Guarded Of(string? appHome = null)
+        {
+            var home = appHome ?? Paths.Home;
+            var homes = Forms(home).Distinct(StringComparer.Ordinal).ToList();
+            var inside = homes.SelectMany(h => new[] { Path.Combine(h, "state"), Path.Combine(h, "cells") })
+                .Concat(Forms(Path.Combine(home, "state"))).Concat(Forms(Path.Combine(home, "cells")))
+                .Distinct(StringComparer.Ordinal).ToList();
+            return new Guarded(homes, inside);
+        }
+
+        /// <summary>Why a path — one already resolved, or one spelling of it — may not be granted, or null.</summary>
+        public string? Refuses(string form)
+        {
+            foreach (var home in Homes)
+                if (Within(home, form))
+                    return $"would grant TradeAgent's own home {home}, which holds its state and the owner's logins";
+            foreach (var root in Inside)
+                if (Within(form, root))
+                    return $"lies inside TradeAgent's state or its cell policies ({root})";
+            return null;
+        }
     }
 
     /// <summary>The path as written and, where it exists, as the kernel resolves it: a symlink is judged by where it leads.</summary>
