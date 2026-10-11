@@ -97,7 +97,9 @@ public static class Containment
             Sandbox: $"OS sandbox: {sandbox.Name}")
         {
             Environment = "the AI is given a named list of environment variables, not a copy of TradeAgent's own",
-            Grant = "every launch carries a grant naming its role and attempt; only the Operations Director's may trade",
+            Grant = "every launch carries a grant naming its role and attempt, served only to a program inside the " +
+                    "container TradeAgent made for that launch; only the Operations Director's may trade, and not while " +
+                    "another launch is running beside it",
             Peer = peer,
             SandboxDetail = sandbox.Detail
         };
@@ -457,13 +459,41 @@ public static class ProcessContainment
     /// stops talking to its owner over a health property. What refuses in that state is the LIVE
     /// configuration, in one place, where a refusal is the safe answer.
     /// </summary>
-    public static ContainedProcess Start(ProcessStartInfo psi, IReadOnlyList<string>? launcher = null)
+    /// <summary>
+    /// WHY A LAUNCH COULD NOT BE HELD ON THIS COMPUTER, KNOWN BEFORE ANYTHING STARTS — the owner's sentence with its repair —
+    /// or null (<c>U-grant-tree</c>, RULING 2). macOS and Linux: TradeAgent's own trade command, which makes the session,
+    /// is missing. Windows: null — a job is created before the process and a job that will not be made refuses then.
+    /// </summary>
+    public static string? CannotHold(IReadOnlyList<string>? launcher = null)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        if ((launcher ?? DefaultLauncher()) is { Count: > 0 }) return null;
+        return Unheld($"TradeAgent's own trade command, which holds the AI's programs in a session of their own on this " +
+                      $"computer, is not at {Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)}");
+    }
+
+    /// <summary>The refusal sentence for a launch that cannot be held: what, why it matters, and the repair.</summary>
+    static string Unheld(string what) =>
+        $"{what}, so TradeAgent did not start the AI: a launch it cannot hold could prove nothing to the trading service " +
+        "and would spend your AI allowance on work TradeAgent would not accept. Restart TradeAgent — it puts back what it " +
+        "needs to hold the AI as it starts. If this stays, reinstall TradeAgent.";
+
+    /// <param name="requireHeld">
+    /// A launch that carries a grant (<c>U-grant-tree</c>, RULING 2): one that cannot be held is REFUSED — thrown as
+    /// <see cref="ErrorCode.CONTAINMENT_UNAVAILABLE"/> — rather than started bare. Before the process when that is known
+    /// first (no launcher, a launcher that will not start, a job Windows will not make); and when it is known only after
+    /// (a process Windows would not put in its job), the process is ended at once and then refused. False is the Doctor's
+    /// fixed probes, which start no agent and carry no grant, and keep the bare fallback.
+    /// </param>
+    public static ContainedProcess Start(ProcessStartInfo psi, IReadOnlyList<string>? launcher = null, bool requireHeld = false)
     {
         ArgumentNullException.ThrowIfNull(psi);
 
-        if (OperatingSystem.IsWindows()) return StartWindows(psi);
+        if (OperatingSystem.IsWindows()) return StartWindows(psi, requireHeld);
 
         var prefix = launcher ?? DefaultLauncher();
+        if (requireHeld && CannotHold(prefix) is { } unheld)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, unheld);
         if (prefix is not { Count: > 0 })
         {
             var bare = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
@@ -492,6 +522,10 @@ public static class ProcessContainment
             // every agent process now comes through here that exception surfaced from `Doctor.RunAsync`
             // — the containment broke the diagnostics that would have explained it. The honest
             // behaviour is the one this class already states: start it anyway and say it is not held.
+            // EXCEPT FOR A LAUNCH THAT CARRIES A GRANT (RULING 2): that one is refused, and nothing is started.
+            if (requireHeld)
+                throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
+                    Unheld($"TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message})"));
             Command(psi, exe, args);
             var bare = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
                 $"{exe} would not start");
@@ -589,9 +623,11 @@ public static class ProcessContainment
     }
 
     [SupportedOSPlatform("windows")]
-    static ContainedProcess StartWindows(ProcessStartInfo psi)
+    static ContainedProcess StartWindows(ProcessStartInfo psi, bool requireHeld)
     {
         var job = CreateJob(out var why);
+        if (requireHeld && job == IntPtr.Zero)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, Unheld(why));
 
         var process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
             $"{psi.FileName} would not start");
@@ -617,6 +653,14 @@ public static class ProcessContainment
         {
             var err = Marshal.GetLastWin32Error();
             CloseHandleSafe(job);
+            if (requireHeld)
+            {
+                // KNOWN ONLY AFTER THE START: the process is ended at once, before it can do the work it was started for.
+                try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+                process.Dispose();
+                throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
+                    Unheld($"Windows would not put the AI's program in the job TradeAgent made for it (error {err})"));
+            }
             return new ContainedProcess(process, IntPtr.Zero, false, false,
                 $"not held: the agent process could not be put in its job (error {err})");
         }

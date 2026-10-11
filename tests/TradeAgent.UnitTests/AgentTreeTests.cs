@@ -118,19 +118,33 @@ public class AgentTreeTests : IDisposable
     /// trade command. The turn then shares the app's own group and session, so the only proof a pid is
     /// the turn's is that it descends from the turn's leader: the probe here is the tree that proof can
     /// reach (no process detached from the leader before the press), and every one of them must end.
+    ///
+    /// <para><b>No longer a mission turn (<c>U-grant-tree</c>, RULING 2).</b> A launch that carries a grant and cannot be
+    /// held is refused before it starts, so a mission turn with no launcher never runs (<c>ContainmentTests.A_launch_the_app_
+    /// cannot_contain_never_starts_and_says_why</c>). The fallback itself remains for the processes that carry no grant — the
+    /// Doctor's fixed probes and the runtime's interactive session — and its teardown is what this proves, on the same
+    /// tree, through the same containment the turn used: started with no launcher, ended by <c>ContainedProcess.End</c>.</para>
     /// </summary>
     [Fact]
     public async Task A_paused_turn_with_no_launcher_ends_every_process_that_descends_from_its_leader()
     {
         if (OperatingSystem.IsWindows()) return;
 
-        var turn = await HungTurn(launcher: false, orphan: false);
-        try
+        var dir = NewDir("bare");
+        var sh = WriteScript(dir, HungBody(dir, orphan: false));
+        var psi = new ProcessStartInfo("/bin/sh")
         {
-            await turn.Host.Mission.PauseAsync();
-            await AssertAllDead(turn, "Mission.PauseAsync, no launcher deployed");
-        }
-        finally { await Close(turn.Host); }
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        psi.ArgumentList.Add(sh);
+        psi.ArgumentList.Add("go");
+        using var contained = ProcessContainment.Start(psi, launcher: []);
+        Assert.False(contained.Held, "a start with no launcher claimed to be held");
+
+        var members = await Record(dir, HungFiles(orphan: false));
+        contained.End();
+        await AssertAllDead(members, "ContainedProcess.End, no launcher");
     }
 
     /// <summary>

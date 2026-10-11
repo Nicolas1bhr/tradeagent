@@ -86,6 +86,7 @@ public class ContainmentTests
         var dir = Path.Combine(TestEnv.Home, "refuse-" + Guid.NewGuid().ToString("n")[..8]);
         Directory.CreateDirectory(dir);
         var marker = Path.Combine(dir, "the-cli-ran");
+        DeployLauncher();   // held, as every launch must be to start at all (U-grant-tree)
 
         var manifest = new RuntimeManifest
         {
@@ -120,6 +121,48 @@ public class ContainmentTests
         await session.SendAsync(MakeMarker());
         for (var i = 0; i < 100 && !Directory.Exists(marker); i++) await Task.Delay(50);
         Assert.True(Directory.Exists(marker), "the AI did not run once real-money trading was switched off");
+    }
+
+    /// <summary>
+    /// (i) A LAUNCH THE APP CANNOT CONTAIN NEVER STARTS, AND SAYS WHY (<c>U-grant-tree</c>, RULING 2). With no trade command
+    /// to make the session, the owner's message is neither admitted nor run — held, with the reason and the repair — and a
+    /// turn the loop had already admitted is refused before any process starts. macOS and Linux: Windows makes its job
+    /// before the process, and a job Windows will not make is a refusal there too, but not one a test can arrange.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_the_app_cannot_contain_never_starts_and_says_why()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var dir = Path.Combine(TestEnv.Home, "uncontained-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(dir);
+        var marker = Path.Combine(dir, "the-cli-ran");
+        var launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
+        if (File.Exists(launcher)) File.Delete(launcher);
+        try
+        {
+            var manifest = new RuntimeManifest
+            {
+                Id = "uncontained-probe", DisplayName = "uncontained probe", Executable = Shell,
+                ExecArgs = [ShellFlag, "{prompt}"], TaskArgs = [ShellFlag, "{prompt}"],
+                ResumeArgs = [], UnattendedArgs = [], ModelArgs = [], JsonFlag = null
+            };
+            var admitted = 0;
+            var session = new AgentSession(manifest, () => Shell, () => dir,
+                () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(), grants: new AgentGrants())
+            {
+                Admit = _ => { admitted++; return AiAdmission.NoLedger; }
+            };
+
+            await session.SendAsync(MakeMarker());          // the owner, at the chat
+            await session.SendMissionAsync(MakeMarker());   // a turn the loop had already admitted
+
+            Assert.False(Directory.Exists(marker), "an AI program was started that nothing on this computer could hold");
+            Assert.Equal(0, admitted);
+            Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains("trade command")
+                                                  && t.Text.Contains("Restart TradeAgent"));
+        }
+        finally { TestEnv.EnsureLauncher(); }
     }
 
     /// <summary>
