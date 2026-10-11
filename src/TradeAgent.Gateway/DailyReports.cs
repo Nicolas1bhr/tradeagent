@@ -656,11 +656,16 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// N_eff of M and the noise ceiling, E2's blocks, each gate's status and power, and the family gate. RESEARCH DATA ONLY
     /// — the streams of research runs before the cutoff, never a figure of the held-back months (R04 :309: agents may see
     /// their own M, N_eff, noise ceiling and DSR) — and SHOWN, never enforced. Nothing for a verdict taken before this build
-    /// measured any.
+    /// measured any. And nothing of a measurement that read a run held back NOW (<paramref name="withheld"/>, asked at this
+    /// read): a holdout set after the verdict makes its figures figures of held-back bars, so the line says it is withheld,
+    /// which run and why, and shows none of them.
     /// </summary>
-    static string ResearchLine(ResearchEvidenceRow? e)
+    static string ResearchLine(ResearchEvidenceRow? e, ResearchWithheld? withheld)
     {
         if (e is null) return "";
+        if (withheld is not null)
+            return $". Research evidence withheld: this verdict's measurement read run {Short(withheld.RunId)}, which is held "
+                   + $"back now, so not one of its figures is shown — {withheld.Why}";
         static string F(double? x) => x is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) : "unknown";
         var trials = $"M {e.TrialsM} ({e.TrialsUnstreamed} without a readable stream), N_eff {e.NEff}";
         if (e.CandidateRunId is null)
@@ -673,6 +678,10 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                + $"{trials}, noise ceiling {F(e.Ceiling)} annual Sharpe; blocks {e.BlocksPositive}/{Core.Strategy.BlockTest.Count} positive "
                + $"— {e.BlocksStatus}, power {F(e.BlocksPower)}; family PBO: no family — {e.FamilyStatus}";
     }
+
+    /// <summary>The verdict's research evidence as its line shows it, today's holdout windows asked first.</summary>
+    string Research(long campaignId, string versionId) =>
+        _research.Of(campaignId, versionId) is { } e ? ResearchLine(e, _research.Withheld(e)) : "";
 
     /// <summary>One research run, with the figures the app computed from its own trace.</summary>
     static string RunLine(StrategyRunRow run) =>
@@ -954,7 +963,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                             + $"{p.At.UtcDateTime:yyyy-MM-dd HH:mm}Z under campaign {p.CampaignId}, on holdout run "
                             + $"{Short(p.HoldoutRunId)}: {PromotionReason.Words(p.Reason)}"
                             + (withdrawn ? $" — INVALIDATED since: {standing.Why}" : "")
-                            + ResearchLine(_research.Of(p.CampaignId, p.VersionId)));
+                            + Research(p.CampaignId, p.VersionId));
             }
         }
         catch (Exception ex) { gaps.Add(new ReportGap("verdicts", $"the promotion ledger could not be read ({ex.Message})")); }

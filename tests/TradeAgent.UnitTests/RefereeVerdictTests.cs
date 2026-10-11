@@ -1012,6 +1012,57 @@ public class RefereeVerdictTests
             DailyReportText.Render(bare.Gw.Reports.Compose(Midday())), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A HOLDOUT SET AFTER A VERDICT WITHHOLDS ITS RECORDED RESEARCH EVIDENCE FROM THE REPORT, AND THE RECORD STANDS. The
+    /// owner downloads the same bars again and holds back minutes the candidate's research window covers: the run is held
+    /// back now (<c>StrategyStore.HeldBack</c>), so its DSR, blocks and ceiling — figures of those minutes — leave the
+    /// agent-readable report, which names the measurement as withheld, the run and why. The same for a trial the measurement
+    /// read that is not the candidate. The rows are what they were: the measurement stays true about what ran. RED before
+    /// the fix: the report printed the recorded figures without asking today's windows.
+    /// </summary>
+    [Fact]
+    public async Task The_report_withholds_research_evidence_a_holdout_set_later_reaches()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+        var candidate = StreamedRun(w, "candidate", 139, 11);
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        var recorded = Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial");
+        Assert.Contains("noise ceiling", VerdictLine(w), StringComparison.Ordinal);
+
+        // ANOTHER DOWNLOAD OF THE SAME BARS, CUT AT MINUTE 10: its window reaches the candidate's research window.
+        var again = w.Gw.Datasets.Record(w.Set with { Id = 0, Version = "v2", HoldoutFrom = null });
+        var held = w.Gw.Datasets.SetHoldout(again, Bar0.AddMinutes(10), EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+
+        var line = VerdictLine(w);
+        Assert.Contains($"Research evidence withheld: this verdict's measurement read run {candidate[..12]}, which is held back "
+            + "now, so not one of its figures is shown — the trades of run", line, StringComparison.Ordinal);
+        foreach (var figure in new[] { "DSR", "N_eff", "noise ceiling", "blocks", "power", "known days" })
+            Assert.DoesNotContain(figure, line, StringComparison.Ordinal);
+        Assert.Equal(recorded, Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial"));
+
+        // A TRIAL THAT IS NOT THE CANDIDATE: the candidate's window ends at minute 5, the other version's trial runs the
+        // whole hour, and a later cut at minute 30 reaches the trial alone.
+        var t = await Given(frozenAt: Bar0);
+        using var _2 = t.Db;
+        var own = StreamedRun(t, "candidate", 139, 11, windowTo: Bar0.AddMinutes(5));
+        var trial = StreamedRun(t, "other", 139, 12, OtherVersion(t));
+        Assert.True(RefereeOf(t).Verdict(t.VersionId, t.Campaign.Id).Promoted);
+        Assert.Equal(own, RefereeOf(t).Research.Of(t.Campaign.Id, t.VersionId)!.CandidateRunId);
+        var later = t.Gw.Datasets.Record(t.Set with { Id = 0, Version = "v2", HoldoutFrom = null });
+        Assert.True(t.Gw.Datasets.SetHoldout(later, Bar0.AddMinutes(30), EvaluationClass.Research).Ok);
+
+        var trialLine = VerdictLine(t);
+        Assert.Contains($"Research evidence withheld: this verdict's measurement read run {trial}, which is held back now",
+            trialLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("DSR", trialLine, StringComparison.Ordinal);
+    }
+
+    /// <summary>The report's line for the world's verdict.</summary>
+    static string VerdictLine(World w) => Assert.Single(DailyReportText.Render(w.Gw.Reports.Compose(Midday())).Split('\n'),
+        l => l.Contains($"PROMOTED version {w.VersionId[..12]}", StringComparison.Ordinal));
+
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()
     {

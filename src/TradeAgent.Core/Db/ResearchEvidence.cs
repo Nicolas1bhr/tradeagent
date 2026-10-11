@@ -14,6 +14,13 @@ namespace TradeAgent.Core.Db;
 public sealed record ResearchTrialRow(int Ordinal, string RunId, int Cluster, string Reading);
 
 /// <summary>
+/// WHY A RECORDED MEASUREMENT IS NOT SHOWN NOW: <see cref="RunId"/>, a run it read, is held back from research today
+/// (<see cref="Why"/>, in <c>StrategyStore</c>'s words) — a holdout window set after the verdict reaches it, or its dataset
+/// is gone so whether one does cannot be told.
+/// </summary>
+public sealed record ResearchWithheld(string RunId, string Why);
+
+/// <summary>
 /// WHAT ONE VERDICT MEASURED OF A VERSION'S RESEARCH EVIDENCE (<c>U-referee-v2a</c>; <c>docs/EDGE-FACTORY.md</c> § 4.5, E2
 /// and E3) — SHOWN, NEVER A CLAUSE.
 ///
@@ -220,6 +227,31 @@ public sealed class ResearchEvidence(Database db)
         using var c = db.Cmd($"SELECT {Cols} FROM referee_research WHERE campaign_id=$camp AND version_id=$ver AND method=$m",
             ("$camp", campaignId), ("$ver", versionId), ("$m", Version));
         return ReadRows(c).FirstOrDefault();
+    });
+
+    /// <summary>
+    /// WHETHER <paramref name="row"/>'S FIGURES MAY BE SHOWN TODAY, asked at each read: null when they may, else the first
+    /// run it read — its candidate, then every trial it read through a stream, in order — that a holdout window reaches NOW
+    /// (<see cref="StrategyStore.HeldBack"/>, under <c>BarAudience.ResearchEvidence</c>, the check <see cref="Measure"/>
+    /// applied), with why. A run the ledger no longer holds is withheld too: whether a window reaches it cannot be told, and
+    /// a figure is not shown on a guess. The recorded rows are not touched — the measurement stays true about what ran; it
+    /// is only no longer served. A trial read as <see cref="NoStream"/> or <see cref="HeldBack"/> gave no figure of its
+    /// bars, so it is not asked.
+    /// </summary>
+    public ResearchWithheld? Withheld(ResearchEvidenceRow row) => db.Read(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        var holdout = TapeHoldout.Of(BarAudience.ResearchEvidence, _datasets);
+        var read = row.Trials.Where(t => t.Reading == Streamed).Select(t => t.RunId);
+        if (row.CandidateRunId is { } candidate) read = read.Prepend(candidate);
+        foreach (var runId in read.Distinct(StringComparer.Ordinal))
+        {
+            if (_strategies.RunById(runId) is not { } run)
+                return new ResearchWithheld(runId, $"run {runId} is no longer in this installation's strategy ledger, so "
+                    + "whether a holdout window reaches it cannot be read now — and a figure is not shown on a guess.");
+            if (_strategies.HeldBack(run, holdout) is { } why) return new ResearchWithheld(runId, why);
+        }
+        return null;
     });
 
     /// <summary>Every measurement recorded, any method, oldest first.</summary>
