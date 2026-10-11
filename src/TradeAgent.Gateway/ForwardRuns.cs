@@ -366,15 +366,27 @@ public sealed class ForwardRuns
             // It is asked on EVERY minute, counted in the program's bars: the count reaches the limit at
             // the close of the declared bar that reaches it — the backtest's step 3 — and stays there, so
             // a close a gate refused is asked for again on the next minute rather than the next hour.
-            if (live && account.Position == PositionSide.Long
+            //
+            // AND THE READING IS THE SAME ON EVERY PASS (`U-runner-maxhold-replay`): it is a function of the books, not
+            // of the pass. A later pass replays this minute as over while its books still read long — the flatten fills
+            // on a later minute, and its request is terminal by then, so not in flight — and an evaluator handed that
+            // long reading fired its own `max_hold_bars` exit, whose pending held back the run's next entry — on declared
+            // bars a whole declared bar of them.
+            // So on every minute whose books read long at or past the limit, live or replayed, the evaluator reads
+            // FLAT; only the cancel and the flatten — the orders — wait for `live`.
+            if (account.Position == PositionSide.Long
                 && program.MaxHoldBars is { } hold && account.BarsSinceEntry >= hold)
             {
-                planned |= await CancelRestingAsync(
-                    deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
-                stopRequest = targetRequest = null;
+                if (live)
+                {
+                    planned |= await CancelRestingAsync(
+                        deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
+                    stopRequest = targetRequest = null;
 
-                planned |= await FlattenAsync(deployment, bar, account, seq++,
-                    $"max_hold_bars {hold} reached at this bar's close", ct);
+                    planned |= await FlattenAsync(deployment, bar, account, seq++,
+                        $"max_hold_bars {hold} reached at this bar's close", ct);
+                }
+
                 account = RunBooks.Flat(account);
             }
 

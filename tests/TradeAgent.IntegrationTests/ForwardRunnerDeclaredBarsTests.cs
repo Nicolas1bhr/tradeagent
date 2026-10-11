@@ -286,6 +286,57 @@ public partial class ForwardRunnerTests
             o.ClientOrderId == TradingGateway.ClientOrderIdFor(flatten.RequestId) && o.Side == OrderSide.Sell);
     }
 
+    /// <summary>
+    /// (d2) AFTER ITS MAXIMUM HOLD, AN HOURLY PROGRAM ENTERS AT THE FIRST DECLARED CLOSE THAT FINDS IT FLAT WITH
+    /// NOTHING IN FLIGHT (<c>U-runner-maxhold-replay</c>) — on every pass, not only the one that flattened.
+    ///
+    /// <para>The rig of (d), run on a minute per pass. The 15:00 hour's close, minute 239, is live once: the flatten
+    /// goes out and the evaluator reads FLAT. Every later pass rebuilds the run from its first minute and replays
+    /// 239 as over; its books still read LONG there (the flatten fills two minutes on), and the maximum hold's reading
+    /// is a function of those books, not of the pass — so the evaluator reads FLAT on the replay too and has no
+    /// `max_hold_bars` exit of its own to emit. The 16:00 hour then closes at minute 299 flat, with nothing in
+    /// flight and the entry rule true: the entry goes out there.</para>
+    ///
+    /// <para><b>RED on the base</b>: the replayed 239 was skipped by the hold, the evaluator emitted its own exit,
+    /// that exit's pending suppressed the 16:00 hour's entry, and the next entry came only at the 17:00 hour's close,
+    /// minute 359 — one whole declared bar of entries skipped, live, on paper.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_hourly_program_enters_at_the_first_close_after_its_maximum_hold()
+    {
+        await using var rig = await ReadyAsync(HourlyText("max_hold_bars 2\n"));
+
+        await EnteredAsync(rig);
+        rig.Minutes(62, HourClose(4) - 1, _ => 100m);
+        Assert.Single(await rig.Runner.AdvanceAsync());
+
+        var flattened = await FlatMinuteAsync(rig, HourClose(4), 100m);
+        log.WriteLine($"after minute {HourClose(4)}: {flattened.Account}; pending {flattened.State!.Pending?.Kind}/"
+                      + $"{flattened.State.Pending?.Cause}; intents {flattened.State.Counters.Intents}");
+
+        var exitHeld = new List<int>();
+        for (var minute = HourClose(4) + 1; minute <= HourClose(5); minute++)
+        {
+            var state = await FlatMinuteAsync(rig, minute, 100m);
+            if (minute <= HourClose(4) + 2 || minute >= HourClose(5) - 1)
+                log.WriteLine($"after minute {minute}: {state.Account!.Position} intents {state.State!.Counters.Intents}"
+                              + $" pending {state.State.Pending?.Kind}/{state.State.Pending?.Cause}");
+
+            if (state.State!.Pending?.Kind == IntentKind.Exit) exitHeld.Add(minute);
+        }
+
+        Show(log, rig);
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        Assert.DoesNotContain(ops, o => o.Kind == DeploymentOpKind.Exit);
+
+        // THE ENTRY AT THE 16:00 HOUR'S CLOSE: the first declared close after the flatten, flat and nothing in flight.
+        var entries = ops.Where(o => o.Kind == DeploymentOpKind.Entry).Select(o => MinuteOf(rig, o)).ToList();
+        Assert.Equal([HourClose(1), HourClose(5)], entries);
+
+        // AND ON NO PASS DID THE EVALUATOR HOLD AN EXIT OF ITS OWN: the runner's flatten closed the position.
+        Assert.Empty(exitHeld);
+    }
+
     // ---------------------------------------------------------------- (e) a restart mid-hour
 
     /// <summary>
@@ -458,7 +509,10 @@ public partial class ForwardRunnerTests
 
     /// <summary>
     /// What the runner at <c>3dff4294</c> answered for (f), pass by pass, with <c>U-runner-refused-close</c>'s change
-    /// at minute 12. See the test. The minute-12 entry's operation line ends in a space: it has no answer yet.
+    /// at minute 12 and <c>U-runner-maxhold-replay</c>'s at minutes 11 and 12: a minute whose books read long past the
+    /// maximum hold is handed to the evaluator FLAT on every pass, so minute 11's account reads flat with the close in
+    /// flight, the replayed minute 10 emits no phantom exit, and minute 12's entry goes out on its FIRST pass — the
+    /// second reads it in flight. Not one operation or order line moved. See the test. The minute-12 entry's operation line ends in a space: it has no answer yet.
     /// </summary>
     const string OneMinuteTranscript = """
         m1 a: replayed=1 skipped=0 last=+1 ended=- account=Flat/0@0 equity=5000000 capital=5000000 pending=False held=0 counters=bars:1 missing:0 gaps:0 warm:0 undef:0 eval:1 intents:1 outside:0 whilePending:0 unsized:0
@@ -481,10 +535,10 @@ public partial class ForwardRunnerTests
         m9 b: replayed=9 skipped=0 last=+9 ended=- account=Long/1.000@100 equity=5000001.3000 capital=5000000 pending=False held=2 counters=bars:9 missing:0 gaps:0 warm:0 undef:0 eval:9 intents:2 outside:0 whilePending:2 unsized:0
         m10 a: replayed=10 skipped=0 last=+10 ended=- account=Flat/0@0 equity=5000001.4000 capital=5000000 pending=True held=0 counters=bars:10 missing:0 gaps:0 warm:0 undef:0 eval:10 intents:2 outside:0 whilePending:3 unsized:0
         m10 b: replayed=10 skipped=0 last=+10 ended=- account=Flat/0@0 equity=5000001.4000 capital=5000000 pending=True held=0 counters=bars:10 missing:0 gaps:0 warm:0 undef:0 eval:10 intents:2 outside:0 whilePending:3 unsized:0
-        m11 a: replayed=11 skipped=0 last=+11 ended=- account=Long/1.000@100 equity=5000001.5000 capital=5000000 pending=True held=4 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
-        m11 b: replayed=11 skipped=0 last=+11 ended=- account=Long/1.000@100 equity=5000001.5000 capital=5000000 pending=True held=4 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
+        m11 a: replayed=11 skipped=0 last=+11 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=True held=0 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
+        m11 b: replayed=11 skipped=0 last=+11 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=True held=0 counters=bars:11 missing:0 gaps:0 warm:0 undef:0 eval:11 intents:2 outside:0 whilePending:4 unsized:0
         m12 a: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=False held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:3 outside:0 whilePending:4 unsized:0
-        m12 b: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=False held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:4 outside:0 whilePending:3 unsized:0
+        m12 b: replayed=12 skipped=0 last=+12 ended=- account=Flat/0@0 equity=5000001.5000 capital=5000000 pending=True held=0 counters=bars:12 missing:0 gaps:0 warm:0 undef:0 eval:12 intents:2 outside:0 whilePending:5 unsized:0
         op +1#0 entry resolved request=FILLED — FILLED
         op +3#0 stop resolved request=CANCELLED — WORKING — resting at the venue
         op +3#1 target resolved request=FILLED — WORKING — resting at the venue

@@ -81,7 +81,7 @@ public partial class ForwardRunnerTests
     /// The run's books counted it as an order in flight for ever after, and the evaluator suppressed every entry
     /// while flat: the run was frozen with its envelope's slot held.</para>
     ///
-    /// <para><b>RED on the base</b>: minute 12's second pass reads <c>pending=True</c> and nothing is written
+    /// <para><b>RED on the base</b>: minute 12's pass reads <c>pending=True</c> and nothing is written
     /// after <c>+11#0</c>, which is what (f) pinned. <b>Mutant (i)</b> — a refused operation over a
     /// <c>CREATED</c> row counted in flight again — goes red here.</para>
     /// </summary>
@@ -115,14 +115,14 @@ public partial class ForwardRunnerTests
             var (open, high, low, close) = minutes[i];
             rig.Bar(i + 1, open, high, low, close);
             await rig.Gw.RefreshHealthAsync();
-            Assert.Single(await rig.Runner.AdvanceAsync());
+            var first = Assert.Single(await rig.Runner.AdvanceAsync());
             await Position(rig);
-            var second = Assert.Single(await rig.Runner.AdvanceAsync());
-            if (i + 1 == 12) twelve = second;
+            Assert.Single(await rig.Runner.AdvanceAsync());
+            if (i + 1 == 12) twelve = first;
         }
 
         Show(log, rig);
-        log.WriteLine($"m12 b: {Said(rig, twelve!)}");
+        log.WriteLine($"m12 a: {Said(rig, twelve!)}");
         var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
 
         // THE PREMISE: minute 11's close was refused over a row that never left CREATED.
@@ -132,7 +132,10 @@ public partial class ForwardRunnerTests
         Assert.Contains(ErrorCode.POSITION_MOVED.ToString(), refused.Answer);
         Assert.Equal(ExecutionState.CREATED, rig.Gw.Requests.Get(refused.RequestId)!.State);
 
-        // NO ORDER IN FLIGHT ON MINUTE 12: the refusal sent nothing and is over.
+        // NO ORDER IN FLIGHT ON MINUTE 12: the refusal sent nothing and is over. Read on minute 12's FIRST pass, the
+        // one that writes the entry (`U-runner-maxhold-replay`): the replayed minute 10 no longer hands the evaluator
+        // a long reading past its limit, so no phantom exit of its own holds the entry back to the second pass — and
+        // that second pass reads the run's own entry in flight, which is the order it is, not the refusal.
         Assert.False(twelve!.Account!.OrderPending);
 
         // AND THE PROGRAM ENTERS BY ITS RULES AGAIN: an entry written on minute 12, under its own id, filled at

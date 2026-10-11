@@ -464,6 +464,51 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         Assert.Equal(1, state.State!.Counters.Intents);
     }
 
+    /// <summary>
+    /// (c2) A PASS THAT REPLAYS THE MAXIMUM HOLD'S MINUTE READS IT FLAT, AS THE LIVE PASS DID
+    /// (<c>U-runner-maxhold-replay</c>). The rig of (c), run on to bar 8. Bar 5 is live once: the flatten goes out
+    /// and the evaluator reads FLAT. Every later pass rebuilds the run from bar 1 and replays bar 5 as over, where
+    /// the books still read LONG — and the maximum hold's reading is a function of those books, not of the pass, so
+    /// the evaluator reads FLAT there too and emits no `max_hold_bars` exit of its own.
+    ///
+    /// <para>So no pass counts an intent the run did not decide: on every pass the evaluator's intents are at most
+    /// the entries and exits the run has written — an intent can be fewer, where a replay reads the run's own order
+    /// in flight on the minute it was sent, never more. <b>RED on the base</b>: from bar 7's pass on, the replayed bar 5
+    /// handed the evaluator a long reading past its limit and it emitted the program's own exit — two intents for the
+    /// one entry written at bar 7, three for two at bar 8. The phantom was never dispatched, but its pending held the
+    /// 12:07 entry back: bar 7's pass wrote nothing and the entry went out on bar 8's pass, a minute late, under
+    /// 12:07's id. On declared bars the same phantom skips a whole bar of entries — the hourly test (d2).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_pass_that_replays_the_maximum_holds_minute_reads_it_flat_as_the_live_pass_did()
+    {
+        await using var rig = await ReadyAsync(ProgramText("max_hold_bars 2\n"));
+
+        rig.Bar(1, 99m, 101m, 98m, 101m);
+        await rig.Runner.AdvanceAsync();
+
+        var phantoms = new List<string>();
+        for (var minute = 2; minute <= 8; minute++)
+        {
+            var price = 100m + minute;
+            rig.Bar(minute, price, price + 1m, price - 1m, price);
+            await rig.Gw.RefreshHealthAsync();
+            var state = Assert.Single(await rig.Runner.AdvanceAsync()).State!;
+            var decided = rig.Gw.Deployments.OpsOf(rig.Deployment.Id)
+                .Count(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit);
+            log.WriteLine($"after bar {minute}: intents {state.Counters.Intents}, entries and exits written {decided}");
+
+            if (state.Counters.Intents > decided)
+                phantoms.Add($"bar {minute}: {state.Counters.Intents} intents for {decided}");
+        }
+
+        Show(log, rig);
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        Assert.Single(ops, o => o.Kind == DeploymentOpKind.Flatten && o.State != DeploymentOpState.Refused);
+        Assert.DoesNotContain(ops, o => o.Kind == DeploymentOpKind.Exit);
+        Assert.Empty(phantoms);
+    }
+
     // ---------------------------------------------------------------- (d)
 
     [Fact]
