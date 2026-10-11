@@ -10314,3 +10314,5 @@ ubuntu, macos each `0 Warning(s)`; linux-host), CARRIED to `cc0dec52` (build tre
 no regression; one P2 — no executable regression test of land.sh's `test*` predicate — judged fleet tooling outside the unit (land.sh's own test, owed card).
 **NOT VERIFIED:** a real deduped main push. This record's push carries the merged build.yml, so it starts a main run whose tree equals run 38149744637's outside
 the bookkeeping list: whether it dedupes is not known at this record — its verdict (skip named or a full run) goes to fleet/ci-ledger.md and the next record. Tests box NOT RUN (CI-only unit).
+**VERIFIED since (the orchestrator, 2026-10-11 17:29 CEST):** main run 38151486639 on `ba27ce63` deduped — `dedupe-gate` success, its log printing
+`tested_by=38149744637`; shard-plan, test, package, package-linux and linux-host `skipped`; the run's conclusion success.

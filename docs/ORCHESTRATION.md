@@ -96,8 +96,9 @@ OWNER (in-process) — mission · ceilings · authority · veto · the Org page 
 ### 2.1 Chart and identity — five layers
 - **Unit** (`org_unit`): the root, divisions, earned sub-divisions, teams, the chief's staff; parent, head position, status, envelope share; its
   charter is its mandate (§ 2.2). Kinds are validated text a later build extends; depth has no constant (VISION § 3).
-- **Position** (`org_position`): the durable identity — home, memory, ledger entries, decision records, scorecard. It gains a kind (head, member,
-  staff) and a reference to its pinned seat version (a rung; no compatibility owed, `CLAUDE.md`). Status active, dormant or ended. An id that is not an
+- **Position** (`org_position`): the durable identity — home, memory, ledger entries, decision records, scorecard. Its kind (head, member,
+  staff) is derived from the chart — it heads a unit, sits on the chief's staff, or is a member — and never stored beside it; it gains a reference to its
+  pinned seat version (a rung; no compatibility owed, `CLAUDE.md`). Status active, dormant or ended. An id that is not an
   active position is refused or quarantined with a reason, never folded into the chair.
 - **Seat** (a versioned record): runtime profile × model class × effort × playbook version × allowance × cell class. A changed field is a new version;
   a seat moves only by an app rule or the owner (ORGANISATION § 8).
@@ -193,7 +194,8 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **Wakes** are `mission_event` rows addressed to a position, with a cause class, a priority class, an entity and a deduplication key; raised only
   by app paths; consumed inside the launch transaction (as today).
 - **Eligibility:** the position active; not leased (one conversation per position at a time); its unit not asleep (the circuit breaker, VISION § 7.7);
-  envelope room; its quota pool not held; its cell available; the owner's pause and stop obeyed.
+  envelope room; its quota pool not held; its cell available; the activation gate passes for every capability the launch needs (§ 2.3 — a refused position's due wakes settle with a
+  recorded disposition and never retry); the owner's pause and stop obeyed.
 - **Priority:** ORGANISATION § 10's order, read from there and never restated; oldest due first within a class; ties by unit depth, then id.
 - **Objectives per position kind** (extending `RoleObjectives`): a wake is a divergence between the observed and the desired world. A head owns its
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
@@ -352,7 +354,7 @@ collapse test read from decision timestamps, and shared playbooks, tools and tem
 ## 3. The data, at a glance
 Each table lands with its unit, on the next free rung, in landing order; none is designed for an older build (`CLAUDE.md`).
 - **Kept:** `org_unit`, `org_event` (rung 28); `ledger_*` (rung 31); `tool_call`.
-- **Changed:** `org_position` gains its kind and its seat-version reference; `mission_event` gains the position (exact id, never folded);
+- **Changed:** `org_position` gains its seat-version reference (its kind is derived, § 2.1); `mission_event` gains the position (exact id, never folded);
   `ai_attempt` gains the position, mandate, seat version, runtime-profile hash, cell id, funding chain and parent attempt, and its input lineage.
 - **New:** versioned seat and runtime-profile records; `org_mandate` and `org_mandate_event` (with sealed delivery manifests and failure records);
   `org_decision` and `org_forecast`; relay rows for notes; the audit line's and the watcher's own tables, outside `org_*`; the proving ground's store

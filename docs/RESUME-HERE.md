@@ -105,9 +105,9 @@ write and flags a holdout its authoring model may remember; the paper queue is o
 train B3 `U-red-says-why` `4fa0f0c2` + `U-owner-words-delegated` `80945a60` (nothing an agent writes can mark the owner's words handled) · `U-lenses` `af1a7a6f`
 (`tape.db` rung 3: versioned, hashed lenses; nothing runs one yet) · train A5 `U-prove-phase4` `f350e0b5` (the Linux proof's kill -9 phase: the restarted app must
 record its start within 30 s, the false green closed) + `U-evidence-evaluator-label` `5f19f910` (rung 36: every run, and every research measurement, trial and
-sealed holdout row, names its evaluator; a row from before 36 reads as another evaluator's) + `U-friction-home` `670d6757` · `U-ci-dedupe` PARKED, not landed: `land.sh check` reads any job named `test*` as a test job and refused its new
-`tested-before` gate job (rename it, run CI again; branch `u-ci-dedupe` `dfc5d47e`, CI green); a phase chain piped into `tail` hid that refusal, `record` pushed
-a false landing record (`973f89d0`), and it was reverted at once (`6853e0bb`; no code merged). Twenty-two
+sealed holdout row, names its evaluator; a row from before 36 reads as another evaluator's) + `U-friction-home` `670d6757` · `U-ci-dedupe` parked at that close: `land.sh check` read any job named `test*` as a test job and refused its
+`tested-before` gate job; a phase chain piped into `tail` hid that refusal, `record` pushed a false landing record (`973f89d0`), reverted at once (`6853e0bb`);
+the gate renamed `dedupe-gate`, it LANDED that afternoon (`ba27ce63`), and the first push it gated, main run 38151486639, skipped its jobs naming run 38149744637. Twenty-two
 units this session, every one CI-green on all three platforms and Codex-reviewed before landing. **A product defect, found by refusing "a flake":** a test red
 seen on three branches was `WorkspaceBuilder.MoveOlderLayout`, compatibility code that on the chair's first start moved `workspace/research` — the Research
 Director's own home, programs included — into the chair's folder (since `89c5ad8e`, 2026-09-07); deleted under the no-backward-compat rule, red first with a watched
