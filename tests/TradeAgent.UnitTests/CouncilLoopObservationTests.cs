@@ -113,6 +113,65 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (a2) A NOTICE THE LISTENER FAILS IS TOLD AGAIN ON THE NEXT POLL, AND IT IS STILL ONE WAKE. The tape committed the
+    /// item and the listener threw; the identical page polled again stores nothing new, and the collector tells the
+    /// pending notice anyway — once it succeeds it is not told again. A listener that raised and then threw is retried
+    /// too, and the coalesced raise keeps it one untaken wake.
+    ///
+    /// <para>RED at 27cb7bcf (a failed notice was dropped): "Assert.Single() Failure: The collection was empty".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_notice_the_listener_fails_is_told_again_on_the_next_poll_and_is_still_one_wake()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        using var archive = new FakeArchive();
+        var okx = Okx();
+        var path = TapeCollector.Url(okx.Series[0], "", null);
+        using var store = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+
+        var calls = 0;
+        var throwAt = new HashSet<int> { 1 };
+        var raiseFirst = false;
+        await using var collector = new TapeCollector(store, baseUrl: archive.BaseUrl,
+            requestTimeout: TimeSpan.FromSeconds(5), now: () => TapeNow,
+            catalog: new TapeSourceCatalogRead([okx], null, []),
+            stored: arrival =>
+            {
+                calls++;
+                if (raiseFirst) TapeWakes.Raise(db, arrival, TapeNow);
+                if (throwAt.Contains(calls)) throw new IOException("the listener fell over");
+                if (!raiseFirst) TapeWakes.Raise(db, arrival, TapeNow);
+            });
+
+        // THE LISTENER THROWS BEFORE IT RAISES: nothing yet, and the identical page polled again tells it.
+        archive.PublishAt(path, AnnouncementPage(Announcement("okx-will-launch-zzz", TapeNow.AddHours(-1), "OKX will launch ZZZ")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Empty(events.OfKind(MissionEventKind.Tape));
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.Equal(CouncilRoles.Research, wake.Role);
+        Assert.Equal(1, Json.Read<TapeWakePayload>(wake.Payload!)!.Count);
+
+        // TOLD ONCE IT SUCCEEDED, AND NOT AGAIN.
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(2, calls);
+
+        // THE LISTENER RAISES AND THEN THROWS: retried on the next poll, and still one untaken wake.
+        events.Consume([wake.Id], "turn-1", TapeNow);
+        raiseFirst = true;
+        throwAt.Add(3);
+        archive.PublishAt(path, AnnouncementPage(
+            Announcement("okx-will-launch-zzz", TapeNow.AddHours(-1), "OKX will launch ZZZ"),
+            Announcement("okx-will-list-xxx", TapeNow.AddMinutes(-10), "OKX will list XXX")));
+        Assert.Equal(1, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(0, (await collector.CollectOnceAsync(okx)).Stored);
+        Assert.Equal(4, calls);
+        Assert.Equal(2, events.OfKind(MissionEventKind.Tape).Count);
+        Assert.Single(events.OfKind(MissionEventKind.Tape), e => !e.Consumed);
+    }
+
+    /// <summary>
     /// (b) A TAPE ITEM INSIDE A HOLDOUT WINDOW WAKES NOBODY — a window that ends, and one with no end because its dataset
     /// does not record where its bars end. An item outside every window still wakes Research, and the held one beside it
     /// is neither counted nor named.

@@ -33,8 +33,8 @@ public static class TapeWakes
     /// <summary>
     /// RAISES RESEARCH'S TAPE WAKE FOR WHAT <paramref name="arrival"/> STORED, when it owns any of it outside every
     /// holdout window, and answers whether a row went in. False when it owns none, when every owned item is held back,
-    /// and when a tape wake is already untaken. Throws when a ledger cannot be read; the caller's notice is then lost
-    /// and the next new item raises its own.
+    /// and when a tape wake is already untaken. Throws when a ledger cannot be read; the collector keeps the notice and
+    /// tells it again at the row's next look, and the coalesced raise keeps a retry one wake.
     /// </summary>
     public static bool Raise(Database db, TapeArrival arrival, DateTimeOffset at)
     {

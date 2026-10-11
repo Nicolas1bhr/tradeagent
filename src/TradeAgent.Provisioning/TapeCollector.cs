@@ -120,7 +120,8 @@ public sealed class TapeCollector : IAsyncDisposable
     /// <param name="stored">
     /// Told what each fetch stored NEW — subjects and source times, never a payload — after its transaction committed
     /// (<c>U-reconcile-packet</c>). The app decides there whether a role owns it and raises its wake; this collector
-    /// holds no database. A listener that throws loses that one notice and never the look.
+    /// holds no database. A listener that throws never costs the look, and its notice stays pending here and is told
+    /// again at the row's next look until it is told (coalesced by the listener, so a retry is never a second wake).
     /// </param>
     public TapeCollector(
         TapeStore store,
@@ -239,9 +240,13 @@ public sealed class TapeCollector : IAsyncDisposable
     public async Task<TapeTick> CollectOnceAsync(TapeSourceEntry row, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(row);
+        var state = Row(row.Id);
+
+        // WHAT THE TAPE ALREADY HOLDS AND THE LISTENER WAS NOT TOLD (U-reconcile-packet, review 1): told first, oldest
+        // first, before the switch is read — the rows are committed whatever the owner's toggle says now.
+        TellPending(state);
         if (!_enabled()) return TapeTick.SwitchedOff;
 
-        var state = Row(row.Id);
         var root = (_baseUrl ?? row.BaseUrl).TrimEnd('/');
         IEnumerable<string?> symbols = row.PerSymbol ? TapeSourceCatalog.Universe.Cast<string?>() : AllSymbols;
 
@@ -286,7 +291,7 @@ public sealed class TapeCollector : IAsyncDisposable
                 {
                     delivered++;
                     stored += appended.Stored;
-                    if (appended.Stored > 0) Tell(row, series, appended.FetchId);
+                    if (appended.Stored > 0 && !Tell(row, series, appended.FetchId)) state.Owe(row, series, appended.FetchId);
                 }
                 else problem ??= $"{series.Id}{(symbol is null ? "" : " " + symbol)}: {note}";
 
@@ -302,18 +307,32 @@ public sealed class TapeCollector : IAsyncDisposable
 
     /// <summary>
     /// TELLS THE LISTENER WHAT ONE FETCH STORED NEW, read back from the tape by the fetch's own id — subjects and source
-    /// times only. Never throws: a notice that could not be read or delivered is one wake not raised, and the next new
-    /// item raises its own.
+    /// times only — and answers whether it was told. Never throws: a notice that could not be read or delivered is
+    /// false, and the caller keeps it pending for the row's next look.
     /// </summary>
-    void Tell(TapeSourceEntry row, TapeSeriesEntry series, long fetchId)
+    bool Tell(TapeSourceEntry row, TapeSeriesEntry series, long fetchId)
     {
-        if (_stored is null) return;
+        if (_stored is null) return true;
         try
         {
             var items = _store.ObservationsOf(fetchId).Select(o => new TapeArrived(o.Subject, o.SourceTime)).ToList();
             if (items.Count > 0) _stored(new TapeArrival(row.Id, series.Id, row.Parser, fetchId, items));
+            return true;
         }
-        catch (Exception) { /* the look stands; only this notice is lost */ }
+        catch (Exception) { return false; /* the look stands; the notice stays owed */ }
+    }
+
+    /// <summary>
+    /// TELLS THE ROW'S PENDING NOTICES, oldest first, and stops at the first that fails again: the listener is still
+    /// falling over, and the rest wait for the next look in order. A notice told is dropped; one never is otherwise.
+    /// </summary>
+    void TellPending(RowState state)
+    {
+        while (state.NextOwed() is { } owed)
+        {
+            if (!Tell(owed.Row, owed.Series, owed.FetchId)) return;
+            state.Told(owed);
+        }
     }
 
     /// <summary>
@@ -398,6 +417,40 @@ public sealed class TapeCollector : IAsyncDisposable
     {
         volatile string? _lastError;
         int _failures;
+        readonly Lock _owedGate = new();
+        readonly List<Owed> _owed = [];
+
+        /// <summary>A notice the listener was not told: the fetch that stored it, under its row and series.</summary>
+        public sealed record Owed(TapeSourceEntry Row, TapeSeriesEntry Series, long FetchId);
+
+        /// <summary>
+        /// The most notices one row keeps owed. A listener that never recovers would otherwise grow this by one per
+        /// storing fetch for as long as the app runs; past it the oldest goes first — the listener coalesces to one wake
+        /// per role anyway, so a full list loses its oldest notices and never its newest.
+        /// </summary>
+        const int OwedLimit = 256;
+
+        /// <summary>Keeps a notice the listener failed, to be told at the row's next look.</summary>
+        public void Owe(TapeSourceEntry row, TapeSeriesEntry series, long fetchId)
+        {
+            lock (_owedGate)
+            {
+                if (_owed.Count >= OwedLimit) _owed.RemoveAt(0);
+                _owed.Add(new Owed(row, series, fetchId));
+            }
+        }
+
+        /// <summary>The oldest notice still owed, or null.</summary>
+        public Owed? NextOwed()
+        {
+            lock (_owedGate) return _owed.Count > 0 ? _owed[0] : null;
+        }
+
+        /// <summary>Drops a notice once it has been told.</summary>
+        public void Told(Owed owed)
+        {
+            lock (_owedGate) _owed.Remove(owed);
+        }
 
         public string? LastError { get => _lastError; set => _lastError = value; }
         public int Failures { get => Volatile.Read(ref _failures); set => Volatile.Write(ref _failures, value); }
