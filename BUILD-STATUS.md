@@ -9835,3 +9835,37 @@ licence, the feature's own live refusal proven by `FeatureProgramStandingTests.R
 reads LONG there, emits its own max-hold exit and leaves it pending, so the close after a max-hold flatten cannot enter and a catch-up pass could decide differently — pre-existing, every program.
 **NOT done, NOT verified:** live; the app was not run; the full Unit/Fault/Integration suites ran on CI only; the brief's NOT-claimed list (a row stamped by a close but committed after the deciding pass; forward
 bars' own holdout gap).
+
+## 2026-10-11 — U-trial-returns landed at RUNG 32: every recorded research run keeps its daily net returns at 1× and 2× the dataset venue's cost model, computed by the app and written once with the run; a day with no bar is unknown, never 0; the streams charge no trial
+
+Built under build-fleet seat A from `docs/briefs/U-trial-returns.md` (EDGE § 4.5 E1 "daily net returns stored … at 1× and 2×"; R04 move 2): one builder (opus) reported `521d8fd6`
+(code `2f099206` on `c4f611fe`, rung 32 written over 30); seat B's U-research-ledger then took rung 31 on main, so a FRESH landing fixer (opus/high, 2026-10-11 06:0x) rebased it
+onto main's 31 and kept it 32 above it; land.sh v2 prep rebased it onto `eace5030` (docs only), src+tests patch-id identical (`529e042a8398`). Merge `52d4698e` (ff-only):
+7 commits (4 items, test (g), the report, the fix report), 13 files, +1,068/−10. On main: item 1 `1902169a`, item 2 (rung) `a6cab634`, item 3 `204b30fa`, item 4 `9277d13c`,
+test (g) `c8eb5cd8`, report `b1fbbb00`, fix report `52d4698e`.
+**Schema: rung 32** (`DatabaseSchemaVersion = 32`): `strategy_stream` (one per run and cost multiple, unique) and `strategy_stream_day` (one per stream and UTC day), written only
+by `StrategyStore.RecordRun` after the run's trades in the run's own insert, read in-process only by `StreamsOf`; nothing updates or deletes either. 31's block kept whole, 32's
+after it, stamp last in each — a crash between a rung's statements and its stamp recovers as before. No backfill: a run recorded before rung 32 has no stream (the brief says so).
+**What it does.** `DailyReturns.Of(trace, grid, capital)` (rule version 1): each UTC day's mark is the equity at its last close, a 00:00Z close ends the day before, a day with
+no bar is unknown. `Backtests.Record` keeps a 1× and a 2× stream under the dataset venue's model — the run's own trace where its model is exactly the venue's at 1×, otherwise an
+evaluation of the app's own beside the run (same audience, dataset, window) — or records the stream missing with why. The referee's holdout run keeps no stream at either
+multiple (test (g)). 31's ledger links stay in the same record write (`Links.Link` last). CONTRACTS states the rule.
+**Deviation, judged** (Codex review 1, `fleet/records/U-trial-returns-review-triage.md`): the extra evaluations start BESIDE the run on threads of their own; a feature program's
+run id is known only after its run, so a repeat request starts and abandons its two evaluations — nothing is written. Accepted, no fixer.
+**Gate (builder).** Release `--no-incremental` 0 warnings 0 errors; touched classes 62/62 ×3; CI 38096342401 green on every job (old workflow).
+**Gate (fixer, the landed code).** Release 0 warnings 0 errors; BacktestLedger, BacktestMetrics, CampaignLedger, PaperFriction, RefereeVerdict, ResearchLedger 66/66 ×3;
+Integration ResearchLedgerOverPipeTests 5/5 ×3. **CI CARRIED** from run 38110745221 at `a90df02c` — every job success (sharded: package-linux, package, shard-plan, windows 1–5,
+ubuntu, macos, linux-host); its build tree equals `52d4698e` outside the bookkeeping paths.
+**RED before** (evidence path, builder): (a) `Expected: "2026-01-05 bars=2 mark=10200 return=0.02 "··· Actual: ""`; (e) `Expected: "1x model=fees=0.001;slippage=0.0002;incre"···
+Actual: ""`; (h) `the stream tables arrive at rung 32; this build says 30`; (c)/(d) `Expected: "1,2" Actual: ""`. On the rebased tip (fixer): (h) red again with main's rung-31
+Database.cs and Versioning.cs.
+**Mutant** (the 2× evaluation handed the 1× model), re-watched on the rebased tip ⇒ (c) red at :477: `Expected: "fees=0.002;slippage=0.0004;increment=0.00"··· Actual:
+"fees=0.001;slippage=0.0002;increment=0.00"···`; restored. Builder's second mutant (the referee writes a stream) ⇒ (g) red; restored.
+**Codex re-review** of the rebase (range-diff of commits 2–3; Versioning, Database, Backtests): no defects found.
+**Year benchmark** (builder, before the rebase; scratch, not committed): hourly, 525,600 minute bars, 1,095 trades — median wall 10.13 s → 11.09 s (1.09×, venue fee) and
+10.06 s → 12.43 s (1.24×, declared fee), both ≤ 1.5×. NOT re-run after the rebase.
+**Names vs main:** 2504 → 2512, removed 0. **Scan:** four CancellationToken hits (`(extra, token)`, `stop: token`, `evaluate(model, token)`, `stop.Token`), judged false, excluded by name.
+**No agent-facing change:** no op, verb, answer field or canon word (builder's diff of AgentRuntime, TradeCli, GatewayPipeServer, GatewaySchema, every AGENTS.md → 0).
+**Tests box:** NOT RUN — `ready : NO - the machine does not answer` (01:38).
+**NOT done, NOT verified:** full Unit/Fault/Integration locally (CI ran them); no app run; every commit but the tip built on its own; the benchmark after the rebase; a stream
+for any run recorded before rung 32 (no backfill, by design); E1's depth gates, E2–E4 and the deflated figures (`U-referee-v2a`, rung 33, next).
