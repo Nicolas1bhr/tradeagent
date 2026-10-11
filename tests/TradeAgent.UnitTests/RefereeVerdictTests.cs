@@ -1320,6 +1320,66 @@ public class RefereeVerdictTests
         Assert.Equal(["RefereeHoldout.cs: INSERT INTO referee_holdout({Cols})"], writers);
     }
 
+    /// <summary>
+    /// A VERDICT RECORDED WITHOUT A SEALED ROW GAINS NONE WHEN IT IS ASKED AGAIN — the sealed row is written only in the
+    /// write that records the verdict's promotion and its research measurement for the first time (finding 1 of the
+    /// review). A verdict from before rung 35 holds its v2a row and no sealed row; asking it again re-runs the holdout and
+    /// measures the research again, and a row sealed then would set a fidelity read off research measured NOW beside a
+    /// <c>research_row</c> naming the older, immutable measurement the verdict was judged beside — a record that is not
+    /// true about what ran. The imitation deletes the sealed row of a recorded verdict (the shape a rung-33 or rung-34
+    /// verdict has); the re-ask is made twice — under the campaign's pinned model, which finds its promotion recorded, and
+    /// under another model, which records a new promotion over the same, older research row — and once more with the v2a
+    /// row gone too, the shape of a verdict from before rung 33. None seals. The mutants are the guard removed (the seal
+    /// written in every write) and either half of it alone.
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_asked_again_with_no_sealed_row_gains_none()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _ = w.Db;
+        StreamedRun(w, "candidate", 139, 11);
+        var first = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(first.Promoted, first.Promotion?.Reason ?? first.Why);
+        Assert.NotNull(RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId));
+
+        // A VERDICT FROM BEFORE THE RUNG: its v2a row in place, no sealed row.
+        w.Db.Write(_ =>
+        {
+            using var c = w.Db.Cmd("DELETE FROM referee_holdout");
+            return c.ExecuteNonQuery();
+        });
+        Assert.Null(RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+        var research = Bytes(w.Db, "referee_research");
+
+        var again = new Referee(w.Db, () => At.AddHours(1)).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(again.Promoted, again.Promotion?.Reason ?? again.Why);
+        Assert.Equal(first.Promotion!.Id, again.Promotion!.Id);
+        Assert.Null(RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+
+        var other = new Referee(w.Db, () => At.AddHours(2)).Verdict(w.VersionId, w.Campaign.Id,
+            ExecutionModel.Declare(increment: 1m, capital: 20_000m).Model!);
+        Assert.True(other.Ok, other.Why);
+        Assert.NotEqual(first.Promotion.Id, other.Promotion!.Id);
+        Assert.Null(RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+
+        Assert.Equal(research, Bytes(w.Db, "referee_research"));
+
+        // AND A VERDICT FROM BEFORE RUNG 33, with no v2a row either: asked again, it records its research now (v2a's own
+        // first writer) and still gains no sealed row, because its promotion was recorded before.
+        w.Db.Write(_ =>
+        {
+            using var c = w.Db.Cmd("DELETE FROM referee_research_trial; DELETE FROM referee_research;");
+            return c.ExecuteNonQuery();
+        });
+        var older = new Referee(w.Db, () => At.AddHours(3)).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(older.Promoted, older.Promotion?.Reason ?? older.Why);
+        Assert.Equal(first.Promotion.Id, older.Promotion!.Id);
+        Assert.NotNull(RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId));
+        Assert.Null(RefereeOf(w).Holdouts.SealedOf(w.Campaign.Id, w.VersionId));
+
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
+    }
+
     /// <summary>The report's line for the world's verdict, by its verdict word.</summary>
     static string VerdictLineOf(World w, string verdict) => Assert.Single(
         DailyReportText.Render(w.Gw.Reports.Compose(Midday())).Split('\n'),
