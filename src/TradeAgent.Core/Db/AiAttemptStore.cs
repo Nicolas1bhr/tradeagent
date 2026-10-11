@@ -89,6 +89,15 @@ public sealed record AiAttempt
     public string? RuntimeProfile { get; init; }
 
     /// <summary>
+    /// THE UNITS THAT FUND THIS LAUNCH (<c>U-org-envelopes</c>, rung 38): the position's own unit first, then every unit above
+    /// it to the root, as the chart stood when the launch was admitted. Written by <see cref="AiAttemptStore.Begin"/> as
+    /// <c>ai_attempt_funding</c> rows in the attempt's own transaction and never moved afterwards — funding lineage is immutable
+    /// (<c>docs/ORCHESTRATION.md</c> § 2.4). Null or empty for a launch no unit funds (an app principal). Not read back onto
+    /// this record: <see cref="AiAttemptStore.FundingOf"/> reads the rows.
+    /// </summary>
+    public IReadOnlyList<string>? Funding { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -221,6 +230,13 @@ public sealed record AiAdmission
     public const string Ledger = "ledger";
 
     /// <summary>
+    /// What <see cref="Ceiling"/> says when the position's FUNDING CHAIN could not be read (<c>U-org-envelopes</c>): no unit's
+    /// envelope ran out and no row was written; the chart would not say which units fund the launch, so it was not admitted
+    /// on the day's limit alone.
+    /// </summary>
+    public const string Chart = "chart";
+
+    /// <summary>
     /// THE REFUSAL FOR A LAUNCH WHOSE ROW COULD NOT BE WRITTEN — never an admission. A turn the ledger did not take is a
     /// turn whose cost no ceiling sees, so it is not started, it consumes no wake, and the reason to take it stays owed.
     /// </summary>
@@ -316,6 +332,14 @@ public sealed class AiAttemptStore(Database db)
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile));
         c.ExecuteNonQuery();
+        // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
+        if (a.Funding is { Count: > 0 } funding)
+            for (var depth = 0; depth < funding.Count; depth++)
+            {
+                using var f = db.Cmd("INSERT INTO ai_attempt_funding(attempt_id, unit_id, depth) VALUES($id,$unit,$depth)",
+                    ("$id", a.Id), ("$unit", funding[depth]), ("$depth", depth));
+                f.ExecuteNonQuery();
+            }
         if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
         return new AiAdmission { Id = a.Id, ResumesAt = admit?.ResumesAt ?? default };
     });
@@ -510,6 +534,19 @@ public sealed class AiAttemptStore(Database db)
     }
 
     static int Int(SqliteDataReader r, int i) => r.IsDBNull(i) ? 0 : Convert.ToInt32(r.GetValue(i));
+
+    /// <summary>
+    /// THE CHAIN AN ATTEMPT WAS ADMITTED UNDER, nearest unit first, as <see cref="Begin"/> recorded it; empty for an attempt no
+    /// unit funds. Read from the rows and never from today's chart, which may have moved since.
+    /// </summary>
+    public IReadOnlyList<string> FundingOf(string attemptId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT unit_id FROM ai_attempt_funding WHERE attempt_id=$id ORDER BY depth", ("$id", attemptId));
+        using var r = c.ExecuteReader();
+        var units = new List<string>();
+        while (r.Read()) units.Add(r.GetString(0));
+        return (IReadOnlyList<string>)units;
+    });
 
     /// <summary>One attempt by id, or null. For the screens and for a test that has to read a row back.</summary>
     public AiAttempt? Get(string id) => db.Read(_ =>

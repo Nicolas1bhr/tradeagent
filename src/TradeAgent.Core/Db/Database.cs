@@ -2292,6 +2292,52 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','37') ON CONFLICT(key) DO UPDATE SET value='37';");
         }
 
+        if (have < 38)
+        {
+            // THE FUNDING CHAIN A LAUNCH WAS ADMITTED UNDER — `U-org-envelopes`, the orchestrator's rung 38, after 37. A position's
+            // launch is admitted against every unit from its own to the root (`docs/ORCHESTRATION.md` § 2.4), and "funding lineage
+            // is immutable": an attempt is charged to the chain recorded at its admission, and a later move, merge or close of a
+            // unit never re-parents a past charge. So the chain is a row per unit, written by `AiAttemptStore.Begin` in the same
+            // transaction as the attempt's own insert, never updated or deleted — and a unit's spend is read through these rows,
+            // never through today's chart.
+            //
+            // `depth` is the unit's place in the chain: 0 for the position's own unit, rising to the root.
+            //
+            // THE BACKFILL reads each existing row's role as the ledger always has: a NULL role is the chair's (`operations`), a role
+            // that is a position is charged to that position's unit and every unit above it, as the chart stands now; an app
+            // principal (perception, the referee, the allocator) and a name that is no position are funded by no unit — their spend
+            // stays in the day's total and in no subtree. The CREATE is IF NOT EXISTS and the fill is one statement over the rows
+            // that have no chain yet, ON CONFLICT DO NOTHING, so a crash between these statements and the stamp reruns the rung
+            // over what is there and writes nothing twice.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS ai_attempt_funding(
+              attempt_id TEXT NOT NULL REFERENCES ai_attempt(id),
+              unit_id    TEXT NOT NULL REFERENCES org_unit(id),
+              depth      INTEGER NOT NULL CHECK(depth >= 0),
+              PRIMARY KEY(attempt_id, unit_id),
+              UNIQUE(attempt_id, depth)
+            );
+            CREATE INDEX IF NOT EXISTS ix_attempt_funding_unit ON ai_attempt_funding(unit_id, attempt_id);
+            """);
+            using (var fill = Cmd("""
+                WITH RECURSIVE line(attempt_id, unit_id, depth) AS (
+                  SELECT a.id, p.unit_id, 0
+                    FROM ai_attempt a JOIN org_position p ON p.id = COALESCE(a.role, $chair)
+                   WHERE NOT EXISTS (SELECT 1 FROM ai_attempt_funding f WHERE f.attempt_id = a.id)
+                  UNION ALL
+                  SELECT l.attempt_id, u.parent_id, l.depth + 1
+                    FROM line l JOIN org_unit u ON u.id = l.unit_id
+                   WHERE u.parent_id IS NOT NULL AND l.depth < 64
+                )
+                INSERT INTO ai_attempt_funding(attempt_id, unit_id, depth)
+                SELECT attempt_id, unit_id, depth FROM line WHERE true
+                ON CONFLICT DO NOTHING
+                """, ("$chair", CouncilRoles.Default)))
+                fill.ExecuteNonQuery();
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','38') ON CONFLICT(key) DO UPDATE SET value='38';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

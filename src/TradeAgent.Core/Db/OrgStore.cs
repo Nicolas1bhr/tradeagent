@@ -299,8 +299,13 @@ public sealed class OrgStore(Database db)
     public IReadOnlyList<OrgUnitRow> Ancestors(string unitId)
     {
         var units = Units().ToDictionary(u => u.Id, StringComparer.Ordinal);
-        if (!units.TryGetValue(unitId, out var unit)) return [];
+        return units.TryGetValue(unitId, out var unit) ? Line(units, unit) : [];
+    }
 
+    /// <summary><see cref="Ancestors"/> over one snapshot of the units: the parents above <paramref name="start"/>, nearest first.</summary>
+    static List<OrgUnitRow> Line(Dictionary<string, OrgUnitRow> units, OrgUnitRow start)
+    {
+        var unit = start;
         var line = new List<OrgUnitRow>();
         var seen = new HashSet<string>(StringComparer.Ordinal) { unit.Id };
         while (unit.ParentId is { } parentId)
@@ -308,12 +313,35 @@ public sealed class OrgStore(Database db)
             if (!units.TryGetValue(parentId, out var parent))
                 throw Damaged($"unit {unit.Id} hangs from {parentId}, which is not a unit");
             if (!seen.Add(parent.Id))
-                throw Damaged($"the line of parents above {unitId} loops at {parent.Id}");
+                throw Damaged($"the line of parents above {start.Id} loops at {parent.Id}");
             line.Add(parent);
             unit = parent;
         }
         return line;
     }
+
+    /// <summary>
+    /// THE FUNDING CHAIN OF A POSITION (<c>U-org-envelopes</c>, <c>docs/ORCHESTRATION.md</c> § 2.4): its own unit first, then
+    /// every unit above it, ending at the root — read in one snapshot. A launch is charged to every one of them.
+    ///
+    /// <para><b>Refused, never answered in part.</b> A name that is no position, a position whose unit is not there, and a
+    /// line of parents that loops or names a missing unit each throw, because a chain read short would admit a launch against
+    /// fewer envelopes than fund it — and the admission that reads this refuses rather than falling back to the day's limit
+    /// alone.</para>
+    /// </summary>
+    public IReadOnlyList<OrgUnitRow> FundingLine(string positionId) => db.Read(_ =>
+    {
+        var standing = Standing(positionId)
+            ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, $"'{positionId}' is no position on the chart");
+        var units = Units().ToDictionary(u => u.Id, StringComparer.Ordinal);
+        if (!units.TryGetValue(standing.UnitId, out var unit))
+            throw Damaged($"position {positionId} belongs to {standing.UnitId}, which is not a unit");
+
+        IReadOnlyList<OrgUnitRow> line = [unit, .. Line(units, unit)];
+        if (line[^1].Kind != OrgUnitKind.Root)
+            throw Damaged($"the line of parents above {unit.Id} ends at {line[^1].Id}, which is not the root");
+        return line;
+    });
 
     /// <summary>
     /// A UNIT AND EVERY UNIT BELOW IT, breadth first: the unit itself, then its children, then theirs. Empty for

@@ -307,7 +307,8 @@ public class OrgLedgerTests
     ///
     /// <para><b>Three layers, because a name is the weakest of them.</b> No op and no <c>trade</c> verb names the
     /// organisation, and no op takes an argument that would address a unit, a head or a seat. <c>OrgStore</c>'s
-    /// public surface is its seven reads: no writer, yet. And no source file but the rung writes an org table at
+    /// public surface is its reads: no writer, yet — <c>FundingLine</c> (<c>U-org-envelopes</c>) is one more read, the chain a
+    /// launch is charged to. And no source file but the rung writes an org table at
     /// all, so no handler can do it with raw SQL either. <c>U-org-verbs</c>, which adds the writers and a READ op,
     /// is where each layer is revisited, out loud.</para>
     /// </summary>
@@ -329,7 +330,7 @@ public class OrgLedgerTests
         }
 
         Assert.Equal(
-            ["Ancestors", "IsAppPrincipal", "Position", "Positions", "Standing", "Subtree", "UnitOf", "Units"],
+            ["Ancestors", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Standing", "Subtree", "UnitOf", "Units"],
             typeof(OrgStore)
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .Select(m => m.Name).Order(StringComparer.Ordinal).ToArray());
