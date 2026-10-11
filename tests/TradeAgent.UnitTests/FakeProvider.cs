@@ -39,6 +39,7 @@ public sealed class FakeProvider : IDisposable
     readonly ConcurrentQueue<string> _marks = new();
     readonly ConcurrentQueue<string> _keys = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
+    readonly CancellationTokenSource _release = new();
     string _last = "";
 
     /// <param name="answers">
@@ -108,6 +109,24 @@ public sealed class FakeProvider : IDisposable
                     if (_responses.TryDequeue(out var next)) _last = next;
                     var body = Encoding.UTF8.GetBytes(_last.Length > 0 ? _last : Message("(nothing canned)"));
 
+                    if (StallsBody)
+                    {
+                        // A 200 WHOSE BODY NEVER FINISHES (U-wire-body-deadline): the status, the headers and the first
+                        // part of a valid body are written and flushed, then the rest is held until this host is disposed.
+                        // Chunked, so no length is declared that the close would then have to break.
+                        ctx.Response.StatusCode = 200;
+                        ctx.Response.ContentType = "application/json";
+                        ctx.Response.SendChunked = true;
+                        var first = body.AsMemory(0, Math.Max(1, body.Length / 2));
+                        Mark($"answering 200, {first.Length} of {body.Length} bytes, then holding the rest, on purpose");
+                        await ctx.Response.OutputStream.WriteAsync(first);
+                        await ctx.Response.OutputStream.FlushAsync();
+                        Mark("first part flushed");
+                        try { await Task.Delay(Timeout.Infinite, _release.Token); }
+                        catch (OperationCanceledException) { Mark("released"); }
+                        continue;
+                    }
+
                     ctx.Response.StatusCode = 200;
                     ctx.Response.ContentType = "application/json";
                     ctx.Response.ContentLength64 = body.Length;
@@ -149,6 +168,13 @@ public sealed class FakeProvider : IDisposable
 
     /// <summary>When set, every request is answered with this status, and with <see cref="ErrorBody"/> or no body.</summary>
     public HttpStatusCode? AlwaysAnswer { get; set; }
+
+    /// <summary>
+    /// When true, a request is answered with status 200, a JSON content type, the headers flushed and the first part of
+    /// a valid body — and the rest is held until this host is disposed (<c>U-wire-body-deadline</c>): a host whose
+    /// headers arrive at once and whose body then stalls. Nothing in it outlives <see cref="Dispose"/>.
+    /// </summary>
+    public bool StallsBody { get; set; }
 
     /// <summary>
     /// The body served with <see cref="AlwaysAnswer"/>'s status, or none — a host's error page can be anything, larger than
@@ -292,6 +318,8 @@ public sealed class FakeProvider : IDisposable
 
     public void Dispose()
     {
+        // RELEASE A HELD BODY FIRST, so the serving loop ends with the listener rather than after it.
+        try { _release.Cancel(); } catch (Exception) { }
         try { _http.Stop(); _http.Close(); } catch (Exception) { }
     }
 }
