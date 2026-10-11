@@ -129,7 +129,8 @@ public sealed record MissionOptions
     ///
     /// <para>It is the FASTEST the look comes round. While only looks wake a role, each one raises
     /// the next at twice its own interval, up to eight of these; the first real event brings it back
-    /// (<see cref="MissionLoop"/>, <c>NextLook</c>).</para>
+    /// (<see cref="MissionLoop"/>, <c>NextLook</c>). And it comes round only for a role that has open
+    /// work it owns (<see cref="RoleObjectives"/>, <c>U-reconcile-wakes</c>).</para>
     /// </summary>
     public TimeSpan ReviewEvery { get; init; } = TimeSpan.FromMinutes(30);
 }
@@ -586,6 +587,14 @@ public sealed record MissionSituation
     public IReadOnlyList<string> Restored { get; init; } = [];
 
     /// <summary>
+    /// WHAT THE APP REFUSED AND PUT NOTHING BACK OVER, one line per file (<c>U-reconcile-wakes</c>): the first time a
+    /// file was ever over its limit, so there was no earlier revision, and a file whose text could not be kept in
+    /// <c>trading/archive/</c>, so nothing was written over the only copy. Headed apart from <see cref="Restored"/>,
+    /// because "put the version before it back" is false of every line here.
+    /// </summary>
+    public IReadOnlyList<string> NotRestored { get; init; } = [];
+
+    /// <summary>
     /// WHY THIS ROLE'S PREVIOUS TURN WAS CUT SHORT BY TRADEAGENT, in the words that turn was given, or
     /// null where it finished on its own.
     ///
@@ -720,11 +729,22 @@ public sealed record MissionSituation
         // about `PLAN.md` — the file the last line of every one of these messages tells the turn to
         // read first — and a turn that reads a restored plan without being told it was restored will
         // conclude the app lost its work.
+        //
+        // EACH FILE UNDER WHAT HAPPENED TO IT (U-reconcile-wakes): one header used to head all three
+        // notices, and it was false for the two that put nothing back.
         if (Restored.Count > 0)
         {
-            b.AppendLine("**TradeAgent refused what you last wrote to these files and put the version "
-                         + "before it back.**").AppendLine();
+            b.AppendLine("**TradeAgent refused what you last wrote to these files, kept it in "
+                         + $"`{WorkspaceRevisions.ArchiveDir}/` and put the version before it back.**").AppendLine();
             foreach (var line in Restored) b.AppendLine($"- {line}");
+            b.AppendLine();
+        }
+
+        if (NotRestored.Count > 0)
+        {
+            b.AppendLine("**TradeAgent refused what you last wrote to these files and put nothing back over "
+                         + "them: what is on disk is what you wrote.**").AppendLine();
+            foreach (var line in NotRestored) b.AppendLine($"- {line}");
             b.AppendLine();
         }
 

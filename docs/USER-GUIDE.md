@@ -571,6 +571,17 @@ your positions, and it does not take away any permission — at midnight the day
 and the AI carries on where it left off. You get one line in the **Activity** log saying it happened,
 what it had spent, and when it will start again. If you want it working sooner, raise the limit.
 
+**When nothing happens, it looks around — and that costs turns too.** The AI takes a turn when something
+happens that it owns: you type, material arrives in the Inbox, one of its orders fills or settles, a report
+or a verdict arrives, or midnight gives a role that had spent its share of the day a new one. On the
+**Safety** page, under *What the AI costs*, **Wake the AI to look around at most every … minutes** sets
+the fastest it is woken to look around anyway, 30 minutes out of the box. It is the fastest, not a
+clock: while nothing happens the look slows, up to eight times that interval, and each role is looked at
+only while it has open work it owns — your messages and its orders and positions for the Operations
+Director, the research for the Research Director. A quiet day with nothing open for the chair therefore
+costs only the Research Director's looks. 0 turns the look off altogether. Waking it more often asks twice,
+because it spends more of your money.
+
 **The limit is applied before a turn runs, not after it.** Before a turn starts, TradeAgent writes
 down that it is about to spend and sets aside the most that turn could cost; the turn only runs if
 what has been spent, plus what is already set aside, plus that amount, still fits inside the limit.
