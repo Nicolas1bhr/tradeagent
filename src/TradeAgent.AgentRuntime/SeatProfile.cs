@@ -16,23 +16,89 @@ namespace TradeAgent.AgentRuntime;
 public static class SeatProfile
 {
     /// <summary>
-    /// MAKES THE SEAT HOME READY FOR A START: its folders exist. Called by <see cref="AgentEnvironment.Apply(ProcessStartInfo,
-    /// IReadOnlyDictionary{string, string}, RuntimeManifest)"/>, the one seam every process of a runtime passes.
+    /// MAKES THE SEAT HOME READY FOR A START: its folders exist and its config file is the app's. Called by <see
+    /// cref="AgentEnvironment.Apply(ProcessStartInfo, IReadOnlyDictionary{string, string}, RuntimeManifest)"/>, the one seam every
+    /// process of a runtime passes, and by <see cref="VerifyAsync"/>.
+    ///
+    /// <para><b>A LINK IS REFUSED, NEVER FOLLOWED</b> (CRED-001): every component from <see cref="SeatPlan.Root"/> down to each folder
+    /// and to the config file is looked at itself, not at what it points to, and a symbolic link, a junction or any other reparse
+    /// point is a <see cref="ErrorCode.AI_SEAT_REFUSED"/> naming it and the repair — never a silent re-create, and never a write
+    /// through it, which would have overwritten the owner's own <c>~/.codex/config.toml</c> and reused his sign-in had
+    /// <c>seat-home/codex</c> been linked to it. Missing folders are made one level at a time and looked at again; the config file
+    /// is read with a no-follow open. The folders above the root are the app's own home, which the owner places, and are not
+    /// judged here. Not checked: the owner of each folder — .NET states no file owner, and a writer that could hand the seat home to
+    /// another account already writes the owner's home. ADVISORY like the rest while seats are unconfined (§ 2.7): a same-user
+    /// writer can swap a folder for a link between this look and the start.</para>
     /// </summary>
     public static void Prepare(SeatPlan seat)
     {
-        Directory.CreateDirectory(seat.Root);
+        var root = Path.GetFullPath(seat.Root);
+        RealFolder(root, root);
         foreach (var (name, value) in seat.ResolvedEnvironment())
-            if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) Directory.CreateDirectory(value);
+            if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) RealFolder(root, Path.GetFullPath(value));
 
         // THE CLI'S OWN CONFIG FILE, WRITTEN BY THE APP BEFORE EVERY START. A turn ignores it (--ignore-user-config), but `login`,
         // `features` and `mcp` take no such flag, and a seat can write this file: a seat-written chatgpt_base_url would steer the
-        // next sign-in. Published whole through a rename, so a reader sees the old bytes or the new ones and never half of either.
+        // next sign-in. Published whole through a rename, so a reader sees the old bytes or the new ones and never half of either —
+        // and a rename replaces a name, it never writes through one.
         if (ConfigPath(seat) is { } path)
         {
+            RealFolder(root, Path.GetDirectoryName(path)!);
+            NotALink(path);
             var bytes = ConfigBytes(seat);
             if (!SameBytes(path, bytes)) OwnerOnlyFile.Write(path, bytes);
         }
+    }
+
+    /// <summary>
+    /// <paramref name="folder"/> under <paramref name="root"/>, every component from the root down a real folder: none a link, each
+    /// missing one made alone and looked at again.
+    /// </summary>
+    static void RealFolder(string root, string folder)
+    {
+        var rel = Path.GetRelativePath(root, folder);
+        if (rel == ".." || rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(rel))
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not use {folder} for the AI: it is outside the AI's own home {root}. This is TradeAgent's own " +
+                "settings at fault; nothing was written or started.");
+
+        if (Path.GetDirectoryName(root) is { } above) Directory.CreateDirectory(above);
+        var at = root;
+        Real(at);
+        if (rel == ".") return;
+        foreach (var part in rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            Real(at = Path.Combine(at, part));
+
+        static void Real(string at)
+        {
+            NotALink(at);
+            if (Directory.Exists(at)) return;
+            if (File.Exists(at))
+                throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                    $"TradeAgent will not use the AI's own home while {at} is a file where its folder belongs. Nothing was written " +
+                    $"or started. Remove {at} and TradeAgent makes the folder there.");
+            Directory.CreateDirectory(at);
+            NotALink(at);
+        }
+    }
+
+    /// <summary>
+    /// REFUSES <paramref name="path"/> WHEN IT IS ITSELF A LINK — a symbolic link, a junction or any reparse point — looked at
+    /// without following it. Nothing there is fine.
+    /// </summary>
+    static void NotALink(string path)
+    {
+        var info = new FileInfo(path);
+        string? target = null;
+        try { target = info.LinkTarget; }
+        catch (IOException) { /* not a link this platform can read the target of; the attribute below still says */ }
+        var reparse = target is not null
+            || ((File.Exists(path) || Directory.Exists(path)) && info.Attributes.HasFlag(FileAttributes.ReparsePoint));
+        if (!reparse) return;
+        throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use the AI's own home while {path} is a link{(target is null ? "" : $" to {target}")}: it never " +
+            "writes the AI's settings or starts the AI through a link, which could lead into your own Codex settings and sign-in. " +
+            $"Nothing was written or started. Remove the link {path} — not what it points to — and TradeAgent makes its own folder there.");
     }
 
     /// <summary>Where <see cref="SeatPlan.ConfigFile"/> is, or null for a plan with none.</summary>
@@ -83,7 +149,8 @@ public static class SeatProfile
     {
         if (manifest.Seat is not { } seat) return SeatVerdict.None;
 
-        Prepare(seat);
+        try { Prepare(seat); }
+        catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_SEAT_REFUSED) { return SeatVerdict.Refuse(ex.Code, ex.Message); }
 
         if (PinRefusal(manifest, exe) is { } notThePin)
             return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notThePin);
@@ -274,12 +341,39 @@ public static class SeatProfile
                $"that is not the pin, not even to ask its version. {repair}";
     }
 
-    static bool SameBytes(string path, byte[] bytes)
+    static bool SameBytes(string path, byte[] bytes) => ReadNoFollow(path) is { } held && held.AsSpan().SequenceEqual(bytes);
+
+    /// <summary>
+    /// THE FILE'S BYTES, OPENED WITHOUT FOLLOWING A LINK, or null for none, a link, or anything unreadable. On Linux and macOS an
+    /// <c>open</c> with <c>O_NOFOLLOW</c>, which fails on a link; on Windows the caller has refused any reparse point, and the file
+    /// is read as it is.
+    /// </summary>
+    static byte[]? ReadNoFollow(string path)
     {
-        try { return File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes); }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
+        try
+        {
+            if (OperatingSystem.IsWindows()) return File.Exists(path) ? File.ReadAllBytes(path) : null;
+
+            var fd = open(path, NoFollowReadOnly);
+            if (fd < 0) return null;
+            using var handle = new Microsoft.Win32.SafeHandles.SafeFileHandle((IntPtr)fd, ownsHandle: true);
+            using var stream = new FileStream(handle, FileAccess.Read, bufferSize: 0);
+            using var held = new MemoryStream();
+            stream.CopyTo(held);
+            return held.ToArray();
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
+
+    /// <summary><c>O_RDONLY | O_NOFOLLOW | O_CLOEXEC</c> as this platform numbers them (Linux on ARM numbers O_NOFOLLOW apart).</summary>
+    static int NoFollowReadOnly =>
+        OperatingSystem.IsMacOS() ? 0x0100 | 0x01000000
+        : (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+            is System.Runtime.InteropServices.Architecture.Arm64 or System.Runtime.InteropServices.Architecture.Arm ? 0x8000 : 0x20000) | 0x80000;
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true, EntryPoint = "open")]
+    static extern int open([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, int flags);
 }
 
 /// <summary>

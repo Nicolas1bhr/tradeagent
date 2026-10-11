@@ -312,6 +312,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         ProcResult r;
         try { r = await Run(exe, manifest.VersionArgs, VersionDeadline, ct, agentWork: false); }
+        // A SEAT HOME THAT WILL NOT BE USED — a link where its folder belongs — is a runtime that is not installed, with the words.
+        catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_SEAT_REFUSED) { return (null, ex.Message); }
         catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_AUTH_TIMEOUT && !ct.IsCancellationRequested)
         {
             var seconds = VersionDeadline.TotalSeconds;

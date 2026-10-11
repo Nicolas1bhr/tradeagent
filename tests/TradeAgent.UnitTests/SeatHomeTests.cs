@@ -189,6 +189,115 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// A LINKED SEAT HOME IS REFUSED, AND NOTHING IS WRITTEN OR STARTED THROUGH THE LINK (the review's P1 on the fix pass, 2026-10-11;
+    /// CRED-001). The first pass created the seat home's folders and wrote its config file with calls that follow links, so a
+    /// <c>seat-home/codex</c> linked to the owner's own <c>~/.codex</c> would have had his config overwritten and his sign-in reused.
+    /// Here a disposable "owner home" with a config and a credential stands in for his; the seat home, its <c>codex</c> folder and
+    /// its config file are each linked to it in turn (a junction for the folders on Windows); every door refuses naming the link,
+    /// and the fixture is byte-identical afterwards.
+    /// </summary>
+    [Fact]
+    public async Task A_linked_seat_home_is_refused_and_nothing_is_written_through_it()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_linked_seat_home_is_refused_and_nothing_is_written_through_it));
+        var dir = Path.GetDirectoryName(exe)!;
+        var ownerHome = Path.Combine(dir, "owner-home");
+        var ownerCodex = Path.Combine(ownerHome, ".codex");
+        Directory.CreateDirectory(ownerCodex);
+        var ownerConfig = Path.Combine(ownerCodex, "config.toml");
+        File.WriteAllText(ownerConfig, "model = \"the-owners\"\n[mcp_servers.his]\ncommand = \"his-server\"\n");
+        File.WriteAllText(Path.Combine(ownerCodex, "auth.json"), "{\"his\":\"credential\"}\n");
+        string Fixture() => string.Join("\n", Directory.GetFileSystemEntries(ownerHome, "*", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .Select(f => File.Exists(f)
+                ? $"{f} {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))} {File.GetLastWriteTimeUtc(f):O}"
+                : $"{f}/"));
+        var before = Fixture();
+
+        var root = codex.Seat!.Root;
+        var workspace = Path.Combine(dir, "role-home");
+        Directory.CreateDirectory(workspace);
+        var rt = new CliAgentRuntime(codex, presence: new AgentPresence(), seatProbe: new FakeProbe());
+        var session = Session(codex, exe, workspace, new FakeProbe());
+
+        (string Link, string Target, bool Folder)[] links =
+        [
+            (Path.Combine(root, "codex"), ownerCodex, true),
+            (root, ownerHome, true),
+            (Path.Combine(root, "codex", "config.toml"), ownerConfig, false)
+        ];
+        foreach (var (link, target, folder) in links)
+        {
+            if (Path.Exists(root)) DeleteSeatHome(root);
+            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+            if (!Link(link, target, folder)) continue;
+
+            var detected = await rt.DetectAsync();
+            Assert.False(detected.Installed, $"{link} -> {target}: detected as installed");
+            Assert.Contains(link, detected.Reason, StringComparison.Ordinal);
+
+            var verdict = session.CheckSeat();
+            Assert.True(verdict.Refused, $"{link} -> {target}: the admission passed");
+            Assert.Equal(ErrorCode.AI_SEAT_REFUSED, verdict.Code);
+            Assert.Contains(link, verdict.Refusal, StringComparison.Ordinal);
+
+            var ended = await Turn(session);
+            Assert.Contains(link, ended.Raw, StringComparison.Ordinal);
+
+            await Assert.ThrowsAsync<TradeAgentException>(() => rt.SignInWithApiKeyAsync("sk-FAKE-0000"));
+
+            Assert.Equal(before, Fixture());
+        }
+        Assert.Empty(Argv(dump));
+
+        // Unlinked, the same seat home is made again by the app and the seat starts.
+        DeleteSeatHome(root);
+        Assert.True((await rt.DetectAsync()).Installed);
+        Assert.False(session.CheckSeat().Refused);
+        Assert.Equal(before, Fixture());
+    }
+
+    /// <summary>Removes a test's seat home, unlinking any link in it without following it.</summary>
+    static void DeleteSeatHome(string root)
+    {
+        if (new FileInfo(root).LinkTarget is not null) { Directory.Delete(root); return; }
+        foreach (var entry in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (new FileInfo(entry).LinkTarget is not null)
+            {
+                if (Directory.Exists(entry)) Directory.Delete(entry); else File.Delete(entry);
+            }
+            else if (Directory.Exists(entry)) DeleteSeatHome(entry);
+            else File.Delete(entry);
+        }
+        Directory.Delete(root);
+    }
+
+    /// <summary>
+    /// A link at <paramref name="link"/> to <paramref name="target"/>: a symbolic link, and on Windows a junction for a folder (no
+    /// privilege needed). False only for a Windows file link the account may not create, which needs the symlink privilege.
+    /// </summary>
+    static bool Link(string link, string target, bool folder)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            if (folder) Directory.CreateSymbolicLink(link, target); else File.CreateSymbolicLink(link, target);
+            return true;
+        }
+        if (folder)
+        {
+            using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", ["/c", "mklink", "/J", link, target])
+                { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            mklink.WaitForExit();
+            Assert.True(mklink.ExitCode == 0 && Directory.Exists(link), $"mklink /J {link} {target} exited {mklink.ExitCode}");
+            return true;
+        }
+        try { File.CreateSymbolicLink(link, target); return true; }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (IOException) { return false; }
+    }
+
+    /// <summary>
     /// (c) A FILE THE PROFILE DOES NOT ALLOW, IN THE SEAT HOME OR THE WORKSPACE, REFUSES THE LAUNCH IN WORDS NAMING IT — before
     /// admission and again at the start, fresh or resumed. Each of the three was measured reaching the model (survey §§ 1-2): the
     /// home's <c>AGENTS.md</c> injected even under the deny set, <c>$HOME/.agents/skills</c> a skill root with CODEX_HOME set, and a
