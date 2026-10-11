@@ -448,6 +448,47 @@ public class BacktestLedgerTests(Xunit.Abstractions.ITestOutputHelper log)
         Assert.True(writers.Count == 0, string.Join("\n", writers));
     }
 
+    /// <summary>
+    /// (b, <c>U-evidence-evaluator-label</c>) THE SAME REQUEST UNDER ANOTHER EVALUATOR IS ANOTHER RUN. The run id hashes
+    /// <see cref="Referee.EvaluatorVersion"/> (the internal seam names another one, as an older build's would have been),
+    /// so a row an older evaluator wrote — its label that evaluator, its streams its own — is never the row this build's
+    /// request reads as its own: recording this build's run of the same request makes a second row with its own label and
+    /// its own streams, and the older row, its label and its streams are what they were. RED on the base: one id for both,
+    /// and the second account wrote nothing.
+    /// </summary>
+    [Fact]
+    public void The_same_request_under_another_evaluator_is_another_run()
+    {
+        const string Older = "backtest=1;metrics=1;scoring=1";
+        using var db = TestEnv.NewDb();
+        var store = new StrategyStore(db);
+        var program = Parsed();
+        store.RecordVersion(Version(program));
+        var dataset = Dataset(db);
+        var model = ExecutionModel.Declare(0.001m, 0m).Model!;
+        var request = new BacktestRequest(dataset, "aa11", model, At, At.AddHours(1));
+
+        var current = request.RunIdFor(program.StrategyId);
+        var older = request.RunIdFor(program.StrategyId, Older);
+        Assert.Equal(current, request.RunIdFor(program.StrategyId, Referee.EvaluatorVersion));
+        Assert.NotEqual(current, older);
+
+        // WHAT AN OLDER EVALUATOR RECORDED: its row, labelled with it, and its stream.
+        var olderStream = Kept(older, 1, model.Canonical, "old", Day(13, 60, 10_000m, 0.001m, null));
+        store.RecordRun(Run(older, program.StrategyId, dataset), [Trade(older, 0)], [olderStream]);
+        Exec(db, $"UPDATE strategy_run SET evaluator_version='{Older}' WHERE id='{older}'");
+
+        // THIS BUILD'S RUN OF THE SAME REQUEST: a row of its own, its label, its streams.
+        var currentStream = Kept(current, 1, model.Canonical, "new", Day(13, 60, 10_050m, 0.005m, null));
+        Assert.Equal(current, store.RecordRun(Run(current, program.StrategyId, dataset), [], [currentStream]));
+
+        Assert.Equal(Older, store.RunById(older)!.EvaluatorVersion);
+        Assert.Equal(Referee.EvaluatorVersion, store.RunById(current)!.EvaluatorVersion);
+        Assert.Equal(Shown([olderStream]), Shown(store.StreamsOf(older)));
+        Assert.Equal(Shown([currentStream]), Shown(store.StreamsOf(current)));
+        Assert.Equal(2, store.RunsOfDataset(dataset).Count);
+    }
+
     static string? Scalar(Database db, string sql) => db.Read(_ =>
     {
         using var c = db.Cmd(sql);

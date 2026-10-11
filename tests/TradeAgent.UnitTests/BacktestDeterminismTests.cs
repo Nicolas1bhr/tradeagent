@@ -153,9 +153,11 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
     /// THE RUN ID IS A HASH OF EVERY INPUT THAT DECIDED THE ANSWER, AND THE COMPOSITION IS PINNED.
     ///
     /// <para>The golden figure was computed OUTSIDE this build, in Python, over the exact string the
-    /// composition produces — <c>version id \n dataset id \n dataset sha256 \n window \n model</c> —
+    /// composition produces — <c>version id \n dataset id \n dataset sha256 \n window \n model \n evaluator</c> —
     /// so a change to the order, the separator or the fields is caught here and not by a reader
-    /// wondering why last month's id no longer reproduces.</para>
+    /// wondering why last month's id no longer reproduces. The evaluator line is
+    /// <c>backtest=2;metrics=1;scoring=1</c> (<c>U-evidence-evaluator-label</c>): a bump of
+    /// <see cref="Referee.EvaluatorVersion"/> moves every run id, and this test says so where it happens.</para>
     ///
     /// <para>The dataset's SHA-256 is in there as well as its id, which is the mutant this test was
     /// watched against: with the sha left out, a run over the bytes the ledger measured and a run over
@@ -170,13 +172,13 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
             new DateTimeOffset(2026, 8, 2, 0, 0, 0, TimeSpan.Zero));
 
         Assert.Equal("2026-08-01T00:00:00.0000000Z..2026-08-02T00:00:00.0000000Z", window.Window);
-        Assert.Equal("9eff99d7d6e9c95b3bf513f496ced6e193e4db52023add1386e68301769cee7d",
+        Assert.Equal("dec8536c5c800bf8ad6880e547da3aacadb5025e89b38192a29ca84f4fb92b59",
             window.RunIdFor("version-x"));
 
         // An open-ended window says `all` on the side that is open, and is its own run.
         var everything = window with { From = null, To = null };
         Assert.Equal("all..all", everything.Window);
-        Assert.Equal("70fdabd4374362031062ad3c69888e55dbb981b15fd8d8d09533bc1c195fa42b",
+        Assert.Equal("a9286f8a7c32e28563a36d59ef3f1bd3c3c404d1ead560b2f41f54d8076ed4fa",
             everything.RunIdFor("version-x"));
     }
 
