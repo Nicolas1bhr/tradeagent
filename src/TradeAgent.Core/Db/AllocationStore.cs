@@ -616,7 +616,8 @@ public sealed class Allocations(Database db)
     /// <see cref="RecordPaper"/>'s write. Four questions, each about the ledger as it stands: ONE TERM PER VERSION — a
     /// version that has held a slot is never given another, so an ended term ends it; A THIRD OF THE SLOTS — the envelope's
     /// standing slots of OTHER versions under this policy are fewer than <c>Inconclusive.Slots(max_deployments)</c>, none
-    /// below three; ONE PER LINEAGE — none of them stands for a version judged under the same campaign lineage (the family's
+    /// below three; ONE PER LINEAGE — no standing slot of another version under this policy, in ANY envelope, stands for a
+    /// version judged under the same campaign lineage (the family's
     /// stand-in until <c>U-experiments-op</c>), and a lineage that cannot be read refuses; and THE CHARGE — the verdict's
     /// campaign has a trial left (<see cref="CampaignStore.IncubationRefusal"/>). Re-recording the row that is already
     /// there is the same slot and is neither a second term nor a second charge.
@@ -655,17 +656,36 @@ public sealed class Allocations(Database db)
                    + $"({string.Join(", ", held.Select(a => Short(a.VersionId)))}) and the quota is {slots}, a third rounded "
                    + $"down, so version {Short(allocation.VersionId)} was not given an inconclusive paper slot.";
 
-        foreach (var other in held)
+        // ONE PER LINEAGE IN THE WHOLE LEDGER, not per envelope: the family is one family on every account, so the fence
+        // reads every standing inconclusive slot of another version, whichever envelope holds it. The count above stays
+        // the envelope's own third.
+        foreach (var other in StandingInconclusive(now)
+                     .Where(a => !string.Equals(a.VersionId, allocation.VersionId, StringComparison.Ordinal)))
             if (_promotions.ById(other.PromotionId) is not { } theirs
                 || _campaigns.LineageRoot(theirs.CampaignId) is not { } root
                 || root == lineage)
                 return $"version {Short(other.VersionId)} already holds the inconclusive paper slot of campaign lineage "
-                       + $"{lineage} in the paper envelope on account {envelope.AccountId} — or its lineage cannot be read — "
-                       + $"and the quota allows one per lineage at a time, so version {Short(allocation.VersionId)} was "
-                       + "not given one. The lineage stands in for the family until families exist.";
+                       + $"{lineage} in the paper envelope on account {other.AccountId} — or its lineage cannot be read — "
+                       + $"and the quota allows one per lineage at a time across every envelope, so version "
+                       + $"{Short(allocation.VersionId)} was not given one. The lineage stands in for the family until "
+                       + "families exist.";
 
         return already ? null : _campaigns.IncubationRefusal(promotion.CampaignId, allocation.VersionId);
     }
+
+    /// <summary>
+    /// EVERY PAPER ROW UNDER <see cref="AllocationPolicy.InconclusiveV1"/> IN FORCE AT <paramref name="now"/>, in every
+    /// envelope — what the one-per-lineage fence reads. A row whose envelope has since ended is still counted: the reading
+    /// that can only refuse. Private: this ledger's public surface is its two writes and its reads.
+    /// </summary>
+    IReadOnlyList<AllocationRow> StandingInconclusive(DateTimeOffset now) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {Cols} FROM strategy_allocation WHERE policy_version=$p "
+            + "ORDER BY effective_from DESC, at DESC, id DESC",
+            ("$p", AllocationPolicy.InconclusiveV1));
+        return (IReadOnlyList<AllocationRow>)[.. Read(c).Where(a => a.IsPaper && a.StandsAt(now))];
+    });
 
     /// <summary>
     /// WHICH INCONCLUSIVE CLASS THIS STANDING IS, over its verdict's holdout span (<see cref="CampaignStore.HoldoutSpan"/>),
