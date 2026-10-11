@@ -464,15 +464,20 @@ public sealed class MissionEventStore(Database db)
     ///
     /// A row with no role is the chair's, which is why the filter is written out rather than
     /// expressed as <c>role = $role</c>: every event in an upgraded database has NULL there.
+    ///
+    /// <para><b>THE OWNER'S WORDS FIRST, then the oldest</b> (pass 3, item 3). A turn is handed at most
+    /// <paramref name="limit"/> wakes, and a backlog older than a message — fills recorded over a downtime, or the
+    /// retry of words a lost turn took, written at its recovery — would otherwise push the owner's words out of the
+    /// very turn that has to answer them first.</para>
     /// </summary>
     public List<MissionEvent> DueFor(string role, DateTimeOffset now, int limit = BatchLimit) =>
         db.Read(_ =>
         {
             using var c = db.Cmd(
                 $"SELECT {Cols} FROM mission_event WHERE consumed_at IS NULL AND due_at <= $now "
-                + "AND COALESCE(role,$chair) = $role ORDER BY due_at, rowid LIMIT $limit",
+                + "AND COALESCE(role,$chair) = $role ORDER BY (kind = $owner) DESC, due_at, rowid LIMIT $limit",
                 ("$now", Sql.T(now)), ("$role", role), ("$chair", CouncilRoles.Default),
-                ("$limit", limit));
+                ("$owner", MissionEventKind.Owner), ("$limit", limit));
             using var r = c.ExecuteReader();
             var list = new List<MissionEvent>();
             while (r.Read()) list.Add(Read(r));
