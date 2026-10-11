@@ -10502,3 +10502,13 @@ argv. STILL OWED: the row "a cell cannot read another attempt's prompt" needs a 
 **Accepted deviation:** a broken pipe on the prompt write is ignored (an early-stopped reader no longer posts a chat line); the turn is judged by its exit and output.
 **Tests box:** NOT RUN — a run for another unit was in progress at both tries. **NOT VERIFIED:** OpenCode's stdin path on a real binary (none installed; none installed by
 the legs). Reviews: fleet/tmp/A-org/u-prompt-stdin-build/ (P1 + P2, triage fleet/records/U-prompt-stdin-review-triage.md), u-prompt-stdin-fix/ (re-review: no defects).
+
+## 2026-10-11 (night) — the fleet's secret scan failed open on one input; fixed, and every claim since re-checked (the orchestrator)
+**Defect (fleet tooling, outside the repo):** `fleet/bin/scan.sh` passed a judged exclusion to `grep -viE "$EX"`. An exclusion beginning with "-" (a
+documented `--with-api-key` phrase) was read by grep as an OPTION; grep failed, the hit list emptied, and the gate printed SCAN CLEAN with exit 0 having
+judged nothing. Found by the U-seat-signin builder, reproduced and fixed by seat A: the exclusion goes through `-e`, and a grep error (exit > 1) now
+FAILS the scan; tested: a leading-dash exclusion keeps 9 of 13 hits, an invalid regex exits 1, the normal and fully-excluded paths unchanged.
+**Exposure re-checked (VERIFIED, 2026-10-11 ~23:1x):** seat A re-scanned main since `fd7174ee` with the fixed tool — 52 hits, every one judged a false
+positive (fixtures, prose, the planted fake key); the orchestrator searched all 120 open remote branches and today's main commits for the high-signal
+patterns (API-key and token shapes, private-key headers, private-network addresses, the boxes' names, `TA_WIN_*`) — zero real hits, only "Tailscale"
+inside the tests-box tool's own error sentence. Every "scan clean" claim since `fd7174ee` therefore stands as re-verified, not as originally gated.
