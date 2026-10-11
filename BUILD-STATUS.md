@@ -9694,3 +9694,40 @@ pid check (a false red, never a false green). Sent to the orchestrator for seat 
 shard 4 4). The paths-ignore filter on a real main push: checked after this push (the landing push must start a run, the next bookkeeping-only push none).
 shellcheck green on CI only (not installed locally). `tools/win-test-run.ps1` still runs the suite whole. Tests box NOT RUN ("the machine does not answer").
 **CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat P's next record and `fleet/ci-ledger.md`.
+
+## U-decision-card — the owner's Perception card: Jev's key pasted in the app's own window, a two-press daily budget and a Test press, with the decision models' rate limits enforced before the port is called (landed 2026-10-11, seat B)
+
+**Landed** at `778efd9e` (code tip `9e94ca84`; rebased from `8148cb68`, src+tests patch-id `f86c07cd1423` identical at each rebase) on `main` `d0e4f01f`, by `land.sh` v2:
+**CI CARRIES** — run **38099387582** at `4633326f` (the same build tree; only bookkeeping paths differ): all 11 jobs success — windows shards 1–5 10/4/8/8/12 min, ubuntu 13,
+macos 16, linux-host 20, package 4, package-linux 1, shard-plan 0; `land.sh check` VERDICT PASS. No local suite (SPEED-MODE § 5). No rung (main 30, `tape.db` 2). Money path (credentials, spend).
+**What changed** (13 files and the fix pass):
+- `Core/Decisions/DecisionRateGate.cs` (new): per instrument, at most its documented requests a second and tokens a second (a call in flight counted at its bound until its
+  answer says what it used); where EITHER rate is undocumented, TradeAgent's own bound applies whole — one call in flight AND one a second, named as the app's; a host's
+  429, 529 or 402 holds the instrument until its `Retry-After`, else 1 s doubling to 60 s, in memory. `TypeSafeWire` asks it after the tape refusal and BEFORE the key is
+  read or anything reserved; a hold is refused in words. `DecisionInstruments.Read` refuses a file row that zeroes a documented rate or sets an undocumented one.
+- `TypeSafeWire` sends with `ResponseHeadersRead`: status and `Retry-After` are read first, a non-2xx's body never (a declared deviation from "buffer it": unused, so it
+  cannot lose the status), a 2xx's body only up to `MaxAnswerBytes` under one deadline of the existing timeout — nothing raised, no retry.
+- `App/PerceptionCard.cs` (new), on the Safety page after "What the AI costs", built once and updated in place: the model chosen in one press; the key pasted into a masked
+  box bound to that model's built-in address and forgotten in one press; the daily budget raised only by two presses, an edit of the box disarming the armed save; today's
+  spending and the cap named when it binds first; every price, limit and the app's own bound read off the instrument and dated; the terms in two sentences.
+- The Test press: one fixed neutral question labelled `owner-test`, sent only to the instrument the key was pasted for, whose worst case (its reservation and price) is the
+  one named beside it, disabled while it flies, its answer shown as the port returned it. CONTRACTS, RESEARCH-REQUIRED § D5 (re-read 2026-10-10) and USER-GUIDE say it.
+- **A money defect on main, fixed here (declared deviation, commit `18276c01`):** the AI daily cap's two-press raise did not bind its amount — arm a raise to one figure, edit
+  the box, confirm, and the new figure was saved. Its save now disarms on an edit (`SafetyPage.BuildSaveDailyCap(box, …)`), as the allocation and envelope boxes did.
+**Verified (quoted from the report and the fix pass):** Release `--no-incremental` 0 Warning(s), 0 Error(s). The touched classes (PerceptionCardTests, DecisionRateGateTests,
+DecisionPortTests, MissionCostSurfacesTests, SuiteReachesNoVendorTests) 3× under the suite lock: `Passed: 56, Total: 56` each. Branch CI 38095678030 at `8148cb6`: all six jobs
+success. Names main..tip: `sets: base 2457 tip 2469`, `removed: 0`. Scan: 115 hits judged false positives (LLM token counts, `deadline.Token`, `PasswordChar`, a
+`not-a-real-decision-key-<guid>` test value, the tests box's own message), excluded by PHRASE — an earlier leg's bare-word `token` exclusion was re-scanned and refused.
+**Reds and mutants:** each fix red at its tip, then its mutant watched red: budget edit (`Expected: 4 Actual: 100`), daily cap (`Assert.Empty() … [100]`), the zeroed rate
+(`Assert.Null()`; per-rate bound `Expected: 1 Actual: 10`), the bad body (`Expected: FAILED Actual: UNANSWERED`), the worst case (`"Asks Jev 1.13 at TypeSafe …"`). Mutants
+on the unit's own guards: the gate after `Reserve` ⇒ (a); `Retry-After` ignored ⇒ (c); the press on the first instrument ⇒ (g); a one-press raise ⇒ (f); a literal limit and a
+terminal hint ⇒ (h); a pipe arg `budget` ⇒ `DecisionPortTests`; a settled call charged 0 ⇒ (b). **Judged exception:** red-before at base for (a)–(d) NOT RECORDED — the
+gate class did not exist at base and the builder died before reporting; the mutants above are the evidence.
+**Reviews (Codex gpt-6.1-sol):** first pass 4 findings, all real (the budget's unbound confirmation, a zeroed rate lifting the bound, a bad body losing the hold, the worst case
+of the wrong instrument) — fixed by a fresh fixer; the re-review: all five CLOSED. Its one test gap — no test is red if the 2xx body read loses its deadline
+(`TypeSafeWire.cs:401`) — is judged not a blocker (the guard is present; without it a stalled body fails CLOSED: the call stays in flight, the gate holds later calls, the
+reservation stands) and is OWED as card `U-wire-body-deadline` (tests only: 200 headers at once, the body stalled past the timeout ⇒ UNANSWERED with HttpStatus 200).
+**NOT VERIFIED / not done:** no request was ever sent to a vendor (the first real press is the owner's); a hold across a restart (memory only); whether a 429 is billed;
+which agreement binds OpenRouter's Jev output (UNKNOWN, R02 § 2); the card rendered on Windows or Linux (no launch, no capture, by the owner's word); a cut (short) 2xx body;
+the full local suites (CI's). Tests box NOT RUN ("the machine does not answer"). Nothing calls the port yet but the owner's Test press.
+**CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat B's next record and `fleet/ci-ledger.md`.
