@@ -97,6 +97,43 @@ public class AlphaWealthTests
         Assert.Equal(AlphaWealth.Inconclusive, row3.AddisStatus);
     }
 
+    /// <summary>
+    /// THE α-WEALTH IS SPENT IN THE ORDER THE CHARGES WERE RECORDED, NOT BY THEIR TIMESTAMPS (finding 2 of the review). Two
+    /// verdicts charged one after the other at one instant — a coarse or injected clock — whose second version's id sorts
+    /// before the first's: ordered by (timestamp, campaign, version id), the second would read an empty history and spend
+    /// α_1 again. It reads the first's step and spends α_2. The mutant is the order back to (timestamp, ids).
+    /// </summary>
+    [Fact]
+    public async Task Charges_at_one_instant_spend_alpha_in_the_order_they_were_charged()
+    {
+        var w = await RefereeVerdictTests.Given(frozenAt: new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), verdicts: 2);
+        using var _ = w.Db;
+        var exit = Enumerable.Range(98, 40).First(x => string.CompareOrdinal(IdOf(x), w.VersionId) < 0);
+        var second = Version(w, exit);
+        Assert.True(string.CompareOrdinal(second, w.VersionId) < 0, $"{second} sorts after {w.VersionId}");
+
+        var t0 = new DateTimeOffset(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);
+        var referee = new Referee(w.Db, () => t0);
+        Assert.True(referee.Verdict(w.VersionId, w.Campaign.Id).Ok);
+        var judged = referee.Verdict(second, w.Campaign.Id);
+        Assert.True(judged.Ok, judged.Why);
+        Assert.Equal([t0, t0], w.Gw.Campaigns.JudgementsCharged(w.Campaign.Id).Select(v => v.RequestedAt));
+
+        var holdouts = referee.Holdouts;
+        var row1 = holdouts.SealedOf(w.Campaign.Id, w.VersionId)!;
+        var row2 = holdouts.SealedOf(w.Campaign.Id, second)!;
+        Assert.Equal([w.VersionId, second], w.Gw.Campaigns.JudgementsCharged(w.Campaign.Id).Select(v => v.VersionId));
+        Assert.Equal([AlphaWealth.Inconclusive], holdouts.History(w.Campaign.Id, second));
+        Assert.Equal(AlphaWealth.AlphaAfter([]), row1.AlphaJ, 15);
+        Assert.Equal(AlphaWealth.AlphaAfter([AlphaWealth.Inconclusive]), row2.AlphaJ, 15);
+        Assert.Equal(row1.WealthAfter, row2.WealthBefore, 15);
+    }
+
+    static string IdOf(int exitAbove) => StrategyParser.Parse(Text(exitAbove)).Program!.StrategyId;
+
+    static string Text(int exitAbove) => "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + $"exit when close > {exitAbove}\nentry when close < 97\n";
+
     /// <summary>Another version of the fixture's program, recorded frozen with the fixture's own, for a second verdict.</summary>
     static string Version(RefereeVerdictTests.World w, int exitAbove)
     {
