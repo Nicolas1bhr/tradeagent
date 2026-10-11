@@ -645,6 +645,14 @@ public sealed record MissionSituation
     public IReadOnlyList<string> NotRestored { get; init; } = [];
 
     /// <summary>
+    /// WHAT THE APP HELD OF WHAT THIS POSITION STAGED, one line per output, since its last turn (<c>U-org-rights</c>;
+    /// <see cref="CouncilRelay.HeldNotices"/>): a position after the legacy pair has no recipient until
+    /// <c>U-org-assignments</c>, so its file was recorded and published to nobody, and the line carries that disposition.
+    /// Empty for the legacy pair, whose outputs are always handed on.
+    /// </summary>
+    public IReadOnlyList<string> HeldOutputs { get; init; } = [];
+
+    /// <summary>
     /// WHY THIS ROLE'S PREVIOUS TURN WAS CUT SHORT BY TRADEAGENT, in the words that turn was given, or
     /// null where it finished on its own.
     ///
@@ -835,6 +843,16 @@ public sealed record MissionSituation
             b.AppendLine("**TradeAgent refused what you last wrote to these files and put nothing back over "
                          + "them: what is on disk is what you wrote.**").AppendLine();
             foreach (var line in NotRestored) b.AppendLine($"- {line}");
+            b.AppendLine();
+        }
+
+        // WHAT THE APP HELD (U-org-rights): what this position staged went to nobody, and it is told so beside the other
+        // things the app did with its files, rather than left to look for a reply that is not coming.
+        if (HeldOutputs.Count > 0)
+        {
+            b.AppendLine("**TradeAgent recorded what you staged in `out/` and handed it to nobody: you have no recipient "
+                         + "yet.**").AppendLine();
+            foreach (var line in HeldOutputs) b.AppendLine($"- {line}");
             b.AppendLine();
         }
 

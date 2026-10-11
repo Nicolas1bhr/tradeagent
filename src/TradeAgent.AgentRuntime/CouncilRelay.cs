@@ -247,7 +247,7 @@ public sealed class CouncilRelay
     {
         var restores = new List<WorkspaceRevisions.Restore>();
 
-        foreach (var role in CouncilRoles.All)
+        foreach (var role in Positions())
         {
             Publish(role, attempt: null);
             restores.AddRange(_revisions.Snapshot(role, attempt: null));
@@ -255,6 +255,25 @@ public sealed class CouncilRelay
 
         Deliver();
         WorkspaceRevisions.Apply(restores);
+    }
+
+    /// <summary>
+    /// THE POSITIONS A WHOLE-ORGANISATION PASS WALKS (<c>U-org-rights</c>): the legacy pair, as always, then every other
+    /// position the chart holds as ACTIVE, by its exact id. A chart that cannot be read walks the legacy pair alone — the
+    /// others' files stay on disk, unpublished, for the next pass — so a damaged chart can delay a hold and never route one.
+    /// </summary>
+    IReadOnlyList<string> Positions()
+    {
+        var walk = new List<string>(CouncilRoles.All);
+        try
+        {
+            walk.AddRange(new OrgStore(_db).Positions()
+                .Where(p => p.Status == OrgPositionStatus.Active && !CouncilRoles.IsKnown(p.Id) && CouncilRoles.IsPositionId(p.Id))
+                .Select(p => p.Id)
+                .Order(StringComparer.Ordinal));
+        }
+        catch (Exception) { /* the legacy pair still reconcile; the rest wait for a pass that can read the chart */ }
+        return walk;
     }
 
     /// <summary>
@@ -377,6 +396,19 @@ public sealed class CouncilRelay
         {
             // ---- boundary 1: the file exists and nothing in the tables knows about it ------------
             Boundary?.Invoke("file");
+
+            // HELD, PUBLISHED TO NOBODY (U-org-rights). A position after the legacy pair has no recipient
+            // (`RecipientsOf`) until U-org-assignments names its mandate's issuer: its file passed the fence and is
+            // recorded as the app's own copy, attributed to the launch its name carries, with no delivery and no wake —
+            // and the hold is a disposition its own next Situation reads. Never routed to Research, never an assessment
+            // or a challenge: those are the legacy pair's, and a boundary is a decision no unconfined seat takes.
+            if (p.RecipientList.Count == 0)
+            {
+                _store.Record(p, _now());
+                _events.Hold(p.Id, p.Role, _now(), HeldWhy);
+                Boundary?.Invoke("transaction");
+                continue;
+            }
 
             // THE THREE WAYS AN ARTIFACT LANDS, AND THE APP PICKS. A report or an agenda is committed
             // and handed straight over. An ASSESSMENT is committed and SEALED — no delivery, no wake —
@@ -592,9 +624,13 @@ public sealed class CouncilRelay
     /// WHAT EACH ROLE PUBLISHES. The chair sends an agenda down; Research reports up. It is a
     /// function of the role rather than of the file name, so a role cannot change what its output IS
     /// by naming a file differently.
+    ///
+    /// <para>Any other position REPORTS (<c>U-org-rights</c>): its output goes up to its mandate's issuer once
+    /// <c>U-org-assignments</c> names one, and until then it is held (<see cref="RecipientsOf"/>). It is never the
+    /// chair's agenda, which is the only kind that carries the owner's words downward.</para>
     /// </summary>
     public static string KindFor(string role) =>
-        role == CouncilRoles.Research ? PublicationKind.Report : PublicationKind.Brief;
+        role == CouncilRoles.Operations ? PublicationKind.Brief : PublicationKind.Report;
 
     /// <summary>
     /// EVERY KIND ONE ROLE MAY PUBLISH. Its own handoff, plus the two the consequential boundary adds —
@@ -604,17 +640,63 @@ public sealed class CouncilRelay
     /// <para>A function of the role and never of the file name, like <see cref="KindFor"/>: a role does
     /// not get to turn its agenda into an assessment by renaming the file, and WHICH boundary an
     /// assessment answers is the app's decision too (<see cref="CouncilBoundaries.Assess"/>).</para>
+    ///
+    /// <para><b>The boundary's two kinds are the legacy pair's</b> (<c>U-org-rights</c>): any other position stages its
+    /// own report and nothing else, because an assessment or a challenge is a decision, and a decision verb on an
+    /// unconfined seat stays refused (<c>docs/ORCHESTRATION.md</c> § 2.3).</para>
     /// </summary>
     public static string[] KindsFor(string role) =>
-        [KindFor(role), PublicationKind.Assessment, PublicationKind.Challenge];
+        CouncilRoles.IsKnown(role)
+            ? [KindFor(role), PublicationKind.Assessment, PublicationKind.Challenge]
+            : [KindFor(role)];
 
     /// <summary>
     /// WHO IT GOES TO. Both directions are one hop today. It is here rather than in the mission file
     /// because a role must not be able to choose its own audience: that is the recipient scoping
     /// round 4 asked for, and it is the app's decision.
+    ///
+    /// <para><b>The legacy pair only, each by its exact id</b> (<c>U-org-rights</c>). Every other position has NOBODY:
+    /// its output is held (<see cref="Land"/>), with its disposition in its own next Situation, until
+    /// <c>U-org-assignments</c> names its mandate's issuer. Before this, every role that was not Research was sent to
+    /// Research — so a third position's file landed as Research's agenda, with a paid wake.</para>
     /// </summary>
-    public static string[] RecipientsOf(string role) =>
-        role == CouncilRoles.Research ? [CouncilRoles.Operations] : [CouncilRoles.Research];
+    public static string[] RecipientsOf(string role) => role switch
+    {
+        CouncilRoles.Research => [CouncilRoles.Operations],
+        CouncilRoles.Operations => [CouncilRoles.Research],
+        _ => []
+    };
+
+    /// <summary>What a hold's disposition says: why nobody was handed the output.</summary>
+    public const string HeldWhy = "no recipient until U-org-assignments";
+
+    /// <summary>The most held outputs one Situation names.</summary>
+    public const int HeldLimit = 10;
+
+    /// <summary>
+    /// WHAT <paramref name="role"/>'S NEXT SITUATION SAYS THE APP DID WITH WHAT IT STAGED (<c>U-org-rights</c>): one
+    /// line per output held since its last woken turn began (every one, where it has had none), newest first, at most
+    /// <see cref="HeldLimit"/> — the file, the publication it became and the disposition. Empty for the legacy pair, whose
+    /// outputs always have a recipient; a ledger that cannot be read says nothing rather than something false.
+    /// </summary>
+    public static IReadOnlyList<string> HeldNotices(Database db, string role)
+    {
+        try
+        {
+            var since = new AiAttemptStore(db).LastWoken(role)?.StartedAt;
+            var store = new PublicationStore(db);
+            var lines = new List<string>();
+            foreach (var e in new MissionEventStore(db).HeldSince(role, since, HeldLimit))
+            {
+                if (e.Payload is null || Json.Read<MissionTask>(e.Payload) is not { } task) continue;
+                var source = store.Get(task.Publication)?.Source ?? "a file";
+                lines.Add($"`{source}` (publication {task.Publication[..Math.Min(12, task.Publication.Length)]}): "
+                          + $"{e.Disposition} — {e.DispositionDetail}.");
+            }
+            return lines;
+        }
+        catch (Exception) { return []; }
+    }
 
     /// <summary>The file names each kind is read from — exactly what the mission file asks for.</summary>
     public static string Pattern(string kind) => kind switch

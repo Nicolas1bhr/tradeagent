@@ -220,6 +220,40 @@ public class OrgRightsTests
         var held = Assert.Single(store.By(Third));
         Assert.Empty(held.RecipientList);
         Assert.Equal("turn-third-out", held.Attempt);
+        Assert.Equal(PublicationKind.Report, held.Kind);
+
+        // THE HOLD IS A DISPOSITION, never a wake: born consumed by no launch, and named in the writer's next Situation.
+        var hold = Assert.Single(events.OfKind(MissionEventKind.Output));
+        Assert.Equal(MissionEventIds.Held(held.Id), hold.Id);
+        Assert.Equal(Third, hold.Role);
+        Assert.Equal(MissionEventDisposition.Held, hold.Disposition);
+        Assert.Equal(CouncilRelay.HeldWhy, hold.DispositionDetail);
+        Assert.NotNull(hold.ConsumedAt);
+        Assert.Null(hold.ConsumedBy);
+        Assert.Empty(events.DueFor(Third, DateTimeOffset.UtcNow.AddMinutes(1)));
+        var notice = Assert.Single(CouncilRelay.HeldNotices(db, Third));
+        Assert.Contains(held.Source!, notice, StringComparison.Ordinal);
+        Assert.Contains($"{MissionEventDisposition.Held} — {CouncilRelay.HeldWhy}", notice, StringComparison.Ordinal);
+        var text = new MissionSituation { Role = Third, HeldOutputs = CouncilRelay.HeldNotices(db, Third) }.Text();
+        Assert.Contains(notice, text, StringComparison.Ordinal);
+        Assert.Empty(CouncilRelay.HeldNotices(db, CouncilRoles.Research));
+
+        // A RE-RUN HOLDS NOTHING TWICE, and an assessment it stages is not its to publish (a boundary is the legacy pair's).
+        File.WriteAllText(Path.Combine(Home(Third), WorkspaceBuilder.OutDir, "assessment-turn-third-out.md"), "my view");
+        relay.Run(Third, "turn-third-out");
+        Assert.Single(store.By(Third));
+        Assert.Single(events.OfKind(MissionEventKind.Output));
+
+        // RECONCILE WALKS THE ACTIVE POSITIONS: a lost turn's file is held on the start-up pass too, never routed.
+        attempts.Begin(new AiAttempt { Id = "turn-third-lost", StartedAt = DateTimeOffset.UtcNow, Role = Third });
+        attempts.LoseOpen(DateTimeOffset.UtcNow);
+        File.WriteAllText(Path.Combine(Home(Third), WorkspaceBuilder.OutDir, MissionSituation.OutputName(Third, "turn-third-lost")),
+            "what the lost turn found");
+        relay.Reconcile();
+        Assert.Equal(2, store.By(Third).Count);
+        Assert.All(store.By(Third), p => Assert.Empty(p.RecipientList));
+        Assert.Equal(2, events.OfKind(MissionEventKind.Output).Count);
+        Assert.Empty(store.To(CouncilRoles.Research));
 
         // LEGACY ROUTING IS UNCHANGED: Research's report still reaches the chair.
         attempts.Begin(new AiAttempt { Id = "turn-research-out", StartedAt = DateTimeOffset.UtcNow, Role = CouncilRoles.Research });

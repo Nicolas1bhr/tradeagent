@@ -1880,7 +1880,9 @@ public sealed class AppHost : IAsyncDisposable
                 // and the next turn would spend itself wondering where its work went.
                 Restored = host._db is { } db ? WorkspaceRevisions.Notices(db, role, putBack: true) : [],
                 // AND WHAT IT REFUSED AND PUT NOTHING BACK OVER, under a header that is true of it.
-                NotRestored = host._db is { } kept ? WorkspaceRevisions.Notices(kept, role, putBack: false) : []
+                NotRestored = host._db is { } kept ? WorkspaceRevisions.Notices(kept, role, putBack: false) : [],
+                // AND WHAT IT HELD OF WHAT THIS POSITION STAGED (U-org-rights): published to nobody, with why.
+                HeldOutputs = host._db is { } held ? CouncilRelay.HeldNotices(held, role) : []
             };
 
         /// <summary>The chair's, where no role is named.</summary>
