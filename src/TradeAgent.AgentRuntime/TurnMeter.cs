@@ -800,10 +800,12 @@ public sealed class TurnMeter
     /// at <see cref="Today"/> stays where it is as a cheap first filter; this is the gate.
     ///
     /// Returns the admission: an id when the row went in, a refusal when some ceiling had no room,
-    /// and <see cref="AiAdmission.Unrecorded"/> when nothing could be written at all. That last one
-    /// is not a refusal — a turn whose row could not be written is a turn whose cost the ceiling
-    /// will not see, which the card already says out loud, and stopping the AI on a database that
-    /// will not take a row would be a new way to lose the mission.
+    /// and a refusal on <see cref="AiAdmission.Ledger"/> when the row could not be written at all
+    /// (<c>U-admission-fail-closed</c>). That last one used to be an admission — "the turn still
+    /// runs" — and it was spend no ceiling saw: a database that would not take the row started a
+    /// paid process the day's cap never counted. A cap is a cap and unknown is never zero, so a
+    /// launch nobody could reserve is not started, consumes no wake, and is tried again at the next
+    /// look, as the decision port's call already was (<c>TypeSafeWire</c>).
     /// </summary>
     /// <param name="consuming">
     /// The <c>mission_event</c> ids this launch is answering, marked consumed in the same commit as
@@ -871,7 +873,9 @@ public sealed class TurnMeter
                     _live.Enter(written);
                 }
         }
-        catch (Exception) { return AiAdmission.Unrecorded; }
+        // WHATEVER STOPPED THE ROW FROM GOING IN REFUSES THE LAUNCH. Never an admission: the row is
+        // the reservation, and a turn with no reservation is spending the day's cap cannot see.
+        catch (Exception ex) { return AiAdmission.LedgerRefused(ex.Message); }
 
         Changed?.Invoke();
         return admission;
@@ -1035,7 +1039,9 @@ public sealed class TurnMeter
                 Role = role
             };
             // Ungated: nothing admitted this turn, so nothing may refuse it after the vendor has
-            // already done the work. The row exists so the bill is recorded, not to decide anything.
+            // already done the work. The row exists so the bill is recorded, not to decide anything —
+            // A RECORD, NOT AN ADMISSION: the turn has already run, so this write fails no launch
+            // closed, and Begin above is the only place a launch is admitted (U-admission-fail-closed).
             _attempts.Begin(opened);
             id = opened.Id;
         }

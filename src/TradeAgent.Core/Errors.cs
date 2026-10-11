@@ -304,6 +304,17 @@ public static class Labels
     }
 
     /// <summary>
+    /// THE TURN REFUSED BECAUSE ITS LAUNCH COULD NOT BE WRITTEN DOWN (<c>U-admission-fail-closed</c>). The launch ledger
+    /// is where a turn's cost is reserved before the process starts, and the only place the day's limit can see it; a
+    /// turn whose row would not go in is a turn no ceiling would ever count, so it is not started. It names the ledger
+    /// and not the day's limit or a role's share, because neither of those ran out and the Safety page repairs neither.
+    /// <paramref name="cause"/> is what the ledger said, kept as the decision port keeps it.
+    /// </summary>
+    public static string LaunchLedgerUnwritable(string cause) =>
+        $"TradeAgent could not write this turn into its launch ledger ({cause}), so the turn was not started. "
+        + "Nothing was sent to the AI tool and nothing was charged. It is tried again at the next look.";
+
+    /// <summary>
     /// What the Chat page says when the owner types while the AI is working. Beside the two refusals
     /// above because all three are the same promise: their words were kept, and here is what happens
     /// next.
