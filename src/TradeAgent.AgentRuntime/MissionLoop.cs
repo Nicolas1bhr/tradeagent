@@ -434,12 +434,14 @@ public interface IMissionHost
     /// ceiling inside the transaction that writes the reservation, and a refusal from there means
     /// no process may be started — nothing was written and the wakes were not consumed.
     ///
-    /// <see cref="AiAdmission.Id"/> null WITHOUT a refusal is a host that recorded nothing. The loop
-    /// uses the id to name the <c>self</c> event when the AI asks to be woken later, and spends the
-    /// wakes anyway when nothing could be written — a wake nobody consumed would buy an unbounded
-    /// number of turns.
+    /// <see cref="AiAdmission.Id"/> null WITHOUT a refusal is <see cref="AiAdmission.NoLedger"/>: a
+    /// host BUILT without a ledger, which is what this default is and all it may be. The loop uses the
+    /// id to name the <c>self</c> event when the AI asks to be woken later, and spends the wakes of a
+    /// no-ledger host anyway — a wake nobody consumed would buy an unbounded number of turns. A host
+    /// that keeps a ledger and could not write the row REFUSES (<see cref="AiAdmission.Ledger"/>), and
+    /// then nothing is started and nothing consumed (<c>U-admission-fail-closed</c>).
     /// </summary>
-    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) => AiAdmission.Unrecorded;
+    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) => AiAdmission.NoLedger;
 
     /// <summary>
     /// The same, naming the role being charged. The role is on the launch record so the day's
@@ -1827,7 +1829,8 @@ public sealed class MissionLoop
         // another launch can have taken the room — the owner's own chat turn, or a second role — and
         // the ledger is where that is settled. Nothing was written, the wakes stayed unconsumed and
         // no process was started, so this returns exactly as a capped turn does: the reason to take
-        // a turn is still owed one, at midnight or once the owner raises the limit.
+        // a turn is still owed one, at midnight or once the owner raises the limit — or, when it was
+        // the LEDGER that would not take the row, at the next look (U-admission-fail-closed).
         //
         // BEFORE the `finally` below exists, so a refused turn commits no transition: there is no
         // launch to close, nothing was published and no wake was consumed. The id minted above is
@@ -1845,19 +1848,19 @@ public sealed class MissionLoop
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
 
-        // THE ID THE ROW ACTUALLY CARRIES. Null is a host that recorded nothing — not a refusal — and
-        // then the minted id stands, which is what the turn was already told to name its output
-        // after; the relay's fence is what refuses a file naming a launch no row carries.
+        // THE ID THE ROW ACTUALLY CARRIES. Null is a host BUILT WITHOUT A LEDGER (AiAdmission.NoLedger)
+        // and nothing else — a ledger that would not take the row refused above — and then the minted
+        // id stands, which is what the turn was already told to name its output after; the relay's
+        // fence is what refuses a file naming a launch no row carries.
         var recorded = admission.Id;
         attemptId = recorded ?? attemptId;
 
-        // A LAUNCH NOBODY COULD RECORD STILL SPENDS ITS WAKE. Leaving the events unconsumed because
-        // the attempt row could not be written would hand the same wake to the next turn, and the
-        // next, for as long as the database stayed unwritable — an unbounded number of paid turns
-        // out of one reason to take one.
+        // A NO-LEDGER HOST'S LAUNCH STILL SPENDS ITS WAKE. Leaving the events unconsumed because no
+        // attempt row exists would hand the same wake to the next turn, and the next, for ever — an
+        // unbounded number of turns out of one reason to take one.
         if (recorded is null && events is not null && wakeIds.Length > 0)
             try { events.Consume(wakeIds, Unrecorded, _now()); }
-            catch (Exception) { /* the same failure that lost the attempt row; the turn still runs */ }
+            catch (Exception) { /* a queue this host could not write; the turn still runs, as it has no ledger */ }
 
         AgentTurnEnded? ended = null;
         void Watch(AgentTurnEnded e) => ended = e;
@@ -2007,9 +2010,11 @@ public sealed class MissionLoop
     }
 
     /// <summary>
-    /// What <c>consumed_by</c> reads when the launch record could not be written. It is deliberately
-    /// not an attempt id: nothing in <c>ai_attempt</c> will ever carry it, and a row pointing at an
-    /// attempt that does not exist is the honest shape of "this turn ran and was not recorded".
+    /// What <c>consumed_by</c> reads when a host BUILT WITHOUT A LAUNCH LEDGER ran the turn
+    /// (<see cref="AiAdmission.NoLedger"/>). It is deliberately not an attempt id: nothing in
+    /// <c>ai_attempt</c> will ever carry it, and a row pointing at an attempt that does not exist is the
+    /// honest shape of "this turn ran with no ledger to record it". A ledger that would not take the row
+    /// never reaches it: that launch is refused and its wakes stay owed (<c>U-admission-fail-closed</c>).
     /// </summary>
     public const string Unrecorded = "unrecorded";
 

@@ -65,7 +65,7 @@ public class MissionOwnerMessageTests
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
         {
             Prompts.Add(prompt);
-            return AiAdmission.Unrecorded;
+            return AiAdmission.NoLedger;
         }
     }
 

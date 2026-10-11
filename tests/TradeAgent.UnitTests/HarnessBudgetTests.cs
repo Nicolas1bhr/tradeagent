@@ -241,6 +241,32 @@ public class HarnessBudgetTests : IDisposable
     }
 
     /// <summary>
+    /// A HARNESS CONVERSATION NO METER IS ATTACHED TO REACHES THE PROVIDER NOT AT ALL (<c>U-admission-fail-closed</c>).
+    /// Detached — its role moved to another runtime — it has no admission, and no admission is a refusal on the ledger,
+    /// never a request nobody reserved.
+    /// </summary>
+    [Fact]
+    public async Task A_harness_conversation_no_meter_is_attached_to_reaches_the_provider_not_at_all()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("should never be asked for"));
+
+        using var runtime = Runtime(provider, allowance);
+        var conversation = Research(runtime);
+        meter.Attach(conversation, CouncilRoles.Research).Dispose();
+
+        await conversation.SendAsync("what is the plan?");
+
+        Assert.Empty(provider.Requests);
+        Assert.Contains(conversation.History,
+            t => t.Role == ChatRole.System && t.Text == AiAdmission.NoLedgerOpen.Refusal);
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+    }
+
+    /// <summary>
     /// AND WHEN IT IS ADMITTED, THE ROW IS THERE WITH THE RESERVATION ON IT BEFORE THE TURN RUNS —
     /// the same commitment the CLI's launches make, on a runtime where the app is the one spending.
     /// </summary>

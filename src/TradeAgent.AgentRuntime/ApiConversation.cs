@@ -197,7 +197,8 @@ public sealed class ApiConversation(
         if (string.IsNullOrWhiteSpace(message)) return;
         if (_busy) { Queue(message); return; }
 
-        var admission = Admit?.Invoke(message) ?? AiAdmission.Unrecorded;
+        // No admission attached is a refusal, not a pass — see AgentSession.SendAsync.
+        var admission = Admit?.Invoke(message) ?? AiAdmission.NoLedgerOpen;
         if (!admission.Admitted) { Hold(message, admission.Refusal!); return; }
 
         Append(new ChatTurn(ChatRole.You, message, _now()));
@@ -658,8 +659,10 @@ public interface IAdmittedConversation
 {
     /// <summary>
     /// OPENS THE DURABLE RECORD AND COMMITS THE COST before the turn runs, and answers whether it may
-    /// run at all. Set by <c>TurnMeter.Attach</c>; null in a host with no meter, and then the turn
-    /// runs and the row is written when it ends.
+    /// run at all. Set by <c>TurnMeter.Attach</c> and cleared when it detaches. NULL REFUSES the owner's
+    /// turn (<see cref="AiAdmission.NoLedgerOpen"/>): a conversation nothing reserves for is spending no
+    /// ceiling sees (<c>U-admission-fail-closed</c>). A host built without a ledger says so explicitly,
+    /// with an <c>Admit</c> that answers <see cref="AiAdmission.NoLedger"/>.
     /// </summary>
     Func<string, AiAdmission>? Admit { get; set; }
 

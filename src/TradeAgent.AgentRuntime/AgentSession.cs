@@ -334,7 +334,9 @@ public sealed class AgentSession(
         // — and, holding the meter's single open slot, resolve the OTHER turn's reservation with its
         // own usage. Every launch has a commitment made before it (docs/COUNCIL.md rule 3), and the
         // person typing is not an exception to a bill they are the one paying.
-        var admission = Admit?.Invoke(message) ?? AiAdmission.Unrecorded;
+        // NO ADMISSION ATTACHED IS A REFUSAL, NOT A PASS (U-admission-fail-closed): a conversation the meter is not
+        // attached to — never attached, or detached when its runtime was replaced — has nothing to reserve its turn.
+        var admission = Admit?.Invoke(message) ?? AiAdmission.NoLedgerOpen;
         if (!admission.Admitted)
         {
             // NOT LAUNCHED, NOT LOST. Their words are held exactly as a message typed while the AI
@@ -352,11 +354,12 @@ public sealed class AgentSession(
     /// OPENS THE DURABLE RECORD AND COMMITS THE COST OF A TURN THE OWNER TYPED, before it is
     /// started, and answers whether it may be started at all.
     ///
-    /// Set by <see cref="TurnMeter.Attach"/>, which is the one place a conversation is metered.
-    /// Null in every host that has no meter — a test, a build with no AI prepared — and then this
-    /// behaves exactly as it did: the turn runs and the row is written when it ends. That default is
-    /// the permissive one for the same reason the loop's is, and for the same reason: a chat that
-    /// refused to work because nobody was counting would refuse for ever.
+    /// Set by <see cref="TurnMeter.Attach"/>, which is the one place a conversation is metered, and
+    /// cleared when it detaches. NULL REFUSES (<see cref="AiAdmission.NoLedgerOpen"/>,
+    /// <c>U-admission-fail-closed</c>): it used to be the permissive default — the turn ran and the row
+    /// was written when it ended — and that is a turn no ceiling saw before it was paid for. A host
+    /// built without a ledger says so explicitly, with an admission that answers
+    /// <see cref="AiAdmission.NoLedger"/>.
     /// </summary>
     public Func<string, AiAdmission>? Admit { get; set; }
 

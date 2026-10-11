@@ -1696,16 +1696,19 @@ public sealed class AppHost : IAsyncDisposable
         /// wakes this turn is answering. Nothing else on this interface writes to the database, and
         /// this one cannot change a mode, lift the kill switch or approve anything — it commits
         /// money the AI is about to spend on itself.
+        ///
+        /// NO METER IS A REFUSAL (<c>U-admission-fail-closed</c>): this host keeps a ledger, so a
+        /// launch with no meter to reserve it is one no ceiling would see, and it is not started.
         /// </summary>
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
-            host.Meter?.Begin(prompt, wakes) ?? AiAdmission.Unrecorded;
+            host.Meter?.Begin(prompt, wakes) ?? AiAdmission.NoLedgerOpen;
 
         /// <summary>
         /// The same, naming the role being charged, so the day's spending can be allocated at all —
         /// a bill nobody can allocate cannot be shared between two roles.
         /// </summary>
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) =>
-            host.Meter?.Begin(prompt, wakes, role) ?? AiAdmission.Unrecorded;
+            host.Meter?.Begin(prompt, wakes, role) ?? AiAdmission.NoLedgerOpen;
 
         /// <summary>
         /// What the turn left in <c>out/</c>, published and delivered — and anything an earlier

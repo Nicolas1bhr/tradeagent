@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -50,8 +51,12 @@ public class ContainmentTests
             JsonFlag = null
         };
 
+        // Built without a launch ledger, and saying so: a conversation with no admission refuses (U-admission-fail-closed).
         var session = new AgentSession(manifest, () => Shell, () => probe.Dir,
-            () => new Dictionary<string, string>(), new AgentPresence());
+            () => new Dictionary<string, string>(), new AgentPresence())
+        {
+            Admit = _ => AiAdmission.NoLedger
+        };
 
         var turn = session.SendAsync(probe.Command);
         try
@@ -95,7 +100,10 @@ public class ContainmentTests
 
         var session = new AgentSession(manifest, () => Shell, () => dir,
             () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(),
-            launchRefusal: () => armed ? refusal : null);
+            launchRefusal: () => armed ? refusal : null)
+        {
+            Admit = _ => AiAdmission.NoLedger   // built without a launch ledger, explicitly
+        };
 
         await session.SendAsync(MakeMarker());
 

@@ -1094,6 +1094,8 @@ public sealed class TurnMeter
         return new Detach(() =>
         {
             conversation.TurnEnded -= OnEnded;
+            // CLEARED, AND THEREFORE REFUSING: a detached conversation's next typed turn has no meter to
+            // reserve it, and a null Admit is a refusal (U-admission-fail-closed), never a pass.
             if (conversation is IAdmittedConversation a) a.Admit = null;
         });
     }
