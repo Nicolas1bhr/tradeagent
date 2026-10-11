@@ -509,7 +509,10 @@ public class CellLinuxTests
                 print(f"seqpacket-sendto-refused errno={e.errno}")
             """);
         var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", probe, listenerPath, receiverPath);
-        Says(ran, "stream-connect-refused errno=106", "stream-sendto-refused errno=106");
+        // EISCONN (106) on Landlock ABI 7 and 8; from ABI 9 RESOLVE_UNIX may refuse the lookup first with EACCES (13). Either holds.
+        foreach (var name in new[] { "stream-connect", "stream-sendto" })
+            Assert.True(ran.Out.Contains($"{name}-refused errno=106") || ran.Out.Contains($"{name}-refused errno=13"),
+                $"expected {name} refused with EISCONN or EACCES.\n--- stdout ---\n{ran.Out}\n--- stderr ---\n{ran.Err}");
         Assert.DoesNotContain("-reached", ran.Out);
         Assert.DoesNotContain("went-to-elsewhere", ran.Out);
         Assert.False(receiver.Poll(TimeSpan.FromSeconds(1), SelectMode.SelectRead), "the outside datagram receiver got something from the cell");
@@ -629,7 +632,7 @@ public class CellLinuxTests
         Assert.All(fds, fd => Assert.Contains(fd, new[] { "0", "1", "2", "3" }));
     }
 
-    /// <summary>One policy file per launch, in the app's own cell folder while the cell runs, and gone once it has exited (triage #6).</summary>
+    /// <summary>One policy file per launch, in the app's own cell folder while the cell runs, and gone once it has exited or been killed (triage #6).</summary>
     [LinuxFact]
     public async Task A_cell_policy_file_is_removed_after_the_cell_exits()
     {
@@ -646,6 +649,17 @@ public class CellLinuxTests
         await held.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(90));
         Assert.Equal(0, held.Process.ExitCode);
         Assert.False(File.Exists(file), $"the launch's policy file {file} outlived its cell");
+
+        // A CANCELLED TURN: its supervisor is killed with the cell, so the app removes the file itself.
+        var long_ = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        long_.ArgumentList.Add("-c");
+        long_.ArgumentList.Add("sleep 60");
+        using var killed = ProcessContainment.Start(long_, w.Policy(), Launcher());
+        var killedFile = killed.Cell!.PolicyFile;
+        Assert.True(File.Exists(killedFile), $"the launch's policy file {killedFile} while its cell runs");
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        killed.Kill();
+        Assert.False(File.Exists(killedFile), $"the policy file {killedFile} outlived a cell that was killed");
     }
 
     [LinuxFact]

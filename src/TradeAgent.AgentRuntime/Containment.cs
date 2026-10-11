@@ -246,7 +246,11 @@ public sealed class ContainedProcess : IDisposable
                 return Ended = TreeEnd.Nothing;
             }
 
-            return Ended = TreeTeardown.End(_leader, _leaderStart, _session);
+            Ended = TreeTeardown.End(_leader, _leaderStart, _session);
+            // A CELL'S POLICY FILE GOES WITH ITS TREE (triage #6): the supervisor removes it when the cell exits, but a cancelled
+            // turn's supervisor is itself killed here, so the app removes it too — only its own file, never throwing.
+            if (Cell is not null) CellStage.Discard(Cell.PolicyFile);
+            return Ended;
         }
     }
 
