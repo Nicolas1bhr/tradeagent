@@ -68,6 +68,11 @@ public static class RoleObjectives
     /// <summary>The entity of <see cref="PositionWatched"/> when the host has no reading of the book to give.</summary>
     public const string UnreadBook = "the book has not been read";
 
+    /// <summary>The request ledger's rows not in a final state, every non-terminal state of the machine named.</summary>
+    static readonly string NotFinal = "execution_state IN ("
+        + string.Join(",", Enum.GetValues<ExecutionState>().Where(s => !OrderStateMachine.IsTerminal(s)).Select(s => $"'{s}'"))
+        + ")";
+
     /// <summary>The objective kinds a role holds, in this build.</summary>
     public static IReadOnlyList<string> KindsOf(string role) => role switch
     {
@@ -98,8 +103,11 @@ public static class RoleObjectives
                 foreach (var e in events.Pending(MissionEventKind.Owner, role))
                     open.Add(new RoleObjective(OwnerAnswered, e.Id));
 
+                // EVERY STATE THE STATE MACHINE CAN STILL LEAVE, from the machine itself: a request written and
+                // not yet dispatched, or waiting for the owner's approval, has not reached a final state either.
+                // `ExecutionRequestStore.Open()` is what is at the broker, and leaves both out.
                 var deployments = new Deployments(db);
-                foreach (var r in new ExecutionRequestStore(db).Open())
+                foreach (var r in new ExecutionRequestStore(db).Query(NotFinal))
                     if (deployments.OpById(r.RequestId) is null)
                         open.Add(new RoleObjective(RequestFinal, r.RequestId));
 
