@@ -695,6 +695,15 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// RUNS <paramref name="body"/> AS ONE COMMIT: every write it makes through this store lands together or not at all,
+    /// and an exception out of it rolls them all back (<see cref="Database.Write{T}"/>). The lost owner's words are
+    /// settled and their retry raised — its sequence number allocated — inside one of these (pass 3, item 1), so a crash
+    /// between the two cannot leave a message settled with no row carrying its words, and no other writer can take the
+    /// sequence number between its allocation and its insert.
+    /// </summary>
+    public T InOneCommit<T>(Func<T> body) => db.Write(_ => body());
+
+    /// <summary>
     /// EVERY WAKE OF ONE KIND FOR ONE ROLE THAT NO TURN HAS TAKEN YET, due or not, oldest first — what that role is
     /// still owed: an owner's message nobody has answered (a blocked one included, which is still owed its turn), a
     /// verdict nobody has read. A row a turn took is that turn's: if the turn was lost, a look would not see the row
