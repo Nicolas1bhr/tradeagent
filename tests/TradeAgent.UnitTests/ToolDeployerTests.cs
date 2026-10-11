@@ -6,12 +6,28 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
+/// THE TESTS THAT EMPTY OR REWRITE THE HOME'S BIN FOLDER RUN ALONE (<c>U-grant-tree</c>). That folder holds the launcher every
+/// agent launch on macOS and Linux is held by, and a launch that cannot be held is refused before it starts (RULING 2): a
+/// class that clears it while another class's turn starts would refuse that turn. Measured on CI run 38168126968 —
+/// VendorLimitTests, SeatHomeTests and QuiescenceBarrierTests refused on ubuntu and macOS beside <c>ClearBin</c>.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class BinFolder
+{
+    public const string Name = "the launcher's bin folder";
+}
+
+/// <summary>
 /// The agent's only route to the gateway is the trade CLI. These cover the way it was broken on a
 /// real machine: the launcher was deployed without the assemblies it loads, so it started and threw
 /// on every invocation — while the health row said READY because a file with the right name existed.
 /// </summary>
-public class ToolDeployerTests
+[Collection(BinFolder.Name)]
+public class ToolDeployerTests : IDisposable
 {
+    /// <summary>The home's launcher back, as every later launch on macOS and Linux needs it (U-grant-tree).</summary>
+    public void Dispose() => TestEnv.EnsureLauncher();
+
     /// <summary>A framework-dependent CLI layout: launcher, side-cars, and one referenced assembly.</summary>
     static string FakeCliBuild(params string[] dependencies)
     {
