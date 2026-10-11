@@ -2054,6 +2054,25 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','33') ON CONFLICT(key) DO UPDATE SET value='33';");
         }
 
+        if (have < 34)
+        {
+            // THE REPLAY SEMANTICS A PAPER RUN IS RECORDED UNDER — `U-runner-maxhold-replay`, the orchestrator's rung 34, after
+            // 33's. Every pass of the runner rebuilds a run from its first minute, and what it reads off a replayed minute is
+            // this build's rule; a run whose minutes an earlier build decided under another rule replays into a state it never
+            // had — an entry it never sent, and the stop of the one it did send sized from it. Nothing on the run said which
+            // rule it was written under, so the runner could only guess.
+            //
+            // ONE COLUMN, OUTSIDE THE RUN'S ID like its state and cursor: `Versions.ForwardReplay` of the build that started
+            // it, written by `Deployments.Start` in the run's own insert and by no other statement. NO BACKFILL: a run recorded
+            // before this rung has NULL, and the runner ends it in words naming both versions — the refusal this build owes an
+            // earlier one's run (CLAUDE.md "No backward compatibility while we build"), never a migration; its rows stay as
+            // they are. Added only where the table lacks it and the stamp last, because the rungs run in autocommit and a crash
+            // before the stamp runs this again.
+            AddColumnIfMissing("strategy_deployment", "replay_version", "INTEGER");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','34') ON CONFLICT(key) DO UPDATE SET value='34';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

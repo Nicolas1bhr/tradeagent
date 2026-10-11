@@ -122,6 +122,14 @@ public sealed record StrategyDeploymentRow(
     public string ComputedId =>
         IdOf(VersionId, AllocationId, EnvelopeId, ConnectorId, AccountId, Symbol, StartedAt);
 
+    /// <summary>
+    /// THE REPLAY SEMANTICS THE RUN WAS STARTED UNDER (<c>strategy_deployment.replay_version</c>, rung 34): the
+    /// <see cref="Versions.ForwardReplay"/> of the build whose <see cref="Deployments.Start"/> wrote the row — or null for a
+    /// run recorded before the rung. Outside the id, as the state and the cursor are. Read only; <c>Start</c> writes this
+    /// build's number whatever a caller puts here, and the runner ends a run whose number is not this build's.
+    /// </summary>
+    public int? ReplayVersion { get; init; }
+
     public bool IsActive => string.Equals(State, DeploymentState.Active, StringComparison.Ordinal);
     public bool IsSuspended => string.Equals(State, DeploymentState.Suspended, StringComparison.Ordinal);
     public bool IsEnded => string.Equals(State, DeploymentState.Ended, StringComparison.Ordinal);
@@ -274,7 +282,7 @@ public sealed class Deployments(Database db)
 {
     const string Cols =
         "id, version_id, allocation_id, envelope_id, connector_id, account_id, symbol, mode, state, " +
-        "cursor_open_time, started_at, suspended_reason, ended_at, end_reason";
+        "cursor_open_time, started_at, suspended_reason, ended_at, end_reason, replay_version";
 
     const string OpCols =
         "request_id, deployment_id, bar_open_time, kind, intent, state, answer, created_at, resolved_at";
@@ -333,14 +341,18 @@ public sealed class Deployments(Database db)
 
         using var c = db.Cmd($"""
             INSERT INTO strategy_deployment({Cols})
-            VALUES($id,$ver,$alloc,$env,$conn,$acct,$sym,$mode,$state,$cursor,$started,NULL,NULL,NULL)
+            VALUES($id,$ver,$alloc,$env,$conn,$acct,$sym,$mode,$state,$cursor,$started,NULL,NULL,NULL,$replay)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", row.Id), ("$ver", row.VersionId), ("$alloc", row.AllocationId),
             ("$env", row.EnvelopeId), ("$conn", row.ConnectorId), ("$acct", row.AccountId),
             ("$sym", row.Symbol), ("$mode", row.Mode), ("$state", row.State),
             ("$cursor", row.CursorOpenTime is { } cur ? Sql.T(cur) : null),
-            ("$started", Sql.T(row.StartedAt)));
+            ("$started", Sql.T(row.StartedAt)),
+            // THE REPLAY SEMANTICS THIS BUILD'S RUNNER WILL REPLAY THE RUN UNDER, stamped here and nowhere else — this
+            // build's own constant, never the caller's (`U-runner-maxhold-replay`, rung 34). A re-start of a row that is
+            // already there leaves its stamp as it was written.
+            ("$replay", Versions.ForwardReplay));
         var created = c.ExecuteNonQuery() == 1;
 
         // THE SEVEN FACTS ARE THE ID, SO A RE-START OF AN ENDED RUN IS THE SAME ROW — and it must not
@@ -721,7 +733,10 @@ public sealed class Deployments(Database db)
                 r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
                 r.GetString(5), r.GetString(6), r.GetString(7), r.GetString(8),
                 Sql.TimeN(r.GetValue(9)), Sql.Time(r.GetValue(10)), Sql.S(r.GetValue(11)),
-                Sql.TimeN(r.GetValue(12)), Sql.S(r.GetValue(13))));
+                Sql.TimeN(r.GetValue(12)), Sql.S(r.GetValue(13)))
+            {
+                ReplayVersion = r.IsDBNull(14) ? null : r.GetInt32(14)
+            });
         return rows;
     }
 

@@ -927,7 +927,8 @@ public class RefereeVerdictTests
     [Fact]
     public async Task Research_evidence_arrives_at_its_rung_and_has_one_writer()
     {
-        Assert.Equal(33, Versions.DatabaseSchemaVersion);
+        Assert.True(Versions.DatabaseSchemaVersion >= 33,
+            "the research-evidence tables arrive at rung 33; this build says " + Versions.DatabaseSchemaVersion);
         var w = await Given();
         StreamedRun(w, "candidate", 139, 11);
         Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Ok);
@@ -947,7 +948,7 @@ public class RefereeVerdictTests
 
         using (var rerun = new Database(file))
         {
-            Assert.Equal("33", rerun.Read(_ =>
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture), rerun.Read(_ =>
             {
                 using var c = rerun.Cmd("SELECT value FROM meta WHERE key='schema_version'");
                 return (string)c.ExecuteScalar()!;

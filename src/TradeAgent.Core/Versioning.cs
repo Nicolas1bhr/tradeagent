@@ -353,8 +353,32 @@ public static class Versions
     /// and status — and <c>referee_research_trial</c>, each trial it read with its cluster. Shown, never a clause; written
     /// only by <c>ResearchEvidence.Record</c> in the verdict's own write, first writer wins, never updated or deleted; a
     /// verdict before the rung has none and gains none.</para>
+    ///
+    /// <para><b>34 — the replay semantics a paper run is recorded under</b> (<c>U-runner-maxhold-replay</c>, after 33):
+    /// <c>strategy_deployment.replay_version</c>, the <see cref="ForwardReplay"/> of the build that started the run, written
+    /// by <c>Deployments.Start</c> in the run's own insert and by nothing else. No backfill: a run recorded before the rung
+    /// has none, and the runner ends it in words naming both versions rather than replay it under rules it was not decided
+    /// under — the refusal, not a migration.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 33;
+    public const int DatabaseSchemaVersion = 34;
+
+    /// <summary>
+    /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its
+    /// first minute reads off each minute it replays — which readings the evaluator is handed, and so which signals it
+    /// re-emits. Every pass replays a run's whole history (<c>ForwardRuns</c>), and a later pass's replay must arrive at the
+    /// state the live passes had; a run whose minutes were decided under other rules does not — its replay can emit an
+    /// entry the run never sent, and the stop of the entry it did send is then sized from that one.
+    ///
+    /// <para><b>Stamped on each run when it starts</b> (<c>strategy_deployment.replay_version</c>, rung 34), and a run
+    /// whose stamp is not this number — or that has none, because a build before the rung started it — is ENDED, in words
+    /// naming both, before anything is settled, replayed or sent (<c>ForwardRuns.AdvanceOneAsync</c>); nothing it recorded
+    /// is rewritten. Raise it with any change to what a replayed minute hands the evaluator, the way
+    /// <see cref="BridgeProtocolVersion"/> is raised with any change to what the bridge promises.</para>
+    ///
+    /// 1: the first stamped semantics — the maximum hold's FLAT reading on every minute whose books read long at or past
+    /// the limit, live or replayed (<c>U-runner-maxhold-replay</c>). Every run from before it is unstamped.
+    /// </summary>
+    public const int ForwardReplay = 1;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
