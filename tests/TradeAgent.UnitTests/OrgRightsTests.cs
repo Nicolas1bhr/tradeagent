@@ -6,6 +6,7 @@ using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -127,7 +128,7 @@ public class OrgRightsTests
         var (gw, _, db) = await TestEnv.Ready();
         await using var _gw = gw;
         using var _db = db;
-        await using var server = new GatewayPipeServer(gw, "not-a-real-token");
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
         HeadATeam(db, Third, Team);
 
         // THE CHART SAYS BOTH ARE HEADS: the third position of its team, Research of its division.
@@ -335,7 +336,7 @@ public class OrgRightsTests
             lock (registered) registered.Add($"{proposer}/{attempt}");
             return tape.RegisterLens(definition, proposer, attempt);
         };
-        await using var server = new GatewayPipeServer(gw, "not-a-real-token");
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
         Seat(db, Third);
         Seat(db, "pos-dormant", status: OrgPositionStatus.Dormant);
 
