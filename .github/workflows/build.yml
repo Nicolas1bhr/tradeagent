@@ -95,7 +95,7 @@ jobs:
           fi
           dotnet test TradeAgent.sln -c Release --no-build --filter "$filter" --logger "trx;LogFileName=results.trx"
 
-      # THE TIMING CATEGORY — run everywhere, RE-RUN ONCE ON EVERY RUNNER.
+      # THE TIMING CATEGORY — run everywhere; ITS FAILED TESTS RE-RUN ONCE ON EVERY RUNNER.
       #
       # WHAT THE CATEGORY MEANS, ONCE, SO NOTHING ELSE DRIFTS INTO IT: a test belongs here when its
       # verdict needs the RUNNER to keep a wall clock as well as the product to be right — it either
@@ -129,6 +129,13 @@ jobs:
       # than granted, why the first failure is printed, named in the job summary, annotated on the
       # run and uploaded as its own trx — and why a red twice in a row is still a red run, on every
       # platform, with nothing left to try.
+      #
+      # WHAT THE SECOND ATTEMPT RUNS (U-red-says-why): ONLY THE TESTS THE FIRST ONE FAILED, a Theory's
+      # rows at method granularity — `.github/ci/timing-retry.sh` reads them from attempt 1's trx files
+      # and builds the filter. It used to re-run the whole category, so in run 37524459410 the button
+      # row, green on attempt 1, went red on attempt 2 only because a FaultTests press test's red had
+      # re-run everything: "red twice" belongs to one test. A first attempt that failed and names no
+      # failed test (a crash, an abort, no trx) re-runs nothing and fails the step, saying so.
       - name: Test the timing category
         if: ${{ !matrix.shard || matrix.shard == 1 }}
         shell: bash
@@ -155,9 +162,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::warning title=Timing category failed on its first attempt::${failed//$'\n'/, }"
 
-          echo "Re-running the timing category once; the failure above stands in the record either way."
+          # ONLY WHAT FAILED, read from the same trx files; nothing named is a failed step, not a re-run.
+          retry=$(.github/ci/timing-retry.sh filter tests/*/TestResults/results-timing.trx) || exit 1
+          echo "Re-running only the timing tests that failed, once; the failure above stands in the record either way."
+          echo "Filter: $retry"
           dotnet test TradeAgent.sln -c Release --no-build \
-            --filter "Category=Timing" --logger "trx;LogFileName=results-timing-retry.trx"
+            --filter "$retry" --logger "trx;LogFileName=results-timing-retry.trx"
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
