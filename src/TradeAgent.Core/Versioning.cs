@@ -346,8 +346,15 @@ public static class Versions
     /// return and the day that return runs from, an unknown day NULL and never 0. Written only by
     /// <c>StrategyStore.RecordRun</c> in the run's own insert, never updated or deleted; a run before the rung has none and
     /// gains none (no backfill).</para>
+    ///
+    /// <para><b>33 — the referee's research evidence</b> (<c>U-referee-v2a</c>, after 32): <c>referee_research</c>, one row per
+    /// campaign, version and method — what a verdict measured of the version's research streams before its holdout run: the
+    /// candidate stream, E2's eight blocks, E3's M, N_eff, moments, SR0, deflated Sharpe and noise ceiling, each gate's power
+    /// and status — and <c>referee_research_trial</c>, each trial it read with its cluster. Shown, never a clause; written
+    /// only by <c>ResearchEvidence.Record</c> in the verdict's own write, first writer wins, never updated or deleted; a
+    /// verdict before the rung has none and gains none.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 32;
+    public const int DatabaseSchemaVersion = 33;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

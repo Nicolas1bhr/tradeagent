@@ -730,6 +730,246 @@ public class RefereeVerdictTests
         await w.Gw.DisposeAsync();
     }
 
+    // ---- the research evidence a verdict measures (U-referee-v2a, item 2) --------------------------
+
+    /// <summary>The first day of the synthetic research streams below.</summary>
+    static readonly DateOnly StreamDay0 = new(2026, 3, 1);
+
+    /// <summary>
+    /// A RESEARCH RUN OF <paramref name="version"/> WITH A 1x STREAM OF <paramref name="days"/> KNOWN DAYS (none for 0), recorded
+    /// through the app's own writer and charged as a trial of the world's campaign. Its window is the pre-cutoff hour unless
+    /// <paramref name="windowTo"/> says otherwise — a run over the held-back minutes is (g)'s.
+    /// </summary>
+    static string StreamedRun(World w, string name, int days, int seed, string? version = null, DateTimeOffset? windowTo = null,
+        double mean = 0.001)
+    {
+        var runId = "run-" + name;
+        var of = version ?? w.VersionId;
+        var model = "fees=0.001;slippage=0.0002;increment=1;capital=10000";
+        IReadOnlyList<StrategyStreamRow> streams = days == 0
+            ? []
+            : [new StrategyStreamRow(runId, 1, model, "friction-" + name, "trace-" + name, "COMPLETED", DailyReturns.Version,
+                null, DeflationTests.Series(StreamDay0, DeflationTests.Normal(seed, days, mean, 0.01)))];
+        new StrategyStore(w.Db).RecordRun(new StrategyRunRow(
+            runId, of, w.Set.Id, w.Set.NormalisedSha256, Bar0, windowTo ?? Bar0.AddMinutes(HoldoutAtBar - 1), model,
+            BacktestOutcome.COMPLETED.ToString(), null, 60, 1, 1, 1, 2, 10, 0, 0, 1m, 0m, 1m, 0m, "trace-" + name, At,
+            CouncilRoles.Research, "attempt-1"), [], streams);
+        var trial = w.Gw.Campaigns.RegisterTrial(w.Campaign.Id, of, runId, EvaluationClass.Research, At);
+        Assert.True(trial.Ok, trial.Why);
+        return runId;
+    }
+
+    /// <summary>A second accepted version, for a trial of another program in the same lineage.</summary>
+    static string OtherVersion(World w)
+    {
+        var parsed = StrategyParser.Parse(LosingText).Program!;
+        new StrategyStore(w.Db).RecordVersion(new StrategyVersionRow(
+            parsed.StrategyId, parsed.Source, parsed.Canonical, parsed.Manifest,
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, parsed.WarmUpBars, Bar0, CouncilRoles.Research, "attempt-1"));
+        return parsed.StrategyId;
+    }
+
+    /// <summary>Every column of every row of <paramref name="table"/>, as the database holds it, one line a row.</summary>
+    static string Bytes(Database db, string table) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT * FROM {table} ORDER BY 1");
+        using var r = c.ExecuteReader();
+        var text = new StringBuilder();
+        while (r.Read())
+        {
+            for (var i = 0; i < r.FieldCount; i++)
+                text.Append(r.GetName(i)).Append('=').Append(Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture)).Append('|');
+            text.Append('\n');
+        }
+        return text.ToString();
+    });
+
+    static long Count(Database db, string table) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT COUNT(*) FROM {table}");
+        return (long)c.ExecuteScalar()!;
+    });
+
+    /// <summary>
+    /// (e) A VERDICT RECORDS ITS RESEARCH EVIDENCE, AND ITS PROMOTION IS UNCHANGED.
+    ///
+    /// <para>The version has a 139-day research stream, a second version of the lineage an uncorrelated 139-day one, and a
+    /// third trial no stream at all. The verdict records the candidate (its run, friction and trace), blocks k of 8, M 3
+    /// with one unstreamed, N_eff 3 (the unstreamed trial clusters alone), a noise ceiling above zero and a DSR — each gate
+    /// <c>inconclusive</c> with its power, which at 139 days is far below 0.50. And the promotion row and the note are byte
+    /// for byte those of the same verdict over a lineage with no research stream at all, which measured nothing: no clause
+    /// read a new figure. RED on the base: the referee measured nothing and had no <c>Research</c> to read.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_records_its_research_evidence_and_its_promotion_is_unchanged()
+    {
+        var bare = await Given();
+        using var _1 = bare.Db;
+        var based = RefereeOf(bare).Verdict(bare.VersionId, bare.Campaign.Id);
+        Assert.True(based.Promoted, based.Why);
+
+        var w = await Given();
+        using var _2 = w.Db;
+        var candidate = StreamedRun(w, "candidate", 139, 11);
+        StreamedRun(w, "other", 139, 12, OtherVersion(w));
+        StreamedRun(w, "streamless", 0, 0);
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Promoted, verdict.Why);
+
+        Assert.Equal(Bytes(bare.Db, "strategy_promotion"), Bytes(w.Db, "strategy_promotion"));
+        Assert.Equal(
+            new PublicationStore(bare.Db).By(Referee.RunRole).Select(p => p.Content),
+            new PublicationStore(w.Db).By(Referee.RunRole).Select(p => p.Content));
+        Assert.Equal(RefereeFeedback.Text(based.Promotion!), RefereeFeedback.Text(verdict.Promotion!));
+
+        // THE BASE'S LINEAGE HAD NO STREAM: recorded so, every statistic unknown.
+        var none = Assert.Single(RefereeOf(bare).Research.All());
+        Assert.Null(none.CandidateRunId);
+        Assert.Equal((GateStatus.NoStream, GateStatus.NoStream), (none.BlocksStatus, none.DsrStatus));
+        Assert.Null(none.Dsr);
+
+        var e = RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId);
+        Assert.NotNull(e);
+        Assert.Equal(ResearchEvidence.Version, e!.Method);
+        Assert.Equal((candidate, "friction-candidate", "trace-candidate"), (e.CandidateRunId, e.FrictionSha256, e.TraceSha256));
+        Assert.Equal(139, e.Days);
+        Assert.Equal(8, e.BlocksKnown);
+        Assert.InRange(e.BlocksPositive, 0, 8);
+        Assert.Equal((3, 1, 3), (e.TrialsM, e.TrialsUnstreamed, e.NEff));
+        Assert.True(e.Ceiling > 0, $"ceiling {e.Ceiling}");
+        Assert.NotNull(e.Dsr);
+        Assert.NotNull(e.Sr);
+        Assert.Equal(GatePower.Blocks(139), e.BlocksPower, 12);
+        Assert.Equal(GatePower.Dsr(139, 3), e.DsrPower, 12);
+        Assert.True(e.BlocksPower < GatePower.Discriminates && e.DsrPower < GatePower.Discriminates);
+        Assert.Equal((GateStatus.Inconclusive, GateStatus.Inconclusive, GateStatus.Inconclusive),
+            (e.BlocksStatus, e.DsrStatus, e.FamilyStatus));
+        Assert.Equal(At, e.At);
+        Assert.Equal([ResearchEvidence.Streamed, ResearchEvidence.Streamed, ResearchEvidence.NoStream],
+            e.Trials.Select(t => t.Reading));
+
+        // ASKED AGAIN, THE FIRST MEASUREMENT STANDS: one row, the same one.
+        var again = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.Equal(verdict.Promotion!.Id, again.Promotion!.Id);
+        Assert.Equal(e with { Trials = [] }, Assert.Single(RefereeOf(w).Research.All()) with { Trials = [] });
+    }
+
+    /// <summary>
+    /// (f) A STOPPED OR REFUSED VERDICT RECORDS NO RESEARCH EVIDENCE. Stopped before its charge, stopped during its holdout
+    /// run — after the measurement was taken in memory — and refused for a campaign whose policy this build does not
+    /// implement: none of the three writes a row of either table. The measurement lands in the verdict's own write or not
+    /// at all.
+    /// </summary>
+    [Fact]
+    public async Task A_stopped_or_refused_verdict_records_no_research_evidence()
+    {
+        var w = await Given(verdicts: 1);
+        using var _1 = w.Db;
+        StreamedRun(w, "candidate", 139, 11);
+
+        using (var before = new CancellationTokenSource())
+        {
+            before.Cancel();
+            Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id, stop: before.Token).Stopped);
+        }
+        Assert.Equal((0L, 0L), (Count(w.Db, "referee_research"), Count(w.Db, "referee_research_trial")));
+
+        using (var during = new CancellationTokenSource())
+        {
+            var stopping = new Referee(w.Db, () =>
+            {
+                during.Cancel();
+                return At;
+            });
+            Assert.True(stopping.Verdict(w.VersionId, w.Campaign.Id, stop: during.Token).Stopped);
+        }
+        Assert.Equal((0L, 0L), (Count(w.Db, "referee_research"), Count(w.Db, "referee_research_trial")));
+
+        var campaigns = new CampaignStore(w.Db);
+        campaigns.Close(w.Campaign.Id, At);
+        var odd = campaigns.Open("odd policy", w.Set, 5, 2, At, policy: "promote whatever you like");
+        Assert.True(odd.Ok, odd.Why);
+        Assert.False(RefereeOf(w).Verdict(w.VersionId, odd.Campaign!.Id).Ok);
+        Assert.Equal((0L, 0L), (Count(w.Db, "referee_research"), Count(w.Db, "referee_research_trial")));
+    }
+
+    /// <summary>
+    /// (g) RESEARCH EVIDENCE READS NO HOLDOUT BAR. A research run of the version whose recorded window reaches the
+    /// campaign's cutoff — its stream the longer of the two — is not read: it is <c>held-back</c>, counted in M and
+    /// clustered alone, and the candidate is the shorter stream over the pre-cutoff hour. The referee's own holdout run is
+    /// no trial and keeps no stream. Read as a candidate, the held-back stream's 300 days would have been measured from
+    /// bars past the cutoff.
+    /// </summary>
+    [Fact]
+    public async Task Research_evidence_reads_no_holdout_bar()
+    {
+        var w = await Given();
+        using var _1 = w.Db;
+        var inside = StreamedRun(w, "inside", 139, 11);
+        var over = StreamedRun(w, "over", 300, 13, windowTo: Bar0.AddMinutes(HoldoutAtBar + 30));
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Ok, verdict.Why);
+
+        var e = RefereeOf(w).Research.Of(w.Campaign.Id, w.VersionId)!;
+        Assert.Equal(inside, e.CandidateRunId);
+        Assert.Equal(139, e.Days);
+        Assert.Equal((2, 1, 2), (e.TrialsM, e.TrialsUnstreamed, e.NEff));
+        Assert.Equal(ResearchEvidence.HeldBack, e.Trials.Single(t => t.RunId == over).Reading);
+        Assert.DoesNotContain(e.Trials, t => t.RunId == verdict.Promotion!.HoldoutRunId);
+    }
+
+    /// <summary>
+    /// (h) THE RESEARCH-EVIDENCE TABLES ARRIVE AT RUNG 33, A CRASH BEFORE ITS STAMP RUNS IT AGAIN OVER WHAT IS THERE, AND
+    /// NOTHING BUT THE ONE INSERT WRITES THEM.
+    /// </summary>
+    [Fact]
+    public async Task Research_evidence_arrives_at_its_rung_and_has_one_writer()
+    {
+        Assert.Equal(33, Versions.DatabaseSchemaVersion);
+        var w = await Given();
+        StreamedRun(w, "candidate", 139, 11);
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Ok);
+        var before = Bytes(w.Db, "referee_research") + Bytes(w.Db, "referee_research_trial");
+        var file = w.Db.Read(c => c.DataSource);
+        await w.Gw.DisposeAsync();
+        w.Db.Dispose();
+
+        // A CRASH BETWEEN THE RUNG'S STATEMENTS AND ITS STAMP: every table and row in place, the stamp one lower.
+        using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = "UPDATE meta SET value='32' WHERE key='schema_version';";
+            c.ExecuteNonQuery();
+        }
+
+        using (var rerun = new Database(file))
+        {
+            Assert.Equal("33", rerun.Read(_ =>
+            {
+                using var c = rerun.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+                return (string)c.ExecuteScalar()!;
+            }));
+            Assert.Equal(before, Bytes(rerun, "referee_research") + Bytes(rerun, "referee_research_trial"));
+        }
+
+        var rewrite = new System.Text.RegularExpressions.Regex(
+            @"(UPDATE\s+referee_research(_trial)?\b|DELETE\s+FROM\s+referee_research(_trial)?\b|REPLACE\s+INTO\s+referee_research(_trial)?\b"
+            + @"|INSERT\s+OR\s+\w+\s+INTO\s+referee_research(_trial)?\b|DROP\s+TABLE\s+(IF\s+EXISTS\s+)?referee_research(_trial)?\b)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var writers = Directory.GetFiles(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (f, i, line)))
+            .Where(l => rewrite.IsMatch(l.line) || l.line.Contains("INSERT INTO referee_research", StringComparison.Ordinal))
+            .Select(l => $"{Path.GetFileName(l.f)}: {l.line.Trim()}")
+            .ToList();
+        Assert.Equal(
+            ["ResearchEvidence.cs: INSERT INTO referee_research({Cols})",
+             "ResearchEvidence.cs: INSERT INTO referee_research_trial(campaign_id, version_id, method, ordinal, run_id, cluster, reading)"],
+            writers);
+    }
+
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()
     {

@@ -703,6 +703,14 @@ public sealed class StrategyStore(Database db)
     /// WHY <paramref name="row"/>'S TRADES ARE NOT SERVED TO <paramref name="holdout"/>'S AUDIENCE, in its words, or null when
     /// they are. The three refusals of <see cref="ReadTrades"/>, in order; null at once for the referee's own.
     /// </summary>
+    /// <summary>
+    /// WHY <paramref name="row"/> IS HELD BACK FROM <paramref name="holdout"/>'S AUDIENCE NOW, or null when it is not — the
+    /// three refusals <see cref="ReadTrades"/> applies, for an in-process reader of what a run measured
+    /// (<c>ResearchEvidence</c>, <c>U-referee-v2a</c>): a run's daily returns say what its bars and its readings did, so they
+    /// are held back exactly as its trades are.
+    /// </summary>
+    internal string? HeldBack(StrategyRunRow row, TapeHoldout holdout) => db.Read(_ => Withheld(row, row.Id, holdout));
+
     string? Withheld(StrategyRunRow row, string asked, TapeHoldout holdout)
     {
         if (holdout.MayReadHoldout) return null;
