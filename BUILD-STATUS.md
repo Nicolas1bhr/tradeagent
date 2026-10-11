@@ -9767,3 +9767,34 @@ U-verdict-stopped left it.
 **NOT VERIFIED / not done:** whether a schema-honouring provider lets an API-harness model send any `trade` argument (pre-existing, above); the full local suites (CI's); a crash between
 rung 31's statements and its stamp beyond (j)'s re-run; Windows by hand. Tests box NOT RUN ("the machine does not answer"). `stash@{0}` in the worktree (an autostash, all committed) left.
 **CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat B's next record and `fleet/ci-ledger.md`.
+
+## 2026-10-11 — U-tape-gaps landed: the daily report counts the tape's gaps across days and restarts — a day with no delivery is one whole-day gap, each gap named by its bounds and what the tape holds inside — read by index searches alone, and the report reaches the disk whole or not at all
+
+Built under build-fleet seat A from `docs/briefs/U-tape-gaps.md` (dispatched 2026-10-10, the daily report's crash-safe write folded in from S-linux-host's finding) by one fresh Opus builder, then THREE fresh fixers, one
+after each finding of the independent Codex review (speed mode, 2026-10-11) — the fresh-fixer rule; the third scoped as a class fix after the second partial (the orchestrator told). Final branch `u-tape-gaps-3`; the
+manager's v2 preps rebased it onto `d0e4f01`, `f1d899f`, then `c6390038` (code landed between each); src+tests patch-id identical (`e04c935838e2`) at every one. Merge `792aafae` (ff-only): 9 commits (3 items, the report, 4 fixes, the fix report),
+10 files, +1,232/−108. On main: items `ef66d0f3`, `5d034601`, `04822f40`; report `afd134dc`; fixes `347195fc`, `bc5e4b28`, `c1acb9d4`, `11c68fac`; fix report `792aafae`. **No schema change** (main 30, `tape.db` 2).
+EVIDENCE path (tape integrity: what the owner's daily report says the tape recorded).
+
+- **Item 1 (`ef66d0f3`), `TapeReader.Day(from, to, asOf)`:** each catalogue source's share of the day and its gaps from the last delivery before to the first after, across midnights and restarts, clipped to the day's
+  elapsed part, named by the failed attempts inside or "nothing asked", nothing a gap before a source's first delivery, the look back bounded at eight days. **Item 2 (`5d034601`):** the report's tape line — per source
+  "recorded X of Y", its three longest gaps in order, the rest counted; CONTRACTS "The tape", USER-GUIDE. **Item 3 (`04822f40`):** the report is written to a temp of its own, flushed and renamed over the day's file by
+  `OwnerOnlyFile.Publish`; a dead write's temp removed at the next write; CONTRACTS says so.
+- **Fix 1 (`347195fc`) and fix 3 (`c1acb9d4`, the class fix):** each series' delivery before the day is the LATEST arrival instant of all its deliveries in [LookedBackTo, from), the one after the EARLIEST from the elapsed
+  part's end — band and index candidates compared, never decided by id order (ids follow arrival only within ArrivalSlack), every walk bounded. **Fix 2 (`bc5e4b28`):** the look back stops exactly at `LookedBackTo`.
+  **Fix 4 (`11c68fac`, class fix):** every statement `Day` and `status.tape` prepare is an index SEARCH — `FirstAtOrAfter`'s bounds two scalar subqueries (the combined `MIN(id), MAX(id)` was a full SCAN, on main
+  since `b1d59af1`, which this unit called once per series); DEVIATION, declared and accepted: two more pre-existing scans the check found (the last hour's `GROUP BY source`, the GDELT cap read) now read by id,
+  same results; seam `TapeReader.Preparing` (internal), so Core gains `InternalsVisibleTo` the unit tests.
+**Verified by running (quoted from the reports).** Builder at `524176bc`: Release `--no-incremental` `0 Warning(s)` `0 Error(s)`; Unit 1598/1598, Fault 485/485; TapeReadTests 11/11, DailyReportTests 12/12 ×3.
+RED over main: a day with no delivery read "0 gaps"; (a)'s night down "0 gaps" from 31 requests; (h) "a write that failed half-way left a file for 2025-09-05"; (i) the earlier report replaced by half of the new one.
+Mutants: the look-back seek removed ⇒ (a),(c),(g) red; the in-place write restored ⇒ (h),(i) red. Fixers at `50c25a63`: Release 0 warnings; TapeReadTests 19/19 ×3; each fix RED over its parent — (j) a false gap
+21:58-22:01; (k) a delivery past LookedBackTo returned; (l)-(n) 5 of 5 (e.g. [-60,-8,-11,-9,1] read -9 not -8); (o) "SCAN tape_fetch USING COVERING INDEX … <- SELECT MIN(id), MAX(id) FROM tape_fetch" and the two
+others. Mutant: the combined `MIN(id), MAX(id)` restored ⇒ (o) red. Rewritten test, disclosed: (g)'s row order and clock; `TestClock.GetUtcNow` answers UTC. Names vs main (`c6390038`): 2481 → 2495, removed 0, added 14.
+**Codex reviews (gpt-6.1-sol, read-only), triaged by seat A:** the unit's — 2 real (band edges by id order; the look back 10 min past its stated bound), 1 not reachable in the app (below); fix 2's — the outside
+seeks still by id and a band edge suppressing them (real → fixer 2); fix 3's — the bounds query's full SCAN per series (real → fixer 3); fix 4's — "no defects found" (16 SELECTs all SEARCH; results preserved).
+**OWED, judged:** `DailyReports.Read` opens without share-delete, so an OUTSIDE process holding today's report makes the Windows replace throw in `WriteNow` on the UI thread (no catch) — in-app Read and WriteNow run
+in sequence on the UI thread and the owed pass writes only days with no file, so the app's own reader cannot (pre-existing; a light card).
+**CI:** builder run 38042370739 at `524176bc` and fixers' run 38096360741 at `50c25a63` (old workflow): every job success. Landing run (sharded, the v2 gate — CI CARRIES to the merge) 38102709150 at `792aafae`: test ubuntu 13 min, macos 17, windows 5 shards 5-13 min, linux-host 20, package 3, package-linux 2, shard-plan — all success; `land.sh check` PASS (0 Warning(s), names 0 removed, scan clean with `Tailscale` excluded). Main CI on this record: `nohup ci-wait.sh` → `fleet/ci-ledger.md`. Scan: the tests box's `ready` line
+("Tailscale") judged a false positive, excluded by name. **Tests box:** NOT RUN — "the machine does not answer" (2026-10-10 11:45, 2026-10-11 01:50).
+**NOT done, NOT verified:** timings of the fixed reader (query plans only); `firstEver`'s walk for a never-delivered series grows with its failures; why nothing was asked (the recorder's durable run record, a `tape.db`
+rung); per-symbol completeness; the line over a real home's tape; full local suites (CI ran them).
