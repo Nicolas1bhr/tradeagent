@@ -10053,3 +10053,33 @@ of the fixes — fix 2 regressed (a crash-consumed owner message open forever �
 **Tests edited, declared:** two `MissionLoopTests` now name the stopped role; (f) rewritten on the durable API, same scenario and asserts. Quiet-review, memory-kept and `No_verb_and_no_pipe_op_names_the_wake_queue` unedited.
 **Not claimed / owed:** no app run; tests box NOT RUN; whether the `DueFor` reorder changes a pinned "Why you are awake" order elsewhere is shown only by CI green. OWED (pre-existing, not worsened): `CouncilRelay.cs:422` → `MissionEventStore.Delegated` (:821) marks a consumed owner message delegated whenever an agent-written brief names its attempt, a LOST one included — an agent-written file settling the owner's words; and an owner message taken by a launch that ENDED without an outcome, or by an unrecorded launch, is neither an objective nor re-raised.
 A deployment's position in the shared book keeps the chair's look; a renewal raised while stopped still fires if the owner later raises the ceiling.
+
+## 2026-10-11 — U-runner-maxhold-replay landed at RUNG 34: every pass hands the evaluator the FLAT reading the runner's own maximum hold gave the live minute, so a replay emits no phantom max-hold exit and the first close after a flatten can enter; a paper run started under other replay semantics is ended in words, never replayed on a guess
+
+Built under build-fleet seat A from `docs/briefs/U-runner-maxhold-replay.md` (the finding U-runner-features recorded and did not fix; survey a15db9c2, queued `eace5030`, dispatched
+`89e877ad`): one builder (opus/high) reported `5d2ad0ea` (code `0c926c86`); its own Codex review (step 3b) found one real defect → a FRESH fixer (opus/high) reported `a21fd4b7`
+(code `efd3bbc7`) on main `cf290476`. Merge `a21fd4b7` (ff-only): 6 commits — item 1 `56e1327b`, item 2 `18e12e0d`, report `4c4a2a81`, rung `834e36a0`, the end `efd3bbc7`,
+fix report `a21fd4b7`. MONEY PATH (which paper entries the runner dispatches) and evidence. The brief's "Schema: none … main stays 31" is superseded: **schema RUNG 34**
+(`DatabaseSchemaVersion = 34`, assigned by the orchestrator): `strategy_deployment.replay_version`, written by `Deployments.Start` as the build's `Versions.ForwardReplay` (1), never the
+caller's; its own block after 33's, stamp last; no backfill.
+**What it does.** `ForwardRuns` (:369-379 on base): the max-hold condition is hoisted out of `live` — on every minute whose books read long at or past the limit, live or replayed,
+the evaluator reads `RunBooks.Flat(account)`; the cancel, the stop/target reset and `FlattenAsync` stay live-only. `AdvanceOneAsync` first ENDS any run whose `replay_version`
+differs from this build's or is NULL, through `EndAsync` (which flattens — ending only removes exposure), in words naming both versions; nothing recorded is rewritten.
+CONTRACTS: the minute order and a PROTECTION paragraph. The rejected alternative (the entry signal from the dispatched op's record) would still replay on a guess.
+**Blast radius, larger than the survey said:** on base the phantom held back ONE-MINUTE entries too (all three shipped strategies are 1m): the crash-restart rig (e) never wrote
+its 12:06 entry and now does; (b)'s 12:07 entry and the refused-close rig's minute-12 entry come on time. 8 of 9 rigs' op lists byte-identical; (e) gains its entry.
+**Deviations / declared test changes, accepted by seat A:** (b) asserts no pass counts more intents than ops written and no Exit op (the brief's "== 2 every pass" is false on the
+fix: a replay counts its own in-flight entry); `A_close_refused_before_the_wire` reads minute 12's FIRST pass; `A_bars_1m_deployment`'s pinned transcript changes at m11 and m12
+(every op and wire line unchanged); `RefereeVerdictTests`' schema pin `== 33` → `>= 33`.
+**RED before / mutants:** builder: (a) `Expected [59, 299] Actual [59]`; (b) `bar 7: 2 intents for 1 …`; mutant (`if (live)` restored around Flat) red on both and the transcript test.
+Fixer: (r1) `Expected flatten Actual entry`; (r2) the review's hourly case (stop percent 5, closes 100 at 299 and 110 at 359, fill at 110) `Collection: [105]` — the same reds are
+the stamp-check mutant; green with the fix; every existing max-hold op line unchanged.
+**Codex reviews.** Builder's (step 3b): a run started under an earlier build replays under the new reading and sizes its stop from a phantom signal — REAL, fixed by the stamp
+(`fleet/records/U-runner-maxhold-replay-review-triage.md`). Fixer's re-review: reconcile (`AppHost.cs:1155` → `TradingGateway.cs:1065`) dispatches a persisted PLANNED operation
+before the runner's stamp check ends the run — JUDGED NOT A DEFECT of this unit: a planned op is a decision the earlier build recorded under its checks (as U-runner-features'
+triage held), not a replay; the end then flattens on paper; cost one paper round trip in an upgrade-after-crash; OWED light card `U-reconcile-stamp-first` (check the stamp first).
+**Gate.** Builder: Release 0/0; ForwardRunnerTests 28/28 ×3, FeatureProgramRunnerTests 9/9; CI 38121042474 every job. Fixer: Release 0/0; ForwardRunnerTests 32/32,
+FeatureProgramRunnerTests 9/9 and 50/50 over six classes ×3. **Landing CI CARRIED** from run 38126307572 at `efd3bbc7` — every job success: windows 1–5 10/9/10/9/11 min, ubuntu 13,
+macos 24, linux-host 20, packages. **Names vs main:** 2564 → 2569, removed 0. **Scan:** clean.
+**Tests box:** NOT RUN. **NOT done, NOT verified:** (r2)'s earlier-build ledger is emulated (cursor moved by hand); no test of the sweep starting a fresh run after such an end; the
+Fault max-hold rig not diffed; the brief's rulings Q1/Q2 are owed cards (`U-backtest-maxhold-reentry`, `U-runner-maxhold-refire`); the full local suites (CI ran them).
