@@ -845,8 +845,13 @@ public sealed class TurnMeter
         // THE UNITS THAT FUND THIS LAUNCH, read from the chart before the transaction and recorded with the row inside it
         // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
         // no unit's envelope sees. No row, no reservation, no wake.
+        //
+        // THE DAY'S CAP IS READ ONCE FOR THIS ADMISSION, here, and both the envelopes and the rule's own cap are sized from that one
+        // value: read twice, a cap the owner lowers between the reads leaves every envelope sized to the old, larger cap inside a
+        // rule enforcing the new one — a child envelope outside its parent's (BUDGET-001).
+        var cap = Cap();
         IReadOnlyList<FundedUnit> funding;
-        try { funding = FundingOf(role); }
+        try { funding = FundingOf(role, cap); }
         catch (Exception ex)
         {
             return new AiAdmission { Refusal = Labels.FundingChainUnreadable(Key(role), ex.Message), Ceiling = AiAdmission.Chart };
@@ -886,7 +891,7 @@ public sealed class TurnMeter
         AiAdmission admission;
         try
         {
-            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding));
+            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding, cap));
             if (admission.Id is { } written)
                 lock (_gate)
                 {
@@ -933,16 +938,18 @@ public sealed class TurnMeter
     ///
     /// It carries no totals. Those are read inside the transaction, which is the whole of the fix.
     ///
+    /// <para><paramref name="cap"/> is the ONE reading of the day's cap this admission made, the same one its envelopes in
+    /// <paramref name="funding"/> were sized from; this method never reads the cap again.</para>
+    ///
     /// <para><b>The chain replaces the role's share</b> (<c>U-org-envelopes</c>): <paramref name="funding"/> carries the units and
     /// their envelopes, and the store reads each unit's totals inside its transaction. The legacy split is still what a legacy
     /// division's envelope reads (<see cref="OrgEnvelopes"/>), so the legacy pair admits as before; a new position no longer
     /// gets half the day by default.</para>
     /// </summary>
-    AiAdmissionRule RuleFor(string? role, TurnPrice reservation, IReadOnlyList<FundedUnit> funding)
+    AiAdmissionRule RuleFor(string? role, TurnPrice reservation, IReadOnlyList<FundedUnit> funding, decimal cap)
     {
         var now = _now();
         var (from, to) = OwnerDay.Window(now);
-        var cap = Cap();
         return new AiAdmissionRule
         {
             From = from,
@@ -960,21 +967,26 @@ public sealed class TurnMeter
     /// THE RULE A LAUNCH BY <paramref name="role"/> WOULD BE ADMITTED AGAINST NOW — its reservation and funding chain resolved,
     /// no totals in it. For a test that builds two rules before either is admitted. Throws where the chain cannot be read.
     /// </summary>
-    internal AiAdmissionRule AdmissionRuleFor(string? role) => RuleFor(role, Reservation(role), FundingOf(role));
+    internal AiAdmissionRule AdmissionRuleFor(string? role)
+    {
+        var cap = Cap();
+        return RuleFor(role, Reservation(role), FundingOf(role, cap), cap);
+    }
 
     /// <summary>
     /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root,
-    /// each with its envelope as the owner has the cap and the split set at this instant (<see cref="OrgStore.FundingChain"/>).
+    /// each with its envelope sized from <paramref name="cap"/>, this admission's one reading of the day's cap, and the split as set
+    /// at this instant (<see cref="OrgStore.FundingChain"/>).
     /// A launch with NO role is the chair's, as its ledger row is, so its spend stays in the chair's units where the role-share
     /// rule always counted it — and it has no envelope to fit, because a launch nobody was named for was never held to a share
     /// (it keeps its rule, the day's). Throws where the chart cannot answer.
     /// </summary>
-    IReadOnlyList<FundedUnit> FundingOf(string? role)
+    IReadOnlyList<FundedUnit> FundingOf(string? role, decimal cap)
     {
         var org = new OrgStore(_db);
         return role is null
             ? [.. org.FundingLine(Key(role)).Select(u => new FundedUnit(u.Id, null))]
-            : org.FundingChain(role, Cap(), Share);
+            : org.FundingChain(role, cap, Share);
     }
 
     IReadOnlyList<string>? FundingOrNone(string? role)
