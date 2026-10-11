@@ -401,5 +401,19 @@ public class ResearchLedgerLinkTests(ITestOutputHelper log)
         Assert.Empty(w.Gw.Promotions.For(versionB));
         Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
         Assert.Equal(3, Links(w).Count);
+
+        // AN ANSWER ALREADY RECORDED, ASKED UNDER AN ENTRY BY A REQUEST THE APP STOPPED: refused as the referee's stop is,
+        // and nothing linked — the already-judged path asks the stop before it writes the link.
+        var later = Entry(w, CouncilRoles.Research);
+        using (var stop = new CancellationTokenSource())
+        {
+            stop.Cancel();
+            var stopped = await w.Server.CallAsync(Verdict(versionA, later), CouncilRoles.Research, "attempt-e1", stop.Token);
+            Assert.Equal(nameof(ErrorCode.IPC_UNAVAILABLE), stopped.Error?.Code);
+            Assert.Contains("TradeAgent stopped this verdict before it answered", stopped.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Empty(Links(w, later));
+        Assert.Equal(3, Links(w).Count);
+        Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
     }
 }

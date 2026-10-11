@@ -2721,8 +2721,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         if (gateway.Promotions.For(version).FirstOrDefault(p => p.CampaignId == campaign.Id) is { } judged)
         {
             // ANSWERED AS IT STANDS, AND LINKED ALONE when it was asked under an entry: the app answered this request with
-            // that record. Nothing runs and nothing is charged; asked again, it is the same one link.
-            if (under is not null) gateway.Links.Link(under, LedgerRecord.Promotion, judged.Id, ctx.AttemptId);
+            // that record. Nothing runs and nothing is charged; asked again, it is the same one link. A REQUEST THE APP
+            // STOPPED LINKS NOTHING: the stop is asked before the link and refused as the referee's stop is below — no
+            // record was produced for it, so no link may say the app answered it.
+            if (under is not null)
+            {
+                if (ct.IsCancellationRequested)
+                    throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Backtests.VerdictStopped);
+                gateway.Links.Link(under, LedgerRecord.Promotion, judged.Id, ctx.AttemptId);
+            }
             return Answered(campaign, version, judged, Withdrawn(version, campaign.Id, judged));
         }
 
