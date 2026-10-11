@@ -230,6 +230,50 @@ public class OrgRightsTests
         Assert.Empty(store.To(CouncilRoles.Research));
     }
 
+    // ---- (f) minting --------------------------------------------------------------------------------------------------
+
+    /// <summary>The names Windows reserves for devices, spelled here independently of the build's own list.</summary>
+    static readonly string[] DeviceNames =
+    [
+        "con", "prn", "aux", "nul",
+        .. Enumerable.Range(0, 10).Select(i => $"com{i}"), .. Enumerable.Range(0, 10).Select(i => $"lpt{i}")
+    ];
+
+    /// <summary>
+    /// (f) A MINTED POSITION ID NEVER EQUALS A LEGACY ID, AN APP PRINCIPAL OR A DEVICE NAME, and the one validator
+    /// <c>U-org-verbs</c>' writers call refuses each of those by name. RED at base: no minting rule and no validator
+    /// existed (<c>OrgStore</c> has no writer; ids are minted by <c>U-org-verbs</c>, so the RULE lands here as code).
+    /// </summary>
+    [Fact]
+    public void A_minted_position_id_never_equals_a_legacy_id_an_app_principal_or_a_device_name()
+    {
+        var reserved = CouncilRoles.All.Concat(AppPrincipals.All).Concat(DeviceNames).ToArray();
+
+        var minted = Enumerable.Range(0, 2000).Select(_ => OrgIds.MintPosition()).ToList();
+        Assert.Equal(minted.Count, minted.Distinct(StringComparer.Ordinal).Count());
+        foreach (var id in minted)
+        {
+            Assert.StartsWith(OrgIds.PositionPrefix, id, StringComparison.Ordinal);
+            Assert.True(CouncilRoles.IsPositionId(id), id);
+            Assert.Null(OrgIds.PositionIdRefusal(id));
+            Assert.DoesNotContain(id, reserved);
+        }
+
+        // THE PREFIX ITSELF IS ONE NONE OF THEM CAN TAKE.
+        foreach (var name in reserved)
+            Assert.False(name.StartsWith(OrgIds.PositionPrefix, StringComparison.Ordinal), name);
+
+        // THE VALIDATOR REFUSES EACH, IN A SENTENCE NAMING WHAT IT IS.
+        foreach (var legacy in CouncilRoles.All)
+            Assert.Contains("legacy", OrgIds.PositionIdRefusal(legacy)!, StringComparison.Ordinal);
+        foreach (var principal in AppPrincipals.All)
+            Assert.Contains("app's own principals", OrgIds.PositionIdRefusal(principal)!, StringComparison.Ordinal);
+        foreach (var device in DeviceNames)
+            Assert.Contains("Windows reserves", OrgIds.PositionIdRefusal(device)!, StringComparison.Ordinal);
+        foreach (var malformed in new[] { null, "", "CON", "Pos-1", "pos 1", "pos/1", "pos.1", "../pos" })
+            Assert.NotNull(OrgIds.PositionIdRefusal(malformed));
+    }
+
     // ---- (g) lenses -------------------------------------------------------------------------------------------------
 
     /// <summary>A lens over OKX's announcements, this suite's own words.</summary>

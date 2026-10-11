@@ -23,6 +23,45 @@ public static class OrgIds
 
     /// <summary>The division the legacy <c>research</c> position heads.</summary>
     public const string Research = "div-research";
+
+    /// <summary>
+    /// THE PREFIX EVERY POSITION ID THE APP MINTS CARRIES (<c>U-org-rights</c>). No legacy id (<c>operations</c>,
+    /// <c>research</c>), no app principal (<see cref="AppPrincipals"/>) and no device name Windows reserves begins with
+    /// it, so a minted id can never equal one of them; a test holds that over every one.
+    /// </summary>
+    public const string PositionPrefix = "pos-";
+
+    /// <summary>
+    /// A NEW POSITION ID: <see cref="PositionPrefix"/> and 48 bits from the operating system's cryptographic generator,
+    /// lower-case hex — app-random, never a name an agent chose and never derived from anything a model wrote. Minting is
+    /// not writing: <c>U-org-verbs</c>' writers call this, then <see cref="PositionIdRefusal"/>, inside the write that
+    /// inserts the row, whose primary key refuses the astronomically unlikely repeat.
+    /// </summary>
+    public static string MintPosition() =>
+        PositionPrefix + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
+
+    /// <summary>
+    /// THE ONE CHECK A WRITER OF A NEW POSITION CALLS (<c>U-org-verbs</c>): null when <paramref name="id"/> may name a
+    /// new position, otherwise the sentence that says why not. It refuses an id that is not a position id at all
+    /// (<see cref="CouncilRoles.IsPositionId"/>: <c>[a-z0-9-]+</c>), a LEGACY id — the two positions the schema-28 rung
+    /// seeded are never minted again — an APP PRINCIPAL, which is code and never a position, and a DEVICE NAME Windows
+    /// reserves, which no home folder can carry. Each is named on its own, before the shape, so the refusal says what the
+    /// id is rather than only that it failed.
+    /// </summary>
+    public static string? PositionIdRefusal(string? id)
+    {
+        if (CouncilRoles.IsKnown(id))
+            return $"'{id}' is a legacy position's id (operations, research): they were seeded once, under those ids, and "
+                   + "no new position takes one.";
+        if (OrgStore.IsAppPrincipal(id))
+            return $"'{id}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code writing "
+                   + "under a name, never a position.";
+        if (CouncilRoles.IsReservedDeviceName(id))
+            return $"'{id}' is a device name Windows reserves, so no folder can carry it and no position takes it.";
+        if (!CouncilRoles.IsPositionId(id))
+            return $"'{id}' is not a position id: a position id is lower-case letters, digits and hyphens.";
+        return null;
+    }
 }
 
 /// <summary>
