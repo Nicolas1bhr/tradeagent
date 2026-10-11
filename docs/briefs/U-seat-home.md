@@ -71,3 +71,21 @@ is reachable and has codex, prove it; otherwise the report says NOT VERIFIED and
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (speed mode: Release `--no-incremental` 0 warnings; touched classes 3× via `suite.sh`; the full suite on
 branch CI, all three platforms; the Codex review started with the CI wait; names vs `main` 0 removed). The report names the rung, the pinned version and
 every digest, the mock run quoted, and the RED-before and mutant lines. `## Report` ≤ 20 lines appended here.
+
+## Report
+- **Tip** `5077711c` (code; this Report commits on top) on main 06ebf6e7 (2 rebases: U-admission-fail-closed, U-reconcile-packet); **rung 37** (main 36). Build Release --no-incremental `0 Warning(s) 0 Error(s)`;
+  touched classes 3× `Passed: 74` (SeatHome, AgentModel, LinuxHostRuntime, VendorLimit, TurnMeter, BudgetReservation, HarnessBudget); names: removed 0 (2575 → 2589).
+  CI 38166217557 on 5077711c: every job success (dedupe-gate, shard-plan, package, package-linux, macos, ubuntu, windows 1-5, linux-host). Tests box run 20261011-185626-583276c5 GREEN (1754 unit · 692+1 not run integration · 498 fault · timing green; his files unchanged) — before the owner fixes; later NOT RUN (box busy).
+- Items 1-6 (pass 1): seat env at the one Apply seam; deny set as data fresh+resumed and config.toml written each start; pin per platform; verify every launch; profile hash at insert; signed-out refused in words.
+- Rebase: kept admission's refusal (LedgerRefused, NoLedger, null Admit refuses; the seat check sits beside StillRunning in TurnMeter.Begin); U-seat-home's ExecuteTaskAsync changes dropped (method deleted on main → review P2 closed).
+- Fix 1 (P1 :272): a non-pin is never run, `--version` included (one choke point in ProbeVersionAsync + RequirePin; ISeatProbe.VersionAsync deleted); refusal names its sha256, the pin's, the pinned version, "version unknown — not run". RED: `Assert.Contains() Failure: Sub-string not found` (2 tests).
+- Fix 2 (P1 :241): cache dropped, hashed from bytes at every check (seat A's ruling: no metadata is unforgeable; codex 241,556,032 B hashes in 0.61 s); binary integrity labelled ADVISORY in code. RED: `a same-length swap with its time restored was taken for the pin`.
+- Fix 3 (P1 :35): lstat-style link/junction/reparse refusal on every component root→folder→config, folders made one level at a time, config read with O_NOFOLLOW (Unix), never written through a link. RED: `seat-home/codex -> owner-home/.codex: detected as installed`; fixture byte-identical after.
+- Re-review fixes: foreign-owned folder refused (Unix: chmod 0700 only an owner may do; Windows: owner SID) — RED `UnauthorizedAccessException: Access to the path '/usr/codex' is denied`; Windows folders get a protected owner-only DACL; a folder that cannot be made private (macOS CI: `Read-only file system: '/usr'`) is refused in words.
+- Mutant (drop `--ignore-user-config`), rebased tree: (b) `Item not found in collection`, (c) `Filter not matched in collection` → restored, green.
+- Pin codex 0.160.1; archive digests = GitHub's; program digests win 9e7c59c0…f55d · linux x64 f34a4d23…1e35 · linux arm64 fbbaec80…eb3e · mac arm64 09fa44fd…82be (= PATH copy) · mac x64 8757e2a2…eafc.
+- Mock (pass 1, unit's real argv, hostile throwaway home): 4 tools fresh + resumed, `ps` empty, notify hook never called; real probe on a clean seat home: 26 allowlisted features, `mcp list` `[]`, `login status` rc 1.
+- request_user_input under exec: codex answers "unavailable in Default mode", turn exits 0 — left as is (no key removes it).
+- Deviations (pass 1): `forced_login_method` dropped (blocks a pasted key); settings on `RuntimeManifest.Seat`; profile change → fresh session in AgentSession; meter checks the seat via the role's attached conversation. Fixer: test (a) now pins its script (a non-pin is no longer run).
+- NOT VERIFIED: Windows USERPROFILE / known-folder home (→ U-cell-windows); `$CODEX_HOME/AGENTS.md` refused only by the inventory check, ADVISORY while unconfined; root on Unix (chmod proves no ownership — documented, product never elevates); Windows red for the DACL test (green on CI only).
+- OWED (re-review 3, beyond brief): macOS ACL entries survive 0700 (clear ACLs on seat folders); Windows explicit grants on an existing `codex/auth.json` survive the folder DACL (reset file DACLs).
