@@ -58,6 +58,25 @@ public class PromptStdinTests
     }
 
     /// <summary>
+    /// (c) A PROMPT OVER THE ARGV CAP REACHES THE RUNTIME WHOLE: 300 KiB and more, over Linux's 128 KiB per argument and
+    /// Windows' 32,767 characters per command line. Lines under 8 KiB, because the Windows recorder is <c>findstr</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_prompt_over_the_argv_cap_reaches_the_runtime_whole()
+    {
+        var (codex, exe, rec) = Recorder(nameof(A_prompt_over_the_argv_cap_reaches_the_runtime_whole));
+        var session = SeatHomeTests.Session(codex, exe, rec.Dir, new SeatHomeTests.FakeProbe());
+        var prompt = string.Join('\n', Enumerable.Range(0, 3100).Select(i => $"{i:D6} " + new string((char)('a' + i % 26), 92)));
+        Assert.True(Encoding.UTF8.GetByteCount(prompt) > 300 * 1024);
+
+        var ended = await SeatHomeTests.Turn(session, prompt);
+
+        Assert.Equal(0, ended.ExitCode);
+        Assert.True(prompt == rec.Stdin(), $"stdin carried {rec.Stdin().Length} of {prompt.Length} characters");
+        Assert.DoesNotContain(rec.Argv(), a => a.Contains("000001 b", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// (e) THE <c>.cmd</c>-SHIM PATH CARRIES NO PROMPT ON ITS COMMAND LINE. On Windows the recorder is a <c>.cmd</c>, so the turn
     /// runs through <c>ComSpec /c</c>, whose parser expands <c>%VAR%</c> and splits on <c>&amp;</c> even inside quotes: a prompt
     /// on that line was the owner's words rewritten by cmd.exe. On stdin it arrives byte for byte. Everywhere else the same
