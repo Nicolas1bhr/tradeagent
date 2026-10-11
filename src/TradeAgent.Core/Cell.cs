@@ -224,7 +224,7 @@ public sealed record CellPlatform(bool Linux, string Kernel, string Architecture
             return $"Linux {Kernel} does not run Landlock (active security modules: {Lsm}; {versions}). {none}.";
         if (LandlockAbi < MinimumAbi)
             return $"Linux {Kernel} offers Landlock ABI {AbiFound} and a cell needs ABI {MinimumAbi} or newer (kernel 6.12 or later), " +
-                   $"whose signal and socket scoping keep a cell from the app itself. {none}.";
+                   $"whose signal and socket scoping keep a cell from the app itself ({versions}). {none}.";
         return null;
     }
 
