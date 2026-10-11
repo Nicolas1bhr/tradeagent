@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
 using Xunit;
@@ -80,10 +82,23 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
     static GatewaySchema.ArgSpec[] ArgsOf(string op) =>
         GatewaySchema.Ops().Single(o => o.Op == (op == Ops.Sell ? Ops.Buy : op)).Args;
 
-    /// <summary>A value of the offered TYPE for one argument, plausible where the name says what it holds.</summary>
-    static object Value(string op, string name, string offeredType) => offeredType switch
+    /// <summary>
+    /// The research-ledger entry the fixture wrote, so an op that names an entry names one that is there and reads on past
+    /// it, rather than being refused for a missing entry before its other arguments are read.
+    /// </summary>
+    long _entry = 1;
+
+    /// <summary>
+    /// A value of the offered TYPE for one argument, one the gateway can ACT on where the fixture can give it one — the
+    /// entry it wrote, the tape's own source, series and subject — so a refusal for a value comes as late as it can.
+    /// </summary>
+    object Value(string op, string name, string offeredType) => offeredType switch
     {
-        "number" => name switch { "confidence" => 0.5m, "fees" or "slippage" => 0.001m, "after" => 0, _ => 1 },
+        "number" => name switch
+        {
+            "confidence" => 0.5m, "fees" or "slippage" => 0.001m, "after" => 0,
+            "entry" or "about" => _entry, "before" when op == Ops.LedgerList => _entry + 1, _ => 1
+        },
         "boolean" => false,
         "string" => (op, name) switch
         {
@@ -100,7 +115,8 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
             (Ops.LedgerRevise, "status") => "held",
             (_, "status") => "open",
             (Ops.DataBars, "source") => "archive",
-            (Ops.DataTape, "source") => "binance-um-oi",
+            (Ops.DataTape, "source") => TapeSourceCatalog.Premium,
+            (Ops.DataTape, "series") => "premium-index",
             (_, "strategy") => "strategies/none.strategy",
             (_, "request_id") => "args-" + Guid.NewGuid().ToString("n")[..12],
             _ => "x"
@@ -163,7 +179,7 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
     /// than one, and each declared argument as a value of the type the schema offers it as — or, where the schema does not
     /// offer it at all, of the type the gateway declares, so the validator says so rather than the test skipping it.
     /// </summary>
-    static Dictionary<string, object> FullCall(JsonElement schema, string tool, string op)
+    Dictionary<string, object> FullCall(JsonElement schema, string tool, string op)
     {
         var call = new Dictionary<string, object>(StringComparer.Ordinal);
         if (GrantedWorkerTools.OpsOf(tool).Count > 1) call["op"] = op;
@@ -183,6 +199,14 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
     public async Task Every_op_called_with_every_argument_it_takes_validates_against_the_offered_schema_and_is_refused_for_no_argument_name_or_type()
     {
         var (gw, _, db) = await TestEnv.Ready();
+
+        // A REAL TAPE, so 'data-tape' reads its arguments instead of refusing for the tape's absence before any of them:
+        // one premium-index reading of BTCUSDT, the source, series and subject its call names.
+        using (var store = new TapeStore(TapeReadings.NewFile()))
+        {
+            TapeReadings.Reading(store, DateTimeOffset.Parse("2025-12-31T23:00:00Z"), "0.0001");
+            gw.Tape = new TapeReader(store.File);
+        }
         var pipe = "ta-args-" + Guid.NewGuid().ToString("n")[..12];
         var grants = new AgentGrants();
         using var _db = db;     // declared first, so it is disposed after the server that reads it
@@ -195,6 +219,14 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
         var role = CouncilRoles.Operations;
         var tools = new GrantedWorkerTools(role, () => Paths.RoleHome(role), () => "attempt-args", () => server);
         await using var wire = await Raw.DialAsync(pipe, grants.Issue(role, "attempt-args").Token);
+        var written = await wire.SendAsync(new IpcRequest
+        {
+            Op = Ops.LedgerAdd, Session = "args", RequestId = "args-entry",
+            Args = new() { ["kind"] = J("lesson"), ["text"] = J("the fixture's entry"), ["mark"] = J("claim") }
+        });
+        Assert.True(written.Ok, Json.Write(written.Error));
+        _entry = JsonSerializer.SerializeToElement(written.Data, Json.Options).GetProperty("entry").GetInt64();
+        var unparsed = new List<string>();
 
         var invalid = new List<string>();
         var checkedOps = 0;
@@ -224,6 +256,26 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
                 });
                 NotForANameOrType("pipe", op, reply.Ok, reply.Ok ? "" : $"{reply.Error?.Code}: {reply.Error?.Message}");
 
+                // AND EACH NUMBER AND FLAG WAS READ, not refused past: the same frame with that one argument unreadable is
+                // refused FOR that argument. The two frames differ in that argument alone, so the handler ran the same way
+                // up to its reading — which means the complete call reached it too, and its reader took the offered type.
+                // A refusal that came first is named here and fails the test: it would make the complete call's answer
+                // prove nothing about that argument. (A string has no type to refuse: the pipe reads any JSON as one; the
+                // gateway's refusal of a name runs before anything else, on the four ops that have it.)
+                foreach (var arg in ArgsOf(op).Where(a => OfferedType(schema, a.Name) is "number" or "boolean"))
+                {
+                    var probe = new Dictionary<string, JsonElement>(args) { [arg.Name] = J("unreadable") };
+                    var refused = await wire.SendAsync(new IpcRequest
+                    {
+                        Op = op, Session = "args", RequestId = "args-" + Guid.NewGuid().ToString("n")[..12], Args = probe
+                    });
+                    var expected = OfferedType(schema, arg.Name) == "number"
+                        ? $"'{arg.Name}' is not a number this build can read"
+                        : $"'{arg.Name}' must be true or false";
+                    if (refused.Ok || !refused.Error!.Message.Contains(expected, StringComparison.Ordinal))
+                        unparsed.Add($"{op}·{arg.Name}: " + (refused.Ok ? "served" : $"{refused.Error!.Code} {Cut(refused.Error.Message)}"));
+                }
+
                 log.WriteLine($"{tool.Name}·{op} [{string.Join(",", call.Keys)}] harness={(answer.Served ? "served" : "refused: " + Cut(answer.Content))} "
                               + $"pipe={(reply.Ok ? "served" : $"refused: {reply.Error?.Code} {Cut(reply.Error?.Message)}")}");
                 checkedOps++;
@@ -231,6 +283,7 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
         }
 
         Assert.True(invalid.Count == 0, "the offered schema refuses a complete call:\n" + string.Join("\n", invalid));
+        Assert.True(unparsed.Count == 0, "a number or a flag was refused past, not read:\n" + string.Join("\n", unparsed));
         Assert.Equal(GrantedWorkerTools.Granted.Sum(t => GrantedWorkerTools.OpsOf(t.Name).Count), checkedOps);
 
         // THE GUARD STILL STANDS, ON BOTH ROUTES: an argument an op does not take is refused by the gateway, in its words.
