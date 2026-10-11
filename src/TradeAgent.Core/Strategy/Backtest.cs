@@ -9,7 +9,7 @@ namespace TradeAgent.Core.Strategy;
 /// stop-versus-target ordering". Declared, not assumed — every one of these four numbers changes the
 /// answer, none of them is in the program and none of them is in the dataset, so a result reported
 /// without them is a number nobody can reproduce or argue with. They are hashed into the run's id
-/// (<see cref="BacktestRequest.RunIdFor"/>), which is what makes a run under one fee and a run under
+/// (<see cref="BacktestRequest.RunIdFor(string)"/>), which is what makes a run under one fee and a run under
 /// another two different runs rather than one run that changed its mind.</para>
 ///
 /// <para><b><see cref="FeeRate"/> and <see cref="SlippageRate"/> are FRACTIONS, not amounts.</b> A
@@ -272,23 +272,35 @@ public sealed record BacktestRequest(
 
     /// <summary>
     /// THE RUN'S IDENTITY: <c>sha256(version id + dataset id + the dataset's normalised sha256 +
-    /// window + execution model)</c>, in that order, newline separated — and, only for a program that reads
-    /// features, the SHA-256 of every feature value it read as a sixth line.
+    /// window + execution model + evaluator)</c>, in that order, newline separated — and, only for a program that reads
+    /// features, the SHA-256 of every feature value it read as a seventh line.
     ///
     /// <para>The dataset's SHA-256 is in there as well as its id, and that is not redundancy. A
     /// dataset row can be REJECTED later because a raw archive changed under it; with only the id in
     /// the hash, a run over the old bytes and a run over the new ones would collide on one id and one
     /// of the two results would silently stand for both.</para>
     ///
+    /// <para><b>The evaluator is in there for the same reason</b> (<c>U-evidence-evaluator-label</c>): a run's figures and
+    /// streams are what <see cref="Referee.EvaluatorVersion"/>'s backtest, metrics and scoring made of its bars, and
+    /// <c>strategy_run</c> keeps the first account of an id. Without it the same request under another evaluator would be
+    /// answered by the row an older one wrote; with it, it is another run — a new row, its own streams and its own trial
+    /// charge — and the old row stays what it was, labelled with the evaluator it was measured under.</para>
+    ///
     /// <para><b>The feature values are in there for the same reason</b> (<c>U-language-v2a</c>): the tape is not the
     /// dataset, it grows and it is revised, and a run over one tape and a run over another are two runs. Each value is
     /// named by the feature's id, its instant and the digest of the rows it stands on, so the run id names the exact
     /// readings it was computed from — and a promotion, which hashes the run id, binds them too. A program that reads
-    /// no feature hashes the five lines it always did: every v1 run id is unchanged.</para>
+    /// no feature hashes the six lines alone.</para>
     /// </summary>
-    public string RunIdFor(string versionId) =>
+    public string RunIdFor(string versionId) => RunIdFor(versionId, Referee.EvaluatorVersion);
+
+    /// <summary>
+    /// The run id under <paramref name="evaluator"/>: THE TESTS' SEAM, internal and reached by no request — every caller
+    /// in the app asks <see cref="RunIdFor(string)"/>, which is this build's evaluator.
+    /// </summary>
+    internal string RunIdFor(string versionId, string evaluator) =>
         Sha256Hex.Of(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}")
+            $"{versionId}\n{DatasetId}\n{DatasetSha256}\n{Window}\n{Model.Canonical}\n{evaluator}")
             + (FeaturesSha256 is { } features ? "\n" + features : ""));
 }
 

@@ -255,7 +255,7 @@ public sealed class FeatureFeed : IDisposable
 
     /// <summary>
     /// THE SHA-256 OF EVERY VALUE HANDED OUT SO FAR, one line each — <c>feature id, instant, rows sha256</c> — in the order
-    /// the run read them. What <see cref="BacktestRequest.RunIdFor"/> adds to a feature program's run id.
+    /// the run read them. What <see cref="BacktestRequest.RunIdFor(string)"/> adds to a feature program's run id.
     /// </summary>
     public string ValuesSha256 => Convert.ToHexStringLower(_digest.GetCurrentHash());
 

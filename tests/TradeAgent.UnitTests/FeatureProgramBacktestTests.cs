@@ -236,14 +236,14 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
         var five = new BacktestRequest(1, "fixture", Model, Start, null);
         Assert.Equal(Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
-                $"{program.StrategyId}\n1\nfixture\n{five.Window}\n{Model.Canonical}\n{first.Request.FeaturesSha256}")),
+                $"{program.StrategyId}\n1\nfixture\n{five.Window}\n{Model.Canonical}\n{Referee.EvaluatorVersion}\n{first.Request.FeaturesSha256}")),
             first.RunId);
 
-        // THE V1 RUN ID, PINNED: a request with no feature digest hashes exactly the five lines it hashed on main.
+        // THE V1 RUN ID, PINNED: a request with no feature digest hashes the five lines it always did and the evaluator (U-evidence-evaluator-label).
         var v1 = Parsed(DayOnePrograms.Text("ma-crossover.strategy"));
         Assert.Null(five.FeaturesSha256);
         Assert.Equal(Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
-            $"{v1.StrategyId}\n1\nfixture\n{five.Window}\n{Model.Canonical}")), five.RunIdFor(v1.StrategyId));
+            $"{v1.StrategyId}\n1\nfixture\n{five.Window}\n{Model.Canonical}\n{Referee.EvaluatorVersion}")), five.RunIdFor(v1.StrategyId));
         Assert.Equal(PinnedV1RunId, five.RunIdFor(v1.StrategyId));
         var v1Run = Backtest.Run(v1, five, Minutes(Start, 120));
         Assert.Null(v1Run.Request.FeaturesSha256);
@@ -561,7 +561,9 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
     /// <summary>
     /// The run id of `ma-crossover.strategy` over the fixture request above: SHA-256 of the five lines main's
-    /// <c>RunIdFor</c> hashes (at <c>18a7ab10</c>), computed outside this build, with Python's hashlib.
+    /// <c>RunIdFor</c> hashed (at <c>18a7ab10</c>) and the evaluator line <c>backtest=2;metrics=1;scoring=1</c> it hashes
+    /// since <c>U-evidence-evaluator-label</c>, computed outside this build, with Python's hashlib (the five lines alone
+    /// still give <c>1cf789735c32…</c>, the figure pinned before).
     /// </summary>
-    const string PinnedV1RunId = "1cf789735c3282c5ac3b894cc490942c778bbdd32fc0edc57b09c53055fd6a77";
+    const string PinnedV1RunId = "593be2d99b53c247b43236f298e39da450d481c508486d9c165f8e29e1be5f65";
 }
