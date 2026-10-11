@@ -1422,27 +1422,33 @@ public class GatewayPipeBackpressureTests
 
             var latch = new CallLatch();
             conn.Faults.Hold = latch.Hold;
-            var sweep = Swallow(client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-a" }));
-            // The whole prefix and the whole wave are still ahead: the composite's first read is parked.
-            await WaitFor(() => latch.Parked > 0, TimeSpan.FromSeconds(30));
+            try
+            {
+                var sweep = Swallow(client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-a" }));
+                // The whole prefix and the whole wave are still ahead: the composite's first read is parked.
+                await WaitFor(() => latch.Parked > 0, TimeSpan.FromSeconds(30));
 
-            var disposing = server.DisposeAsync().AsTask();
-            // The agent's connection closing is step 2 of disposal; the drain (step 3) is what comes
-            // next, and it must be WAITING for the held handler — not have given up on it.
-            await sweep;
-            Assert.False(disposing.IsCompleted, "disposal returned while the wave was still held");
-            latch.ReleaseAll();
-            await disposing;
+                var disposing = server.DisposeAsync().AsTask();
+                // The agent's connection closing is step 2 of disposal; the drain (step 3) is what comes
+                // next, and it must be WAITING for the held handler — not have given up on it.
+                await sweep;
+                Assert.False(disposing.IsCompleted, "disposal returned while the wave was still held");
+                latch.ReleaseAll();
+                await disposing;
 
-            Assert.Equal(0, Dispatching(db));
-            Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
+                Assert.Equal(0, Dispatching(db));
+                Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
 
-            // Every position was really closed BEFORE disposal returned, so "nothing unsettled" is
-            // not "nothing happened". The agent's own reply is gone either way — disposal closes the
-            // connection before it waits — which is exactly why the evidence has to be the record and
-            // the broker's book rather than the answer.
-            Assert.DoesNotContain(conn.Broker.Positions, p => p.Quantity != 0);
-            await sweep;
+                // Every position was really closed BEFORE disposal returned, so "nothing unsettled" is
+                // not "nothing happened". The agent's own reply is gone either way — disposal closes the
+                // connection before it waits — which is exactly why the evidence has to be the record and
+                // the broker's book rather than the answer.
+                Assert.DoesNotContain(conn.Broker.Positions, p => p.Quantity != 0);
+                await sweep;
+            }
+            // Every path lets the held handlers go: a failed assert above must not leave an
+            // uncancellable handler parked for the life of the test host.
+            finally { latch.ReleaseAll(); }
         }
 
         // MID-WAVE: a second sweep over a freshly stocked book, disposed once a placement of the
@@ -1456,24 +1462,28 @@ public class GatewayPipeBackpressureTests
         var before = conn2.Broker.Orders.Count;
         var latch2 = new CallLatch();
         conn2.Faults.Hold = latch2.Hold;
-        var sweep2 = Swallow(client2.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-b" }));
-        // One call at a time, until a placement has passed its hold and reached the broker.
-        while (conn2.Broker.Orders.Count <= before)
+        try
         {
-            await WaitFor(() => latch2.Parked > 0 || conn2.Broker.Orders.Count > before, TimeSpan.FromSeconds(30));
-            if (conn2.Broker.Orders.Count > before) break;
-            latch2.ReleaseOne();
-        }
+            var sweep2 = Swallow(client2.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-b" }));
+            // One call at a time, until a placement has passed its hold and reached the broker.
+            while (conn2.Broker.Orders.Count <= before)
+            {
+                await WaitFor(() => latch2.Parked > 0 || conn2.Broker.Orders.Count > before, TimeSpan.FromSeconds(30));
+                if (conn2.Broker.Orders.Count > before) break;
+                latch2.ReleaseOne();
+            }
 
-        var disposing2 = server2.DisposeAsync().AsTask();
-        await sweep2;
-        Assert.False(disposing2.IsCompleted, "disposal returned while the rest of the wave was still held");
-        latch2.ReleaseAll();
-        await disposing2;
-        Assert.Equal(0, Dispatching(db2));
-        Assert.Null(ReadEngineering(db2, "handlers_did_not_finish"));
-        Assert.DoesNotContain(conn2.Broker.Positions, p => p.Quantity != 0);
-        await sweep2;
+            var disposing2 = server2.DisposeAsync().AsTask();
+            await sweep2;
+            Assert.False(disposing2.IsCompleted, "disposal returned while the rest of the wave was still held");
+            latch2.ReleaseAll();
+            await disposing2;
+            Assert.Equal(0, Dispatching(db2));
+            Assert.Null(ReadEngineering(db2, "handlers_did_not_finish"));
+            Assert.DoesNotContain(conn2.Broker.Positions, p => p.Quantity != 0);
+            await sweep2;
+        }
+        finally { latch2.ReleaseAll(); }
         await server2.DisposeAsync();
     }
 
