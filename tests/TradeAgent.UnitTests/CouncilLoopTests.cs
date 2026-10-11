@@ -1,6 +1,7 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using Xunit;
 
@@ -298,6 +299,10 @@ public partial class CouncilLoopTests
         /// <summary>The role's own open ledger entries, as the app reads them — only where this host says what each role owns.</summary>
         public IReadOnlyList<LedgerListed>? Beliefs(string role) =>
             Owns ? MissionSituation.OpenBeliefs(_db, role) : null;
+
+        /// <summary>The role's holdout windows as the dataset ledger holds them now, exactly as the app reads them.</summary>
+        public IReadOnlyList<TapeHoldoutWindow>? Holdouts(string role) =>
+            TapeHoldout.Pipe(role, new DatasetStore(_db)).Windows();
     }
 
     /// <summary>How long a boundary in these tests stays open. A day compressed to a minute.</summary>

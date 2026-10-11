@@ -2166,7 +2166,10 @@ series an ACTIVE deployment of one of its versions declares as a feature input (
 runs) — and only for items whose source time is outside every window `TapeHoldout.Pipe` refuses Research's own
 reads, a dataset with no recorded end held with no end. It is coalesced (one untaken row per role, one
 statement, `RaiseCoalesced`), keyed by the fetch, and its payload is source, series, subject and count — never an
-item's text, address or a figure; the collector holds no database and tells the app through a delegate. A
+item's text, address or a figure (the row also keeps each counted item's subject and source time, never rendered, so
+the holdout is asked again when the wake is admitted and when its packet is rendered: a window declared after the
+raise drops what it holds from the count, and a wake it holds entirely is withdrawn without a turn and names nothing);
+the collector holds no database and tells the app through a delegate. A
 `deadline` wake is raised by the loop's schedule for each open boundary a director has not assessed, keyed
 `deadline:<boundary>:<role>`, due a quarter of the window before `deadline_at` — once per boundary and
 director — and closed `withdrawn` without a turn once the director has assessed it or the boundary is settled.

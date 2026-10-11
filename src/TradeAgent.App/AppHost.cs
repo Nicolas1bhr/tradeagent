@@ -1757,6 +1757,10 @@ public sealed class AppHost : IAsyncDisposable
         public IReadOnlyList<LedgerListed>? Beliefs(string role) =>
             host._db is { } db ? MissionSituation.OpenBeliefs(db, role) : null;
 
+        /// <summary>THE ROLE'S HOLDOUT WINDOWS NOW, as its own reads are refused (U-reconcile-packet, review 1): a tape wake they hold buys no turn.</summary>
+        public IReadOnlyList<Core.Data.TapeHoldoutWindow>? Holdouts(string role) =>
+            host._db is { } db ? Core.Data.TapeHoldout.Pipe(role, new DatasetStore(db)).Windows() : null;
+
         public MissionDelivery? Delivered(string publicationId)
         {
             try

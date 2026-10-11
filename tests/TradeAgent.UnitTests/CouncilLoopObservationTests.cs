@@ -155,6 +155,72 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (b2) A TAPE WAKE WHOSE ITEM A WINDOW DECLARED AFTER IT WAS QUEUED NOW HOLDS BUYS NOTHING AND NAMES NOTHING — the
+    /// holdout is asked again when the wake is admitted and when the packet is rendered, never only when it was raised.
+    /// A wake whose every item is now held is closed without a turn; one with an item still outside names only that
+    /// one; and a window declared while the turn is being composed (here an open-ended one) takes the wake out of the
+    /// packet, and the turn takes only what else woke it.
+    ///
+    /// <para>RED at 27cb7bcf (the payload cached at the raise, no check after it): "Assert.Empty() Failure: Collection was not empty" — Research launched on the held item.
+    /// Mutant, the admission and render check removed (<c>Unheld</c> keeps every wake): red, the same line.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_tape_wake_a_later_holdout_covers_buys_no_turn_and_names_nothing()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var datasets = new DatasetStore(db);
+        var events = new MissionEventStore(db);
+        var okx = Okx();
+        TapeArrival Arrival(long fetch, params (string Subject, DateTimeOffset At)[] items) =>
+            new(okx.Id, okx.Series[0].Id, okx.Parser, fetch, [.. items.Select(i => new TapeArrived(i.Subject, i.At))]);
+        static DateTimeOffset On(int month, int day) => new(2026, month, day, 12, 0, 0, TimeSpan.Zero);
+
+        var host = new CouncilHost(db, root, new Concurrency());
+        var now = TapeNow;
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        // QUEUED OUTSIDE EVERY WINDOW, THEN HELD: May is declared held after the wake went in.
+        Assert.True(TapeWakes.Raise(db, Arrival(1, ("subject-held-in-may", On(5, 15))), TapeNow));
+        HeldDataset(datasets, On(5, 1), On(5, 31), On(5, 10));
+        await loop.TurnAsync();
+        Assert.Empty(host.Opened);
+        var closed = Assert.Single(events.OfKind(MissionEventKind.Tape));
+        Assert.NotNull(closed.ConsumedAt);
+        Assert.Equal(MissionEventDisposition.Withdrawn, closed.Disposition);
+        Assert.DoesNotContain("subject-held-in-may", closed.DispositionDetail ?? "", StringComparison.Ordinal);
+
+        // ONE ITEM HELD LATER, ONE STILL OUTSIDE: the turn is bought by and names only the one outside.
+        Assert.True(TapeWakes.Raise(db, Arrival(2,
+            ("subject-outside-in-july", On(7, 15)), ("subject-held-in-june", On(6, 15))), TapeNow));
+        HeldDataset(datasets, On(6, 1), On(6, 30), On(6, 10));
+        await loop.TurnAsync();
+        var (role, prompt) = Assert.Single(host.Opened);
+        Assert.Equal(CouncilRoles.Research, role);
+        Assert.Contains("1 new item of", prompt, StringComparison.Ordinal);
+        Assert.Contains("subject-outside-in-july", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("subject-held-in-june", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("2 new items", prompt, StringComparison.Ordinal);
+
+        // HELD WHILE THE TURN IS COMPOSED, BY A WINDOW WITH NO END: the turn runs for the look that also woke it, and
+        // its packet says nothing of the tape.
+        now = TapeNow.AddMinutes(1);
+        Assert.True(TapeWakes.Raise(db, Arrival(3, ("subject-held-from-august", On(8, 15))), now));
+        events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(now), CouncilRoles.Research),
+            MissionEventKind.Review, now, now, role: CouncilRoles.Research);
+        host.BeforeLaunch = _ => HeldDataset(datasets, On(8, 1), null, On(8, 10));
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Opened.Count);
+        var (late, packet) = host.Opened[1];
+        Assert.Equal(CouncilRoles.Research, late);
+        foreach (var text in new[] { "subject-held-from-august", "new item", "stored something new on the tape" })
+            Assert.DoesNotContain(text, packet, StringComparison.Ordinal);
+        var withdrawn = Assert.Single(events.OfKind(MissionEventKind.Tape), e => e.Id.StartsWith(MissionEventIds.Tape(3) + "#", StringComparison.Ordinal));
+        Assert.Equal(MissionEventDisposition.Withdrawn, withdrawn.Disposition);
+        Assert.Null(withdrawn.ConsumedBy);
+    }
+
+    /// <summary>
     /// A MARKET READING WAKES RESEARCH ONLY WHILE AN ACTIVE DEPLOYMENT OF ITS VERSION READS IT. The input is the one the
     /// version's program declares, read back from the version the deployment runs; no deployment, or one that is not
     /// active, and the same reading wakes nobody — it arrives every poll.

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using TradeAgent.Core.Data;
 
 namespace TradeAgent.Core.Db;
 
@@ -112,7 +113,8 @@ public static class MissionEventKind
     /// <para>Raised by the app through the collector's delegate, never by an agent, and COALESCED: at most one untaken
     /// row per role (<see cref="MissionEventStore.RaiseCoalesced"/>), so a busy series buys at most one turn per turn
     /// taken. Its payload is <see cref="TapeWakePayload"/> — source, series, subject and count — and never an item's
-    /// text: a tape item is untrusted data, and the turn reads it with the tape's own read, under the holdout.</para>
+    /// text: a tape item is untrusted data, and the turn reads it with the tape's own read, under the holdout. The holdout
+    /// is asked again when the wake is admitted and when its packet is rendered (<see cref="TapeWakeRow"/>).</para>
     /// </summary>
     public const string Tape = "tape";
 }
@@ -122,6 +124,15 @@ public static class MissionEventKind
 /// new items are all of one (null when they span several), and how many — never an item's text, its URL or a figure.
 /// </summary>
 public sealed record TapeWakePayload(string Source, string Series, string? Subject, int Count);
+
+/// <summary>
+/// WHAT A <see cref="MissionEventKind.Tape"/> ROW HOLDS: what the wake says (<see cref="TapeWakePayload"/>'s four fields,
+/// which read it back) and, for the app alone, each counted item's subject and source time — never its text — so the
+/// holdout is asked again when the wake is admitted and when its packet is rendered (<c>U-reconcile-packet</c>, review
+/// 1): a window declared after the raise takes the items it holds out of the count, and a wake it holds entirely is
+/// closed without a turn (<see cref="MissionEventStore.WithdrawTape"/>). Never rendered.
+/// </summary>
+public sealed record TapeWakeRow(string Source, string Series, string? Subject, int Count, IReadOnlyList<TapeArrived> Items);
 
 /// <summary>
 /// WHAT BECAME OF A WAKE.
@@ -606,6 +617,23 @@ public sealed class MissionEventStore(Database db)
             """,
             ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
             ("$id", id), ("$deadline", MissionEventKind.Deadline));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
+    /// CLOSES ONE UNTAKEN <see cref="MissionEventKind.Tape"/> WAKE WITHOUT A TURN, consumed by no launch and
+    /// <see cref="MissionEventDisposition.Withdrawn"/> with <paramref name="why"/> — a holdout window now holds every item
+    /// it counted, or the windows could not be read (<c>U-reconcile-packet</c>, review 1). The guard is the statement's:
+    /// only an untaken tape wake is ever closed here.
+    /// </summary>
+    public bool WithdrawTape(string id, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, disposition=$withdrawn, disposition_detail=$why
+             WHERE id=$id AND kind=$tape AND consumed_at IS NULL
+            """,
+            ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
+            ("$id", id), ("$tape", MissionEventKind.Tape));
         return c.ExecuteNonQuery() == 1;
     });
 

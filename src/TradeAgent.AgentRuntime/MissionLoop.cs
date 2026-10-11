@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
@@ -526,6 +527,15 @@ public interface IMissionHost
     /// Every one is the role's claim; the Situation says so on every line and never mixes one into what changed.
     /// </summary>
     IReadOnlyList<LedgerListed>? Beliefs(string role) => null;
+
+    /// <summary>
+    /// THE HOLDOUT WINDOWS <paramref name="role"/>'S OWN READS ARE REFUSED, as the dataset ledger holds them NOW
+    /// (<see cref="TapeHoldout.Pipe"/>, <c>U-reconcile-packet</c> review 1), or null where this host cannot say. The loop
+    /// asks it when it admits a tape wake and when it renders the packet, so a window declared after the wake was raised
+    /// still holds what it holds. Null closes every tape wake without a turn: a wake nobody can show is outside every
+    /// window names nothing.
+    /// </summary>
+    IReadOnlyList<TapeHoldoutWindow>? Holdouts(string role) => null;
 }
 
 /// <summary>
@@ -1805,6 +1815,7 @@ public sealed class MissionLoop
             RecoverLostOwnerWords(events);
             RecoverUnansweredOwnerWords(events);
             Schedule(events);
+            WithdrawHeldTape(events);
             var due = RolesDue(events);
             if (due.Count == 0) return Idle(events);
 
@@ -1882,7 +1893,7 @@ public sealed class MissionLoop
         // one turn: the turn about to run is the one that should be told about it.
         if (events is not null)
         {
-            wake = events.DueFor(role, _now());
+            wake = Unheld(events, role, events.DueFor(role, _now()), HoldoutsOf(role));
             if (wake.Count == 0) return Idle(events);
         }
 
@@ -1918,7 +1929,19 @@ public sealed class MissionLoop
         // nothing is committed until BeginTurn below, and an id nobody launched under names no row.
         var attemptId = Mint();
 
-        var situation = (await _host.SituationAsync(role, ct)) with
+        var known = await _host.SituationAsync(role, ct);
+
+        // THE HOLDOUT, ASKED AGAIN AT THE RENDER (U-reconcile-packet, review 1): a window declared while this turn was
+        // being composed closes the tape wake it holds without this turn, and the packet names nothing of it. A turn
+        // nothing else woke, and nobody typed into, is not launched.
+        var windows = HoldoutsOf(role);
+        if (events is not null)
+        {
+            wake = Unheld(events, role, wake, windows);
+            if (wake.Count == 0 && typed.Count == 0) return Idle(events);
+        }
+
+        var situation = known with
         {
             Role = role,
             Attempt = attemptId,
@@ -1932,7 +1955,7 @@ public sealed class MissionLoop
             // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
             // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
             // the attempt keeps the prompt's hash and the wakes name their attempt.
-            WhatChanged = Observations(wake),
+            WhatChanged = Observations(wake, windows ?? []),
             Believed = BeliefsOf(role),
             Wanted = OpenObjectives(role)
         };
@@ -2652,16 +2675,75 @@ public sealed class MissionLoop
         catch (Exception) { return null; }
     }
 
-    /// <summary>WHAT CHANGED: one line per wake, in the order taken, each with its entity.</summary>
-    static string[] Observations(IEnumerable<MissionEvent> wake) =>
-        [.. wake.Take(MissionEventStore.BatchLimit).Select(Observation)];
+    /// <summary>
+    /// WHAT CHANGED: one line per wake, in the order taken, each with its entity — a tape wake counted and named under
+    /// <paramref name="windows"/>, the holdout as the ledger holds it at the render.
+    /// </summary>
+    static string[] Observations(IEnumerable<MissionEvent> wake, IReadOnlyList<TapeHoldoutWindow> windows) =>
+        [.. wake.Take(MissionEventStore.BatchLimit).Select(e => Observation(e, windows))];
+
+    /// <summary>
+    /// THE HOLDOUT WINDOWS OF <paramref name="role"/> FROM THE HOST, read now, or null where it cannot say — and a host
+    /// that throws cannot say. Null closes every tape wake without a turn.
+    /// </summary>
+    IReadOnlyList<TapeHoldoutWindow>? HoldoutsOf(string role)
+    {
+        try { return _host.Holdouts(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// EVERY UNTAKEN TAPE WAKE A WINDOW NOW HOLDS, CLOSED WITHOUT A TURN, before the loop decides whose turn it is
+    /// (<c>U-reconcile-packet</c>, review 1) — so a held item never makes its role the one that is due. Never throws: a
+    /// wake left here is asked again when it is admitted.
+    /// </summary>
+    void WithdrawHeldTape(MissionEventStore events)
+    {
+        foreach (var role in CouncilRoles.All)
+        {
+            try
+            {
+                var pending = events.Pending(MissionEventKind.Tape, role);
+                if (pending.Count > 0) Unheld(events, role, pending, HoldoutsOf(role));
+            }
+            catch (Exception) { /* asked again at the admission */ }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="wake"/> WITHOUT THE TAPE WAKES <paramref name="windows"/> NOW HOLD ENTIRELY, each of those closed
+    /// without a turn (<see cref="MissionEventStore.WithdrawTape"/>) — and every tape wake when the windows could not be
+    /// read. The reason recorded names the rule and never the item: a disposition that said which subject or month would
+    /// be a read of the held month by another door. A wake that could not be closed is still left out of this turn.
+    /// </summary>
+    List<MissionEvent> Unheld(MissionEventStore events, string role, List<MissionEvent> wake,
+        IReadOnlyList<TapeHoldoutWindow>? windows)
+    {
+        var kept = new List<MissionEvent>(wake.Count);
+        foreach (var e in wake)
+        {
+            if (e.Kind != MissionEventKind.Tape || (windows is not null && TapeWakes.Unheld(e.Payload, windows) is not null))
+            {
+                kept.Add(e);
+                continue;
+            }
+            try
+            {
+                events.WithdrawTape(e.Id, _now(), windows is null
+                    ? $"TradeAgent could not read {CouncilRoles.Title(role)}'s holdout windows, so it did not pay for a turn on this"
+                    : $"a holdout window {CouncilRoles.Title(role)}'s reads are refused now holds what this counted, so TradeAgent did not pay for a turn on it");
+            }
+            catch (Exception) { /* left untaken, and out of this turn; asked again on the next pass */ }
+        }
+        return kept;
+    }
 
     /// <summary>
     /// ONE OBSERVATION IN WORDS: the wake's phrase and what it is about — read from the app's own small payload where
     /// it names more than the id does, and the id otherwise. A tape wake says source, series, subject and count and
     /// never an item; a fill says what filled; a boundary says when TradeAgent decides it.
     /// </summary>
-    static string Observation(MissionEvent e)
+    static string Observation(MissionEvent e, IReadOnlyList<TapeHoldoutWindow> windows)
     {
         var id = e.Id.Split('#')[0];
         string? detail = null;
@@ -2673,7 +2755,7 @@ public sealed class MissionLoop
                     $"{f.Side} {f.Quantity?.ToString(CultureInfo.InvariantCulture)} {symbol}, execution `{id}`",
                 MissionEventKind.Order when Json.Read<OrderWake>(e.Payload ?? "") is { Request: { } request } o =>
                     $"request `{request}` is {o.State}",
-                MissionEventKind.Tape when Json.Read<TapeWakePayload>(e.Payload ?? "") is { } t =>
+                MissionEventKind.Tape when TapeWakes.Unheld(e.Payload, windows) is { } t =>
                     $"{t.Count} new item{(t.Count == 1 ? "" : "s")} of `{t.Source}/{t.Series}`"
                     + (t.Subject is { } subject ? $", subject `{subject}`" : ", over more than one subject")
                     + $" (`{id}`); TradeAgent counts more only once you have taken this",

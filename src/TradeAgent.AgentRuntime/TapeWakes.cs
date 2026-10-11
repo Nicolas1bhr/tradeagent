@@ -21,7 +21,9 @@ namespace TradeAgent.AgentRuntime;
 ///
 /// <para><b>Coalesced and textless.</b> At most one untaken tape wake per role
 /// (<see cref="MissionEventStore.RaiseCoalesced"/>), keyed by the fetch; its payload is source, series, subject and
-/// count (<see cref="TapeWakePayload"/>) — never an item's text, its address or a figure.</para>
+/// count (<see cref="TapeWakePayload"/>) — never an item's text, its address or a figure. The row also keeps each counted
+/// item's subject and source time (<see cref="TapeWakeRow"/>), never rendered, so that a window declared after the raise
+/// is honoured when the wake is admitted and when its packet is rendered (<see cref="Unheld"/>).</para>
 /// </summary>
 public static class TapeWakes
 {
@@ -48,19 +50,43 @@ public static class TapeWakes
         var outside = owned.Where(i => !windows.Any(w => w.Holds(i.SourceTime))).ToList();
         if (outside.Count == 0) return false;
 
-        var subjects = outside.Select(i => i.Subject).Distinct(StringComparer.Ordinal).ToList();
-        var payload = new TapeWakePayload(arrival.Source, arrival.Series, subjects.Count == 1 ? subjects[0] : null,
-            outside.Count);
-
         return new MissionEventStore(db).RaiseCoalesced(new MissionEvent
         {
             Id = MissionEventIds.ForRole(MissionEventIds.Tape(arrival.FetchId), Owner),
             Kind = MissionEventKind.Tape,
             CreatedAt = at,
             DueAt = at,
-            Payload = Json.Write(payload),
+            Payload = Json.Write(Row(arrival.Source, arrival.Series, outside)),
             Role = Owner
         });
+    }
+
+    /// <summary>
+    /// WHAT A TAPE WAKE SAYS NOW, under the windows the role's own reads are refused AS THE LEDGER HOLDS THEM NOW
+    /// (<c>U-reconcile-packet</c>, review 1): source, series, subject and count of the items it counted that no window
+    /// holds — or null when a window declared after the raise holds every one, or the row cannot be read. The loop asks
+    /// this when it admits the wake and again when it renders the packet; null is a wake closed without a turn, which
+    /// names nothing.
+    /// </summary>
+    internal static TapeWakePayload? Unheld(string? payload, IReadOnlyList<TapeHoldoutWindow> windows)
+    {
+        ArgumentNullException.ThrowIfNull(windows);
+        TapeWakeRow? row;
+        try { row = Json.Read<TapeWakeRow>(payload ?? ""); }
+        catch (Exception) { return null; }
+        if (row?.Items is not { Count: > 0 } items) return null;
+
+        var outside = items.Where(i => !windows.Any(w => w.Holds(i.SourceTime))).ToList();
+        if (outside.Count == 0) return null;
+        var now = Row(row.Source, row.Series, outside);
+        return new TapeWakePayload(now.Source, now.Series, now.Subject, now.Count);
+    }
+
+    /// <summary>The row for <paramref name="items"/>: one subject when they are all of one, null when they span several.</summary>
+    static TapeWakeRow Row(string source, string series, IReadOnlyList<TapeArrived> items)
+    {
+        var subjects = items.Select(i => i.Subject).Distinct(StringComparer.Ordinal).ToList();
+        return new TapeWakeRow(source, series, subjects.Count == 1 ? subjects[0] : null, items.Count, items);
     }
 
     /// <summary>
