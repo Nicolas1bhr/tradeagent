@@ -10083,3 +10083,32 @@ FeatureProgramRunnerTests 9/9 and 50/50 over six classes ×3. **Landing CI CARRI
 macos 24, linux-host 20, packages. **Names vs main:** 2564 → 2569, removed 0. **Scan:** clean.
 **Tests box:** NOT RUN. **NOT done, NOT verified:** (r2)'s earlier-build ledger is emulated (cursor moved by hand); no test of the sweep starting a fresh run after such an end; the
 Fault max-hold rig not diffed; the brief's rulings Q1/Q2 are owed cards (`U-backtest-maxhold-reentry`, `U-runner-maxhold-refire`); the full local suites (CI ran them).
+
+## 2026-10-11 — U-referee-v2c landed at rung 35: every verdict keeps its sealed E4 figures (fidelity z, betting e-value, p_h, ADDIS α-wealth step) and a flag when the authoring model may remember its holdout; the paper queue is ordered by research evidence, a flagged version after every unflagged one; no holdout figure reaches an agent
+
+Built under build-fleet seat A from `docs/briefs/U-referee-v2c.md` (EDGE § 4.5 E4 `EDGE-FACTORY.md:206`, E2/E3 "orders the paper queue" `:204-205`, "fitness never includes holdout
+figures" `:225`; R04's E4 row). Rulings Q6 (a) sealed table, Q7 (a) flagged when the holdout starts before the author's cutoff or the cutoff is unknown, Q8 (c) a flagged
+paper-eligible version stays on the paper-eligible path, offered after every unflagged one (seat A, 10:42). One builder (opus/high) reported `a5641dba` (code `8ea3cd32` on `cf290476`,
+rung 35 over 33); the Codex review found two real defects → a FRESH fixer (opus/high) re-stacked onto rung 34 and fixed both, reporting `727625b0` (code `d871f212` on `3fa6cfc3`).
+land.sh v2 prep rebased it onto main `43c894a4` (src+tests patch-id identical `a995009ddfb1`). Merge `913374b2` (ff-only): 10 commits.
+On main: item 1 `9d86911b`, item 2 `49afcd1f`, item 3 `e6e41233`, item 4 `8d52324b`, report `4e482333` + two rewordings `10e53cf5`, `f95b93ec`, fix 1 `60695022`, fix 2 `5e08ace6`,
+fix report `913374b2`. **Schema: main 35** (rung 34's block whole, then 35's, each stamp last): `referee_holdout(campaign_id, version_id, method, …)`, first writer wins. EVIDENCE PATH.
+**What it does.** `AlphaWealth` (ADDIS, α_paper 0.25), `Fidelity`, `BettingE` (Core/Strategy, pure, Version 1); `ModelCutoffs` (11 vendor-published training cutoffs as data, read
+2026-10-11; an unpublished one is flagged) and `Authorship` (version → attempt → effective_model, never the requested one). `Referee.Verdict` seals the holdout row in the verdict's
+one write; `SealedOf` is internal (tests only); the note, `RefereeFeedback.Text`, the answer, the boundary, the Situation and the report carry no sealed value — the report's verdict
+line carries only the "may be remembered" flag. The sweep offers unflagged before flagged, then by v2a's DSR rank, unknown or withheld last, ties in today's order; the inconclusive
+pass by DSR, then oldest. CONTRACTS paragraph, USER-GUIDE clause. Nothing ENFORCES z, ADDIS or E_h yet (named NOT claimed).
+**Codex review 1** (`fleet/records/U-referee-v2c-review-triage.md`), both REAL, both FIXED red-first: (1) a re-asked verdict sealed a row beside an older research measurement → seal only
+when THIS write recorded the promotion AND the research row for the first time (`ResearchEvidence.Record` returns whether it inserted) — RED "Assert.Null() Failure: Value is not null …
+ResearchRow = 1"; mutants `if (true)`, `promoted` alone, `measured` alone each red. (2) equal-instant charges ordered α by ids → `JudgementsCharged` orders by `strategy_verdict.rowid`
+(append-only) — RED and mutant (order back to (at, campaign, version)) "Collections differ" at :125. **Re-review of the fix:** one point (a pre-rung version re-asked under ANOTHER
+execution model seals) JUDGED NOT A DEFECT — that is a new promotion's first write, its research row written beside it, true about what ran. **OWED light card U-verdict-charge-order:**
+the rowid order rests on no VACUUM ever running on a home (none in src; no test pins it).
+**RED before** (builder): (a)/(b) CS0103; (c) "Assert.NotNull() Failure: Value is null"; (f), (g) "Collections differ". **Mutant** (author = `EffectiveModel ?? RequestedModel`) ⇒ (c) red.
+**Gate.** Builder: Release 0/0; AlphaWealth|Fidelity|RefereeVerdict 29/29, PaperAllocationGate 18/18 ×3; CI 38127030680 every job. Fixer: Release 0/0; 31/31, 18/18, ForwardRunnerTests
+32/32 ×3; CI 38129113502 every job (shard-plan, package, package-linux, windows 1-5, macos, ubuntu, linux-host). **Landing CI:** CARRIED from run 38129113502 at `d871f212` (build tree
+equal to `913374b2`; only bookkeeping paths differ). **Names vs main:** 2569 → 2580, removed 0 (land.sh check [Fact]/[Theory] 2515 → 2526). **Scan:** clean at landing; one earlier push
+(`f145b4a3`) went through a pipe that hid a hit on the tests-box line (the private network's product name, already public in tools/README.md; no host, no credential) — reworded since.
+**Tests box:** NOT RUN — the machine does not answer.
+**NOT done, NOT verified:** enforcing z / ADDIS / E_h; e-LOND and E7 (`U-live-tiers`); a family (`U-experiments-op`); more UI paper slots (`U-envelope-slots`, the owner's); serving any
+of it to agents (never); a VACUUM pin (owed); the full local suites (CI ran them).
