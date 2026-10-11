@@ -26,8 +26,8 @@ public static class SeatProfile
     /// through it, which would have overwritten the owner's own <c>~/.codex/config.toml</c> and reused his sign-in had
     /// <c>seat-home/codex</c> been linked to it. Missing folders are made one level at a time and looked at again; the config file
     /// is read with a no-follow open. The folders above the root are the app's own home, which the owner places, and are not
-    /// judged here. Not checked: the owner of each folder — .NET states no file owner, and a writer that could hand the seat home to
-    /// another account already writes the owner's home. ADVISORY like the rest while seats are unconfined (§ 2.7): a same-user
+    /// judged here. A folder another account owns is refused too, and each folder is made owner-only (<see cref="OwnedHere"/>).
+    /// ADVISORY like the rest while seats are unconfined (§ 2.7): a same-user
     /// writer can swap a folder for a link between this look and the start.</para>
     /// </summary>
     public static void Prepare(SeatPlan seat)
@@ -72,14 +72,57 @@ public static class SeatProfile
         static void Real(string at)
         {
             NotALink(at);
-            if (Directory.Exists(at)) return;
+            if (Directory.Exists(at)) { OwnedHere(at); return; }
             if (File.Exists(at))
                 throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
                     $"TradeAgent will not use the AI's own home while {at} is a file where its folder belongs. Nothing was written " +
                     $"or started. Remove {at} and TradeAgent makes the folder there.");
             Directory.CreateDirectory(at);
             NotALink(at);
+            OwnedHere(at);
         }
+    }
+
+    /// <summary>
+    /// REFUSES A SEAT HOME FOLDER THAT BELONGS TO ANOTHER ACCOUNT, and makes each one owner-only. On Linux and macOS the folder is
+    /// set to <c>0700</c> — which only its owner may do, so a refused change IS a foreign owner (.NET states no owner there), and the
+    /// credential the seat home keeps is then out of other accounts' reach. On Windows its owner is read from its security descriptor:
+    /// this account, or the Administrators group for an elevated process (which is whom Windows makes the owner of what that creates).
+    /// </summary>
+    static void OwnedHere(string at)
+    {
+        string? owner = null;
+        bool ours;
+        if (OperatingSystem.IsWindows()) ours = OwnedOnWindows(at, out owner);
+        else
+        {
+            try { new DirectoryInfo(at).UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute; ours = true; }
+            catch (UnauthorizedAccessException) { ours = false; }
+        }
+        if (ours) return;
+        throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use the AI's own home while {at} belongs to another account{(owner is null ? "" : $" ({owner})")}: " +
+            "whoever owns it could change the AI's settings and read its sign-in. Nothing was written or started. Remove " +
+            $"{at} and TradeAgent makes its own folder there.");
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static bool OwnedOnWindows(string at, out string? owner)
+    {
+        owner = null;
+        try
+        {
+            var sid = new DirectoryInfo(at).GetAccessControl(System.Security.AccessControl.AccessControlSections.Owner)
+                .GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) as System.Security.Principal.SecurityIdentifier;
+            if (sid is null) return false;
+            owner = sid.Value;
+            using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
+            if (me.User is { } user && sid.Equals(user)) return true;
+            return sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
+                && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (InvalidOperationException) { return false; }
     }
 
     /// <summary>
