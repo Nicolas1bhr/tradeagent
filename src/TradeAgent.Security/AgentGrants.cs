@@ -73,6 +73,12 @@ public sealed class AgentGrant : IDisposable
     /// <summary>Set when the turn ends: a grant in its grace is no longer a running neighbour (<see cref="AgentGrants.Issue"/>).</summary>
     internal bool TurnOver { get; set; }
 
+    /// <summary>
+    /// Set once <see cref="AgentGrants.Ended"/> has been raised for this grant's expiry while its turn still ran: the grant
+    /// is refused for service from then on and stays in the register as a neighbour until the turn ends.
+    /// </summary>
+    internal bool ExpiryTold { get; set; }
+
     public string Token { get; }
     public string Role { get; }
     public string AttemptId { get; }
@@ -374,9 +380,17 @@ public sealed class AgentGrants
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 
     /// <summary>
-    /// Drops every grant whose expiry has passed and RETURNS what it dropped, so the caller can
-    /// announce those endings once it is out of the lock. Null rather than an empty list because
-    /// pruning nothing is the ordinary case and it should allocate nothing.
+    /// Drops every grant whose expiry has passed and whose turn is over, and RETURNS the tokens that
+    /// stopped being served, so the caller can announce those endings once it is out of the lock.
+    /// Null rather than an empty list because pruning nothing is the ordinary case and it should
+    /// allocate nothing.
+    ///
+    /// <para><b>AN EXPIRED GRANT WHOSE TURN STILL RUNS STAYS, AS A NEIGHBOUR</b> (ORDER-001, <c>U-grant-tree</c> fix
+    /// pass 1). Expiry refuses the token for service — <see cref="Verify"/> answers Expired and the ending is announced
+    /// once, so its connections close — but it says nothing about the process: a turn hung past
+    /// <see cref="MaxTurn"/> is still running, unconfined, and dropping it here would let an Operations launch issued
+    /// beside it hold order permission. It leaves the register only once its turn has returned, which is after its tree
+    /// was ended (a tree the teardown could not end is held by the meter's survivors).</para>
     /// </summary>
     List<string>? Prune()
     {
@@ -384,8 +398,16 @@ public sealed class AgentGrants
         List<string>? gone = null;
         for (var i = _live.Count - 1; i >= 0; i--)
         {
-            if (_live[i].Expires > cutoff) continue;
-            (gone ??= []).Add(_live[i].Token);
+            var g = _live[i];
+            if (g.Expires > cutoff) continue;
+            if (!g.TurnOver)
+            {
+                if (g.ExpiryTold) continue;
+                g.ExpiryTold = true;
+                (gone ??= []).Add(g.Token);
+                continue;
+            }
+            if (!g.ExpiryTold) (gone ??= []).Add(g.Token);
             _live.RemoveAt(i);
         }
         return gone;
