@@ -114,6 +114,10 @@ public static class AgentArgs
     /// model it was run with — it is a fresh process reading a transcript — so a build that put the
     /// flag on the first turn only would run one turn on the model TradeAgent chose and every turn
     /// after it on whatever the CLI's own config file says.
+    ///
+    /// <para><b>The prompt is not on it</b> for a runtime that reads stdin (<see cref="RuntimeManifest.PromptOnStdin"/>,
+    /// <c>U-prompt-stdin</c>): its slot carries <see cref="RuntimeManifest.StdinMarker"/> and the turn writes the prompt to the
+    /// child's stdin, so the argv a seat is verified on at its admission is the argv it starts with.</para>
     /// </summary>
     public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model)
     {
@@ -124,7 +128,7 @@ public static class AgentArgs
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
-            ModelArgs(manifest, model), SeatArgs(manifest));
+            ModelArgs(manifest, model), SeatArgs(manifest), manifest.PromptOnStdin ? manifest.StdinMarker : null);
     }
 
     /// <summary>
@@ -143,8 +147,13 @@ public static class AgentArgs
             ? []
             : [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
 
+    /// <param name="stdinMarker">
+    /// THE PROMPT TRAVELS ON STDIN when this is not null (<c>U-prompt-stdin</c>): the slot carries the marker — or nothing, when
+    /// the marker is empty — and <paramref name="prompt"/> is not on the command line at all; the caller writes it to the child's
+    /// stdin. Null is a runtime that cannot read stdin, whose prompt is the slot, as it always was, and whose attempts say so.
+    /// </param>
     public static List<string> Build(string[] template, string prompt, string? jsonFlag, string[] unattended,
-        string[]? modelArgs = null, string[]? seatArgs = null)
+        string[]? modelArgs = null, string[]? seatArgs = null, string? stdinMarker = null)
     {
         var flags = new List<string>();
         if (!string.IsNullOrWhiteSpace(jsonFlag))
@@ -159,14 +168,18 @@ public static class AgentArgs
         for (var i = 0; i < template.Length; i++)
         {
             if (i == promptIndex) args.AddRange(flags);
-            args.Add(template[i].Replace("{prompt}", prompt));
+            if (stdinMarker is null) args.Add(template[i].Replace("{prompt}", prompt));
+            // THE SLOT IS THE MARKER, WHOLE: never the prompt, and never a template word with the prompt spliced into it.
+            else if (i != promptIndex) args.Add(template[i]);
+            else if (stdinMarker.Length > 0) args.Add(stdinMarker);
         }
 
-        // A template with no placeholder still has to carry the message somewhere.
+        // A template with no placeholder still has to carry the message somewhere — or say where it went instead.
         if (promptIndex < 0)
         {
             args.AddRange(flags);
-            args.Add(prompt);
+            if (stdinMarker is null) args.Add(prompt);
+            else if (stdinMarker.Length > 0) args.Add(stdinMarker);
         }
 
         return args;
@@ -595,7 +608,12 @@ public sealed class AgentSession(
             // with the turn stuck at Busy, and the same command with stdin closed answered in
             // seconds. A conversation that never returns is the worst possible failure here,
             // because it looks exactly like the AI thinking.
+            //
+            // AND, FOR A RUNTIME THAT READS IT, THE PROMPT TRAVELS HERE (U-prompt-stdin): written whole, then closed — the
+            // same end-of-file, one message later. UTF-8 without a byte-order mark, set rather than defaulted: on Windows the
+            // default is the console's code page, and the owner's words are not ASCII.
             RedirectStandardInput = true,
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = workspace(),
@@ -642,8 +660,12 @@ public sealed class AgentSession(
         var alive = Presence.Enter();
         try
         {
-            // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
-            try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
+            // End-of-file on stdin, at once — after the prompt, for a runtime that reads it there. See the comment on
+            // RedirectStandardInput above. Written beside the reads below rather than before them: a child that answers
+            // before it has read a long prompt would otherwise fill its stdout pipe while the app is still writing.
+            var feed = manifest.PromptOnStdin
+                ? Task.Run(() => FeedAsync(process, message), CancellationToken.None)
+                : CloseInput(process);
 
             // THE LEADER'S EXIT IS THE TURN'S END, AND ITS TREE ENDS WITH IT, AT ONCE (U-agent-tree). A
             // process the turn left behind that still holds the turn's stdout or stderr used to hold the
@@ -675,6 +697,7 @@ public sealed class AgentSession(
 
             await process.WaitForExitAsync(ct);
             var errorText = (await stderr).Trim();
+            await feed;
 
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
             return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
@@ -694,6 +717,30 @@ public sealed class AgentSession(
             _current = null;
             alive.Dispose();
         }
+    }
+
+    /// <summary>
+    /// THE PROMPT, WRITTEN TO THE CHILD'S STDIN AND CLOSED (<c>U-prompt-stdin</c>), as bytes: the writer over that stream could
+    /// put a byte-order mark first. A child that exits without reading it — refused at its start, say — closes the pipe under
+    /// the write; that turn ends on its own exit code and words, which say more than a broken pipe does.
+    /// </summary>
+    static async Task FeedAsync(Process process, string prompt)
+    {
+        try
+        {
+            var stream = process.StandardInput.BaseStream;
+            await stream.WriteAsync(new UTF8Encoding(false).GetBytes(prompt));
+            await stream.FlushAsync();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { /* the child left */ }
+        finally { await CloseInput(process); }
+    }
+
+    /// <summary>End-of-file on the child's stdin.</summary>
+    static Task CloseInput(Process process)
+    {
+        try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }
+        return Task.CompletedTask;
     }
 
     /// <summary>

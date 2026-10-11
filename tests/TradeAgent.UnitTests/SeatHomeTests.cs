@@ -70,7 +70,9 @@ public class SeatHomeTests
         foreach (var resuming in new[] { false, true })
         {
             var argv = AgentArgs.For(codex, "PROMPT", resuming, "gpt-5.6-sol");
-            var prompt = argv.IndexOf("PROMPT");
+            // The prompt's slot carries the stdin marker; the prompt itself is on stdin (U-prompt-stdin).
+            Assert.DoesNotContain("PROMPT", argv);
+            var prompt = argv.IndexOf(codex.StdinMarker);
 
             foreach (var flag in new[] { "--ignore-user-config", "--ignore-rules", "--strict-config" })
             {
