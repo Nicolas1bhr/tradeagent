@@ -9893,3 +9893,22 @@ proving more needs a Gateway seam the brief forbade. (2) the latch release had n
 :1290 untouched. Tests box NOT RUN (`win-test.sh ready`: the machine did not answer). `cd7d9f38`'s windows red, recorded red under HOW-WE-BUILD:89-95, is answered by this unit: the test that went red then
 now measures the product, not the runner.
 Scan exclusions at prep (judged, by phrase): the cancellation phrases in the seam's doc and test names; "asleep, off Tailscale" in the tests-box line (a tool's message, no host).
+
+## U-wire-body-deadline — a perception answer whose 200 headers arrive at once and whose body then stalls ends UNANSWERED "timeout" at the wire's own deadline, its status kept, pinned by a test (landed 2026-10-11, seat B)
+
+**Landed** in train `B1` (behind `U-closeall-latch`) at `362ad63e` (code tip `ef7914f9`, report `d3bbf12c`; stacked to `362ad63e`) on `main` `f1bdd2d2`, by `land.sh` v3's train:
+CI run **38113735253** at the train's tip `362ad63e` (the first train run 38112158847, green 11/11, superseded when main moved): all 11 jobs success (windows shards 1–5 10/7/8/4/13 min, ubuntu 13, macos 14, linux-host 20; every test job 0 Warning(s)), CARRIED to the stacked tip; `land.sh train-check` VERDICT PASS. No local suite (SPEED-MODE § 5). No rung (main 31, `tape.db` 2). TESTS ONLY: nothing under `src/`.
+Owed by `U-decision-card` (its record): the body-read deadline (`TypeSafeWire.cs:401`) existed and no test failed without it. Builder sonnet/high, one pass.
+**What changed** (3 files):
+- `UnitTests/FakeProvider.cs`: `StallsBody` — status 200, a JSON content type, chunked; the first half of a valid body written and flushed, the rest held until `Dispose`, which releases the hold BEFORE it stops the listener.
+- `UnitTests/DecisionPortTests.cs`: `A_200_whose_body_stalls_ends_unanswered_timeout_at_the_wires_deadline` — wire timeout 2 s, no caller cancellation, a 20 s ceiling of the test's own (`Task.WhenAny`); asserts
+  UNANSWERED, `ErrorClass` "timeout", `HttpStatus` 200, no answers, one request, the host's "first part flushed" mark; the attempt ENDED with the reservation as its cost, not flying; the tape record
+  UNANSWERED / timeout / 200, no answers.
+**Evidence (the builder's report, `docs/briefs/U-wire-body-deadline.md` § Report):** Release `--no-incremental` 0 warnings; `DecisionPortTests` 8/8 ×3; `SuiteReachesNoVendorTests` 13/13; branch CI 38110703372 green 11/11;
+names 2453 → 2454, removed 0 (at landing: the train 2512 → 2519, removed 0).
+- RED (the mutant, the brief's only one): `deadline.CancelAfter(_http.Timeout);` commented out in the working tree only — failed at 25 s, "the call had not returned 20 s after a 2 s wire timeout: nothing
+  bounds a body that stalls after a 200"; host marks "answering 200, 224 of 449 bytes, then holding the rest" / "first part flushed". GREEN with it restored.
+**Review (Codex `gpt-6.1-sol`, high):** no defect in the diff; its one note was the `## Report` not yet written (written after CI). Seat B read the diff: the ceiling turns the hang into a red; the stall is in the
+body, not the headers; nothing outlives disposal.
+**Not claimed / not done:** tests box NOT RUN (`win-test.sh ready`: the machine did not answer); full local suites (CI's); any change to the wire.
+Scan exclusions (judged, by phrase): `kept.InputTokens`, `_release.Token`, the report line naming them, and the tests-box line's "asleep, off Tailscale" (a tool's message, no host).
