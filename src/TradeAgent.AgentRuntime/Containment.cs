@@ -174,11 +174,27 @@ public sealed class ContainedProcess : IDisposable
         _held = held;
         Mechanism = mechanism;
         Cell = cell;
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows())
+        {
+            if (held && job != IntPtr.Zero) Container = new JobContainer(this);
+            return;
+        }
         _leader = process.Id;
         _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
         _session = ownSession ? _leader : 0;
+        if (ownSession && _leaderStart != 0) Container = new SessionContainer(this);
     }
+
+    /// <summary>
+    /// THE CONTAINER A LAUNCH GRANT IS BOUND TO (<c>U-grant-tree</c>), or null when this process is not held and never
+    /// will be — and then nothing may present a grant from it, so the launch is refused rather than run (RULING 2).
+    /// Windows: the job, once the assign succeeded. macOS and Linux: the launcher's session and the parent links below
+    /// it, by <see cref="TreeTeardown"/>'s own proof — which answers Unknown until <see cref="Held"/> latches.
+    /// </summary>
+    public AttemptContainer? Container { get; }
+
+    /// <summary>Set once the teardown has run: a container whose attempt was ended admits nobody.</summary>
+    volatile bool _over;
 
     public Process Process { get; }
 
@@ -246,11 +262,78 @@ public sealed class ContainedProcess : IDisposable
                 return Ended = TreeEnd.Nothing;
             }
 
+            _over = true;
             Ended = TreeTeardown.End(_leader, _leaderStart, _session);
             // A CELL'S POLICY FILE GOES WITH ITS TREE (triage #6): the supervisor removes it when the cell exits, but a cancelled
             // turn's supervisor is itself killed here, so the app removes it too — only its own file, never throwing.
             if (Cell is not null) CellStage.Discard(Cell.PolicyFile);
             return Ended;
+        }
+    }
+
+    /// <summary>
+    /// THE WINDOWS JOB AS A GRANT'S CONTAINER: a peer is inside when <c>IsProcessInJob</c> says so of the process the
+    /// pid names NOW — opened, its creation re-read under the handle and compared with the start the pipe read, so a pid
+    /// handed on is not the peer — asked under the teardown lock, so a job whose handle has been closed is never asked
+    /// (a closed handle's value can name something else). The assign gap is a refusal here, not a hole: a child that
+    /// started before the assign landed is outside the job and is refused.
+    /// </summary>
+    sealed class JobContainer(ContainedProcess owner) : AttemptContainer
+    {
+        public override string Name => "the Windows job TradeAgent made for this attempt";
+
+        public override MembershipVerdict Contains(PeerFacts peer)
+        {
+            if (!OperatingSystem.IsWindows()) return MembershipVerdict.Unknown("a Windows job is asked only on Windows");
+            lock (owner._teardown)
+            {
+                if (owner._closed || owner._job == IntPtr.Zero)
+                    return MembershipVerdict.Unknown("the attempt's job has already been ended");
+                var h = Win32.OpenProcess(0x1000, false, (uint)peer.Pid);   // PROCESS_QUERY_LIMITED_INFORMATION
+                if (h == IntPtr.Zero)
+                    return MembershipVerdict.Unknown($"Windows would not open process {peer.Pid} (error {Marshal.GetLastWin32Error()})");
+                try
+                {
+                    if (PeerImage.WindowsStartOf(h) is not { } created)
+                        return MembershipVerdict.Unknown($"Windows would not say when process {peer.Pid} started");
+                    if (created != peer.Start)
+                        return MembershipVerdict.Outside($"process {peer.Pid} is no longer the process that connected");
+                    if (!Win32.IsProcessInJob(h, owner._job, out var inside))
+                        return MembershipVerdict.Unknown($"Windows would not say whether process {peer.Pid} is in the job (error {Marshal.GetLastWin32Error()})");
+                    return inside ? MembershipVerdict.Member
+                        : MembershipVerdict.Outside($"process {peer.Pid} is not in the Windows job TradeAgent made for this attempt");
+                }
+                finally { Win32.CloseHandle(h); }
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE LAUNCHER'S SESSION AS A GRANT'S CONTAINER (macOS, Linux): a peer is inside by exactly the proof the teardown
+    /// kills by (<see cref="TreeTeardown.IsMember"/>) — the leader, a member of the session while its id names the live
+    /// leader, or a descendant of either. Unknown until the launcher has made its session (<see cref="Held"/>), once the
+    /// leader is gone or the teardown has run, and when the table cannot be read. A same-user process cannot join a
+    /// session or become a descendant, so a replayed token is refused; it is WEAKER than a job on macOS and the interim on
+    /// Linux until the per-attempt cgroup is ANDed onto it (RULING 1, <c>U-cell-linux-b</c>).
+    /// </summary>
+    sealed class SessionContainer(ContainedProcess owner) : AttemptContainer
+    {
+        public override string Name => "the session TradeAgent made for this attempt";
+
+        public override MembershipVerdict Contains(PeerFacts peer)
+        {
+            if (owner._over) return MembershipVerdict.Unknown("the attempt's processes have already been ended");
+            if (!owner.Held)
+                return MembershipVerdict.Unknown("TradeAgent has not yet proved the attempt's own session is held");
+            if (ProcessTable.Read(owner._leader) is not { Zombie: false } leader || leader.Start != owner._leaderStart)
+                return MembershipVerdict.Unknown("the attempt's launcher has already exited, so its session is over");
+            if (ProcessTable.Read(peer.Pid) is not { Zombie: false } now)
+                return MembershipVerdict.Unknown($"the process table would not describe process {peer.Pid}");
+            if (now.Start != peer.Start)
+                return MembershipVerdict.Outside($"process {peer.Pid} is no longer the process that connected");
+            return TreeTeardown.IsMember(peer.Pid, peer.Start, owner._leader, owner._leaderStart, owner._session)
+                ? MembershipVerdict.Member
+                : MembershipVerdict.Outside($"process {peer.Pid} is neither the attempt's launcher, in its session, nor descended from either");
         }
     }
 
@@ -323,6 +406,13 @@ public sealed class ContainedProcess : IDisposable
         }
 
         /// <summary>How many processes the job still holds, or 0 when it cannot say — the close still ends them.</summary>
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
         internal static uint ActiveProcesses(IntPtr job) =>
             QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out var info,
                 (uint)Marshal.SizeOf<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), IntPtr.Zero)

@@ -498,6 +498,42 @@ public static class ProcessTable
     }
 }
 
+/// <summary>
+/// NOW, IN THE UNIT A PROCESS'S START IS WRITTEN IN, so "did this process start before that moment" can be asked of one
+/// machine's own two readings (<c>U-grant-tree</c>: a peer that started after its connection was accepted is a pid handed
+/// on). The kernel's own clocks, never converted to a wall time: macOS's microseconds since the epoch, as
+/// <see cref="ProcessEntry.Start"/> is; Linux's clock ticks since boot (<c>CLOCK_BOOTTIME</c>, the clock
+/// <c>/proc/&lt;pid&gt;/stat</c>'s start is kept on); Windows's FILETIME, as <c>GetProcessTimes</c> gives a creation.
+/// Zero when it cannot be read, and then nothing is "before" it.
+/// </summary>
+public static class ProcessClock
+{
+    [DllImport("libc", SetLastError = true)]
+    static extern int clock_gettime(int clock, out TimeSpec spec);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern long sysconf(int name);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct TimeSpec { public long Seconds; public long Nanoseconds; }
+
+    const int CLOCK_BOOTTIME = 7, _SC_CLK_TCK = 2;
+
+    public static ulong Now()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows()) return (ulong)DateTime.UtcNow.ToFileTimeUtc();
+            if (OperatingSystem.IsMacOS()) return (ulong)((DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10);
+            if (!OperatingSystem.IsLinux() || clock_gettime(CLOCK_BOOTTIME, out var t) != 0) return 0;
+            var hz = sysconf(_SC_CLK_TCK);
+            if (hz <= 0) return 0;
+            return (ulong)t.Seconds * (ulong)hz + (ulong)t.Nanoseconds * (ulong)hz / 1_000_000_000UL;
+        }
+        catch (Exception) { return 0; }
+    }
+}
+
 /// <summary>What a teardown did: whether every process it proved the turn's is gone, and the ones that are not.</summary>
 public sealed record TreeEnd(bool Ended, IReadOnlyList<ProcessEntry> Survivors, int Killed)
 {
@@ -591,13 +627,12 @@ public static class TreeTeardown
             var children = table.Values.GroupBy(e => e.Parent).ToDictionary(g => g.Key, g => g.Select(e => e.Pid).ToList());
             var queue = new Queue<int>();
 
-            if (leader > 1 && leader != self && leaderStart != 0 && table.TryGetValue(leader, out var l) && !l.Zombie && l.Start == leaderStart)
-                queue.Enqueue(leader);
+            // THE ROOTS, by the one predicate the grant's membership check asks too (Holds): zombies, init and this
+            // process itself are dropped as each is dequeued below.
+            foreach (var e in table.Values)
+                if (Holds(e, leader, leaderStart, session, sweep)) queue.Enqueue(e.Pid);
             if (leader == self && children.TryGetValue(self, out var mine))
                 foreach (var k in mine) queue.Enqueue(k);
-            if (sweep)
-                foreach (var e in table.Values)
-                    if (e.Session == session && !e.Zombie && e.Start >= leaderStart) queue.Enqueue(e.Pid);
             foreach (var pid in frozen.Keys)
                 if (children.TryGetValue(pid, out var kids)) foreach (var k in kids) queue.Enqueue(k);
 
@@ -613,8 +648,7 @@ public static class TreeTeardown
                 // RE-PROVED NOW THAT IT CANNOT CHANGE: the same process (pid and start), and the turn's.
                 var now = ProcessTable.Read(pid);
                 var proved = now is { Zombie: false } n && n.Start == seen.Start && (
-                    (pid == leader && n.Start == leaderStart) ||
-                    (sweep && n.Session == session && n.Start >= leaderStart) ||
+                    Holds(n, leader, leaderStart, session, sweep) ||
                     frozen.ContainsKey(n.Parent) || (leader == self && n.Parent == self));
                 if (!proved)
                 {
@@ -645,13 +679,10 @@ public static class TreeTeardown
         var found = new Dictionary<int, ProcessEntry>();
         var queue = new Queue<int>();
 
-        if (leader > 1 && leader != self && leaderStart != 0 && table.TryGetValue(leader, out var l) && l.Start == leaderStart)
-            queue.Enqueue(leader);
+        foreach (var e in table.Values)
+            if (Holds(e, leader, leaderStart, session, sweep)) queue.Enqueue(e.Pid);
         if (leader == self && children.TryGetValue(self, out var mine))
             foreach (var k in mine) queue.Enqueue(k);
-        if (sweep)
-            foreach (var e in table.Values)
-                if (e.Session == session && e.Start >= leaderStart) queue.Enqueue(e.Pid);
 
         while (queue.Count > 0)
         {
@@ -662,6 +693,44 @@ public static class TreeTeardown
             if (children.TryGetValue(pid, out var kids)) foreach (var k in kids) queue.Enqueue(k);
         }
         return [.. found.Values];
+    }
+
+    /// <summary>
+    /// THE ROOT OF THE PROOF, and the one predicate the kill and the launch grant share (<c>U-grant-tree</c>): a process
+    /// is one of the turn's own roots when it is the leader — its pid and the start read when it was started — or when
+    /// it sits in the turn's session (only while <paramref name="sweep"/> says the session is the turn's) and started no
+    /// earlier than the leader. Everything else the turn owns descends from one of these by parent links.
+    /// </summary>
+    public static bool Holds(ProcessEntry e, int leader, ulong leaderStart, int session, bool sweep) =>
+        (e.Pid == leader && leaderStart != 0 && e.Start == leaderStart) ||
+        (sweep && e.Session == session && e.Start >= leaderStart);
+
+    /// <summary>
+    /// IS THIS ONE PROCESS THE TURN'S, by the teardown's own proof — asked for a single pid rather than of the whole
+    /// table, by the launch grant's membership check (<c>U-grant-tree</c>). <paramref name="start"/> is the start the
+    /// caller read with the pid, so a pid handed on since is not the process asked about. The answer walks UP the parent
+    /// links until it meets a root (<see cref="Holds"/>): the same set <c>Members</c> walks down to, since a process
+    /// descends from a root exactly when one of its ancestors is one. A parent that started after its child is a parent
+    /// pid handed on mid-walk, and the walk stops there with a no rather than following a stranger.
+    /// </summary>
+    /// <param name="read">The process table, for a test; the real one otherwise.</param>
+    public static bool IsMember(int pid, ulong start, int leader, ulong leaderStart, int session,
+        Func<int, ProcessEntry?>? read = null)
+    {
+        if (OperatingSystem.IsWindows() || pid <= 1) return false;
+        var table = read ?? ProcessTable.Read;
+        var self = Environment.ProcessId;
+        var sweep = session != 0 && SessionIsTheTurns(leader, leaderStart, session, insideTheSession: false, self);
+
+        if (table(pid) is not { Zombie: false } e || e.Start != start) return false;
+        for (var hop = 0; hop < 256; hop++)
+        {
+            if (Holds(e, leader, leaderStart, session, sweep)) return true;
+            if (e.Pid <= 1 || e.Pid == self || e.Parent <= 1) return false;
+            if (table(e.Parent) is not { Zombie: false } parent || parent.Start > e.Start) return false;
+            e = parent;
+        }
+        return false;
     }
 
     /// <summary>
