@@ -3843,9 +3843,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
-    /// EVERY ROLE'S ENTRIES, NEWEST FIRST, BOUNDED TWICE AND NEVER SILENTLY: at most the limit asked for and
-    /// <see cref="ResearchLedger.MaxReadBytes"/> of them as the wire writes them, an entry never split — the first is served
-    /// whatever it costs — and an answer either bound stopped says which, with the <c>before</c> that continues it.
+    /// EVERY ROLE'S ENTRIES, NEWEST FIRST, BOUNDED TWICE AND NEVER SILENTLY: at most the limit asked for, and the WHOLE
+    /// answer's data at most <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes it, escaping included — an entry
+    /// never split and never cut — and an answer either bound stopped says which, with the <c>before</c> that continues it.
+    /// The first entry is always served, and always fits: see <see cref="ReplyBytes"/>.
     /// </summary>
     object LedgerList(IpcRequest req)
     {
@@ -3858,13 +3859,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
         var rows = gateway.Ledger.List(author, kind, status, before, limit);
         var entries = new List<LedgerListReplyEntry>();
-        long spent = 0;
+        // THE FRAME FIRST, at the most its own fields can cost once the entries are in (see `ReplyBytes`).
+        long spent = ReplyBytes(new LedgerListReply(author, kind, status, before, limit, limit, false,
+            TapeReader.CappedByBytes, long.MaxValue, LedgerListNote, []));
         string? cappedBy = null;
         foreach (var row in rows)
         {
             if (entries.Count == limit) { cappedBy = TapeReader.CappedByLimit; break; }
             var shaped = ListEntry(row);
-            var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped));
+            var cost = ReplyBytes(shaped) + (entries.Count > 0 ? 1 : 0);
             if (entries.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = TapeReader.CappedByBytes; break; }
             entries.Add(shaped);
             spent += cost;
@@ -3908,15 +3911,20 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var e = shown.Entry;
         var frame = new LedgerShowReply(e.Id, e.Kind, e.Author, e.About, e.Source, e.CreatedAt, e.Attempt,
             shown.RevisionCount, shown.LinkCount, shown.AboutCount, part, before, false, null, null, LedgerShowNote, [], [], []);
-        long spent = Encoding.UTF8.GetByteCount(Json.Write(frame));
+        // THE FRAME FIRST, at the most its own fields can cost once the lists are in (see `ReplyBytes`): `more` false,
+        // `capped_by` the longer word and `next` its longest — the longest part and two cursors of nineteen digits.
+        long spent = ReplyBytes(frame with
+        {
+            CappedBy = TapeReader.CappedByBytes, Next = new LedgerShowNext(long.MaxValue, LedgerPart.Revisions, long.MaxValue)
+        });
 
         // THE LISTS IN ORDER, FROM THE ONE ASKED: whole rows while every bound holds; the first row a bound stops ends the
         // answer, and `next` begins the next one there.
         var served = 0;
         (string Part, long? Before, string By)? stop = null;
-        var revisions = Serve(LedgerPart.Revisions, shown.Revisions, ResearchLedger.MaxRevisions, Revision, r => r.Revision, measured: true);
-        var links = stop is null ? Serve(LedgerPart.Links, shown.Links, ResearchLedger.MaxLinks, LinkOf, l => l.Link.Id, measured: false) : [];
-        var about = stop is null ? Serve(LedgerPart.About, shown.About, ResearchLedger.MaxAbout, AboutOf, a => a.Id, measured: false) : [];
+        var revisions = Serve(LedgerPart.Revisions, shown.Revisions, ResearchLedger.MaxRevisions, Revision, r => r.Revision);
+        var links = stop is null ? Serve(LedgerPart.Links, shown.Links, ResearchLedger.MaxLinks, LinkOf, l => l.Link.Id) : [];
+        var about = stop is null ? Serve(LedgerPart.About, shown.About, ResearchLedger.MaxAbout, AboutOf, a => a.Id) : [];
 
         return frame with
         {
@@ -3925,8 +3933,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             Revisions = revisions, Links = links, AboutIt = about
         };
 
+        // THE FIRST ROW OF THE ANSWER IS ALWAYS SERVED, so every answer moves on — and it always fits: the frame and one
+        // row at every maximum are under the bound (see `ReplyBytes`). Every later row is served only while the whole
+        // answer stays under it.
         List<TReply> Serve<TRow, TReply>(string list, IReadOnlyList<TRow> rows, int max, Func<TRow, TReply> shape,
-            Func<TRow, long> cursor, bool measured)
+            Func<TRow, long> cursor) where TReply : notnull
         {
             var into = new List<TReply>();
             long? last = list == part ? before : null;
@@ -3934,8 +3945,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             {
                 if (into.Count == max) { stop = (list, last, TapeReader.CappedByLimit); break; }
                 var shaped = shape(row);
-                var cost = Encoding.UTF8.GetByteCount(Json.Write(shaped)) + (into.Count > 0 ? 1 : 0);
-                if (measured && served > 0 && spent + cost > ResearchLedger.MaxReadBytes)
+                var cost = ReplyBytes(shaped) + (into.Count > 0 ? 1 : 0);
+                if (served > 0 && spent + cost > ResearchLedger.MaxReadBytes)
                 {
                     stop = (list, last, TapeReader.CappedByBytes);
                     break;
@@ -3948,6 +3959,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             return into;
         }
     }
+
+    /// <summary>
+    /// WHAT A PIECE OF A LEDGER READ COSTS ON THE WIRE: its bytes as <see cref="Json.Write"/> writes it — the writer the
+    /// pipe answers with, escaping included, so a character outside ASCII is the six or twelve bytes of its escape and not
+    /// the one it reads as. A reply's data is its frame (written with its lists empty and its own fields at their longest)
+    /// plus each row, plus one comma between two rows of a list: that sum is never under what is sent.
+    ///
+    /// <para><b>The first row always fits</b>, measured on the widest character the wire writes (twelve bytes, a pair of
+    /// escaped surrogates) in every free-text field at its maximum: a show's frame with a 1,000-character source and one
+    /// revision of 2,000 characters of text and 1,000 of reason is 49,430 bytes sent; a list's frame and one entry at the
+    /// same maxima is under that; a link — 64-character ids and at most <see cref="ResearchLedger.MaxDerived"/> derived
+    /// ids of each kind — and an entry about it are smaller. All under 65,536, with room to spare
+    /// (<c>ResearchLedgerOverPipeTests.A_ledger_read_is_bounded_and_says_where_it_stopped</c> quotes the bytes).</para>
+    /// </summary>
+    static long ReplyBytes(object piece) => Encoding.UTF8.GetByteCount(Json.Write(piece));
 
     /// <summary>
     /// EVERY ARGUMENT THE OP DOES NOT DECLARE IS REFUSED, and nothing is written or read.

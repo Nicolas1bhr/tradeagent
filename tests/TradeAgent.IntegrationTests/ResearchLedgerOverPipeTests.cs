@@ -46,11 +46,16 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
             return c;
         }
 
+        /// <summary>The bytes of the last answer's <c>data</c>, exactly as the wire carried them — escaping included.</summary>
+        public int LastDataBytes { get; private set; }
+
         public async Task<IpcResponse> SendAsync(IpcRequest req)
         {
             req.Token ??= IpcToken.Ensure();
             await _w.WriteLineAsync(Json.Write(req));
             var line = await _r.ReadLineAsync() ?? throw new IOException("the gateway closed the connection");
+            using (var doc = JsonDocument.Parse(line))
+                LastDataBytes = doc.RootElement.TryGetProperty("data", out var data) ? Encoding.UTF8.GetByteCount(data.GetRawText()) : 0;
             return Json.Read<IpcResponse>(line) ?? throw new IOException("unreadable reply");
         }
 
@@ -457,8 +462,10 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
     /// (i) A LEDGER READ IS BOUNDED AND SAYS WHERE IT STOPPED. A list serves at most 100 entries newest first and at most
     /// 64 KiB of them, never splitting one; an answer either bound stopped says which in <c>capped_by</c> and hands back
     /// the <c>next_before</c> that continues it exactly, so the pages put together are every entry once, in order. A show
-    /// does the same for revisions. A limit outside 1 to 100 is refused, never clamped; a filter outside its vocabulary is
-    /// refused rather than answered with nothing.
+    /// does the same for revisions, with <c>next</c>. A limit outside 1 to 100 is refused, never clamped; a filter outside
+    /// its vocabulary is refused rather than answered with nothing. The bound is on the WHOLE answer's data as the wire
+    /// carries it, escaping included — measured on the raw line, with no tolerance — and it holds for an entry at every
+    /// maximum with 100 links and 100 entries about it, page after page.
     /// </summary>
     [Fact]
     public async Task A_ledger_read_is_bounded_and_says_where_it_stopped()
@@ -507,8 +514,8 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
             var page = await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "experiment"), ("before", cursor)));
             var d = Data(page);
             var entries = d.GetProperty("entries").EnumerateArray().ToList();
-            var bytes = entries.Sum(e => Encoding.UTF8.GetByteCount(e.GetRawText()));
-            log.WriteLine($"page {++pages}: {entries.Count} entries, {bytes:N0} bytes of them, capped by {d.GetProperty("capped_by")}");
+            var bytes = wire.LastDataBytes;
+            log.WriteLine($"page {++pages}: {entries.Count} entries, {bytes:N0} bytes sent, capped by {d.GetProperty("capped_by")}");
             Assert.True(bytes <= ResearchLedger.MaxReadBytes, $"{bytes:N0} bytes is over {ResearchLedger.MaxReadBytes:N0}");
             served.AddRange(entries.Select(e => e.GetProperty("entry").GetInt64()));
             if (!d.GetProperty("more").GetBoolean()) break;
@@ -541,8 +548,74 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
         var capped = Data(await wire.SendAsync(Frame(Ops.LedgerShow, ("entry", heavy))));
         Assert.True(capped.GetProperty("more").GetBoolean());
         Assert.Equal("bytes", capped.GetProperty("capped_by").GetString());
-        Assert.True(Encoding.UTF8.GetByteCount(capped.GetRawText()) <= ResearchLedger.MaxReadBytes + 1_024,
-            $"a show of {Encoding.UTF8.GetByteCount(capped.GetRawText()):N0} bytes");
+        Assert.True(wire.LastDataBytes <= ResearchLedger.MaxReadBytes, $"a show of {wire.LastDataBytes:N0} bytes");
+
+        // THE WHOLE ANSWER IS BOUNDED, MEASURED AS SENT (the fix pass, finding 2): an entry at every maximum — its source,
+        // each revision's text and reason in a character the wire writes as twelve bytes — with 100 links and 100 entries
+        // about it, themselves at every maximum, is read whole by following 'next', and no answer's data passes 64 KiB.
+        // The first answer is the entry's frame and one maximal revision, which is always served: its bytes are quoted.
+        const string Wide = "\U0001F600";   // one character: four bytes of UTF-8, and \uD83D\uDE00 — twelve — on the wire
+        static string Widest(int chars) => string.Concat(Enumerable.Repeat(Wide, chars));
+        var top = rig.Gw.Ledger.Add(CouncilRoles.Research, "attempt-i", LedgerKind.Hypothesis, Widest(ResearchLedger.MaxTextChars),
+            LedgerMark.Hypothesis, 0.5m, null, Widest(ResearchLedger.MaxNoteChars)).Id;
+        for (var r = 2; r <= 4; r++)
+            rig.Gw.Ledger.Revise(CouncilRoles.Research, "attempt-i", top, Widest(ResearchLedger.MaxTextChars), LedgerMark.Claim,
+                Widest(ResearchLedger.MaxNoteChars), 0.25m, LedgerStatus.Held);
+        var app = new LedgerLinks(rig.Db);
+        var asked = rig.Gw.Ledger.Ask(top, CouncilRoles.Research);
+        for (var i = 0; i < 100; i++)
+            Assert.True(app.Link(asked, LedgerRecord.Run, i.ToString("D2", CultureInfo.InvariantCulture) + new string('f', 62), "attempt-i"));
+        var against = new List<long>();
+        for (var i = 0; i < 100; i++)
+            against.Add(rig.Gw.Ledger.Add(CouncilRoles.Operations, "attempt-i", LedgerKind.Kill, Widest(ResearchLedger.MaxTextChars),
+                LedgerMark.Claim, null, top, Widest(ResearchLedger.MaxNoteChars)).Id);
+        foreach (var revised in against.Take(3))
+            rig.Gw.Ledger.Revise(CouncilRoles.Operations, "attempt-i", revised, Widest(ResearchLedger.MaxTextChars), LedgerMark.Claim,
+                Widest(ResearchLedger.MaxNoteChars), null, null);
+
+        var (revs, lnks, abts) = (0, 0, 0);
+        var next = new List<(string, object?)> { ("entry", top) };
+        for (var page = 1; ; page++)
+        {
+            Assert.True(page <= 20, "the maximal show never finished");
+            var d = Data(await wire.SendAsync(Frame(Ops.LedgerShow, [.. next])));
+            log.WriteLine($"maximal show, page {page}: {wire.LastDataBytes:N0} bytes sent — {d.GetProperty("revisions").GetArrayLength()} "
+                + $"revisions, {d.GetProperty("links").GetArrayLength()} links, {d.GetProperty("about_it").GetArrayLength()} about it, "
+                + $"capped by {d.GetProperty("capped_by")}");
+            Assert.True(wire.LastDataBytes <= ResearchLedger.MaxReadBytes, $"page {page}: {wire.LastDataBytes:N0} bytes");
+            if (page == 1) Assert.Equal(1, d.GetProperty("revisions").GetArrayLength());
+            revs += d.GetProperty("revisions").GetArrayLength();
+            lnks += d.GetProperty("links").GetArrayLength();
+            abts += d.GetProperty("about_it").GetArrayLength();
+            if (d.GetProperty("next") is not { ValueKind: JsonValueKind.Object } more) break;
+            next = [("entry", top), ("part", more.GetProperty("part").GetString())];
+            if (more.TryGetProperty("before", out var at)) next.Add(("before", at.GetInt64()));
+        }
+        Assert.Equal((4, 100, 100), (revs, lnks, abts));
+
+        // AND A LIST: maximal entries, and a pair whose entries alone come within the frame's size of the bound.
+        var (listed, widest) = (0, 0);
+        long? from = null;
+        for (var page = 1; ; page++)
+        {
+            Assert.True(page <= 200, "the maximal list never finished");
+            var d = Data(await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "kill"), ("before", from))));
+            Assert.True(wire.LastDataBytes <= ResearchLedger.MaxReadBytes, $"list page {page}: {wire.LastDataBytes:N0} bytes");
+            widest = Math.Max(widest, wire.LastDataBytes);
+            listed += d.GetProperty("count").GetInt32();
+            if (!d.GetProperty("more").GetBoolean()) break;
+            from = d.GetProperty("next_before").GetInt64();
+        }
+        Assert.Equal(100, listed);
+        log.WriteLine($"maximal list: its widest page {widest:N0} bytes sent, one entry");
+
+        for (var i = 0; i < 2; i++)
+            rig.Gw.Ledger.Add(CouncilRoles.Research, "attempt-i", LedgerKind.Finding, Widest(ResearchLedger.MaxTextChars),
+                LedgerMark.Claim, null, null, Widest(680));
+        var pair = Data(await wire.SendAsync(Frame(Ops.LedgerList, ("kind", "finding"))));
+        log.WriteLine($"the pair: {wire.LastDataBytes:N0} bytes sent, {pair.GetProperty("count")} entries, "
+            + $"{pair.GetProperty("entries").EnumerateArray().Sum(e => Encoding.UTF8.GetByteCount(e.GetRawText())):N0} of them entries");
+        Assert.True(wire.LastDataBytes <= ResearchLedger.MaxReadBytes, $"the pair: {wire.LastDataBytes:N0} bytes");
     }
 
     // ---- every reference a show names is reachable ------------------------------------------------------------------
