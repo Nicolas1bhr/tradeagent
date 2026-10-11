@@ -25,3 +25,12 @@
 - Phase-4 line: `09:38:35  PASS  kill -9 of 3463: systemd restarted it as 4729, which took the lock, started (11554 ms after the kill) and recorded again 11531 ms after the kill` (the row was now seen before the restart check held, 23 ms earlier than the restart time, which the old order could not show).
 - Review (codex gpt-6.1-sol, not acted on): `/private/tmp/claude-501/-Users-nicolasbeeckman-Projects-ai-trading-software-for-mihael/c651f5ce-bffa-4313-be4f-a72133a34282/scratchpad/prove4/U-prove-phase4-fix-review.md`.
 - NOT verified: the failure messages of the new loop (no red run was made to read them); the race reproduced on demand; the baseline read under a slow harness (finding 2, left); shellcheck. One green run is one sample.
+
+### Fix 2
+- Tip of the fix: `c2528b1c` (prove.sh only, +2 lines): after the loop, `restart_ms` must also be ≤ 30000, else fail naming it (finding P2: the loop broke on success before its deadline check, so a restart confirmed at 31 s passed). Findings 1 and 3 behaviour kept.
+- RED (mock harness, stubbed clock/systemctl/rows, one harness stall past t=29000; not committed): base, restart 31000 ms + row 29000 ms -> `PASS: kill -9 of 111 ... started (31000 ms after the kill) and recorded again 29000 ms after the kill`, exit 0 (false green).
+- Fixed, same inputs -> `FAIL: systemd's restart was confirmed only 31000 ms after kill -9 (the budget is 30000 ms)`, exit 1; restart 25000 + row 29000 still -> `PASS: ... started (25000 ms after the kill) and recorded again 29000 ms after the kill`, exit 0.
+- Gate: `bash -n` ok; shellcheck NOT RUN (not installed). CI run 38129941333 on c2528b1c: every job success, including linux-host: `10:05:59  PASS  kill -9 of 3483: systemd restarted it as 4733, which took the lock, started (11551 ms after the kill) and recorded again 11528 ms after the kill`. Names: removed 0 (added 0; [Fact]/[Theory] 2515 / 2515).
+- tests box: NOT RUN — the machine does not answer
+- Review (codex gpt-6.1-sol, not acted on): `/private/tmp/claude-501/-Users-nicolasbeeckman-Projects-ai-trading-software-for-mihael/c651f5ce-bffa-4313-be4f-a72133a34282/scratchpad/prove4/U-prove-phase4-fix2-review.md`.
+- NOT verified: the mock is a model of the loop (virtual clock), not a real slow-harness run; the race and finding 2 as before; shellcheck. One green run is one sample.
