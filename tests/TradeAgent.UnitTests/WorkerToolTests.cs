@@ -558,6 +558,49 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.Contains("not a JSON object", notAnObject.Content);
     }
 
+    /// <summary>
+    /// THE OFFERED SCHEMA IS BUILT FROM THE GATEWAY'S ONE DESCRIPTION, AND REFUSES TO GUESS (<c>U-harness-trade-args</c>,
+    /// item 1): one argument name declared with two types across one tool's ops, a type the harness cannot name in JSON
+    /// schema, and an op with no description are each a thrown refusal at build time — never one type offered while the
+    /// gateway reads the other. And the real tools build: their schemas are JSON schema's own words on the wire.
+    /// </summary>
+    [Fact]
+    public void The_offered_schema_refuses_an_argument_with_two_types_an_unknown_type_and_an_undescribed_op()
+    {
+        GatewaySchema.OpSpec Op(string name, params GatewaySchema.ArgSpec[] args) => new(name, "trade " + name, false, "", args);
+        GatewaySchema.ArgSpec Arg(string name, string type) => new(name, type, false, "");
+
+        var twoTypes = Assert.Throws<InvalidOperationException>(() => GrantedWorkerTools.OpsSchema(["a", "b"],
+            [Op("a", Arg("limit", "number")), Op("b", Arg("limit", "string"))]));
+        Assert.Contains("'limit' is declared as number and, by 'b', as string", twoTypes.Message, StringComparison.Ordinal);
+
+        var unknown = Assert.Throws<InvalidOperationException>(() => GrantedWorkerTools.OpsSchema(["a"], [Op("a", Arg("n", "integer"))]));
+        Assert.Contains("'n' of 'a' is declared as 'integer'", unknown.Message, StringComparison.Ordinal);
+
+        var undescribed = Assert.Throws<InvalidOperationException>(() => GrantedWorkerTools.OpsSchema(["a", "z"], [Op("a")]));
+        Assert.Contains("'z' has no description", undescribed.Message, StringComparison.Ordinal);
+
+        // The same name with the same type across ops is one property, named by both — and `bool` is JSON schema's boolean.
+        using var wire = JsonDocument.Parse(Json.Write(GrantedWorkerTools.OpsSchema(["a", "b"],
+            [Op("a", Arg("all", "bool"), Arg("limit", "number")), Op("b", Arg("limit", "number"))])));
+        var root = wire.RootElement;
+        Assert.Equal(JsonValueKind.False, root.GetProperty("additionalProperties").ValueKind);
+        Assert.False(root.TryGetProperty("required", out _));
+        var properties = root.GetProperty("properties");
+        Assert.Equal(["op", "all", "limit"], properties.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["a", "b"], properties.GetProperty("op").GetProperty("enum").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal("boolean", properties.GetProperty("all").GetProperty("type").GetString());
+        Assert.Equal("For a, b.", properties.GetProperty("limit").GetProperty("description").GetString());
+
+        // EVERY GRANTED TOOL, AS IT GOES ONTO THE WIRE: JSON schema's keyword, not the snake_case of a C# property's name.
+        foreach (var tool in GrantedWorkerTools.Granted)
+        {
+            using var offered = JsonDocument.Parse(Json.Write(tool.Parameters));
+            Assert.Equal(JsonValueKind.False, offered.RootElement.GetProperty("additionalProperties").ValueKind);
+            Assert.False(offered.RootElement.TryGetProperty("additional_properties", out _), tool.Name);
+        }
+    }
+
     const string Trade = GrantedWorkerTools.Trade;
     const string Data = GrantedWorkerTools.Data;
     const string Report = GrantedWorkerTools.Report;
