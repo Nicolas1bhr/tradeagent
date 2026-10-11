@@ -9731,3 +9731,39 @@ reservation stands) and is OWED as card `U-wire-body-deadline` (tests only: 200 
 which agreement binds OpenRouter's Jev output (UNKNOWN, R02 § 2); the card rendered on Windows or Linux (no launch, no capture, by the owner's word); a cut (short) 2xx body;
 the full local suites (CI's). Tests box NOT RUN ("the machine does not answer"). Nothing calls the port yet but the owner's Test press.
 **CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat B's next record and `fleet/ci-ledger.md`.
+
+## U-research-ledger — each role's hypotheses, experiments, findings, kill reasons and lessons become its own versioned claims in the app's database, linked only by the app to the runs and verdicts asked under them (landed 2026-10-11, seat B, MAIN RUNG 31)
+
+**Landed** at `781bf948` (code tip `a48704dc`; rebased from `fd94daba`, src+tests patch-id `3f6625d2e57d` identical) on `main` `f1d899ff`, by `land.sh` v2: **CI CARRIES** — run **38101024999**
+at the tip itself: all 11 jobs success — windows shards 1–5 10/7/7/7/5 min, ubuntu 13, macos 16, linux-host 20, package 3, package-linux 2; every test job `0 Warning(s)`; `land.sh check` PASS, names `sets: base 2469 tip 2481`, `removed: 0`. No local suite (SPEED-MODE § 5). **Schema rung 31** (main 30 → 31; seat A's U-trial-returns takes 32 after it). Evidence path: measurement vs claim.
+**What changed:**
+- Rung 31 (`Core/Db/ResearchLedger.cs`, `IF NOT EXISTS`, stamp last): `ledger_entry`, `ledger_revision` (PK entry, revision), `ledger_link` (unique entry, kind, record). The agent writes
+  kind, mark (claim / assumption / hypothesis; a SQL CHECK too), confidence (0–1 or NULL = unknown, CHECKed), status, `about`, source, text, why; the app writes ids, revision numbers,
+  author (the grant's role), attempt, instants and every link. Public writes `Add` and `Revise` only; no UPDATE or DELETE of a `ledger_` table in `src`. Deviation (declared): `Link` is on
+  a public `LedgerLinks` class (Core grants Gateway no internals), held to the two record paths by source and IL-caller scans.
+- Four verbs, not `Mutating`: `trade ledger add | revise | list | show` (`ledger-add`, `-revise`, `-list`, `-show`) in the protocol, schema, CLI, dispatch, drain table and `TradeOps`;
+  writes need a grant; a role revises only its own entries; undeclared args and over-long text are refused, never cut. `show` pages its three lists (revisions, links, entries about it)
+  with `--part` and `--before`, a stopped bound naming `next`; every `show` and `list` reply's data is ≤ 65,536 B as `Json.Write` sends it (max measured 65,360 B over 5 pages).
+- `backtest` and `verdict` take an optional `entry` of the caller's own role, checked before anything runs or is charged; the link is written in the record's own write (a run's
+  `Record`, the referee's verdict write) and alone for an already-judged answer — which now asks the app's stop first (refused `IPC_UNAVAILABLE`, nothing linked).
+- Canon v2: one shared `## Evidence` sentence (beliefs go in the ledger as claims; nothing written there is a measurement; an unknown stays unknown; PLAN/JOURNAL are scratch); the
+  verbs in the guide; CONTRACTS "The research ledger" (NOT claimed: that an entry is true, a link supports it, every relevant record is linked, a confidence is calibrated).
+  Bytes main → v2 (default/heavier): ops·Cli·sim 15,693/15,835 → 16,069/16,211 (heaviest, under 16,384); research·Harness·sim 11,763/11,905 → 12,156/12,298. v2 hashes: operations
+  `605d04f7…`, research `1070e7c2…`.
+**Verified (quoted from the report and fix pass):** Release `--no-incremental` 0 Warning(s), 0 Error(s); ResearchLedgerTests + CanonTests 3× "Passed: 25"; ResearchLedgerOverPipeTests +
+ResearchLedgerLinkTests 3× "Passed: 8"; guards and sweeps unedited and green. Branch CI 38096312339 (897f781c) and 38097635594 (fd94daba) success on all seven jobs. Names
+`sets: base 2457 tip 2469`, `removed: 0`. Scan: false positives excluded by PHRASE ("machine token", "stop.Token", `Issue(role, attempt).Token`, "MetadataToken", "turn's token cancelled").
+**Reds and mutants:** red with the guard absent: (g)/(j) rung off, (f) author check off, (b) confidence defaulted to 0 (`Expected: "unknown" Actual: "0"`), (h) ops off TradeOps,
+(i) byte bound off (`92,676 bytes is over 65,536`); before item 3: (c), (d) no link, (e) an unknown entry answered. Mutants: undeclared args dropped ⇒ (a) red; the link written at the entry
+check ⇒ (e) red. Fix pass: the stop before the already-judged link (`Expected: "IPC_UNAVAILABLE" Actual: null`, its mutant the same); paging (101 links / 101 about: KeyNotFound at
+tip); the whole-reply bound (`page 4: 76,670 bytes` at tip; mutant "list frame not counted" ⇒ `65,762 bytes`); `Revise`'s one-row read pinned.
+**Reviews (Codex gpt-6.1-sol):** first pass 4 findings, all real (a stopped already-judged request linking; `show` over 64 KiB; links and entries-about unreachable past 100; `Revise`
+reading the whole history in the write lock) — fixed by a fresh fixer (the builder stopped at 398k context). Re-review: 1, 2, 4 CLOSED; 3 judged CLOSED in scope — its NOT CLOSED is
+the API harness's `trade` tool schema declaring only `op`/`request_id` (`GrantedWorkerTools.cs:449`, additionalProperties=false), PRE-EXISTING for every op's args on main and not
+made worse in kind: OWED card `U-harness-trade-args` (the offered schema carries each op's args; a test validates a complete call of every op against `trade.Parameters`).
+**Rulings (seat B):** `ledger-show`'s reply shape changed in the fix pass (part, next, link_count, about_count) — accepted: the verb is this unit's, nothing else read the old fields,
+and no compatibility is owed while building. The stop on the already-judged path is asked only for a request under an entry — accepted: an un-entried stopped ask writes nothing, as
+U-verdict-stopped left it.
+**NOT VERIFIED / not done:** whether a schema-honouring provider lets an API-harness model send any `trade` argument (pre-existing, above); the full local suites (CI's); a crash between
+rung 31's statements and its stamp beyond (j)'s re-run; Windows by hand. Tests box NOT RUN ("the machine does not answer"). `stash@{0}` in the worktree (an autostash, all committed) left.
+**CI on main:** the run of this push is read by a detached `ci-wait.sh`; its verdict goes in seat B's next record and `fleet/ci-ledger.md`.
