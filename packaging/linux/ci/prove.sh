@@ -200,12 +200,14 @@ restarts_before="$(systemctl show -p NRestarts --value tradeagent.service)"
 started_before="$(activity_count 'TradeAgent started')"
 t_kill_ms="$(now_ms)"
 kill -9 "$pid"
-# The row baseline is read once the killed process is GONE (SIGKILL: it can commit nothing after that), and the
-# restart is awaited from the kill before a row is accepted, so a row the dying process committed in its last
-# instant can never count. The baseline is deliberately not read after the restart: the restarted app records
-# its first loopback row at once (run 38125438221 saw it land before the restart check returned), and a baseline
-# taken after that row would wait for the next one a whole 60 s cadence later. Both waits share the one 30 s
-# budget measured from the kill.
+# The row baseline is read once the killed process is GONE (SIGKILL: it can commit nothing after that), and a row
+# only counts once seen after it, so a row the dying process committed in its last instant can never count. The
+# baseline is deliberately not read after the restart: the restarted app records its first loopback row at once
+# (run 38125438221 saw it land before the restart check returned), and a baseline taken after that row would wait
+# for the next one a whole 60 s cadence later. One loop, bounded by the 30 s from the kill, polls all three: the
+# killed process gone, the restart conditions, and the row, whose time is taken the moment it is first seen, so
+# "recorded again N ms after the kill" is kill -> first row and never a later check. Every condition is still
+# required within the 30 s.
 old_process_gone() { [ ! -e "/proc/$pid" ]; }
 restart_done() {
     new_pid="$(main_pid)"
@@ -222,16 +224,28 @@ restart_missing() {
     echo "${missing# }: main process $new_pid (was $pid), NRestarts $restarts_after (was $restarts_before), TradeAgent started $started_after (was $started_before)"
 }
 new_pid=0 restarts_after="$restarts_before" started_after="$started_before"
-budget_left() { echo $(( 30 - ($(now_ms) - t_kill_ms) / 1000 )); }
-wait_until 5 old_process_gone || fail "the killed main process $pid was still there 5 s after kill -9"
-before2="$(loopback_max_id)"
-wait_until "$(budget_left)" restart_done || fail "within 30 s of kill -9 the restart was incomplete, missing $(restart_missing)"
-restart_ms=$(( $(now_ms) - t_kill_ms ))
-remaining="$(budget_left)"
-[ "$remaining" -ge 1 ] || fail "restarted only $restart_ms ms after kill -9, no time left to see a loopback row"
-wait_until "$remaining" loopback_row_after "$before2" \
-    || fail "restarted (main process $new_pid, was $pid) after $restart_ms ms but no loopback tape row from the restarted process within 30 s of kill -9 (newest row id $(loopback_max_id), was $before2 once the killed process was gone)"
-recorded_after_ms=$(( $(now_ms) - t_kill_ms ))
+gone=0 before2="" restart_ms="" recorded_after_ms=""
+while :; do
+    if [ "$gone" = 0 ] && old_process_gone; then
+        gone=1
+        before2="$(loopback_max_id)"
+    fi
+    if [ -z "$recorded_after_ms" ] && [ "$gone" = 1 ] && loopback_row_after "$before2"; then
+        recorded_after_ms=$(( $(now_ms) - t_kill_ms ))
+    fi
+    if [ -z "$restart_ms" ] && restart_done; then
+        restart_ms=$(( $(now_ms) - t_kill_ms ))
+    fi
+    [ -n "$restart_ms" ] && [ -n "$recorded_after_ms" ] && break
+    if [ $(( $(now_ms) - t_kill_ms )) -ge 30000 ]; then
+        missing_now=""
+        [ "$gone" = 1 ] || missing_now="$missing_now killed-process-gone (/proc/$pid still there)"
+        [ -n "$restart_ms" ] || missing_now="$missing_now restart: $(restart_missing)"
+        [ -n "$recorded_after_ms" ] || missing_now="$missing_now loopback-row-from-the-restarted-process (newest row id $(loopback_max_id), was ${before2:-unread} once the killed process was gone)"
+        fail "within 30 s of kill -9 of $pid the recovery was incomplete, missing:${missing_now}"
+    fi
+    if [ "$gone" = 1 ]; then sleep 1; else sleep 0.1; fi
+done
 [ "$recorded_after_ms" -le 30000 ] || fail "recorded again only $recorded_after_ms ms after kill -9"
 pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, started (${restart_ms} ms after the kill) and recorded again ${recorded_after_ms} ms after the kill"
 
