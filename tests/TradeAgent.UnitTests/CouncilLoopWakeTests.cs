@@ -210,6 +210,40 @@ public partial class CouncilLoopTests
             $"the chair's request at {state} raised no look");
     }
 
+    /// <summary>
+    /// THE OWNER'S WORDS ARE OPEN UNTIL THEY HAVE AN OUTCOME, not until a launch took them. A launch consumes the
+    /// owner's message in its own write; a crash after that write leaves the message consumed and with no outcome, and
+    /// the chair keeps its look over it — the look the fixed clock used to give it — until a turn's outcome is written.
+    ///
+    /// <para>RED at a2e839e6 (review 1, finding 2): the objective read only unconsumed messages, so the crash took the
+    /// owner's words out of the objectives and the chair's look was withdrawn.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_owners_words_a_lost_turn_took_stay_open_until_they_have_an_outcome()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+        Assert.True(events.RecordOwnerMessage("close the ES position before the weekend", now));
+        var owner = Assert.Single(events.OfKind(MissionEventKind.Owner));
+
+        // THE LAUNCH'S WRITE, THEN THE CRASH: consumed by an attempt nobody will hear from again.
+        events.Consume([owner.Id], "turn-lost", now);
+        new AiAttemptStore(db).LoseOpen(now.AddMinutes(1));
+
+        Assert.Contains(new RoleObjective(RoleObjectives.OwnerAnswered, owner.Id),
+            RoleObjectives.Open(db, CouncilRoles.Operations, []));
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = [] };
+        await new MissionLoop(host, HalfHourLooks, now: () => now.AddMinutes(2)).TurnAsync();
+        Assert.True(host.Events!.HasUnconsumed(MissionEventKind.Review, CouncilRoles.Operations),
+            "the owner's words a lost turn took raised no look for the chair");
+
+        // A TURN'S OUTCOME CLOSES IT.
+        Assert.True(events.Settle(owner.Id, MissionEventDisposition.Answered));
+        Assert.Empty(RoleObjectives.Open(db, CouncilRoles.Operations, []));
+    }
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
