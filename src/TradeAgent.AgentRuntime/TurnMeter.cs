@@ -905,7 +905,9 @@ public sealed class TurnMeter
             if (_launching.Contains(key)) return new AiAdmission { Refusal = Labels.LaunchRoleOpen(null) };
 
             if (attemptId is null) id = NewId();
-            else if (_minted.FindIndex(m => m.Id == attemptId) is var at and >= 0)
+            // FOR THIS ROLE (review P2): an id minted for another role is that role's launch, not this one's — refused
+            // here like an id never minted, and left in the list for the role it was minted for.
+            else if (_minted.FindIndex(m => m.Id == attemptId && m.Role == key) is var at and >= 0)
             {
                 id = attemptId;
                 _minted.RemoveAt(at);
