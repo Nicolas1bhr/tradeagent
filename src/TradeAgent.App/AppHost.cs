@@ -56,6 +56,9 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     SeatRegister _seats = SeatRegister.Shared;
 
+    /// <summary>This host's activation-gate register, for a test that it is set before any launch can start.</summary>
+    internal SeatRegister Seats => _seats;
+
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
     public HealthRegistry Health { get; } = new();
@@ -904,6 +907,12 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     void ComposeTheAi(Database db)
     {
+        // THE ACTIVATION GATE'S REGISTER, FILLED HERE AND NOWHERE ELSE (U-thinking-seats-a), and FIRST: before the supervisor, the
+        // meter or the loop exists, so no launch can start against a register nothing set — which refuses an unconfined launch
+        // outside a test host (fix pass 2, item 5). Its reads are asked at each launch, never here.
+        _seats.Facts = FactsFor;
+        _seats.Neighbours = ActiveBeyondLegacy;
+
         // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
         // page while the agent is running, and the next turn is the one that has to obey.
         Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
@@ -942,10 +951,6 @@ public sealed class AppHost : IAsyncDisposable
             // THE SEAT EACH ROLE WAS DECLARED ON, for the meter's own check that the seat it verifies is that seat.
             declaredSeat: DeclaredSeatClass);
         Meter.Changed += () => Changed?.Invoke();
-
-        // THE ACTIVATION GATE'S REGISTER, FILLED HERE AND NOWHERE ELSE (U-thinking-seats-a).
-        _seats.Facts = FactsFor;
-        _seats.Neighbours = ActiveBeyondLegacy;
 
         Wakes = new MissionEventStore(db);
         Boundaries = new CouncilBoundaries(db);

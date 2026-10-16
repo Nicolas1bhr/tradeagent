@@ -404,6 +404,49 @@ public class ThinkingSeatsTests : IDisposable
         }
     }
 
+    // ---- (o) re-review item 5: outside a test host an unset register fails closed -------------------------------
+
+    /// <summary>
+    /// (o) OUTSIDE A TEST HOST, A REGISTER NOTHING SET REFUSES THE LEGACY PAIR'S UNCONFINED LAUNCH (fix pass 2, item 5; ORCHESTRATION
+    /// § 2.3, fail closed): a production path that forgot the register cannot run the pair unconfined beside a position nobody could
+    /// rule out — at the seam and at the last check, about the host. A brokered seat is no neighbour; a test host keeps the pair's
+    /// behaviour from before the gate; and the app's own host sets its register when it composes the AI, before any conversation
+    /// exists, so the product's launches are asked the neighbour rule of a register that answers. RED at the rebased tip: an unset
+    /// register passed <c>AtLaunch("operations", "cli")</c> beside an active position. THE WATCHED MUTANT: the test-host condition
+    /// removed.
+    /// </summary>
+    [Fact]
+    public void Outside_a_test_host_an_unset_register_refuses_the_legacy_pairs_unconfined_launch()
+    {
+        using var db = TestEnv.NewDb();
+        Head(db, Third);
+        var chart = new OrgStore(db);
+        var unset = new SeatRegister();
+
+        foreach (var legacy in CouncilRoles.All)
+        {
+            var launch = PositionActivation.AtLaunch(legacy, SeatClasses.Cli, unset, testHost: false);
+            Assert.True(launch?.Kind == RefusalKind.HostOrLaunch,
+                $"an unset register passed '{legacy}' unconfined beside an active position outside a test host: {launch?.Kind}");
+            Assert.Contains("register is not set", launch!.Words, StringComparison.Ordinal);
+            Assert.Equal(RefusalKind.HostOrLaunch,
+                PositionActivation.Ask(legacy, chart.Standing(legacy), unset, null, testHost: false)?.Kind);
+            Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Harness, unset, testHost: false));   // brokered: no neighbour
+            Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Cli, unset, testHost: true));         // a test host, as before
+        }
+        Assert.True(PositionActivation.TestHost, "this assembly's module initializer did not mark it a test host");
+
+        // THE APP'S HOST SETS ITS REGISTER WHEN IT COMPOSES THE AI: outside a test host its legacy launch is asked a neighbour read
+        // that answers — refused while the third is active, run once it is dormant.
+        var app = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        Assert.True(app.Seats.IsSet, "the app composed its AI and left the activation gate's register unset");
+        var beside = PositionActivation.AtLaunch(CouncilRoles.Operations, SeatClasses.Cli, app.Seats, testHost: false);
+        Assert.Equal(RefusalKind.HostOrLaunch, beside?.Kind);
+        Assert.Contains($"'{Third}'", beside!.Words, StringComparison.Ordinal);
+        SetStatus(db, Third, OrgPositionStatus.Dormant);
+        Assert.Null(PositionActivation.AtLaunch(CouncilRoles.Operations, SeatClasses.Cli, app.Seats, testHost: false));
+    }
+
     // ---- (m) review item 3: a proof counts on the host that recorded it ------------------------------------------
 
     /// <summary>
