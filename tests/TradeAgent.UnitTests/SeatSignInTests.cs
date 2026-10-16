@@ -250,6 +250,57 @@ public class SeatSignInTests
     }
 
     /// <summary>
+    /// FIX 3 (the review's P2; the brief: "a failure to run status reads as 'unknown', shown as such"): AN UNREADABLE runtimes.json, OR
+    /// A CHOSEN RUNTIME IT CANNOT NAME, READS UNKNOWN AND THE CARD SAYS SO — in words naming the file or the runtime, with no way in it
+    /// cannot honour. Only no runtime chosen (or one with no seat home) is nothing to show. Red at base: the app read the catalogue with
+    /// Find, whose null for an unreadable file read as NotApplicable, and the card hid.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_runtimes_file_or_a_chosen_runtime_it_cannot_name_reads_unknown_and_the_card_says_so()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            foreach (var step in Enum.GetValues<OnboardingStep>()) host.Onboarding.Complete(step);
+            var page = new DashboardPage(host, () => Task.CompletedTask);
+            SeatSignInReading Read()
+            {
+                var reading = Rig.OnThisThread(host.SeatSignIn.RefreshAsync());
+                page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
+                return reading;
+            }
+
+            host.Gateway.Update(s => s.SelectedRuntimeId = "codex");
+            File.WriteAllText(RuntimeCatalog.OverridePath, "[{\"id\": \"codex\", ");
+            var unreadable = Read();
+            Assert.Equal(SeatSignInState.Unknown, unreadable.State);
+            Assert.Contains(Labels.RuntimesFile, unreadable.Reason, StringComparison.Ordinal);
+            Assert.True(page.SignIn.Root.IsVisible, "an unreadable runtimes.json hid the sign-in card");
+            var words = Rig.Words(page.SignIn.Root);
+            Assert.Contains(words, w => w.StartsWith("TradeAgent could not tell whether its AI is signed in", StringComparison.Ordinal)
+                && w.Contains(Labels.RuntimesFile, StringComparison.Ordinal) && !w.Contains("sign it in below", StringComparison.Ordinal));
+            Assert.DoesNotContain(SeatSignInCard.Key, words);
+
+            File.Delete(RuntimeCatalog.OverridePath);
+            host.Gateway.Update(s => s.SelectedRuntimeId = "no-such-runtime");
+            var unnamed = Read();
+            Assert.Equal(SeatSignInState.Unknown, unnamed.State);
+            Assert.Contains("no-such-runtime", unnamed.Reason, StringComparison.Ordinal);
+            Assert.True(page.SignIn.Root.IsVisible);
+
+            host.Gateway.Update(s => s.SelectedRuntimeId = null);
+            Assert.Equal(SeatSignInState.NotApplicable, Read().State);
+            Assert.False(page.SignIn.Root.IsVisible);
+        }
+        finally
+        {
+            if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath);
+            await host.Gateway.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// (d) THE CODE IS SHOWN WITH ITS EXPIRY AND A RETRY ONCE IT LAPSES, AND OUTPUT THE MANIFEST'S PATTERNS DO NOT MATCH IS REFUSED
     /// NAMING THE VERSION — no code guessed onto the screen. Red at base: no code path on the card, no expiry read, and no refusal.
     /// </summary>

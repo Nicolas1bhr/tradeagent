@@ -194,11 +194,13 @@ sealed class SeatSignInCard
         // A SIGN-IN THAT FINISHED leaves nothing of itself behind for the next time the card appears.
         if (!wanted) { _challenge = null; _browserAddress = null; }
 
+        var (browser, code, key) = _sources.Service.Offers();
+        // NO PROMISE OF A WAY IN THE CARD CANNOT OFFER: an unreadable catalogue names no runtime to sign in.
         _headline.Text = reading.State is SeatSignInState.Unknown
-            ? $"TradeAgent could not tell whether its AI is signed in: {reading.Reason ?? "the AI tool did not say"}. You can sign it in below."
+            ? $"TradeAgent could not tell whether its AI is signed in: {(reading.Reason ?? "the AI tool did not say").TrimEnd('.')}." +
+              (browser || code || key ? " You can sign it in below." : "")
             : _sources.Service.SignedOutWords();
 
-        var (browser, code, key) = _sources.Service.Offers();
         _browser.IsVisible = browser;
         _code.IsVisible = code && _challenge is null;
         _keyRow.IsVisible = key;

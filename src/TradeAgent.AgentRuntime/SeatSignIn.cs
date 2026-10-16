@@ -93,7 +93,11 @@ public static class PastedKey
 ///
 /// <para>Operator authority, in-process only: nothing on the agent-facing pipe reaches this object.</para>
 /// </summary>
-/// <param name="manifest">The runtime the owner chose, read at every call — the settings change while the app runs.</param>
+/// <param name="manifest">
+/// The runtime the owner chose, read at every call — the settings change while the app runs. Null is no runtime chosen (nothing to
+/// show); a throw is a catalogue that could not answer — an unreadable <c>runtimes.json</c>, a chosen runtime it cannot name — and
+/// reads <see cref="SeatSignInState.Unknown"/> with the refusal's words, never as nothing to show.
+/// </param>
 /// <param name="presence">
 /// The register a sign-in's processes report to: null is the process-wide one, which is what the product passes; a test passes its
 /// own, for the reason <see cref="CliAgentRuntime"/>'s own parameter gives.
@@ -196,7 +200,8 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
     /// </summary>
     CliAgentRuntime? Runtime()
     {
-        if (Manifest() is not { Seat: not null } m) return null;
+        // THE CATALOGUE'S REFUSAL GOES THROUGH: a read turns it into Unknown with its words, a press into the card's words.
+        if (manifest() is not { Seat: not null } m) return null;
         var signature = Json.Write(m);
         lock (_gate)
         {

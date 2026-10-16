@@ -60,11 +60,13 @@ public sealed class AppHost : IAsyncDisposable
     /// THE APP'S ONE SIGN-IN INTO ITS SEAT HOME (<c>U-seat-signin</c>), for the runtime the owner chose — read through the settings at
     /// every call, since he changes it while the app runs. Its status is read on the background loop's cadence, never on the window's
     /// thread; the Dashboard's "AI sign-in" card shows it and offers the three ways in. A test's host is handed another.
+    /// <para>Resolved with <see cref="RuntimeCatalog.Require"/>, never <c>Find</c>: an unreadable <c>runtimes.json</c>, or a chosen
+    /// runtime it cannot name, is a refusal the card shows as UNKNOWN in its own words — only no runtime chosen is nothing to show.</para>
     /// </summary>
     public SeatSignIn SeatSignIn
     {
         get => _seatSignIn ??= new SeatSignIn(() =>
-            Gateway?.Settings.SelectedRuntimeId is { Length: > 0 } id ? RuntimeCatalog.Find(id) : null);
+            Gateway?.Settings.SelectedRuntimeId is { Length: > 0 } id ? RuntimeCatalog.Require(id) : null);
         internal set => _seatSignIn = value;
     }
 
