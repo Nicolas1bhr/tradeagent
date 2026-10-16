@@ -472,8 +472,8 @@ public static class ProcessContainment
     const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 
     /// <summary>
-    /// WINDOWS FAILURES A TEST CANNOT OTHERWISE ARRANGE (<c>U-grant-tree</c> fix pass 1): an assign Windows
-    /// refuses, a tree kill that fails. Scoped to the test's own async flow — a launch anywhere else never sees
+    /// WINDOWS FAILURES A TEST CANNOT OTHERWISE ARRANGE (<c>U-grant-tree</c> fix pass 1): a job Windows will not make, an
+    /// assign it refuses, a tree kill that fails. Scoped to the test's own async flow — a launch anywhere else never sees
     /// it — and it only ever makes a launch fail, never turns a check off. Null in the product.
     /// </summary>
     internal static readonly AsyncLocal<WindowsFaults?> Faults = new();
@@ -499,7 +499,8 @@ public static class ProcessContainment
     /// <summary>
     /// WHY A LAUNCH COULD NOT BE HELD ON THIS COMPUTER, KNOWN BEFORE ANYTHING STARTS — the owner's sentence with its repair —
     /// or null (<c>U-grant-tree</c>, RULING 2). macOS and Linux: TradeAgent's own trade command, which makes the session,
-    /// is missing. Windows: null — a job is created before the process and a job that will not be made refuses then.
+    /// is missing. Windows: null — the job is made by <see cref="Prepare"/>, before admission, and a job Windows will not make
+    /// refuses there.
     /// </summary>
     public static string? CannotHold(IReadOnlyList<string>? launcher = null)
     {
@@ -507,6 +508,39 @@ public static class ProcessContainment
         if ((launcher ?? DefaultLauncher()) is { Count: > 0 }) return null;
         return Unheld($"TradeAgent's own trade command, which holds the AI's programs in a session of their own on this " +
                       $"computer, is not at {Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)}");
+    }
+
+    /// <summary>
+    /// WHAT WILL HOLD THE NEXT LAUNCH, MADE BEFORE ANYTHING IS ADMITTED (<c>U-grant-tree</c> fix pass 1, RULING 2) — or a
+    /// throw of <see cref="ErrorCode.CONTAINMENT_UNAVAILABLE"/> in the owner's words. Windows: the job itself is created here,
+    /// so a job Windows will not make refuses while no row is written and no wake consumed; it used to be made only as the
+    /// process started, after the ledger had reserved the turn and consumed its wakes for a launch that then never ran.
+    /// macOS and Linux: the trade command that makes the session must be there (<see cref="CannotHold"/>). Handed to
+    /// <see cref="Start(ProcessStartInfo, PreparedHold, IReadOnlyList{string}?)"/>; disposed unused, it closes its job.
+    /// </summary>
+    public static PreparedHold Prepare(IReadOnlyList<string>? launcher = null)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            if (CannotHold(launcher) is { } unheld) throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, unheld);
+            return new PreparedHold(IntPtr.Zero);
+        }
+        var job = CreateJob(out var why);
+        if (job == IntPtr.Zero) throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, Unheld(why));
+        return new PreparedHold(job);
+    }
+
+    /// <summary>
+    /// Starts a launch that carries a grant in what <see cref="Prepare"/> made for it: on Windows that job, taken here; on
+    /// macOS and Linux the launcher's session, as <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?, bool)"/> with
+    /// <c>requireHeld</c> does.
+    /// </summary>
+    public static ContainedProcess Start(ProcessStartInfo psi, PreparedHold hold, IReadOnlyList<string>? launcher = null)
+    {
+        ArgumentNullException.ThrowIfNull(psi);
+        ArgumentNullException.ThrowIfNull(hold);
+        if (OperatingSystem.IsWindows()) return StartWindows(psi, requireHeld: true, hold.Take());
+        return Start(psi, launcher, requireHeld: true);
     }
 
     /// <summary>The refusal sentence for a launch that cannot be held: what, why it matters, and the repair.</summary>
@@ -661,14 +695,26 @@ public static class ProcessContainment
     }
 
     [SupportedOSPlatform("windows")]
-    static ContainedProcess StartWindows(ProcessStartInfo psi, bool requireHeld)
+    static ContainedProcess StartWindows(ProcessStartInfo psi, bool requireHeld, IntPtr prepared = default)
     {
-        var job = CreateJob(out var why);
+        var why = "";
+        var job = prepared != IntPtr.Zero ? prepared : CreateJob(out why);
         if (requireHeld && job == IntPtr.Zero)
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, Unheld(why));
 
-        var process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
-            $"{psi.FileName} would not start");
+        Process process;
+        try
+        {
+            process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
+                $"{psi.FileName} would not start");
+        }
+        catch (Exception)
+        {
+            // A JOB NOTHING WAS PUT IN is closed here, not left open for the life of the app (fix pass 1: it may be the
+            // one Prepare made before the admission).
+            CloseHandleSafe(job);
+            throw;
+        }
 
         if (job == IntPtr.Zero)
             return new ContainedProcess(process, IntPtr.Zero, false, false, $"not held: {why}");
@@ -715,6 +761,11 @@ public static class ProcessContainment
     static IntPtr CreateJob(out string why)
     {
         why = "";
+        if (Faults.Value is { RefuseJob: true })
+        {
+            why = "Windows would not create a job object (error 5)";
+            return IntPtr.Zero;
+        }
         var job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero)
         {
@@ -740,6 +791,12 @@ public static class ProcessContainment
         finally { Marshal.FreeHGlobal(block); }
 
         return job;
+    }
+
+    /// <summary>Closes a prepared job nobody took. Never throws.</summary>
+    internal static void Release(IntPtr job)
+    {
+        if (job != IntPtr.Zero && OperatingSystem.IsWindows()) CloseHandleSafe(job);
     }
 
     [SupportedOSPlatform("windows")]
@@ -805,4 +862,21 @@ public static class ProcessContainment
 }
 
 /// <summary>The Windows failures <see cref="ProcessContainment.Faults"/> arranges for a test; each one only makes a launch fail.</summary>
-internal sealed record WindowsFaults(bool RefuseAssign = false, bool RefuseTreeKill = false);
+internal sealed record WindowsFaults(bool RefuseJob = false, bool RefuseAssign = false, bool RefuseTreeKill = false);
+
+/// <summary>
+/// WHAT <see cref="ProcessContainment.Prepare"/> MADE FOR ONE LAUNCH BEFORE ITS ADMISSION (<c>U-grant-tree</c> fix pass 1): the
+/// Windows job the launch will be put in, or nothing on macOS and Linux, where the launcher makes the session as it starts.
+/// Taken once by the start; disposed untaken — the launch was refused or never started — it closes the job.
+/// </summary>
+public sealed class PreparedHold : IDisposable
+{
+    IntPtr _job;
+
+    internal PreparedHold(IntPtr job) => _job = job;
+
+    /// <summary>The job, handed to the start once; zero afterwards, and zero on macOS and Linux.</summary>
+    internal IntPtr Take() => Interlocked.Exchange(ref _job, IntPtr.Zero);
+
+    public void Dispose() => ProcessContainment.Release(Take());
+}

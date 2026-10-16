@@ -621,6 +621,44 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A JOB WINDOWS WILL NOT MAKE IS REFUSED BEFORE THE LEDGER IS ASKED (<c>U-grant-tree</c> fix pass 1, review P2
+    /// Containment.cs:469, RULING 2). The job is created with the launch's claim, before admission, so its failure writes no
+    /// attempt row, reserves nothing and consumes no wake — and the loop backs off with the reason, as for any launch this
+    /// computer cannot hold. Windows only: the job is refused through <see cref="ProcessContainment.Faults"/>, scoped to
+    /// this test's own flow.
+    /// </summary>
+    [Fact]
+    public async Task A_job_windows_will_not_make_is_refused_before_the_ledger_and_keeps_its_wake()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("fill:job", MissionEventKind.Fill, now, role: CouncilRoles.Operations);
+        var meter = Meter(50m, () => now);
+        var dir = Path.Combine(TestEnv.Home, $"job-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(dir);
+        var manifest = new RuntimeManifest
+        {
+            Id = "job-probe", DisplayName = "job probe", Executable = "job-probe",
+            ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"], TaskArgs = ["{prompt}"]
+        };
+        var chair = new AgentSession(manifest, () => Path.Combine(dir, "never-started"), () => dir,
+            () => new Dictionary<string, string>(), new AgentPresence(), grants: new AgentGrants());
+        var host = new RaceHost(meter, chair, events, onSituation: () => { });
+        var loop = new MissionLoop(host, new MissionOptions(), now: () => now);
+
+        ProcessContainment.Faults.Value = new WindowsFaults(RefuseJob: true);
+        try { await loop.TurnAsync(); }
+        finally { ProcessContainment.Faults.Value = null; }
+
+        using (var c = _db.Cmd("SELECT COUNT(*) FROM ai_attempt"))
+            Assert.True(Convert.ToInt32(c.ExecuteScalar()) == 0, "a launch whose job Windows would not make wrote an attempt row");
+        Assert.Null(events.Get("fill:job")!.ConsumedBy);
+        Assert.Contains(host.BarTold, b => b.Lasting && b.Why.Contains("job object"));
+    }
+
+    /// <summary>
     /// A COMPUTER THAT CANNOT HOLD THE LAUNCH (<c>U-grant-tree</c>, RULING 2): nothing is written and the wake stays owed, as
     /// above, and the loop backs off as from a ledger refusal — the card saying what it waits for, in the reason's own words.
     /// </summary>

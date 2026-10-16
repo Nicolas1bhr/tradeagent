@@ -321,7 +321,7 @@ public sealed class AgentSession(
     /// <see cref="Unclaim"/> gives it back (<c>U-grant-tree</c> fix pass 1). One at a time: a second claim while one is held
     /// is a launch of this role already being prepared.
     /// </summary>
-    AgentGrant? _claim;
+    (AgentGrant Grant, PreparedHold Hold)? _claim;
     readonly Lock _claimGate = new();
 
     /// <inheritdoc />
@@ -331,6 +331,9 @@ public sealed class AgentSession(
     /// written its row, reserved its spend and consumed its wakes — none of which a launch that never starts may do, and
     /// none of which can be undone in an append-only ledger. So the grant itself is issued here, under the register's lock,
     /// before the caller asks the ledger; <see cref="AgentGrants.Issue"/>'s refusal arrives while nothing has been written.</para>
+    /// <para><b>AND WHAT WILL HOLD IT, MADE HERE TOO</b> (RULING 2): the Windows job is created with the claim, so a job Windows
+    /// will not make is a lasting refusal while nothing has been written — never a reservation charged and a wake consumed
+    /// for a launch that then could not start.</para>
     /// </remarks>
     public LaunchBar? Claim(out string? ordersWithheld)
     {
@@ -339,10 +342,17 @@ public sealed class AgentSession(
         lock (_claimGate)
         {
             if (_claim is not null) return new LaunchBar(Labels.HeldWhileTheAiIsWorking, Lasting: false);
+            PreparedHold hold;
+            try { hold = ProcessContainment.Prepare(); }
+            catch (TradeAgentException ex) when (ex.Code == ErrorCode.CONTAINMENT_UNAVAILABLE) { return new LaunchBar(ex.Message, Lasting: true); }
             AgentGrant grant;
             try { grant = register.Issue(role, ""); }
-            catch (TradeAgentException ex) when (ex.Code == ErrorCode.LAUNCH_HELD) { return new LaunchBar(ex.Message, Lasting: false); }
-            _claim = grant;
+            catch (TradeAgentException ex) when (ex.Code == ErrorCode.LAUNCH_HELD)
+            {
+                hold.Dispose();
+                return new LaunchBar(ex.Message, Lasting: false);
+            }
+            _claim = (grant, hold);
             ordersWithheld = grant.OrdersWithheld;
             return null;
         }
@@ -351,14 +361,14 @@ public sealed class AgentSession(
     /// <inheritdoc />
     public void Unclaim()
     {
-        AgentGrant? claim;
-        lock (_claimGate) { claim = _claim; _claim = null; }
-        // NO PROCESS EVER HELD IT: revoked outright, never given the grace a finished turn's grant has.
-        if (claim is not null) (grants ?? AgentGrants.Shared).Revoke(claim.Token);
+        if (TakeClaim() is not { } claim) return;
+        // NO PROCESS EVER HELD IT: revoked outright, never given the grace a finished turn's grant has; its job closed.
+        (grants ?? AgentGrants.Shared).Revoke(claim.Grant.Token);
+        claim.Hold.Dispose();
     }
 
     /// <summary>The held claim, taken for the launch about to start, or null when nothing claimed one.</summary>
-    AgentGrant? TakeClaim()
+    (AgentGrant Grant, PreparedHold Hold)? TakeClaim()
     {
         lock (_claimGate)
         {
@@ -716,7 +726,9 @@ public sealed class AgentSession(
         // THE GRANT THIS LAUNCH WILL CARRY: the one claimed before its admission (Claim), or — for a caller that admitted
         // nothing first — issued now, refused here as the hard line. Taken here, so every way out below ends it.
         var register = grants ?? AgentGrants.Shared;
-        using var launch = TakeClaim() ?? register.Issue(role, "");
+        var claimed = TakeClaim();
+        using var hold = claimed?.Hold ?? ProcessContainment.Prepare();
+        using var launch = claimed?.Grant ?? register.Issue(role, "");
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
@@ -801,7 +813,7 @@ public sealed class AgentSession(
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
         // exited has none left to walk — measured before this line existed, a detached grandchild
         // outlived CancelAsync on both platforms. See ProcessContainment.
-        var contained = ProcessContainment.Start(psi, requireHeld: true);
+        var contained = ProcessContainment.Start(psi, hold);
         var process = contained.Process;
         _current = contained;
 
