@@ -10642,3 +10642,33 @@ condition "sent and not Working" is true inside that window. Diagnostic in the h
 watched red; the regression guard is the deterministic red's seam, not this test's every run — noted, not a defect of what is protected. P2 "report missing" — appended before landing.
 **OWED (light card):** while the post-turn pass runs the card briefly shows Waiting, no next time and the old error count — product behaviour this unit left unchanged.
 **NOT VERIFIED:** tests box (NOT RUN — the machine does not answer).
+
+## U-seat-acl — the seat home is this account's alone on every platform: no access entry outlives "owner-only" on any folder or file already in it, nothing outside it is changed through a link or a second name, and a refusal changes nothing; no rung (landed 2026-10-16, seat A)
+
+**Landed** in train A2 (`land.sh` v3) with `U-puppet-runtime`: (rebased on main at its train-prep; fix pass 2's report `d7a80527`, code `a0158cb6`; fix pass 1 code
+`d8c4e4a7`; builder `b473ff4e`). A protection light — CRED-001 (the seat home's sign-in is readable by this account alone; ORCHESTRATION § 2.7) and "refuse, never guess /
+never destroy": the two gaps `U-seat-home`'s last review left. **No rung.** Built by a81abcef9d78656b6 (2026-10-11; it stopped at a usage limit with no report),
+fresh fixers aa150ab69d5bc0c90 (pass 1) and aa2698dce6959a627 (pass 2), 2026-10-16.
+**CI:** train A2 run **38967229637** at `f234d62c` (U-seat-acl → U-puppet-runtime on `main` `97b1e169`): all 12 jobs success — dedupe-gate, shard-plan, package, package-linux, test windows 1-5, ubuntu, macos, linux-host. Runs 38947459782, 38947696356 (train A1, SUCCESS on `63283056`) and 38963297900 did not carry: main moved by code under each. Before: 38943338805 at `a0158cb6`, all 12 success; 38934596057 at `d8c4e4a7`, all success but linux-host
+(the fleet image break U-ci-host-pins fixed). Names: removed 0. Scan: prose ("token", "secret", "OAuth tokens", "keyring") judged false positives, excluded by phrase.
+**What changed:** `SeatProfile.Prepare` READS BEFORE IT WRITES. First, every component of every manifest path (seat folders, `private_files` =
+`codex/auth.json`, `codex/.credentials.json` per codex 0.160.1's source, and `config_file`) is checked by `Look`: lexical (no rooted path, nothing leading out,
+the refusal naming its runtimes.json entry), not a link, not a file where a folder belongs. Then the whole home is walked without following a link; a file with
+a link count above one (lstat on macOS, statx on Linux, a reparse-point handle on Windows) is refused in words naming it and the repair; the root's owner is read
+unchanged. Only then are modes and lists written, each only when not already so, and read back. macOS: every folder and file is cleared of extended ACL
+entries through `acl_set_link_np` (no-follow). Windows: below the root every folder and file keeps no entry or protection of its own and inherits the root's
+owner-only list. Linux: folders 0700, credential and config files 0600; a POSIX ACL entry is voided by the `---` mask (pinned). Anything that will not take
+refuses the seat in words (`AI_SEAT_REFUSED`), never starts it. Measured on the dev Mac: 67-105 ms over 377 folders and 4,032 session files.
+**Evidence:** builder red-first (c8f2a645): (a), (b) red on this Mac; (c), (d) red on the tests box at base (2026-10-11); its mutant (item 1's folder clear off) ⇒ (a)
+red. Pass 1: CI reds R1 and R2 were the TESTS (ubuntu's `getfacl` prints uid 65534 as `nobody` → `getfacl -n`; CI's windows admin token changes a list past the
+owner-rights deny, so (d) probes a throwaway file and skips with that reason there); (f) RED `…/sessions/…/rollout-2026-10-16.jsonl still grants: 0: group:everyone
+allow read`; (g) RED `Expected "OtherRead, GroupRead, UserWrite, UserRead" Actual "UserWrite, UserRead"` (an outside 0644 file went 0600); mutant (file walk off) ⇒
+(f) red. Pass 2: (h) hard link RED `Expected: ["0: group:everyone allow read"] Actual: []`; (h′) RED likewise; (i) a refused path left the root's mode changed, RED;
+mutant (link-count check off) ⇒ (h), (h′) red; restored `Passed: 11, Skipped: 2`. Release `--no-incremental` 0 warnings; SeatAclTests 3× `Passed: 12, Skipped: 2`;
+neighbours 27.
+**Judged** (fleet/records/U-seat-acl-review-triage.md): a Linux hard link under `sessions/` is not refused, because a Linux preparation changes no session file, so no
+outside file can be reached through one (credential and config files ARE link-checked on every platform). An owned folder at mode 000 is now REFUSED in words
+where the old walk repaired it: fail-closed, and the price of "a refusal changes nothing".
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the Windows rows of (f), (g), (h), (h′) are green on CI but were never seen red on Windows;
+(d)'s Windows row skips on CI's admin token and is proved only on a standard account (the tests box, 2026-10-11, not re-run); (i) runs on Linux and macOS only;
+nothing local on Linux (the Colima VM is off-limits); no real codex or login.
