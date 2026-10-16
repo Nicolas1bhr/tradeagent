@@ -31,10 +31,10 @@ public static class SeatProfile
     /// writer can swap a folder for a link between this look and the start.</para>
     ///
     /// <para><b>THE WHOLE HOME, AT EVERY PREPARATION</b> (<c>U-seat-acl</c>; CRED-001): not only the folders the environment names but
-    /// every folder below the root — whatever the CLI made there since — and the files that hold its credential
-    /// (<see cref="SeatPlan.PrivateFiles"/>) and its settings (<see cref="SeatPlan.ConfigFile"/>) are made owner-only, because an access
-    /// entry on a file outlives any change to its folder's. A link met on the walk is never followed (its target is not the seat home);
-    /// a credential file that is a link is refused like a folder.</para>
+    /// every folder and every file below the root — whatever the CLI made there since — is left with no access entry of its own, and
+    /// the files that hold its credential (<see cref="SeatPlan.PrivateFiles"/>) and its settings (<see cref="SeatPlan.ConfigFile"/>)
+    /// are made 0600, because an access entry on a file outlives any change to its folder's. A link met on the walk is never followed
+    /// (its target is not the seat home); a credential file that is a link is refused like a folder.</para>
     /// </summary>
     public static void Prepare(SeatPlan seat)
     {
@@ -91,27 +91,36 @@ public static class SeatProfile
     }
 
     /// <summary>
-    /// EVERY FOLDER BELOW <paramref name="root"/>, PARENTS FIRST, AND THE CREDENTIAL AND SETTINGS FILES, MADE OWNER-ONLY. A folder
-    /// that is a link, a junction or another reparse point is stepped over, never entered: what it points to is not the seat home.
-    /// Measured on the dev Mac (U-seat-acl): a whole preparation took 17-19 ms over a home of 377 folders and 4,032 session files
-    /// (0.3 ms over an empty one) — the walk lists folders only, and the files below them keep their folders' lists.
+    /// EVERY FOLDER AND EVERY FILE BELOW <paramref name="root"/>, PARENTS FIRST, MADE OWNER-ONLY, AND THE CREDENTIAL AND SETTINGS FILES
+    /// MADE 0600. A folder or file that is a link, a junction or another reparse point is stepped over, never entered or changed: what
+    /// it points to is not the seat home. A FILE keeps no entry of its own (the review's P1, U-seat-acl; CRED-001): on Windows an
+    /// explicit entry on an existing session transcript outlives its folder's protected list, and traverse checking is bypassed by
+    /// default, so it would stay readable by path; on macOS an extended entry is cleared as on a folder. Each file's list is read and
+    /// written only when it is not so. Linux files are left as they are: their 0700 folders let no other account reach them.
+    /// Measured on the dev Mac: a whole preparation took 54-72 ms over a home of 377 folders and 4,032 session files (17-19 ms when the
+    /// walk listed folders only; 0.3 ms over an empty home).
     /// </summary>
     static void PrivateBelow(string root, SeatPlan seat)
     {
         var options = new EnumerationOptions { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false };
+        var files = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS();
         var folders = new Stack<string>();
         folders.Push(root);
         while (folders.Count > 0)
         {
             var at = folders.Pop();
             List<string> below;
-            try { below = [.. Directory.EnumerateDirectories(at, "*", options)]; }
+            try { below = [.. files ? Directory.EnumerateFileSystemEntries(at, "*", options) : Directory.EnumerateDirectories(at, "*", options)]; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(at, ex.Message); }
-            foreach (var folder in below)
+            foreach (var entry in below)
             {
-                if (IsLink(folder)) continue;
-                OwnedHere(folder, root);
-                folders.Push(folder);
+                if (IsLink(entry)) continue;
+                if (Directory.Exists(entry))
+                {
+                    OwnedHere(entry, root);
+                    folders.Push(entry);
+                }
+                else if (files) NoEntryOfItsOwn(entry);
             }
         }
 
@@ -135,9 +144,22 @@ public static class SeatProfile
 
     /// <summary>
     /// <paramref name="path"/>, a file of the seat home that holds its credential or settings, made this account's alone: <c>0600</c> on
-    /// Linux and macOS. A file that cannot be is refused in words, never used.
+    /// Linux and macOS, and no access entry of its own. A file that cannot be is refused in words, never used.
     /// </summary>
     static void PrivateFile(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+            try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(path, ex.Message); }
+        NoEntryOfItsOwn(path);
+    }
+
+    /// <summary>
+    /// <paramref name="path"/>, a file of the seat home, left with NO ACCESS ENTRY OF ITS OWN: on Windows it inherits exactly the root's
+    /// owner-only list (<see cref="OwnedOnWindows"/>), on macOS it keeps no extended ACL entry (<see cref="NoExtendedAcl"/>). Linux
+    /// keeps nothing to clear. A file another account owns, or one that will not take the list, is refused in words, never used.
+    /// </summary>
+    static void NoEntryOfItsOwn(string path)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -146,11 +168,8 @@ public static class SeatProfile
                     $"TradeAgent will not use the AI's own home while {path} belongs to another account{(owner is null ? "" : $" ({owner})")}: " +
                     $"whoever owns it could read the AI's sign-in. Nothing was written or started. Remove {path}; a removed sign-in is " +
                     "signed in again from TradeAgent.");
-            return;
         }
-        try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw NotPrivate(path, ex.Message); }
-        if (OperatingSystem.IsMacOS()) NoExtendedAcl(path);
+        else if (OperatingSystem.IsMacOS()) NoExtendedAcl(path);
     }
 
     /// <summary>
