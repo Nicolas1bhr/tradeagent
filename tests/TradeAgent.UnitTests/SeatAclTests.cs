@@ -15,6 +15,25 @@ public sealed class SeatAclFactAttribute : FactAttribute
         else if (OperatingSystem.IsLinux() && !File.Exists("/usr/bin/setfacl") && !File.Exists("/bin/setfacl"))
             Skip = "setfacl is not installed on this Linux machine, so no POSIX ACL entry can be written to pin";
     }
+
+    /// <summary>
+    /// The fact needs a file this account owns but cannot change the list of — on Windows, its owner denied that right. AN
+    /// ADMINISTRATOR'S TOKEN (CI's windows runners) changes the list past that deny, so there the file is not unprivatisable and the
+    /// preparation rightly makes it private: tried on a throwaway file first, and skipped with that reason when the lock does not hold.
+    /// </summary>
+    bool needsWindowsLock;
+
+    public bool NeedsWindowsLock
+    {
+        get => needsWindowsLock;
+        set
+        {
+            needsWindowsLock = value;
+            if (value && Skip is null && OperatingSystem.IsWindows() && !SeatAclTests.WindowsLockHolds())
+                Skip = "this Windows account changes a file's access list past a deny on its owner's right to (an administrator's token, as " +
+                       "on CI's windows runners), so no file of its own is unprivatisable here; the row runs on a standard account (the tests box)";
+        }
+    }
 }
 
 /// <summary>
@@ -124,7 +143,7 @@ public class SeatAclTests
     /// change its list. Red at base: the file is never looked at, and the seat is taken.
     /// </summary>
     [SeatAclFact("a file of this account's own it cannot make private needs a lock flag (macOS) or a deny entry (Windows); Linux has neither without root",
-        "macos", "windows")]
+        "macos", "windows", NeedsWindowsLock = true)]
     public async Task A_seat_home_file_that_cannot_be_made_private_refuses_the_seat_in_words()
     {
         var (codex, exe, dump) = SeatHomeTests.Seat(nameof(A_seat_home_file_that_cannot_be_made_private_refuses_the_seat_in_words));
@@ -237,21 +256,57 @@ public class SeatAclTests
     {
         if (OperatingSystem.IsWindows())
         {
-            var info = new FileInfo(file);
-            var acl = info.GetAccessControl();
-            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(Everyone,
-                System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
-            // OWNER RIGHTS (S-1-3-4) replaces the owner's implicit right to change the list; denied, the owner cannot.
-            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
-                new System.Security.Principal.SecurityIdentifier("S-1-3-4"),
-                System.Security.AccessControl.FileSystemRights.ChangePermissions | System.Security.AccessControl.FileSystemRights.TakeOwnership,
-                System.Security.AccessControl.AccessControlType.Deny));
-            info.SetAccessControl(acl);
+            LockOnWindows(file);
             Assert.NotEmpty(Foreign(file));
             return;
         }
         File.SetUnixFileMode(file, (UnixFileMode)0b110_100_100);
         Tool("/usr/bin/chflags", "uchg", file);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static void LockOnWindows(string file)
+    {
+        var info = new FileInfo(file);
+        var acl = info.GetAccessControl();
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(Everyone,
+            System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+        // OWNER RIGHTS (S-1-3-4) replaces the owner's implicit right to change the list; denied, the owner cannot.
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier("S-1-3-4"),
+            System.Security.AccessControl.FileSystemRights.ChangePermissions | System.Security.AccessControl.FileSystemRights.TakeOwnership,
+            System.Security.AccessControl.AccessControlType.Deny));
+        info.SetAccessControl(acl);
+    }
+
+    /// <summary>
+    /// WINDOWS: whether <see cref="LockOnWindows"/> holds against this account — a throwaway file locked so, then its explicit
+    /// entries purged and written back as the preparation does: refused means it holds. Removed afterwards either way.
+    /// </summary>
+    internal static bool WindowsLockHolds() => !OperatingSystem.IsWindows() || ProbeLock();
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static bool ProbeLock()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "tradeagent-tests", $"lock-probe-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "probe.json");
+        try
+        {
+            File.WriteAllText(file, "{}");
+            LockOnWindows(file);
+            var info = new FileInfo(file);
+            var acl = info.GetAccessControl();
+            foreach (var who in acl.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier))
+                         .Cast<System.Security.AccessControl.FileSystemAccessRule>().Select(r => r.IdentityReference).Distinct().ToList())
+                acl.PurgeAccessRules(who);
+            try { info.SetAccessControl(acl); return false; }
+            catch (UnauthorizedAccessException) { return true; }
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     static void Unlock(string file)
