@@ -148,6 +148,12 @@ public sealed class ApiConversation(
     /// </summary>
     public const string EndedKeyRefused = "key-origin-refused";
 
+    /// <summary>
+    /// The activation gate refused a request of the turn at its last check (<see cref="AgentTurnEnded.GateRefused"/>): before the
+    /// first, nothing was sent; before a later one, the earlier ones' usage is on the row.
+    /// </summary>
+    public const string EndedGateRefused = "gate-refused";
+
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
@@ -211,7 +217,9 @@ public sealed class ApiConversation(
         if (!admission.Admitted) { Hold(message, admission.Refusal!); return; }
 
         Append(new ChatTurn(ChatRole.You, message, _now()));
-        await RunAsync(message, ct);
+
+        // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: the owner's words are kept — see AgentSession.SendAsync.
+        if (await RunAsync(message, ct) is not null) Keep(message);
     }
 
     /// <inheritdoc />
@@ -253,13 +261,14 @@ public sealed class ApiConversation(
     /// One turn: the role's mission and the Situation in, the provider's tool-calling loop executed
     /// BY THIS METHOD, and one <see cref="TurnEnded"/> out whatever happened.
     /// </summary>
-    async Task RunAsync(string message, CancellationToken ct)
+    async Task<LateRefusal?> RunAsync(string message, CancellationToken ct)
     {
         var startedAt = _now();
         var transcript = new Transcript();
         var exitCode = NotStarted;
         var outcome = EndedNotStarted;
         TurnUsage? usage = null;
+        LateRefusal? gateRefused = null;
 
         // WHICH BOUND CUT THE TURN, in the words the worker was given. Null on every other path out:
         // a cancelled turn and a provider that refused were not cut by this app's own arithmetic, and
@@ -287,7 +296,7 @@ public sealed class ApiConversation(
                 Outcome = EndedKeyRefused,
                 KeyWithheld = said
             });
-            return;
+            return null;
         }
 
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
@@ -306,7 +315,7 @@ public sealed class ApiConversation(
                 Outcome = EndedNotStarted,
                 KeyNotHeld = Labels.HarnessKeyNotHeld
             });
-            return;
+            return null;
         }
 
         SetBusy(true);
@@ -321,6 +330,16 @@ public sealed class ApiConversation(
             (exitCode, outcome) = (NotStarted, EndedCancelled);
             Append(new ChatTurn(ChatRole.System, "Stopped.", _now()));
             transcript.Note("the turn was cancelled");
+        }
+        catch (GateRefusedException ex)
+        {
+            // THE GATE'S LAST CHECK REFUSED A REQUEST: before the first one nothing was sent and the turn did not start; before a
+            // later one, what the earlier ones reported is kept on the row. Either way its kind travels out as data.
+            (exitCode, outcome) = ex.BeforeAnyWork ? (NotStarted, EndedGateRefused) : (ProviderFailed, EndedGateRefused);
+            usage = ex.SoFar;
+            gateRefused = new LateRefusal(ex.Refusal, ex.BeforeAnyWork);
+            Append(new ChatTurn(ChatRole.System, ex.Message, _now()));
+            transcript.Note(ex.Message);
         }
         catch (TradeAgentException ex)
         {
@@ -357,9 +376,13 @@ public sealed class ApiConversation(
                 // AND THE NEXT TURN IS TOLD WHICH BOUND, in these same words. A role handed a
                 // half-written report with no explanation spends its next turn — at the owner's
                 // expense — finding out where the rest of it went.
-                Cut = cut
+                Cut = cut,
+
+                // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
+                GateRefused = gateRefused
             });
         }
+        return gateRefused;
     }
 
     /// <summary>
@@ -400,6 +423,13 @@ public sealed class ApiConversation(
             }
 
             var body = RequestBody(messages, surface, bound);
+
+            // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE EACH REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter
+            // asked it before admitting the turn, and a host with no meter sends requests too. Nothing is sent on a refusal, and the
+            // refusal leaves as data with its kind and whether any request had gone before it (review item 1).
+            if (PositionActivation.AtLaunch(role, SeatClasses.Harness, seats) is { } gate)
+                throw new GateRefusedException(gate, beforeAnyWork: requests == 0, soFar: total);
+
             requests++;
             // THE INPUT THE APP IS ABOUT TO SEND, COUNTED BY THE APP, beside the attempt the cost is
             // committed against. Bytes, because bytes are what this end can measure — the token
@@ -534,11 +564,6 @@ public sealed class ApiConversation(
 
     async Task<ProviderAnswer> PostAsync(string endpoint, string key, string body, CancellationToken ct)
     {
-        // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked it
-        // before admitting the turn, and a host with no meter sends requests too. Nothing is sent on a refusal.
-        if (PositionActivation.AtLaunch(role, SeatClasses.Harness, seats) is { } gate)
-            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, gate.Words);
-
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
@@ -592,15 +617,21 @@ public sealed class ApiConversation(
     void Hold(string message, string said)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
+        Keep(message);
+        Append(new ChatTurn(ChatRole.You, message, _now()));
+        Append(new ChatTurn(ChatRole.System, said, _now()));
+    }
+
+    /// <summary>Keeps the owner's words for the next turn, where <see cref="Hold"/> keeps them, without a second line in the chat.</summary>
+    void Keep(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
         var text = message.Trim();
 
         var recorded = false;
         try { recorded = RecordTyped?.Invoke(text) ?? false; }
         catch (Exception) { recorded = false; }
         if (!recorded) lock (_historyLock) _typedMeanwhile.Add(text);
-
-        Append(new ChatTurn(ChatRole.You, message, _now()));
-        Append(new ChatTurn(ChatRole.System, said, _now()));
     }
 
     void SetBusy(bool busy)

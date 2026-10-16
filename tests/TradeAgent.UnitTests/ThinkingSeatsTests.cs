@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Connectors.Fake;
@@ -253,6 +254,104 @@ public class ThinkingSeatsTests : IDisposable
         var meter = new TurnMeter(db, () => 5m, live: new LiveAttempts());
         using var seat = meter.Attach(new Seated(SeatClasses.Harness), Third);
         Assert.Equal(RefusalKind.HostOrLaunch, meter.Begin("## Situation", role: Third).Kind);
+    }
+
+    // ---- (n) review item 1: a late refusal keeps its kind and settles nothing ------------------------------------
+
+    /// <summary>
+    /// (n) A REFUSAL AT THE GATE'S LAST CHECK, AFTER ADMISSION, STARTS NOTHING, SETTLES NO WAKE AND KEEPS THE OWNER'S WORDS (fix
+    /// pass 1, review item 1; ORCHESTRATION § 2.5): the gate's facts change between <c>Begin</c> and the start — a position beyond
+    /// the legacy pair activated — so the chair's unconfined CLI launch is refused immediately before its process. No process; every
+    /// wake it consumed is due again; the owner's words are neither settled nor retried as failed, only shown undelivered with the
+    /// refusal's sentence; the row is closed as refused, charged nothing, with the kind on it. RED at the rebased tip: the loop
+    /// settled the wakes as a failed turn and re-raised the owner's words.
+    /// </summary>
+    [Fact]
+    public async Task A_late_gate_refusal_starts_nothing_settles_no_wake_and_keeps_the_owners_words()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        Assert.True(events.RecordOwnerMessage("how are we doing?", DateTimeOffset.UtcNow.AddMinutes(-1)));
+        var owner = Assert.Single(events.Due(DateTimeOffset.UtcNow)).Id;
+        var review = Wake(events, CouncilRoles.Operations);
+        var meter = Meter(db, _ => SeatClasses.Cli);
+        var (codex, exe, dump) = SeatHomeTests.Seat(nameof(A_late_gate_refusal_starts_nothing_settles_no_wake_and_keeps_the_owners_words));
+        var session = new AgentSession(codex, () => exe, () => Path.GetDirectoryName(exe)!, () => new Dictionary<string, string>(),
+            presence: new AgentPresence(), role: CouncilRoles.Operations, seatProbe: new SeatHomeTests.FakeProbe(),
+            seats: Register(db, SeatClasses.Cli));
+        using var metering = meter.Attach(session, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+        var host = new LateGateHost(db, meter, session, afterBegin: () => Head(db, Third));
+
+        await new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }).TurnAsync();
+
+        Assert.NotNull(host.Admitted);   // the admission passed: this is the last check's refusal
+        Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
+        foreach (var id in new[] { owner, review })
+            Assert.False(events.Get(id)!.Consumed, $"{id} was taken by a launch the gate refused: {events.Get(id)!.Disposition}");
+        Assert.Null(events.Get(review)!.Disposition);
+        Assert.Equal(MissionEventDisposition.Blocked, events.Get(owner)!.Disposition);
+        Assert.Contains($"'{Third}'", events.Get(owner)!.DispositionDetail, StringComparison.Ordinal);
+        Assert.Equal(1L, OwnerRows(db));   // never re-raised as a failed turn's retry
+
+        Assert.Equal(RefusalKind.HostOrLaunch, ended?.GateRefused?.Refusal.Kind);
+        Assert.True(ended!.GateRefused!.BeforeAnyWork);
+        var row = new AiAttemptStore(db).Get(host.Admitted!)!;
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(0m, row.Cost);
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.Equal(nameof(RefusalKind.HostOrLaunch), context.RootElement.GetProperty("gate_kind").GetString());
+        Assert.Equal(0m, meter.Today.Reserved);
+
+        // AND THE HARNESS, ON A HOST WITH NO METER: refused before its first request, the turn's end says so as data.
+        using var noCell = TestEnv.NewDb();
+        Head(noCell, Third);
+        using var provider = new FakeProvider();
+        var harness = HarnessFor(provider, Register(noCell, SeatClasses.Harness));
+        AgentTurnEnded? harnessEnded = null;
+        harness.TurnEnded += e => harnessEnded = e;
+        await harness.SendMissionAsync("## Situation");
+        Assert.Empty(provider.Requests);
+        Assert.Equal((RefusalKind.HostOrLaunch, true), (harnessEnded?.GateRefused?.Refusal.Kind, harnessEnded?.GateRefused?.BeforeAnyWork));
+        Assert.Equal(ApiConversation.EndedGateRefused, harnessEnded!.Outcome);
+    }
+
+    static long OwnerRows(Database db) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM mission_event WHERE kind=$k", ("$k", MissionEventKind.Owner));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
+    /// <summary>
+    /// A host whose admission is the real meter's and whose transition commits the meter's close and the loop's dispositions in one
+    /// write, as the app's does — and which changes the gate's facts the moment an admission passes.
+    /// </summary>
+    sealed class LateGateHost(Database db, TurnMeter meter, IAgentConversation conversation, Action afterBegin) : IMissionHost
+    {
+        public string? Admitted { get; private set; }
+        public IAgentConversation? Conversation => conversation;
+        public IAgentConversation? ConversationFor(string role) => conversation;
+        public MissionEventStore? Events { get; } = new(db);
+        public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"late-gate-{Guid.NewGuid():n}");
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+        public string? NextAttemptId() => meter.Mint();
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) => BeginTurn(prompt, wakes, CouncilRoles.Default);
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
+        {
+            var admission = meter.Begin(prompt, wakes, role);
+            if (admission.Admitted)
+            {
+                Admitted = admission.Id;
+                afterBegin();
+            }
+            return admission;
+        }
+        public void CommitTurn(string role, string? attempt, Action dispositions) =>
+            db.Write(_ => { meter.CommitStaged(role); dispositions(); return 0; });
     }
 
     // ---- (k) review item 2: the neighbour rule is asked whatever the facts read -----------------------------------

@@ -234,6 +234,14 @@ public sealed record TurnContext
     public string? Refused { get; init; }
 
     /// <summary>
+    /// THE KIND OF THE ACTIVATION GATE'S REFUSAL, where it refused this turn at its last check after admission
+    /// (<see cref="AgentTurnEnded.GateRefused"/>; review of <c>U-thinking-seats-a</c>, item 1): <c>Position</c> or
+    /// <c>HostOrLaunch</c>, as data, with the gate's own sentence in <see cref="Refused"/>. O3 routes the wakes such a turn gave
+    /// back by this, never by the words. Null on every other turn.
+    /// </summary>
+    public string? GateKind { get; init; }
+
+    /// <summary>
     /// THE CANON THE TURN RAN UNDER (<c>U-canon</c>): its version, when it was this build's own canon and nothing stood
     /// in for it; the SHA-256 of the text the turn received; whether that text is the app's own; and, on a CLI, whether an
     /// <c>AGENTS.override.md</c> lay beside it. Absent on a turn that launched nothing. No rung and no setting: the old
@@ -729,7 +737,9 @@ public sealed class TurnMeter
     /// request is built: <c>KeyWithheld</c> when the key it holds was pasted for another origin and the
     /// holder refused and forgot it (<c>U-key-host-pin</c>), <c>KeyNotHeld</c> when it held no key at all
     /// (<c>U-meter-batch-1</c>). Each is the app's own record of its own act rather than a vendor's report,
-    /// and a request never built is a request nobody billed.</item>
+    /// and a request never built is a request nobody billed. So is the activation gate's refusal at its last check before any
+    /// work (<see cref="AgentTurnEnded.GateRefused"/> with <c>BeforeAnyWork</c>, <c>U-thinking-seats-a</c> review item 1): no
+    /// process started and no request was sent, and the row says so with the refusal's kind.</item>
     /// <item><b>No usage otherwise</b> — unknown, and <see cref="AiAttemptStore.End"/> charges the
     /// reservation, as before: a turn that showed work, or whose stream said nothing recognisable, may
     /// have been billed for requests nothing measured, and unknown is never zero. That includes a turn
@@ -739,7 +749,8 @@ public sealed class TurnMeter
     /// </summary>
     TurnPrice Charge(AgentTurnEnded ended, string? role) =>
         ended.Usage is null
-        && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null || ended.KeyNotHeld is not null)
+        && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null || ended.KeyNotHeld is not null
+            || ended.GateRefused is { BeforeAnyWork: true })
             ? new TurnPrice(0m, Currency(), null)
             : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
 
@@ -761,7 +772,8 @@ public sealed class TurnMeter
             ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
         with
         {
-            Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld,
+            Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld ?? ended.GateRefused?.Refusal.Words,
+            GateKind = ended.GateRefused?.Refusal.Kind.ToString(),
             CanonVersion = ended.Canon?.Version,
             CanonSha256 = ended.Canon?.Sha256,
             CanonAppOwn = ended.Canon?.AppOwn,

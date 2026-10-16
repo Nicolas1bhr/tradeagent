@@ -556,7 +556,10 @@ public sealed class AgentSession(
         }
 
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-        await RunAsync(message, ct);
+
+        // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: nothing answered them, so their words are kept exactly as a
+        // refused admission keeps them — the System line the turn wrote says why (review of U-thinking-seats-a, item 1).
+        if (await RunAsync(message, ct) is not null) Keep(message);
     }
 
     /// <summary>
@@ -599,6 +602,15 @@ public sealed class AgentSession(
     void Hold(string message, string said)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
+        Keep(message);
+        Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
+        Append(new ChatTurn(ChatRole.System, said, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>Keeps the owner's words for the next turn, where <see cref="Hold"/> keeps them, without a second line in the chat.</summary>
+    void Keep(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
         var text = message.Trim();
 
         // EXACTLY ONE OF THE TWO HOLDS IT. Writing to both would hand the same words to the next
@@ -608,9 +620,6 @@ public sealed class AgentSession(
         try { recorded = RecordTyped?.Invoke(text) ?? false; }
         catch (Exception) { recorded = false; }
         if (!recorded) lock (_historyLock) _typedMeanwhile.Add(text);
-
-        Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-        Append(new ChatTurn(ChatRole.System, said, DateTimeOffset.UtcNow));
     }
 
     /// <inheritdoc />
@@ -644,13 +653,14 @@ public sealed class AgentSession(
     /// started, because the mission loop's backoff and `U-meter`'s prices are both counting turns and
     /// a turn that vanished silently is one neither of them can account for.
     /// </summary>
-    async Task RunAsync(string message, CancellationToken ct)
+    async Task<LateRefusal?> RunAsync(string message, CancellationToken ct)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var exitCode = -1;
         var raw = "";
         TurnUsage? usage = null;
         VendorLimit? limit = null;
+        LateRefusal? gateRefused = null;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -659,7 +669,7 @@ public sealed class AgentSession(
             raw = $"{manifest.DisplayName} is not installed, so the message was not sent.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
-            return;
+            return null;
         }
 
         SetBusy(true);
@@ -675,6 +685,13 @@ public sealed class AgentSession(
         {
             raw = "Stopped.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
+        }
+        catch (GateRefusedException ex)
+        {
+            // THE GATE'S LAST CHECK REFUSED IT, BEFORE THE PROCESS: nothing started. Its kind travels out as data.
+            raw = ex.Message;
+            gateRefused = new LateRefusal(ex.Refusal, BeforeAnyWork: true);
+            Append(new ChatTurn(ChatRole.System, ex.Message, DateTimeOffset.UtcNow));
         }
         catch (TradeAgentException ex)
         {
@@ -713,9 +730,12 @@ public sealed class AgentSession(
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
                 PromptIn = _promptIn,
                 // AND, FOR A PUPPET, THE CLASS ITS TEST'S MANIFEST DECLARED (U-puppet-runtime); nothing for any other seat.
-                SeatClass = manifest.Puppet ? manifest.PuppetSeatClass : null
+                SeatClass = manifest.Puppet ? manifest.PuppetSeatClass : null,
+                // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
+                GateRefused = gateRefused
             });
         }
+        return gateRefused;
     }
 
     async Task<(int ExitCode, string Raw, TurnUsage? Usage, VendorLimit? Limit)> RunTurnAsync(string exe, string message,
@@ -772,7 +792,7 @@ public sealed class AgentSession(
         // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — the
         // seat actually about to start — so a position beyond the legacy pair is refused here whatever the meter answered.
         if (PositionActivation.AtLaunch(role, SeatClasses.Cli, seats) is { } gate)
-            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, gate.Words);
+            throw new GateRefusedException(gate, beforeAnyWork: true);
 
         // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by
         // another build or with another deny set, and the turn starts a fresh one instead — the files are the memory.
