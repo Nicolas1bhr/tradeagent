@@ -230,7 +230,7 @@ public sealed record AiAdmission
     /// <summary>
     /// WHAT THE REFUSAL IS ABOUT, where it is a refusal to activate (<c>U-org-wakes</c>, ORCHESTRATION § 2.5):
     /// <see cref="RefusalKind.Position"/> for a name the chart does not hold as an active position — the loop settles its due
-    /// wakes — and <see cref="RefusalKind.HostOrLaunch"/> for a refusal about this host or this launch. Null for every other
+    /// wakes — and <see cref="RefusalKind.HostOrLaunch"/> for a refusal about this host or this launch, every <see cref="LaunchRefused"/> among them. Null for every other
     /// refusal — a ceiling, the ledger, a process still running — and for an admission: those keep every wake, as a
     /// <see cref="RefusalKind.HostOrLaunch"/> does. Never a default of <see cref="RefusalKind.Position"/>: only a refusal that
     /// says so settles anything.
@@ -277,12 +277,17 @@ public sealed record AiAdmission
     /// What <see cref="Ceiling"/> says when the LAUNCH ITSELF was refused (<c>U-mint-per-launch</c>): its role already has
     /// a launch open, it carried an id not minted for it, or another launch took some of its wakes. A refusal about the
     /// launch and not the position (<c>docs/ORCHESTRATION.md</c> § 2.5): the loop steps over it keeping every wake, and the
-    /// owner's words are not settled on it. Where O3's <c>RefusalKind</c> lands, this is its <c>HostOrLaunch</c>.
+    /// owner's words are not settled on it. ONE KIND, ONE RECORD (the orchestrator's ruling, 2026-10-16): it is typed
+    /// <see cref="RefusalKind.HostOrLaunch"/>, never <see cref="RefusalKind.Position"/>.
     /// </summary>
     public const string Launch = "launch";
 
-    /// <summary>A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words.</summary>
-    public static AiAdmission LaunchRefused(string refusal) => new() { Refusal = refusal, Ceiling = Launch };
+    /// <summary>
+    /// A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words, typed
+    /// <see cref="RefusalKind.HostOrLaunch"/>: it is about this launch, so it keeps every wake and settles none.
+    /// </summary>
+    public static AiAdmission LaunchRefused(string refusal) =>
+        new() { Refusal = refusal, Ceiling = Launch, Kind = RefusalKind.HostOrLaunch };
 
     /// <summary>What the launch ledger said when it refused (<see cref="Ledger"/>), on its own; null for any other answer.</summary>
     public string? Cause { get; init; }

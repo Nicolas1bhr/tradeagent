@@ -2204,7 +2204,9 @@ public sealed class MissionLoop
             // A REFUSAL ABOUT THE LAUNCH, NOT THE POSITION (U-mint-per-launch; docs/ORCHESTRATION.md § 2.5): the role's
             // other launch still open, an id not minted for it, or wakes another launch took. It steps over, keeping every
             // wake, under the refusal backoff — and the owner's words are never settled by it: they stay owed, unblocked.
-            if (admission.Ceiling == AiAdmission.Launch)
+            // It is typed HostOrLaunch (one RefusalKind, the orchestrator's ruling); the kind decides what settles, so a
+            // launch refusal ever typed Position would not be stepped over here but settled below, as its kind says.
+            if (admission.Ceiling == AiAdmission.Launch && admission.Kind != RefusalKind.Position)
             {
                 lock (_gate)
                 {
