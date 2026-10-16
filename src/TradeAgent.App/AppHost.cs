@@ -2003,6 +2003,27 @@ public sealed class AppHost : IAsyncDisposable
         public string? RuntimeFor(string role) => host.RuntimeForRole(role);
 
         /// <summary>
+        /// THE ROLE'S QUOTA POOL (<c>U-org-lanes</c>): its runtime, and that runtime's plan window from its manifest — vendor
+        /// data. No seat home names an account yet, so the account is unknown and collapses: one pool per runtime at most.
+        /// </summary>
+        public QuotaPool PoolOf(string role)
+        {
+            var runtime = host.RuntimeForRole(role);
+            var window = runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.PlanWindow : null;
+            return QuotaPool.Of(runtime, null, window);
+        }
+
+        /// <summary>The owner's lane settings, read on every tick so a press on the Safety page applies at the next one.</summary>
+        public LaneSettings Lanes
+        {
+            get
+            {
+                var s = host.Gateway.Settings;
+                return new LaneSettings(s.AiLanes, s.AiLanesPerPool, s.AiLanesPerCellClass);
+            }
+        }
+
+        /// <summary>
         /// The one activity line the owner gets when their AI tool's own plan runs out — see
         /// <see cref="VendorLimitLine"/> — written where they already look for what the software did.
         /// </summary>

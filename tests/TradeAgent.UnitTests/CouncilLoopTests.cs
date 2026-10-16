@@ -182,6 +182,14 @@ public partial class CouncilLoopTests
         public Dictionary<string, RoleConversation> Conversations { get; } = [];
         public Dictionary<string, AiSpendToday> Spending { get; } = [];
 
+        /// <summary>The owner's lane policy on this host (<c>U-org-lanes</c>); one lane by default, as the app's.</summary>
+        public LaneSettings Lanes { get; set; } = LaneSettings.Default;
+
+        /// <summary>This host's own lane profiles by position — a test host's, never settings; Unconfined where unnamed.</summary>
+        public Dictionary<string, LaneProfile> Profiles { get; } = [];
+
+        public LaneProfile LaneOf(string role) => Profiles.GetValueOrDefault(role) ?? LaneProfile.Unconfined;
+
         /// <summary>
         /// RUN AT THE LAST MOMENT BEFORE A TURN IS ADMITTED, so a test can hold two callers there
         /// and let them go together. It is called from <see cref="SituationAsync(string,
@@ -823,6 +831,14 @@ public partial class CouncilLoopTests
         var concurrency = new Concurrency();
         var host = new CouncilHost(db, root, concurrency);
         var loop = new MissionLoop(host, NoHeartbeat);
+
+        // TWO CONFINED LANES (U-org-lanes): since the orchestrator's ruling Q2 (2026-10-16) the loop never runs two turns on
+        // seats nothing confines at once, whatever the settings say — so the two roles' turns overlap here on this host's own
+        // confined profile and two lanes, which is the only way two loop turns may overlap at all. The overlap, the leases
+        // and the card are what this test has always measured.
+        host.Lanes = new LaneSettings(2, 2, 2);
+        foreach (var role in CouncilRoles.All)
+            host.Profiles[role] = new LaneProfile(LaneAssurance.Confined, "test-cell", InboxUnwritable: false);
 
         var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
         foreach (var role in CouncilRoles.All)

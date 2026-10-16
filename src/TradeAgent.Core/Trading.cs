@@ -485,6 +485,24 @@ public sealed class TradeAgentSettings
     public int MissionReviewMinutes { get; set; } = 30;
 
     /// <summary>
+    /// THE LANES (<c>U-org-lanes</c>, <c>docs/ORCHESTRATION.md</c> § 2.5): how many positions the loop may turn at once, and
+    /// how many of them on one AI account's quota pool and in one cell class. One each by default — N = 1 until grants are
+    /// bound to containers and cells exist. Edited on the Safety page only, and RAISING asks twice: more lanes spend faster.
+    /// No pipe op, verb or packet field reads or writes them.
+    ///
+    /// <para><b>Not an authority boundary.</b> This file lives under <c>state/</c>, which an unconfined neighbour can
+    /// rewrite, so the code bounds what it can mean: at most one turn on a seat nothing confines runs at a time whatever
+    /// these say (<c>LanePolicy.UnconfinedCeiling</c>), and until a proven cell exists raising them admits nothing extra.</para>
+    /// </summary>
+    public int AiLanes { get; set; } = 1;
+
+    /// <inheritdoc cref="AiLanes"/>
+    public int AiLanesPerPool { get; set; } = 1;
+
+    /// <inheritdoc cref="AiLanes"/>
+    public int AiLanesPerCellClass { get; set; } = 1;
+
+    /// <summary>
     /// THE LONGEST A HEAD AFTER THE LEGACY PAIR MAY GO UNWOKEN, in hours (<c>U-org-wakes</c>; ORGANISATION § 10: "heads wake on
     /// material events with a maximum interval (default 24 h)"). A floor every turn of that head resets, never a heartbeat; zero
     /// raises none. One value for every level until the levels' horizons (VISION § 7.5) are set apart. The owner's, in-process:

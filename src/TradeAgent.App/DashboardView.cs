@@ -1089,6 +1089,8 @@ sealed class SafetyPage
     readonly TextBlock _allowanceNote = Ui.Micro("");
     readonly NumericUpDown _reviewEvery;
     readonly TextBlock _reviewNote = Ui.Micro("");
+    readonly NumericUpDown _lanes, _lanesPerPool, _lanesPerCellClass;
+    readonly TextBlock _lanesNote = Ui.Micro("");
     readonly NumericUpDown _priceIn, _priceOut;
     readonly TextBlock _priceNote = Ui.Micro("");
     readonly Panel _modelRow;
@@ -1366,6 +1368,24 @@ sealed class SafetyPage
     /// rule about which direction asks twice is the whole of what this control is, and a rule that
     /// can only be exercised by running the app is a rule nobody is checking.
     /// </summary>
+    /// <summary>
+    /// THE LANES' SAVE (<c>U-org-lanes</c>): RAISING any of the three asks twice and names what the second press allows — more
+    /// positions at once spend the owner's money faster; lowering only ever spends slower and saves in one press. Pulled out
+    /// of the page, as the others beside it are, so a test presses the control the owner sees.
+    /// </summary>
+    internal static Button BuildSaveLanes(Func<(int Lanes, int PerPool, int PerCellClass)> current,
+        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveLanes,
+            () => pending() is var p && current() is var c
+                  && (p.Lanes > c.Lanes || p.PerPool > c.PerPool || p.PerCellClass > c.PerCellClass)
+                ? Labels.RaiseLanesArmed(p.Lanes, p.PerPool, p.PerCellClass)
+                : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
     internal static Button BuildSaveReviewEvery(Func<int> current, Func<int> pending, Action save)
     {
         var b = Ui.ConfirmIf(Labels.SaveReviewEvery,
@@ -1661,6 +1681,9 @@ sealed class SafetyPage
         _allowanceIn = Ui.NumberField(allowance.InputTokens, 0m, 100_000m);
         _allowanceOut = Ui.NumberField(allowance.OutputTokens, 0m, 5_000m);
         _reviewEvery = Ui.NumberField(_host.Gateway.Settings.MissionReviewMinutes, 0m, 5m);
+        _lanes = LaneField(_host.Gateway.Settings.AiLanes);
+        _lanesPerPool = LaneField(_host.Gateway.Settings.AiLanesPerPool);
+        _lanesPerCellClass = LaneField(_host.Gateway.Settings.AiLanesPerCellClass);
 
         // THE BOXES OPEN ON WHAT THE AI IS ACTUALLY BEING CHARGED, not on empty. An owner correcting
         // a rate has to be able to see the one in force to know whether it needs correcting, and the
@@ -1735,6 +1758,23 @@ sealed class SafetyPage
             BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
                 SaveReviewEvery),
             _reviewNote,
+            Ui.Divider(),
+            // THE LANES (U-org-lanes), BESIDE THE CEILING: how many positions may work at once is how fast the limit above
+            // is spent. Policy the owner sets here and nowhere else — and the page says plainly what raising it can and
+            // cannot do today, because the code allows one unconfined turn at a time whatever these say.
+            Ui.Muted("How many of the AI's positions may work at the same moment, how many of them on one AI account, and "
+                + "how many in one kind of sealed workspace. Your own chat is never counted and never waits for these. "
+                + "Today every position runs without a sealed workspace, and TradeAgent lets only one such position work "
+                + "at a time whatever these say — so until a proven sealed workspace exists on this computer, raising "
+                + "them lets nothing extra run."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.Lanes, _lanes),
+            Ui.FieldRow(Labels.LanesPerPool, _lanesPerPool),
+            Ui.FieldRow(Labels.LanesPerCellClass, _lanesPerCellClass,
+                "Raising any of these lets the AI spend faster, so it asks again first."),
+            Ui.Spacer(Theme.S2),
+            BuildSaveLanes(CurrentLanes, PendingLanes, SaveLanes),
+            _lanesNote,
             Ui.Divider(),
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
             // worth what the rate below says a turn costs. The owner never edits a file to set it —
@@ -2466,6 +2506,43 @@ sealed class SafetyPage
         _host.Gateway.Log.Activity($"One AI turn now sets aside up to {reservation}");
         _allowanceNote.Text = Labels.TurnAllowanceReads(
             allowance.InputTokens, allowance.OutputTokens, reservation);
+    }
+
+    /// <summary>A lane count's box: whole numbers from one to <see cref="LanePolicy.MaxLanes"/>.</summary>
+    static NumericUpDown LaneField(int value)
+    {
+        var box = Ui.NumberField(LanePolicy.Clamp(value), 1m);
+        box.Maximum = LanePolicy.MaxLanes;
+        return box;
+    }
+
+    (int Lanes, int PerPool, int PerCellClass) CurrentLanes()
+    {
+        var s = _host.Gateway.Settings;
+        return (LanePolicy.Clamp(s.AiLanes), LanePolicy.Clamp(s.AiLanesPerPool), LanePolicy.Clamp(s.AiLanesPerCellClass));
+    }
+
+    (int Lanes, int PerPool, int PerCellClass) PendingLanes()
+    {
+        var c = CurrentLanes();
+        return (LanePolicy.Clamp((int)(_lanes.Value ?? c.Lanes)), LanePolicy.Clamp((int)(_lanesPerPool.Value ?? c.PerPool)),
+            LanePolicy.Clamp((int)(_lanesPerCellClass.Value ?? c.PerCellClass)));
+    }
+
+    /// <summary>Writes the three lane numbers, in-process, and says what they now allow.</summary>
+    void SaveLanes()
+    {
+        var p = PendingLanes();
+        _host.Gateway.Update(s =>
+        {
+            s.AiLanes = p.Lanes;
+            s.AiLanesPerPool = p.PerPool;
+            s.AiLanesPerCellClass = p.PerCellClass;
+        });
+        var said = $"Up to {p.Lanes} of the AI's positions may now work at once ({p.PerPool} on one AI account, "
+                   + $"{p.PerCellClass} in one kind of sealed workspace); only one runs without a sealed workspace at a time";
+        _host.Gateway.Log.Activity(said);
+        _lanesNote.Text = $"Saved. {said}.";
     }
 
     int PendingReviewEvery() =>

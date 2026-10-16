@@ -622,6 +622,23 @@ public static class Labels
 
     public const string SaveReviewEvery = "Save how often it looks";
 
+    /// <summary>How many positions may turn at once (<c>U-org-lanes</c>), and the press that writes the three numbers.</summary>
+    public const string Lanes = "Positions that may work at once";
+
+    public const string LanesPerPool = "At once on one AI account";
+
+    public const string LanesPerCellClass = "At once in one kind of sealed workspace";
+
+    public const string SaveLanes = "Save how many work at once";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveLanes"/> will do. RAISING any of the three asks twice: more positions at once
+    /// spend the owner's money faster. Lowering only ever spends slower, so it saves in one press.
+    /// </summary>
+    public static string RaiseLanesArmed(int lanes, int perPool, int perCellClass) =>
+        $"Confirm: let up to {lanes} position{(lanes == 1 ? "" : "s")} work at once ({perPool} on one AI account, "
+        + $"{perCellClass} in one kind of sealed workspace), which spends faster";
+
     /// <summary>
     /// What the second press of <see cref="SaveReviewEvery"/> will do. LOWERING the interval is what
     /// asks twice here, which is the opposite of every risk limit and is the point: a shorter

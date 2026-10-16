@@ -388,6 +388,15 @@ public sealed class RuntimeManifest
     [JsonIgnore]
     public string SessionSeatClass => Puppet ? PuppetSeatClass : TradeAgent.Core.Db.SeatClasses.Cli;
     public string DisplayName { get; set; } = "";
+
+    /// <summary>
+    /// THE VENDOR'S PLAN WINDOW — the period its subscription's usage is counted over, in the vendor's own words (for example
+    /// "5h") — one part of a launch's quota pool (<see cref="QuotaPool"/>, <c>U-org-lanes</c>). Vendor data, so a vendor that
+    /// changes its plans is a one-line data fix. Null where nobody has recorded it, and an unknown window collapses into every
+    /// pool on the same runtime: it never buys a lane. No built-in names one yet.
+    /// </summary>
+    public string? PlanWindow { get; set; }
+
     public string Description { get; set; } = "";
     public string SignInDescription { get; set; } = "";
 
