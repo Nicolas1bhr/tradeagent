@@ -1204,6 +1204,32 @@ public sealed class MissionEventStore(Database db)
     }
 
     /// <summary>
+    /// GIVES BACK THE WAKES A LAUNCH TOOK AND THE ACTIVATION GATE THEN REFUSED (review of <c>U-thinking-seats-a</c>, item 1): each
+    /// row <paramref name="consumedBy"/> consumed and no turn has settled is due again, as though that launch had been refused at
+    /// admission. Called only inside the launch's own committed transition, beside the close that records its row as refused with
+    /// the refusal's kind — the record that it took them and why it gave them back. A wake another launch took, or one a turn
+    /// settled, is never touched. <b>A delegated one is given back too</b> (fix pass 2, item 6): a refused launch's output is held,
+    /// never published, so a link saying its brief carried the owner's words would be false — it is cleared and the words are owed
+    /// again. Returns how many rows were given back.
+    /// </summary>
+    public int Release(IReadOnlyList<string> ids, string consumedBy) => db.Write(_ =>
+    {
+        var written = 0;
+        foreach (var id in ids)
+        {
+            using var c = db.Cmd("""
+                UPDATE mission_event SET consumed_at=NULL, consumed_by=NULL,
+                       disposition = CASE WHEN disposition=$delegated THEN NULL ELSE disposition END,
+                       disposition_detail = CASE WHEN disposition=$delegated THEN NULL ELSE disposition_detail END
+                 WHERE id=$id AND consumed_by=$by AND (disposition IS NULL OR disposition IN ($blocked, $delegated))
+                """, ("$id", id), ("$by", consumedBy), ("$blocked", MissionEventDisposition.Blocked),
+                ("$delegated", MissionEventDisposition.Delegated));
+            written += c.ExecuteNonQuery();
+        }
+        return written;
+    });
+
+    /// <summary>
     /// RECORDS WHAT A TURN MADE OF A WAKE. Only a CONSUMED row is written, because a disposition on
     /// an event nobody has taken would be a verdict on a turn that never happened.
     ///

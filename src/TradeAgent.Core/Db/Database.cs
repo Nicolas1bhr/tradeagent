@@ -2379,6 +2379,40 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','38') ON CONFLICT(key) DO UPDATE SET value='38';");
         }
 
+        if (have < 39)
+        {
+            // THE ACTIVATION GATE'S RECORD — `U-thinking-seats-a`, rung 39, after `U-org-envelopes`' 38.
+            // Two things the gate needs written down and had nowhere to go:
+            //
+            // WHAT SEAT EACH LAUNCH RAN ON: `ai_attempt.seat_class` (cli, broker, harness, cell; a test host's puppet) and `ai_attempt.assurance`
+            // (unconfined, mediated, brokered, confined), written by `AiAttemptStore.Begin` in the row's own insert from the seat the
+            // admission verified, and never updated. NO BACKFILL: a launch recorded before this rung has NULL — unknown.
+            //
+            // THE HOST'S PROVEN EXECUTOR-CELL CLASSES: `cell_proof`, one row per provider whose benchmark passed on this host, written
+            // only by the app when that benchmark passes (`U-cell-linux-c`/`-e`; nothing in this build writes it). A row names the
+            // HOST it was proven on — `machine`, a SHA-256 over the machine id the app reads (never the id itself), and `os_release`,
+            // the kernel or OS release — beside the platform and build, and counts only where all four match (`CellProofStore`; review
+            // item 3: a home copied to another machine holds no proof there). Until it holds such a row, no position beyond the
+            // legacy pair activates on a real-model seat (ORCHESTRATION § 2.3, the owner's answer). Created only where missing and
+            // columns added only where missing, so a crash between any statement here and the stamp reopens cleanly.
+            AddColumnIfMissing("ai_attempt", "seat_class", "TEXT");
+            AddColumnIfMissing("ai_attempt", "assurance", "TEXT");
+            Exec("""
+                CREATE TABLE IF NOT EXISTS cell_proof(
+                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                  provider      TEXT NOT NULL,
+                  platform      TEXT NOT NULL,
+                  machine       TEXT NOT NULL,
+                  os_release    TEXT NOT NULL,
+                  build         TEXT NOT NULL,
+                  profile_hash  TEXT NOT NULL,
+                  proven_at     TEXT NOT NULL
+                );
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','39') ON CONFLICT(key) DO UPDATE SET value='39';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

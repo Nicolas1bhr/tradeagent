@@ -96,22 +96,32 @@ public class OrgPrincipalsTests : IDisposable
     /// (b) A THIRD POSITION'S OPEN ATTEMPT IS KEYED BY ITS OWN ID. RED at base: <c>TurnMeter.Key</c> was
     /// <c>CouncilRoles.Or</c>, so the third position's launch took the chair's slot and the chair's open attempt — the
     /// one its grant names — became the third position's.
+    ///
+    /// <para><b>Re-posed by <c>U-thinking-seats-a</c>, the purpose kept:</b> the activation gate now admits a position beyond the
+    /// legacy pair only on a seat that carries its capabilities, on a host with a proven executor cell, and never beside the chair's
+    /// unconfined launch — so the two slots compared are two positions' on the harness, each its own and neither the chair's.</para>
     /// </summary>
     [Fact]
     public void A_third_positions_open_attempt_is_keyed_by_its_own_id()
     {
+        const string fourth = "pos-2b8e41d0";
         using var db = TestEnv.NewDb();
         Seat(db, Third);
-        var meter = new TurnMeter(db, () => 5m, live: new LiveAttempts());
+        Seat(db, fourth);
+        ThinkingSeatsTests.ProveCell(db);
+        var meter = ThinkingSeatsTests.Meter(db, _ => SeatClasses.Harness);
+        using var a = meter.Attach(new ThinkingSeatsTests.Seated(SeatClasses.Harness), Third);
+        using var b = meter.Attach(new ThinkingSeatsTests.Seated(SeatClasses.Harness), fourth);
 
-        var chair = meter.Begin("## Situation", role: CouncilRoles.Operations).Id;
         var third = meter.Begin("## Situation", role: Third).Id;
-        Assert.NotNull(chair);
+        var other = meter.Begin("## Situation", role: fourth).Id;
         Assert.NotNull(third);
-        Assert.NotEqual(chair, third);
+        Assert.NotNull(other);
+        Assert.NotEqual(third, other);
 
-        Assert.Equal(chair, meter.OpenAttemptIdFor(CouncilRoles.Operations));
+        Assert.Null(meter.OpenAttemptIdFor(CouncilRoles.Operations));
         Assert.Equal(third, meter.OpenAttemptIdFor(Third));
+        Assert.Equal(other, meter.OpenAttemptIdFor(fourth));
         Assert.Equal(Third, new AiAttemptStore(db).Get(third!)!.Role);
     }
 
@@ -217,12 +227,13 @@ public class OrgPrincipalsTests : IDisposable
             var standing = new OrgStore(db).Standing(Third);
             Assert.Equal(new PositionStanding(Third, OrgIds.Research, OrgPositionStatus.Active, OrgPositionKind.Member,
                 IsLegacy: false, HomeDir: $"org/{Third}"), standing);
-            Assert.Contains("no activation gate", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
-            Assert.Contains("no activation gate", host.ActivationRefusal(Third)!.Words, StringComparison.Ordinal);
-            Assert.Contains("not an active position", host.ActivationRefusal("nobody-here")!.Words, StringComparison.Ordinal);
-            // TYPED (U-org-wakes): an active position this build will not activate is refused for the HOST, its wakes kept; a
-            // name the chart does not hold as active is refused for what it is, its wakes settled.
-            Assert.Equal(RefusalKind.HostOrLaunch, host.ActivationRefusal(Third)!.Kind);
+            // U-thinking-seats-a: the process-wide register is unset in a test process, which refuses a position beyond the legacy
+            // pair; this host's own register declares the probe's CLI seat, whose shell is code — a refusal about the position.
+            Assert.Contains($"'{Third}'", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
+            var gated = host.ActivationRefusal(Third);
+            Assert.Equal(RefusalKind.Position, gated?.Kind);
+            Assert.Contains("code needs a confined cell", gated!.Words, StringComparison.Ordinal);
+            Assert.Contains("not an active position", host.ActivationRefusal("nobody-here")?.Words, StringComparison.Ordinal);
             Assert.Equal(RefusalKind.Position, host.ActivationRefusal("nobody-here")!.Kind);
             Assert.Null(new OrgStore(db).Standing(AppPrincipals.Perception));
             Assert.Equal(OrgPositionKind.Head, new OrgStore(db).Standing(CouncilRoles.Operations)!.Kind);
@@ -240,7 +251,20 @@ public class OrgPrincipalsTests : IDisposable
             Assert.Null(PositionActivation.Refusal(CouncilRoles.Operations, new OrgStore(db).Standing(CouncilRoles.Operations)));
             Assert.Null(PositionActivation.Refusal(CouncilRoles.Research, new OrgStore(db).Standing(CouncilRoles.Research)));
 
-            // THE LEGACY PAIR KEEP THEIR EXISTING TWO-ROLE BEHAVIOUR.
+            // NO UNCONFINED NEIGHBOUR (U-thinking-seats-a; ORCHESTRATION § 2.3): while a position beyond the legacy pair is
+            // active, the legacy pair on their unconfined CLI seats run confined too, or not there — refused, naming it.
+            Assert.Null(host.ConversationFor(CouncilRoles.Operations));
+            var neighbour = host.ActivationRefusal(CouncilRoles.Research);
+            Assert.Equal(RefusalKind.HostOrLaunch, neighbour?.Kind);
+            Assert.Contains($"'{Third}'", neighbour!.Words, StringComparison.Ordinal);
+
+            // THE LEGACY PAIR ALONE KEEP THEIR EXISTING TWO-ROLE BEHAVIOUR.
+            foreach (var other in new[] { Third, "pos-staff" })
+                db.Write(_ =>
+                {
+                    using var c = db.Cmd("UPDATE org_position SET status='dormant' WHERE id=$id", ("$id", other));
+                    return c.ExecuteNonQuery();
+                });
             Assert.Same(host.Conversation, host.ConversationFor(CouncilRoles.Operations));
             Assert.NotNull(host.ConversationFor(CouncilRoles.Research));
         }

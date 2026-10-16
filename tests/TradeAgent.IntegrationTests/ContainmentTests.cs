@@ -55,7 +55,7 @@ public class ContainmentTests
         // Built without a launch ledger, and saying so: a conversation with no admission refuses (U-admission-fail-closed).
         // A register of its own: the assembly's chair grant is order-capable, and no other launch is issued beside it.
         var session = new AgentSession(manifest, () => Shell, () => probe.Dir,
-            () => new Dictionary<string, string>(), new AgentPresence(), grants: new AgentGrants())
+            () => new Dictionary<string, string>(), new AgentPresence(), grants: new AgentGrants(), seats: NoNeighbours())
         {
             Admit = _ => AiAdmission.NoLedger
         };
@@ -103,7 +103,7 @@ public class ContainmentTests
 
         var session = new AgentSession(manifest, () => Shell, () => dir,
             () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(),
-            grants: new AgentGrants(), launchRefusal: () => armed ? refusal : null)
+            grants: new AgentGrants(), launchRefusal: () => armed ? refusal : null, seats: NoNeighbours())
         {
             Admit = _ => AiAdmission.NoLedger   // built without a launch ledger, explicitly
         };
@@ -149,7 +149,8 @@ public class ContainmentTests
             };
             var admitted = 0;
             var session = new AgentSession(manifest, () => Shell, () => dir,
-                () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(), grants: new AgentGrants())
+                () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(), grants: new AgentGrants(),
+                seats: NoNeighbours())
             {
                 Admit = _ => { admitted++; return AiAdmission.NoLedger; }
             };
@@ -172,6 +173,12 @@ public class ContainmentTests
     /// argument and need no shell.
     /// </summary>
     const string MarkerVariable = "TA_TEST_MARKER";
+
+    /// <summary>
+    /// The activation gate's register as the app sets it when it composes the AI, on a home with no position beyond the legacy
+    /// pair: an unset one refuses an unconfined launch outside the unit-test host (U-thinking-seats-a, fix pass 2, item 5).
+    /// </summary>
+    static SeatRegister NoNeighbours() => new() { Neighbours = () => [] };
 
     static string MakeMarker() => OperatingSystem.IsWindows()
         ? $"md %{MarkerVariable}%"

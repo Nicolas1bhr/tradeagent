@@ -278,10 +278,32 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public string? PromptIn { get; init; }
 
     /// <summary>
-    /// THE SEAT CLASS A PUPPET'S TEST MANIFEST DECLARED (<see cref="RuntimeManifest.PuppetSeatClass"/>, <c>U-puppet-runtime</c>), or
-    /// null for every seat that is not a puppet. Written into the attempt's <c>context</c>; never read from a data file.
+    /// THE ACTIVATION GATE'S REFUSAL OF THIS TURN AT ITS LAST CHECK — immediately before the process or a request, after the meter
+    /// had admitted it and its wakes were consumed — or null (review of <c>U-thinking-seats-a</c>, item 1). Set by the conversation
+    /// that refused, never inferred from words: the refusal's <see cref="RefusalKind"/> travels as data, so the loop gives back every
+    /// wake the launch took and keeps the owner's words owed (<see cref="MissionLoop"/>), and the meter closes the row as refused
+    /// with the kind on it — charged nothing when <see cref="LateRefusal.BeforeAnyWork"/>, since nothing started.
     /// </summary>
-    public string? SeatClass { get; init; }
+    public LateRefusal? GateRefused { get; init; }
+}
+
+/// <summary>
+/// A REFUSAL BY THE ACTIVATION GATE AFTER ADMISSION (<see cref="AgentTurnEnded.GateRefused"/>): the refusal with its kind, and whether
+/// it came before any work — no process started, no request sent — which is the app's own record of its own act, set where it
+/// happened and never inferred.
+/// </summary>
+public sealed record LateRefusal(TurnRefusal Refusal, bool BeforeAnyWork);
+
+/// <summary>
+/// THE ACTIVATION GATE REFUSED THE TURN AT ITS LAST CHECK (<see cref="PositionActivation.AtLaunch"/>), thrown by the conversation so
+/// the turn's end can carry the refusal as data (<see cref="AgentTurnEnded.GateRefused"/>) rather than as words in a failure.
+/// <see cref="SoFar"/> is what the turn's earlier requests reported, where a later one was refused.
+/// </summary>
+public sealed class GateRefusedException(TurnRefusal refusal, bool beforeAnyWork, TurnUsage? soFar = null) : Exception(refusal.Words)
+{
+    public TurnRefusal Refusal { get; } = refusal;
+    public bool BeforeAnyWork { get; } = beforeAnyWork;
+    public TurnUsage? SoFar { get; } = soFar;
 }
 
 /// <summary>
@@ -2261,6 +2283,10 @@ public sealed class MissionLoop
         var recorded = admission.Id;
         attemptId = recorded ?? attemptId;
 
+        // WHO THE WAKES WERE CONSUMED BY — the row's id, or the no-ledger mark below — so a launch the gate refused at its last
+        // check gives back exactly what it took.
+        var consumer = recorded ?? Unrecorded;
+
         // A NO-LEDGER HOST'S LAUNCH STILL SPENDS ITS WAKE. Leaving the events unconsumed because no
         // attempt row exists would hand the same wake to the next turn, and the next, for ever — an
         // unbounded number of turns out of one reason to take one.
@@ -2288,7 +2314,11 @@ public sealed class MissionLoop
             // IN THE FINALLY, because a turn that was cancelled has still been LAUNCHED and has
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
-            Commit(role, attemptId, events, wake, ended);
+            Commit(role, attemptId, events, wake, ended, consumer);
+
+            // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
+            // for a launch refused at admission (review of U-thinking-seats-a, item 1).
+            if (ended?.GateRefused is not null) lock (_gate) _typedForARefusedTurn.AddRange(typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
             // than after it, so a turn that threw its way out still settles the question — a turn
@@ -2849,7 +2879,7 @@ public sealed class MissionLoop
     /// a bookkeeping failure into an AI that stopped working.
     /// </summary>
     void Commit(string role, string? attempt, MissionEventStore? events,
-        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended)
+        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer)
     {
         var failed = ended?.Failed ?? true;
         try
@@ -2858,7 +2888,7 @@ public sealed class MissionLoop
             // message whose turn failed is re-raised once, so a runtime that fell over does not
             // swallow the one thing in the block that was waiting for an answer.
             _host.CommitTurn(role, attempt,
-                () => { if (events is not null) Settle(events, wake, failed, ended); });
+                () => { if (events is not null) Settle(events, wake, failed, ended, consumer); });
         }
         catch (Exception) { /* the row stays LAUNCHED; the next start loses it and reconciles */ }
     }
@@ -3234,10 +3264,27 @@ public sealed class MissionLoop
     /// ever, at the price of a turn each time. The retry carries the failure in its payload, and a
     /// retry that fails again is left <c>failed</c> — the owner can see both rows and ask again in
     /// their own words, which is the outcome a loop cannot improve on.
+    ///
+    /// <para><b>A launch the activation gate refused at its last check settles nothing</b> (review of <c>U-thinking-seats-a</c>,
+    /// item 1; ORCHESTRATION § 2.5): every wake it took is given back, due again under the loop's backoff, whichever kind the
+    /// refusal was — the launch gives them back, and a <see cref="RefusalKind.Position"/> refusal's wakes are settled by O3's seam at the next look, routing by
+    /// the kind on the row. The owner's words among them are never settled and never retried as failed: they stay owed, shown
+    /// undelivered with the refusal's own sentence (<see cref="MissionEventDisposition.Blocked"/>).</para>
     /// </summary>
-    void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended)
+    void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer)
     {
         if (wake.Count == 0) return;
+        if (ended?.GateRefused is { } late)
+        {
+            try
+            {
+                events.Release([.. wake.Select(e => e.Id)], consumer);
+                foreach (var e in wake.Where(e => e.Kind == MissionEventKind.Owner))
+                    events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, late.Refusal.Words);
+            }
+            catch (Exception) { /* a record, not a gate — as below */ }
+            return;
+        }
         var disposition = failed ? MissionEventDisposition.Failed : MissionEventDisposition.Answered;
 
         try

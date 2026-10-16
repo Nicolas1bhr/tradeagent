@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -26,6 +27,10 @@ namespace TradeAgent.AgentRuntime;
 /// start path passes its own, because the shared register is sticky — see
 /// <c>CliAgentRuntime.Presence</c>.
 /// </param>
+/// <param name="seats">
+/// The activation gate's register, handed to every runtime this supervisor prepares and asked by each of their sessions immediately
+/// before a process starts. Null is the process-wide one, which the product fills.
+/// </param>
 /// <param name="positions">
 /// The chart's active positions beside the legacy pair, read at every prepare — each gets a home of its own under
 /// <c>org/&lt;id&gt;</c>. Null is the legacy pair alone. A read that throws builds the legacy pair alone: a home that
@@ -33,7 +38,7 @@ namespace TradeAgent.AgentRuntime;
 /// </param>
 public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
-    AgentPresence? presence = null, Func<IReadOnlyList<string>>? positions = null)
+    AgentPresence? presence = null, Func<IReadOnlyList<string>>? positions = null, SeatRegister? seats = null)
 {
     IReadOnlyList<string> Positions()
     {
@@ -81,7 +86,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence)
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence, seats: seats)
             {
                 VersionDeadline = VersionDeadline
             };

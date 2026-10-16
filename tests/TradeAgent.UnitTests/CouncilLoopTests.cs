@@ -650,6 +650,54 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (d, <c>U-thinking-seats-a</c>, adopting O3's kinds) A REFUSED POSITION IS STEPPED OVER, WHICHEVER ITS KIND, AND THE LEGACY
+    /// PAIR KEEP TURNING: a position refused for itself (<see cref="RefusalKind.Position"/>, a capability its seat cannot carry) has
+    /// its review settled <see cref="MissionEventDisposition.Refused"/>; one refused for its host (<see cref="RefusalKind.HostOrLaunch"/>,
+    /// no proven cell) keeps every wake; the owner's words to either are never settled — unconsumed, at most shown undelivered — and
+    /// Research takes the turn.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_position_is_stepped_over_and_the_legacy_pair_keep_turning()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, NoHeartbeat);
+        const string itself = "pos-7f3a90c1", itsHost = "pos-2b8e41d0";
+        host.Refusals[itself] = new TurnRefusal(RefusalKind.Position, $"'{itself}' cannot run on a cli seat.");
+        host.Refusals[itsHost] = new TurnRefusal(RefusalKind.HostOrLaunch, $"'{itsHost}': no proven executor cell.");
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-3);
+        var kept = new List<string>();
+        foreach (var (position, kind) in new[]
+                 {
+                     (itself, MissionEventKind.Review), (itself, MissionEventKind.Owner), (itsHost, MissionEventKind.Review),
+                     (itsHost, MissionEventKind.Owner)
+                 })
+        {
+            var id = $"{kind}:{position}:{kept.Count}";
+            host.Events!.Raise(id, kind, earlier.AddSeconds(kept.Count), role: position);
+            kept.Add(id);
+        }
+        host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Research),
+            MissionEventKind.Review, earlier.AddMinutes(1), role: CouncilRoles.Research);
+
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+
+        Assert.Equal([CouncilRoles.Research], host.Opened.Select(o => o.Role));
+        Assert.Equal(MissionEventDisposition.Refused, host.Events.Get(kept[0])!.Disposition);
+        Assert.Null(host.Events.Get(kept[2])!.Disposition);
+        Assert.False(host.Events.Get(kept[2])!.Consumed, $"{kept[2]} was consumed");
+        foreach (var owner in new[] { kept[1], kept[3] })
+        {
+            var e = host.Events.Get(owner)!;
+            Assert.False(e.Consumed, $"{owner} was consumed");
+            Assert.True(e.Disposition is null or MissionEventDisposition.Blocked, $"{owner} was settled {e.Disposition}");
+        }
+    }
+
+    /// <summary>
     /// EVERY ROLE OVER ITS SHARE IS A WAIT, NOT A SPIN, and the card says whose share ran out rather
     /// than sending the owner to the daily limit on the Safety page — which is not the number that
     /// needs changing.

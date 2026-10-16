@@ -397,6 +397,20 @@ public sealed class CouncilRelay
             // ---- boundary 1: the file exists and nothing in the tables knows about it ------------
             Boundary?.Invoke("file");
 
+            // HELD, NEVER PUBLISHED: THE OUTPUT OF A LAUNCH THE ACTIVATION GATE REFUSED (U-thinking-seats-a, fix pass 2, item 6;
+            // ORCHESTRATION § 2.3). Asked here, inside the transaction and after the launch's close, because the close is what
+            // records the refusal — so the turn's own commit, a later pass and the start-up reconcile all read the same row. What
+            // it staged before the refusal is recorded as the app's own copy, delivered to nobody and buying no turn, with a held
+            // disposition saying why: a brief of a refused launch never carries the owner's words downward, so the loop gives
+            // them back with every wake the launch took.
+            if (RefusedAtTheGate(p.Attempt))
+            {
+                _store.Record(p with { Recipients = "" }, _now());
+                _events.Hold(p.Id, p.Role, _now(), GateHeldWhy);
+                Boundary?.Invoke("transaction");
+                continue;
+            }
+
             // HELD, PUBLISHED TO NOBODY (U-org-rights). A position after the legacy pair has no recipient
             // (`RecipientsOf`) until U-org-assignments names its mandate's issuer: its file passed the fence and is
             // recorded as the app's own copy, attributed to the launch its name carries, with no delivery and no wake —
@@ -677,6 +691,28 @@ public sealed class CouncilRelay
 
     /// <summary>What a hold's disposition says: why nobody was handed the output.</summary>
     public const string HeldWhy = "no recipient until U-org-assignments";
+
+    /// <summary>What the hold of a refused launch's output says: the activation gate refused the launch that staged it.</summary>
+    public const string GateHeldWhy = "its launch was refused by the activation gate, so nothing it staged is published";
+
+    /// <summary>
+    /// WHETHER THE LAUNCH <paramref name="attempt"/> NAMES WAS CLOSED AS REFUSED BY THE ACTIVATION GATE — the meter's own record
+    /// on its row (<c>context.gate_kind</c>), never anything the agent wrote. A row that cannot be read is taken as refused: a
+    /// file is held on a doubt and published on none.
+    /// </summary>
+    bool RefusedAtTheGate(string? attempt)
+    {
+        if (attempt is null) return false;
+        try
+        {
+            if (_attempts.Get(attempt)?.Context is not { Length: > 0 } context) return false;
+            using var doc = System.Text.Json.JsonDocument.Parse(context);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("gate_kind", out var kind)
+                   && kind.ValueKind == System.Text.Json.JsonValueKind.String;
+        }
+        catch (Exception) { return true; }
+    }
 
     /// <summary>The most held outputs one Situation names.</summary>
     public const int HeldLimit = 10;

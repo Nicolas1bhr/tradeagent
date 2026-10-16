@@ -89,7 +89,7 @@ public sealed class SeatPlan
     /// (<c>U-thinking-seats-a</c>) can exempt it from the refusal of real-model positions by name; a puppet manifest may declare
     /// another class to play (<see cref="RuntimeManifest.PuppetSeatClass"/>).
     /// </summary>
-    public const string PuppetClass = "puppet";
+    public const string PuppetClass = TradeAgent.Core.Db.SeatClasses.Puppet;
 
     /// <summary>
     /// THE DENY SET, BY SEAT CLASS: argv every turn of that class carries before its prompt, on the first turn AND on every resume
@@ -371,12 +371,22 @@ public sealed class RuntimeManifest
 
     /// <summary>
     /// THE SEAT CLASS A PUPPET MANIFEST DECLARES IT PLAYS — <see cref="SeatPlan.PuppetClass"/> unless its test says otherwise — and
-    /// records on every attempt it runs (<c>seat_class</c> in <c>ai_attempt.context</c>), so a later unit's puppet can reach the
+    /// the class the activation gate checks it as and every attempt it runs records at admission (<c>ai_attempt.seat_class</c>,
+    /// <see cref="SessionSeatClass"/>; <c>U-thinking-seats-a</c> fix pass 2, item 7), so a later unit's puppet can reach the
     /// verbs a declared class allows. Declared by the test's manifest, in code: never read from <c>runtimes.json</c>, and nothing
     /// in production configuration can reach it (seat classes live in code, § 2.7). Ignored on a manifest that is not a puppet.
     /// </summary>
     [JsonIgnore]
     internal string PuppetSeatClass { get; init; } = SeatPlan.PuppetClass;
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT AN <see cref="AgentSession"/> OVER THIS MANIFEST STARTS — the one answer the session's own verdict, its
+    /// last check before the process and the app's declared seat all read: a test host's puppet plays its declared class
+    /// (<see cref="PuppetSeatClass"/>), and every other CLI seat is <c>cli</c>, with a seat plan or without one, since no seat starts
+    /// in a cell yet. Code, never data: not serialized and read from no file (ORCHESTRATION § 2.7).
+    /// </summary>
+    [JsonIgnore]
+    public string SessionSeatClass => Puppet ? PuppetSeatClass : TradeAgent.Core.Db.SeatClasses.Cli;
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string SignInDescription { get; set; } = "";

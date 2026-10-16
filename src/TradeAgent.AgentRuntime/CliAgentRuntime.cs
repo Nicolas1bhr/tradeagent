@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Provisioning;
 
 namespace TradeAgent.AgentRuntime;
@@ -27,7 +28,7 @@ namespace TradeAgent.AgentRuntime;
 /// </param>
 public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
-    AgentPresence? presence = null, ISeatProbe? seatProbe = null) : IAgentRuntime
+    AgentPresence? presence = null, ISeatProbe? seatProbe = null, SeatRegister? seats = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -952,7 +953,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
             presence: presence, model: () => RequestedModel, role: CouncilRoles.Operations,
-            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal, seatProbe: seatProbe);
+            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats);
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -974,7 +975,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // exists to keep out of the app.
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
                 presence: presence, model: () => ModelFor(model()), role: role,
-                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe);
+                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats);
             _roleConversations[role] = session;
             return session;
         }

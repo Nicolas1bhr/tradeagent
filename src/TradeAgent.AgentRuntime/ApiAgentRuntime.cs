@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
@@ -56,7 +57,8 @@ public sealed class ApiAgentRuntime(
     Func<TurnAllowance>? allowance = null,
     TimeSpan? requestTimeout = null,
     HttpMessageHandler? transport = null,
-    AppFileManifest? appFiles = null) : IAgentRuntime, IDisposable
+    AppFileManifest? appFiles = null,
+    SeatRegister? seats = null) : IAgentRuntime, IDisposable
 {
     /// <summary>The runtime id, spelled once. It is what the Safety page and the ledger both record.</summary>
     public const string RuntimeId = "openai-api";
@@ -191,7 +193,8 @@ public sealed class ApiAgentRuntime(
                 allowance: allowance,
                 requestTimeout: requestTimeout ?? DefaultRequestTimeout,
                 transport: transport,
-                appFiles: appFiles);
+                appFiles: appFiles,
+                seats: seats);
             _conversations[role] = conversation;
             return conversation;
         }

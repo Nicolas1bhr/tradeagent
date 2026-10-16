@@ -49,6 +49,16 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     WorkspaceReads _reads = WorkspaceReads.Disk;
 
+    /// <summary>
+    /// THE ACTIVATION GATE'S REGISTER (<c>U-thinking-seats-a</c>), filled in <see cref="ComposeTheAi"/>: the process-wide one in the
+    /// product (<see cref="PositionActivation.Seats"/>), so the seam, the meter and the last check before a process or a request all
+    /// read one answer; only <see cref="Composed"/> — a test's host — is handed its own, for the reason <see cref="_presence"/> is.
+    /// </summary>
+    SeatRegister _seats = SeatRegister.Shared;
+
+    /// <summary>This host's activation-gate register, for a test that it is set before any launch can start.</summary>
+    internal SeatRegister Seats => _seats;
+
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
     public HealthRegistry Health { get; } = new();
@@ -201,7 +211,8 @@ public sealed class AppHost : IAsyncDisposable
                     attemptId: role => Meter?.OpenAttemptIdFor(role),
                     allowance: () => TurnAllowance.From(
                         Gateway.Settings.AiTurnAllowanceInputTokens,
-                        Gateway.Settings.AiTurnAllowanceOutputTokens));
+                        Gateway.Settings.AiTurnAllowanceOutputTokens),
+                    seats: _seats);
             }
             catch (Exception ex)
             {
@@ -293,9 +304,9 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public IAgentConversation? ConversationFor(string role)
     {
-        // THE ACTIVATION SEAM, FIRST (U-org-principals): a position it refuses opens nothing — no conversation, no
-        // meter attached, no row written. Today only the legacy pair pass; U-thinking-seats fills the gate.
-        if (PositionActivation.Refusal(role, StandingOf(role)) is not null) return null;
+        // THE ACTIVATION GATE, FIRST (U-org-principals, U-thinking-seats-a): a position it refuses opens nothing — no
+        // conversation, no meter attached, no row written. Asked with the DECLARED seat; the meter asks again with the verified one.
+        if (ActivationRefusal(role) is not null) return null;
 
         if (role == CouncilRoles.Operations) return Conversation;
 
@@ -324,23 +335,61 @@ public sealed class AppHost : IAsyncDisposable
         _roleConversations = [];
 
     /// <summary>
-    /// The chart's standing for one position id, or null where there is no such position, no database yet, or a chart
-    /// that could not be read — each of which the seam refuses.
+    /// The chart's standing for one position id, or null where there is no such position or no database yet — each of which the
+    /// seam refuses as a refusal about the position. A chart that cannot be read THROWS: that is a fact about the host, never
+    /// one about the position (review of <c>U-thinking-seats-a</c>, item 4), and its caller refuses it as such.
     /// </summary>
-    PositionStanding? StandingOf(string role)
+    PositionStanding? StandingOf(string role) => _db is null ? null : new OrgStore(_db).Standing(role);
+
+    /// <summary>
+    /// WHY A POSITION MAY NOT TURN — its kind and a sentence — or null: the activation gate's own answer with the DECLARED seat,
+    /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation. A chart that
+    /// could not be read is a refusal about the host (<see cref="PositionActivation.ChartUnreadable"/>): its wakes are kept under
+    /// the loop's backoff, never settled as though the position were gone.
+    /// </summary>
+    public TurnRefusal? ActivationRefusal(string role)
     {
-        try { return _db is null ? null : new OrgStore(_db).Standing(role); }
-        catch (Exception) { return null; }
+        PositionStanding? standing;
+        try { standing = StandingOf(role); }
+        catch (Exception ex) { return PositionActivation.ChartUnreadable(role, ex.Message); }
+        return PositionActivation.Ask(role, standing, _seats);
     }
 
     /// <summary>
-    /// WHY A POSITION MAY NOT TURN, typed, or null: the activation seam's own answer (<see cref="PositionActivation.Typed"/>),
-    /// asked by the loop, which settles the wakes of a position refused for what it is and keeps those of one refused for this
-    /// host (<c>U-org-wakes</c>). A chart that cannot be READ is not "no such position": it THROWS, the loop steps over and
-    /// keeps every wake, and nothing is settled on a read that failed. No database yet answers as an empty chart does.
+    /// WHAT THE ACTIVATION GATE READS FOR ONE POSITION, as this host knows it now: the chart's standing, the DECLARED class of the
+    /// seat it would launch on, whether this host holds a proven executor cell, the active positions beyond the legacy pair, and the
+    /// positions with an open unconfined launch other than this one. Each read where it is asked, never captured. A read that fails
+    /// throws, and the register answers "not known" — never a missing standing, which would be a refusal about the position.
     /// </summary>
-    public TurnRefusal? ActivationRefusal(string role) =>
-        PositionActivation.Typed(role, _db is null ? null : new OrgStore(_db).Standing(role));
+    SeatFacts FactsFor(string role) => new()
+    {
+        Standing = StandingOf(role),
+        DeclaredClass = DeclaredSeatClass(role),
+        ProvenCell = new CellProofStore(_db!).HoldsProof(),
+        ActiveBeyondLegacy = ActiveBeyondLegacy(),
+        OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? []
+    };
+
+    /// <summary>
+    /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, read where asked: one of the facts above, and the register's own neighbour read
+    /// (<see cref="SeatRegister.Neighbours"/>), which the gate asks for the legacy pair whenever their facts could not be read.
+    /// </summary>
+    IReadOnlyList<string> ActiveBeyondLegacy() => new OrgStore(_db!).ActivePositionsBeyondLegacy();
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD LAUNCH ON, DECLARED from the runtime object this host would open it on
+    /// (<see cref="RuntimeObjectFor"/>) — the harness is <see cref="SeatClasses.Harness"/>; any CLI runtime is the class its session
+    /// starts (<see cref="RuntimeManifest.SessionSeatClass"/>: <see cref="SeatClasses.Cli"/>, with a seat plan or without one, since
+    /// no seat starts in a cell yet, or a test host's puppet's declared class) — and null before anything is prepared.
+    /// Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
+    /// </summary>
+    string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
+    {
+        null => null,
+        ApiAgentRuntime => SeatClasses.Harness,
+        CliAgentRuntime cli => cli.Manifest.SessionSeatClass,
+        _ => SeatClasses.Cli
+    };
 
     /// <summary>
     /// ONE ROLE'S OWN DIRECTORY, as the last prepare built it, and the managed path for that role
@@ -860,6 +909,12 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     void ComposeTheAi(Database db)
     {
+        // THE ACTIVATION GATE'S REGISTER, FILLED HERE AND NOWHERE ELSE (U-thinking-seats-a), and FIRST: before the supervisor, the
+        // meter or the loop exists, so no launch can start against a register nothing set — which refuses an unconfined launch
+        // outside a test host (fix pass 2, item 5). Its reads are asked at each launch, never here.
+        _seats.Facts = FactsFor;
+        _seats.Neighbours = ActiveBeyondLegacy;
+
         // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
         // page while the agent is running, and the next turn is the one that has to obey.
         Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
@@ -872,6 +927,7 @@ public sealed class AppHost : IAsyncDisposable
             launchRefusal: () => Containment.RefusalToLaunch(
                 Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
             presence: _presence,
+            seats: _seats,
             // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
             positions: () => new OrgStore(db).Positions()
                 .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))
@@ -893,7 +949,9 @@ public sealed class AppHost : IAsyncDisposable
             // be priced against the harness's catalogue. Priced against the chair's, a model only
             // the harness offers falls back to the dearest entry and the row reads as an estimate
             // when the app knows exactly what it asked for.
-            roleRuntime: RuntimeForRole);
+            roleRuntime: RuntimeForRole,
+            // THE SEAT EACH ROLE WAS DECLARED ON, for the meter's own check that the seat it verifies is that seat.
+            declaredSeat: DeclaredSeatClass);
         Meter.Changed += () => Changed?.Invoke();
 
         Wakes = new MissionEventStore(db);
@@ -958,7 +1016,7 @@ public sealed class AppHost : IAsyncDisposable
     internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence,
         WorkspaceReads? reads = null)
     {
-        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk };
+        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk, _seats = new SeatRegister() };
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
@@ -2192,6 +2250,8 @@ public sealed class AppHost : IAsyncDisposable
         // it is never written, so there is nothing to delete, and it does not outlive this process.
         HarnessKey.Clear();
         PerceptionKey.Clear();
+        _seats.Facts = null;
+        _seats.Neighbours = null;
         lock (_decisionModels)
         {
             foreach (var wire in _decisionModels.Values) wire.Dispose();

@@ -264,6 +264,10 @@ public static class AgentArgs
 /// vendor's CLI at all, null when it will. A function because the owner arms and disarms real money
 /// while the AI is working, and the turn that has to obey is the next one.
 /// </param>
+/// <param name="seats">
+/// The activation gate's register, asked immediately before the process starts (<see cref="PositionActivation.AtLaunch"/>). Null
+/// is the process-wide one, which the product fills; a test's host passes its own.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
@@ -276,7 +280,8 @@ public sealed class AgentSession(
     AgentGrants? grants = null,
     Func<string?>? launchRefusal = null,
     AppFileManifest? appFiles = null,
-    ISeatProbe? seatProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
+    ISeatProbe? seatProbe = null,
+    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
 {
     /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
     ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
@@ -286,9 +291,12 @@ public sealed class AgentSession(
     {
         // A PUPPET OUTSIDE A TEST HOST IS REFUSED HERE TOO, so the meter writes no row and reserves nothing for it (U-puppet-runtime).
         if (PuppetSeats.Refusal(manifest) is { } puppet) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, puppet);
-        if (manifest.Seat is null) return SeatVerdict.None;
+        // A CLI SEAT, WITH A SEAT PLAN OR WITHOUT ONE (U-thinking-seats-a): every session here starts its process with a shell and
+        // outside any cell, so its class is `cli` and its assurance unconfined — or, for a test host's puppet, the class its test
+        // declared (fix pass 2, item 7) — the app's own answer in code, never a field of the manifest's file.
+        if (manifest.Seat is null) return Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
-        if (resolveExecutable() is not { } exe) return SeatVerdict.None;
+        if (resolveExecutable() is not { } exe) return Seated;
         var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: RequestedModel);
         var home = workspace();
         try
@@ -298,13 +306,16 @@ public sealed class AgentSession(
                 .GetAwaiter().GetResult();
             // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
             Volatile.Write(ref _admittedProfile, verdict.Profile);
-            return verdict;
+            return verdict.Refused ? verdict : verdict with { SeatClass = manifest.SessionSeatClass };
         }
         catch (Exception ex)
         {
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent could not check the AI's own settings: {ex.Message}");
         }
     }
+
+    /// <summary>The verdict on this session's seat with nothing to verify: nothing refused, and its class.</summary>
+    SeatVerdict Seated => SeatVerdict.None with { SeatClass = manifest.SessionSeatClass };
 
     /// <summary>
     /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
@@ -553,7 +564,10 @@ public sealed class AgentSession(
         }
 
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-        await RunAsync(message, ct);
+
+        // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: nothing answered them, so their words are kept exactly as a
+        // refused admission keeps them — the System line the turn wrote says why (review of U-thinking-seats-a, item 1).
+        if (await RunAsync(message, ct) is not null) Keep(message);
     }
 
     /// <summary>
@@ -596,6 +610,15 @@ public sealed class AgentSession(
     void Hold(string message, string said)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
+        Keep(message);
+        Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
+        Append(new ChatTurn(ChatRole.System, said, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>Keeps the owner's words for the next turn, where <see cref="Hold"/> keeps them, without a second line in the chat.</summary>
+    void Keep(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
         var text = message.Trim();
 
         // EXACTLY ONE OF THE TWO HOLDS IT. Writing to both would hand the same words to the next
@@ -605,9 +628,6 @@ public sealed class AgentSession(
         try { recorded = RecordTyped?.Invoke(text) ?? false; }
         catch (Exception) { recorded = false; }
         if (!recorded) lock (_historyLock) _typedMeanwhile.Add(text);
-
-        Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-        Append(new ChatTurn(ChatRole.System, said, DateTimeOffset.UtcNow));
     }
 
     /// <inheritdoc />
@@ -641,13 +661,14 @@ public sealed class AgentSession(
     /// started, because the mission loop's backoff and `U-meter`'s prices are both counting turns and
     /// a turn that vanished silently is one neither of them can account for.
     /// </summary>
-    async Task RunAsync(string message, CancellationToken ct)
+    async Task<LateRefusal?> RunAsync(string message, CancellationToken ct)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var exitCode = -1;
         var raw = "";
         TurnUsage? usage = null;
         VendorLimit? limit = null;
+        LateRefusal? gateRefused = null;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -656,7 +677,7 @@ public sealed class AgentSession(
             raw = $"{manifest.DisplayName} is not installed, so the message was not sent.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
-            return;
+            return null;
         }
 
         SetBusy(true);
@@ -673,6 +694,13 @@ public sealed class AgentSession(
         {
             raw = "Stopped.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
+        }
+        catch (GateRefusedException ex)
+        {
+            // THE GATE'S LAST CHECK REFUSED IT, BEFORE THE PROCESS: nothing started. Its kind travels out as data.
+            raw = ex.Message;
+            gateRefused = new LateRefusal(ex.Refusal, BeforeAnyWork: true);
+            Append(new ChatTurn(ChatRole.System, ex.Message, DateTimeOffset.UtcNow));
         }
         catch (TradeAgentException ex)
         {
@@ -712,10 +740,11 @@ public sealed class AgentSession(
                 Canon = _canon,
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
                 PromptIn = _promptIn,
-                // AND, FOR A PUPPET, THE CLASS ITS TEST'S MANIFEST DECLARED (U-puppet-runtime); nothing for any other seat.
-                SeatClass = manifest.Puppet ? manifest.PuppetSeatClass : null
+                // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
+                GateRefused = gateRefused
             });
         }
+        return gateRefused;
     }
 
     async Task<(int ExitCode, string Raw, TurnUsage? Usage, VendorLimit? Limit)> RunTurnAsync(string exe, string message,
@@ -767,6 +796,13 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
                 "TradeAgent did not start the AI: its own settings changed between the moment the turn was recorded and its start. " +
                 "The next turn checks them again.");
+
+        // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE PROCESS (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked
+        // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — or a
+        // test host's puppet playing its declared class — the seat actually about to start, so a position beyond the legacy pair is
+        // refused here whatever the meter answered.
+        if (PositionActivation.AtLaunch(role, manifest.SessionSeatClass, seats) is { } gate)
+            throw new GateRefusedException(gate, beforeAnyWork: true);
 
         // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by
         // another build or with another deny set, and the turn starts a fresh one instead — the files are the memory.
