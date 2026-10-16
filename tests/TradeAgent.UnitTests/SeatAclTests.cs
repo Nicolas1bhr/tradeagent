@@ -310,6 +310,38 @@ public class SeatAclTests
     }
 
     /// <summary>
+    /// (i) A CREDENTIAL PATH THROUGH A LINKED FOLDER IS REFUSED BEFORE ANYTHING IS CHANGED, INSIDE THE SEAT HOME TOO (the re-review's P2):
+    /// every component of every manifest path is looked at before the root's mode, the walk or any list is changed. The root keeps its
+    /// 0755 and, on macOS, a session file its access entry. Linux and macOS (a Windows link needs a privilege). Red at base: the root is
+    /// made 0700 before the refusal.
+    /// </summary>
+    [Fact]
+    public void A_credential_path_through_a_linked_folder_is_refused_before_anything_is_changed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (codex, exe, _) = SeatHomeTests.Seat("linked-folder-before-any-change");
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var owners = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(exe)!, "owners-codex")).FullName;
+        var link = Path.Combine(seat.Root, "codex", "linked");
+        Directory.CreateSymbolicLink(link, owners);
+        seat.PrivateFiles = [.. seat.PrivateFiles, "codex/linked/auth.json"];
+        var transcript = Path.Combine(Directory.CreateDirectory(Path.Combine(seat.Root, "codex", "sessions")).FullName, "rollout.jsonl");
+        File.WriteAllText(transcript, "{}");
+        if (OperatingSystem.IsMacOS()) OpenFileToEveryone(transcript);
+        File.SetUnixFileMode(seat.Root, (UnixFileMode)0b111_101_101);
+
+        var thrown = Record.Exception(() => SeatProfile.Prepare(seat));
+
+        Assert.Equal((UnixFileMode)0b111_101_101, File.GetUnixFileMode(seat.Root));
+        if (OperatingSystem.IsMacOS()) Assert.NotEmpty(Granted(transcript));
+        var refused = Assert.IsType<TradeAgentException>(thrown);
+        Assert.Equal(ErrorCode.AI_SEAT_REFUSED, refused.Code);
+        Assert.Contains(link, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("is a link", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (h) A SESSION FILE HARD-LINKED FROM OUTSIDE THE SEAT HOME IS REFUSED BEFORE ANYTHING IS CHANGED, AND THE OUTSIDE FILE KEEPS ITS
     /// ACCESS ENTRY (the re-review's P1; CRED-001): a hard link is no link to <c>IsLink</c> — it is the same file under a second name,
     /// so a same-user process can give the owner's own <c>~/.codex/auth.json</c> a name under <c>sessions/</c>, and clearing that name's
