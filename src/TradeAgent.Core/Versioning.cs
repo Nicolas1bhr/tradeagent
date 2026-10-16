@@ -396,7 +396,8 @@ public static class Versions
     /// machine — a SHA-256 over the machine id the app reads, never the id — OS release, build, profile hash, when), written only by the
     /// app when a cell provider's benchmark passes here — nothing in this build writes it — and read by the activation gate, which
     /// activates no position beyond the legacy pair on a real-model seat while it holds no row for this host, platform, release and
-    /// build.</para>
+    /// build. And <c>ai_attempt.gate_kind</c>: the kind of the gate's refusal at its last check, written in its own short write the moment
+    /// it happens, so a launch a crash left LOST still says it was refused and what it staged is held, never published.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 39;
 
