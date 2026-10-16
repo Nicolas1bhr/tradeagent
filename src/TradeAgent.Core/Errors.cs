@@ -359,6 +359,16 @@ public static class Labels
     }
 
     /// <summary>
+    /// THE TURN REFUSED BECAUSE ANOTHER LAUNCH ALREADY TOOK SOME OF THE WAKES IT WAS ANSWERING (<c>U-mint-per-launch</c>):
+    /// the wakes are the transaction's answer, and a launch is admitted and charged only for wakes it actually took. It
+    /// names the launch and the count, so the record says which turn stepped over and why.
+    /// </summary>
+    public static string LaunchWakesTaken(string attemptId, int taken, int asked) =>
+        $"The launch '{attemptId}' was answering {asked} wake(s), and another launch had already taken "
+        + $"{asked - taken} of the {asked}, so it was not started. Nothing was written and nothing was charged; "
+        + "its own wakes are still due.";
+
+    /// <summary>
     /// A LAUNCH UNDER AN ID THIS LEDGER NEVER HANDED OUT, OR ALREADY LAUNCHED UNDER (<c>U-mint-per-launch</c>). A turn's
     /// prompt, row and output's name are one id, the one it minted; a launch carrying any other is refused rather than
     /// recorded under a name another launch owns.
