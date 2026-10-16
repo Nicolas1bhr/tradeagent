@@ -303,14 +303,29 @@ public class SweepRequestIdTests
     /// three replies delayed 1.9 s each made this take about 5.7 s against a promise of 2.
     ///
     /// The scope now carries ONE absolute deadline and every RPC inside it gets what is left.
+    ///
+    /// <para>MEASURED BY THE PRODUCT'S OWN ACCOUNTING, NOT BY THE RUNNER'S (U-sweep-budget-red). It
+    /// used to give every simulator call 1.9 s of the 2 s budget, which left everything the handler
+    /// does before the book read — store included, on the wall clock the pipe opens — 100 ms, and a
+    /// macOS runner that spent more had its book read clipped: three reds, two faces, one event
+    /// (<see cref="A_sweep_whose_book_read_the_runner_left_no_room_for_answers_refused_and_touches_nothing"/>
+    /// spends that room every run and shows the product right). Now each simulator call is seen at
+    /// the wire through <see cref="FaultProfile.Wait"/>, with the deadline the product bounded it
+    /// by: the book read answers once HALF the budget is spent (by that deadline), the resolution at
+    /// once, and the cancel is held until the deadline stops it. One clock, all three calls bound by
+    /// the same deadline, opened by this press; a clock started per RPC gives the cancel a deadline a
+    /// whole half-budget later than the read's, every run. The runner can no longer clip the read
+    /// unless it spends the whole budget before it.</para>
     /// </summary>
-    // `Timing`: the assertion below is a raw stopwatch over a press, so the runner's file IO is
-    // inside the number. Same measurement and same reason as `OperatorPressIsAnEmergencyTests`.
+    // `Timing`: the two stopwatch bounds below still time a press, so the runner's file IO is inside
+    // them. Same measurement and same reason as `OperatorPressIsAnEmergencyTests`. The verdict on
+    // the clock itself is the deadlines, which are the product's and not the runner's.
     [Fact]
     [Trait("Category", "Timing")]
     public async Task A_sweep_pays_the_emergency_budget_once_not_once_per_rpc()
     {
-        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2));
+        var budget = TimeSpan.FromSeconds(2);
+        var (gw, conn, db) = await ReadyWithBudget(budget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -321,23 +336,56 @@ public class SweepRequestIdTests
         Assert.True((await client.SendAsync(Buy("f1-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
         Assert.Single(await gw.OrdersAsync(false));
 
-        // Every simulator call now costs 1.9 s: the orders read, the target resolution, the cancel.
-        conn.Faults.LatencyMs = 1900;
+        // Every simulator call inside the sweep's scope, in order: when it reached the wire, and the
+        // deadline the product bounded it by. A call outside the scope (a health poll) is not the
+        // sweep's and passes through. One millisecond of latency is what makes the simulator hand
+        // each call to the seam; it fits any budget that has not already gone.
+        var calls = new List<(long At, long Deadline)>();
+        conn.Faults.Wait = (d, token) =>
+        {
+            if (RiskReducingScope.DeadlineAt is not { } deadline) return Task.Delay(d, token);
+            int n;
+            lock (calls) { calls.Add((Environment.TickCount64, deadline)); n = calls.Count; }
+            return n switch
+            {
+                // The book read: answered once half the budget is gone by the product's own deadline.
+                1 => Task.Delay(RiskReducingScope.LeftUntil(deadline) - budget / 2 is var w && w > TimeSpan.Zero
+                    ? w : TimeSpan.Zero, token),
+                // The cancel, and anything after it: held until the deadline stops the wait.
+                >= 3 => Task.Delay(Timeout.Infinite, token),
+                _ => Task.CompletedTask
+            };
+        };
+        conn.Faults.LatencyMs = 1;
 
+        var opened = Environment.TickCount64;
         var timer = Stopwatch.StartNew();
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f1-sweep" })
             .WaitAsync(TimeSpan.FromSeconds(30));
         timer.Stop();
+        conn.Faults.LatencyMs = 0;
+        conn.Faults.Wait = null;
+
+        // The instrument applied: the book read, the target resolution and the cancel all reached it.
+        Assert.True(calls.Count == 3,
+            $"{calls.Count} simulator call(s) inside the sweep, where the book read, the resolution and the cancel are three — this measures nothing");
+
+        // THE VERDICT: one deadline for the whole operation, and it is this press's own budget.
+        var deadlines = string.Join(", ", calls.Select(c => $"+{c.Deadline - opened} ms"));
+        Assert.True(calls.All(c => c.Deadline == calls[0].Deadline),
+            $"the sweep's calls were bounded by different deadlines ({deadlines} after the press) — each RPC is still starting its own clock");
+        Assert.InRange(calls[0].Deadline - (long)budget.TotalMilliseconds, opened, calls[0].At);
 
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(4),
             $"the sweep took {timer.Elapsed.TotalSeconds:0.00}s against a two-second budget — each RPC is still starting its own clock");
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
             $"the sweep returned in {timer.Elapsed.TotalSeconds:0.00}s — the latency never applied, so this measures nothing");
 
-        // And whatever it did, it says so per leg rather than leaving the owner to guess — once it has
-        // answered at all: a book read the deadline clipped answers ok=false and no data (see Answered).
+        // And whatever it did, it says so per leg rather than leaving the owner to guess: the one
+        // leg's cancel was held past the deadline, so it may have acted and is named as such.
         var data = Answered(reply);
         Assert.Equal(1, data.GetProperty("outcomes").GetArrayLength());
+        Assert.Equal("sent-not-confirmed", Outcomes(data).Single().Outcome);
     }
 
     /// <summary>
