@@ -1465,13 +1465,15 @@ public sealed class MissionLoop
     string? _waitingFor;
 
     /// <summary>
-    /// EACH POSITION'S LAST LAUNCH REFUSAL (<see cref="AiAdmission.Launch"/>), in the refusal's own words, until that position
-    /// next launches or nothing is due at all. It is the reason the card gives for that position's wait — and so for the
-    /// owner's words it still owes — and it settles nothing: the wakes and the words stay due (docs/ORCHESTRATION.md § 2.5,
-    /// "his surface shows them undelivered with the reason"). Kept apart from <see cref="_waitingFor"/>, which the next
-    /// lease clears.
+    /// EACH POSITION'S NEWEST REFUSAL, as the card says it, until that position next launches, another reason replaces it, or
+    /// nothing is due at all: a launch refusal (<see cref="AiAdmission.Launch"/>), the ledger's (<see cref="AiAdmission.Ledger"/>)
+    /// or a lasting launch bar. It is the reason the card gives for that position's wait — and so for the owner's words it
+    /// still owes — and it settles nothing: the wakes and the words stay due (docs/ORCHESTRATION.md § 2.5, "his surface shows
+    /// them undelivered with the reason"). Kept apart from <see cref="_waitingFor"/>, which the next lease clears. NEWEST WINS
+    /// (<c>U-org-lanes</c>, owed by <c>U-mint-per-launch</c>): a launch refusal kept here used to outrank every later reason
+    /// for the same position, so a ledger that then refused it showed behind a stale sentence.
     /// </summary>
-    readonly Dictionary<string, string> _launchRefused = [];
+    readonly Dictionary<string, string> _refusedLast = new(StringComparer.Ordinal);
 
     /// <summary>The launch ledger's last refusal the host was told of, so a ledger that stays broken is one line.</summary>
     string? _ledgerRefusalTold;
@@ -1555,7 +1557,21 @@ public sealed class MissionLoop
     /// are safe by construction — a refused launch consumes none — and this is the in-memory half of
     /// the same promise.
     /// </summary>
-    readonly List<string> _typedForARefusedTurn = [];
+    readonly Dictionary<string, List<string>> _typedForARefusedTurn = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// PUTS <paramref name="typed"/> BACK FOR <paramref name="role"/> ALONE (<c>U-org-lanes</c>): the owner's words typed into
+    /// one position's conversation reach that position's next turn and no other's — one list for every role handed them to
+    /// whichever turned next. At the front when <paramref name="first"/>, so anything added meanwhile stays behind them.
+    /// Called under the loop's lock.
+    /// </summary>
+    void OweTyped(string role, IReadOnlyList<string> typed, bool first = false)
+    {
+        if (typed.Count == 0) return;
+        if (!_typedForARefusedTurn.TryGetValue(role, out var owed)) _typedForARefusedTurn[role] = owed = [];
+        if (first) owed.InsertRange(0, typed);
+        else owed.AddRange(typed);
+    }
 
     /// <summary>
     /// THE BOUND THAT CUT EACH ROLE'S LAST TURN, until that role's next turn has been told about it.
@@ -1808,8 +1824,8 @@ public sealed class MissionLoop
                     _turns, Errors(whose.FirstOrDefault() ?? _role), _lastFirstLine)
                 {
                     WaitingFor = state != MissionState.Waiting ? null
-                        : card is not null && _launchRefused.TryGetValue(card, out var refused)
-                            ? $"its launch to be tried again (it was refused: {refused})"
+                        : card is not null && _refusedLast.TryGetValue(card, out var refused)
+                            ? refused
                             : _waitingFor,
                     Role = whose.FirstOrDefault() ?? _role,
                     Roles = whose,
@@ -1869,7 +1885,7 @@ public sealed class MissionLoop
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
         // this is the second half of the same promise for a turn whose task the wait above gave up
         // on: a lease nothing releases is a role that never works again.
-        lock (_gate) { _turning.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _launchRefused.Clear(); }
+        lock (_gate) { _turning.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
         Changed?.Invoke();
     }
 
@@ -1989,29 +2005,63 @@ public sealed class MissionLoop
         // IT RUNS BEFORE ANYTHING ELSE IN THE TURN AND IT LAUNCHES NOTHING. No wake, no admission, no
         // conversation: an expired boundary is settled even on a day the ceiling is reached and even
         // when the loop is idle, because the loop sleeps until the earliest deadline (see Idle).
+        //
+        // ONE TICK, ONE LANE (U-org-lanes): the sweeps once, the pick of one, and that one's turn run inline — the shape every
+        // caller of this method has always had. The dispatcher is the same three parts with up to N
+        // picked, each run as its own lane.
+        var swept = Sweep();
+        var picked = Pick(swept, 1);
+        if (picked.Roles.Count == 0) return picked.Wait;
+        return await RunAsync(picked.Roles[0], swept.Events, ct);
+    }
+
+    /// <summary>What one tick's sweeps leave the pick: the wake queue, and the roles whose only due wakes are held tape.</summary>
+    readonly record struct Swept(MissionEventStore? Events, HashSet<string> Deferred);
+
+    /// <summary>What a pick chose — up to the lanes it was offered — or, when it chose none, how long to wait and why.</summary>
+    readonly record struct Picked(IReadOnlyList<string> Roles, TimeSpan Wait);
+
+    /// <summary>
+    /// THE APP'S OWN SWEEPS, ONCE PER TICK AND NEVER ONCE PER LANE (<c>docs/ORCHESTRATION.md</c> § 2.5): the boundary deadlines,
+    /// the paper allocation and deployments, the owner's-words recoveries, the schedule of every role's next look, and the
+    /// tape wakes the holdout withholds. None of them launches anything; each runs whether or not a role then turns.
+    /// </summary>
+    Swept Sweep()
+    {
         ApplyBoundaryDeadlines();
 
         var events = _host.Events;
-        var role = CouncilRoles.Default;
-        List<MissionEvent> wake = [];
+        if (events is null) return new Swept(null, []);
 
-        if (events is not null)
+        RecoverLostOwnerWords(events);
+        RecoverUnansweredOwnerWords(events);
+        Schedule(events);
+        return new Swept(events, WithdrawHeldTape(events));
+    }
+
+    /// <summary>
+    /// THE POSITIONS THAT TURN NOW, UP TO <paramref name="lanes"/>, in O3's order (<see cref="RolesDue"/>) through every
+    /// eligibility filter the loop has — runnable, not already leased, affordable, not held by its vendor. A pick only LOOKS:
+    /// it takes no lease and writes nothing a launch writes, and each picked position's own run asks every gate again.
+    /// Choosing none, it answers the wait the loop's single turn has always answered for the same reason.
+    /// </summary>
+    Picked Pick(Swept swept, int lanes)
+    {
+        var events = swept.Events;
+        if (events is null) return new Picked([CouncilRoles.Default], TimeSpan.Zero);
+        var deferred = swept.Deferred;
         {
-            RecoverLostOwnerWords(events);
-            RecoverUnansweredOwnerWords(events);
-            Schedule(events);
-            var deferred = WithdrawHeldTape(events);
             // A ROLE WHOSE ONLY DUE WAKES ARE TAPE WAKES IT CANNOT CHECK NOW IS NOT A CANDIDATE: the wakes wait for the
             // next look, and they do not stand in front of another role's.
             var due = RolesDue(events).Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
-            if (due.Count == 0) return Idle(events);
+            if (due.Count == 0) return new Picked([], Idle(events));
 
             // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of
             // a position that cannot run would be chosen on every pass and the legacy pair would never turn. WHAT BECOMES OF
             // ITS WAKES is the refusal's kind (U-org-wakes, ORCHESTRATION § 2.5): refused for what it IS, they settle,
             // recorded, never retried; refused for this host or this launch — or by a seam that threw — they are kept.
             due = [.. due.Where(r => Runnable(events, r))];
-            if (due.Count == 0) return _options.BusyRetry;
+            if (due.Count == 0) return new Picked([], _options.BusyRetry);
 
             // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
             // role that has spent its share is. Without this line a second caller always collides
@@ -2021,7 +2071,7 @@ public sealed class MissionLoop
             // Every role due is already turning: the work is in hand, there is nothing to say and
             // nothing to record, so this is a plain wait rather than the cap's sentence below.
             var free = due.Where(r => !Turning(r)).ToList();
-            if (free.Count == 0) return _options.BusyRetry;
+            if (free.Count == 0) return new Picked([], _options.BusyRetry);
 
             // The roles whose own share AND the owner's ceiling both have room for a turn.
             var affordable = free.Where(r => Spend(r).AdmitsAnotherTurn).ToList();
@@ -2029,12 +2079,12 @@ public sealed class MissionLoop
             // THE FIRST OF THEM WHOSE VENDOR WILL TAKE A TURN. A role whose vendor has refused for its
             // usage limit is stepped over until the time the vendor named, exactly as a turning role
             // is: its wakes stay due and unconsumed, and a role on another runtime keeps working.
-            var open = affordable.FirstOrDefault(r => HeldFor(r) is null);
-            if (open is null)
+            var open = affordable.Where(r => HeldFor(r) is null).Take(lanes).ToList();
+            if (open.Count == 0)
             {
                 // Every role that could be afforded is held: nothing is launched, and the card says
                 // whose limit and until when.
-                if (affordable.Count > 0) return Holding(affordable[0]);
+                if (affordable.Count > 0) return new Picked([], Holding(affordable[0]));
 
                 // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it.
                 // The message stays unconsumed and is still owed a turn; this is the standing reason
@@ -2042,10 +2092,20 @@ public sealed class MissionLoop
                 // the thing that stopped the turn is that there is no money left to spend on one.
                 BlockOwnerMessages(events, "the day's AI spending ceiling is reached, so no turn can "
                                            + "be taken until it resets");
-                return CappedUntilMidnight(Spend(free[0])) ?? _options.BusyRetry;
+                return new Picked([], CappedUntilMidnight(Spend(free[0])) ?? _options.BusyRetry);
             }
-            role = open;
+            return new Picked(open, TimeSpan.Zero);
         }
+    }
+
+    /// <summary>
+    /// ONE POSITION'S TURN, from its conversation to the wait after it (<c>U-org-lanes</c>): every gate asked again for this
+    /// position — the day's ceiling, its vendor, its launch bar, its wakes — then its lease, its admission, the run, the commit
+    /// and the pass behind it. Run inline by <see cref="TurnAsync"/>, and as its own lane by the dispatcher.
+    /// </summary>
+    async Task<TimeSpan> RunAsync(string role, MissionEventStore? events, CancellationToken ct)
+    {
+        List<MissionEvent> wake = [];
 
         // ---- the day's ceiling -------------------------------------------------------------------
         // The AI's mission is to make at least enough to pay for itself and half of that sentence is
@@ -2119,8 +2179,8 @@ public sealed class MissionLoop
         List<string> typed;
         lock (_gate)
         {
-            typed = [.. _typedForARefusedTurn, .. conversation.TakeTyped()];
-            _typedForARefusedTurn.Clear();
+            typed = [.. _typedForARefusedTurn.GetValueOrDefault(role) ?? [], .. conversation.TakeTyped()];
+            _typedForARefusedTurn.Remove(role);
         }
 
         // THE LAUNCH ID, MINTED BEFORE THE MESSAGE IT GOES INTO. The turn has to be told the id it
@@ -2149,7 +2209,7 @@ public sealed class MissionLoop
             // THE OWNER'S WORDS GO BACK BEFORE THE REFUSAL IS SAID (fix pass 2; ORCHESTRATION § 2.5): they came off the
             // conversation's list above for a turn that will not run, and a refusal never drops or settles them. Put back
             // at the FRONT, so anything added meanwhile stays behind them and they reach the next turn in the order typed.
-            lock (_gate) _typedForARefusedTurn.InsertRange(0, typed);
+            lock (_gate) OweTyped(role, typed, first: true);
             return Barred(role, claimRefused, events);
         }
         using var claimed = new ClaimHeld(gate);
@@ -2204,7 +2264,7 @@ public sealed class MissionLoop
         // SituationAsync would stop the other role for as long as the broker took to answer.
         if (Lease(role) is not { } lease)
         {
-            lock (_gate) _typedForARefusedTurn.AddRange(typed);
+            lock (_gate) OweTyped(role, typed);
             Refused?.Invoke($"{CouncilRoles.Title(role)}: a turn is already running for this role, or "
                             + "a material pass is measuring the window a launch would walk into, so a "
                             + "second one was not started.");
@@ -2245,7 +2305,7 @@ public sealed class MissionLoop
         // with this turn (`minted`); the next turn mints its own (U-mint-per-launch).
         if (!admission.Admitted)
         {
-            lock (_gate) { _turning.Remove(role); _role = null; _typedForARefusedTurn.AddRange(typed); }
+            lock (_gate) { _turning.Remove(role); _role = null; OweTyped(role, typed); }
 
             // THE MANDATE REFUSED IT (U-org-assignments-a): closed, not this role's, of unknown spend, or its allocation has no room.
             // That mandate's wakes in this launch are closed by no launch and its decider is told — so the next look is a fresh one
@@ -2269,7 +2329,7 @@ public sealed class MissionLoop
             {
                 lock (_gate)
                 {
-                    _launchRefused[role] = admission.Refusal ?? "";
+                    _refusedLast[role] = $"its launch to be tried again (it was refused: {admission.Refusal ?? ""})";
                     _role = role;
                     _nextTurnAt = _now() + _options.BusyRetry;
                 }
@@ -2298,7 +2358,7 @@ public sealed class MissionLoop
 
         // LAUNCHED, so the minted id is the row's now and nothing forgets it — and a launch refusal kept for this position
         // is no longer the reason it waits.
-        lock (_gate) _launchRefused.Remove(role);
+        lock (_gate) _refusedLast.Remove(role);
         minted.Launched();
 
         // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
@@ -2463,6 +2523,7 @@ public sealed class MissionLoop
         {
             _role = role;
             _waitingFor = $"{hold.Vendor}'s usage limit to reset";
+            _refusedLast.Remove(role);
         }
         Changed?.Invoke();
 
@@ -2989,7 +3050,7 @@ public sealed class MissionLoop
         }
 
         // NOTHING IS DUE, so no position waits on a refused launch and no kept refusal is a reason any more.
-        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; _launchRefused.Clear(); }
+        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; _refusedLast.Clear(); }
         Changed?.Invoke();
 
         if (next is null) return _options.MaxDelay;
@@ -3528,6 +3589,7 @@ public sealed class MissionLoop
                 ? $"the {CouncilRoles.Title(r)}'s share of the day to reset"
                 : "the daily spending limit to reset";
             _role = spend.Role;
+            if (spend.Role is { } capped) _refusedLast.Remove(capped);
         }
         Changed?.Invoke();
 
@@ -3559,6 +3621,7 @@ public sealed class MissionLoop
             _waitingFor = admission.Cause is { Length: > 0 } cause
                 ? $"the launch ledger to take this turn's record again (it said: {cause})"
                 : "the launch ledger to take this turn's record again";
+            _refusedLast[role] = _waitingFor;
         }
 
         if (!told)
@@ -3588,6 +3651,7 @@ public sealed class MissionLoop
                 errors = Failed(role);
                 _role = role;
                 _waitingFor = $"TradeAgent to be able to hold the AI's programs again ({bar.Why})";
+                _refusedLast[role] = _waitingFor;
             }
         }
 
