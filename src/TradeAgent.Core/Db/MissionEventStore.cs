@@ -207,6 +207,15 @@ public static class MissionEventDisposition
     /// reached without a turn, like <see cref="Withdrawn"/>; never a claim about a turn.
     /// </summary>
     public const string Held = "held";
+
+    /// <summary>
+    /// A WAKE FOR A POSITION THE ACTIVATION GATE REFUSED FOR WHAT IT IS (<see cref="RefusalKind.Position"/>, <c>U-org-wakes</c>):
+    /// consumed by no launch (<see cref="MissionEventStore.NoLaunch"/>), at no cost, with the gate's sentence, and never retried —
+    /// no later pass can make the position runnable, so a wake kept for it would be re-read on every pass for nothing. Never
+    /// written on the owner's words (they stay owed, <see cref="Blocked"/> with the sentence) and never for a refusal about the
+    /// host or the launch, which keeps every wake. An outcome the app reached without a turn, like <see cref="Withdrawn"/>.
+    /// </summary>
+    public const string Refused = "refused";
 }
 
 /// <summary>
@@ -764,6 +773,50 @@ public sealed class MissionEventStore(Database db)
             """,
             ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
             ("$review", MissionEventKind.Review), ("$chair", CouncilRoles.Default), ("$role", role));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// WHAT <c>consumed_by</c> READS ON A WAKE THE APP SETTLED WITHOUT A LAUNCH (<see cref="SettleRefused"/>). Deliberately no
+    /// attempt id — nothing in <c>ai_attempt</c> carries it — so <see cref="AiAttemptStore.LastWoken"/> never reads it as a turn.
+    /// </summary>
+    public const string NoLaunch = "no-launch";
+
+    /// <summary>
+    /// SETTLES EVERY DUE WAKE OF <paramref name="position"/>, consumed by no launch and <see cref="MissionEventDisposition.Refused"/>
+    /// with <paramref name="why"/>, and answers how many (<c>U-org-wakes</c>, RULING Q1). The loop calls it once the activation
+    /// gate has refused the position FOR WHAT IT IS (<see cref="RefusalKind.Position"/>).
+    ///
+    /// <para><b>The guard is the statement's.</b> One UPDATE: the EXACT role — never the chair's role-less rows folded in —
+    /// unconsumed, due at <paramref name="now"/>, and never the owner's words, which no refusal of either kind settles. A wake
+    /// due later is left for the pass at which it is due.</para>
+    /// </summary>
+    public int SettleRefused(string position, DateTimeOffset now, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$now, consumed_by=$none, disposition=$refused, disposition_detail=$why
+             WHERE role = $position AND consumed_at IS NULL AND due_at <= $now AND kind <> $owner
+            """,
+            ("$now", Sql.T(now)), ("$none", NoLaunch), ("$refused", MissionEventDisposition.Refused), ("$why", why),
+            ("$position", position), ("$owner", MissionEventKind.Owner));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// THE OWNER'S WORDS TO <paramref name="role"/> THAT ARE DUE AND NO TURN HAS TAKEN, marked
+    /// <see cref="MissionEventDisposition.Blocked"/> with <paramref name="why"/> where nothing has settled them yet, and how many
+    /// (<c>U-org-wakes</c>, RULING Q1): left UNCONSUMED — still owed a turn — and shown undelivered with the reason the
+    /// position cannot take them. The same standing reason the day's ceiling writes; the real outcome replaces it.
+    /// </summary>
+    public int BlockOwnerWords(string role, DateTimeOffset now, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition=$blocked, disposition_detail=$why
+             WHERE kind = $owner AND COALESCE(role,$chair) = $role AND consumed_at IS NULL AND due_at <= $now
+               AND disposition IS NULL
+            """,
+            ("$blocked", MissionEventDisposition.Blocked), ("$why", why), ("$owner", MissionEventKind.Owner),
+            ("$chair", CouncilRoles.Default), ("$role", role), ("$now", Sql.T(now)));
         return c.ExecuteNonQuery();
     });
 

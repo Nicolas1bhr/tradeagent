@@ -218,8 +218,12 @@ public class OrgPrincipalsTests : IDisposable
             Assert.Equal(new PositionStanding(Third, OrgIds.Research, OrgPositionStatus.Active, OrgPositionKind.Member,
                 IsLegacy: false, HomeDir: $"org/{Third}"), standing);
             Assert.Contains("no activation gate", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
-            Assert.Contains("no activation gate", host.ActivationRefusal(Third), StringComparison.Ordinal);
-            Assert.Contains("not an active position", host.ActivationRefusal("nobody-here"), StringComparison.Ordinal);
+            Assert.Contains("no activation gate", host.ActivationRefusal(Third)!.Words, StringComparison.Ordinal);
+            Assert.Contains("not an active position", host.ActivationRefusal("nobody-here")!.Words, StringComparison.Ordinal);
+            // TYPED (U-org-wakes): an active position this build will not activate is refused for the HOST, its wakes kept; a
+            // name the chart does not hold as active is refused for what it is, its wakes settled.
+            Assert.Equal(RefusalKind.HostOrLaunch, host.ActivationRefusal(Third)!.Kind);
+            Assert.Equal(RefusalKind.Position, host.ActivationRefusal("nobody-here")!.Kind);
             Assert.Null(new OrgStore(db).Standing(AppPrincipals.Perception));
             Assert.Equal(OrgPositionKind.Head, new OrgStore(db).Standing(CouncilRoles.Operations)!.Kind);
             db.Write(_ =>
@@ -272,7 +276,10 @@ public class OrgPrincipalsTests : IDisposable
         Assert.True(conversation.Sent.Count == 0,
             $"a wake for 'nobody-here' was run through the host's default conversation: {conversation.Sent.Count} sent");
         Assert.Empty(((NoSeamHost)host).Wakes);
-        Assert.False(events.Get(strangers)!.Consumed);
+        // REFUSED FOR WHAT IT IS (U-org-wakes): the default seam's refusal is about the id, so its wake settles — consumed by
+        // no launch, never by a turn — rather than being re-read on every pass.
+        Assert.Equal(MissionEventStore.NoLaunch, events.Get(strangers)!.ConsumedBy);
+        Assert.Equal(MissionEventDisposition.Refused, events.Get(strangers)!.Disposition);
 
         var chairs = MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Operations);
         events.Raise(chairs, MissionEventKind.Review, earlier.AddSeconds(1), role: CouncilRoles.Operations);
@@ -288,7 +295,8 @@ public class OrgPrincipalsTests : IDisposable
         {
             var refusal = host.ActivationRefusal(stranger);
             Assert.NotNull(refusal);
-            Assert.Contains($"'{stranger}'", refusal, StringComparison.Ordinal);
+            Assert.Equal(RefusalKind.Position, refusal.Kind);
+            Assert.Contains($"'{stranger}'", refusal.Words, StringComparison.Ordinal);
         }
         Assert.Null(host.ActivationRefusal(CouncilRoles.Operations));
         Assert.Null(host.ActivationRefusal(CouncilRoles.Research));

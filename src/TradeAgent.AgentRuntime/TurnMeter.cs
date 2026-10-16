@@ -1418,11 +1418,22 @@ public sealed class TurnMeter
             if (!OrgStore.IsAppPrincipal(role) && new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active })
                 return null;
         }
-        catch (Exception) { /* a chart that cannot be read admits nobody by name */ }
+        catch (Exception ex)
+        {
+            // A CHART THAT CANNOT BE READ ADMITS NOBODY BY NAME — and says nothing about the position: it is this host's
+            // read that failed, so the refusal keeps every wake (U-org-wakes).
+            return new AiAdmission
+            {
+                Refusal = $"the organisation chart could not be read, so no turn is launched under '{role}': {ex.Message}. "
+                          + "Nothing was written.",
+                Kind = RefusalKind.HostOrLaunch
+            };
+        }
         return new AiAdmission
         {
             Refusal = $"'{role}' is not an active position, so no turn is launched under it and none is charged to "
-                      + "another position. Nothing was written."
+                      + "another position. Nothing was written.",
+            Kind = RefusalKind.Position
         };
     }
 

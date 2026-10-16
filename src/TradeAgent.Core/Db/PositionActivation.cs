@@ -20,6 +20,32 @@ public static class OrgPositionKind
 public sealed record PositionStanding(string Id, string UnitId, string Status, string Kind, bool IsLegacy, string HomeDir);
 
 /// <summary>
+/// WHAT A REFUSAL TO TURN IS ABOUT (<c>docs/ORCHESTRATION.md</c> § 2.5, the orchestrator's ruling of 2026-10-11, <c>U-org-wakes</c>).
+/// The loop acts on the kind and never on the words.
+/// </summary>
+public enum RefusalKind
+{
+    /// <summary>
+    /// ABOUT THE POSITION ITSELF — its standing (dormant, ended, unknown) or a capability its seat cannot carry. Its due wakes
+    /// SETTLE, recorded <see cref="MissionEventDisposition.Refused"/>, and are never retried: no pass can make it runnable.
+    /// </summary>
+    Position,
+
+    /// <summary>
+    /// ABOUT THE HOST OR THE LAUNCH — no proven cell on this host, the no-unconfined-neighbour rule, no launcher, a held order
+    /// grant, an unwritable ledger or chart. The pass STEPS OVER the position and keeps every wake: the host may answer
+    /// differently at the next look.
+    /// </summary>
+    HostOrLaunch
+}
+
+/// <summary>
+/// WHY A POSITION MAY NOT TURN, typed (<c>U-org-wakes</c>): the kind the loop acts on and the sentence the owner reads. The owner's
+/// words are never settled by a refusal of either kind — they stay owed and show undelivered with <see cref="Words"/>.
+/// </summary>
+public sealed record TurnRefusal(RefusalKind Kind, string Words);
+
+/// <summary>
 /// THE ACTIVATION SEAM (<c>U-org-principals</c>; ORCHESTRATION § 2.3): whether a position may open a conversation at all,
 /// asked FIRST in <c>AppHost.ConversationFor</c> so a refused position opens nothing and writes no row.
 ///
@@ -46,4 +72,21 @@ public static class PositionActivation
                    + "is opened for it.";
         return null;
     }
+
+    /// <summary>
+    /// THE SAME ANSWER, TYPED (<c>U-org-wakes</c>): null where <see cref="Refusal"/> is null; otherwise its sentence with what it
+    /// is about. A position the chart does not hold as active — unknown, dormant, ended, or another id's row — is refused
+    /// <see cref="RefusalKind.Position"/>: nothing a later pass can do makes it runnable. An ACTIVE position this build will not
+    /// activate is refused <see cref="RefusalKind.HostOrLaunch"/>: what is missing is this build's gate and this host's proven
+    /// cell (ORCHESTRATION § 2.3), a fact about the host and never about the position, so its wakes are kept.
+    /// <paramref name="standing"/> null is the chart's answer "no such position"; a chart that could not be READ never reaches
+    /// here — its caller throws, and a throw is no verdict.
+    /// </summary>
+    public static TurnRefusal? Typed(string id, PositionStanding? standing) => Refusal(id, standing) is not { } words
+        ? null
+        : new TurnRefusal(
+            standing is not null && standing.Id == id && standing.Status == OrgPositionStatus.Active
+                ? RefusalKind.HostOrLaunch
+                : RefusalKind.Position,
+            words);
 }
