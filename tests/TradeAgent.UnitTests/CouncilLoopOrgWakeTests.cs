@@ -365,6 +365,37 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (c4) A CEILING MOVED BACK TO A DUE TIME IT ONCE SUPERSEDED KEEPS THE HEAD'S FLOOR (fix pass 1, review point 1). The floor
+    /// goes D1, then D2 (say its level's interval changed), then D1 again: exactly one pending ceiling remains, due at D1, and
+    /// the first D1 row still reads superseded — its history is not rewritten. A repeat at D1 writes nothing.
+    ///
+    /// <para>RED before the fix: the third move's raise hit the superseded D1 row's id and wrote nothing, and the supersede
+    /// then closed the pending D2 — the head was left with no floor at all.</para>
+    /// </summary>
+    [Fact]
+    public void A_ceiling_moved_back_to_a_superseded_due_time_keeps_the_heads_floor()
+    {
+        var (db, _) = Workspace();
+        using var __ = db;
+        var events = new MissionEventStore(db);
+        var now = Noon();
+        DateTimeOffset d1 = now.AddHours(24), d2 = now.AddHours(12);
+
+        events.MoveCeiling(Pos, now, d1);
+        events.MoveCeiling(Pos, now.AddMinutes(1), d2);
+        events.MoveCeiling(Pos, now.AddMinutes(2), d1);
+
+        var floor = Assert.Single(events.Pending(MissionEventKind.Ceiling, Pos));
+        Assert.Equal(d1, floor.DueAt);
+        var first = events.Get(MissionEventIds.Ceiling(Pos, d1))!;
+        Assert.True(first.Consumed);
+        Assert.Equal(MissionEventDisposition.Superseded, first.Disposition);
+
+        Assert.False(events.MoveCeiling(Pos, now.AddMinutes(3), d1));
+        Assert.Equal(floor.Id, Assert.Single(events.Pending(MissionEventKind.Ceiling, Pos)).Id);
+    }
+
+    /// <summary>
     /// (c3) GUARD: THE LEGACY PAIR'S LOOKS ARE UNCHANGED by the positions now on the chart: the same rows — kind, role, due —
     /// raised for the chair and Research with a head and a member beside them as without, the heartbeat on and the host saying
     /// what each owns (<c>U-reconcile-wakes</c>' "no open work, no look"; <c>U-reconcile-packet</c>'s reminders).
