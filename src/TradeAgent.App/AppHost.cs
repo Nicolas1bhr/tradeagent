@@ -32,6 +32,17 @@ public sealed class AppHost : IAsyncDisposable
     readonly AtasHealthReporter _atasHealth = new();
     readonly RuntimeFileHealth _runtimeFile = new();
     GatewayPipeServer? _server;
+
+    /// <summary>
+    /// THE BROKER'S SHELL-FREE DOOR (<c>U-thinking-seats-b</c>): the app's own MCP server on loopback, beside the pipe, started
+    /// with the gateway and stopped with it. ONE door for the app's life: it reads <see cref="_server"/> per call, so a switch of
+    /// trading platform, which replaces the pipe server, does not leave it serving a gateway nobody trades through.
+    /// </summary>
+    BrokerDoor? _door;
+
+    /// <summary>Where the broker door listens — the URL a broker-only seat's MCP configuration names (part c) — or null.</summary>
+    public Uri? DoorUrl => _door?.Url;
+
     CancellationTokenSource? _loop;
 
     /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
@@ -241,6 +252,19 @@ public sealed class AppHost : IAsyncDisposable
             gateway: () => _server,
             ledger: _db is null ? null : new ToolCallStore(_db),
             session: () => Agent?.SessionId ?? "");
+
+    /// <summary>
+    /// THE BROKER DOOR AS THE APP COMPOSES IT (<c>U-thinking-seats-b</c>). Its record goes to the engineering log, a line per
+    /// decision and never a token.
+    /// </summary>
+    BrokerDoor ComposeTheDoor() => new()
+    {
+        Log = line =>
+        {
+            try { Gateway.Log.Engineering("BrokerDoor", "decision", "info", metadataJson: Json.Write(new { line })); }
+            catch (Exception) { /* a line about the door is never worth the door */ }
+        }
+    };
 
     /// <summary>
     /// WHICH RUNTIME ONE ROLE RUNS ON: the owner's choice for that role, then the app's default.
@@ -875,6 +899,8 @@ public sealed class AppHost : IAsyncDisposable
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
             _server.Start();
+            _door = ComposeTheDoor();
+            _door.Start();
             Health.Set(Components.Gateway, HealthState.READY);
 
             ComposeTheAi(_db);
@@ -2290,6 +2316,7 @@ public sealed class AppHost : IAsyncDisposable
         // a death in the record itself. A crash writes nothing here, and that absence is the evidence.
         try { Gateway?.Log.Activity("TradeAgent stopped"); }
         catch (Exception) { /* the quit goes on whether or not it could be written down */ }
+        if (_door is not null) await _door.DisposeAsync();
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();
