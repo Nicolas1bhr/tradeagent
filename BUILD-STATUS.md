@@ -10603,3 +10603,25 @@ seat A, behaviour identical, the ResumeOnStart test's purpose kept. Accepted dev
 Triage: fleet/records/U-seat-signin-review-triage.md.
 **Tests box:** NOT RUN — busy (2026-10-11), then the machine does not answer (2026-10-16). **NOT VERIFIED:** a real codex sign-in by browser, device code or key
 (fake CLI and fake keys only); the Windows card by eye; the Doctor row in the running app; no full local suite run.
+
+## U-grant-tree — a launch's grant is served only to a peer inside the container the app made for that attempt; `operations` never holds order permission beside another live launch; an uncontainable launch never starts (landed 2026-10-16, seat B)
+
+**Landed** solo (`land.sh` v3) on `main` at tip `eb943501` (rebased e17e0f6e → 24c6f965 onto `bc26f660`, then → eb943501 onto `6393e14e`, docs only; src+tests patch-id identical). CI run **38946186264** at `24c6f965`: every job success (incl.
+`linux-host`); `land.sh check` VERDICT PASS (names 2737 → 2761, removed 0; scan clean with the phrase list fleet/tmp/B-scratch/u-grant-tree-fix2/scan-phrases.txt — grant-identifier and `.Token` code lines). **No rung, no pipe op, no verb.**
+**What changed (build, 4 items):** `AttemptContainer`/`PeerFacts` (Windows: the job, `IsProcessInJob` + `GetProcessTimes`; Linux/macOS: `TreeTeardown`'s session + parent-chain predicate — RULING 1: on Linux
+`U-cell-linux-b` later ADDS the cgroup, AND, never a replacement); grants PENDING until `Bind` to the held container, a membership check at hello; ORDER-001 overlap decided atomically in `Issue`
+(`LAUNCH_HELD`); the loop and the chat pre-check and defer, wakes kept, no row. **RULING 2, in plain words:** a launch the app cannot contain is refused to START, before any spend — the legacy pair
+included: an install with no working trade launcher (the legacy pair in paper mode) now refuses to start any AI turn; nothing admitted, wakes owed, the card and chat say the trade command is missing.
+**Fix pass 1 (review: 3 P1 + 1 P2):** an expired grant whose turn still runs stays an overlap neighbour (a687b37d); the grant is claimed under the register's lock BEFORE the ledger — no row, reservation
+or wake on the race (66cfa884); on Windows an assign failure ends the process at once and its survivors are carried to the meter, admission refused until they exit (48f98f5d); the job is made inside
+`Claim` before admission, so a job Windows will not make is refused with no row and its wake kept (675dca30). **Fix pass 2 (re-review: 1 P2 regression + 1 P1 partly closed):** a refused claim puts
+the owner's typed words back in typed order (c657a673); a process listing Windows will not give is never "the leader alone" — the tree stays an UNVERIFIED survivor, re-listed at every admission, no
+timer, until a listing shows none alive (ea9f799b).
+**Evidence:** build RED at base quoted (a)–(f), (i), e.g. "a process outside the attempt's container presented its live grant and was served"; seven mutants watched red. Fix 1 RED/mutants on
+windows-latest: (3) 38936216613 / 38936239245, (4) 38934266696 / 38934289586. Fix 2: item A RED "the owner's words taken for a turn whose claim was refused were lost", mutant (reverse order) red;
+item B single-job witnesses RED 38941463679, fixed 38941872482, mutant 38941897723. Tests box GREEN on the pre-rebase build 1c93ba41 only; the fix passes NOT RUN (the machine does not answer).
+**Re-review of pass 2, judged NOT in scope (owed, named):** (1) `_typedForARefusedTurn` is ONE list for every role, so restored words can reach the other role's next turn — the list's existing
+design, shared by the ledger and lease refusals, on the no-queue fallback only (the product's queue writes rows): owed to `U-org-lanes` item (g) `Owner_words_from_a_refused_turn_reach_only_their_position`.
+(2) an unlisted Windows child that starts a grandchild and exits before any listing succeeds orphans the grandchild — needs assign failure + snapshot failure + that chain; the grandchild holds no
+bound grant. Only a job closes it: OWED CARD — start suspended (CREATE_SUSPENDED → assign → resume) with a hand-built CreateProcess that keeps CreateNoWindow (Windows cells, seat A).
+**NOT VERIFIED:** `SO_PEERPIDFD` on the CI kernel; a `--cell` peer as a grant member; real Windows assign/snapshot refusals (injected only); a same-user ptrace or dup'd handle (not claimed, § 2.8).
