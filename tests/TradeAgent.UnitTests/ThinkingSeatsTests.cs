@@ -1,5 +1,7 @@
 using System.Globalization;
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -302,6 +304,52 @@ public class ThinkingSeatsTests : IDisposable
             Assert.Null(PositionActivation.Ask(legacy, chart.Standing(legacy), neighbours));
         }
     }
+
+    // ---- (l) review item 4: a chart read failure is about the host ------------------------------------------------
+
+    /// <summary>
+    /// (l) A CHART THAT CANNOT BE READ IS A REFUSAL ABOUT THE HOST, AT BOTH ENTRY POINTS (fix pass 1, review item 4; ORCHESTRATION
+    /// § 2.5): a transient store failure for an active position is <see cref="RefusalKind.HostOrLaunch"/> at the meter's admission
+    /// and at the app's seam — its wakes kept under backoff, never settled by O3 as a position defect. A position the chart READ as
+    /// dormant or unknown stays <see cref="RefusalKind.Position"/>. RED at the rebased tip: both answered Position.
+    /// </summary>
+    [Fact]
+    public async Task A_chart_that_cannot_be_read_is_a_refusal_about_the_host_at_both_entry_points()
+    {
+        using var db = TestEnv.NewDb();
+        Head(db, Third);
+        ProveCell(db);
+        var meter = Meter(db, _ => SeatClasses.Harness);
+        using var seat = meter.Attach(new Seated(SeatClasses.Harness), Third);
+        var app = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        await using var gateway = app.Gateway;
+
+        Rename(db, "org_position", "org_position_away");
+        try
+        {
+            var begun = meter.Begin("## Situation", role: Third);
+            Assert.False(begun.Admitted);
+            var seam = app.ActivationRefusal(Third);
+            Assert.True(begun.Kind == RefusalKind.HostOrLaunch && seam?.Kind == RefusalKind.HostOrLaunch,
+                $"a chart read failure was a refusal about the position: meter {begun.Kind}, seam {seam?.Kind}");
+            Assert.Contains("could not read the organisation chart", begun.Refusal, StringComparison.Ordinal);
+            Assert.Equal(0, Attempts(db));
+        }
+        finally { Rename(db, "org_position_away", "org_position"); }
+
+        // READ, AND NOT ACTIVE: a refusal about the position, as before.
+        SetStatus(db, Third, OrgPositionStatus.Dormant);
+        Assert.Equal(RefusalKind.Position, meter.Begin("## Situation", role: Third).Kind);
+        Assert.Equal(RefusalKind.Position, app.ActivationRefusal(Third)?.Kind);
+        Assert.Equal(RefusalKind.Position, app.ActivationRefusal("pos-0000dead")?.Kind);
+    }
+
+    /// <summary>A table renamed for the length of a test: the transient store failure, without a hook in the product.</summary>
+    static void Rename(Database db, string from, string to) => db.Write(_ =>
+    {
+        using var c = db.Cmd($"ALTER TABLE {from} RENAME TO {to}");
+        return c.ExecuteNonQuery();
+    });
 
     // ---- (g) code, never data --------------------------------------------------------------------------------------
 

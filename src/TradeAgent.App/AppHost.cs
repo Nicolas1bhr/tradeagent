@@ -332,25 +332,31 @@ public sealed class AppHost : IAsyncDisposable
         _roleConversations = [];
 
     /// <summary>
-    /// The chart's standing for one position id, or null where there is no such position, no database yet, or a chart
-    /// that could not be read — each of which the seam refuses.
+    /// The chart's standing for one position id, or null where there is no such position or no database yet — each of which the
+    /// seam refuses as a refusal about the position. A chart that cannot be read THROWS: that is a fact about the host, never
+    /// one about the position (review of <c>U-thinking-seats-a</c>, item 4), and its caller refuses it as such.
     /// </summary>
-    PositionStanding? StandingOf(string role)
-    {
-        try { return _db is null ? null : new OrgStore(_db).Standing(role); }
-        catch (Exception) { return null; }
-    }
+    PositionStanding? StandingOf(string role) => _db is null ? null : new OrgStore(_db).Standing(role);
 
     /// <summary>
     /// WHY A POSITION MAY NOT TURN — its kind and a sentence — or null: the activation gate's own answer with the DECLARED seat,
-    /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation.
+    /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation. A chart that
+    /// could not be read is a refusal about the host (<see cref="PositionActivation.ChartUnreadable"/>): its wakes are kept under
+    /// the loop's backoff, never settled as though the position were gone.
     /// </summary>
-    public GateRefusal? ActivationRefusal(string role) => PositionActivation.Ask(role, StandingOf(role), _seats);
+    public GateRefusal? ActivationRefusal(string role)
+    {
+        PositionStanding? standing;
+        try { standing = StandingOf(role); }
+        catch (Exception ex) { return PositionActivation.ChartUnreadable(role, ex.Message); }
+        return PositionActivation.Ask(role, standing, _seats);
+    }
 
     /// <summary>
     /// WHAT THE ACTIVATION GATE READS FOR ONE POSITION, as this host knows it now: the chart's standing, the DECLARED class of the
     /// seat it would launch on, whether this host holds a proven executor cell, the active positions beyond the legacy pair, and the
-    /// positions with an open unconfined launch other than this one. Each read where it is asked, never captured.
+    /// positions with an open unconfined launch other than this one. Each read where it is asked, never captured. A read that fails
+    /// throws, and the register answers "not known" — never a missing standing, which would be a refusal about the position.
     /// </summary>
     SeatFacts FactsFor(string role) => new()
     {

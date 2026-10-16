@@ -1392,8 +1392,10 @@ public sealed class TurnMeter
 
     /// <summary>
     /// THE REFUSAL OF A LAUNCH UNDER A NAME THAT IS NOT AN ACTIVE POSITION, or null. An app principal is code and never
-    /// a position; an unknown, dormant or ended one is refused in words rather than charged to the chair, and a chart
-    /// that could not be read refuses too. Nothing is written and nothing is consumed.
+    /// a position; an unknown, dormant or ended one is refused in words rather than charged to the chair — a refusal about
+    /// the position. A chart that could not be read refuses too, as a refusal about the HOST (review of
+    /// <c>U-thinking-seats-a</c>, item 4): a read failure says nothing about the position, and its wakes are kept under
+    /// backoff. Nothing is written and nothing is consumed.
     /// </summary>
     AiAdmission? NotAnActivePosition(string? role)
     {
@@ -1403,7 +1405,11 @@ public sealed class TurnMeter
             if (!OrgStore.IsAppPrincipal(role) && new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active })
                 return null;
         }
-        catch (Exception) { /* a chart that cannot be read admits nobody by name */ }
+        catch (Exception ex)
+        {
+            var unread = PositionActivation.ChartUnreadable(role, ex.Message);
+            return new AiAdmission { Refusal = unread.Words, Kind = unread.Kind };
+        }
         return new AiAdmission
         {
             Refusal = $"'{role}' is not an active position, so no turn is launched under it and none is charged to "

@@ -241,6 +241,16 @@ public static class PositionActivation
         $"'{id}' runs unconfined, and TradeAgent could not read whether any position beyond the legacy pair is active on this host, "
         + "so nothing is started: an unconfined launch is never passed beside a neighbour nobody could rule out. Its wakes are kept.");
 
+    /// <summary>
+    /// THE CHART COULD NOT BE READ for <paramref name="id"/> — a refusal about the HOST, never about the position (review of
+    /// <c>U-thinking-seats-a</c>, item 4): a store or read failure says nothing about the position's standing, so its wakes are kept
+    /// under backoff rather than settled as though it were dormant, ended or unknown. Only a chart READ as holding no active
+    /// position by that id is <see cref="RefusalKind.Position"/>.
+    /// </summary>
+    public static GateRefusal ChartUnreadable(string id, string why) => new(RefusalKind.HostOrLaunch,
+        $"TradeAgent could not read the organisation chart for '{id}' ({why}), so nothing is started for it. Its wakes are kept and "
+        + "it is tried again.");
+
     static GateRefusal Unset(string id) => new(RefusalKind.HostOrLaunch,
         $"'{id}' is a position beyond the legacy pair, and nothing has told this host which seat it would run on (the activation "
         + "gate's register is not set), so nothing is started for it. Its wakes are kept.");
