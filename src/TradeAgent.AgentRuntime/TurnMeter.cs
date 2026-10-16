@@ -923,11 +923,11 @@ public sealed class TurnMeter
         lock (_gate)
         {
             if (_survivors.Count == 0) return null;
-            _survivors.RemoveAll(p => !TreeTeardown.StillRunning(p));
+            _survivors.RemoveAll(p => !ProcessContainment.StillRunning(p));
             if (_survivors.Count == 0) return null;
             left = [.. _survivors];
         }
-        return new AiAdmission { Refusal = Labels.LastTurnStillRunning(left.Select(p => p.Pid)) };
+        return new AiAdmission { Refusal = TreeEnd.Held(left) };
     }
 
     /// <summary>

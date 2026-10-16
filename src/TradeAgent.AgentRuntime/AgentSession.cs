@@ -833,8 +833,12 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
                 $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it " +
                 (end is { Ended: false }
-                    ? $"tried to end it at once and could not: process {string.Join(", ", end.Survivors.Select(p => p.Pid))} " +
-                      "still runs, and no AI turn starts until it has ended. "
+                    ? end.Survivors.Any(p => p.Unlisted)
+                        ? "tried to end it at once and could not tell whether it ended: Windows would not list the programs it " +
+                          $"started (under process {end.Survivors.First(p => p.Unlisted).Pid}), and no AI turn starts until Windows lists them and " +
+                          "none is left running. "
+                        : $"tried to end it at once and could not: process {string.Join(", ", end.Survivors.Select(p => p.Pid))} " +
+                          "still runs, and no AI turn starts until it has ended. "
                     : "ended it at once. ") +
                 "Restart TradeAgent — it puts back what it needs to hold the AI as it starts. If this stays, reinstall TradeAgent.");
         }

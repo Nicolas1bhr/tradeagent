@@ -282,7 +282,10 @@ public sealed class ContainedProcess : IDisposable
     [SupportedOSPlatform("windows")]
     TreeEnd EndUnjobbed()
     {
-        var members = WindowsProcessTable.Tree(_leader, _leaderStart).ToList();
+        // A TREE WINDOWS WOULD NOT LIST IS NOT A LEADER-ONLY TREE (fix pass 2): the leader is asked as before, and the tree
+        // stays unverified — and is carried out as one Unlisted survivor — until a listing succeeds and shows none of it alive.
+        var leader = new ProcessEntry(_leader, 0, 0, 0, _leaderStart, false, false);
+        var members = ProcessContainment.ListTree(_leader, _leaderStart)?.ToList() ?? [leader];
         try
         {
             if (ProcessContainment.Faults.Value is { RefuseTreeKill: true })
@@ -294,11 +297,13 @@ public sealed class ContainedProcess : IDisposable
         var deadline = DateTime.UtcNow + TreeTeardown.Bound;
         while (true)
         {
-            foreach (var late in WindowsProcessTable.Tree(_leader, _leaderStart))
+            var listed = ProcessContainment.ListTree(_leader, _leaderStart);
+            foreach (var late in listed ?? [])
                 if (!members.Any(m => m.Pid == late.Pid)) members.Add(late);
             var left = members.Where(TreeTeardown.StillRunning).ToList();
-            if (left.Count == 0) return TreeEnd.Nothing;
-            if (DateTime.UtcNow >= deadline) return new TreeEnd(false, left, 0);
+            if (listed is not null && left.Count == 0) return TreeEnd.Nothing;
+            if (DateTime.UtcNow >= deadline)
+                return new TreeEnd(false, listed is null ? [.. left, leader with { Unlisted = true }] : left, 0);
             Thread.Sleep(20);
         }
     }
@@ -478,6 +483,23 @@ public static class ProcessContainment
     /// </summary>
     internal static readonly AsyncLocal<WindowsFaults?> Faults = new();
     const int JobObjectExtendedLimitInformation = 9;
+
+    /// <summary>
+    /// The tree under a Windows leader as the toolhelp snapshot has it, through <see cref="Faults"/>: a snapshot the test
+    /// refuses is answered as Windows' own refusal is — null, never the leader alone.
+    /// </summary>
+    internal static IReadOnlyList<ProcessEntry>? ListTree(int leader, ulong leaderStart) =>
+        Faults.Value is { RefuseSnapshot: true } ? null : WindowsProcessTable.Tree(leader, leaderStart);
+
+    /// <summary>
+    /// Whether a survivor of a teardown still runs, as the meter asks before every admission: a tree Windows would not list
+    /// (<see cref="ProcessEntry.Unlisted"/>) is listed again through <see cref="ListTree"/> and runs until a listing shows
+    /// none of it alive; any other survivor is asked as <see cref="TreeTeardown.StillRunning"/> asks it.
+    /// </summary>
+    internal static bool StillRunning(ProcessEntry survivor) =>
+        survivor.Unlisted
+            ? WindowsProcessTable.AnyAlive(ListTree(survivor.Pid, survivor.Start))
+            : TreeTeardown.StillRunning(survivor);
 
     /// <summary>
     /// The launcher the Unix path needs: TradeAgent's own <c>trade</c>, where the app deployed it.
@@ -862,7 +884,8 @@ public static class ProcessContainment
 }
 
 /// <summary>The Windows failures <see cref="ProcessContainment.Faults"/> arranges for a test; each one only makes a launch fail.</summary>
-internal sealed record WindowsFaults(bool RefuseJob = false, bool RefuseAssign = false, bool RefuseTreeKill = false);
+internal sealed record WindowsFaults(bool RefuseJob = false, bool RefuseAssign = false, bool RefuseTreeKill = false,
+    bool RefuseSnapshot = false);
 
 /// <summary>
 /// WHAT <see cref="ProcessContainment.Prepare"/> MADE FOR ONE LAUNCH BEFORE ITS ADMISSION (<c>U-grant-tree</c> fix pass 1): the

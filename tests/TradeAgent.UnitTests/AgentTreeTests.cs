@@ -742,6 +742,69 @@ public class AgentTreeTests : IDisposable
         Assert.True(admitted.Admitted, $"the hold did not lift once the uncontained process had exited: {admitted.Refusal}");
     }
 
+    /// <summary>
+    /// A TREE WINDOWS WOULD NOT LIST IS NEVER "NOTHING LEFT RUNNING" (<c>U-grant-tree</c> fix pass 2, re-review item 3). A
+    /// launch Windows would not put in its job, whose tree kill failed and whose process snapshot Windows refused, starts a
+    /// child and exits. The child is the launch still spending; nothing listed it. Read as a leader-only tree, the teardown
+    /// said the launch had ended and the next one was admitted beside it. Fail-closed: the tree stays an unverified survivor
+    /// — re-asked at every admission, never cleared by a timer — until a listing succeeds and shows none of it alive. Windows
+    /// only: the assign, the kill and the snapshot are refused through <see cref="ProcessContainment.Faults"/>; the child is real.
+    /// </summary>
+    [Fact]
+    public async Task A_tree_windows_would_not_list_holds_every_launch_until_a_listing_shows_none_of_it_alive()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = NewDir("unlisted");
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var manifest = new RuntimeManifest
+        {
+            Id = Probe, DisplayName = "Tree probe", Executable = cmd,
+            ExecArgs = ["/c", "{prompt}"], ResumeArgs = ["/c", "{prompt}"], TaskArgs = ["/c", "{prompt}"]
+        };
+        using var db = new Database(Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db"));
+        var meter = new TurnMeter(db, cap: () => 5m, recordPath: Path.Combine(dir, "turns.jsonl"), live: new LiveAttempts());
+        var session = new AgentSession(manifest, () => cmd, () => dir, () => new Dictionary<string, string>(),
+            new AgentPresence(), grants: new AgentGrants());
+        using var metered = meter.Attach(session, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        IReadOnlyList<ProcessEntry> roots = [];
+        try
+        {
+            ProcessContainment.Faults.Value = new WindowsFaults(RefuseAssign: true, RefuseTreeKill: true, RefuseSnapshot: true);
+            // THE LEADER STARTS A CHILD AND EXITS: the child is what still runs of the launch, and no snapshot named it.
+            await session.SendAsync("start /b ping -n 60 127.0.0.1 >nul 2>nul");
+            roots = ended?.Survivors ?? [];
+
+            var held = meter.Begin("next", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.False(held.Admitted, "a launch was admitted beside a child of the last launch that Windows would not list");
+            Assert.Contains("Windows would not list", held.Refusal, StringComparison.Ordinal);
+
+            // WINDOWS LISTS AGAIN, AND THE CHILD STILL RUNS: the listing that succeeds is what decides, and it shows one alive.
+            ProcessContainment.Faults.Value = null;
+            var listed = meter.Begin("listed", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.False(listed.Admitted, "a launch was admitted while a child the listing now shows still ran");
+        }
+        finally
+        {
+            ProcessContainment.Faults.Value = null;
+            foreach (var root in roots)
+                foreach (var p in (IEnumerable<ProcessEntry>?)ProcessContainment.ListTree(root.Pid, root.Start) ?? [])
+                    if (p.Pid != root.Pid && TreeTeardown.StillRunning(p))
+                        try { using var gone = Process.GetProcessById(p.Pid); gone.Kill(entireProcessTree: true); }
+                        catch (Exception) { /* already gone */ }
+        }
+
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (roots.Any(r => ((IEnumerable<ProcessEntry>?)ProcessContainment.ListTree(r.Pid, r.Start) ?? []).Any(TreeTeardown.StillRunning))
+               && DateTime.UtcNow < until)
+            await Task.Delay(50);
+        var admitted = meter.Begin("after", role: CouncilRoles.Operations, heldForTheLoop: false);
+        Assert.True(admitted.Admitted, $"the hold did not lift once a listing showed none of the tree alive: {admitted.Refusal}");
+    }
+
     /// <summary>A process of the test's own, killed by the test's Dispose: never one the test did not start.</summary>
     Process Ours(string program, params string[] args)
     {
