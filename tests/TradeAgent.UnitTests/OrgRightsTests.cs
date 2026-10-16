@@ -265,6 +265,73 @@ public class OrgRightsTests
         Assert.Empty(store.To(CouncilRoles.Research));
     }
 
+    // ---- U-org-wakes (f): a held output and its disposition commit together --------------------------------------------
+
+    /// <summary>
+    /// (f) A HELD OUTPUT AND ITS HOLD COMMIT TOGETHER (<c>U-org-wakes</c> item 6; the O2b review's P2, its settling check). The
+    /// start-up pass (<see cref="CouncilRelay.Reconcile"/>) records a third position's lost turn's file and holds it; the hold's
+    /// insert is made to fail. Then the file is deleted and the pass retried: no output may be left recorded with no
+    /// disposition — the writer would never be told of it. And where the file is still there, the retry holds it once, and the
+    /// writer's next Situation names it.
+    ///
+    /// <para>RED at base: the record committed on its own, so after the failed hold and the deleted file one publication of the
+    /// position stood with no held row and no notice, for good.</para>
+    /// </summary>
+    [Fact]
+    public void A_held_output_and_its_hold_commit_together()
+    {
+        foreach (var keepFile in new[] { false, true })
+        {
+            var root = Path.Combine(TestEnv.Home, $"rights-hold-{Guid.NewGuid():n}");
+            string Home(string role) => WorkspaceBuilder.HomeOf(root, role);
+            foreach (var role in CouncilRoles.All.Append(Third))
+            {
+                Directory.CreateDirectory(Path.Combine(Home(role), WorkspaceBuilder.InDir));
+                Directory.CreateDirectory(Path.Combine(Home(role), WorkspaceBuilder.OutDir));
+            }
+
+            using var db = TestEnv.NewDb();
+            Seat(db, Third);
+            var attempts = new AiAttemptStore(db);
+            attempts.Begin(new AiAttempt { Id = "turn-third-lost", StartedAt = DateTimeOffset.UtcNow, Role = Third });
+            attempts.LoseOpen(DateTimeOffset.UtcNow);
+            var file = Path.Combine(Home(Third), WorkspaceBuilder.OutDir, MissionSituation.OutputName(Third, "turn-third-lost"));
+            File.WriteAllText(file, "what the lost turn found");
+
+            void Exec(string sql) => db.Write(_ =>
+            {
+                using var c = db.Cmd(sql);
+                return c.ExecuteNonQuery();
+            });
+            Exec("""
+                CREATE TRIGGER abort_hold BEFORE INSERT ON mission_event WHEN NEW.kind = 'output'
+                BEGIN SELECT RAISE(ABORT, 'the hold could not be written'); END
+                """);
+            var relay = new CouncilRelay(db, Home);
+            Assert.NotNull(Record.Exception(relay.Reconcile));
+
+            Exec("DROP TRIGGER abort_hold");
+            if (!keepFile) File.Delete(file);
+            relay.Reconcile();
+
+            var store = new PublicationStore(db);
+            var held = new MissionEventStore(db).OfKind(MissionEventKind.Output);
+            Assert.Equal(store.By(Third).Select(p => MissionEventIds.Held(p.Id)).Order(StringComparer.Ordinal),
+                held.Select(e => e.Id).Order(StringComparer.Ordinal));
+            if (keepFile)
+            {
+                var row = Assert.Single(held);
+                Assert.Equal(MissionEventDisposition.Held, row.Disposition);
+                Assert.Single(CouncilRelay.HeldNotices(db, Third));
+            }
+            else
+            {
+                Assert.Empty(store.By(Third));
+                Assert.Empty(held);
+            }
+        }
+    }
+
     // ---- (f) minting --------------------------------------------------------------------------------------------------
 
     /// <summary>The names Windows reserves for devices, spelled here independently of the build's own list.</summary>

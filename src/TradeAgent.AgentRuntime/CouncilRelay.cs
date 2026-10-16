@@ -402,10 +402,18 @@ public sealed class CouncilRelay
             // recorded as the app's own copy, attributed to the launch its name carries, with no delivery and no wake —
             // and the hold is a disposition its own next Situation reads. Never routed to Research, never an assessment
             // or a challenge: those are the legacy pair's, and a boundary is a decision no unconfined seat takes.
+            //
+            // THE RECORD AND ITS HOLD ARE ONE COMMIT (U-org-wakes, the O2b review's P2): on the start-up pass and on a
+            // relay run outside a turn's transition nothing else is open, and two commits let a failure between them leave
+            // an output recorded with no disposition — once the file is gone, an output its writer is never told about.
             if (p.RecipientList.Count == 0)
             {
-                _store.Record(p, _now());
-                _events.Hold(p.Id, p.Role, _now(), HeldWhy);
+                var at = _now();
+                _db.Write(_ =>
+                {
+                    _store.Record(p, at);
+                    return _events.Hold(p.Id, p.Role, at, HeldWhy);
+                });
                 Boundary?.Invoke("transaction");
                 continue;
             }
