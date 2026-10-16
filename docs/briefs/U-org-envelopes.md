@@ -56,3 +56,14 @@ Rung 38: one table + index (CREATE IF NOT EXISTS) and one backfill statement ove
 Tests box: GREEN on 11ed2669 (this code before the docs/c8004ffc rebase) — unit 1792/1792, fault 498/498, integration 692 + 1 not run, timing green; his files unchanged.
 Declared: `BudgetReservationTests.A_roles_share_refuses_the_launch_while_the_day_still_has_room` now asserts Ceiling `div-research` and the whole-envelope sentence (item 4's intent; Over 0.28 unchanged); `OrgLedgerTests.No_pipe_op_writes_an_org_table`'s OrgStore surface list gains FundingChain, FundingLine, Unfundable (reads / a pure check, no writer). A NULL-role launch records the chair's chain with no envelopes (day gate only, as before) so the legacy split still counts it.
 NOT done: `TurnMeter.TodayFor`/the card's cheap first look still reads the role split (½ for a new position) — the gate is Begin; moot until activation lets a third position run. NOT verified: nothing beyond the lines above.
+
+## Fix report (pass 1)
+
+- 52e821d5: one admission reads the day's cap once and sizes both its unit envelopes and its rule's cap from that value (P1).
+- f6968f0a: rung 38 records every funding chain whole; a looping chart refuses the rung in one rolled-back transaction, home left at 37 (P2).
+- Unit project run 3x (logs show TradeAgent.UnitTests.dll only, no class filter recorded): run1 Passed 290, Failed 0; run2 Passed 290, Failed 0; run3 Passed 290, Failed 0.
+- CI 38176161802 (pre-rebase fix tip 468fdec4): success. Jobs all success: dedupe-gate, shard-plan, package, package-linux, linux-host, test ubuntu-latest, test macos-latest, test windows-latest 1-5.
+- Landing CI 38933247781 on the rebased tip f6968f0a is in flight; not yet verified.
+- Re-review, "No remaining defect or introduced regression found in these two fixes." (/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/fleet/tmp/B-scratch/u-org-envelopes-fix1/fix1-review.md)
+- RED-before and mutant lines for the two fixes: NOT in the surviving logs — NOT VERIFIED by this clerk.
+- Written by a clerk from the fixer's logs; the fixer's own gate output beyond those logs is NOT VERIFIED.
