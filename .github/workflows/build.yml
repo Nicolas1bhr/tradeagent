@@ -69,7 +69,7 @@ jobs:
   # Not named test*: land.sh reads every test* job's build log for its 0 Warning(s) line, and this builds nothing.
   shard-plan:
     needs: dedupe-gate
-    if: false
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -94,7 +94,7 @@ jobs:
   # exactly one job.
   test:
     needs: [dedupe-gate, shard-plan]
-    if: false
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.shard-plan.result == 'success' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.shard-plan.outputs.matrix) }}
@@ -265,7 +265,7 @@ jobs:
   # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
   package:
     needs: dedupe-gate
-    if: false
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -359,8 +359,10 @@ jobs:
   # tape row, records again within 30 s of kill -9, stops within 15 s of `systemctl stop` with its quit recorded,
   # listens on no network, and its window's screenshot, peak RSS and the tape's growth are uploaded.
   #
-  # DETERMINISTIC ON PURPOSE, because every branch in the fleet runs it: every package it installs is pinned
-  # to its version in noble's release pocket (which never changes), and every host of a venue the app knows is
+  # DETERMINISTIC ON PURPOSE, because every branch in the fleet runs it: every package the image does not
+  # already carry is pinned to its version in noble's release pocket (which never changes) and every one it does
+  # carry is taken as the image has it, all versions printed (the image moves, the release pocket does not: a
+  # release pin on a package the image holds from noble-security is a downgrade apt refuses), and every host of a venue the app knows is
   # mapped to 127.0.0.1 before the app starts — no exchange is ever asked from a US runner, and the one source
   # that answers is the job's own loopback server. It reads the app's home with sqlite3 -readonly, never the pipe.
   linux-host:
@@ -384,39 +386,35 @@ jobs:
             [ "$resolved" = "127.0.0.1 " ] || { echo "$h resolves to '$resolved', not 127.0.0.1 alone"; exit 1; }
           done
 
-      - name: DIAGNOSTIC apt
+      - name: Install the host's packages, each one pinned
         run: |
-          cat /etc/apt/sources.list.d/* 2>/dev/null | head -30
-          grep -r ImageVersion /etc/*release /imagegeneration 2>/dev/null | head -3 || true
+          # A package the image already carries is taken AS THE IMAGE HAS IT (pinning it back to the release pocket
+          # is a downgrade apt refuses once the image holds it from noble-security/updates: libx11-6 on image
+          # 20261012.334); a package the image lacks is installed at its release-pocket version. No -qq on the
+          # install: if a future image breaks this, apt's own reason is in the log. Every version is printed after.
           sudo apt-get update -qq
-          pk="libx11-6 libxext6 libxi6 libxrandr2 libxcursor1 libice6 libsm6 libfontconfig1 fonts-dejavu-core tigervnc-standalone-server tigervnc-common tigervnc-tools xauth x11-apps netpbm"
-          apt-cache policy $pk
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            libx11-6=2:1.8.7-1build1 libxext6=2:1.3.4-1build2 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 \
-            libxcursor1=1:1.2.1-1build1 libice6=2:1.0.10-1build3 libsm6=2:1.2.3-1build3 \
-            libfontconfig1=2.15.0-1.1ubuntu2 fonts-dejavu-core=2.37-8 \
-            tigervnc-standalone-server=1.13.1+dfsg-2build2 tigervnc-common=1.13.1+dfsg-2build2 \
-            tigervnc-tools=1.13.1+dfsg-2build2 xauth=1:1.1.2-1build1 \
-            x11-apps=7.7+11build3 netpbm=2:11.05.02-1.1build1 2>&1 | tail -40 || true
-          echo "--- unpinned"
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -s --no-install-recommends $pk 2>&1 | tail -40 || true
-          dpkg-query -W libx11-6 libxext6 libxi6 libxrandr2 libxcursor1 libice6 libsm6 libfontconfig1 fonts-dejavu-core xauth netpbm || true
-
-      - if: false
-        name: Install the host's packages, each one pinned
-        run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            libx11-6=2:1.8.7-1build1 libxext6=2:1.3.4-1build2 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 \
-            libxcursor1=1:1.2.1-1build1 libice6=2:1.0.10-1build3 libsm6=2:1.2.3-1build3 \
-            libfontconfig1=2.15.0-1.1ubuntu2 fonts-dejavu-core=2.37-8 \
-            tigervnc-standalone-server=1.13.1+dfsg-2build2 tigervnc-common=1.13.1+dfsg-2build2 \
-            tigervnc-tools=1.13.1+dfsg-2build2 xauth=1:1.1.2-1build1 \
-            x11-apps=7.7+11build3 netpbm=2:11.05.02-1.1build1
+          declare -A pin=(
+            [libx11-6]=2:1.8.7-1build1 [libxext6]=2:1.3.4-1build2 [libxi6]=2:1.8.1-1build1 [libxrandr2]=2:1.5.2-2build1
+            [libxcursor1]=1:1.2.1-1build1 [libice6]=2:1.0.10-1build3 [libsm6]=2:1.2.3-1build3
+            [libfontconfig1]=2.15.0-1.1ubuntu2 [fonts-dejavu-core]=2.37-8
+            [tigervnc-standalone-server]=1.13.1+dfsg-2build2 [tigervnc-common]=1.13.1+dfsg-2build2
+            [tigervnc-tools]=1.13.1+dfsg-2build2 [xauth]=1:1.1.2-1build1
+            [x11-apps]=7.7+11build3 [netpbm]=2:11.05.02-1.1build1
+          )
+          args=()
+          for p in "${!pin[@]}"; do
+            if dpkg-query -W -f='${Status}' "$p" 2> /dev/null | grep -q '^install ok installed'; then
+              echo "$p: on the image at $(dpkg-query -W -f='${Version}' "$p"); taken as it is"
+              args+=("$p")
+            else
+              args+=("$p=${pin[$p]}")
+            fi
+          done
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${args[@]}"
+          dpkg-query -W -f='installed ${Package} ${Version}\n' "${!pin[@]}" | sort
           sqlite3 --version
 
-      - if: false
-        name: Install TradeAgent with the kit, twice
+      - name: Install TradeAgent with the kit, twice
         run: |
           address="$(ip -4 -o addr show scope global | awk '{ print $4 }' | cut -d/ -f1 | head -n 1)"
           echo "ADDRESS=$address" >> "$GITHUB_ENV"
@@ -430,8 +428,7 @@ jobs:
           [ "$(systemctl show -p MainPID --value tradeagent.service)" = "$pid" ] || { echo "the second run restarted the app"; exit 1; }
           rm -f "$RUNNER_TEMP/vnc-pass"
 
-      - if: false
-        name: Twenty minutes unattended
+      - name: Twenty minutes unattended
         run: |
           sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" ADDRESS="$ADDRESS" RUN_MINUTES=20 \
             GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" packaging/linux/ci/prove.sh
