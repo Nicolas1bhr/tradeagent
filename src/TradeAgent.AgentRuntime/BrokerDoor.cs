@@ -94,6 +94,40 @@ public sealed class BrokerDoor : IAsyncDisposable
     public Func<int, string?> ImageOf { get; init; } = PeerImage.PathOf;
 
     /// <summary>
+    /// THE SURFACE ONE GRANT IS SERVED, or null for none: the harness's own <see cref="GrantedWorkerTools"/> under the grant's role
+    /// and attempt (<see cref="ToolsFor"/>). Asked per request, so a grant's surface is the one the app composes now.
+    /// </summary>
+    public Func<AgentGrant, IWorkerTools?> Tools { get; init; } = _ => null;
+
+    /// <summary>
+    /// The most one tool result carries over the door. A longer answer is cut at a character boundary, with words saying how
+    /// big it was and that the rest is fetched by id — the harness's own retrieval bound per call.
+    /// </summary>
+    public const int MaxResultBytes = GrantedWorkerTools.MaxBytesPerCall;
+
+    /// <summary>
+    /// THE SURFACE THE APP SERVES A GRANT ON THE DOOR — the harness's, the same class with the same default deny, rows and write
+    /// roots (<c>docs/ORCHESTRATION.md</c> § 2.9, one authority implementation) — under the grant's role, its attempt, and its
+    /// ORDER permission as issued: an Operations launch issued beside a neighbour reaches the gateway as the pipe would serve it,
+    /// withheld (<see cref="Gateway.GatewayPipeServer.CallAsGrantAsync"/>), never as its role alone.
+    /// </summary>
+    public static IWorkerTools ToolsFor(AgentGrant grant, Func<string, string> home, Func<Gateway.GatewayPipeServer?> server,
+        Core.Db.ToolCallStore? ledger) =>
+        new GrantedWorkerTools(grant.Role,
+            home: () => home(grant.Role),
+            attempt: () => grant.AttemptId,
+            gateway: () => server() is { } s ? new GrantCalls(s, grant) : null,
+            ledger: ledger,
+            session: () => $"door-{grant.Role}");
+
+    /// <summary>The gateway seen through one grant: every call carries the grant itself, whatever role and attempt it is handed.</summary>
+    sealed class GrantCalls(Gateway.GatewayPipeServer server, AgentGrant grant) : IGatewayCalls
+    {
+        public Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId, CancellationToken ct = default) =>
+            server.CallAsGrantAsync(req, grant, ct);
+    }
+
+    /// <summary>
     /// The door's own record: a line per decision, never a token. The app writes it to its engineering log; a test reads it.
     /// </summary>
     public Action<string>? Log { get; init; }
@@ -246,15 +280,20 @@ public sealed class BrokerDoor : IAsyncDisposable
                 result = new Dictionary<string, object>();
                 break;
             case "tools/list":
-                result = new Dictionary<string, object> { ["tools"] = Array.Empty<object>() };
+                result = new Dictionary<string, object>
+                {
+                    ["tools"] = (Tools(connection.Grant!)?.Offered ?? []).Select(t => new Dictionary<string, object>
+                    {
+                        ["name"] = t.Name, ["description"] = t.Description, ["inputSchema"] = t.Parameters
+                    }).ToArray()
+                };
                 break;
             case "tools/call":
-                result = ToolResult("this door serves no tool yet", served: false);
+                result = await Call(connection.Grant!, id.Value, parameters, ct);
                 break;
             default:
                 return HttpAnswer.Json(200, RpcError(id, -32601, $"'{method}' is not a method this door answers"));
         }
-        await Task.CompletedTask;
         Log?.Invoke($"door: {method} accepted for the {CouncilRoles.Title(connection.Grant!.Role)}'s attempt {connection.Grant.AttemptId}");
         return HttpAnswer.Json(200, RpcResult(id.Value, result));
     }
@@ -332,6 +371,34 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// <summary>The token of an <c>Authorization: Bearer</c> header, or null for any other header or none.</summary>
     static string? Bearer(string? header) =>
         header is { Length: > 7 } h && h.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? h[7..].Trim() : null;
+
+    /// <summary>
+    /// ONE TOOL CALL, THROUGH THE HARNESS'S OWN SURFACE under the grant: any name — the surface's default deny answers a name it
+    /// does not grant, and records it — with the model's arguments as the harness receives them, the answer cut to
+    /// <see cref="MaxResultBytes"/>. A refusal is a result with <c>isError</c>, in words, never a transport error.
+    /// </summary>
+    async Task<Dictionary<string, object>> Call(AgentGrant grant, JsonElement id, JsonElement parameters, CancellationToken ct)
+    {
+        var name = parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("name", out var n)
+                   && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+        if (name is null) return ToolResult("a tools/call names its tool", served: false);
+        var arguments = parameters.TryGetProperty("arguments", out var a) && a.ValueKind != JsonValueKind.Null ? a.GetRawText() : "";
+
+        if (Tools(grant) is not { } tools) return ToolResult("the door serves no tool to this launch", served: false);
+        var answer = await tools.InvokeAsync(new ToolRequest(id.ToString(), name, arguments), ct);
+        return ToolResult(Bounded(answer.Content), answer.Served);
+    }
+
+    /// <summary>The text cut to <see cref="MaxResultBytes"/> at a character boundary, saying so, or the text whole.</summary>
+    static string Bounded(string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        if (bytes.Length <= MaxResultBytes) return text;
+        var cut = MaxResultBytes;
+        while (cut > 0 && (bytes[cut] & 0xC0) == 0x80) cut--;
+        return Encoding.UTF8.GetString(bytes, 0, cut) +
+               $"\n[truncated — fetch by id: the answer was {bytes.Length:N0} bytes and one door result carries at most {MaxResultBytes:N0}]";
+    }
 
     static Dictionary<string, object> Initialize(JsonElement parameters)
     {

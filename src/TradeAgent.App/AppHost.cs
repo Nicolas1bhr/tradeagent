@@ -260,6 +260,9 @@ public sealed class AppHost : IAsyncDisposable
     BrokerDoor ComposeTheDoor() => new()
     {
         Image = BrokerDoor.PinnedCodex,
+        // THE HARNESS'S SURFACE, the same composition as ToolsFor(role) below but under the grant: its role, its attempt, and
+        // its order permission as issued. The pipe server is read per call — a platform switch replaces it.
+        Tools = grant => BrokerDoor.ToolsFor(grant, HomeFor, () => _server, _db is null ? null : new ToolCallStore(_db)),
         Log = line =>
         {
             try { Gateway.Log.Engineering("BrokerDoor", "decision", "info", metadataJson: Json.Write(new { line })); }

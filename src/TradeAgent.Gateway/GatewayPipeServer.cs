@@ -1180,6 +1180,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             ? Task.FromResult(refusal)
             : Handle(req, role, attemptId, ct);
 
+    /// <summary>
+    /// ONE OPERATION FROM THE BROKER DOOR, under the launch grant the door verified (<c>U-thinking-seats-b</c>): exactly
+    /// <see cref="CallAsync"/>, with the one thing a grant carries that a role and an attempt do not — whether THIS launch was
+    /// issued without its role's order permission (ORDER-001, <see cref="Security.AgentGrant.OrdersWithheld"/>). The pipe's read
+    /// loop hands the same three to <see cref="Handle"/>; the door must not hand fewer, or an Operations launch started beside a
+    /// neighbour would trade through the door after the pipe refused it.
+    /// </summary>
+    public Task<IpcResponse> CallAsGrantAsync(IpcRequest req, Security.AgentGrant grant, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+        return ReservedSessionRefusal(req) is { } refusal
+            ? Task.FromResult(refusal)
+            : Handle(req, grant.Role, grant.AttemptId, ct, grant.OrdersWithheld);
+    }
+
     async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct,
         string? ordersWithheld = null)
     {

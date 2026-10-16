@@ -7,6 +7,8 @@ using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 using TradeAgent.Security;
 using Xunit;
 
@@ -216,6 +218,168 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// (e) A RESEARCH GRANT ASKING THE DOOR TO BUY IS REFUSED AS ON THE PIPE, AND RECORDED. The door's <c>trade</c> is the harness's,
+    /// so the gateway's own role check refuses it with its own code; the call is a <c>tool_call</c> row under the grant's attempt;
+    /// and nothing reached the broker.
+    /// </summary>
+    [Fact]
+    public async Task A_research_grant_asking_the_door_to_buy_is_refused_as_on_the_pipe_and_recorded()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-door-buy");
+        await using var door = Surface(grants, server, db);
+        door.Start();
+
+        using var http = Client(research.Token);
+        var reply = await Post(http, door.Url!, Rpc(7, "tools/call",
+            new { name = GrantedWorkerTools.Trade, arguments = new { op = Ops.Buy, symbol = "ES", quantity = "1" } }));
+
+        Assert.Equal(HttpStatusCode.OK, reply.Status);
+        var result = reply.Json.GetProperty("result");
+        Assert.True(result.GetProperty("isError").GetBoolean(), $"a research grant's buy through the door was served: {reply.Body}");
+        Assert.Contains(nameof(ErrorCode.ROLE_MAY_NOT_TRADE), Text(result));
+
+        var rows = new ToolCallStore(db).ForAttempt("attempt-door-buy");
+        Assert.True(rows.Count == 1, $"the door's call was recorded {rows.Count} times under its attempt, not once");
+        Assert.Equal(GrantedWorkerTools.Trade, rows[0].Tool);
+        Assert.Equal(CouncilRoles.Research, rows[0].Role);
+        Assert.False(rows[0].Served);
+        Assert.Empty(await conn.GetOrdersAsync(conn.Broker.AccountId, includeInactive: true, since: null));
+    }
+
+    /// <summary>
+    /// ORDER-001 THROUGH THE DOOR: an Operations launch issued beside another live launch holds no order permission
+    /// (<c>U-grant-tree</c>), and the door carries that — its buy is refused with the grant's own words, as on the pipe, never
+    /// served because the door handed the gateway the role alone.
+    /// </summary>
+    [Fact]
+    public async Task An_operations_grant_issued_beside_a_neighbour_may_not_buy_through_the_door()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        using var neighbour = grants.IssueHere(CouncilRoles.Research, "attempt-neighbour");
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-chair-withheld");
+        Assert.NotNull(chair.OrdersWithheld);
+        await using var door = Surface(grants, server, db);
+        door.Start();
+
+        using var http = Client(chair.Token);
+        var reply = await Post(http, door.Url!, Rpc(8, "tools/call",
+            new { name = GrantedWorkerTools.Trade, arguments = new { op = Ops.Buy, symbol = "ES", quantity = "1" } }));
+
+        var result = reply.Json.GetProperty("result");
+        Assert.True(result.GetProperty("isError").GetBoolean(),
+            $"an Operations launch started beside a neighbour bought through the door: {reply.Body}");
+        Assert.Contains("holds no permission to trade", Text(result));
+        Assert.Empty(await conn.GetOrdersAsync(conn.Broker.AccountId, includeInactive: true, since: null));
+    }
+
+    /// <summary>
+    /// (g) GUARD: THE DOOR LISTS EXACTLY THE HARNESS'S TOOLS AND ANSWERS A READ — over a real HTTP client, on every runner: the
+    /// names, in order, of <see cref="GrantedWorkerTools.Granted"/>, each with its schema; a <c>read_file</c> of the role's own
+    /// brief served; a result past the byte cap cut with the words that say how to get the rest.
+    /// </summary>
+    [Fact]
+    public async Task The_door_lists_exactly_the_harness_tools_and_answers_a_read()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var home = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(Path.Combine(home, "in"));
+        File.WriteAllText(Path.Combine(home, "in", "brief.md"), "the brief the app delivered");
+        File.WriteAllText(Path.Combine(home, "in", "long.md"), new string('x', BrokerDoor.MaxResultBytes * 2));
+        var grants = new AgentGrants();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-door-read");
+        await using var door = Surface(grants, server, db, home);
+        door.Start();
+
+        using var http = Client(research.Token);
+        var list = await Post(http, door.Url!, Rpc(1, "tools/list"));
+        var tools = list.Json.GetProperty("result").GetProperty("tools").EnumerateArray().ToList();
+        Assert.Equal(GrantedWorkerTools.Granted.Select(t => t.Name), tools.Select(t => t.GetProperty("name").GetString()));
+        Assert.All(tools, t => Assert.Equal("object", t.GetProperty("inputSchema").GetProperty("type").GetString()));
+
+        var read = await Post(http, door.Url!, Rpc(2, "tools/call", new { name = GrantedWorkerTools.ReadFile, arguments = new { path = "in/brief.md" } }));
+        var answer = read.Json.GetProperty("result");
+        Assert.False(answer.GetProperty("isError").GetBoolean(), $"the door refused a read of the role's own brief: {read.Body}");
+        Assert.Equal("the brief the app delivered", Text(answer));
+
+        var cut = await Post(http, door.Url!, Rpc(3, "tools/call", new { name = GrantedWorkerTools.ReadFile, arguments = new { path = "in/long.md" } }));
+        var cutText = Text(cut.Json.GetProperty("result"));
+        Assert.True(Encoding.UTF8.GetByteCount(cutText) <= BrokerDoor.MaxResultBytes + 512, $"a door result of {cutText.Length} chars passed the cap");
+        Assert.Contains("fetch by id", cutText);
+    }
+
+    /// <summary>
+    /// (h) GUARD: THE PIPE AND THE HARNESS BEHAVE AS BEFORE. The in-process harness reaches the gateway with the role and attempt
+    /// the app assigned, through <see cref="GatewayPipeServer.CallAsync"/>, exactly as before the door — its Research buy refused
+    /// with the gateway's code, its Operations buy placed — and the door's refusal of the same Research buy is word for word the
+    /// harness's.
+    /// </summary>
+    [Fact]
+    public async Task The_pipe_and_the_harness_behave_as_before()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var home = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(home);
+        const string buy = """{"op":"buy","symbol":"ES","quantity":"1","request_id":"same-buy-1"}""";
+
+        var harness = new GrantedWorkerTools(CouncilRoles.Research, () => home, () => "attempt-harness", () => server,
+            session: () => "door-research");
+        var byHarness = await harness.InvokeAsync(new ToolRequest("h1", GrantedWorkerTools.Trade, buy));
+        Assert.False(byHarness.Served);
+        Assert.Contains(nameof(ErrorCode.ROLE_MAY_NOT_TRADE), byHarness.Content);
+
+        var grants = new AgentGrants();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-harness");
+        await using var door = Surface(grants, server, db, home);
+        door.Start();
+        using var http = Client(research.Token);
+        var byDoor = await Post(http, door.Url!, Rpc(1, "tools/call",
+            new { name = GrantedWorkerTools.Trade, arguments = JsonDocument.Parse(buy).RootElement }));
+        Assert.Equal(byHarness.Content, Text(byDoor.Json.GetProperty("result")));
+
+        var chair = new GrantedWorkerTools(CouncilRoles.Operations, () => home, () => "attempt-harness-chair", () => server);
+        var placed = await chair.InvokeAsync(new ToolRequest("h2", GrantedWorkerTools.Trade,
+            """{"op":"buy","symbol":"ES","quantity":"1","request_id":"harness-chair-1"}"""));
+        Assert.True(placed.Served, $"the in-process harness's Operations buy was refused: {placed.Content}");
+    }
+
+    /// <summary>
+    /// (j) GUARD: NO DOOR TOOL SHARES A NAME WITH A PIPE OP IT IS NOT. A tool named like an op of the gateway carries exactly that
+    /// op and nothing else — <c>report</c> is the report — so a name a seat reads can never mean one thing on the door and
+    /// another on the pipe (the orchestrator's 2026-10-16 ruling: <c>cancel</c> is already an order op that moves money).
+    /// </summary>
+    [Fact]
+    public async Task No_door_tool_shares_a_name_with_a_pipe_op_it_is_not()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-door-names");
+        await using var door = Surface(grants, server, db);
+        door.Start();
+        using var http = Client(research.Token);
+        var names = (await Post(http, door.Url!, Rpc(1, "tools/list"))).Json.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToList();
+        Assert.NotEmpty(names);
+
+        var pipeOps = GatewaySchema.Ops().Select(o => o.Op).Append(Ops.Hello).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names.Where(pipeOps.Contains))
+            Assert.True(GrantedWorkerTools.OpsOf(name).SequenceEqual([name]),
+                $"the door's tool '{name}' shares its name with a pipe op and carries {string.Join(", ", GrantedWorkerTools.OpsOf(name))}");
+    }
+
+    /// <summary>
     /// GUARD: THE PRODUCT'S DOOR PINS THE BUILT-IN CODEX — its digest from code, the workspace forbidden, the managed-runtime
     /// folder (where the pin is installed) not — and a door with no pin refuses (see (c)).
     /// </summary>
@@ -235,6 +399,25 @@ public class BrokerDoorTests
         Assert.Null(rule.ToolsDir);
         Assert.Equal(BrokerDoor.RuntimeWord, rule.Program);
     }
+
+    /// <summary>
+    /// A door serving the PRODUCT's surface (<see cref="BrokerDoor.ToolsFor"/>) over a real gateway, its calls recorded in
+    /// <paramref name="db"/>; this test process's own program as the pinned runtime, and the grants bound to this process.
+    /// </summary>
+    static BrokerDoor Surface(AgentGrants grants, GatewayPipeServer server, Database db, string? home = null)
+    {
+        var folder = home ?? Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(folder);
+        var ledger = new ToolCallStore(db);
+        return new BrokerDoor
+        {
+            Grants = grants, Image = SelfImage,
+            Tools = grant => BrokerDoor.ToolsFor(grant, _ => folder, () => server, ledger)
+        };
+    }
+
+    /// <summary>The text of a tools/call result.</summary>
+    static string Text(JsonElement result) => result.GetProperty("content")[0].GetProperty("text").GetString()!;
 
     static BrokerDoor Door(AgentGrants grants) => new() { Grants = grants, Image = SelfImage };
 
