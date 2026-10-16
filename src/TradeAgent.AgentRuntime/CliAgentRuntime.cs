@@ -815,6 +815,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
             // THE KEY GOES TO THE PINNED PROGRAM OR TO NONE: a file on PATH that is not the pin is not handed a credential.
             RequirePin(exe);
+            // ONE SIGN-IN AT A TIME: a browser or code sign-in still waiting would otherwise finish later and overwrite the
+            // credential the owner is choosing now.
+            StopLogin();
             var psi = new ProcessStartInfo
             {
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -886,6 +889,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // not the caller's thread — the window's, when the owner presses the button — because the flush to
             // the device is a wait the window should not make.
             var bytes = Encoding.UTF8.GetBytes(template.Replace("{key}", escaped));
+            StopLogin();
             await Task.Run(() => OwnerOnlyFile.Write(path, bytes, beforeRename), ct);
             return;
         }

@@ -155,7 +155,7 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
     public Task<DeviceChallenge> BeginDeviceCodeAsync(CancellationToken ct = default) =>
         Task.Run(() => Require().BeginDeviceCodeAsync(ct), CancellationToken.None);
 
-    /// <summary>A pasted key, handed to the runtime's stdin. Not kept here or anywhere.</summary>
+    /// <summary>A pasted key, handed to the runtime's stdin — a sign-in still waiting is stopped first. Not kept here or anywhere.</summary>
     public Task SignInWithKeyAsync(string key, CancellationToken ct = default) =>
         Task.Run(() => Require().SignInWithApiKeyAsync(key, ct), CancellationToken.None);
 
