@@ -603,6 +603,12 @@ public sealed class TurnMeter
     /// </summary>
     readonly List<ProcessEntry> _survivors = [];
 
+    /// <summary>
+    /// THE PRESENCE THE SURVIVORS OF A LAUNCH THE APP COULD NOT HOLD STILL HOLD (<c>U-unjobbed-presence</c>): closed when the
+    /// register above is cleared, and not before — the material scanner attests no inbox sighting while any of them runs.
+    /// </summary>
+    readonly List<IDisposable> _survivorPresence = [];
+
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
@@ -668,7 +674,12 @@ public sealed class TurnMeter
     public void Record(AgentTurnEnded ended, string? role = null)
     {
         if (ended.Survivors is { Count: > 0 } left)
-            lock (_gate) _survivors.AddRange(left);
+            lock (_gate)
+            {
+                _survivors.AddRange(left);
+                if (ended.SurvivorPresence is { } present) _survivorPresence.Add(present);
+            }
+        else ended.SurvivorPresence?.Dispose();
 
         var price = Charge(ended, role);
         var record = new TurnRecord
@@ -970,14 +981,17 @@ public sealed class TurnMeter
     AiAdmission? StillRunning()
     {
         List<ProcessEntry> left;
+        List<IDisposable> gone;
         lock (_gate)
         {
-            if (_survivors.Count == 0) return null;
-            _survivors.RemoveAll(p => !ProcessContainment.StillRunning(p));
-            if (_survivors.Count == 0) return null;
+            if (_survivors.Count > 0) _survivors.RemoveAll(p => !ProcessContainment.StillRunning(p));
             left = [.. _survivors];
+            // THEIR PRESENCE CLOSES WITH THE LAST OF THEM (U-unjobbed-presence), and only then.
+            gone = left.Count == 0 ? [.. _survivorPresence] : [];
+            if (left.Count == 0) _survivorPresence.Clear();
         }
-        return new AiAdmission { Refusal = TreeEnd.Held(left) };
+        foreach (var presence in gone) presence.Dispose();
+        return left.Count == 0 ? null : new AiAdmission { Refusal = TreeEnd.Held(left) };
     }
 
     /// <summary>

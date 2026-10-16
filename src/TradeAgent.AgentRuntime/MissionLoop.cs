@@ -256,6 +256,14 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public IReadOnlyList<ProcessEntry>? Survivors { get; init; }
 
     /// <summary>
+    /// THE PRESENCE THOSE SURVIVORS STILL HOLD, for a launch the app could not hold (<c>U-unjobbed-presence</c>), or null. Open
+    /// while any of <see cref="Survivors"/> runs, so the material scanner attests no inbox sighting beside them; whoever holds
+    /// the survivors closes it once a listing shows none of them alive — <see cref="TurnMeter"/>, at the admission that clears
+    /// them. Left open by a host that holds nothing, which is the safe side: the inbox reads unattested, never attested.
+    /// </summary>
+    public IDisposable? SurvivorPresence { get; init; }
+
+    /// <summary>
     /// THE CANON THIS TURN RAN UNDER, read at its launch, or null where nothing was launched or no canon could be read
     /// (<c>U-canon</c>). Set by the conversation that launched it — the CLI's <c>AGENTS.md</c> as found, the harness's
     /// system text as sent — and written into the attempt's <c>context</c> by <see cref="TurnMeter"/>.

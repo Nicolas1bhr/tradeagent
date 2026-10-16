@@ -419,6 +419,13 @@ public sealed class AgentSession(
     /// refuse the next turn while any of it runs.
     /// </summary>
     IReadOnlyList<ProcessEntry>? _survivors;
+
+    /// <summary>
+    /// THE PRESENCE OF A LAUNCH THE APP COULD NOT HOLD WHOSE TEARDOWN LEFT SOME OF IT RUNNING (<c>U-unjobbed-presence</c>), or
+    /// null. Carried out on <see cref="TurnEnded"/> beside <see cref="_survivors"/>, and closed by whoever holds those — the
+    /// meter, once a listing shows none of them alive — so a material pass beside a survivor never attests the inbox.
+    /// </summary>
+    IDisposable? _survivorPresence;
     bool _busy;
     bool _sessionExists;
     string? _threadId;
@@ -654,6 +661,7 @@ public sealed class AgentSession(
 
         SetBusy(true);
         _survivors = null;
+        _survivorPresence = null;
         _canon = null;
         _promptIn = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -698,6 +706,8 @@ public sealed class AgentSession(
                 // process of the turn still running past that is spend no ceiling sees, so the meter holds
                 // the next launch while any of these is the same process and still running.
                 Survivors = _survivors,
+                // AND THEIR PRESENCE, for a launch the app could not hold (U-unjobbed-presence): open while any of them runs.
+                SurvivorPresence = _survivorPresence,
                 // AND THE CANON IT WAS LAUNCHED UNDER, as found on disk the moment before the process started.
                 Canon = _canon,
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
@@ -822,7 +832,21 @@ public sealed class AgentSession(
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
         // exited has none left to walk — measured before this line existed, a detached grandchild
         // outlived CancelAsync on both platforms. See ProcessContainment.
-        var contained = ProcessContainment.Start(psi, hold);
+        //
+        // AND IN THE PRESENCE REGISTER BEFORE IT CAN RUN (U-unjobbed-presence): the material scanner attests an inbox sighting
+        // only across a window no agent process was alive in, and a process is alive from the start below — not from the line
+        // that learns it is held. Entered after the start, a launch Windows would not put in its job ran, and was torn down,
+        // outside the register: a pass beside it recorded an inbox write of that window as the owner's. The handle is the
+        // launch's on every path: closed here if the start throws, by the branch below on the launch it refuses, by the finally
+        // on every other — once.
+        var alive = Presence.Enter();
+        ContainedProcess contained;
+        try { contained = ProcessContainment.Start(psi, hold); }
+        catch (Exception)
+        {
+            alive.Dispose();
+            throw;
+        }
         var process = contained.Process;
         _current = contained;
 
@@ -838,7 +862,15 @@ public sealed class AgentSession(
         {
             _current = null;
             var end = EndTree(contained);
-            if (end is { Ended: false }) _survivors = end.Survivors;
+            // ITS PRESENCE ENDS WITH THE LAST OF IT, NOT WITH THE TEARDOWN THAT COULD NOT END IT: what still runs is carried out
+            // with the survivors, and the meter that holds every launch while any of them runs closes it once a listing shows none
+            // alive. A teardown that throws keeps it open — unknown is never "ended".
+            if (end is { Ended: false })
+            {
+                _survivors = end.Survivors;
+                _survivorPresence = alive;
+            }
+            else alive.Dispose();
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
                 $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it " +
                 (end is { Ended: false }
@@ -854,11 +886,10 @@ public sealed class AgentSession(
         register.Bind(launch.Token, container);
 
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
-        // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened as the turn
-        // starts and closed by the finally below AFTER the teardown — never by the leader's exit, which says
+        // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened before the start
+        // above and closed by the finally below AFTER the teardown — never by the leader's exit, which says
         // nothing about the processes it started, and which is how presence used to read 0 while a turn's
         // detached children still ran (U-agent-tree).
-        var alive = Presence.Enter();
         try
         {
             // End-of-file on stdin, at once — after the prompt, for a runtime that reads it there. See the comment on
