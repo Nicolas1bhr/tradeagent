@@ -115,8 +115,8 @@ public class TurnCommitTests
             var wakes = new MissionEventStore(dying);
             wakes.Raise("review:1", MissionEventKind.Review, world.At, role: CouncilRoles.Research);
 
-            attempt = meter.Mint();
-            Assert.Equal(attempt, meter.Begin("## Situation", ["review:1"], CouncilRoles.Research).Id);
+            attempt = meter.Mint(CouncilRoles.Research);
+            Assert.Equal(attempt, meter.Begin("## Situation", ["review:1"], CouncilRoles.Research, attemptId: attempt).Id);
 
             world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
             world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
@@ -186,8 +186,8 @@ public class TurnCommitTests
         var wakes = new MissionEventStore(db);
         wakes.Raise("review:1", MissionEventKind.Review, world.At, role: CouncilRoles.Research);
 
-        var attempt = meter.Mint();
-        meter.Begin("## Situation", ["review:1"], CouncilRoles.Research);
+        var attempt = meter.Mint(CouncilRoles.Research);
+        meter.Begin("## Situation", ["review:1"], CouncilRoles.Research, attemptId: attempt);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
         meter.Record(Ended(world.At), CouncilRoles.Research);
@@ -226,8 +226,8 @@ public class TurnCommitTests
         using var world = new World();
         var (db, meter) = world.Open();
 
-        var attempt = meter.Mint();
-        meter.Begin("## Situation", [], CouncilRoles.Research);
+        var attempt = meter.Mint(CouncilRoles.Research);
+        meter.Begin("## Situation", [], CouncilRoles.Research, attemptId: attempt);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
         world.Write(CouncilRoles.Research, "trading/JOURNAL.md", Journal);
@@ -252,8 +252,8 @@ public class TurnCommitTests
         using var world = new World();
         var (db, meter) = world.Open();
 
-        var attempt = meter.Mint();
-        meter.Begin("## Situation", [], CouncilRoles.Research);
+        var attempt = meter.Mint(CouncilRoles.Research);
+        meter.Begin("## Situation", [], CouncilRoles.Research, attemptId: attempt);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
         meter.Record(Ended(world.At), CouncilRoles.Research);
@@ -290,8 +290,8 @@ public class TurnCommitTests
         world.Write(CouncilRoles.Research, "trading/PLAN.md", good);
         world.RelayOver(db).Run(CouncilRoles.Research);
 
-        var attempt = meter.Mint();
-        meter.Begin("## Situation", [], CouncilRoles.Research);
+        var attempt = meter.Mint(CouncilRoles.Research);
+        meter.Begin("## Situation", [], CouncilRoles.Research, attemptId: attempt);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", tooLong);
         meter.Record(Ended(world.At), CouncilRoles.Research);
 
@@ -338,8 +338,8 @@ public class TurnCommitTests
         using var world = new World();
         var (db, meter) = world.Open();
 
-        var attempt = meter.Mint();
-        meter.Begin("## Situation", [], CouncilRoles.Research);
+        var attempt = meter.Mint(CouncilRoles.Research);
+        meter.Begin("## Situation", [], CouncilRoles.Research, attemptId: attempt);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         meter.Record(Ended(world.At), CouncilRoles.Research);
 
