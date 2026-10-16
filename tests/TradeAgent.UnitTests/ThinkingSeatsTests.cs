@@ -354,6 +354,119 @@ public class ThinkingSeatsTests : IDisposable
             db.Write(_ => { meter.CommitStaged(role); dispositions(); return 0; });
     }
 
+    // ---- (p) re-review item 6: a refused turn publishes nothing ------------------------------------------------
+
+    /// <summary>
+    /// (p) A TURN THE GATE REFUSED MID-WAY PUBLISHES NOTHING AND GIVES THE OWNER'S WORDS BACK (fix pass 2, item 6; ORCHESTRATION
+    /// § 2.3, the outputs of a refused attempt are held, never published; § 2.5, the owner's words are never settled by a refusal):
+    /// the chair on the harness stages an agenda in its first request, its seat changes, and its second request is refused at the
+    /// last check. Through the real relay's committed transition, the agenda is held — recorded as the app's own copy with a held
+    /// disposition, delivered to nobody, buying no turn — so it never delegates the owner's message: every wake the launch took is
+    /// due again and the owner's words stay open, shown undelivered with the refusal's sentence. A later pass over the same folder
+    /// holds it again. RED at the rebased tip: the relay published the agenda and delegated the owner's words before they were
+    /// given back.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_gate_refused_mid_way_publishes_nothing_and_gives_the_owners_words_back()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        Assert.True(events.RecordOwnerMessage("brief research on the March gap", DateTimeOffset.UtcNow.AddMinutes(-1)));
+        var owner = Assert.Single(events.Due(DateTimeOffset.UtcNow)).Id;
+
+        var root = Path.Combine(TestEnv.Home, $"gate-relay-{Guid.NewGuid():n}");
+        string HomeFor(string role) => WorkspaceBuilder.HomeOf(root, role);
+        foreach (var role in CouncilRoles.All) Directory.CreateDirectory(Path.Combine(HomeFor(role), WorkspaceBuilder.OutDir));
+
+        var declared = SeatClasses.Harness;
+        var meter = Meter(db, _ => declared);
+        var register = new SeatRegister
+        {
+            Facts = id => Facts(db, declared, id),
+            Neighbours = () => new OrgStore(db).ActivePositionsBeyondLegacy()
+        };
+        using var provider = new FakeProvider();
+        var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        manifest.BaseUrl = provider.BaseUrl;
+        using var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            tools: role => new GrantedWorkerTools(role, home: () => HomeFor(role), attempt: () => meter.OpenAttemptIdFor(role)),
+            attemptId: role => meter.OpenAttemptIdFor(role),
+            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
+        var chair = runtime.OpenConversation(CouncilRoles.Operations, () => HomeFor(CouncilRoles.Operations),
+            () => new Dictionary<string, string>(), () => null);
+        using var metering = meter.Attach(chair, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        chair.TurnEnded += e => ended = e;
+
+        // REQUEST 1 STAGES THE AGENDA under the launch's own id; the chair's seat then changes, so request 2 is refused.
+        string? attempt = null;
+        provider.Arriving = () =>
+        {
+            if (provider.Requests.Count != 1) return;
+            attempt = meter.OpenAttemptIdFor(CouncilRoles.Operations);
+            provider.Answer(FakeProvider.ToolCall(GrantedWorkerTools.WriteFile,
+                new { path = $"{WorkspaceBuilder.OutDir}/agenda-{attempt}.md", content = "Research: find the March gap." }));
+            declared = SeatClasses.Cli;
+        };
+        var relay = new CouncilRelay(db, HomeFor);
+        var host = new RelayedHost(db, meter, chair, relay, HomeFor(CouncilRoles.Operations));
+
+        await new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }).TurnAsync();
+
+        Assert.Single(provider.Requests);
+        Assert.Equal((RefusalKind.HostOrLaunch, false), (ended?.GateRefused?.Refusal.Kind, ended?.GateRefused?.BeforeAnyWork));
+        var staged = Path.Combine(HomeFor(CouncilRoles.Operations), WorkspaceBuilder.OutDir, $"agenda-{attempt}.md");
+        Assert.True(File.Exists(staged), "the refused turn's staged agenda was not kept on disk");
+
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed || words.Disposition == MissionEventDisposition.Delegated,
+            $"the owner's words were taken by a turn the gate refused: consumed {words.Consumed}, {words.Disposition} {words.DispositionDetail}");
+        Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
+        AssertNothingPublished(db, events);
+
+        // A LATER PASS OVER THE SAME FOLDER, AND THE START-UP RECONCILE, HOLD IT AGAIN: the attempt's row says it was refused.
+        relay.Run(CouncilRoles.Operations, attempt: null);
+        relay.Reconcile();
+        AssertNothingPublished(db, events);
+        Assert.Equal(MissionEventDisposition.Blocked, events.Get(owner)!.Disposition);
+        Assert.False(events.Get(owner)!.Consumed);
+    }
+
+    /// <summary>No delivery and no brief bought a turn; the one agenda is held, with why, as the app's own copy.</summary>
+    static void AssertNothingPublished(Database db, MissionEventStore events)
+    {
+        Assert.Equal(0L, Count(db, "SELECT COUNT(*) FROM delivery"));
+        Assert.Equal(0L, Count(db, $"SELECT COUNT(*) FROM mission_event WHERE kind='{MissionEventKind.Brief}'"));
+        var held = Assert.Single(events.HeldSince(CouncilRoles.Operations, null, 10));
+        Assert.Contains("refused", held.DispositionDetail, StringComparison.Ordinal);
+    }
+
+    static long Count(Database db, string sql) => db.Read(_ =>
+    {
+        using var c = db.Cmd(sql);
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
+    /// <summary>A host whose committed transition is the real relay's, as the app wires it: close, land, snapshot, dispositions.</summary>
+    sealed class RelayedHost(Database db, TurnMeter meter, IAgentConversation conversation, CouncilRelay relay, string home)
+        : IMissionHost
+    {
+        public IAgentConversation? Conversation => conversation;
+        public IAgentConversation? ConversationFor(string role) => conversation;
+        public MissionEventStore? Events { get; } = new(db);
+        public string AgentHome => home;
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+        public string? NextAttemptId() => meter.Mint();
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) => BeginTurn(prompt, wakes, CouncilRoles.Default);
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => meter.Begin(prompt, wakes, role);
+        public void Relay(string role, string? attempt) => relay.Run(role, attempt);
+        public void CommitTurn(string role, string? attempt, Action dispositions) =>
+            relay.CommitTurn(role, attempt, () => meter.CommitStaged(role), dispositions);
+    }
+
     // ---- (k) review item 2: the neighbour rule is asked whatever the facts read -----------------------------------
 
     /// <summary>
