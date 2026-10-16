@@ -10701,3 +10701,26 @@ pass closes it at Begin. Accepted deviations: the fixture lives in UnitTests; th
 cannot overlap its bin-folder clear (rebase fixer's run 38963835444, 12/12 on `bb3a4749`); guard (f) is behavioural (existing fake CLIs identical with TestHost on and off; none edited).
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** no real model or codex (by design); guard (f) has no base run; the lives run outside the
 Timing category with 3 minutes of patience (seconds on CI).
+
+## U-mint-per-launch — every launch carries the id it minted itself, never another launch's; a role never holds two open launches; a launch whose wakes another took is refused before it is charged (landed 2026-10-16, seat B)
+
+**Landed** (`land.sh` v3) on `main` at tip `de902d25` (rebased onto `32e94314`, after seat A's train A2); CI run **38970237154** at `2a78f320` CARRIED: every job success incl. `linux-host`; `land.sh check` VERDICT PASS (names 2785 → 2797, removed 0; scan clean, phrases `Usage\.InputTokens` and the quoted `InputTokens` of two report lines). **No rung, no pipe op, no verb.**
+A protection O9's read-only survey found (`fleet/tmp/B-scratch/u-org-lanes-survey/survey.md` §§ 2–3), brought AHEAD of `U-org-lanes` by seat B: the owner's chat lane runs outside the loop (§ 2.5), so the
+defect was live at N = 1 — a chat message between the loop's mint and its launch took the loop's id for the CHAT row while the loop's prompt named its output after it.
+**What changed (build):** 1. `TurnMeter.Mint(role)` returns a fresh id on every call; `Begin(..., attemptId)` launches under exactly the caller's id or refuses (`Labels.LaunchIdNotMinted`); the owner's
+chat mints its own; the shared `_minted` slot is gone; `OpenAttemptIdFor(role)` answers only that role's own id; `IMissionHost.NextAttemptId`, the 4-arg `BeginTurn`, `ForgetAttemptId` carry it.
+2. `AiAttemptStore.Begin` under `SAVEPOINT ai_attempt_begin`: fewer wakes consumed than asked → rolled back, refused (`Labels.LaunchWakesTaken`, "n of the m"), nothing reserved or charged.
+**Fix pass 1 (review P1, P2 + the orchestrator's view):** `Begin` refuses while the role has a launch open or being written (`LaunchRoleOpen`, before any row, reservation or wake; `TurnMeter.Release`
+and the attach's `Detach` drop a dead entry, so no role is locked out until restart); the minted id must match its role; the new refusals are `AiAdmission.Launch`, and the loop STEPS OVER them —
+every wake kept, the owner's words never settled (§ 2.5). **Fix pass 2:** a launch refusal's words are the card's reason for the position's wait (`_launchRefused`), settling nothing.
+**Landing fix:** O4's `OrgEnvelopeTests` (7) launched one role repeatedly without closing it — a state the rule forbids. Decision (a), per test: each admitted launch goes through `meter.Release`
+(the product's own path) before that role's next `Begin`, its row staying LAUNCHED with its reservation, so every count and refusal asserted is unchanged; nothing weakened, deleted or renamed.
+**Evidence:** RED at base quoted per test ((a) chat row = the loop's id `Strings are equal`; (a3) `Value is not null`; (a4) `a launch under 'turn-…' was admitted`; (b) `a launch whose wake another launch took
+was admitted`); MUTANTS red: shared slot, Begin takes any id, the cross-role fallback, the count ignored; pass 1: P1, P2, step-over each RED + mutant ("the owner's words were settled 'blocked' on a
+refusal about the launch …"); pass 2: "the card gave no reason for the owner's undelivered words" + mutant. Landing fix: OrgEnvelope+MintPerLaunch+BudgetReservation 3× Passed 59; CI 38965090243 green.
+**Review of pass 2, judged OWED (not a pass 3):** the kept launch refusal always wins on the card, so a later ledger refusal shows behind a stale reason — status precision only, nothing settled; owed to
+`U-org-lanes` item 3 (the card shows the NEWEST refusal per position), written into its queued brief.
+**Seam:** `RefusalKind` not introduced here; O3 `U-org-wakes` (stacked on this unit) maps `AiAdmission.Launch` → `HostOrLaunch` when it lands.
+**First sightings (the landing fixer's one local full Unit run; NOT this unit's tests; 9 green runs after; CI green):** `A_host_built_without_a_ledger_still_runs_its_turns_through_the_explicit_value`,
+`The_owners_chat_turn_beside_a_research_turn_reserves_and_closes_its_own_row`, `The_turn_allowance_saves_in_one_press…` ("the probe's process never ran") — a second sighting makes a unit.
+**NOT VERIFIED:** no app run, no real model; tests box NOT RUN (the machine does not answer); `Release`/`Detach` have no test of their own (AppHost path); the clear-on-launch/Idle paths of the card reason.
