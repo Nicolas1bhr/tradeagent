@@ -806,6 +806,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         key = key.Trim();
         if (key.Length == 0)
             throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, "no key was entered");
+        // A KEY COPIED OVER TWO LINES reaches no program: one that read its first line could print half of it back.
+        if (PastedKey.Broken(key))
+            throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, PastedKey.BrokenWords);
 
         if (plan.StdinArgs.Length > 0)
         {
@@ -861,11 +864,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                     $"{Path.GetFileName(exe)} did not accept the key within {KeySignInTimeout.TotalSeconds:0} seconds");
             }
 
-            // THE KEY NEVER COMES BACK IN THE WORDS: a CLI that echoes what it was handed would otherwise put the credential on
-            // the card, in the activity log and in any report of the error (CRED-001, U-seat-signin).
+            // THE KEY NEVER COMES BACK IN THE WORDS: a CLI that echoes what it was handed — whole, in part, or over lines of its
+            // own — would otherwise put the credential on the card, in the activity log and in any report of the error (CRED-001,
+            // U-seat-signin). Cleared BEFORE the words are cut to one line, so no cut can leave a piece the clearing missed.
             if (p.ExitCode != 0)
                 throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
-                    Summarise(string.IsNullOrWhiteSpace(err) ? outp : err).Replace(key, "(the key)", StringComparison.Ordinal));
+                    Summarise(PastedKey.Redact(string.IsNullOrWhiteSpace(err) ? outp : err, key)));
             return;
         }
 

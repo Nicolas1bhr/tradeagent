@@ -1,3 +1,4 @@
+using System.Text;
 using TradeAgent.Core;
 
 namespace TradeAgent.AgentRuntime;
@@ -23,6 +24,62 @@ public sealed record SeatSignInReading(SeatSignInState State, string? Reason);
 
 /// <summary>A sign-in with a one-time code: where to type it, the code, and how long it lives from when it was printed.</summary>
 public sealed record DeviceChallenge(string Url, string Code, TimeSpan ExpiresIn);
+
+/// <summary>
+/// WHAT A PASTED KEY MAY NEVER LEAVE IN A WORD (CRED-001; <c>U-seat-signin</c> fix 1): the refusal, the card and the activity log
+/// carry no piece of it in any form.
+///
+/// <list type="bullet">
+/// <item><b>A key has no space or line break inside it.</b> One that does was copied over two lines; it is refused in
+/// <see cref="BrokenWords"/> before it reaches any program, so no program can print half of it back.</item>
+/// <item><b>Every word a program said is cleared first and cut to one line after</b>: the whole key wherever it appears, every
+/// whitespace-separated piece of what was pasted of <see cref="Piece"/> characters or more, and every run of <see cref="Run"/> or more
+/// consecutive characters of any piece — a program that echoes the key from its fifth character, or wraps it over its own lines, is
+/// cleared as surely as one that echoes it whole. Each cleared stretch reads <see cref="Shown"/>.</item>
+/// </list>
+/// A piece under four characters is not cleared on its own (a key's public prefix is three, and clearing letters that short would
+/// erase ordinary words); a run under eight is not either — the industry's own masks show four.
+/// </summary>
+public static class PastedKey
+{
+    public const string Shown = "(the key)";
+    public const int Run = 8;
+    public const int Piece = 4;
+
+    public const string BrokenWords =
+        "The key you pasted has a space or a line break inside it, and a key has none — it was probably copied over two lines. " +
+        "Nothing was signed in and the key was handed to nothing; copy it again in one piece.";
+
+    /// <summary>True when what was pasted, its ends trimmed, still has whitespace inside.</summary>
+    public static bool Broken(string pasted) => pasted.Trim().Any(char.IsWhiteSpace);
+
+    /// <summary>The text with every piece of the pasted key cleared, as the class says.</summary>
+    public static string Redact(string text, string pasted)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrWhiteSpace(pasted)) return text;
+        var pieces = pasted.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var hide = new bool[text.Length];
+        var runs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var piece in pieces)
+        {
+            if (pieces.Length == 1 || piece.Length >= Piece)
+                for (var at = text.IndexOf(piece, StringComparison.Ordinal); at >= 0; at = text.IndexOf(piece, at + 1, StringComparison.Ordinal))
+                    Array.Fill(hide, true, at, piece.Length);
+            for (var i = 0; i + Run <= piece.Length; i++) runs.Add(piece.Substring(i, Run));
+        }
+        for (var i = 0; i + Run <= text.Length; i++)
+            if (runs.Contains(text.Substring(i, Run))) Array.Fill(hide, true, i, Run);
+
+        var cleared = new StringBuilder(text.Length);
+        for (var i = 0; i < text.Length;)
+        {
+            if (!hide[i]) { cleared.Append(text[i++]); continue; }
+            cleared.Append(Shown);
+            while (i < text.Length && hide[i]) i++;
+        }
+        return cleared.ToString();
+    }
+}
 
 /// <summary>
 /// THE APP'S ONE SIGN-IN INTO ITS SEAT HOME, after onboarding as much as during it (<c>U-seat-signin</c>; <c>docs/ORCHESTRATION.md</c>

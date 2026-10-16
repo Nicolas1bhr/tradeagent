@@ -296,16 +296,18 @@ sealed class SeatSignInCard
 
     /// <summary>
     /// THE PASTED KEY: taken out of the field and the field emptied BEFORE anything runs, handed to the runtime's stdin, and never
-    /// put back into any word this card shows or logs — a refusal that quotes it has it replaced.
+    /// put back into any word this card shows or logs — a refusal that quotes any piece of what was pasted has it cleared
+    /// (<see cref="PastedKey.Redact"/>), on top of the runtime's own clearing.
     /// </summary>
     void UseKey()
     {
-        var key = (_keyField.Text ?? "").Trim();
+        var pasted = _keyField.Text ?? "";
         _keyField.Text = "";
+        var key = pasted.Trim();
         if (key.Length == 0) { Say("Paste a key into the box first.", problem: true); return; }
         Press(async () => { await _sources.Service.SignInWithKeyAsync(key); return true; },
             _ => _sources.Activity($"Signed TradeAgent's AI in with a pasted key ({_sources.Service.DisplayName}); TradeAgent kept no copy"),
-            words => words.Replace(key, "(the key)", StringComparison.Ordinal));
+            words => PastedKey.Redact(words, pasted));
     }
 
     Task StartSignOut()

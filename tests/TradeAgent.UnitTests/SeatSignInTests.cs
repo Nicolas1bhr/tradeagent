@@ -164,6 +164,59 @@ public class SeatSignInTests
     }
 
     /// <summary>
+    /// FIX 1 (CRED-001; the review's P1): NO PIECE OF A PASTED KEY COMES BACK IN ANY WORD — a key copied over two lines, or echoed by
+    /// the program only in part. A key with a space or a line break inside is refused in words before anything runs (a key has none);
+    /// the program's words are cleared of the key BEFORE they are cut to one line, and of every run of eight characters of it. Read in
+    /// the refusal itself, every word on the card and every activity line. Red at base: the words were cut to their first line and
+    /// only then cleared of the exact key, so the first line of a wrapped key, or the key less its first four characters, came back.
+    /// </summary>
+    [Fact]
+    public void A_pasted_key_wrapped_over_lines_or_echoed_in_part_leaves_no_piece_of_itself_in_any_word()
+    {
+        using var rig = new Rig(nameof(A_pasted_key_wrapped_over_lines_or_echoed_in_part_leaves_no_piece_of_itself_in_any_word));
+        rig.Refresh();
+        const string wrapped = "sk-FAKE-1111-first-half\r\nsecond-half-2222-wrapped";
+
+        // A KEY COPIED OVER TWO LINES, into a program that prints back what it read.
+        File.WriteAllText(rig.Refuse, "");
+        rig.KeyField.Text = wrapped;
+        rig.Press(rig.Button(SeatSignInCard.Key));
+        Assert.Equal("", rig.KeyField.Text ?? "");
+        NoPieceOf(wrapped, Rig.Words(rig.Card.Root), "the card");
+        foreach (var broken in new[] { wrapped, "sk-FAKE-1111-first-half second-half-2222-wrapped" })
+            NoPieceOf(broken, [Refusal(rig, broken)], "the refusal");
+        Assert.Contains(Rig.Words(rig.Card.Root), w => w.Contains("line break", StringComparison.Ordinal));
+        Assert.DoesNotContain("login --with-api-key", rig.Argv());
+
+        // A PROGRAM THAT ECHOES THE KEY ONLY IN PART: all but its first four characters.
+        File.Delete(rig.Refuse);
+        File.WriteAllText(rig.RefusePart, "");
+        rig.KeyField.Text = FakeKey;
+        rig.Press(rig.Button(SeatSignInCard.Key));
+        NoPieceOf(FakeKey, Rig.Words(rig.Card.Root), "the card");
+        NoPieceOf(FakeKey, [Refusal(rig, FakeKey)], "the refusal");
+        Assert.Contains(Rig.Words(rig.Card.Root), w => w.Contains("(the key)", StringComparison.Ordinal));
+        Assert.Contains("login --with-api-key", rig.Argv());
+
+        NoPieceOf(wrapped + " " + FakeKey, rig.Activity, "the activity log");
+        Assert.True(rig.Card.Root.IsVisible);
+    }
+
+    /// <summary>The words a key sign-in was refused in, called as the card calls it.</summary>
+    static string Refusal(Rig rig, string key) =>
+        Assert.IsType<TradeAgentException>(Assert.Throws<AggregateException>(() => rig.Service.SignInWithKeyAsync(key).Wait()).InnerException).Message;
+
+    /// <summary>No run of eight characters of any whitespace-separated piece of what was pasted, in any of the words.</summary>
+    static void NoPieceOf(string pasted, IEnumerable<string> words, string where)
+    {
+        var pieces = pasted.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var w in words)
+            foreach (var p in pieces)
+                for (var i = 0; i + 8 <= p.Length; i++)
+                    Assert.False(w.Contains(p.Substring(i, 8), StringComparison.Ordinal), $"{where} carries \"{p.Substring(i, 8)}\" of the key: {w}");
+    }
+
+    /// <summary>
     /// (d) THE CODE IS SHOWN WITH ITS EXPIRY AND A RETRY ONCE IT LAPSES, AND OUTPUT THE MANIFEST'S PATTERNS DO NOT MATCH IS REFUSED
     /// NAMING THE VERSION — no code guessed onto the screen. Red at base: no code path on the card, no expiry read, and no refusal.
     /// </summary>
@@ -384,6 +437,7 @@ public class SeatSignInTests
 
         public string Marker => Path.Combine(Dir, "signed-in");
         public string Refuse => Path.Combine(Dir, "refuse");
+        public string RefusePart => Path.Combine(Dir, "refuse-part");
         public string Stdin => Path.Combine(Dir, "stdin.txt");
         public string DeviceFile => Path.Combine(Dir, "device.txt");
         public string Hold => Path.Combine(Dir, "hold");
@@ -480,7 +534,7 @@ public class SeatSignInTests
 
         /// <summary>
         /// A PROGRAM THAT ANSWERS LIKE codex-cli 0.160.1, on either platform: status by a marker file, a key read from stdin (and
-        /// refused, printing it back, while a "refuse" file exists), the device prompt from a file (held open while a "hold" file
+        /// refused, printing it back, while a "refuse" file exists — or all but its first four characters, while a "refuse-part" one does), the device prompt from a file (held open while a "hold" file
         /// exists), the browser sign-in's address on stderr then a wait, and logout. Every start appends "== args" and its environment.
         /// </summary>
         string WriteScript()
@@ -510,6 +564,7 @@ public class SeatSignInTests
                     "set /p KEY=",
                     $"> \"{Stdin}\" echo %KEY%",
                     $"if exist \"{Refuse}\" (echo refused: %KEY% 1>&2& exit /b 1)",
+                    $"if exist \"{RefusePart}\" (echo the key ending %KEY:~4% is not valid 1>&2& exit /b 1)",
                     $"type nul > \"{Marker}\"",
                     "echo Successfully logged in 1>&2",
                     "exit /b 0",
@@ -536,7 +591,7 @@ public class SeatSignInTests
                 "case \"$*\" in",
                 "  --version) echo 'codex-cli 0.160.1' ;;",
                 $"  'login status') if [ -f \"{Marker}\" ]; then echo 'Logged in using an API key - ***' >&2; exit 0; fi; echo 'Not logged in' >&2; exit 1 ;;",
-                $"  'login --with-api-key') read -r KEY; printf '%s\\n' \"$KEY\" > \"{Stdin}\"; if [ -f \"{Refuse}\" ]; then echo \"refused: $KEY\" >&2; exit 1; fi; : > \"{Marker}\"; echo 'Successfully logged in' >&2 ;;",
+                $"  'login --with-api-key') read -r KEY; printf '%s\\n' \"$KEY\" > \"{Stdin}\"; if [ -f \"{Refuse}\" ]; then echo \"refused: $KEY\" >&2; exit 1; fi; if [ -f \"{RefusePart}\" ]; then echo \"the key ending ${{KEY#????}} is not valid\" >&2; exit 1; fi; : > \"{Marker}\"; echo 'Successfully logged in' >&2 ;;",
                 $"  'login --device-auth') cat \"{DeviceFile}\"; if [ -f \"{Hold}\" ]; then sleep 30; fi ;;",
                 "  login) echo 'https://auth.example.test/oauth/authorize?x=1' >&2; sleep 30 ;;",
                 $"  logout) rm -f \"{Marker}\"; echo 'Successfully logged out' >&2 ;;",
