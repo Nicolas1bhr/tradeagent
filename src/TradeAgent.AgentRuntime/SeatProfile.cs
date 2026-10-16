@@ -44,17 +44,25 @@ public static class SeatProfile
         // list — changed before its folder was looked at. The owner's own files are never touched.
         foreach (var rel in seat.PrivateFiles) Inside(root, rel, "private_files");
         Inside(root, seat.ConfigFile, "config_file");
+        // EVERY COMPONENT OF EVERY PATH THE SEAT NAMES — its folders, and the folders of its credential and settings files — LOOKED AT
+        // BEFORE ANY CHANGE (the re-review's P2, U-seat-acl): a link on the way is refused while the root's mode, the walk and every list
+        // are still as they were. The root looked at first, its owner read, never changed: a walk never reads a tree another account owns.
+        var folders = new List<string> { root };
+        foreach (var (name, value) in seat.ResolvedEnvironment())
+            if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) folders.Add(Path.GetFullPath(value));
+        foreach (var folder in folders) Look(root, folder);
+        NotForeign(root);
+        foreach (var file in SeatFiles(root, seat))
+        {
+            Look(root, Path.GetDirectoryName(file)!);
+            NotALink(file);
+        }
         // THE WHOLE HOME READ, AND EVERY FILE IT WOULD CHANGE LOOKED AT, BEFORE ANY CHANGE (the re-review's P1, U-seat-acl; CRED-001): a
         // file with a second name may be the owner's own, and is refused while nothing is changed yet.
-        // The root looked at first, its owner read, never changed: a walk never reads a tree another account owns.
-        NotALink(root);
-        NotForeign(root);
         var below = Below(root);
         foreach (var file in SeatFiles(root, seat)) NoSecondName(file);
 
-        RealFolder(root, root);
-        foreach (var (name, value) in seat.ResolvedEnvironment())
-            if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) RealFolder(root, Path.GetFullPath(value));
+        foreach (var folder in folders) RealFolder(root, folder);
         PrivateBelow(root, seat, below);
 
         // THE CLI'S OWN CONFIG FILE, WRITTEN BY THE APP BEFORE EVERY START. A turn ignores it (--ignore-user-config), but `login`,
@@ -76,12 +84,7 @@ public static class SeatProfile
     /// </summary>
     static void RealFolder(string root, string folder)
     {
-        var rel = Path.GetRelativePath(root, folder);
-        if (rel == ".." || rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(rel))
-            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
-                $"TradeAgent will not use {folder} for the AI: it is outside the AI's own home {root}. This is TradeAgent's own " +
-                "settings at fault; nothing was written or started.");
-
+        var rel = Relative(root, folder);
         if (Path.GetDirectoryName(root) is { } above) Directory.CreateDirectory(above);
         var at = root;
         Real(at);
@@ -93,15 +96,47 @@ public static class SeatProfile
         {
             NotALink(at);
             if (Directory.Exists(at)) { OwnedHere(at, root); return; }
-            if (File.Exists(at))
-                throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
-                    $"TradeAgent will not use the AI's own home while {at} is a file where its folder belongs. Nothing was written " +
-                    $"or started. Remove {at} and TradeAgent makes the folder there.");
+            if (File.Exists(at)) throw FileWhereFolder(at);
             Directory.CreateDirectory(at);
             NotALink(at);
             OwnedHere(at, root);
         }
     }
+
+    /// <summary>
+    /// <paramref name="folder"/> under <paramref name="root"/> LOOKED AT, NOTHING MADE OR CHANGED: every component from the root that is
+    /// there is a real folder, none a link or a file; the first missing one ends the look (<see cref="RealFolder"/> makes the rest).
+    /// </summary>
+    static void Look(string root, string folder)
+    {
+        var rel = Relative(root, folder);
+        var at = root;
+        var parts = rel == "." ? [] : rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts.Prepend(""))
+        {
+            if (part.Length > 0) at = Path.Combine(at, part);
+            NotALink(at);
+            if (Directory.Exists(at)) continue;
+            if (File.Exists(at)) throw FileWhereFolder(at);
+            return;
+        }
+    }
+
+    /// <summary><paramref name="folder"/> relative to <paramref name="root"/> — or the refusal, when it is outside it.</summary>
+    static string Relative(string root, string folder)
+    {
+        var rel = Path.GetRelativePath(root, folder);
+        if (rel == ".." || rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(rel))
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not use {folder} for the AI: it is outside the AI's own home {root}. This is TradeAgent's own " +
+                "settings at fault; nothing was written or started.");
+        return rel;
+    }
+
+    static TradeAgentException FileWhereFolder(string at) =>
+        new(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use the AI's own home while {at} is a file where its folder belongs. Nothing was written " +
+            $"or started. Remove {at} and TradeAgent makes the folder there.");
 
     /// <summary>
     /// EVERY FOLDER AND EVERY FILE <see cref="Below"/> READ, PARENTS FIRST, MADE OWNER-ONLY, AND THE CREDENTIAL AND SETTINGS FILES MADE
@@ -129,7 +164,7 @@ public static class SeatProfile
     /// THE SEAT HOME READ, NOTHING CHANGED: every folder below <paramref name="root"/>, parents first, and — on macOS and Windows, where
     /// a preparation changes a file's own entries — every file, each looked at by <see cref="NoSecondName"/>. A folder or file that is a
     /// link, a junction or another reparse point is stepped over, never entered or changed: what it points to is not the seat home.
-    /// Nothing when the root is not there yet. Measured on the dev Mac: a whole preparation took 67-92 ms over a home of 377 folders and
+    /// Nothing when the root is not there yet. Measured on the dev Mac: a whole preparation took 67-105 ms over a home of 377 folders and
     /// 4,032 session files (54-72 ms before each file's link count was read; 17-19 ms when the walk listed folders only).
     /// </summary>
     static (List<string> Folders, List<string> Files) Below(string root)
