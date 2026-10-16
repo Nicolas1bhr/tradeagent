@@ -3,6 +3,25 @@
 organisation's verbs, artifact reads by id and bounded data queries"), § 2.3 (a grant bound to the attempt's container), § 2.9 (one authority
 implementation); ORGANISATION § 15 row `U-thinking-seats`. Part b of 3 (a gate → **b** → c class). **A protection — AUTH-001 (no operator op on the door),
 ORDER-001 (no mutating op unless `operations`' grant), the grant binding: red-first and ONE watched mutant.** Seat A; opus/high. **No rung.**
+**AMENDED AT DISPATCH (seat A, 2026-10-16 ~23:55, main `30a73c91`+; these lines outrank the older ones below where they differ):**
+- **Re-grep every file:line below at your base first** — they were taken at `8f261176` (10-11). Landed since: `U-grant-tree` (`AttemptContainer`,
+  src/TradeAgent.Security/AttemptContainer.cs:53; PENDING-until-bound grants; RULING 2), `U-seat-home`/`U-seat-signin`/`U-seat-acl`, `U-prompt-stdin`,
+  O2a/O2b (`org_rights`), O4 (rung 38), `U-puppet-runtime` (`PuppetLife`, `PuppetSeats.TestHost`). Landing next: `U-mint-per-launch` (one minted id per launch),
+  O3 `U-org-wakes` (THE `RefusalKind` + `TurnRefusal`), then part a `U-thinking-seats-a` (rung 39: `CapabilityPolicy`, `Capability.DecisionVerbs`, the attempt's
+  RECORDED assurance / `seat_class`). Rebase onto each as it lands; adopt, never alias.
+- **The binding** is `AttemptContainer.Contains` as landed — on Linux `U-cell-linux-b` (in flight) ANDs per-attempt cgroup membership into it; the door
+  inherits it and adds nothing of its own beside the image rule. Peer lookup per accepted connection, any error refuses.
+- **The surface follows the RECORDED seat assurance (ORCHESTRATION § 2.9, bdf66e1b), never headship or a role name:** today the door serves exactly
+  `GrantedWorkerTools.Granted`. Any ORGANISATION verb (`mandate-*` of O5a, the `decision-*`/`forecast-*`/`escalation-*`/`lateral-*` of O5b — whichever are on
+  main when you rebase) is served on the door ONLY to an attempt whose recorded assurance is Brokered or Confined, refused in words otherwise (the legacy pair
+  on unconfined seats hold none — § 2.3). If none has landed when you finish, build the hook (a verb's minimum assurance read from part a's policy) with a
+  test verb in tests only, and write one line in your report for the second lander (O5a's brief item 6 carries the same seam from its side). If part a has
+  not landed when you need its recorded assurance, build to its branch's names (`u-thinking-seats-a`) and say so; do not invent a second policy.
+- Add red-first (i) `An_org_verb_on_the_door_is_refused_to_an_attempt_recorded_unconfined` and GUARD (j) `No_door_tool_shares_a_name_with_a_pipe_op_it_is_not`.
+- **Q2 (code ceiling):** a broker-only (MEDIATED) seat still counts as unconfined for lanes; this unit adds no lane. **No real model, no paid run;** puppets and
+  the mock provider only. Codex 0.160.1 runs on this Mac only with a throwaway CODEX_HOME + HOME and a FAKE grant (as the survey's probe did).
+- CI is shared (GitHub Free): one branch run per pass; the watched mutant on the ONE job that proves it, the other jobs cancelled (fleet/tmp/A-org/cancel-after-ubuntu.sh pattern).
+- Scan exclusions by phrase for this unit's prose: "Bearer", "bearer_token_env_var", "token" (DISPATCH_SCAN_EXCLUDE). Tests box: `ready` once; else "tests box: NOT RUN — the machine does not answer".
 **Depends on `U-grant-tree`** (`AttemptContainer`, PENDING-until-bound grants — `docs/briefs/U-grant-tree.md` items 1-2); ∥ part a.
 **Today (main `8f261176`, READ + RUN):** no MCP server or HTTP listener in `src`. The harness's surface is `GrantedWorkerTools` (AgentRuntime/GrantedWorkerTools.cs:41;
 six tools, default deny, a `tool_call` row per call, `InvokeAsync` :175, ops `TradeOps` :130 / `DataOps` :145 / `ReportOps` :148, writes `Writable` :75),
