@@ -369,6 +369,16 @@ public static class Labels
         + "its own wakes are still due.";
 
     /// <summary>
+    /// THE TURN REFUSED BECAUSE THE SAME ROLE ALREADY HAS A LAUNCH OPEN (<c>U-mint-per-launch</c>) — the owner's chat turn
+    /// still running when the loop's comes, or the other way round. A role holds one open launch, so each turn's usage
+    /// closes its own row; <paramref name="openId"/> is that launch, or null while its row is still being written.
+    /// </summary>
+    public static string LaunchRoleOpen(string? openId) =>
+        $"Another turn of this role{(openId is null ? "" : $" ('{openId}')")} has not ended yet, so this one was not "
+        + "started. Nothing was written, nothing was charged and no wake was taken; it is tried again once that turn "
+        + "has ended.";
+
+    /// <summary>
     /// A LAUNCH UNDER AN ID THIS LEDGER NEVER HANDED OUT, OR ALREADY LAUNCHED UNDER (<c>U-mint-per-launch</c>). A turn's
     /// prompt, row and output's name are one id, the one it minted; a launch carrying any other is refused rather than
     /// recorded under a name another launch owns.

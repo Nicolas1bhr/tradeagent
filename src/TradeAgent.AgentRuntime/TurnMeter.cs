@@ -566,6 +566,13 @@ public sealed class TurnMeter
     readonly List<(string Id, string Role)> _minted = [];
 
     /// <summary>
+    /// THE ROLES WHOSE LAUNCH IS BEING WRITTEN, between <see cref="Begin"/>'s look at <see cref="_open"/> and its row
+    /// going in (<c>U-mint-per-launch</c>): a second launch of the same role in that window is refused as one would be
+    /// while the first is open.
+    /// </summary>
+    readonly HashSet<string> _launching = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// THE CLOSE OF A TURN THE MISSION LOOP OWNS, METERED AND NOT YET COMMITTED.
     ///
     /// <para>A turn's END belongs in the same transaction as what that turn published and what
@@ -891,9 +898,19 @@ public sealed class TurnMeter
         // launch can carry it; an id this meter never minted, or already launched under, is refused in words — no row,
         // no reservation, no wake. No id at all is a launch that minted nothing ahead (the owner's chat): it mints its
         // own, here, and can take no one else's.
+        //
+        // ONE OPEN LAUNCH PER ROLE (U-mint-per-launch, review P1). The owner's chat and the loop share the role's
+        // conversation, and the role's usage closes the role's open launch: a second launch admitted while the first ran
+        // overwrote its entry, so the first one's usage closed the second one's row and the second's wakes were spent on a
+        // turn the busy conversation never ran. Refused here, before any row, reservation or wake, and held in
+        // `_launching` until the row is in, so two launches of one role cannot both pass this look.
+        var key = Key(role);
         string id;
         lock (_gate)
         {
+            if (_open.TryGetValue(key, out var running)) return new AiAdmission { Refusal = Labels.LaunchRoleOpen(running.Id) };
+            if (_launching.Contains(key)) return new AiAdmission { Refusal = Labels.LaunchRoleOpen(null) };
+
             if (attemptId is null) id = NewId();
             else if (_minted.FindIndex(m => m.Id == attemptId) is var at and >= 0)
             {
@@ -901,6 +918,8 @@ public sealed class TurnMeter
                 _minted.RemoveAt(at);
             }
             else return new AiAdmission { Refusal = Labels.LaunchIdNotMinted(attemptId) };
+
+            _launching.Add(key);
         }
 
         var attempt = new AiAttempt
@@ -924,22 +943,19 @@ public sealed class TurnMeter
         try
         {
             admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding, cap));
+            // NO ENTRY TO REPLACE: one open is refused above. A launch whose turn ended with no end seen here leaves by
+            // Release or by its conversation's Detach, not by being overwritten.
             if (admission.Id is { } written)
                 lock (_gate)
                 {
-                    // A LAUNCH THIS ROLE NEVER CLOSED IS NOT FLYING ANY MORE: the role is starting
-                    // another turn, so whatever happened to the last one, nothing in this process is
-                    // waiting for it. Left in the register it would be a row no restart-shaped pass
-                    // could ever reconcile.
-                    if (_open.TryGetValue(Key(role), out var abandoned)) _live.Leave(abandoned.Id);
-
-                    _open[Key(role)] = (written, prompt.Length, heldForTheLoop);
+                    _open[key] = (written, prompt.Length, heldForTheLoop);
                     _live.Enter(written);
                 }
         }
         // WHATEVER STOPPED THE ROW FROM GOING IN REFUSES THE LAUNCH. Never an admission: the row is
         // the reservation, and a turn with no reservation is spending the day's cap cannot see.
         catch (Exception ex) { return AiAdmission.LedgerRefused(ex.Message); }
+        finally { lock (_gate) _launching.Remove(key); }
 
         Changed?.Invoke();
         return admission;
@@ -1062,6 +1078,23 @@ public sealed class TurnMeter
             _minted.Add((id, Key(role)));
             return id;
         }
+    }
+
+    /// <summary>
+    /// A LAUNCH WHOSE TURN IS OVER WITH NO END THIS METER SAW, no longer open (<c>U-mint-per-launch</c>): its send threw
+    /// before the conversation raised an end. Only while <paramref name="attemptId"/> is still the role's open launch —
+    /// a turn whose end was recorded has already left, and another launch's entry is not this one's to drop. Its row
+    /// stays LAUNCHED and leaves the live register, so a restart-shaped pass reconciles it; without this the role, which
+    /// may hold one open launch, would be refused every launch until the app restarts.
+    /// </summary>
+    public void Release(string? role, string attemptId)
+    {
+        lock (_gate)
+            if (_open.TryGetValue(Key(role), out var open) && open.Id == attemptId)
+            {
+                _open.Remove(Key(role));
+                _live.Leave(attemptId);
+            }
     }
 
     /// <summary>
@@ -1225,6 +1258,11 @@ public sealed class TurnMeter
         return new Detach(() =>
         {
             conversation.TurnEnded -= OnEnded;
+            // NO END OF THIS CONVERSATION WILL BE RECORDED NOW, so its role's open launch is not open any more
+            // (U-mint-per-launch): one role, one conversation, one open launch — left here, the role would be refused
+            // every launch until the app restarts. The row stays LAUNCHED for the restart-shaped pass, as Release.
+            lock (_gate)
+                if (_open.Remove(Key(role), out var open)) _live.Leave(open.Id);
             // CLEARED, AND THEREFORE REFUSING: a detached conversation's next typed turn has no meter to
             // reserve it, and a null Admit is a refusal (U-admission-fail-closed), never a pass.
             if (conversation is IAdmittedConversation a) a.Admit = null;
