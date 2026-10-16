@@ -159,6 +159,7 @@ public class SeatAclTests
     /// <summary>
     /// (e) LINUX, PINNED: a POSIX ACL entry naming another uid grants nothing after a preparation — 0700 sets the mask to <c>---</c>,
     /// and every named entry is masked by it. Green at base by design; a change that stops setting the group bits turns it red.
+    /// Read with <c>getfacl -n</c>: by default it prints the uid's NAME (65534 is <c>nobody</c> on Ubuntu), never the number.
     /// </summary>
     [SeatAclFact("POSIX ACLs and their mask", "linux")]
     public void Linux_posix_acl_entries_grant_nothing_after_0700()
@@ -168,14 +169,21 @@ public class SeatAclTests
         SeatProfile.Prepare(seat);
         var folder = Path.Combine(seat.Root, "codex");
         Tool("setfacl", "-m", "u:65534:rwx", folder);
-        Assert.Contains("user:65534:rwx", Tool("getfacl", "-p", folder), StringComparison.Ordinal);
-        Assert.Contains("mask::rwx", Tool("getfacl", "-p", folder), StringComparison.Ordinal);
+        var before = Tool("getfacl", "-p", "-n", folder);
+        Assert.StartsWith("user:65534:rwx", Named(before), StringComparison.Ordinal);
+        Assert.DoesNotContain("#effective:", Named(before), StringComparison.Ordinal);
+        Assert.Contains("mask::rwx", before, StringComparison.Ordinal);
 
         SeatProfile.Prepare(seat);
 
-        var acl = Tool("getfacl", "-p", folder);
+        var acl = Tool("getfacl", "-p", "-n", folder);
         Assert.Contains("mask::---", acl, StringComparison.Ordinal);
-        Assert.Contains("#effective:---", acl, StringComparison.Ordinal);
+        Assert.StartsWith("user:65534:rwx", Named(acl), StringComparison.Ordinal);
+        Assert.EndsWith("#effective:---", Named(acl), StringComparison.Ordinal);
+
+        // The one line naming uid 65534: its entry, and what the mask leaves of it.
+        static string Named(string acl) =>
+            acl.Split('\n').Select(l => l.Trim()).Single(l => l.StartsWith("user:65534:", StringComparison.Ordinal));
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
