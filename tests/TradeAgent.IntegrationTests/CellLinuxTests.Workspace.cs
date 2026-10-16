@@ -150,4 +150,45 @@ public partial class CellLinuxTests
         }
         return ms.ToArray();
     }
+
+    /// <summary>
+    /// ROW (h): THE OWNER'S INBOX IS NO CELL'S TO WRITE (Q5's evidence, without a flip; COUNCIL rule 7): a cell whose workspace is
+    /// elsewhere cannot create or change a file in a planted inbox, and a policy naming the inbox, or the workspace tree that holds
+    /// it, as its workspace or as an input is refused before anything starts. The agent's own tree beside the inbox stays grantable.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_cannot_write_the_owners_inbox()
+    {
+        PlatformIsACells();
+        var w = new World("inbox");
+        var planted = Path.Combine(Paths.Inbox, $"owner-material-{Guid.NewGuid():n}.txt");
+        File.WriteAllText(planted, "the owner's");
+
+        var ran = await InCell(w.Policy(), "/bin/sh", "-c",
+            $"echo x >> '{planted}' 2>/dev/null && echo inbox-append-open || echo inbox-append-denied; " +
+            $"echo x > '{Paths.Inbox}/planted-by-a-cell' 2>/dev/null && echo inbox-create-open || echo inbox-create-denied");
+        Says(ran, "inbox-append-denied", "inbox-create-denied");
+        Assert.Equal("the owner's", File.ReadAllText(planted));
+        Assert.False(File.Exists(Path.Combine(Paths.Inbox, "planted-by-a-cell")));
+
+        foreach (var policy in new[]
+        {
+            new CellPolicy(Paths.Inbox, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy(Paths.Workspace, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy(w.Ws, [Paths.Inbox], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+        })
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"echo x > '{Paths.Inbox}/planted-by-a-cell'");
+            var ex = Assert.Throws<TradeAgentException>(() => TradeAgent.AgentRuntime.ProcessContainment.Start(psi, policy, Launcher()).Dispose());
+            Assert.Equal(ErrorCode.CELL_UNAVAILABLE, ex.Code);
+            Assert.Contains("inbox", ex.Message);
+        }
+        Assert.False(File.Exists(Path.Combine(Paths.Inbox, "planted-by-a-cell")));
+
+        var agentTree = Path.Combine(Paths.AgentHome, "cell-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(agentTree);
+        Assert.Null(new CellPolicy(agentTree, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]).Problem());
+    }
 }

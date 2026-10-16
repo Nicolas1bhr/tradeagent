@@ -167,6 +167,29 @@ public class CellPolicyTests
     }
 
     /// <summary>
+    /// THE OWNER'S INBOX IS NO CELL'S (<c>U-cell-linux-d</c> item 5, Q5's evidence; COUNCIL rule 7): a policy naming the inbox, a path
+    /// inside it, or the workspace tree that holds it — as the workspace or as an input — is refused in words naming the inbox; the
+    /// agent's own tree beside it is not.
+    /// </summary>
+    [UnixFact]
+    public void A_policy_that_grants_the_owners_inbox_or_its_parent_is_refused()
+    {
+        var ws = Dir("ws");
+        var inside = Path.Combine(Paths.Inbox, "drop-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(inside);
+        foreach (var why in new[]
+        {
+            Policy(Paths.Inbox).Problem(), Policy(Paths.Workspace).Problem(), Policy(inside).Problem(),
+            Policy(ws, Paths.Inbox).Problem(), Policy(ws, Paths.Workspace).Problem(), Policy(ws, inside).Problem(),
+        })
+            Assert.Contains("the owner's inbox", why);
+
+        var agent = Path.Combine(Paths.AgentHome, "cell-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(agent);
+        Assert.Null(Policy(agent).Problem());
+    }
+
+    /// <summary>
     /// THE PROTECTED SET IS JUDGED WHERE IT REALLY IS (triage #3): with the app's home reached through a symlink, a grant naming the
     /// REAL <c>state/</c>, the real home or its real cell folder is refused — not passed because its spelling differs from the home's.
     /// </summary>

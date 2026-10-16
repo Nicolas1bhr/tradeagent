@@ -194,8 +194,12 @@ public sealed record CellPolicy
     /// WHAT NO GRANT MAY REACH, IN EVERY SPELLING (triage #3): the app's home and everything above it, and its <c>state/</c> — the
     /// ledgers, the holdout and the credentials all live there — and its cell policies, each as written AND as the kernel resolves
     /// it. A home reached through a symlink is judged where it really is, so a grant naming the real <c>state/</c> is refused too.
+    ///
+    /// <para><b>And the owner's inbox</b> (<c>U-cell-linux-d</c> item 5, COUNCIL rule 7): the inbox, anything inside it, and anything
+    /// that holds it — <see cref="Paths.Workspace"/> itself — so no cell is ever granted the folder the material scanner reads as what
+    /// the owner handed over. The agent's own tree beside it (<see cref="Paths.AgentHome"/>, a role's home) stays grantable.</para>
     /// </summary>
-    internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside)
+    internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside, IReadOnlyList<string> Inboxes)
     {
         public static Guarded Of(string? appHome = null)
         {
@@ -204,7 +208,10 @@ public sealed record CellPolicy
             var inside = homes.SelectMany(h => new[] { Path.Combine(h, "state"), Path.Combine(h, "cells") })
                 .Concat(Forms(Path.Combine(home, "state"))).Concat(Forms(Path.Combine(home, "cells")))
                 .Distinct(StringComparer.Ordinal).ToList();
-            return new Guarded(homes, inside);
+            var inboxRelative = Path.GetRelativePath(Paths.Home, Paths.Inbox);
+            var inboxes = homes.Select(h => Path.Combine(h, inboxRelative)).Concat(Forms(Path.Combine(home, inboxRelative)))
+                .Distinct(StringComparer.Ordinal).ToList();
+            return new Guarded(homes, inside, inboxes);
         }
 
         /// <summary>Why a path — one already resolved, or one spelling of it — may not be granted, or null.</summary>
@@ -213,6 +220,9 @@ public sealed record CellPolicy
             foreach (var home in Homes)
                 if (Within(home, form))
                     return $"would grant TradeAgent's own home {home}, which holds its state and the owner's logins";
+            foreach (var inbox in Inboxes)
+                if (Within(form, inbox) || Within(inbox, form))
+                    return $"would grant the owner's inbox {inbox} (it is, lies inside or holds it): what the owner hands over is no cell's to write";
             foreach (var root in Inside)
                 if (Within(form, root))
                     return $"lies inside TradeAgent's state or its cell policies ({root})";
