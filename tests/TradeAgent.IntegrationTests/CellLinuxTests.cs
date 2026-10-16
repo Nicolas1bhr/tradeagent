@@ -66,10 +66,11 @@ public partial class CellLinuxTests
         public string Holdout { get; }
         public static string Ledger => Paths.DatabaseFile;
 
-        public CellPolicy Policy(CellEgress? egress = null, IEnumerable<KeyValuePair<string, string>>? more = null) =>
-            new(Ws, [Ro], CellPolicy.SystemRoots,
+        public CellPolicy Policy(CellEgress? egress = null, IEnumerable<KeyValuePair<string, string>>? more = null,
+            IEnumerable<string>? inputs = null) =>
+            new(Ws, [Ro, .. inputs ?? []], CellPolicy.SystemRoots,
             [
-                new("PATH", "/usr/local/bin:/usr/bin:/bin"), new("HOME", Home), new("LANG", "C.UTF-8"), new("TMPDIR", Ws),
+                new("PATH", CellPath), new("HOME", Home), new("LANG", "C.UTF-8"), new("TMPDIR", Ws),
                 new("XDG_RUNTIME_DIR", RuntimeDir), .. more ?? []
             ], egress);
 
