@@ -3,7 +3,7 @@
 cgroup in a subtree the app's systemd service delegates"); ORGANISATION § 15 row `U-cell-linux-b` (:443). **Protections — AUTH-001, ORDER-001 (cross-container replay),
 UNKNOWN-001 (untouched), no terminal, refuse-never-guess, recovery: red-first and ONE watched mutant.** Seat A; **opus/high**. **No rung** (cgroups are live facts; grants
 stay in memory). **Dispatch only after `U-grant-tree` lands** (seat B): this unit extends its seams and never replaces them.
-**Today (main `bd151496`, READ; `U-grant-tree` = `origin/u-grant-tree` `ea9f799b`, rebased on that main, READ, NOT landed):** no cgroup code; `packaging/linux/tradeagent.service:19-34`:
+**Today (main `bd151496`, READ; `U-grant-tree` = `origin/u-grant-tree` `ea9f799b`, READ — re-checked by seat A at dispatch 2026-10-16 22:4x: U-grant-tree LANDED `eb943501` (record `cc17d93e`) after its fix pass 2 (a Windows teardown whose snapshot fails is never read as leader-only; owner text kept on a claim refusal), and O4 + U-seat-signin landed: `AgentSession.cs`, both `Containment.cs` moved — grep every pointer below before trusting its number):** no cgroup code; `packaging/linux/tradeagent.service:19-34`:
 `User=` (:21), `KillMode=mixed` (:33), no `Delegate=`. The launcher `setsid`s (`Core/Containment.cs:110`), starts the program (:142), ends the session (:165; app side
 `ContainedProcess.End`, `AgentRuntime/Containment.cs:234-255`) — a double-forked `setsid` daemon reparented to init escapes that proof. -a's record OWES the sweep of a policy
 file left when app AND supervisor crash (BUILD-STATUS.md:10434ff). The Cell step runs as `sudo systemd-run --wait --pipe -p User=… -p Delegate=yes` (build.yml:222-236).
