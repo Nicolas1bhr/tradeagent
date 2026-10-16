@@ -263,10 +263,23 @@ public partial class CouncilLoopTests
         }
 
         /// <summary>
+        /// UNDER THE ID THE TURN MINTED, as the meter launches it (<c>U-mint-per-launch</c>): the row carries the id the
+        /// prompt named, and the pending slot above is for this host's callers that name none.
+        /// </summary>
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId)
+        {
+            if (attemptId is null) return BeginTurn(prompt, wakes, role);
+            lock (Opened) Opened.Add((role, prompt));
+            lock (_mint) if (_pending == attemptId) _pending = null;
+            return new AiAttemptStore(_db).Begin(
+                new AiAttempt { Id = attemptId, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
+        }
+
+        /// <summary>
         /// The id the turn about to run will carry. Minted before the prompt, exactly as the meter
         /// does it, so a conversation writing into <c>out/</c> can name the file after it.
         /// </summary>
-        public string? NextAttemptId()
+        public string? NextAttemptId(string role)
         {
             lock (_mint) return Minted = _pending = NewId();
         }

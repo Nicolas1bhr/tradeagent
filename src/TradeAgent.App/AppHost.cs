@@ -1768,6 +1768,13 @@ public sealed class AppHost : IAsyncDisposable
             host.Meter?.Begin(prompt, wakes, role) ?? AiAdmission.NoLedgerOpen;
 
         /// <summary>
+        /// The same, UNDER THE ID THIS LAUNCH MINTED (<c>U-mint-per-launch</c>): the meter launches under exactly that id
+        /// or refuses, so the turn's prompt, its row and its output's name are one id.
+        /// </summary>
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId) =>
+            host.Meter?.Begin(prompt, wakes, role, attemptId: attemptId) ?? AiAdmission.NoLedgerOpen;
+
+        /// <summary>
         /// What the turn left in <c>out/</c>, published and delivered — and anything an earlier
         /// crash left half done, finished. It writes to the relay's two tables and to the roles'
         /// folders, and to nothing that decides what the AI is allowed to do.
@@ -1788,7 +1795,10 @@ public sealed class AppHost : IAsyncDisposable
         /// It commits nothing — the launch record is <see cref="BeginTurn"/>'s — and it cannot change
         /// a mode, lift the kill switch or approve anything.
         /// </summary>
-        public string? NextAttemptId() => host.Meter?.Mint();
+        public string? NextAttemptId(string role) => host.Meter?.Mint(role);
+
+        /// <summary>A minted id the turn gave up without launching under, forgotten by the meter that minted it.</summary>
+        public void ForgetAttemptId(string attemptId) => host.Meter?.Forget(attemptId);
 
         /// <summary>
         /// The artifact one delivered task is about, read out of the app's own publication table
