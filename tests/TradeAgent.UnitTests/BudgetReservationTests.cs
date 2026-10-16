@@ -814,17 +814,21 @@ public class BudgetReservationTests : IDisposable
         TimeSpan[] refused;
         lock (waits) refused = [.. waits.Take(4)];
 
-        // THE WINDOW HELD OPEN: the pass behind the launched turn waits until the status is read, so the read lands after the
-        // turn was sent and its lease dropped and before the loop counted it — every run, not one in twenty.
+        // THE WINDOW HELD OPEN, every run: the pass behind the launched turn waits here, after the turn was sent and its lease
+        // dropped and before the loop counted it. A card read in that window still shows the run of failures — "sent and not
+        // working" is a proxy that is true there (one red in twenty on CI) — so the read waits for the event itself: the turn
+        // COUNTED, which the loop records in the same step that ends or extends the run (MissionLoop's `_turns++` beside
+        // Recovered/Failed), and in one snapshot so the count and the turn are of the same moment.
+        var passEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var passGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        host.Scanning = ct => passGate.Task.WaitAsync(ct);
+        host.Scanning = ct => { passEntered.TrySetResult(); return passGate.Task.WaitAsync(ct); };
         LedgerTakesRows();
-        deadline = DateTimeOffset.UtcNow.AddSeconds(20);
-        while ((host.Conv.Sent.Count == 0 || loop.Status.State == MissionState.Working)
-               && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(1);
-        var after = loop.Status;
+        await passEntered.Task.WaitAsync(TimeSpan.FromSeconds(20));
         passGate.SetResult();
+        deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        MissionStatus after;
+        while ((after = loop.Status).Turns == 0 && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(1);
         await loop.PauseAsync();
 
         Assert.Equal(4, refused.Length);
