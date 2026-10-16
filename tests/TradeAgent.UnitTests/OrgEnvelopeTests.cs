@@ -30,11 +30,34 @@ public class OrgEnvelopeTests : IDisposable
 
     const decimal Reservation = (1_200_000m * 1m + 20_000m * 4m) / 1_000_000m;   // 1.28
 
-    /// <summary>A meter over this test's database. Each one built is a RESTART: it declares every open row LOST.</summary>
-    TurnMeter Meter(decimal cap, Func<string, decimal>? share = null) =>
-        new(_db, () => cap, runtimeId: () => "codex", now: () => _now, recordPath: _records,
+    /// <summary>
+    /// A meter over this test's database. Each one built is a RESTART: it declares every open row LOST.
+    ///
+    /// <para>THE ACTIVATION GATE'S PRECONDITIONS ARE MET, so the envelope is what these launches reach (<c>U-thinking-seats-a</c>,
+    /// rung 39, which landed after this file): every role is declared on the harness, each active position beyond the legacy pair
+    /// launches from a verified harness seat, and the host holds a proven executor cell — without them the gate refuses every
+    /// position's launch before its envelope is read.</para>
+    /// </summary>
+    TurnMeter Meter(decimal cap, Func<string, decimal>? share = null)
+    {
+        var meter = new TurnMeter(_db, () => cap, runtimeId: () => "codex", now: () => _now, recordPath: _records,
             owner: () => new OwnerPrice(1m, 4m), model: () => "gpt-5.6-sol", share: share ?? (_ => 1m),
-            live: new LiveAttempts());
+            live: new LiveAttempts(), declaredSeat: _ => SeatClasses.Harness);
+        if (!new CellProofStore(_db).HoldsProof()) ThinkingSeatsTests.ProveCell(_db);
+        foreach (var id in ActivePositionsBeyondLegacy())
+            meter.Attach(new ThinkingSeatsTests.Seated(SeatClasses.Harness), id);
+        return meter;
+    }
+
+    List<string> ActivePositionsBeyondLegacy() => _db.Read(_ =>
+    {
+        using var c = _db.Cmd("SELECT id FROM org_position WHERE status='active' ORDER BY id");
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read())
+            if (!CouncilRoles.IsKnown(r.GetString(0))) ids.Add(r.GetString(0));
+        return ids;
+    });
 
     void Unit(string id, string parent, string? share = null, string kind = OrgUnitKind.Team) => Exec("""
         INSERT INTO org_unit(id, parent_id, kind, status, envelope_share, created_at)
@@ -373,7 +396,11 @@ public class OrgEnvelopeTests : IDisposable
         var reads = 0;
         decimal Lowered() => ++reads == 1 ? 10m : 2m;   // the owner lowers the cap the instant after the first read
         var meter = new TurnMeter(_db, Lowered, runtimeId: () => "codex", now: () => _now, recordPath: _records,
-            owner: () => new OwnerPrice(1m, 4m), model: () => "gpt-5.6-sol", share: _ => 0.5m, live: new LiveAttempts());
+            owner: () => new OwnerPrice(1m, 4m), model: () => "gpt-5.6-sol", share: _ => 0.5m, live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Harness);
+        // THE ACTIVATION GATE'S PRECONDITIONS, as Meter meets them (U-thinking-seats-a): a verified harness seat, a proven cell.
+        ThinkingSeatsTests.ProveCell(_db);
+        using var seat = meter.Attach(new ThinkingSeatsTests.Seated(SeatClasses.Harness), "pos-1");
 
         reads = 0;
         var rule = meter.AdmissionRuleFor("pos-1");
