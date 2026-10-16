@@ -68,6 +68,20 @@ public static class MissionEventKind
     public const string Brief = PublicationKind.Brief;
 
     /// <summary>
+    /// TRADEAGENT'S OWN NOTE TO A ROLE ABOUT ITS VERSIONS — the paper allocation and the forward-run notes
+    /// (<see cref="PublicationKind.Note"/>), written only by <see cref="PublicationStore.Commit"/>. Named here so the wake table
+    /// classes it (<see cref="WakePriority"/>): a kind the queue holds and the table does not know is refused at raise.
+    /// </summary>
+    public const string Note = PublicationKind.Note;
+
+    /// <summary>
+    /// THE OTHER DIRECTOR'S ONE BOUNDED CHALLENGE, delivered (<see cref="PublicationKind.Challenge"/>), written only by
+    /// <see cref="PublicationStore.Commit"/> from <see cref="CouncilBoundaries"/>. Named here for the wake table, as
+    /// <see cref="Note"/> is.
+    /// </summary>
+    public const string Challenge = PublicationKind.Challenge;
+
+    /// <summary>
     /// THE REFEREE ANSWERED. Written only by <see cref="PublicationStore.Commit"/>, in the same
     /// transaction as the promotion and the note that carries it, and keyed by the PROMOTION — the
     /// entity — so a repeated delivery of one judgement buys no second turn
@@ -136,6 +150,106 @@ public static class MissionEventKind
     /// </summary>
     public const string Ceiling = "ceiling";
 }
+
+/// <summary>
+/// THE PRIORITY CLASSES, IN ORGANISATION § 10'S ORDER AND READ FROM IT — "Priority when the allowance is short: app protection
+/// and reconciliation (never AI-dependent) → the owner's words → unblocking an eligible deployment or required data → the
+/// chief's strategy → research → housekeeping." A lower value is served first. This enum IS that sentence; nothing else in the
+/// product restates the order (<c>U-org-wakes</c>, RULING Q3).
+/// </summary>
+public enum WakeClass
+{
+    /// <summary>"app protection and reconciliation (never AI-dependent)".</summary>
+    Protection = 1,
+
+    /// <summary>"the owner's words".</summary>
+    OwnerWords = 2,
+
+    /// <summary>"unblocking an eligible deployment or required data".</summary>
+    Unblocking = 3,
+
+    /// <summary>"the chief's strategy".</summary>
+    Strategy = 4,
+
+    /// <summary>"research".</summary>
+    Research = 5,
+
+    /// <summary>"housekeeping".</summary>
+    Housekeeping = 6
+}
+
+/// <summary>
+/// EVERY WAKE KIND'S PRIORITY CLASS — ONE CODE TABLE citing ORGANISATION § 10 (<c>U-org-wakes</c>, RULING Q3). The scheduler
+/// serves the position holding the highest class among its due wakes, then the oldest due, then the shallowest unit, then the
+/// id. A kind this table does not class is REFUSED at raise, in a sentence naming it — fail closed, never defaulted to a class
+/// someone would then have to discover.
+/// </summary>
+public static class WakePriority
+{
+    /// <summary>The table. Each line names the § 10 words it follows.</summary>
+    public static IReadOnlyDictionary<string, WakeClass> Table { get; } = new Dictionary<string, WakeClass>(StringComparer.Ordinal)
+    {
+        // "app protection and reconciliation": a fill moved the book, an order reached a final state — the book and the
+        // broker are reconciled first.
+        [MissionEventKind.Fill] = WakeClass.Protection,
+        [MissionEventKind.Order] = WakeClass.Protection,
+
+        // "the owner's words": what he typed, and what he dropped in his own folder.
+        [MissionEventKind.Owner] = WakeClass.OwnerWords,
+        [MissionEventKind.Inbox] = WakeClass.OwnerWords,
+
+        // "unblocking an eligible deployment or required data": a consequential boundary, its deadline and its challenge decide
+        // a deployment; a dataset built and a tape reading stored are the required data.
+        [MissionEventKind.Boundary] = WakeClass.Unblocking,
+        [MissionEventKind.Deadline] = WakeClass.Unblocking,
+        [MissionEventKind.Challenge] = WakeClass.Unblocking,
+        [MissionEventKind.Data] = WakeClass.Unblocking,
+        [MissionEventKind.Tape] = WakeClass.Unblocking,
+
+        // "the chief's strategy": the agenda handed down.
+        [MissionEventKind.Brief] = WakeClass.Strategy,
+
+        // "research": the work itself — a report handed up, the referee's verdict, TradeAgent's note on a version's paper run,
+        // and a position's own request to be woken for its work.
+        [MissionEventKind.Report] = WakeClass.Research,
+        [MissionEventKind.Verdict] = WakeClass.Research,
+        [MissionEventKind.Note] = WakeClass.Research,
+        [MissionEventKind.Self] = WakeClass.Research,
+
+        // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
+        [MissionEventKind.Review] = WakeClass.Housekeeping,
+        [MissionEventKind.Renewal] = WakeClass.Housekeeping,
+        [MissionEventKind.Ceiling] = WakeClass.Housekeeping,
+        [MissionEventKind.Output] = WakeClass.Housekeeping
+    };
+
+    /// <summary>The class of <paramref name="kind"/>, or null for a kind the table does not know.</summary>
+    public static WakeClass? ClassOf(string? kind) =>
+        kind is not null && Table.TryGetValue(kind, out var c) ? c : null;
+
+    /// <summary>
+    /// REFUSES A WAKE OF A KIND WITH NO CLASS, in a sentence naming it (RULING Q3). Every writer of <c>mission_event</c> asks
+    /// this before its INSERT; nothing is written for a refused kind.
+    /// </summary>
+    /// <exception cref="ArgumentException">The kind has no class.</exception>
+    public static void Require(string? kind)
+    {
+        if (ClassOf(kind) is null)
+            throw new ArgumentException(
+                $"a wake of kind '{kind}' has no priority class in the wake table (ORGANISATION § 10), so it was not raised: "
+                + "a kind is classed in WakePriority before anything may raise it.", nameof(kind));
+    }
+
+    /// <summary>
+    /// The class of the row aliased <paramref name="column"/>, as SQL — a CASE over the table's own constants, NULL for a kind
+    /// it does not know (such a row is never served).
+    /// </summary>
+    internal static string Sql(string column) =>
+        $"CASE {column} " + string.Join(" ", Table.Select(kv => $"WHEN '{kv.Key}' THEN {(int)kv.Value}")) + " END";
+}
+
+/// <summary>One position with due wakes, as the scheduler ranks it: its highest class among them and its oldest due at that class.</summary>
+public sealed record DueRole(string Role, WakeClass Class, DateTimeOffset OldestDue);
 
 /// <summary>
 /// WHAT A <see cref="MissionEventKind.Tape"/> WAKE SAYS, AND ALL IT SAYS: which source and series, which subject when the
@@ -466,6 +580,7 @@ public sealed class MissionEventStore(Database db)
     /// </summary>
     public bool Raise(MissionEvent e) => db.Write(_ =>
     {
+        WakePriority.Require(e.Kind);
         using var c = db.Cmd($"""
             INSERT INTO mission_event({Cols})
             VALUES($id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role,NULL)
@@ -601,15 +716,26 @@ public sealed class MissionEventStore(Database db)
     /// would let one role's exhausted allowance stop the whole council until midnight, which is the
     /// opposite of what a share is for.
     /// </summary>
-    public List<string> RolesDue(DateTimeOffset now) => db.Read(_ =>
+    public List<string> RolesDue(DateTimeOffset now) => [.. Queue(now).Select(d => d.Role)];
+
+    /// <summary>
+    /// EVERY POSITION WITH A DUE UNCONSUMED WAKE, RANKED (<c>U-org-wakes</c>, ORCHESTRATION § 2.5): by the highest
+    /// ORGANISATION § 10 class among its due wakes (<see cref="WakePriority"/>), then the oldest due AT that class, then its id.
+    /// The loop breaks a tie of class and age by unit depth before the id — the chart is not this table's to read. A row of a
+    /// kind the table does not class is never served.
+    /// </summary>
+    public List<DueRole> Queue(DateTimeOffset now) => db.Read(_ =>
     {
-        using var c = db.Cmd(
-            "SELECT COALESCE(role,$chair) AS r FROM mission_event "
-            + "WHERE consumed_at IS NULL AND due_at <= $now GROUP BY r ORDER BY MIN(due_at), MIN(rowid)",
-            ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default));
+        using var c = db.Cmd($"""
+            WITH d AS (SELECT COALESCE(role,$chair) AS r, {WakePriority.Sql("kind")} AS c, due_at
+                         FROM mission_event WHERE consumed_at IS NULL AND due_at <= $now),
+                 top AS (SELECT r, MIN(c) AS c FROM d WHERE c IS NOT NULL GROUP BY r)
+            SELECT d.r, top.c, MIN(d.due_at) FROM d JOIN top ON top.r = d.r AND top.c = d.c
+             GROUP BY d.r, top.c ORDER BY top.c, MIN(d.due_at), d.r
+            """, ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default));
         using var r = c.ExecuteReader();
-        var list = new List<string>();
-        while (r.Read()) list.Add(r.GetString(0));
+        var list = new List<DueRole>();
+        while (r.Read()) list.Add(new DueRole(r.GetString(0), (WakeClass)r.GetInt64(1), Sql.Time(r.GetValue(2))));
         return list;
     });
 
@@ -643,6 +769,7 @@ public sealed class MissionEventStore(Database db)
     /// </summary>
     public bool RaiseCoalesced(MissionEvent e) => db.Write(_ =>
     {
+        WakePriority.Require(e.Kind);
         using var c = db.Cmd($"""
             INSERT INTO mission_event({Cols})
             SELECT $id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role,NULL

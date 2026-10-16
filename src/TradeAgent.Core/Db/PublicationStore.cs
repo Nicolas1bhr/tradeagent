@@ -222,6 +222,8 @@ public sealed class PublicationStore(Database db)
     /// </summary>
     public bool Commit(Publication p, DateTimeOffset at, string? eventId = null) => db.Write(_ =>
     {
+        // A KIND THE WAKE TABLE DOES NOT CLASS IS REFUSED BEFORE ANYTHING IS WRITTEN (U-org-wakes, RULING Q3).
+        if (p.RecipientList.Count > 0) WakePriority.Require(p.Kind);
         using var pub = db.Cmd($"""
             INSERT INTO publication({Cols})
             VALUES($id,$role,$attempt,$rev,$kind,$to,$class,$at,$src,$content)

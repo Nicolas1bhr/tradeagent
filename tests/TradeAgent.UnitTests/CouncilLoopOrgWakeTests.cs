@@ -427,4 +427,80 @@ public partial class CouncilLoopTests
         Assert.Equal(0, Launches(db, Pos));
         Assert.Single(Ceilings(host, Pos));
     }
+
+    // ---- (d) priority -----------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (d) THE OWNER'S WORDS OUTRANK AN OLDER REVIEW, AND TIES GO BY DEPTH, THEN ID (ORCHESTRATION § 2.5; ORGANISATION § 10). The
+    /// chair holds the owner's words (due a minute ago); Research a look due ten minutes ago; three positions a request of their
+    /// own each, all due five minutes ago — a department-level head at depth 2 and its twin, and a team head at depth 3 whose id
+    /// sorts first. Served in turn: the owner's words; then the three requests ("research" outranks "housekeeping") by depth
+    /// and then id; then Research's look, oldest of all.
+    ///
+    /// <para>RED at base: <c>RolesDue</c> ordered by <c>MIN(due_at)</c> alone, so Research's look went first.</para>
+    /// </summary>
+    [Fact]
+    public async Task Owner_words_outrank_an_older_review_and_ties_go_by_depth_then_id()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        const string deep = "pos-0aaaaaaaaaaa", shallow = "pos-0zzzzzzzzzzz", twin = "pos-0yyyyyyyyyyy";
+        Unit(db, "sub-d", OrgIds.Research, null, OrgUnitKind.Subdivision);
+        Unit(db, "team-d", "sub-d", null);
+        Unit(db, "sub-e", OrgIds.Research, null, OrgUnitKind.Subdivision);
+        Seat(db, shallow, "sub-d", heads: true);
+        Seat(db, twin, "sub-e", heads: true);
+        Seat(db, deep, "team-d", heads: true);
+        var now = Noon();
+        var host = new CouncilHost(db, root, new Concurrency()).Add(deep).Add(shallow).Add(twin);
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        Assert.True(host.Events!.RecordOwnerMessage("where are we?", now.AddMinutes(-1)));
+        host.Events.Raise(MissionEventIds.ForRole(MissionEventIds.Review(now.AddMinutes(-10)), CouncilRoles.Research),
+            MissionEventKind.Review, now.AddMinutes(-10), role: CouncilRoles.Research);
+        foreach (var p in new[] { deep, shallow, twin })
+            host.Events.Raise(MissionEventIds.ForRole(MissionEventIds.Self($"asked-{p}"), p), MissionEventKind.Self,
+                now.AddMinutes(-5), role: p);
+
+        for (var i = 0; i < 5; i++) await loop.TurnAsync();
+
+        Assert.Equal([CouncilRoles.Operations, twin, shallow, deep, CouncilRoles.Research], host.Opened.Select(o => o.Role));
+    }
+
+    /// <summary>
+    /// (d2) EVERY WAKE KIND HAS A CLASS (RULING Q3): every <see cref="MissionEventKind"/> constant is in the one table, the table
+    /// holds nothing else, and a kind it does not class is refused at raise — by the queue, the coalescing raise and the relay's
+    /// commit — in a sentence naming the kind, with nothing written.
+    /// </summary>
+    [Fact]
+    public void Every_wake_kind_has_a_class()
+    {
+        var kinds = typeof(MissionEventKind)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.NotEmpty(kinds);
+        foreach (var kind in kinds) Assert.True(WakePriority.ClassOf(kind) is not null, $"'{kind}' has no class");
+        Assert.Equal(kinds.Order(StringComparer.Ordinal), WakePriority.Table.Keys.Order(StringComparer.Ordinal));
+
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        var at = DateTimeOffset.UtcNow;
+        var raise = Assert.Throws<ArgumentException>(() => events.Raise("hunch:1", "hunch", at, role: CouncilRoles.Research));
+        Assert.Contains("'hunch'", raise.Message, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => events.RaiseCoalesced(new MissionEvent
+        {
+            Id = "hunch:2", Kind = "hunch", CreatedAt = at, DueAt = at, Role = CouncilRoles.Research
+        }));
+        Assert.Throws<ArgumentException>(() => new PublicationStore(db).Commit(new Publication
+        {
+            Id = "pub-hunch", Role = CouncilRoles.Research, Kind = "hunch", Recipients = CouncilRoles.Operations,
+            CreatedAt = at, Content = "x"
+        }, at));
+        Assert.Null(events.Get("hunch:1"));
+        Assert.Null(events.Get("hunch:2"));
+        Assert.Null(new PublicationStore(db).Get("pub-hunch"));
+    }
 }

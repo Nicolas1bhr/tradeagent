@@ -2739,12 +2739,27 @@ public sealed class MissionLoop
     }
 
     /// <summary>
-    /// The roles with a due wake, longest-waiting first, or nothing at all when the queue cannot be
+    /// The positions with a due wake, in the order they are served, or nothing at all when the queue cannot be
     /// read. A queue that throws is not a reason to launch a process nobody asked for.
+    ///
+    /// <para><b>The order</b> (<c>U-org-wakes</c>, ORCHESTRATION § 2.5): the highest ORGANISATION § 10 class among a position's
+    /// due wakes (<see cref="WakePriority"/>, read from its table and never restated here), then the oldest due at that class,
+    /// then the shallowest unit, then the id. A position the roster does not name sorts after every one it does at the same
+    /// class and age.</para>
     /// </summary>
     List<string> RolesDue(MissionEventStore events)
     {
-        try { return events.RolesDue(_now()); }
+        try
+        {
+            var depth = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var p in Walk()) depth.TryAdd(p.Id, p.Depth);
+            return [.. events.Queue(_now())
+                .OrderBy(d => d.Class)
+                .ThenBy(d => d.OldestDue)
+                .ThenBy(d => depth.TryGetValue(d.Role, out var n) ? n : int.MaxValue)
+                .ThenBy(d => d.Role, StringComparer.Ordinal)
+                .Select(d => d.Role)];
+        }
         catch (Exception) { return []; }
     }
 
