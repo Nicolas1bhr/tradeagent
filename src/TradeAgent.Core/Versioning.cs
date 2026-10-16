@@ -388,8 +388,16 @@ public static class Versions
     /// chart does (<c>docs/ORCHESTRATION.md</c> § 2.4). A unit's spend is read through these rows. Backfilled from each existing row's
     /// role as the ledger read it — NULL the chair's, a position its unit's chain as the chart stood at the rung, an app principal
     /// none — in one statement over the rows with no chain yet, so a crash before the stamp reruns it and writes nothing twice.</para>
+    ///
+    /// <para><b>39 — the activation gate's record</b> (<c>U-thinking-seats-a</c>, rung 39, after
+    /// <c>U-org-envelopes</c>' 38): <c>ai_attempt.seat_class</c> and <c>ai_attempt.assurance</c>,
+    /// the seat a launch was verified on, written by <c>AiAttemptStore.Begin</c> in the row's own insert and never updated (no backfill: a
+    /// launch before the rung has NULL — unknown); and <c>cell_proof</c>, the host's PROVEN executor-cell classes (provider, platform,
+    /// build, profile hash, when), written only by the app when a cell provider's benchmark passes here — nothing in this build writes
+    /// it — and read by the activation gate, which activates no position beyond the legacy pair on a real-model seat while it holds no
+    /// row for this platform and build.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 38;
+    public const int DatabaseSchemaVersion = 39;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

@@ -2379,6 +2379,36 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','38') ON CONFLICT(key) DO UPDATE SET value='38';");
         }
 
+        if (have < 39)
+        {
+            // THE ACTIVATION GATE'S RECORD — `U-thinking-seats-a`, rung 39, after `U-org-envelopes`' 38.
+            // Two things the gate needs written down and had nowhere to go:
+            //
+            // WHAT SEAT EACH LAUNCH RAN ON: `ai_attempt.seat_class` (cli, broker, harness, cell) and `ai_attempt.assurance`
+            // (unconfined, mediated, brokered, confined), written by `AiAttemptStore.Begin` in the row's own insert from the seat the
+            // admission verified, and never updated. NO BACKFILL: a launch recorded before this rung has NULL — unknown.
+            //
+            // THE HOST'S PROVEN EXECUTOR-CELL CLASSES: `cell_proof`, one row per provider whose benchmark passed on this host, written
+            // only by the app when that benchmark passes (`U-cell-linux-c`/`-e`; nothing in this build writes it). Until it holds a
+            // row for this platform and build, no position beyond the legacy pair activates on a real-model seat (ORCHESTRATION
+            // § 2.3, the owner's answer). Created only where missing and columns added only where missing, so a crash between any
+            // statement here and the stamp reopens cleanly.
+            AddColumnIfMissing("ai_attempt", "seat_class", "TEXT");
+            AddColumnIfMissing("ai_attempt", "assurance", "TEXT");
+            Exec("""
+                CREATE TABLE IF NOT EXISTS cell_proof(
+                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                  provider      TEXT NOT NULL,
+                  platform      TEXT NOT NULL,
+                  build         TEXT NOT NULL,
+                  profile_hash  TEXT NOT NULL,
+                  proven_at     TEXT NOT NULL
+                );
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','39') ON CONFLICT(key) DO UPDATE SET value='39';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
