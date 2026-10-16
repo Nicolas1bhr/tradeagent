@@ -799,14 +799,22 @@ public static class TreeTeardown
     /// own by design and only this process itself is spared.
     /// </summary>
     /// <param name="kill">The SIGKILL, for a test that needs a process the kill does not reach; the real one otherwise.</param>
+    /// <param name="held">
+    /// What <see cref="Hold"/> froze before something else that ends processes ran (<c>U-cell-linux-b</c> fix pass 1, R1: the
+    /// attempt's <c>cgroup.kill</c>): each is killed first, when it is still the process frozen, and counted among what is left until
+    /// it is gone — a process proved the turn's only by a parent link that kill has since taken is still the turn's.
+    /// </param>
     public static TreeEnd End(int leader, ulong leaderStart, int session, TimeSpan? bound = null,
-        bool insideTheSession = false, Func<int, bool>? kill = null)
+        bool insideTheSession = false, Func<int, bool>? kill = null, IReadOnlyCollection<ProcessEntry>? held = null)
     {
         if (OperatingSystem.IsWindows()) return TreeEnd.Nothing;
 
         var signal = kill ?? Posix.Kill;
         var deadline = DateTime.UtcNow + (bound ?? Bound);
         var killed = 0;
+        var snapshot = held?.ToList() ?? [];
+        foreach (var p in snapshot)
+            if (StillRunning(p) && signal(p.Pid)) killed++;
         while (true)
         {
             var frozen = Freeze(leader, leaderStart, session, insideTheSession);
@@ -819,11 +827,22 @@ public static class TreeTeardown
             // DONE WHEN NOTHING PROVED THE TURN'S RUNS — asked of the table itself, not of what was frozen, so
             // a process this user could not freeze is still counted rather than quietly skipped.
             var left = Members(leader, leaderStart, session, insideTheSession);
+            left.AddRange(snapshot.Where(p => left.All(l => l.Pid != p.Pid) && StillRunning(p)));
             if (left.Count == 0) return new TreeEnd(true, [], killed);
             if (DateTime.UtcNow >= deadline) return new TreeEnd(false, left, killed);
             if (frozen.Count == 0) Thread.Sleep(50);
         }
     }
+
+    /// <summary>
+    /// THE TURN'S TREE, TAKEN AND FROZEN BEFORE ANYTHING IS KILLED (<c>U-cell-linux-b</c> fix pass 1, R1): every process proved the
+    /// turn's — the leader, its session, everything below them by parent links — SIGSTOPped as it is found, by the same passes
+    /// <see cref="End"/> makes. Handed back to <see cref="End"/> as <c>held</c>. Taken first because a kill that ends a parent ends
+    /// the only proof its child has: a child that left the session and moved itself into another cgroup is the turn's by its
+    /// parent link alone, and <c>cgroup.kill</c> would take that parent before the tree walk got there.
+    /// </summary>
+    public static IReadOnlyList<ProcessEntry> Hold(int leader, ulong leaderStart, int session) =>
+        OperatingSystem.IsWindows() ? [] : [.. Freeze(leader, leaderStart, session, insideTheSession: false).Values];
 
     /// <summary>
     /// Whether a process a teardown could not end is still the same process, and still running — on Windows by

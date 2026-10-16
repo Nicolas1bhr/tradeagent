@@ -278,15 +278,18 @@ public sealed class ContainedProcess : IDisposable
 
             _over = true;
 
-            // THE ATTEMPT'S CGROUP FIRST (U-cell-linux-b): cgroup.kill ends every process born in it — a setsid'd daemon that left
-            // the session and lost its parent included — and the wait is for the kernel's own "populated 0". THEN the session
-            // teardown, for anything that moved itself out of the cgroup and is still the turn's by session or parent links;
-            // THEN the cgroup is removed. What the kill could not end is named, never assumed gone.
+            // THE TREE IS TAKEN FIRST, THEN THE ATTEMPT'S CGROUP IS KILLED, THEN THE TAKEN TREE IS ENDED (U-cell-linux-b; fix pass 1,
+            // R1). The session and parent links are frozen and kept before anything dies: a child that left the session and moved
+            // itself into a sibling attempt's cgroup is the turn's by its parent link alone, and cgroup.kill takes that parent. Then
+            // cgroup.kill ends every process born in the attempt — a setsid'd daemon that lost its parent included — and the wait is
+            // for the kernel's own "populated 0"; then the session teardown ends what was taken and anything still the turn's by
+            // session or parent links; then the cgroup is removed. What the kill could not end is named, never assumed gone.
             var inCgroup = new List<ProcessEntry>();
+            var taken = Cgroup is null ? null : TreeTeardown.Hold(_leader, _leaderStart, _session);
             if (Cgroup is { } attempt && !attempt.Kill(TreeTeardown.Bound))
                 foreach (var pid in attempt.Pids())
                     if (ProcessTable.Read(pid) is { Zombie: false } left) inCgroup.Add(left);
-            var tree = TreeTeardown.End(_leader, _leaderStart, _session);
+            var tree = TreeTeardown.End(_leader, _leaderStart, _session, held: taken);
             if (Cgroup is { } ended && inCgroup.Count == 0 && !ended.Populated()) ended.Remove();
             Ended = inCgroup.Count == 0
                 ? tree
