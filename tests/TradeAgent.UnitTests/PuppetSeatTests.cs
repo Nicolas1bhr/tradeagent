@@ -123,4 +123,45 @@ public class PuppetSeatTests : IDisposable
         var names = written.RootElement.EnumerateObject().Select(p => p.Name).ToList();
         Assert.DoesNotContain(names, n => n.Contains("puppet", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// (f) GUARD — green at base and after: EVERY EXISTING FAKE CLI RUNS EXACTLY AS IT DID. The puppet's refusal is the puppet's
+    /// alone: the canned-stream CLI most suites drive (<see cref="AgentRuntimeProbe.SessionOverStream"/>, codex's recorded
+    /// stream) runs the same turn, metered the same, with the test host's flag set and unset, and records no seat class; its
+    /// seat check refuses nothing; and a probe runtime written into <c>runtimes.json</c> under any id but the reserved one is
+    /// read as before (the ResumeOnStart and AgentTree probes' shape).
+    /// </summary>
+    [Fact]
+    public async Task Every_existing_fake_cli_test_is_unchanged()
+    {
+        foreach (var testHost in new[] { true, false })
+        {
+            PuppetSeats.TestHost = testHost;
+            try
+            {
+                var session = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, name: $"puppet-guard-{testHost}");
+                AgentTurnEnded? ended = null;
+                session.TurnEnded += e => ended = e;
+                await session.SendMissionAsync("say hi");
+
+                Assert.NotNull(ended);
+                Assert.Equal(0, ended!.ExitCode);
+                Assert.Equal(17232, ended.Usage?.InputTokens);
+                Assert.Null(ended.SeatClass);
+                Assert.Contains(session.History, t => t.Role == ChatRole.Ai && t.Text == "Hi!");
+                Assert.False(session.CheckSeat().Refused);
+            }
+            finally { PuppetSeats.TestHost = true; }
+        }
+
+        RuntimeCatalog.SaveOverrides([new RuntimeManifest
+        {
+            Id = "resume-probe", DisplayName = "Resume probe", Executable = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+            VersionArgs = ["version"], ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"]
+        }]);
+        var read = RuntimeCatalog.Read();
+        Assert.Null(read.Unreadable);
+        Assert.NotNull(RuntimeCatalog.Find("resume-probe"));
+        Assert.False(RuntimeCatalog.Find("resume-probe")!.Puppet);
+    }
 }
