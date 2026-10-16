@@ -10779,3 +10779,23 @@ P1s are outside this diff (its prompt's range spanned main's commits after the r
 runtime files in /tmp (diagnostic socket, debug pipes) — litter, not a channel (seccomp refuses AF_UNIX `socket()`; /tmp is not granted) → U-cell-linux-c's card.
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** aarch64; musl and Go resolvers; the owner's host, LAN and resolver; real package
 registries (loopback by design); nothing local on Linux (the Colima VM is off-limits).
+
+
+## U-unjobbed-presence — a launch the app could not contain is in the presence register from before it starts until the processes the teardown saw have ended, so a material pass beside it records the inbox unattested (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v2) on `main` at tip `9225685d` (rebased onto `e3344445`, after train B5; src+tests patch-id identical to the reported `ad9472ec`); CI run **38976271063** on the rebased tip: every job success incl. `linux-host`; `land.sh check` VERDICT PASS (names 2835 → 2838, removed 0; scan clean). **No rung, no pipe op, no verb.**
+A protection (COUNCIL rule 7; INBOX-001; ORCHESTRATION § 2.5 "Inbox attestation is kept"), found by seat A's `U-cell-linux-d` Codex review: on `main` a launch Windows would not put in a job was torn down
+and refused BEFORE `Presence.Enter`, so the process that ran in that window, and any survivor the teardown could not end, were outside the register `AgentPresence.NoneSince` reads — an inbox write then could be recorded attested.
+**What changed (build, base `e4d3afec`):** 1. (`571d36b2`) `AgentSession` enters presence BEFORE `ProcessContainment.Start` on every path (disposed if the start throws); on the no-container branch the handle is
+disposed only once `EndTree` reports the tree ended, else it travels on `AgentTurnEnded.SurvivorPresence` and `TurnMeter` keeps it beside its survivor register, disposing it when a listing shows none alive
+(`Unlisted` included — unknown is never "ended"); a throwing teardown leaves presence open; the contained path is unchanged. 2. (`41fb2438`) `QuiescenceBarrierTests`: (a) `A_launch_windows_would_not_hold_is_in_the_presence_register_while_it_ran`,
+(b) `A_survivor_the_teardown_could_not_end_keeps_the_inbox_unattested_until_it_exits`, (c) guard `A_held_launch_enters_the_presence_register_once_and_leaves_it_when_the_turn_returns`.
+**Evidence:** RED before on the single Windows job, run 38972581917: (a), (b) `Expected InboxUnattested / Actual Inbox`; MUTANT (presence entered after `register.Bind`) single Windows job 38972894025 red; temp branches
+deleted. Builder's gate: Release 0 warnings; QuiescenceBarrierTests 3× Passed 6; TurnMeterTests 3× Passed 9; branch CI 38973321027 every job success. (a) and (b) prove nothing off Windows — the assignment
+fault exists only there; (c) runs on every platform.
+**Review (Codex), ONE P1, judged OWED, not a pass (seat B):** the meter re-checks only the survivor pids it recorded, so a survivor that starts a child after the teardown and then exits releases presence (and
+admission) while that child runs. The unit makes nothing worse (on `main` such a launch was never in the register at all); the root is the one U-grant-tree's RULING 2 named — a process the app could not put
+in a job can spawn outside any listing. It is closed by starting every launch SUSPENDED (assign → resume; an assignment failure then kills a process that never ran), the card OWED to seat A's `U-cell-windows`,
+which now also carries this case: no launch, survivor or survivor's descendant may run outside a job.
+**NOT VERIFIED:** survivors left by the contained path's `finally` teardown still release presence at teardown (the brief kept that path unchanged); a held presence clears only at the meter's next admission
+re-check (errs toward unattested); no app run, no real model; tests box NOT RUN — the machine does not answer.
