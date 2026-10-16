@@ -3346,6 +3346,11 @@ public sealed class MissionLoop
     /// </summary>
     void RecoverLostOwnerWords(MissionEventStore events)
     {
+        // A LOST LAUNCH THE GATE HAD REFUSED IS NO LOST TURN (re-review 2 of U-thinking-seats-a, P1): every wake it took is given
+        // back and the owner's words are shown undelivered, never settled failed and raised again.
+        try { events.ReleaseRefusedLost(RefusedThenLost); }
+        catch (Exception) { /* the wakes stay where they are; the next pass gives them back */ }
+
         try
         {
             foreach (var e in events.LostOwnerWords())
@@ -3359,6 +3364,10 @@ public sealed class MissionLoop
         }
         catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
     }
+
+    /// <summary>The standing reason the owner's words carry when the launch that took them was refused by the gate and then lost.</summary>
+    internal const string RefusedThenLost =
+        "the launch that took this message was refused by the activation gate before TradeAgent stopped; it is owed to the next turn";
 
     /// <summary>The failure the retry of words a finished turn left unsettled carries.</summary>
     internal const string EndedWithoutOutcome =

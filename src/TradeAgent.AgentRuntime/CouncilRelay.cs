@@ -696,21 +696,15 @@ public sealed class CouncilRelay
     public const string GateHeldWhy = "its launch was refused by the activation gate, so nothing it staged is published";
 
     /// <summary>
-    /// WHETHER THE LAUNCH <paramref name="attempt"/> NAMES WAS CLOSED AS REFUSED BY THE ACTIVATION GATE — the meter's own record
-    /// on its row (<c>context.gate_kind</c>), never anything the agent wrote. A row that cannot be read is taken as refused: a
-    /// file is held on a doubt and published on none.
+    /// WHETHER THE ACTIVATION GATE REFUSED THE LAUNCH <paramref name="attempt"/> NAMES — the meter's own mark on its row
+    /// (<see cref="AiAttempt.GateKind"/>), written the moment the refusal happened (re-review 2, P1), so a launch a crash left LOST
+    /// still says so; never anything the agent wrote. A row that cannot be read is taken as refused: a file is held on a doubt and
+    /// published on none.
     /// </summary>
     bool RefusedAtTheGate(string? attempt)
     {
         if (attempt is null) return false;
-        try
-        {
-            if (_attempts.Get(attempt)?.Context is not { Length: > 0 } context) return false;
-            using var doc = System.Text.Json.JsonDocument.Parse(context);
-            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
-                   && doc.RootElement.TryGetProperty("gate_kind", out var kind)
-                   && kind.ValueKind == System.Text.Json.JsonValueKind.String;
-        }
+        try { return _attempts.Get(attempt)?.GateKind is { Length: > 0 }; }
         catch (Exception) { return true; }
     }
 

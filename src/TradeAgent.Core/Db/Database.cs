@@ -2397,6 +2397,11 @@ public sealed class Database : IDisposable
             // columns added only where missing, so a crash between any statement here and the stamp reopens cleanly.
             AddColumnIfMissing("ai_attempt", "seat_class", "TEXT");
             AddColumnIfMissing("ai_attempt", "assurance", "TEXT");
+            // WHETHER THE ACTIVATION GATE REFUSED THE LAUNCH AT ITS LAST CHECK, and its kind: `ai_attempt.gate_kind`, written by
+            // `AiAttemptStore.MarkGateRefused` in its own short write THE MOMENT the refusal happens, never at the close (re-review 2,
+            // P1): a crash before the turn's commit leaves a LOST row that still says the gate refused it, so the start-up reconcile
+            // holds what it staged and the owner's words are given back rather than settled as a lost turn's.
+            AddColumnIfMissing("ai_attempt", "gate_kind", "TEXT");
             Exec("""
                 CREATE TABLE IF NOT EXISTS cell_proof(
                   id            INTEGER PRIMARY KEY AUTOINCREMENT,
