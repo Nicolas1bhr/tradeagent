@@ -205,6 +205,17 @@ public partial class CellLinuxTests
             return [.. Received];
         }
 
+        /// <summary>
+        /// Waits until every named tag has been read from a connection — a control run's connections are read by tasks that may not have
+        /// enqueued yet, and clearing before they have lets a late control tag land after the clear — then returns. Fails if one never arrives.
+        /// </summary>
+        public async Task ReadAll(params string[] tags)
+        {
+            var until = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < until && !tags.All(t => Received.Contains(t))) await Task.Delay(25);
+            Require(tags.All(t => Received.Contains(t)), $"the control run's connection(s) {string.Join(",", tags)} read by the outside listener: {string.Join(",", Received)}");
+        }
+
         public void Dispose()
         {
             _stop.Cancel();
@@ -230,6 +241,7 @@ public partial class CellLinuxTests
         var control = await Outside("/usr/bin/python3", ["-I", probe, .. tries]);
         Says(control, "tcp-connected", "stub53-connected", "fastopen-sent", "udp-sent", "dns-resolved");
         Require((await listener.Settled()).Contains("fast"), $"TCP Fast Open from outside reaching a listener (net.ipv4.tcp_fastopen's client bit): {string.Join(",", listener.Received)}");
+        await listener.ReadAll("tcp", "fast"); // the control's plain connect too, read before the clear
         listener.Received.Clear();
 
         var ran = await InCell(w.Policy(CellEgress.None), "/usr/bin/python3", ["-I", probe, .. tries]);
@@ -278,7 +290,8 @@ public partial class CellLinuxTests
 
         var control = await Outside("/usr/bin/python3", ["-I", probe, .. tries]);
         Says(control, "v4-connected", "v6-connected", "host-connected", "other-connected");
-        foreach (var l in new[] { v4, v6!, host, deniedListener }) l.Received.Clear();
+        await v4!.ReadAll("v4"); await v6!.ReadAll("v6"); await host.ReadAll("host"); await deniedListener.ReadAll("other"); // every control connection read, then clear
+        foreach (var l in new[] { v4, v6, host, deniedListener }) l.Received.Clear();
 
         try
         {
