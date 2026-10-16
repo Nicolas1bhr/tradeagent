@@ -592,6 +592,14 @@ public sealed class AiAttemptStore(Database db)
         db.Read(_ => Totals(from, to, role));
 
     /// <summary>
+    /// ONE UNIT'S DAY (<c>U-org-wakes</c>): every attempt in the window whose recorded funding chain holds <paramref name="unitId"/>
+    /// — the same totals <see cref="Begin"/> compares that unit's envelope against inside its transaction, read here for the
+    /// loop's first look and the card, so neither can admit what the gate refuses.
+    /// </summary>
+    public AiAttemptTotals UnitTotalsBetween(DateTimeOffset from, DateTimeOffset to, string unitId) =>
+        db.Read(_ => Totals(from, to, null, unitId));
+
+    /// <summary>
     /// The same query with NO lock of its own, so <see cref="Begin"/> can run it inside the
     /// transaction it is about to insert into. Every caller is already holding the database's gate —
     /// either through <see cref="Database.Read"/> above or through <see cref="Database.Write"/> —

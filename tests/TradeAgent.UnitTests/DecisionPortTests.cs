@@ -466,7 +466,11 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         var store = new AiAttemptStore(rig.Db);
         var now = DateTimeOffset.Now;
         var chair = $"turn-chair-{Guid.NewGuid():n}";
-        store.Begin(new AiAttempt { Id = chair, StartedAt = now, ReservedCost = 0.5m, Role = CouncilRoles.Operations });
+        // FUNDED AS THE METER FUNDS EVERY CHAIR LAUNCH (U-org-envelopes): a position's reading is its funding chain's (U-org-wakes).
+        store.Begin(new AiAttempt
+        {
+            Id = chair, StartedAt = now, ReservedCost = 0.5m, Role = CouncilRoles.Operations, Funding = [OrgIds.Operations, OrgIds.Root]
+        });
         Assert.True(store.End(chair, 0, now, 1000, 0, 0, 100, 0, "gpt-5.6-luna", 0.25m, null, null));
 
         // THE BUDGET: room for less than one reservation.
