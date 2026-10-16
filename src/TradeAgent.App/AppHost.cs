@@ -49,6 +49,13 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     WorkspaceReads _reads = WorkspaceReads.Disk;
 
+    /// <summary>
+    /// THE ACTIVATION GATE'S REGISTER (<c>U-thinking-seats-a</c>), filled in <see cref="ComposeTheAi"/>: the process-wide one in the
+    /// product (<see cref="PositionActivation.Seats"/>), so the seam, the meter and the last check before a process or a request all
+    /// read one answer; only <see cref="Composed"/> — a test's host — is handed its own, for the reason <see cref="_presence"/> is.
+    /// </summary>
+    SeatRegister _seats = SeatRegister.Shared;
+
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
     public HealthRegistry Health { get; } = new();
@@ -201,7 +208,8 @@ public sealed class AppHost : IAsyncDisposable
                     attemptId: role => Meter?.OpenAttemptIdFor(role),
                     allowance: () => TurnAllowance.From(
                         Gateway.Settings.AiTurnAllowanceInputTokens,
-                        Gateway.Settings.AiTurnAllowanceOutputTokens));
+                        Gateway.Settings.AiTurnAllowanceOutputTokens),
+                    seats: _seats);
             }
             catch (Exception ex)
             {
@@ -293,9 +301,9 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public IAgentConversation? ConversationFor(string role)
     {
-        // THE ACTIVATION SEAM, FIRST (U-org-principals): a position it refuses opens nothing — no conversation, no
-        // meter attached, no row written. Today only the legacy pair pass; U-thinking-seats fills the gate.
-        if (PositionActivation.Refusal(role, StandingOf(role)) is not null) return null;
+        // THE ACTIVATION GATE, FIRST (U-org-principals, U-thinking-seats-a): a position it refuses opens nothing — no
+        // conversation, no meter attached, no row written. Asked with the DECLARED seat; the meter asks again with the verified one.
+        if (ActivationRefusal(role) is not null) return null;
 
         if (role == CouncilRoles.Operations) return Conversation;
 
@@ -334,10 +342,37 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// WHY A POSITION MAY NOT TURN, in a sentence, or null: the activation seam's own answer, asked by the loop so a
-    /// position it refuses is stepped over rather than chosen and handed no conversation.
+    /// WHY A POSITION MAY NOT TURN — its kind and a sentence — or null: the activation gate's own answer with the DECLARED seat,
+    /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation.
     /// </summary>
-    public string? ActivationRefusal(string role) => PositionActivation.Refusal(role, StandingOf(role));
+    public GateRefusal? ActivationRefusal(string role) => PositionActivation.Decide(role, StandingOf(role), _seats.Read(role));
+
+    /// <summary>
+    /// WHAT THE ACTIVATION GATE READS FOR ONE POSITION, as this host knows it now: the chart's standing, the DECLARED class of the
+    /// seat it would launch on, whether this host holds a proven executor cell, the active positions beyond the legacy pair, and the
+    /// positions with an open unconfined launch other than this one. Each read where it is asked, never captured.
+    /// </summary>
+    SeatFacts FactsFor(string role) => new()
+    {
+        Standing = StandingOf(role),
+        DeclaredClass = DeclaredSeatClass(role),
+        ProvenCell = new CellProofStore(_db!).HoldsProof(),
+        ActiveBeyondLegacy = new OrgStore(_db!).ActivePositionsBeyondLegacy(),
+        OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? []
+    };
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD LAUNCH ON, DECLARED from the runtime object this host would open it on
+    /// (<see cref="RuntimeObjectFor"/>) — the harness is <see cref="SeatClasses.Harness"/>; any CLI runtime, with a seat plan or
+    /// without one, is <see cref="SeatClasses.Cli"/>, since no seat starts in a cell yet — and null before anything is prepared.
+    /// Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
+    /// </summary>
+    string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
+    {
+        null => null,
+        ApiAgentRuntime => SeatClasses.Harness,
+        _ => SeatClasses.Cli
+    };
 
     /// <summary>
     /// ONE ROLE'S OWN DIRECTORY, as the last prepare built it, and the managed path for that role
@@ -869,6 +904,7 @@ public sealed class AppHost : IAsyncDisposable
             launchRefusal: () => Containment.RefusalToLaunch(
                 Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
             presence: _presence,
+            seats: _seats,
             // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
             positions: () => new OrgStore(db).Positions()
                 .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))
@@ -890,8 +926,13 @@ public sealed class AppHost : IAsyncDisposable
             // be priced against the harness's catalogue. Priced against the chair's, a model only
             // the harness offers falls back to the dearest entry and the row reads as an estimate
             // when the app knows exactly what it asked for.
-            roleRuntime: RuntimeForRole);
+            roleRuntime: RuntimeForRole,
+            // THE SEAT EACH ROLE WAS DECLARED ON, for the meter's own check that the seat it verifies is that seat.
+            declaredSeat: DeclaredSeatClass);
         Meter.Changed += () => Changed?.Invoke();
+
+        // THE ACTIVATION GATE'S REGISTER, FILLED HERE AND NOWHERE ELSE (U-thinking-seats-a).
+        _seats.Facts = FactsFor;
 
         Wakes = new MissionEventStore(db);
         Boundaries = new CouncilBoundaries(db);
@@ -953,7 +994,7 @@ public sealed class AppHost : IAsyncDisposable
     internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence,
         WorkspaceReads? reads = null)
     {
-        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk };
+        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk, _seats = new SeatRegister() };
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
@@ -1708,7 +1749,7 @@ public sealed class AppHost : IAsyncDisposable
         public IAgentConversation? Conversation => host.Conversation;
 
         /// <summary>The activation seam's refusal for one position. See <see cref="AppHost.ActivationRefusal"/>.</summary>
-        public string? ActivationRefusal(string role) => host.ActivationRefusal(role);
+        public GateRefusal? ActivationRefusal(string role) => host.ActivationRefusal(role);
 
         /// <summary>One role's conversation. The chair's is the window's; see <see cref="AppHost.ConversationFor"/>.</summary>
         public IAgentConversation? ConversationFor(string role) => host.ConversationFor(role);
@@ -2161,6 +2202,7 @@ public sealed class AppHost : IAsyncDisposable
         // it is never written, so there is nothing to delete, and it does not outlive this process.
         HarnessKey.Clear();
         PerceptionKey.Clear();
+        _seats.Facts = null;
         lock (_decisionModels)
         {
             foreach (var wire in _decisionModels.Values) wire.Dispose();

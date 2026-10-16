@@ -344,6 +344,24 @@ public sealed class OrgStore(Database db)
         });
     }
 
+    /// <summary>
+    /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, in the order they were created — ONE read, the activation gate's no-unconfined-
+    /// neighbour question (<see cref="PositionActivation"/>; ORCHESTRATION § 2.3). Nothing writes a position yet (<c>U-org-verbs</c>),
+    /// so on a home the app made this is empty.
+    /// </summary>
+    public IReadOnlyList<string> ActivePositionsBeyondLegacy() => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT id FROM org_position
+             WHERE status = $active AND id NOT IN ($ops, $research)
+             ORDER BY created_at, id
+            """, ("$active", OrgPositionStatus.Active), ("$ops", CouncilRoles.Operations), ("$research", CouncilRoles.Research));
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        return (IReadOnlyList<string>)ids;
+    });
+
     /// <summary>The unit a position belongs to — which it heads when that unit's head is this position — or null.</summary>
     public OrgUnitRow? UnitOf(string positionId) => db.Read(_ =>
     {

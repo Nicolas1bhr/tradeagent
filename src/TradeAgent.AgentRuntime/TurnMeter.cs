@@ -526,7 +526,7 @@ public sealed class TurnMeter
     /// typed turn is admitted and reserved like any other but publishes nothing and consumes no
     /// wake, so it has no transition to be part of.
     /// </summary>
-    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop)> _open = [];
+    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop, string? SeatClass)> _open = [];
 
     /// <summary>
     /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id its next launch will carry.
@@ -588,9 +588,11 @@ public sealed class TurnMeter
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
         Func<string, decimal>? share = null, Func<string, string?>? roleModel = null,
-        Func<string, string?>? roleRuntime = null, LiveAttempts? live = null)
+        Func<string, string?>? roleRuntime = null, LiveAttempts? live = null,
+        Func<string, string?>? declaredSeat = null)
     {
         _db = db;
+        _declaredSeat = declaredSeat;
         _live = live ?? LiveAttempts.Shared;
         _attempts = new AiAttemptStore(db);
         _cap = cap;
@@ -845,7 +847,11 @@ public sealed class TurnMeter
 
         // NOR FROM A SEAT WHOSE PROFILE IS NOT THE APP'S (U-seat-home), refused the same way: no row, no reservation, no wake.
         var seat = SeatOf(role);
-        if (seat.Refused) return new AiAdmission { Refusal = seat.Refusal };
+        if (seat.Refused) return new AiAdmission { Refusal = seat.Refusal, Kind = RefusalKind.HostOrLaunch };
+
+        // NOR ON A SEAT WEAKER THAN ITS CAPABILITIES NEED (U-thinking-seats-a; ORCHESTRATION § 2.3), with the seat just verified:
+        // the activation gate, fail closed, refused the same way — no row, no reservation, no wake, its kind carried as data.
+        if (Gate(role, seat.SeatClass) is { } gate) return new AiAdmission { Refusal = gate.Words, Kind = gate.Kind };
 
         var reservation = Reservation(role);
 
@@ -892,7 +898,10 @@ public sealed class TurnMeter
             Role = role,
             // THE PROFILE THE SEAT WAS VERIFIED UNDER, above, before this row existed (U-seat-home). Written here and nowhere else.
             RuntimeProfile = seat.Profile,
-            Funding = [.. funding.Select(u => u.UnitId)]
+            Funding = [.. funding.Select(u => u.UnitId)],
+            // AND THE SEAT IT WAS VERIFIED ON (U-thinking-seats-a, rung 39), beside it and from the same verdict.
+            SeatClass = seat.SeatClass,
+            Assurance = seat.Assurance is { } assurance ? SeatClasses.Name(assurance) : null
         };
 
         AiAdmission admission;
@@ -908,7 +917,7 @@ public sealed class TurnMeter
                     // could ever reconcile.
                     if (_open.TryGetValue(Key(role), out var abandoned)) _live.Leave(abandoned.Id);
 
-                    _open[Key(role)] = (written, prompt.Length, heldForTheLoop);
+                    _open[Key(role)] = (written, prompt.Length, heldForTheLoop, seat.SeatClass);
                     _live.Enter(written);
                 }
         }
@@ -1188,6 +1197,68 @@ public sealed class TurnMeter
         });
     }
 
+    /// <summary>
+    /// THE ACTIVATION GATE AT ADMISSION (<c>U-thinking-seats-a</c>): <see cref="PositionActivation.Decide"/> with the seat just verified
+    /// (<paramref name="verifiedClass"/>, null where the conversation declared none) and facts this meter reads itself — the chart's
+    /// standing, the proven-cell record, the active positions beyond the legacy pair, its own open set — and the declared class from
+    /// the app. Anything that cannot be read refuses, as the chart that cannot be read already does.
+    /// </summary>
+    GateRefusal? Gate(string? role, string? verifiedClass)
+    {
+        var id = Key(role);
+        SeatFacts facts;
+        PositionStanding? standing;
+        try
+        {
+            var chart = new OrgStore(_db);
+            standing = chart.Standing(id);
+            facts = new SeatFacts
+            {
+                Standing = standing,
+                DeclaredClass = Declared(id),
+                ProvenCell = new CellProofStore(_db).HoldsProof(),
+                ActiveBeyondLegacy = chart.ActivePositionsBeyondLegacy(),
+                OpenUnconfined = OpenUnconfined(id)
+            };
+        }
+        catch (Exception ex)
+        {
+            return new GateRefusal(RefusalKind.HostOrLaunch,
+                $"TradeAgent could not read what the activation gate needs for '{id}' ({ex.Message}), so nothing was started. Its "
+                + "wakes are kept.");
+        }
+
+        // A POSITION BEYOND THE LEGACY PAIR LAUNCHES ONLY FROM A SEAT THIS METER VERIFIED: a conversation that declared none is not
+        // one whose boundary anybody established.
+        if (verifiedClass is null && standing is { IsLegacy: false })
+            return new GateRefusal(RefusalKind.HostOrLaunch,
+                $"'{id}' has no seat this meter verified, so nothing is started for it. Its wakes are kept.");
+
+        return PositionActivation.Decide(id, standing, facts, verifiedClass);
+    }
+
+    /// <summary>The DECLARED class of the seat <paramref name="role"/> would launch on, as the app answers it; null for none or a throw.</summary>
+    string? Declared(string role)
+    {
+        try { return _declaredSeat?.Invoke(role); }
+        catch (Exception) { return null; }
+    }
+
+    readonly Func<string, string?>? _declaredSeat;
+
+    /// <summary>
+    /// THE POSITIONS WITH AN OPEN LAUNCH ON AN UNCONFINED SEAT, other than <paramref name="except"/> — the no-unconfined-neighbour
+    /// half the meter alone can answer (ORCHESTRATION § 2.3). A launch whose seat was not declared counts as unconfined: the rule
+    /// is never passed on a guess.
+    /// </summary>
+    public IReadOnlyList<string> OpenUnconfined(string? except = null)
+    {
+        lock (_gate)
+            return [.. _open.Where(o => o.Key != Key(except)
+                                        && (SeatClasses.AssuranceOf(o.Value.SeatClass) ?? SeatAssurance.Unconfined) == SeatAssurance.Unconfined)
+                            .Select(o => o.Key).Order(StringComparer.Ordinal)];
+    }
+
     /// <summary>The seat each attached role launches from, by role.</summary>
     readonly Dictionary<string, ISeatLaunch> _seats = new(StringComparer.Ordinal);
 
@@ -1336,7 +1407,8 @@ public sealed class TurnMeter
         return new AiAdmission
         {
             Refusal = $"'{role}' is not an active position, so no turn is launched under it and none is charged to "
-                      + "another position. Nothing was written."
+                      + "another position. Nothing was written.",
+            Kind = RefusalKind.Position
         };
     }
 

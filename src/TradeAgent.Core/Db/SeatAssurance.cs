@@ -134,11 +134,16 @@ public static class CapabilityPolicy
         return all;
     }
 
-    /// <summary>The first of <paramref name="capabilities"/> a seat of <paramref name="assurance"/> cannot carry, or null.</summary>
-    public static Capability? FirstMissed(IEnumerable<Capability> capabilities, SeatAssurance assurance)
+    /// <summary>
+    /// THE CAPABILITY THAT BINDS: of <paramref name="capabilities"/>, the one a seat of <paramref name="assurance"/> cannot carry whose
+    /// minimum is the strongest — so a CLI seat is told that its code needs a cell, not merely that its reads need a mediated seat —
+    /// or null when the seat carries them all. Ties go to the earlier capability.
+    /// </summary>
+    public static Capability? Binding(IEnumerable<Capability> capabilities, SeatAssurance assurance)
     {
+        Capability? binding = null;
         foreach (var c in capabilities)
-            if (assurance < Minimum(c)) return c;
-        return null;
+            if (assurance < Minimum(c) && (binding is not { } b || Minimum(c) > Minimum(b))) binding = c;
+        return binding;
     }
 }

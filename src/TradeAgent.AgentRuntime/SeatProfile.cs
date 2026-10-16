@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -942,6 +943,16 @@ public sealed record SeatVerdict(string? Refusal, ErrorCode? Code, SeatReading? 
 {
     /// <summary>The runtime profile a launch under this verdict runs with (<see cref="SeatProfile.ProfileHash"/>), or null.</summary>
     public string? Profile { get; init; }
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT ABOUT TO START, as the app established it (<see cref="SeatClasses"/>; <c>U-thinking-seats-a</c>): a CLI
+    /// session is <see cref="SeatClasses.Cli"/> — with a seat plan or without one, since no seat starts in a cell yet — and the
+    /// harness is <see cref="SeatClasses.Harness"/>. Code, never read from <c>runtimes.json</c>. Null where no seat was declared.
+    /// </summary>
+    public string? SeatClass { get; init; }
+
+    /// <summary>The assurance of <see cref="SeatClass"/>, or null for none or a class this build does not know.</summary>
+    public SeatAssurance? Assurance => SeatClasses.AssuranceOf(SeatClass);
 
     /// <summary>A runtime with no seat profile: nothing refused, nothing read.</summary>
     public static readonly SeatVerdict None = new(null, null, null);

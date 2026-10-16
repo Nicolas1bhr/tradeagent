@@ -282,18 +282,22 @@ public interface IMissionHost
     IAgentConversation? ConversationFor(string role) => Conversation;
 
     /// <summary>
-    /// WHY A POSITION MAY NOT TURN, in a sentence, or null when it may (<c>U-org-principals</c>): the host's activation
-    /// seam. The loop steps over a position it refuses — its wakes stay due and unconsumed — so a wake for a position that
-    /// is representable and not runnable never holds the legacy pair's turns behind it.
+    /// WHY A POSITION MAY NOT TURN — its kind as data and a sentence — or null when it may (<c>U-org-principals</c>,
+    /// <c>U-thinking-seats-a</c>): the host's activation gate. The loop steps over a position it refuses, whichever the kind —
+    /// its wakes stay due and unconsumed, the owner's words among them — so a wake for a position that is representable and
+    /// not runnable never holds the legacy pair's turns behind it. Settling a <see cref="RefusalKind.Position"/> refusal's
+    /// wakes is <c>U-org-wakes</c>' (O3), routing by the kind, never by the words.
     ///
-    /// <para><b>A host with no seam fails closed</b> (ORCHESTRATION § 2.1): it refuses every id but the legacy pair, in a
-    /// sentence. Its <see cref="ConversationFor"/> and <see cref="HomeFor"/> defaults are the host's one conversation and
-    /// one home, so a default that refused nobody would fold any other id's wake into them — the chair's, in the app.</para>
+    /// <para><b>A host with no seam fails closed</b> (ORCHESTRATION § 2.1): it refuses every id but the legacy pair, as a
+    /// <see cref="RefusalKind.Position"/> refusal. Its <see cref="ConversationFor"/> and <see cref="HomeFor"/> defaults are the
+    /// host's one conversation and one home, so a default that refused nobody would fold any other id's wake into them — the
+    /// chair's, in the app.</para>
     /// </summary>
-    string? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
+    GateRefusal? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
         ? null
-        : $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
-          + "opened for it and nothing is folded into this host's own.";
+        : new GateRefusal(RefusalKind.Position,
+            $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
+            + "opened for it and nothing is folded into this host's own.");
 
     /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous

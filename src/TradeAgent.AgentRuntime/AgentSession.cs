@@ -264,6 +264,10 @@ public static class AgentArgs
 /// vendor's CLI at all, null when it will. A function because the owner arms and disarms real money
 /// while the AI is working, and the turn that has to obey is the next one.
 /// </param>
+/// <param name="seats">
+/// The activation gate's register, asked immediately before the process starts (<see cref="PositionActivation.AtLaunch"/>). Null
+/// is the process-wide one, which the product fills; a test's host passes its own.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
@@ -276,7 +280,8 @@ public sealed class AgentSession(
     AgentGrants? grants = null,
     Func<string?>? launchRefusal = null,
     AppFileManifest? appFiles = null,
-    ISeatProbe? seatProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
+    ISeatProbe? seatProbe = null,
+    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
 {
     /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
     ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
@@ -286,9 +291,11 @@ public sealed class AgentSession(
     {
         // A PUPPET OUTSIDE A TEST HOST IS REFUSED HERE TOO, so the meter writes no row and reserves nothing for it (U-puppet-runtime).
         if (PuppetSeats.Refusal(manifest) is { } puppet) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, puppet);
-        if (manifest.Seat is null) return SeatVerdict.None;
+        // A CLI SEAT, WITH A SEAT PLAN OR WITHOUT ONE (U-thinking-seats-a): every session here starts its process with a shell and
+        // outside any cell, so its class is `cli` and its assurance unconfined — the app's own answer, never the manifest's.
+        if (manifest.Seat is null) return CliSeat;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
-        if (resolveExecutable() is not { } exe) return SeatVerdict.None;
+        if (resolveExecutable() is not { } exe) return CliSeat;
         var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: RequestedModel);
         var home = workspace();
         try
@@ -298,13 +305,16 @@ public sealed class AgentSession(
                 .GetAwaiter().GetResult();
             // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
             Volatile.Write(ref _admittedProfile, verdict.Profile);
-            return verdict;
+            return verdict.Refused ? verdict : verdict with { SeatClass = SeatClasses.Cli };
         }
         catch (Exception ex)
         {
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent could not check the AI's own settings: {ex.Message}");
         }
     }
+
+    /// <summary>The verdict on a CLI seat with nothing to verify: nothing refused, and its class.</summary>
+    static readonly SeatVerdict CliSeat = SeatVerdict.None with { SeatClass = SeatClasses.Cli };
 
     /// <summary>
     /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
@@ -757,6 +767,12 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
                 "TradeAgent did not start the AI: its own settings changed between the moment the turn was recorded and its start. " +
                 "The next turn checks them again.");
+
+        // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE PROCESS (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked
+        // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — the
+        // seat actually about to start — so a position beyond the legacy pair is refused here whatever the meter answered.
+        if (PositionActivation.AtLaunch(role, SeatClasses.Cli, seats) is { } gate)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, gate.Words);
 
         // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by
         // another build or with another deny set, and the turn starts a fresh one instead — the files are the memory.

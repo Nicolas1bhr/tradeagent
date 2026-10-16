@@ -58,8 +58,17 @@ public sealed class ApiConversation(
     TimeSpan? requestTimeout = null,
     HttpMessageHandler? transport = null,
     Func<DateTimeOffset>? now = null,
-    AppFileManifest? appFiles = null) : IAgentConversation, IAdmittedConversation, IDisposable
+    AppFileManifest? appFiles = null,
+    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, IDisposable
 {
+    /// <summary>
+    /// THE SEAT A HARNESS TURN RUNS ON (<c>U-thinking-seats-a</c>): the app's own in-process harness, brokered — no process, every
+    /// tool the app's own code. Nothing here reads a file to say so. Asked by the meter inside every admission.
+    /// </summary>
+    public SeatVerdict CheckSeat() => HarnessSeat;
+
+    static readonly SeatVerdict HarnessSeat = SeatVerdict.None with { SeatClass = SeatClasses.Harness };
+
     /// <summary>
     /// THE CANON THE TURN IN FLIGHT SENT AS ITS SYSTEM TEXT, set when the first request is composed and carried out on
     /// <see cref="TurnEnded"/>. Null on a turn that sent nothing.
@@ -525,6 +534,11 @@ public sealed class ApiConversation(
 
     async Task<ProviderAnswer> PostAsync(string endpoint, string key, string body, CancellationToken ct)
     {
+        // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked it
+        // before admitting the turn, and a host with no meter sends requests too. Nothing is sent on a refusal.
+        if (PositionActivation.AtLaunch(role, SeatClasses.Harness, seats) is { } gate)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, gate.Words);
+
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")

@@ -98,8 +98,8 @@ public sealed record AiAttempt
     public IReadOnlyList<string>? Funding { get; init; }
 
     /// <summary>
-    /// THE SEAT THIS LAUNCH WAS VERIFIED ON (<c>U-thinking-seats-a</c>, rung 39): its class (<c>seat_class</c>) and its
-    /// assurance (<c>assurance</c>), as the admission established them before this row existed. Written once, in this
+    /// THE SEAT THIS LAUNCH WAS VERIFIED ON (<c>U-thinking-seats-a</c>, rung 39): its class (<see cref="SeatClasses"/>) and its
+    /// assurance (<see cref="SeatClasses.Name"/>), as the admission established them before this row existed. Written once, in this
     /// row's insert, and never updated. Null on a row from before the rung and on a launch whose conversation declared no seat.
     /// </summary>
     public string? SeatClass { get; init; }
@@ -236,6 +236,13 @@ public sealed record AiAdmission
 
     /// <summary>Why the launch was refused, in the owner's words. Null when it was admitted.</summary>
     public string? Refusal { get; init; }
+
+    /// <summary>
+    /// WHICH KIND OF REFUSAL IT IS, as data (<see cref="RefusalKind"/>; ORCHESTRATION § 2.5): set on the activation gate's refusals
+    /// and on a launch refused for its seat, so a caller routes by it and never by the words. Null on an admission and on a ceiling's
+    /// or the ledger's refusal.
+    /// </summary>
+    public RefusalKind? Kind { get; init; }
 
     /// <summary>
     /// WHICH CEILING REFUSED IT: <see cref="Day"/> for the owner's whole-day limit, or the role id

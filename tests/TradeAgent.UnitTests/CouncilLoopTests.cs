@@ -187,8 +187,8 @@ public partial class CouncilLoopTests
         public IAgentConversation? ConversationFor(string role) => Conversations.GetValueOrDefault(role);
 
         /// <summary>The activation seam's refusals, by position: empty is today's legacy pair, refused by nobody.</summary>
-        public Dictionary<string, string> Refusals { get; } = [];
-        public string? ActivationRefusal(string role) => Refusals.GetValueOrDefault(role);
+        public Dictionary<string, GateRefusal> Refusals { get; } = [];
+        public GateRefusal? ActivationRefusal(string role) => Refusals.GetValueOrDefault(role);
 
         public string AgentHome => WorkspaceBuilder.HomeOf(Root, CouncilRoles.Operations);
         public string HomeFor(string role) => WorkspaceBuilder.HomeOf(Root, role);
@@ -583,7 +583,7 @@ public partial class CouncilLoopTests
         var host = new CouncilHost(db, root, new Concurrency());
         var loop = new MissionLoop(host, NoHeartbeat);
         const string third = "pos-7f3a90c1";
-        host.Refusals[third] = "no activation gate in this build";
+        host.Refusals[third] = new GateRefusal(RefusalKind.Position, "no activation gate in this build");
 
         var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
         var thirds = MissionEventIds.ForRole(MissionEventIds.Review(earlier), third);
@@ -595,6 +595,49 @@ public partial class CouncilLoopTests
 
         Assert.Equal([CouncilRoles.Research], host.Opened.Select(o => o.Role));
         Assert.False(host.Events.Get(thirds)!.Consumed);
+    }
+
+    /// <summary>
+    /// (d, <c>U-thinking-seats-a</c>) A REFUSED POSITION IS STEPPED OVER, WHICHEVER ITS KIND, AND THE LEGACY PAIR KEEP TURNING: a
+    /// position refused for itself (<see cref="RefusalKind.Position"/>) and one refused for its host
+    /// (<see cref="RefusalKind.HostOrLaunch"/>) both keep every wake — the owner's words to one of them included — unconsumed and
+    /// unsettled, older than Research's, and Research takes the turn. Part a settles nothing: that is O3's, routing by the kind.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_position_is_stepped_over_and_the_legacy_pair_keep_turning()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, NoHeartbeat);
+        const string itself = "pos-7f3a90c1", itsHost = "pos-2b8e41d0";
+        host.Refusals[itself] = new GateRefusal(RefusalKind.Position, $"'{itself}' cannot run on a cli seat.");
+        host.Refusals[itsHost] = new GateRefusal(RefusalKind.HostOrLaunch, $"'{itsHost}': no proven executor cell.");
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-3);
+        var kept = new List<string>();
+        foreach (var (position, kind) in new[]
+                 {
+                     (itself, MissionEventKind.Review), (itsHost, MissionEventKind.Review), (itsHost, MissionEventKind.Owner)
+                 })
+        {
+            var id = $"{kind}:{position}:{kept.Count}";
+            host.Events!.Raise(id, kind, earlier.AddSeconds(kept.Count), role: position);
+            kept.Add(id);
+        }
+        host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Research),
+            MissionEventKind.Review, earlier.AddMinutes(1), role: CouncilRoles.Research);
+
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+
+        Assert.Equal([CouncilRoles.Research], host.Opened.Select(o => o.Role));
+        foreach (var id in kept)
+        {
+            var e = host.Events.Get(id)!;
+            Assert.False(e.Consumed, $"{id} was consumed");
+            Assert.Null(e.Disposition);
+        }
     }
 
     /// <summary>
