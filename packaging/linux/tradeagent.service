@@ -10,6 +10,10 @@
 #     spending cap turn at his midnight.
 #   - TMPDIR is inside the account's 0700 home: it is where .NET puts the gateway's pipe socket, and no
 #     other account can reach into it.
+#   - Delegate=yes gives the unit's cgroup to the account (U-cell-linux-b): the app moves itself into
+#     supervisor/ and starts each AI launch in an attempt-<id>/ cgroup of its own, so every process of a
+#     launch is born there whatever session it makes, and cgroup.kill ends all of it. This line is the only
+#     root-owned part; the app never uses sudo. Without it a cell is refused, naming this line.
 [Unit]
 Description=TradeAgent on display :@DISPLAY@
 Requires=tradeagent-display.service
@@ -31,6 +35,7 @@ ExecStart=@ROOT@/current/TradeAgent
 Restart=always
 RestartSec=10
 KillMode=mixed
+Delegate=yes
 TimeoutStopSec=30
 
 [Install]
