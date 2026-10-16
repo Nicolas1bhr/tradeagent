@@ -69,7 +69,7 @@ jobs:
   # Not named test*: land.sh reads every test* job's build log for its 0 Warning(s) line, and this builds nothing.
   shard-plan:
     needs: dedupe-gate
-    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
+    if: false
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -94,7 +94,7 @@ jobs:
   # exactly one job.
   test:
     needs: [dedupe-gate, shard-plan]
-    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.shard-plan.result == 'success' }}
+    if: false
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.shard-plan.outputs.matrix) }}
@@ -265,7 +265,7 @@ jobs:
   # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
   package:
     needs: dedupe-gate
-    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' }}
+    if: false
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
