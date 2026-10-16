@@ -659,6 +659,34 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// THE OWNER'S WORDS SURVIVE A CLAIM THE REGISTER REFUSES (<c>U-grant-tree</c> fix pass 2, re-review item 2; ORCHESTRATION
+    /// § 2.5). The look passes, the words come off the conversation's list to build the Situation, and the claim is then
+    /// refused — the chair's order-capable launch was issued between. A refusal never drops or settles what the owner typed:
+    /// the next admitted turn of that role carries it, in the order it was typed.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_typed_words_survive_a_claim_the_register_refuses_and_reach_the_next_turn()
+    {
+        var now = DateTimeOffset.Now;
+        var host = new StaleHost(Meter(50m, () => now));
+        host.Conv.Typed.Add("first question");
+        host.Conv.Typed.Add("second question");
+        host.Conv.ClaimBar = new LaunchBar("the chair's order-capable launch attempt-chair is running", Lasting: false);
+        var loop = new MissionLoop(host, now: () => now);
+
+        await loop.TurnAsync();
+        Assert.Empty(host.Conv.Sent);
+
+        host.Conv.ClaimBar = null;          // the chair's launch has ended
+        await loop.TurnAsync();
+        var sent = Assert.Single(host.Conv.Sent);
+        Assert.True(sent.Contains("first question") && sent.Contains("second question"),
+            "the owner's words taken for a turn whose claim was refused were lost");
+        Assert.True(sent.IndexOf("first question", StringComparison.Ordinal) < sent.IndexOf("second question", StringComparison.Ordinal),
+            "the owner's words came back out of the order they were typed in");
+    }
+
+    /// <summary>
     /// A COMPUTER THAT CANNOT HOLD THE LAUNCH (<c>U-grant-tree</c>, RULING 2): nothing is written and the wake stays owed, as
     /// above, and the loop backs off as from a ledger refusal — the card saying what it waits for, in the reason's own words.
     /// </summary>
@@ -1078,10 +1106,13 @@ public class BudgetReservationTests : IDisposable
 
         public LaunchBar? Barred() => Bar;
 
+        /// <summary>What the claim answers after the look passed (U-grant-tree fix pass 2); null admits it.</summary>
+        public LaunchBar? ClaimBar { get; set; }
+
         public LaunchBar? Claim(out string? ordersWithheld)
         {
             ordersWithheld = Withheld;
-            return null;
+            return ClaimBar;
         }
 
         public void Unclaim() { }
