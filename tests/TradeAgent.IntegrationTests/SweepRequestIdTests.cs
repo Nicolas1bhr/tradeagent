@@ -453,6 +453,42 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// THE SEAM THAT SPENDS THE ROOM ALWAYS FINISHES SPENDING IT (U-sweep-budget-red fix pass 1).
+    ///
+    /// <para><see cref="RoomSpentBeforeTheBookRead"/> read the time left twice — once to decide whether
+    /// to wait and once to size the wait — so a clock that moved between the two sized a negative
+    /// delay: exactly −1 ms waits forever, anything smaller throws, and neither is the face the seam
+    /// exists to produce. The readings are forced here to the review's case: 1900 ms, then 1898 ms,
+    /// against a 1900 ms latency. The seam must finish, and must have read the clock exactly twice.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_room_spending_seam_reads_the_time_left_once_per_wait_and_always_finishes()
+    {
+        var conn = new FakeConnector(new FakeBroker(),
+            new FaultProfile { Fill = FillBehaviour.LeaveWorking, LatencyMs = 1900, Wait = (_, _) => Task.CompletedTask });
+        await conn.ConnectAsync();
+        var readings = new Queue<TimeSpan>([TimeSpan.FromMilliseconds(1900), TimeSpan.FromMilliseconds(1898)]);
+        var reads = 0;
+        var seam = new RoomSpentBeforeTheBookRead(conn, _ =>
+        {
+            reads++;
+            return readings.TryDequeue(out var r) ? r : TimeSpan.Zero;
+        });
+
+        using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
+        {
+            var read = seam.GetOrdersAsync(conn.Broker.AccountId, false, null);
+            var finished = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(10))) == read;
+            Assert.True(finished, "the seam did not finish within 10 s of a 1900 ms → 1898 ms clock — it sized its wait from a second reading");
+            await read;
+        }
+
+        Assert.Equal(1, seam.RoomSpent);
+        // One reading to wait on, one to stop on: a wait sized from a reading of its own is a third.
+        Assert.True(reads == 2, $"the seam read the time left {reads} times for one wait — it sized the wait from a reading the decision did not see");
+    }
+
+    /// <summary>
     /// FIVE ORDERS, ONE BUDGET, AND NOTHING SKIPPED IN SILENCE.
     ///
     /// The second half of F1's acceptance. The loop this replaces awaited each leg before starting
@@ -1508,9 +1544,12 @@ public class SweepRequestIdTests
     /// so it is the same event on every machine: the simulator's own check then clips the read. Every
     /// other call passes straight through.</para>
     /// </summary>
-    sealed class RoomSpentBeforeTheBookRead(FakeConnector inner) : ITradingConnector
+    /// <param name="left">How long the operation has left — <see cref="RiskReducingScope.LeftUntil"/>
+    /// unless a test of this seam forces the readings.</param>
+    sealed class RoomSpentBeforeTheBookRead(FakeConnector inner, Func<long, TimeSpan>? left = null) : ITradingConnector
     {
         public int RoomSpent;
+        readonly Func<long, TimeSpan> _left = left ?? RiskReducingScope.LeftUntil;
 
         public string Id => inner.Id;
         public string DisplayName => inner.DisplayName;
@@ -1546,9 +1585,14 @@ public class SweepRequestIdTests
             if (RiskReducingScope.DeadlineAt is { } deadline && Interlocked.CompareExchange(ref RoomSpent, 1, 0) == 0)
             {
                 var latency = TimeSpan.FromMilliseconds(inner.Faults.LatencyMs);
-                // A loop and not one wait: a timer may wake on a clock that has not yet reached it.
-                while (RiskReducingScope.LeftUntil(deadline) >= latency)
-                    await Task.Delay(RiskReducingScope.LeftUntil(deadline) - latency + TimeSpan.FromMilliseconds(1), ct);
+                // A loop and not one wait: a timer may wake on a clock that has not yet reached it. ONE
+                // reading per pass, both to decide and to size the wait, and never below zero: two
+                // readings sized a −1 ms wait (forever) when the clock moved between them.
+                for (var left = _left(deadline); left >= latency; left = _left(deadline))
+                {
+                    var wait = left - latency + TimeSpan.FromMilliseconds(1);
+                    await Task.Delay(wait > TimeSpan.Zero ? wait : TimeSpan.Zero, ct);
+                }
             }
             return await inner.GetOrdersAsync(a, i, s, ct);
         }
