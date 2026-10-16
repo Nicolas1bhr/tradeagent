@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
 using Xunit;
@@ -408,5 +409,58 @@ public partial class CellLinuxTests
             $"a process of attempt A that moved itself into attempt B's cgroup presented A's grant and was served (exit {moved.Code}): {moved.Out}");
         Assert.Contains("IPC_UNAUTHENTICATED", moved.Out + moved.Err);
         Assert.Contains("cgroup", moved.Out + moved.Err);
+    }
+
+    // ---- fix pass 1 (the review's R1-R4) ------------------------------------------------------------------------
+
+    /// <summary>A child that leaves its session AND moves itself into a sibling attempt's cgroup, while its parent lives on.</summary>
+    const string SiblingPy = """
+        import os, sys, time
+        out, sibling = sys.argv[1], sys.argv[2]
+        if os.fork() == 0:
+            os.setsid()
+            open(sibling + "/cgroup.procs", "w").write(str(os.getpid()))
+            line = open("/proc/self/cgroup").read().strip()
+            open(out + ".tmp", "w").write(f"{os.getpid()} {line}"); os.rename(out + ".tmp", out)
+            time.sleep(300)
+            os._exit(0)
+        time.sleep(300)
+        """;
+
+    /// <summary>
+    /// (i) R1: THE TREE IS TAKEN BEFORE THE CGROUP IS KILLED. A child that left the attempt's session with <c>setsid</c> and moved itself
+    /// into a sibling attempt's cgroup is the attempt's only by its parent link — and <c>cgroup.kill</c> takes that parent first. Its
+    /// parent lives until the cancel, so the snapshot taken before the kill holds it, and the cancel ends it.
+    /// </summary>
+    [LinuxFact]
+    public async Task Cancelling_an_attempt_ends_a_child_that_left_its_session_and_moved_into_a_sibling_attempts_cgroup()
+    {
+        PlatformIsACells();
+        using var rows = Rows();
+        var sibling = rows.Cgroups.Create("sibling");
+        var said = Path.Combine(Scratch("sibling"), "child");
+        using var held = ProcessContainment.Start(Plain("/usr/bin/python3", "-I", "-c", SiblingPy, said, sibling.Dir), Launcher(),
+            requireHeld: true, attemptId: "parent", cgroups: rows.Cgroups);
+        held.Process.StandardInput.Close();
+        var told = (await Await(said, TimeSpan.FromSeconds(30))).Split(' ', 2);
+        var child = int.Parse(told[0], CultureInfo.InvariantCulture);
+        var entry = ProcessTable.Read(child);
+        Assert.True(entry is { Zombie: false }, $"the child {child} was not running");
+        try
+        {
+            Assert.Equal(LineOf(sibling.Dir), told[1]);                       // it moved to the sibling attempt
+            Assert.NotEqual(held.Process.Id, entry!.Value.Session);            // and left the attempt's session
+            Assert.True(ProcessTable.Read(entry.Value.Parent) is { Zombie: false }, "the child's parent was not alive at the cancel");
+
+            held.Kill();
+
+            Assert.False(Alive(child, entry.Value.Start),
+                $"the child {child}, which left the attempt's session and moved into {sibling.Dir} while its parent lived, outlived the cancel " +
+                $"({held.Mechanism}; ended: {held.Ended?.Ended})");
+        }
+        finally
+        {
+            if (Alive(child, entry!.Value.Start)) Posix.Kill(child);
+        }
     }
 }
