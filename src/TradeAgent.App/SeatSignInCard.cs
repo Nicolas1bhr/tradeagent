@@ -74,7 +74,6 @@ sealed class SeatSignInCard
     readonly Control _working;
 
     DeviceChallenge? _challenge;
-    DateTimeOffset _challengeAt;
     string? _browserAddress;
     bool _busy;
 
@@ -215,7 +214,8 @@ sealed class SeatSignInCard
         {
             _codeUrl.Text = c.Url;
             _codeText.Text = c.Code;
-            var expires = _challengeAt + c.ExpiresIn;
+            // COUNTED FROM WHEN THE PROGRAM PRINTED IT, never from when this card got to show it.
+            var expires = c.ReadAt + c.ExpiresIn;
             var lapsed = _sources.Now() >= expires;
             var ended = !lapsed && !_busy && !_sources.Service.SigningIn;
             _codeExpiry.Text = lapsed
@@ -292,7 +292,6 @@ sealed class SeatSignInCard
     {
         _browserAddress = null;
         _challenge = challenge;
-        _challengeAt = _sources.Now();
         _sources.Activity($"Started signing TradeAgent's AI in with a code on another device ({_sources.Service.DisplayName})");
     });
 

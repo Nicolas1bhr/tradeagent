@@ -22,8 +22,11 @@ public enum SeatSignInState
 /// <summary>One reading of the seat home's sign-in, and why it is <see cref="SeatSignInState.Unknown"/> when it is.</summary>
 public sealed record SeatSignInReading(SeatSignInState State, string? Reason);
 
-/// <summary>A sign-in with a one-time code: where to type it, the code, and how long it lives from when it was printed.</summary>
-public sealed record DeviceChallenge(string Url, string Code, TimeSpan ExpiresIn);
+/// <summary>
+/// A sign-in with a one-time code: where to type it, the code, how long it lives, and WHEN IT WAS READ from what the program printed —
+/// the instant its life is counted from, never a later one (a slow status read after it must not stretch the code shown).
+/// </summary>
+public sealed record DeviceChallenge(string Url, string Code, TimeSpan ExpiresIn, DateTimeOffset ReadAt);
 
 /// <summary>
 /// WHAT A PASTED KEY MAY NEVER LEAVE IN A WORD (CRED-001; <c>U-seat-signin</c> fix 1): the refusal, the card and the activity log
@@ -102,7 +105,11 @@ public static class PastedKey
 /// The register a sign-in's processes report to: null is the process-wide one, which is what the product passes; a test passes its
 /// own, for the reason <see cref="CliAgentRuntime"/>'s own parameter gives.
 /// </param>
-public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? presence = null) : IDisposable
+/// <param name="now">
+/// A test's clock, and the product passes nothing: a code's <see cref="DeviceChallenge.ReadAt"/> is then the runtime's own stamp;
+/// given, it is this clock's, read the moment the runtime hands the code back — before anything else is waited for.
+/// </param>
+public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? presence = null, Func<DateTimeOffset>? now = null) : IDisposable
 {
     readonly object _gate = new();
     CliAgentRuntime? _runtime;
@@ -157,7 +164,11 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
 
     /// <summary>The sign-in with a one-time code — again, for a Retry: the code that lapsed is stopped first.</summary>
     public Task<DeviceChallenge> BeginDeviceCodeAsync(CancellationToken ct = default) =>
-        Task.Run(() => Require().BeginDeviceCodeAsync(ct), CancellationToken.None);
+        Task.Run(async () =>
+        {
+            var challenge = await Require().BeginDeviceCodeAsync(ct);
+            return now is null ? challenge : challenge with { ReadAt = now() };
+        }, CancellationToken.None);
 
     /// <summary>A pasted key, handed to the runtime's stdin — a sign-in still waiting is stopped first. Not kept here or anywhere.</summary>
     public Task SignInWithKeyAsync(string key, CancellationToken ct = default) =>

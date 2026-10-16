@@ -347,6 +347,41 @@ public class SeatSignInTests
     }
 
     /// <summary>
+    /// FIX 4 (the review's P2): THE CODE'S LIFE IS COUNTED FROM WHEN THE PROGRAM PRINTED IT, not from when the card got round to
+    /// showing it — here after a status read that took ten minutes. The expiry shown and the Retry are the code's own. Red at base:
+    /// the card stamped the code in its continuation, after the press had waited for the status read, so the expiry shown was ten
+    /// minutes late and the Retry did not appear when the code lapsed.
+    /// </summary>
+    [Fact]
+    public void The_codes_expiry_counts_from_when_it_was_printed_not_from_a_slow_status_read_after_it()
+    {
+        using var rig = new Rig(nameof(The_codes_expiry_counts_from_when_it_was_printed_not_from_a_slow_status_read_after_it));
+        rig.Device(hold: true);
+        rig.Refresh();
+        var printed = rig.Clock;
+        int Statuses() { try { return rig.Argv().Count(a => a == "login status"); } catch (IOException) { return -1; } }
+        var before = Statuses();
+
+        File.WriteAllText(rig.StatusGate, "");
+        try
+        {
+            Press(rig.Button(SeatSignInCard.Code));
+            Assert.True(SpinWait.SpinUntil(() => Statuses() > before, TimeSpan.FromSeconds(60)), "the status read after the code never started");
+            rig.Clock += TimeSpan.FromMinutes(10);
+        }
+        finally { File.Delete(rig.StatusGate); }
+        rig.Settle();
+
+        var expires = (printed + TimeSpan.FromMinutes(15)).ToLocalTime().ToString("HH:mm");
+        Assert.Contains($"This code expires at {expires}.", Rig.Words(rig.Card.Root));
+        rig.Clock = printed + TimeSpan.FromMinutes(15);
+        rig.Card.Update();
+        Assert.True(rig.Button(SeatSignInCard.Retry).IsVisible, "no Retry at the code's own expiry");
+        Assert.Contains($"This code expired at {expires}. Get a new one to try again.", Rig.Words(rig.Card.Root));
+        rig.Service.Dispose();
+    }
+
+    /// <summary>
     /// (e) SIGNING OUT NEEDS TWO PRESSES (CLAUDE.md: what removes permission asks twice): the first only arms it and runs nothing; the
     /// second runs <c>logout</c> under the seat home and the card comes back. Red at base: no sign-out existed.
     /// </summary>
@@ -499,7 +534,7 @@ public class SeatSignInTests
             Codex.Seat!.Home = Path.Combine(Dir, "seat-home");
             Codex.AuthArgs = ["login"];
             Codex.AuthCodePattern = null;
-            Service = new SeatSignIn(() => Codex, new AgentPresence());
+            Service = new SeatSignIn(() => Codex, new AgentPresence(), () => Clock);
             Card = new SeatSignInCard(new SeatSignInSources
             {
                 Service = Service,
@@ -523,6 +558,7 @@ public class SeatSignInTests
         public string Refuse => Path.Combine(Dir, "refuse");
         public string RefusePart => Path.Combine(Dir, "refuse-part");
         public string BrowserPid => Path.Combine(Dir, "browser.pid");
+        public string StatusGate => Path.Combine(Dir, "status-gate");
         public string Stdin => Path.Combine(Dir, "stdin.txt");
         public string DeviceFile => Path.Combine(Dir, "device.txt");
         public string Hold => Path.Combine(Dir, "hold");
@@ -618,7 +654,7 @@ public class SeatSignInTests
         }
 
         /// <summary>
-        /// A PROGRAM THAT ANSWERS LIKE codex-cli 0.160.1, on either platform: status by a marker file, a key read from stdin (and
+        /// A PROGRAM THAT ANSWERS LIKE codex-cli 0.160.1, on either platform: status by a marker file (held while a "status-gate" one exists), a key read from stdin (and
         /// refused, printing it back, while a "refuse" file exists — or all but its first four characters, while a "refuse-part" one does), the device prompt from a file (held open while a "hold" file
         /// exists), the browser sign-in's address on stderr then a wait (its process id written first, off Windows), and logout. Every start appends "== args" and its environment.
         /// </summary>
@@ -642,6 +678,7 @@ public class SeatSignInTests
                     "echo codex-cli 0.160.1",
                     "exit /b 0",
                     ":status",
+                    $"if exist \"{StatusGate}\" (ping -n 2 127.0.0.1 >nul& goto status)",
                     $"if exist \"{Marker}\" (echo Logged in using an API key - *** 1>&2& exit /b 0)",
                     "echo Not logged in 1>&2",
                     "exit /b 1",
@@ -675,7 +712,7 @@ public class SeatSignInTests
                 $"echo \"$*\" >> \"{ArgvFile}\"",
                 "case \"$*\" in",
                 "  --version) echo 'codex-cli 0.160.1' ;;",
-                $"  'login status') if [ -f \"{Marker}\" ]; then echo 'Logged in using an API key - ***' >&2; exit 0; fi; echo 'Not logged in' >&2; exit 1 ;;",
+                $"  'login status') while [ -f \"{StatusGate}\" ]; do sleep 0.1; done; if [ -f \"{Marker}\" ]; then echo 'Logged in using an API key - ***' >&2; exit 0; fi; echo 'Not logged in' >&2; exit 1 ;;",
                 $"  'login --with-api-key') read -r KEY; printf '%s\\n' \"$KEY\" > \"{Stdin}\"; if [ -f \"{Refuse}\" ]; then echo \"refused: $KEY\" >&2; exit 1; fi; if [ -f \"{RefusePart}\" ]; then echo \"the key ending ${{KEY#????}} is not valid\" >&2; exit 1; fi; : > \"{Marker}\"; echo 'Successfully logged in' >&2 ;;",
                 $"  'login --device-auth') cat \"{DeviceFile}\"; if [ -f \"{Hold}\" ]; then sleep 30; fi ;;",
                 $"  login) echo $$ > \"{BrowserPid}\"; echo 'https://auth.example.test/oauth/authorize?x=1' >&2; exec sleep 30 ;;",

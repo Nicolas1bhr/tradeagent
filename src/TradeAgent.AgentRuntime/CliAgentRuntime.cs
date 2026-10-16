@@ -628,7 +628,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         var c = code.Match(printed);
         var e = expiry.Match(printed);
         if (u.Success && c.Success && e.Success && int.TryParse(Group(e), out var minutes) && minutes > 0)
-            return new DeviceChallenge(TrimUrl(Group(u)), Group(c), TimeSpan.FromMinutes(minutes));
+            return new DeviceChallenge(TrimUrl(Group(u)), Group(c), TimeSpan.FromMinutes(minutes), DateTimeOffset.Now);
 
         StopLogin();
         var missing = string.Join(", ", new[] { (u.Success, "the address"), (c.Success, "the code"), (e.Success && int.TryParse(Group(e), out var m) && m > 0, "how long the code lasts") }
