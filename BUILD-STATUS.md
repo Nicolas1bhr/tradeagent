@@ -10625,3 +10625,20 @@ design, shared by the ledger and lease refusals, on the no-queue fallback only (
 (2) an unlisted Windows child that starts a grandchild and exits before any listing succeeds orphans the grandchild — needs assign failure + snapshot failure + that chain; the grandchild holds no
 bound grant. Only a job closes it: OWED CARD — start suspended (CREATE_SUSPENDED → assign → resume) with a hand-built CreateProcess that keeps CreateNoWindow (Windows cells, seat A).
 **NOT VERIFIED:** `SO_PEERPIDFD` on the CI kernel; a `--cell` peer as a grant member; real Windows assign/snapshot refusals (injected only); a same-user ptrace or dup'd handle (not claimed, § 2.8).
+
+## U-ledger-backoff-red — the intermittent red on main in the ledger-refusal backoff test was a test race, made deterministic and fixed in the test; no product change (landed 2026-10-16, seat B)
+
+**Landed** solo on `main` at tip `ed34d3f9` (rebased onto `835efe4a`; patch-id identical). CI run **38950111651** at `53c80fb2` CARRIED: 13 of 13 jobs success; `land.sh check` VERDICT PASS
+(names 2761 → 2761, removed 0; scan clean). **Test file only** (`BudgetReservationTests.cs`); no rung, no product code. The orchestrator's ruling: never "a flake" — find the cause.
+**The red:** `A_ledger_that_stays_broken_is_told_once_and_backs_off_until_it_takes_rows_again`, `Assert.Equal(0, after.ConsecutiveErrors)`, Actual 5 — first CI sighting run 38945757464 (seat A's
+part a, ubuntu); reproduced on main `bc26f660` with no unit's diff (1 in 20, try 74, 2 in 15).
+**Cause: (B) the TEST.** The loop drops the lease and runs the post-turn pass BEFORE the lock that counts the turn (`_turns++`) and resets the role's error count (`Recovered(role)`); the test's exit
+condition "sent and not Working" is true inside that window. Diagnostic in the held window: `turns=0 state=Waiting errors=5 sent=1`. NOT (A): the reset shares the lock and the role key with
+`Failed(role)`; resetting at admission would break the doubling backoff for turns that fail after admission.
+**Evidence:** deterministic RED via a `StaleHost.Scanning` seam holding that pass: "Expected: 0 / Actual: 5" (`:633`). Fix: wait for the pass to start, release it, read ONE snapshot once `Turns > 0`
+(counted in the same step as the reset); every assertion kept, 20 s deadlines unchanged, no sleep, no retry. MUTANT (the old proxy wait, pass held) red "Expected: 0 / Actual: 5" (`:638`).
+`BudgetReservationTests` 3× Passed 30; the test alone ×100: 0 failures.
+**Review (Codex), judged:** P2 "a proxy wait put back without re-holding the pass could pass again" — true of the final test, which no longer holds the pass; the brief's mutant (pass held) was
+watched red; the regression guard is the deterministic red's seam, not this test's every run — noted, not a defect of what is protected. P2 "report missing" — appended before landing.
+**OWED (light card):** while the post-turn pass runs the card briefly shows Waiting, no next time and the old error count — product behaviour this unit left unchanged.
+**NOT VERIFIED:** tests box (NOT RUN — the machine does not answer).
