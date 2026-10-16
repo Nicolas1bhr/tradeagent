@@ -126,6 +126,15 @@ public static class MissionEventKind
     /// makes no launch look woken; the writer's next Situation reads it (<c>CouncilRelay.HeldNotices</c>).
     /// </summary>
     public const string Output = "output";
+
+    /// <summary>
+    /// A HEAD'S MAXIMUM INTERVAL REACHED (<c>U-org-wakes</c>; ORGANISATION §§ 10–11: "a maximum interval floors every head"):
+    /// ONE pending row per head after the legacy pair, due at its last woken turn plus its level's maximum interval
+    /// (<c>docs/VISION.md</c> § 7.5) — a floor every turn resets, never a periodic tick. Raised by the loop's own schedule,
+    /// never by an agent; a pending one is replaced, consumed by no launch and superseded, when a turn moves the floor
+    /// (<see cref="MissionEventStore.MoveCeiling"/>). Members, the staff and the legacy pair get none.
+    /// </summary>
+    public const string Ceiling = "ceiling";
 }
 
 /// <summary>
@@ -318,6 +327,13 @@ public static class MissionEventIds
         $"{MissionEventKind.Renewal}:{localMidnight.LocalDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
 
     public static string Self(string attemptId) => $"{MissionEventKind.Self}:{attemptId}";
+
+    /// <summary>
+    /// ONE HEAD'S CEILING WAKE, keyed by the instant it is due: the same floor raised twice is one row, and a floor a turn moved
+    /// is a new one.
+    /// </summary>
+    public static string Ceiling(string position, DateTimeOffset due) =>
+        ForRole($"{MissionEventKind.Ceiling}:{due.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture)}", position);
 
     /// <summary>Rounded to the minute: two ticks scheduled inside one minute are one review.</summary>
     public static string Review(DateTimeOffset at) =>
@@ -774,6 +790,29 @@ public sealed class MissionEventStore(Database db)
             ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
             ("$review", MissionEventKind.Review), ("$chair", CouncilRoles.Default), ("$role", role));
         return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// PUTS <paramref name="position"/>'S ONE CEILING WAKE AT <paramref name="dueAt"/> (<c>U-org-wakes</c>), and answers whether
+    /// anything was written. One transaction: the row due then is raised under its own id, and every OTHER pending ceiling of
+    /// that position is closed — consumed by no launch and <see cref="MissionEventDisposition.Superseded"/> by it — so a
+    /// position holds at most one floor and its row still says what became of the old. The guard is the statement's: only an
+    /// unconsumed <see cref="MissionEventKind.Ceiling"/> of exactly this position is ever closed.
+    /// </summary>
+    public bool MoveCeiling(string position, DateTimeOffset at, DateTimeOffset dueAt) => db.Write(_ =>
+    {
+        var id = MissionEventIds.Ceiling(position, dueAt);
+        var raised = Raise(new MissionEvent
+        {
+            Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
+        });
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, disposition=$superseded, disposition_detail=$by
+             WHERE kind=$ceiling AND role=$position AND consumed_at IS NULL AND id <> $by
+            """,
+            ("$at", Sql.T(at)), ("$superseded", MissionEventDisposition.Superseded), ("$by", id),
+            ("$ceiling", MissionEventKind.Ceiling), ("$position", position));
+        return c.ExecuteNonQuery() > 0 || raised;
     });
 
     /// <summary>

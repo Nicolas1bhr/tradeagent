@@ -358,21 +358,36 @@ public class OrgRightsTests
     // ---- (i) no objective -------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// (i) GUARD: A THIRD POSITION HOLDS NO OBJECTIVE, SO NO LOOK WAKES IT. Its objectives are mandates
-    /// (<c>U-org-assignments</c>) and its clock is O3's; until then the legacy pair's kinds are theirs alone, and nothing
-    /// open — a verdict wake raised for it, an open boundary — opens one for it.
+    /// (i) GUARD, FLIPPED FOR HEADS BY <c>U-org-wakes</c>: A MEMBER HOLDS NO OBJECTIVE, AND A HEAD ONLY THE OWNER'S WORDS TO IT.
+    /// A member's objectives are mandates (<c>U-org-assignments</c>), so nothing open — a verdict wake raised for it, an open
+    /// boundary, the owner's words — opens one for it. A head after the legacy pair owns the owner's words addressed to it
+    /// (ORCHESTRATION § 2.5) and nothing else yet; the legacy pair's kinds are theirs alone.
     /// </summary>
     [Fact]
-    public void A_third_position_holds_no_objective_so_no_look_wakes_it()
+    public void A_member_holds_no_objective_and_a_head_only_the_owners_words_to_it()
     {
         using var db = TestEnv.NewDb();
         HeadATeam(db, Third, Team);
-        new MissionEventStore(db).Raise(MissionEventIds.ForRole(MissionEventIds.Verdict("promotion-x"), Third),
-            MissionEventKind.Verdict, DateTimeOffset.UtcNow, role: Third);
+        const string member = "pos-0c0ffee0c0de";
+        Seat(db, member, unit: Team);
+        var events = new MissionEventStore(db);
+        foreach (var who in new[] { Third, member })
+            events.Raise(MissionEventIds.ForRole(MissionEventIds.Verdict("promotion-x"), who),
+                MissionEventKind.Verdict, DateTimeOffset.UtcNow, role: who);
 
         Assert.Empty(RoleObjectives.KindsOf(Third));
+        Assert.Equal([RoleObjectives.OwnerAnswered], RoleObjectives.KindsOf(Third, OrgPositionKind.Head));
+        Assert.Empty(RoleObjectives.KindsOf(member, OrgPositionKind.Member));
         Assert.Empty(RoleObjectives.Open(db, Third, book: null));
         Assert.Empty(RoleObjectives.Open(db, Third, book: ["ES 1 long"]));
+
+        // THE OWNER'S WORDS TO EACH: the head owns them, the member does not.
+        foreach (var who in new[] { Third, member })
+            events.Raise(MissionEventIds.ForRole(MissionEventIds.Owner(800), who), MissionEventKind.Owner, DateTimeOffset.UtcNow,
+                Json.Write(new MissionOwnerMessage("status?", DateTimeOffset.UtcNow)), who);
+        var owned = Assert.Single(RoleObjectives.Open(db, Third, book: null));
+        Assert.Equal(RoleObjectives.OwnerAnswered, owned.Kind);
+        Assert.Empty(RoleObjectives.Open(db, member, book: null));
 
         // The legacy pair keep theirs.
         Assert.NotEmpty(RoleObjectives.KindsOf(CouncilRoles.Operations));

@@ -203,6 +203,12 @@ public partial class CouncilLoopTests
         /// </summary>
         public Dictionary<string, TurnRefusal> Refusals { get; } = [];
 
+        /// <summary>The chart's active positions, read as the app reads them (<see cref="OrgStore.Roster"/>).</summary>
+        public IReadOnlyList<ChartPosition> Positions() => new OrgStore(_db).Roster();
+
+        /// <summary>The position's last woken turn, from the real launch ledger.</summary>
+        public DateTimeOffset? LastWokenAt(string position) => new AiAttemptStore(_db).LastWoken(position)?.StartedAt;
+
         /// <summary>While set, the seam throws for these positions — a chart that could not be read.</summary>
         public HashSet<string> SeamThrows { get; } = [];
 

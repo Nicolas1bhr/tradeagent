@@ -36,7 +36,7 @@ public static class RoleObjectives
     /// kind is added, removed or derived differently — the attempt that ran under the old meaning stays true about
     /// what it ran under.
     /// </summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>Operations: every message the owner typed reaches a turn, and that turn's outcome is written.</summary>
     public const string OwnerAnswered = "owner-message-answered";
@@ -74,14 +74,17 @@ public static class RoleObjectives
         + ")";
 
     /// <summary>
-    /// The objective kinds a role holds, in this build: the legacy pair's, each by its exact id. ANY OTHER POSITION HOLDS
-    /// NONE (<c>U-org-rights</c>, a guard): its objectives are mandates (<c>U-org-assignments</c>) and its schedule is O3's,
-    /// so no look of the app's clock wakes it; <see cref="Open"/> answers it nothing either.
+    /// The objective kinds a role holds, in this build (<c>U-org-wakes</c>, version 2): the legacy pair's, each by its exact id;
+    /// a HEAD after them (<paramref name="kind"/> as the chart derives it) owns the owner's words addressed to it
+    /// (ORCHESTRATION § 2.5 — its deliveries to judge, mandates and kill rules are <c>U-org-assignments</c>'); a member or the
+    /// staff, and a position whose kind is not given, hold NONE — an executor's objective is its open mandate, never the app's
+    /// clock. <c>U-org-rights</c>' guard ("a non-legacy position holds none") holds still for every position but a head.
     /// </summary>
-    public static IReadOnlyList<string> KindsOf(string role) => role switch
+    public static IReadOnlyList<string> KindsOf(string role, string? kind = null) => role switch
     {
         CouncilRoles.Operations => [OwnerAnswered, RequestFinal, PositionWatched, BoundaryAssessed],
         CouncilRoles.Research => [ResearchMandate, VerdictRead, ForwardRunFollowed, BoundaryAssessed],
+        _ when kind == OrgPositionKind.Head => [OwnerAnswered],
         _ => []
     };
 
@@ -132,6 +135,11 @@ public static class RoleObjectives
                 break;
 
             default:
+                // A POSITION AFTER THE LEGACY PAIR, by the kind the chart derives for it now (U-org-wakes): a head owns the
+                // owner's words addressed to it, read as the chair's are; anyone else owns nothing here.
+                if (KindsOf(role, new OrgStore(db).Standing(role)?.Kind).Contains(OwnerAnswered))
+                    foreach (var e in events.OwnerWordsOpen(role))
+                        open.Add(new RoleObjective(OwnerAnswered, e.Id));
                 return open;
         }
 

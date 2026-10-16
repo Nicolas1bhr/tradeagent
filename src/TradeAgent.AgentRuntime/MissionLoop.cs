@@ -135,6 +135,20 @@ public sealed record MissionOptions
     /// work it owns (<see cref="RoleObjectives"/>, <c>U-reconcile-wakes</c>).</para>
     /// </summary>
     public TimeSpan ReviewEvery { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>The maximum interval a level is given where none is set: ORGANISATION § 10's "maximum interval (default 24 h)".</summary>
+    public static readonly TimeSpan DefaultCeiling = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// THE LONGEST A HEAD AFTER THE LEGACY PAIR MAY GO UNWOKEN, PER LEVEL (<c>U-org-wakes</c>; ORGANISATION §§ 10–11, VISION
+    /// § 7.5): its ceiling wake is due at its last woken turn plus this — a floor every turn resets, never a heartbeat.
+    /// <see cref="TimeSpan.Zero"/> raises none for that level. Policy data the owner sets, read in-process; no agent reaches it.
+    /// </summary>
+    public IReadOnlyDictionary<string, TimeSpan> Ceilings { get; init; } =
+        OrgLevel.All.ToDictionary(l => l, _ => DefaultCeiling, StringComparer.Ordinal);
+
+    /// <summary>The ceiling of <paramref name="level"/>, or <see cref="DefaultCeiling"/> where none is set.</summary>
+    public TimeSpan CeilingFor(string level) => Ceilings.TryGetValue(level, out var every) ? every : DefaultCeiling;
 }
 
 /// <summary>
@@ -300,6 +314,21 @@ public interface IMissionHost
         : new TurnRefusal(RefusalKind.Position,
             $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
             + "opened for it and nothing is folded into this host's own.");
+
+    /// <summary>
+    /// THE POSITIONS THE SCHEDULER WALKS (<c>U-org-wakes</c>, ORCHESTRATION § 2.5): each active position's exact id, its kind
+    /// derived from the chart, its unit's depth and its level (<c>docs/VISION.md</c> § 7.5). The default is the legacy pair as
+    /// the heads of their divisions, which is all a host with no chart has; the app answers from the chart
+    /// (<see cref="OrgStore.Roster"/>). The loop walks the legacy pair whatever this answers, and a host that throws is walked
+    /// as the legacy pair alone — a chart nobody can read delays a floor and never invents one.
+    /// </summary>
+    IReadOnlyList<ChartPosition> Positions() => ChartPosition.LegacyPair;
+
+    /// <summary>
+    /// WHEN <paramref name="position"/>'S LAST WOKEN TURN STARTED (<see cref="AiAttemptStore.LastWoken"/>), or null where it has
+    /// none or this host keeps no ledger. What a head's ceiling wake is measured from: a floor every turn resets.
+    /// </summary>
+    DateTimeOffset? LastWokenAt(string position) => null;
 
     /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous
@@ -2409,11 +2438,22 @@ public sealed class MissionLoop
             // PER ROLE, both of them. One shared review tick would be consumed by whichever role
             // reached it first, so the other would only ever run when a real event named it — a
             // Research Director that is never scheduled at all on a quiet day.
-            foreach (var role in CouncilRoles.All)
+            foreach (var position in Walk())
             {
-                // A POSITION REFUSED FOR WHAT IT IS IS RAISED NOTHING (U-org-wakes): no look, no renewal, no reminder — each
-                // would be a wake settled refused at the next pass. One refused for this host keeps its clock.
+                var role = position.Id;
+
+                // A POSITION REFUSED FOR WHAT IT IS IS RAISED NOTHING (U-org-wakes): no look, no ceiling, no renewal, no
+                // reminder — each would be a wake settled refused at the next pass. One refused for this host keeps its clock.
                 if (RefusalOf(role) is { Kind: RefusalKind.Position }) continue;
+
+                // A POSITION AFTER THE LEGACY PAIR (U-org-wakes, RULING Q2): a HEAD gets its ceiling — one wake at its last
+                // turn plus its level's maximum interval — and nothing else from the clock; a member or the staff gets no
+                // clock wake at all, only its own requested wake and the work addressed to it.
+                if (!position.IsLegacy)
+                {
+                    if (position.Kind == OrgPositionKind.Head) Ceiling(events, position, now);
+                    continue;
+                }
 
                 // What woke THIS role's turn, or null: nothing that happened to one role moves the
                 // other's look.
@@ -2467,6 +2507,45 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// THE POSITIONS ONE SCHEDULE PASS WALKS: the legacy pair, always and first — their looks are <c>U-reconcile-wakes</c>' and
+    /// <c>U-reconcile-packet</c>'s whatever the chart says — then every other position the host names, by its exact id. A host
+    /// whose roster throws is walked as the legacy pair alone.
+    /// </summary>
+    IReadOnlyList<ChartPosition> Walk()
+    {
+        IReadOnlyList<ChartPosition> named;
+        try { named = _host.Positions(); }
+        catch (Exception) { named = []; }
+        return [.. ChartPosition.LegacyPair, .. named.Where(p => !p.IsLegacy)];
+    }
+
+    /// <summary>
+    /// <paramref name="head"/>'S ONE CEILING WAKE (<c>U-org-wakes</c>, RULING Q2): due at its last woken turn plus its level's
+    /// maximum interval, so every turn it takes — whatever woke it — moves the floor out; a head that has never turned is
+    /// floored from the first pass that sees it, and that floor is kept until a turn moves it. NEVER re-dated from the clock:
+    /// a ceiling raised from "now" on every pass would be the heartbeat this exists to replace. Never throws: a floor not
+    /// raised is a head that waits for its next real event.
+    /// </summary>
+    void Ceiling(MissionEventStore events, ChartPosition head, DateTimeOffset now)
+    {
+        var every = _options.CeilingFor(head.Level);
+        if (every <= TimeSpan.Zero) return;
+        try
+        {
+            var last = _host.LastWokenAt(head.Id);
+            var pending = events.Pending(MissionEventKind.Ceiling, head.Id);
+            if (last is { } turned)
+            {
+                var due = turned + every;
+                if (pending.Count == 1 && pending[0].DueAt == due) return;
+                events.MoveCeiling(head.Id, now, due);
+            }
+            else if (pending.Count == 0) events.MoveCeiling(head.Id, now, now + every);
+        }
+        catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }
     }
 
     /// <summary>

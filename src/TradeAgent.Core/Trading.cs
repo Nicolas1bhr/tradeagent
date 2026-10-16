@@ -485,6 +485,14 @@ public sealed class TradeAgentSettings
     public int MissionReviewMinutes { get; set; } = 30;
 
     /// <summary>
+    /// THE LONGEST A HEAD AFTER THE LEGACY PAIR MAY GO UNWOKEN, in hours (<c>U-org-wakes</c>; ORGANISATION § 10: "heads wake on
+    /// material events with a maximum interval (default 24 h)"). A floor every turn of that head resets, never a heartbeat; zero
+    /// raises none. One value for every level until the levels' horizons (VISION § 7.5) are set apart. The owner's, in-process:
+    /// no verb, no pipe op and no agent reaches it.
+    /// </summary>
+    public int HeadCeilingHours { get; set; } = 24;
+
+    /// <summary>
     /// HOW LONG A MESSAGE THE OWNER TYPED MAY GO WITHOUT AN OUTCOME BEFORE THE DAILY REPORT CALLS IT
     /// OVERDUE (<c>docs/COUNCIL.md</c> round 4: "Owner text enters Operations' agenda first, with
     /// receipt, disposition and deadline").
