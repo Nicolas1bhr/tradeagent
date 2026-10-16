@@ -140,6 +140,18 @@ public class CellPolicyTests
         Assert.Contains("is form 1; this build reads form 2 only", ex.Message);
     }
 
+    /// <summary>A cell's tools keep their temporary files and caches in its workspace and nowhere else (<c>U-cell-linux-d</c> item 4).</summary>
+    [UnixFact]
+    public void A_cells_tools_keep_their_temp_files_and_caches_in_its_workspace()
+    {
+        var ws = Dir("ws");
+        var env = CellPolicy.ToolEnvironment(ws).ToDictionary(e => e.Key, e => e.Value);
+        Assert.Equal(ws, env["TMPDIR"]);
+        foreach (var name in new[] { "XDG_CACHE_HOME", "PIP_CACHE_DIR", "npm_config_cache" })
+            Assert.StartsWith(ws + "/", env[name]);
+        Assert.Null(new CellPolicy(ws, [], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin"), .. CellPolicy.ToolEnvironment(ws)]).Problem());
+    }
+
     [UnixFact]
     public void A_policy_that_grants_the_app_home_or_its_state_is_refused()
     {

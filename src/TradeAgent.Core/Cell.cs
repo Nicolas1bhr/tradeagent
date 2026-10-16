@@ -63,6 +63,27 @@ public sealed record CellPolicy
     public IReadOnlyList<int> TcpPorts => Egress.TcpPorts;
 
     /// <summary>
+    /// WHERE A CELL'S TOOLS KEEP THEIR TEMPORARY FILES AND CACHES: its own workspace (<c>U-cell-linux-d</c> item 4). A cell may write
+    /// nowhere else, so a package manager left to its defaults — <c>~/.npm</c>, <c>~/.cache/pip</c>, <c>/tmp</c> — fails or quietly
+    /// runs without its cache; with these it installs into the workspace and nothing outside it changes. Policy data, added by
+    /// whoever builds a cell's environment: <c>TMPDIR</c> the workspace itself (it exists), the caches beneath <c>.cache</c>, and
+    /// the tools' own phone-home checks off.
+    /// </summary>
+    public static IReadOnlyList<KeyValuePair<string, string>> ToolEnvironment(string workspace)
+    {
+        var cache = Path.Combine(workspace, ".cache");
+        return
+        [
+            new("TMPDIR", workspace),
+            new("XDG_CACHE_HOME", cache),
+            new("PIP_CACHE_DIR", Path.Combine(cache, "pip")),
+            new("PIP_DISABLE_PIP_VERSION_CHECK", "1"),
+            new("npm_config_cache", Path.Combine(cache, "npm")),
+            new("npm_config_update_notifier", "false"),
+        ];
+    }
+
+    /// <summary>
     /// The policy as the bytes the file holds and the hash names: one canonical form, ordinal order throughout. The egress class
     /// is written by name WITH its effective port set and its name resolution, so the hash covers what the kernel will be told.
     /// </summary>
