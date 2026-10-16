@@ -472,6 +472,62 @@ public class RefereeVerdictTests
     }
 
     /// <summary>
+    /// (e) A VERDICT ON A POSITION'S VERSION REACHES ITS AUTHOR AND RESEARCH (<c>U-org-wakes</c> item 5). The version was written
+    /// by an active position after the legacy pair (<c>strategy_version.role</c>): the referee's note goes to Research AND to
+    /// that position — beside Research, never instead — one wake each, keyed by the promotion. A legacy author, an ended
+    /// position and a version nobody holds are told to Research alone; the paper notes ask the same question
+    /// (<see cref="StrategyStore.NoteRecipients"/>).
+    ///
+    /// <para>RED at base: the note's recipients were Research alone, so the author never heard what became of its version.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_on_a_positions_version_reaches_its_author_and_research()
+    {
+        const string author = "pos-0e0e0e0e0e0e", gone = "pos-0f0f0f0f0f0f";
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+        w.Db.Write(_ =>
+        {
+            foreach (var (id, status) in new[] { (author, OrgPositionStatus.Active), (gone, OrgPositionStatus.Ended) })
+            {
+                using var p = w.Db.Cmd("""
+                    INSERT INTO org_position(id, unit_id, home_dir, status, created_at)
+                    VALUES($id, $unit, $home, $status, '2026-10-11T12:00:00.0000000Z')
+                    """, ("$id", id), ("$unit", OrgIds.Research), ("$home", $"org/{id}"), ("$status", status));
+                p.ExecuteNonQuery();
+            }
+            using var v = w.Db.Cmd("UPDATE strategy_version SET role=$author WHERE id=$id", ("$author", author), ("$id", w.VersionId));
+            return v.ExecuteNonQuery();
+        });
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Ok, verdict.Why);
+        var promotion = verdict.Promotion!;
+
+        var note = Assert.Single(new PublicationStore(w.Db).By(Referee.RunRole));
+        Assert.Equal([CouncilRoles.Research, author], note.RecipientList);
+        var wakes = new MissionEventStore(w.Db).OfKind(MissionEventKind.Verdict);
+        Assert.Equal(2, wakes.Count);
+        Assert.Contains(wakes, e => e.Role == CouncilRoles.Research
+                                    && e.Id == MissionEventIds.ForRole(MissionEventIds.Verdict(promotion.Id), CouncilRoles.Research));
+        Assert.Contains(wakes, e => e.Role == author
+                                    && e.Id == MissionEventIds.ForRole(MissionEventIds.Verdict(promotion.Id), author));
+
+        var strategies = new StrategyStore(w.Db);
+        Assert.Equal($"{CouncilRoles.Research},{author}", strategies.NoteRecipients(w.VersionId));
+        Assert.Equal(CouncilRoles.Research, strategies.NoteRecipients("no-such-version"));
+        foreach (var other in new[] { gone, CouncilRoles.Operations, CouncilRoles.Research })
+        {
+            w.Db.Write(_ =>
+            {
+                using var v = w.Db.Cmd("UPDATE strategy_version SET role=$r WHERE id=$id", ("$r", other), ("$id", w.VersionId));
+                return v.ExecuteNonQuery();
+            });
+            Assert.Equal(CouncilRoles.Research, strategies.NoteRecipients(w.VersionId));
+        }
+    }
+
+    /// <summary>
     /// THE TURN IS TOLD WHAT IS PROMOTED, and told when what was promoted no longer stands.
     ///
     /// <para><c>docs/COUNCIL.md</c>:74 puts the promoted strategy in the Situation. The line is built

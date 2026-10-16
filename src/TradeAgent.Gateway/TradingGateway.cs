@@ -655,7 +655,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 Id = Publication.IdOf(PaperAllocatorRole, PublicationKind.Note, content),
                 Role = PaperAllocatorRole,
                 Kind = PublicationKind.Note,
-                Recipients = CouncilRoles.Research,
+                // RESEARCH, AND THE VERSION'S AUTHOR WHERE THAT IS A POSITION AFTER THE LEGACY PAIR (U-org-wakes).
+                Recipients = new StrategyStore(_db).NoteRecipients(allocation.VersionId),
                 Classification = PublicationClass.Council,
                 CreatedAt = now,
                 Content = content
@@ -1897,7 +1898,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 Id = Publication.IdOf(PaperAllocatorRole, PublicationKind.Note, content),
                 Role = PaperAllocatorRole,
                 Kind = PublicationKind.Note,
-                Recipients = CouncilRoles.Research,
+                // RESEARCH, AND THE VERSION'S AUTHOR WHERE THAT IS A POSITION AFTER THE LEGACY PAIR (U-org-wakes).
+                Recipients = new StrategyStore(_db).NoteRecipients(deployment.VersionId),
                 Classification = PublicationClass.Council,
                 CreatedAt = now,
                 Content = content
