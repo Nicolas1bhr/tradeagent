@@ -263,6 +263,17 @@ public sealed record AiAdmission
         Cause = cause
     };
 
+    /// <summary>
+    /// What <see cref="Ceiling"/> says when the LAUNCH ITSELF was refused (<c>U-mint-per-launch</c>): its role already has
+    /// a launch open, it carried an id not minted for it, or another launch took some of its wakes. A refusal about the
+    /// launch and not the position (<c>docs/ORCHESTRATION.md</c> § 2.5): the loop steps over it keeping every wake, and the
+    /// owner's words are not settled on it. Where O3's <c>RefusalKind</c> lands, this is its <c>HostOrLaunch</c>.
+    /// </summary>
+    public const string Launch = "launch";
+
+    /// <summary>A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words.</summary>
+    public static AiAdmission LaunchRefused(string refusal) => new() { Refusal = refusal, Ceiling = Launch };
+
     /// <summary>What the launch ledger said when it refused (<see cref="Ledger"/>), on its own; null for any other answer.</summary>
     public string? Cause { get; init; }
 
@@ -398,7 +409,7 @@ public sealed class AiAttemptStore(Database db)
             {
                 Exec("ROLLBACK TO ai_attempt_begin");
                 Exec("RELEASE ai_attempt_begin");
-                return new AiAdmission { Refusal = Labels.LaunchWakesTaken(a.Id, taken, asked) };
+                return AiAdmission.LaunchRefused(Labels.LaunchWakesTaken(a.Id, taken, asked));
             }
         }
 
