@@ -2442,10 +2442,12 @@ public sealed class MissionLoop
 
                 // A POSITION AFTER THE LEGACY PAIR (U-org-wakes, RULING Q2): a HEAD gets its ceiling — one wake at its last
                 // turn plus its level's maximum interval — and nothing else from the clock; a member or the staff gets no
-                // clock wake at all, only its own requested wake and the work addressed to it.
+                // clock wake at all, only its own requested wake and the work addressed to it — and a floor it was raised while
+                // it still headed a unit is withdrawn, recorded, before it can buy it a turn (fix pass 1).
                 if (!position.IsLegacy)
                 {
                     if (position.Kind == OrgPositionKind.Head) Ceiling(events, position, now);
+                    else WithdrawCeiling(events, position, now);
                     continue;
                 }
 
@@ -2540,6 +2542,23 @@ public sealed class MissionLoop
             else if (pending.Count == 0) events.MoveCeiling(head.Id, now, now + every);
         }
         catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }
+    }
+
+    /// <summary>
+    /// <paramref name="position"/> IS NO HEAD, SO IT HOLDS NO FLOOR (<c>U-org-wakes</c> fix pass 1, RULING Q2): a pending ceiling
+    /// raised while it headed a unit is closed without a turn, withdrawn with the reason. Read first, so a member with none costs
+    /// no write. Never throws: a ceiling that could not be withdrawn is tried again on the next pass.
+    /// </summary>
+    static void WithdrawCeiling(MissionEventStore events, ChartPosition position, DateTimeOffset now)
+    {
+        try
+        {
+            if (!events.HasUnconsumed(MissionEventKind.Ceiling, position.Id)) return;
+            events.WithdrawCeilings(position.Id, now,
+                $"{position.Id} no longer heads a unit, and a {position.Kind} is woken by no clock, so TradeAgent did not pay "
+                + "for the ceiling it was raised as a head");
+        }
+        catch (Exception) { /* the ceiling stays this pass; the next pass tries again */ }
     }
 
     /// <summary>

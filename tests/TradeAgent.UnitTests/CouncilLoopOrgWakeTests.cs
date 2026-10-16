@@ -396,6 +396,44 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (c5) A HEAD THAT BECOMES A MEMBER LOSES ITS CEILING (fix pass 1, review point 2; RULING Q2 "a member gets no clock wake").
+    /// A team head is floored; its headship is then removed. Past the old floor's due time the pass launches nothing for it, and
+    /// the ceiling is closed by no launch, <c>withdrawn</c>, with a sentence saying why.
+    ///
+    /// <para>RED before the fix: Schedule left the former head's pending ceiling in place, and past due it bought the member a
+    /// clock-driven turn.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_head_that_becomes_a_member_has_its_ceiling_withdrawn()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Unit(db, "team-x", OrgIds.Research, null);
+        Seat(db, Pos, "team-x", heads: true);
+        var now = Noon();
+        Turned(db, Pos, now.AddHours(-2));
+        var host = new CouncilHost(db, root, new Concurrency()).Add(Pos);
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        await loop.TurnAsync();
+        var floor = Assert.Single(Ceilings(host, Pos));
+        var launches = Launches(db, Pos);
+
+        Chart(db, "UPDATE org_unit SET head_position_id=NULL WHERE id=$unit", ("$unit", "team-x"));
+        now = floor.DueAt.AddMinutes(1);
+        await loop.TurnAsync();
+
+        Assert.DoesNotContain(host.Opened, o => o.Role == Pos);
+        Assert.Equal(launches, Launches(db, Pos));
+        var row = Row(host, floor.Id)!;
+        Assert.True(row.Consumed, "the former head's ceiling was left pending");
+        Assert.Null(row.ConsumedBy);
+        Assert.Equal(MissionEventDisposition.Withdrawn, row.Disposition);
+        Assert.False(string.IsNullOrWhiteSpace(row.DispositionDetail));
+        Assert.Empty(host.Events!.Pending(MissionEventKind.Ceiling, Pos));
+    }
+
+    /// <summary>
     /// (c3) GUARD: THE LEGACY PAIR'S LOOKS ARE UNCHANGED by the positions now on the chart: the same rows — kind, role, due —
     /// raised for the chair and Research with a head and a member beside them as without, the heartbeat on and the host saying
     /// what each owns (<c>U-reconcile-wakes</c>' "no open work, no look"; <c>U-reconcile-packet</c>'s reminders).

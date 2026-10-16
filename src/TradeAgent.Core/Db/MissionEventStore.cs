@@ -976,6 +976,23 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// CLOSES <paramref name="position"/>'S PENDING CEILING, consumed by no launch and <see cref="MissionEventDisposition.Withdrawn"/>
+    /// with <paramref name="why"/>, and answers how many (<c>U-org-wakes</c> fix pass 1, RULING Q2). The loop calls it for a
+    /// position that is no longer a head: a member gets no clock wake, so a floor raised while it headed a unit must not buy it a
+    /// turn. The guard is the statement's: only an unconsumed <see cref="MissionEventKind.Ceiling"/> of exactly this position.
+    /// </summary>
+    public int WithdrawCeilings(string position, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, disposition=$withdrawn, disposition_detail=$why
+             WHERE kind=$ceiling AND role=$position AND consumed_at IS NULL
+            """,
+            ("$at", Sql.T(at)), ("$withdrawn", MissionEventDisposition.Withdrawn), ("$why", why),
+            ("$ceiling", MissionEventKind.Ceiling), ("$position", position));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
     /// WHAT <c>consumed_by</c> READS ON A WAKE THE APP SETTLED WITHOUT A LAUNCH (<see cref="SettleRefused"/>). Deliberately no
     /// attempt id — nothing in <c>ai_attempt</c> carries it — so <see cref="AiAttemptStore.LastWoken"/> never reads it as a turn.
     /// </summary>
