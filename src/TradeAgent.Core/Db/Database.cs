@@ -2389,10 +2389,12 @@ public sealed class Database : IDisposable
             // admission verified, and never updated. NO BACKFILL: a launch recorded before this rung has NULL — unknown.
             //
             // THE HOST'S PROVEN EXECUTOR-CELL CLASSES: `cell_proof`, one row per provider whose benchmark passed on this host, written
-            // only by the app when that benchmark passes (`U-cell-linux-c`/`-e`; nothing in this build writes it). Until it holds a
-            // row for this platform and build, no position beyond the legacy pair activates on a real-model seat (ORCHESTRATION
-            // § 2.3, the owner's answer). Created only where missing and columns added only where missing, so a crash between any
-            // statement here and the stamp reopens cleanly.
+            // only by the app when that benchmark passes (`U-cell-linux-c`/`-e`; nothing in this build writes it). A row names the
+            // HOST it was proven on — `machine`, a SHA-256 over the machine id the app reads (never the id itself), and `os_release`,
+            // the kernel or OS release — beside the platform and build, and counts only where all four match (`CellProofStore`; review
+            // item 3: a home copied to another machine holds no proof there). Until it holds such a row, no position beyond the
+            // legacy pair activates on a real-model seat (ORCHESTRATION § 2.3, the owner's answer). Created only where missing and
+            // columns added only where missing, so a crash between any statement here and the stamp reopens cleanly.
             AddColumnIfMissing("ai_attempt", "seat_class", "TEXT");
             AddColumnIfMissing("ai_attempt", "assurance", "TEXT");
             Exec("""
@@ -2400,6 +2402,8 @@ public sealed class Database : IDisposable
                   id            INTEGER PRIMARY KEY AUTOINCREMENT,
                   provider      TEXT NOT NULL,
                   platform      TEXT NOT NULL,
+                  machine       TEXT NOT NULL,
+                  os_release    TEXT NOT NULL,
                   build         TEXT NOT NULL,
                   profile_hash  TEXT NOT NULL,
                   proven_at     TEXT NOT NULL

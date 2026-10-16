@@ -305,6 +305,33 @@ public class ThinkingSeatsTests : IDisposable
         }
     }
 
+    // ---- (m) review item 3: a proof counts on the host that recorded it ------------------------------------------
+
+    /// <summary>
+    /// (m) A PROOF RECORDED ON ANOTHER MACHINE, OR UNDER ANOTHER KERNEL RELEASE, HOLDS NONE HERE (fix pass 1, review item 3;
+    /// ORCHESTRATION § 2.3: no real-model position before a proven cell on THIS host): a home copied to a machine of the same platform
+    /// and build activates nothing until the benchmark has passed there. A host whose identity cannot be read holds none; this host's
+    /// own row holds one. RED at the rebased tip: a proof of the same platform and build counted on any machine.
+    /// </summary>
+    [Fact]
+    public void A_proof_recorded_on_another_machine_or_kernel_release_holds_none_here()
+    {
+        using var db = TestEnv.NewDb();
+        Assert.NotNull(HostIdentity.This);
+        Assert.Equal(64, HostIdentity.This!.Machine.Length);   // a hash, never the id itself
+
+        ProveCell(db, machine: Sha256Hex.Of("another machine"));
+        Assert.False(new CellProofStore(db).HoldsProof(), "a proof recorded on another machine counted here");
+        ProveCell(db, release: "0.0.0-another-release");
+        Assert.False(new CellProofStore(db).HoldsProof(), "a proof recorded under another kernel release counted here");
+
+        ProveCell(db);
+        Assert.False(new CellProofStore(db, () => null).HoldsProof(), "a host whose identity could not be read held a proof");
+        Assert.True(new CellProofStore(db).HoldsProof());
+        var proof = Assert.Single(new CellProofStore(db).Proven());
+        Assert.Equal((HostIdentity.This.Machine, HostIdentity.This.OsRelease), (proof.Machine, proof.OsRelease));
+    }
+
     // ---- (l) review item 4: a chart read failure is about the host ------------------------------------------------
 
     /// <summary>
@@ -575,17 +602,25 @@ public class ThinkingSeatsTests : IDisposable
             return c.ExecuteNonQuery();
         });
 
-    /// <summary>A proven executor-cell row, as only the app may write one (none of its writers exists yet): this platform and build.</summary>
-    internal static void ProveCell(Database db, string? platform = null, string? build = null) =>
+    /// <summary>
+    /// A proven executor-cell row, as only the app may write one (none of its writers exists yet): this host — its identity as the
+    /// app reads it, never a literal — this platform, release and build, unless the test names another.
+    /// </summary>
+    internal static void ProveCell(Database db, string? platform = null, string? build = null, string? machine = null,
+        string? release = null)
+    {
+        var here = HostIdentity.This ?? throw new InvalidOperationException("this host's identity could not be read");
         db.Write(_ =>
         {
             using var c = db.Cmd("""
-                INSERT INTO cell_proof(provider, platform, build, profile_hash, proven_at)
-                VALUES('test-cell', $platform, $build, 'sha256-test', $at)
-                """, ("$platform", platform ?? CellProofStore.ThisPlatform), ("$build", build ?? Versions.App),
+                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at)
+                VALUES('test-cell', $platform, $machine, $release, $build, 'sha256-test', $at)
+                """, ("$platform", platform ?? CellProofStore.ThisPlatform), ("$machine", machine ?? here.Machine),
+                ("$release", release ?? here.OsRelease), ("$build", build ?? Versions.App),
                 ("$at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)));
             return c.ExecuteNonQuery();
         });
+    }
 
     static string Wake(MissionEventStore wakes, string role, string kind = MissionEventKind.Review)
     {

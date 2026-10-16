@@ -393,9 +393,10 @@ public static class Versions
     /// <c>U-org-envelopes</c>' 38): <c>ai_attempt.seat_class</c> and <c>ai_attempt.assurance</c>,
     /// the seat a launch was verified on, written by <c>AiAttemptStore.Begin</c> in the row's own insert and never updated (no backfill: a
     /// launch before the rung has NULL — unknown); and <c>cell_proof</c>, the host's PROVEN executor-cell classes (provider, platform,
-    /// build, profile hash, when), written only by the app when a cell provider's benchmark passes here — nothing in this build writes
-    /// it — and read by the activation gate, which activates no position beyond the legacy pair on a real-model seat while it holds no
-    /// row for this platform and build.</para>
+    /// machine — a SHA-256 over the machine id the app reads, never the id — OS release, build, profile hash, when), written only by the
+    /// app when a cell provider's benchmark passes here — nothing in this build writes it — and read by the activation gate, which
+    /// activates no position beyond the legacy pair on a real-model seat while it holds no row for this host, platform, release and
+    /// build.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 39;
 
