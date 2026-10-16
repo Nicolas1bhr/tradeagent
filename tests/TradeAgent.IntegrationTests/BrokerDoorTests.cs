@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
+using TradeAgent.Core;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -20,15 +23,17 @@ public class BrokerDoorTests
     [Fact]
     public async Task The_door_listens_on_loopback_answers_the_handshake_and_opens_no_stream()
     {
-        await using var door = new BrokerDoor();
+        var grants = new AgentGrants();
+        await using var door = Door(grants);
         door.Start();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-handshake");
 
         Assert.NotNull(door.Url);
         Assert.Equal("127.0.0.1", door.Url!.Host);
         Assert.NotEqual(0, door.Url.Port);
         Assert.Equal(BrokerDoor.Route, door.Url.AbsolutePath);
 
-        using var http = Client();
+        using var http = Client(research.Token);
         var init = await Post(http, door.Url, Rpc(1, "initialize", new { protocolVersion = "2025-06-18" }));
         Assert.Equal(HttpStatusCode.OK, init.Status);
         Assert.Equal("2025-06-18", init.Json.GetProperty("result").GetProperty("protocolVersion").GetString());
@@ -39,6 +44,67 @@ public class BrokerDoorTests
         var stream = await http.GetAsync(door.Url);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, stream.StatusCode);
     }
+
+    /// <summary>
+    /// (a) THE BEARER IS A LIVE LAUNCH GRANT OR NOTHING IS SERVED. No bearer, a token this app never issued, a grant whose life
+    /// is over, a grant still PENDING (minted, not yet bound to its attempt's container), and a grant whose turn has ended inside
+    /// the grace: each answered 401 in words, before any method runs.
+    /// </summary>
+    [Fact]
+    public async Task A_door_request_without_a_live_launch_grant_is_refused()
+    {
+        var clock = DateTimeOffset.UtcNow;
+        var grants = new AgentGrants(() => clock);
+        await using var door = Door(grants);
+        door.Start();
+
+        var expired = grants.IssueHere(CouncilRoles.Research, "attempt-expired", TimeSpan.FromMinutes(1));
+        clock += TimeSpan.FromMinutes(2);   // past the expired grant's life
+        var pending = grants.Issue(CouncilRoles.Research, "attempt-pending");
+        var ended = grants.IssueHere(CouncilRoles.Research, "attempt-ended");
+        ended.Dispose();                    // its turn is over; the register keeps it for the grace
+
+        foreach (var (what, bearer, words) in new (string, string?, string)[]
+                 {
+                     ("no bearer", null, "no launch grant was presented"),
+                     ("a token this app never issued", "0123456789abcdef", "not issued by this TradeAgent"),
+                     ("an expired grant", expired.Token, "expired"),
+                     ("a pending grant", pending.Token, "not yet bound"),
+                     ("a grant whose turn has ended", ended.Token, "turn")
+                 })
+        {
+            using var http = Client(bearer);
+            var reply = await Post(http, door.Url!, Rpc(1, "initialize"));
+            Assert.True(reply.Status == HttpStatusCode.Unauthorized, $"a door request with {what} was served: {(int)reply.Status} {reply.Body}");
+            Assert.Contains(words, reply.Body);
+        }
+    }
+
+    /// <summary>
+    /// (f) AN ENDED GRANT CLOSES ITS DOOR CONNECTION. A keep-alive connection the grant authenticated is closed by the door when
+    /// the turn ends — not left for the next request to find — and a fresh request with the same token is refused.
+    /// </summary>
+    [Fact]
+    public async Task An_ended_grant_closes_its_door_connection()
+    {
+        var grants = new AgentGrants();
+        await using var door = Door(grants);
+        door.Start();
+        var research = grants.IssueHere(CouncilRoles.Research, "attempt-closing");
+
+        await using var raw = await RawHttp.ConnectAsync(door.Url!);
+        var first = await raw.SendAsync(Rpc(1, "initialize"), research.Token);
+        Assert.True(first is { Status: 200 }, $"the live grant's first request was not served: {first}");
+
+        research.Dispose();   // the turn ends
+
+        Assert.True(await raw.ClosedWithinAsync(TimeSpan.FromSeconds(10)), "the door connection of an ended grant stayed open");
+        using var http = Client(research.Token);
+        var again = await Post(http, door.Url!, Rpc(2, "tools/list"));
+        Assert.True(again.Status == HttpStatusCode.Unauthorized, $"a fresh request with an ended grant was served: {(int)again.Status} {again.Body}");
+    }
+
+    static BrokerDoor Door(AgentGrants grants) => new() { Grants = grants };
 
     // ---- the client --------------------------------------------------------------------------------------------------------
 
@@ -61,6 +127,74 @@ public class BrokerDoorTests
     internal sealed record Reply(HttpStatusCode Status, string Body)
     {
         public JsonElement Json => JsonDocument.Parse(Body).RootElement;
+    }
+
+    /// <summary>
+    /// A client that speaks HTTP/1.1 by hand on ONE connection, so a test can see the door close it. <see cref="HttpClient"/>
+    /// reconnects behind the caller's back, which is right for the product and the wrong instrument here.
+    /// </summary>
+    internal sealed class RawHttp : IAsyncDisposable
+    {
+        readonly TcpClient _tcp = new();
+        NetworkStream _stream = null!;
+        Uri _url = null!;
+
+        public static async Task<RawHttp> ConnectAsync(Uri url)
+        {
+            var raw = new RawHttp { _url = url };
+            await raw._tcp.ConnectAsync(IPAddress.Loopback, url.Port);
+            raw._stream = raw._tcp.GetStream();
+            return raw;
+        }
+
+        /// <summary>One POST and its reply, or null when the door closed the connection instead of answering.</summary>
+        public async Task<(int Status, string Body)?> SendAsync(string body, string? bearer)
+        {
+            var bytes = Encoding.UTF8.GetBytes(body);
+            var head = $"POST {_url.AbsolutePath} HTTP/1.1\r\nHost: 127.0.0.1:{_url.Port}\r\nContent-Type: application/json\r\n" +
+                       $"Accept: application/json, text/event-stream\r\nContent-Length: {bytes.Length}\r\n" +
+                       (bearer is null ? "" : $"Authorization: Bearer {bearer}\r\n") + "\r\n";
+            try
+            {
+                await _stream.WriteAsync(Encoding.ASCII.GetBytes(head));
+                await _stream.WriteAsync(bytes);
+                var header = new List<byte>();
+                while (header.Count < 4 || !(header[^4] == '\r' && header[^3] == '\n' && header[^2] == '\r' && header[^1] == '\n'))
+                {
+                    var one = new byte[1];
+                    if (await _stream.ReadAsync(one) == 0) return null;
+                    header.Add(one[0]);
+                }
+                var lines = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n");
+                var status = int.Parse(lines[0].Split(' ')[1]);
+                var length = lines.Where(l => l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                    .Select(l => int.Parse(l[15..].Trim())).FirstOrDefault();
+                var reply = new byte[length];
+                for (var have = 0; have < length;)
+                {
+                    var read = await _stream.ReadAsync(reply.AsMemory(have));
+                    if (read == 0) return null;
+                    have += read;
+                }
+                return (status, Encoding.UTF8.GetString(reply));
+            }
+            catch (IOException) { return null; }
+        }
+
+        /// <summary>Whether the door closed this connection within <paramref name="bound"/>: a read that ends, or fails.</summary>
+        public async Task<bool> ClosedWithinAsync(TimeSpan bound)
+        {
+            using var cts = new CancellationTokenSource(bound);
+            try { return await _stream.ReadAsync(new byte[1], cts.Token) == 0; }
+            catch (OperationCanceledException) { return false; }
+            catch (IOException) { return true; }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _tcp.Dispose();
+            return ValueTask.CompletedTask;
+        }
     }
 
     internal static async Task<Reply> Post(HttpClient http, Uri url, string body)

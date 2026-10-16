@@ -70,8 +70,12 @@ public sealed class AgentGrant : IDisposable
     /// </summary>
     public string? OrdersWithheld { get; }
 
-    /// <summary>Set when the turn ends: a grant in its grace is no longer a running neighbour (<see cref="AgentGrants.Issue"/>).</summary>
-    internal bool TurnOver { get; set; }
+    /// <summary>
+    /// Set when the turn ends: a grant in its grace is no longer a running neighbour (<see cref="AgentGrants.Issue"/>). Read by
+    /// the broker door (<c>U-thinking-seats-b</c>), whose only client is the launch's own process, which has no call left to
+    /// finish once its turn is over — so it serves no request in the grace the pipe keeps for a <c>trade</c> started late.
+    /// </summary>
+    public bool TurnOver { get; internal set; }
 
     /// <summary>
     /// Set once <see cref="AgentGrants.Ended"/> has been raised for this grant's expiry while its turn still ran: the grant

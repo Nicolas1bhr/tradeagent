@@ -52,15 +52,22 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// </summary>
     public Uri? Url { get; private set; }
 
+    /// <summary>The launch grants the door recognises: the process-wide register, as the pipe's.</summary>
+    public AgentGrants Grants { get; init; } = AgentGrants.Shared;
+
     /// <summary>
     /// The door's own record: a line per decision, never a token. The app writes it to its engineering log; a test reads it.
     /// </summary>
     public Action<string>? Log { get; init; }
 
-    /// <summary>Opens the door on an ephemeral loopback port. Once; a second call does nothing.</summary>
+    /// <summary>
+    /// Opens the door on an ephemeral loopback port, and subscribes to the register's endings while it is open — here and not in
+    /// a constructor, because <see cref="Grants"/> is an <c>init</c> property. Once; a second call does nothing.
+    /// </summary>
     public void Start()
     {
         if (_listener is not null) return;
+        Grants.Ended += OnGrantEnded;
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         _listener = listener;
@@ -97,8 +104,14 @@ public sealed class BrokerDoor : IAsyncDisposable
             {
                 var request = await reader.ReadAsync(ct);
                 if (request is null) return;
-                var response = await Answer(connection, request, ct);
-                var close = response.Close || request.WantsClose;
+                // INSIDE THE CALL from here to the reply: an ending that arrives now closes the connection after it, rather
+                // than cutting a tool call in half. An ending that arrived before refuses the request at the token check.
+                if (!connection.EnterCall()) return;
+                HttpAnswer response;
+                bool endedMidCall;
+                try { response = await Answer(connection, request, ct); }
+                finally { endedMidCall = connection.LeaveCall(); }
+                var close = response.Close || request.WantsClose || endedMidCall;
                 await response.WriteAsync(stream, close, ct);
                 if (close) return;
             }
@@ -114,9 +127,33 @@ public sealed class BrokerDoor : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A LAUNCH GRANT HAS ENDED, SO THE DOOR CONNECTIONS IT AUTHENTICATED CLOSE — as the pipe's do. A connection inside a call
+    /// answers that call and closes on the way out; every other closes now. Idempotent: an ending may be raised twice.
+    /// </summary>
+    void OnGrantEnded(string token)
+    {
+        foreach (var connection in _live.Keys)
+        {
+            if (!AgentGrants.SameToken(connection.Token, token)) continue;
+            if (connection.End()) connection.Close();
+        }
+    }
+
     async Task<HttpAnswer> Answer(Connection connection, HttpRequest request, CancellationToken ct)
     {
         if (request.Malformed is { } why) return HttpAnswer.Text(400, why, close: true);
+
+        // A BROWSER PAGE IS NEVER A CALLER. Loopback is reachable from any page the owner opens, and a page's request carries an
+        // Origin; the only legitimate client — the seat's own runtime — sends none (MCP, streamable HTTP: validate Origin).
+        if (request.Header("Origin") is not null)
+        {
+            Log?.Invoke("door: refused a request that carried an Origin");
+            return HttpAnswer.Text(403, "the door does not answer a request sent by a web page", close: true);
+        }
+
+        if (Authenticate(connection, request) is { } refused) return refused;
+
         if (request.Target != Route) return HttpAnswer.Text(404, $"the door answers on {Route} only");
         if (request.Method != "POST")
             return HttpAnswer.Text(405, "the door answers a POST of one JSON-RPC message and opens no stream") with
@@ -170,9 +207,45 @@ public sealed class BrokerDoor : IAsyncDisposable
                 return HttpAnswer.Json(200, RpcError(id, -32601, $"'{method}' is not a method this door answers"));
         }
         await Task.CompletedTask;
-        Log?.Invoke($"door: {method} answered");
+        Log?.Invoke($"door: {method} accepted for the {CouncilRoles.Title(connection.Grant!.Role)}'s attempt {connection.Grant.AttemptId}");
         return HttpAnswer.Json(200, RpcResult(id.Value, result));
     }
+
+    /// <summary>
+    /// WHO IS CALLING, ON EVERY REQUEST: the bearer must be a launch grant the register calls live NOW — not absent, unknown,
+    /// expired or pending, and not one whose turn is over (the pipe's grace is for a <c>trade</c> started late; the door's only
+    /// client is the launch's own process, which has no call left to finish) — and a connection serves the one grant it first
+    /// proved, never a token swapped in later. Null means carry on; a refusal is a 401 in words, and the connection closes:
+    /// one chance per connection, as on the pipe.
+    /// </summary>
+    HttpAnswer? Authenticate(Connection connection, HttpRequest request)
+    {
+        var bearer = Bearer(request.Header("Authorization"));
+        var verdict = Grants.Verify(bearer);
+        string? why = verdict.State switch
+        {
+            GrantState.Valid when verdict.Grant!.TurnOver =>
+                $"the turn the launch grant presented was issued for (attempt {verdict.Grant.AttemptId}) is over",
+            GrantState.Valid when connection.Token is { } proved && !AgentGrants.SameToken(proved, bearer) =>
+                "this connection proved a different launch grant, and a connection serves the one it proved",
+            GrantState.Valid => null,
+            _ => verdict.Reason
+        };
+
+        if (why is null)
+        {
+            connection.Grant = verdict.Grant;
+            connection.Token ??= verdict.Grant!.Token;
+            return null;
+        }
+
+        Log?.Invoke($"door: refused a request: {why}");
+        return HttpAnswer.Text(401, why, close: true) with { Headers = [("WWW-Authenticate", "Bearer")] };
+    }
+
+    /// <summary>The token of an <c>Authorization: Bearer</c> header, or null for any other header or none.</summary>
+    static string? Bearer(string? header) =>
+        header is { Length: > 7 } h && h.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? h[7..].Trim() : null;
 
     static Dictionary<string, object> Initialize(JsonElement parameters)
     {
@@ -207,6 +280,7 @@ public sealed class BrokerDoor : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_stop.IsCancellationRequested) return;
+        Grants.Ended -= OnGrantEnded;
         await _stop.CancelAsync();
         try { _listener?.Stop(); } catch (Exception) { /* already closed */ }
         foreach (var connection in _live.Keys) connection.Close();
@@ -223,7 +297,47 @@ public sealed class BrokerDoor : IAsyncDisposable
 
     sealed class Connection(TcpClient client)
     {
+        readonly Lock _gate = new();
+        bool _inCall, _ended;
+
         public TcpClient Client { get; } = client;
+
+        /// <summary>The token this connection proved on its first served request; never replaced.</summary>
+        public string? Token { get; set; }
+
+        /// <summary>The grant the current request was verified under.</summary>
+        public AgentGrant? Grant { get; set; }
+
+        /// <summary>Marks the connection inside a call: an ending that arrives now waits for the reply.</summary>
+        public bool EnterCall()
+        {
+            lock (_gate)
+            {
+                if (_ended) return false;
+                _inCall = true;
+                return true;
+            }
+        }
+
+        /// <summary>Leaves the call; true when the grant ended while it ran, so the connection closes after this reply.</summary>
+        public bool LeaveCall()
+        {
+            lock (_gate)
+            {
+                _inCall = false;
+                return _ended;
+            }
+        }
+
+        /// <summary>The grant ended: true when the connection may close NOW, false when a call is in flight.</summary>
+        public bool End()
+        {
+            lock (_gate)
+            {
+                _ended = true;
+                return !_inCall;
+            }
+        }
 
         public void Close()
         {
