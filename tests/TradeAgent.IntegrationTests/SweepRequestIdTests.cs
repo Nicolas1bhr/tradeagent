@@ -341,6 +341,51 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// THE PRESS WHOSE BOOK READ THE RUNNER LEFT NO ROOM FOR STILL ANSWERS, INSIDE ITS BUDGET, AND
+    /// SAYS NOTHING WAS DONE (U-sweep-budget-red).
+    ///
+    /// <para>Both faces of <see cref="A_sweep_pays_the_emergency_budget_once_not_once_per_rpc"/>'s red
+    /// on macOS — the NullReferenceException at its cast (runs 37420396771, 37529866030) and "the
+    /// operation deadline passed before the simulator answered" (run 38968186292, both attempts) — are
+    /// ONE event: that fixture gave its book read 1.9 s of a 2 s budget the pipe opens on the wall
+    /// clock, store included, so everything the handler does before the read had 100 ms, and a runner
+    /// that spent more had its book read clipped. <see cref="RoomSpentBeforeTheBookRead"/> spends
+    /// exactly that room, every run, and this is what the product then does: the press answers within
+    /// its budget, refused with the reason, no data and no leg, and the order is untouched — a press
+    /// that always answers, with a definite outcome. The product was right; the fixture's margin was
+    /// the runner's.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_whose_book_read_the_runner_left_no_room_for_answers_refused_and_touches_nothing()
+    {
+        RoomSpentBeforeTheBookRead? wire = null;
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2),
+            over: c => wire = new RoomSpentBeforeTheBookRead(c));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("room-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Single(await gw.OrdersAsync(false));
+
+        conn.Faults.LatencyMs = 1900;
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "room-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        conn.Faults.LatencyMs = 0;
+
+        Assert.Equal(1, wire!.RoomSpent);   // the seam fired, so this is the face and not a pass
+        Assert.False(reply.Ok, "the seam left the book read no room, and the sweep still claims an answer");
+        Assert.Null(reply.Data);
+        Assert.Equal(nameof(ErrorCode.TRADING_CONNECTION_MISSING), reply.Error!.Code);
+        Assert.Contains("the operation was not started. Nothing was placed or cancelled", reply.Error.Message);
+        Assert.Contains("the operation deadline passed before the simulator answered", reply.Error.Message);
+        Assert.Equal(ExecutionState.WORKING, conn.Broker.Orders.Single().State);
+    }
+
+    /// <summary>
     /// FIVE ORDERS, ONE BUDGET, AND NOTHING SKIPPED IN SILENCE.
     ///
     /// The second half of F1's acceptance. The loop this replaces awaited each leg before starting
@@ -1385,6 +1430,61 @@ public class SweepRequestIdTests
                  })
             Assert.True(section.Contains(mutation),
                 $"the frozen contract's connector section does not name {mutation} as owing the transport ledger");
+    }
+
+    /// <summary>
+    /// THE RUNNER'S DISK, SPENT DELIBERATELY AND TO THE MILLISECOND (U-sweep-budget-red).
+    ///
+    /// <para>The first book read made inside a risk-reducing scope waits, BEFORE it reaches the
+    /// simulator, until what the operation has left is less than the simulator's latency — exactly the
+    /// room a slow runner's store work took from it on macOS. Measured off the product's own deadline,
+    /// so it is the same event on every machine: the simulator's own check then clips the read. Every
+    /// other call passes straight through.</para>
+    /// </summary>
+    sealed class RoomSpentBeforeTheBookRead(FakeConnector inner) : ITradingConnector
+    {
+        public int RoomSpent;
+
+        public string Id => inner.Id;
+        public string DisplayName => inner.DisplayName;
+        public ConnectorCapabilities Capabilities => inner.Capabilities;
+        public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
+        public TimeSpan EmergencyBudget => inner.EmergencyBudget;
+
+        public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+
+        public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
+        public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
+        public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);
+        public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => inner.GetAccountsAsync(ct);
+        public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
+        public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
+        public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
+        public Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => inner.GetPositionsAsync(a, ct);
+        public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? s, CancellationToken ct = default) => inner.GetExecutionsAsync(a, s, ct);
+        public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand c, CancellationToken ct = default) => inner.PlaceOrderAsync(c, ct);
+        public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default) => inner.ModifyOrderAsync(c, ct);
+        public Task CancelOrderAsync(string id, CancellationToken ct = default) => inner.CancelOrderAsync(id, ct);
+        public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) => inner.CancelAllOrdersAsync(a, ct);
+        public Task<OrderInfo?> ClosePositionAsync(string a, string s, string c, CancellationToken ct = default) => inner.ClosePositionAsync(a, s, c, ct);
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+        public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool i, DateTimeOffset? s, CancellationToken ct = default)
+        {
+            if (RiskReducingScope.DeadlineAt is { } deadline && Interlocked.CompareExchange(ref RoomSpent, 1, 0) == 0)
+            {
+                var latency = TimeSpan.FromMilliseconds(inner.Faults.LatencyMs);
+                // A loop and not one wait: a timer may wake on a clock that has not yet reached it.
+                while (RiskReducingScope.LeftUntil(deadline) >= latency)
+                    await Task.Delay(RiskReducingScope.LeftUntil(deadline) - latency + TimeSpan.FromMilliseconds(1), ct);
+            }
+            return await inner.GetOrdersAsync(a, i, s, ct);
+        }
     }
 
     /// <summary>
