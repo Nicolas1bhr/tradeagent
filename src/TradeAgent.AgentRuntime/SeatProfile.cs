@@ -39,6 +39,11 @@ public static class SeatProfile
     public static void Prepare(SeatPlan seat)
     {
         var root = Path.GetFullPath(seat.Root);
+        // EVERY SEAT FILE PATH LOOKED AT BEFORE ANYTHING IS CHANGED, ANYWHERE (the review's P2, U-seat-acl; CRED-001): they are manifest
+        // data a runtimes.json entry replaces whole, and one leading out of the seat home would otherwise have its mode — on Windows its
+        // list — changed before its folder was looked at. The owner's own files are never touched.
+        foreach (var rel in seat.PrivateFiles) Inside(root, rel, "private_files");
+        Inside(root, seat.ConfigFile, "config_file");
         RealFolder(root, root);
         foreach (var (name, value) in seat.ResolvedEnvironment())
             if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) RealFolder(root, Path.GetFullPath(value));
@@ -127,10 +132,32 @@ public static class SeatProfile
         foreach (var rel in seat.PrivateFiles.Append(seat.ConfigFile))
         {
             if (string.IsNullOrEmpty(rel)) continue;
-            var path = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
+            var path = Inside(root, rel, rel == seat.ConfigFile ? "config_file" : "private_files")!;
+            // EVERY COMPONENT FROM THE ROOT A REAL FOLDER, NOT ONLY THE LAST: a linked folder on the way would carry the change out.
+            if (Path.GetDirectoryName(path) is { } parent && Directory.Exists(parent)) RealFolder(root, parent);
             NotALink(path);
             if (File.Exists(path)) PrivateFile(path);
         }
+    }
+
+    /// <summary>
+    /// <paramref name="rel"/>, a seat file path from the manifest's <paramref name="key"/>, as a full path STRICTLY BELOW
+    /// <paramref name="root"/> — or the refusal in words, before anything is changed: a rooted path, or one whose <c>..</c> leads out
+    /// of the seat home, is never resolved on a guess. Null for an empty one (none).
+    /// </summary>
+    static string? Inside(string root, string? rel, string key)
+    {
+        if (string.IsNullOrEmpty(rel)) return null;
+        var native = rel.Replace('/', Path.DirectorySeparatorChar);
+        var path = Path.GetFullPath(Path.Combine(root, native));
+        var below = Path.GetRelativePath(root, path);
+        if (!Path.IsPathRooted(native) && !Path.IsPathRooted(below) && below != "." && below != ".."
+            && !below.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            return path;
+        throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use {rel} for the AI's {(key == "config_file" ? "settings" : "sign-in")}: the AI runtime's {key} entry " +
+            $"must name a file inside the AI's own home {root}, and this one does not. This is TradeAgent's own settings at fault — " +
+            $"correct {key} in runtimes.json. Nothing was written or started, and nothing outside the AI's own home was touched.");
     }
 
     /// <summary>Whether <paramref name="path"/> is itself a link, a junction or any other reparse point, looked at without following it.</summary>

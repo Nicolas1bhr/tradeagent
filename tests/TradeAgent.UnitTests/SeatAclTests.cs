@@ -235,6 +235,90 @@ public class SeatAclTests
             acl.Split('\n').Select(l => l.Trim()).Single(l => l.StartsWith("user:65534:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// (g) A CREDENTIAL OR CONFIG PATH THAT LEADS OUT OF THE SEAT HOME IS REFUSED BEFORE ANYTHING IS CHANGED, ANYWHERE (the review's P2;
+    /// CRED-001, refuse never guess): <c>config_file</c> and <c>private_files</c> are manifest data a <c>runtimes.json</c> entry
+    /// replaces whole, so an absolute path or a <c>..</c> one would otherwise have its mode — on Windows its access list — changed before
+    /// the later look at its folder refused it: the owner's own files are never touched. The outside file keeps its mode, list and
+    /// bytes, the seat home its mode, and the refusal names the entry and the repair. Red at base: the file is made 0600 (a new list).
+    /// </summary>
+    [Theory]
+    [InlineData("config", true)]
+    [InlineData("config", false)]
+    [InlineData("private", true)]
+    [InlineData("private", false)]
+    public void A_seat_file_path_outside_the_seat_home_is_refused_with_nothing_changed(string which, bool absolute)
+    {
+        var (codex, exe, _) = SeatHomeTests.Seat($"outside-{which}-{absolute}");
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var outside = Path.Combine(Path.GetDirectoryName(exe)!, "owners-own.toml");
+        File.WriteAllText(outside, "model = \"owner\"\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(outside, (UnixFileMode)0b110_100_100);
+            File.SetUnixFileMode(seat.Root, (UnixFileMode)0b111_101_101);
+        }
+        var before = State(outside);
+        var rootBefore = State(seat.Root);
+        var rel = absolute ? outside : "../owners-own.toml";
+        if (which == "config") seat.ConfigFile = rel;
+        else seat.PrivateFiles = [.. seat.PrivateFiles, rel];
+
+        var thrown = Record.Exception(() => SeatProfile.Prepare(seat));
+
+        Assert.Equal(before, State(outside));
+        Assert.Equal("model = \"owner\"\n", File.ReadAllText(outside));
+        Assert.Equal(rootBefore, State(seat.Root));
+        var refused = Assert.IsType<TradeAgentException>(thrown);
+        Assert.Equal(ErrorCode.AI_SEAT_REFUSED, refused.Code);
+        Assert.Contains(rel, refused.Message, StringComparison.Ordinal);
+        Assert.Contains(which == "config" ? "config_file" : "private_files", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written or started", refused.Message, StringComparison.Ordinal);
+
+        // Its mode and, on Windows, its owner and access list: what a preparation would have changed.
+        static string State(string path) => OperatingSystem.IsWindows() ? Sddl(path) : File.GetUnixFileMode(path).ToString();
+    }
+
+    /// <summary>
+    /// (g′) A CREDENTIAL PATH WHOSE FOLDER IS A LINK OUT OF THE SEAT HOME IS REFUSED, AND WHAT THE LINK POINTS TO KEEPS ITS MODE: every
+    /// component from the root is looked at, not only the last (the review's P2). The walk steps over the linked folder; at base the
+    /// credential pass then changed the mode of the owner's file through it. Linux and macOS (a Windows link needs a privilege).
+    /// </summary>
+    [Fact]
+    public void A_credential_path_through_a_linked_folder_is_refused_with_its_target_unchanged()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (codex, exe, _) = SeatHomeTests.Seat(nameof(A_credential_path_through_a_linked_folder_is_refused_with_its_target_unchanged));
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var owners = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(exe)!, "owners-codex")).FullName;
+        var auth = Path.Combine(owners, "auth.json");
+        File.WriteAllText(auth, "{}");
+        File.SetUnixFileMode(auth, (UnixFileMode)0b110_100_100);
+        var link = Path.Combine(seat.Root, "codex", "linked");
+        Directory.CreateSymbolicLink(link, owners);
+        seat.PrivateFiles = [.. seat.PrivateFiles, "codex/linked/auth.json"];
+
+        var thrown = Record.Exception(() => SeatProfile.Prepare(seat));
+
+        Assert.Equal((UnixFileMode)0b110_100_100, File.GetUnixFileMode(auth));
+        var refused = Assert.IsType<TradeAgentException>(thrown);
+        Assert.Equal(ErrorCode.AI_SEAT_REFUSED, refused.Code);
+        Assert.Contains(link, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("is a link", refused.Message, StringComparison.Ordinal);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static string Sddl(string path)
+    {
+        const System.Security.AccessControl.AccessControlSections ownerAndAccess =
+            System.Security.AccessControl.AccessControlSections.Owner | System.Security.AccessControl.AccessControlSections.Access;
+        return Directory.Exists(path)
+            ? new DirectoryInfo(path).GetAccessControl().GetSecurityDescriptorSddlForm(ownerAndAccess)
+            : new FileInfo(path).GetAccessControl().GetSecurityDescriptorSddlForm(ownerAndAccess);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     /// <summary>The extended ACL entries <c>ls -lde</c> lists for <paramref name="path"/> (macOS), e.g. <c>0: group:everyone allow read</c>.</summary>
