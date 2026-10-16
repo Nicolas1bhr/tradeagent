@@ -76,8 +76,22 @@ public sealed class BrokerDoor : IAsyncDisposable
     {
         var codex = RuntimeCatalog.BuiltIn().FirstOrDefault(m => m.Id == CodexId);
         if (codex?.Install.ExecutableSha256 is not { Length: > 0 } pin) return null;
-        return new PeerRule(new CliAgentRuntime(codex).ResolveExecutable(), pin.Trim(), ToolsDir: null, WorkspaceDir: Paths.Workspace,
-            RuntimeWord);
+        return new PeerRule(Program(new CliAgentRuntime(codex).ResolveExecutable()), pin.Trim(), ToolsDir: null,
+            WorkspaceDir: Paths.Workspace, RuntimeWord);
+    }
+
+    /// <summary>
+    /// THE FILE THAT RUNS, not the name it was found by. A runtime found on PATH is often a link (the vendor's own installer puts
+    /// <c>~/.local/bin/codex</c> → its release folder's <c>bin/codex</c>), and the kernel names a peer by the program it runs,
+    /// resolved — so the rule records the link's final target, which is also the file the pin was hashed through. MEASURED on the
+    /// dev Mac with codex 0.160.1: recording the link refused the pinned codex inside its own attempt. A path that cannot be
+    /// resolved is kept as found, and then refuses as not the pin rather than passing.
+    /// </summary>
+    static string? Program(string? found)
+    {
+        if (found is null) return null;
+        try { return File.ResolveLinkTarget(found, returnFinalTarget: true)?.FullName ?? found; }
+        catch (Exception) { return found; }
     }
 
     /// <summary>The built-in manifest whose program the door's peer must be.</summary>

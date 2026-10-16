@@ -398,6 +398,9 @@ public class BrokerDoorTests
         Assert.Equal(Paths.Workspace, rule.WorkspaceDir);
         Assert.Null(rule.ToolsDir);
         Assert.Equal(BrokerDoor.RuntimeWord, rule.Program);
+        // THE FILE THAT RUNS, never a link to it: the kernel names a peer by its resolved program (measured: a link refused the pin).
+        Assert.True(rule.ExpectedPath is null || new FileInfo(rule.ExpectedPath).LinkTarget is null,
+            $"the door's pinned runtime is recorded as a link, {rule.ExpectedPath}, which the kernel never names");
     }
 
     /// <summary>
