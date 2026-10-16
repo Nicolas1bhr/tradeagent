@@ -39,3 +39,19 @@ Code tip `f117cce6` on O4 `68b567a5` (O4 is not on main yet, so no rebase onto m
 RED/MUTANTS (each mutant equals the base): step-over restored ⇒ (a)(a3)(a4) red; share cap ⇒ (b) "turn 4: reading False, gate True" and (b2) red; legacy-only walk ⇒ (c) "collection was empty"; ceiling from now ⇒ (c) 10:00+02 vs +00, and (g) red; class ignored ⇒ (d) research first; Hold split ⇒ (f) `[]`; throw as Position ⇒ (a2) red; base notes ⇒ (e) ["research"].
 tests box: NOT RUN — the machine does not answer
 NOT done/verified: no app run. The owner's surface showing a Blocked line is NOT VERIFIED; the dispositions are asserted in DB rows only. (c2) is green at base (a guard). I ran the full Unit suite once by mistake (2 reds, both fixed).
+
+## Fix report (pass 1)
+Code tip `e61d89bd`, rebased onto main `bc26f660`. The rebase was clean: O4's old commits dropped by patch-id. Main has since moved to `cc17d93e` (U-grant-tree); this branch has not been rebased onto it, and seat B re-preps at landing.
+Seam: neither `U-thinking-seats-a` (`GateRefusal`) nor `U-mint-per-launch` was on main, so O3's `RefusalKind` + `TurnRefusal` stay the one type, with no mapping. Part a adopts O3's types if O3 lands first.
+Gate: Release `--no-incremental` "0 Warning(s) 0 Error(s)". Ten classes (the build's 9 plus `MissionEventTests`) ran 3× under the suite lock: "Passed! 154/154" each time. `names.sh main u-org-wakes`: removed 0, added 19, base 2645, tip 2664.
+1 `aa76d4ff`: `MoveCeiling` keeps a ceiling already pending at that instant. If the instant's own id is a closed row, it raises the ceiling under a new `again` id beside that row. If it cannot write either id, it throws, and nothing is closed.
+RED: (c4) `A_ceiling_moved_back_to_a_superseded_due_time_keeps_the_heads_floor` "Assert.Single() Failure: The collection was empty".
+MUTANT: with the `again` raise disabled, (c4) went red with the same line. Reverted.
+2 `e61d89bd`: on each pass, Schedule withdraws the pending ceiling of every non-head position via `MissionEventStore.WithdrawCeilings`. The row is consumed by no launch, marked `withdrawn`, and carries a sentence saying why. A member with no ceiling costs no write.
+RED: (c5) `A_head_that_becomes_a_member_has_its_ceiling_withdrawn` "Assert.DoesNotContain() Failure … ("pos-0a3c5e7f9b11", "## Situation … Why you are awake: ceiling")".
+MUTANT: with the `else WithdrawCeiling` call removed, (c5) went red with the same line. Reverted.
+Point 3: not touched (seat B's ruling).
+CI 38947362178: all 12 jobs green, linux-host included.
+Re-review: `fleet/tmp/B-scratch/u-org-wakes/fix1-review.md` says the rebase is clean and points 1 and 2 are closed with no regression. Not acted on (nothing to act on).
+tests box: NOT RUN — the machine does not answer
+NOT verified: there was no app run, and the withdrawn ceiling is asserted in DB rows only. The branch is not rebased onto `cc17d93e`.
