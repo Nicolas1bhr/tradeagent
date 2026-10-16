@@ -479,7 +479,10 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
 
         // ---- and the next Situation says so, in the words the cut turn was given --------------
         provider.Answer(FakeProvider.Message("Understood; carrying on.", input: 10, output: 5));
-        WakeResearch(host, "after-the-cut");
+        // RESEARCH'S OWN REQUEST, not a look (U-org-wakes): the report it published is a "research"-class wake for the chair,
+        // and ORGANISATION § 10 serves it before a "housekeeping" look of any age — Research's own request is its peer.
+        host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Self("after-the-cut"), CouncilRoles.Research),
+            MissionEventKind.Self, DateTimeOffset.UtcNow.AddMinutes(-2), role: CouncilRoles.Research);
         await loop.TurnAsync();
 
         var next = Assert.Single(host.Opened.Skip(1)).Prompt;
