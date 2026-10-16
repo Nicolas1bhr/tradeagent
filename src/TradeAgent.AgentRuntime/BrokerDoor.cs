@@ -142,6 +142,33 @@ public sealed class BrokerDoor : IAsyncDisposable
     }
 
     /// <summary>
+    /// ONE OF THE ORGANISATION'S VERBS, SERVED ON THE DOOR BESIDE THE HARNESS'S TOOLS (<c>docs/ORCHESTRATION.md</c> § 2.9) — none
+    /// exists on <c>main</c> yet (O5a's <c>mandate-*</c>, O5b's <c>decision-*</c>/<c>forecast-*</c>/<c>escalation-*</c>/<c>lateral-*</c>
+    /// join here). Run under the grant; never reached unless <see cref="VerbGate"/> passes the attempt.
+    /// </summary>
+    public sealed record DoorVerb(ToolSpec Spec, Func<AgentGrant, string, CancellationToken, Task<ToolAnswer>> Run);
+
+    /// <summary>The organisation's verbs this door serves. None today; a verb's name may be no harness tool's and no pipe op's.</summary>
+    public IReadOnlyList<DoorVerb> Verbs { get; init; } = [];
+
+    /// <summary>
+    /// WHETHER THIS ATTEMPT MAY USE AN ORGANISATION VERB: null when the seat assurance the activation gate RECORDED for the attempt
+    /// carries decision verbs, the refusal in words otherwise — never headship, never a role name (ORCHESTRATION § 2.3, § 2.9).
+    /// The answer is the activation gate's (<c>U-thinking-seats-a</c>: <c>CapabilityPolicy.Minimum(Capability.DecisionVerbs)</c>
+    /// against the attempt's recorded <c>ai_attempt.assurance</c>), wired here by whichever lands second of this unit and part a;
+    /// until it is, no assurance is recorded for any attempt and EVERY verb is refused — refuse, never guess.
+    /// </summary>
+    public Func<AgentGrant, string?> VerbGate { get; init; } = NoRecordedAssurance;
+
+    /// <summary>The gate before part a: nothing recorded, so nothing carries a decision verb.</summary>
+    public static string? NoRecordedAssurance(AgentGrant grant) =>
+        $"TradeAgent has recorded no seat assurance for attempt {grant.AttemptId}, so it holds no organisational decision right: an " +
+        "organisation verb is served only to an attempt whose recorded assurance carries it, never by role or headship";
+
+    /// <summary>Where a verb's call is recorded, as the harness's calls are: one <c>tool_call</c> row each, served or refused.</summary>
+    public Core.Db.ToolCallStore? Ledger { get; init; }
+
+    /// <summary>
     /// The door's own record: a line per decision, never a token. The app writes it to its engineering log; a test reads it.
     /// </summary>
     public Action<string>? Log { get; init; }
@@ -153,6 +180,16 @@ public sealed class BrokerDoor : IAsyncDisposable
     public void Start()
     {
         if (_listener is not null) return;
+        // A VERB NAMED LIKE A HARNESS TOOL OR A PIPE OP IS REFUSED BEFORE THE DOOR OPENS (ORCHESTRATION § 2.9, the orchestrator's
+        // 2026-10-16 ruling): `cancel` is already an order op that moves money, and a name meaning two things is a name a seat
+        // can be tricked by.
+        var taken = GrantedWorkerTools.Granted.Select(t => t.Name)
+            .Concat(Gateway.GatewaySchema.Ops().Select(o => o.Op)).Append(Ops.Hello)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var verb in Verbs)
+            if (!taken.Add(verb.Spec.Name))
+                throw new InvalidOperationException(
+                    $"the organisation verb '{verb.Spec.Name}' shares its name with a harness tool, a pipe op or another verb, so the door does not open");
         Grants.Ended += OnGrantEnded;
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -296,10 +333,13 @@ public sealed class BrokerDoor : IAsyncDisposable
             case "tools/list":
                 result = new Dictionary<string, object>
                 {
-                    ["tools"] = (Tools(connection.Grant!)?.Offered ?? []).Select(t => new Dictionary<string, object>
-                    {
-                        ["name"] = t.Name, ["description"] = t.Description, ["inputSchema"] = t.Parameters
-                    }).ToArray()
+                    // THE HARNESS'S TOOLS, AND THE VERBS ONLY FOR AN ATTEMPT THE GATE PASSES: a seat is not offered what it may not use.
+                    ["tools"] = (Tools(connection.Grant!)?.Offered ?? [])
+                        .Concat(VerbGate(connection.Grant!) is null ? Verbs.Select(v => v.Spec) : [])
+                        .Select(t => new Dictionary<string, object>
+                        {
+                            ["name"] = t.Name, ["description"] = t.Description, ["inputSchema"] = t.Parameters
+                        }).ToArray()
                 };
                 break;
             case "tools/call":
@@ -398,8 +438,39 @@ public sealed class BrokerDoor : IAsyncDisposable
         if (name is null) return ToolResult("a tools/call names its tool", served: false);
         var arguments = parameters.TryGetProperty("arguments", out var a) && a.ValueKind != JsonValueKind.Null ? a.GetRawText() : "";
 
+        if (Verbs.FirstOrDefault(v => string.Equals(v.Spec.Name, name, StringComparison.Ordinal)) is { } verb)
+            return await Verb(grant, verb, arguments, ct);
+
         if (Tools(grant) is not { } tools) return ToolResult("the door serves no tool to this launch", served: false);
         var answer = await tools.InvokeAsync(new ToolRequest(id.ToString(), name, arguments), ct);
+        return ToolResult(Bounded(answer.Content), answer.Served);
+    }
+
+    /// <summary>
+    /// AN ORGANISATION VERB: asked of <see cref="VerbGate"/> on every call — the attempt's recorded assurance, never its role — and
+    /// run only when it passes; recorded either way.
+    /// </summary>
+    async Task<Dictionary<string, object>> Verb(AgentGrant grant, DoorVerb verb, string arguments, CancellationToken ct)
+    {
+        ToolAnswer answer;
+        if (VerbGate(grant) is { } refused)
+            answer = ToolAnswer.Refused($"'{verb.Spec.Name}' is an organisation verb, and {refused}.", verb.Spec.Name);
+        else
+        {
+            try { answer = await verb.Run(grant, arguments, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { answer = ToolAnswer.Refused($"'{verb.Spec.Name}' could not be answered: {ex.Message}", verb.Spec.Name); }
+        }
+        try
+        {
+            Ledger?.Record(new Core.Db.ToolCallRow
+            {
+                At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = verb.Spec.Name,
+                Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(answer.Content), Served = answer.Served,
+                Refusal = answer.Served ? null : answer.Content
+            });
+        }
+        catch (Exception) { /* a row that could not be written does not turn a refusal into a call */ }
         return ToolResult(Bounded(answer.Content), answer.Served);
     }
 

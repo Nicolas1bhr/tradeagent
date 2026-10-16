@@ -263,6 +263,9 @@ public sealed class AppHost : IAsyncDisposable
         // THE HARNESS'S SURFACE, the same composition as ToolsFor(role) below but under the grant: its role, its attempt, and
         // its order permission as issued. The pipe server is read per call — a platform switch replaces it.
         Tools = grant => BrokerDoor.ToolsFor(grant, HomeFor, () => _server, _db is null ? null : new ToolCallStore(_db)),
+        // NO ORGANISATION VERB YET, and the gate's default refuses every one: no seat assurance is recorded on this build. The
+        // second lander of this unit, part a (U-thinking-seats-a) and O5a wires the gate to the recorded assurance and the verbs.
+        Ledger = _db is null ? null : new ToolCallStore(_db),
         Log = line =>
         {
             try { Gateway.Log.Engineering("BrokerDoor", "decision", "info", metadataJson: Json.Write(new { line })); }

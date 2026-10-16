@@ -380,6 +380,86 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// (i) AN ORGANISATION VERB ON THE DOOR IS REFUSED TO AN ATTEMPT RECORDED UNCONFINED — by the seat assurance the activation
+    /// gate RECORDED for the attempt, never by role or headship (ORCHESTRATION § 2.3, § 2.9). No verb exists on main, so a test
+    /// verb stands in; the product's gate today records nothing and refuses every verb; a gate answering as the activation gate
+    /// does for an unconfined attempt refuses it in words, does not offer it, and records the call; a gate that passes the attempt
+    /// has the verb offered and served — the same role, so only the gate decides.
+    /// </summary>
+    [Fact]
+    public async Task An_org_verb_on_the_door_is_refused_to_an_attempt_recorded_unconfined()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var verb = new BrokerDoor.DoorVerb(new ToolSpec("test-verb-show", "A verb that exists only in this test.", new Dictionary<string, object>
+            {
+                ["type"] = "object", ["properties"] = new Dictionary<string, object>()
+            }),
+            (_, _, _) => Task.FromResult(ToolAnswer.Ok("the test verb answered", "test-verb-show")));
+        var recorded = new Dictionary<string, string> { ["attempt-unconfined"] = "unconfined", ["attempt-carried"] = "carried" };
+        string? AsRecorded(AgentGrant g) => recorded[g.AttemptId] == "unconfined"
+            ? $"attempt {g.AttemptId} was recorded unconfined, which carries no organisational decision right"
+            : null;
+
+        foreach (var (attempt, gate, served) in new (string, Func<AgentGrant, string?>?, bool)[]
+                 {
+                     ("attempt-today", null, false),
+                     ("attempt-unconfined", AsRecorded, false),
+                     ("attempt-carried", AsRecorded, true)
+                 })
+        {
+            var grants = new AgentGrants();
+            using var research = grants.IssueHere(CouncilRoles.Research, attempt);
+            var folder = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+            Directory.CreateDirectory(folder);
+            var ledger = new ToolCallStore(db);
+            await using var door = gate is null
+                ? new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger,
+                    Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger) }
+                : new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger, VerbGate = gate,
+                    Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger) };
+            door.Start();
+            using var http = Client(research.Token);
+
+            var listed = (await Post(http, door.Url!, Rpc(1, "tools/list"))).Json.GetProperty("result").GetProperty("tools")
+                .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToList();
+            var call = (await Post(http, door.Url!, Rpc(2, "tools/call", new { name = "test-verb-show", arguments = new { } })))
+                .Json.GetProperty("result");
+            var rows = ledger.ForAttempt(attempt);
+
+            if (served)
+            {
+                Assert.Contains("test-verb-show", listed);
+                Assert.False(call.GetProperty("isError").GetBoolean(), $"an attempt the gate passes was refused the verb: {Text(call)}");
+                Assert.Equal("the test verb answered", Text(call));
+            }
+            else
+            {
+                Assert.DoesNotContain("test-verb-show", listed);
+                Assert.True(call.GetProperty("isError").GetBoolean(), $"an organisation verb was served to {attempt}: {Text(call)}");
+                Assert.Contains("is an organisation verb", Text(call));
+            }
+            Assert.True(rows.Count(r => r.Tool == "test-verb-show") == 1, $"the verb call of {attempt} was not recorded once");
+        }
+    }
+
+    /// <summary>(j), the verbs' half: a verb named like a pipe op — <c>cancel</c> moves money — or a harness tool keeps the door shut.</summary>
+    [Fact]
+    public async Task A_verb_named_like_a_pipe_op_or_a_harness_tool_keeps_the_door_shut()
+    {
+        foreach (var name in new[] { Ops.Cancel, GrantedWorkerTools.Trade })
+        {
+            var verb = new BrokerDoor.DoorVerb(new ToolSpec(name, "a verb with a taken name", new Dictionary<string, object>()),
+                (_, _, _) => Task.FromResult(ToolAnswer.Ok("never")));
+            await using var door = new BrokerDoor { Grants = new AgentGrants(), Verbs = [verb] };
+            var refused = Assert.Throws<InvalidOperationException>(door.Start);
+            Assert.Contains($"'{name}'", refused.Message);
+            Assert.Null(door.Url);
+        }
+    }
+
+    /// <summary>
     /// GUARD: THE PRODUCT'S DOOR PINS THE BUILT-IN CODEX — its digest from code, the workspace forbidden, the managed-runtime
     /// folder (where the pin is installed) not — and a door with no pin refuses (see (c)).
     /// </summary>
