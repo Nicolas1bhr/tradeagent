@@ -50,9 +50,9 @@ public enum Capability
 /// whether it runs a model. A class this build does not know is answered with no assurance, which every caller refuses — refuse,
 /// never guess (<c>CLAUDE.md</c>).
 ///
-/// <para><b>A later class slots in as a row of the three answers below.</b> A <c>puppet</c> seat (<c>U-puppet-runtime</c>) runs no
-/// model and no shell: it is exempt from the proven-cell refusal (<see cref="RunsModel"/> false) and is no unconfined neighbour.
-/// Whichever of the two units lands second adds it here.</para>
+/// <para><b>A later class slots in as a row of the three answers below.</b> The <see cref="Puppet"/> seat (<c>U-puppet-runtime</c>,
+/// wired here by <c>U-thinking-seats-a</c>'s fix pass 2, item 7) runs no model and no shell: it is exempt from the proven-cell
+/// refusal (<see cref="RunsModel"/> false) and is no unconfined neighbour.</para>
 /// </summary>
 public static class SeatClasses
 {
@@ -68,7 +68,15 @@ public static class SeatClasses
     /// <summary>A seat started in a confined cell (<c>U-cell-linux-b..d</c>; no seat starts in one yet).</summary>
     public const string Cell = "cell";
 
-    public static readonly string[] All = [Cli, Broker, Harness, Cell];
+    /// <summary>
+    /// A SCRIPTED SEAT THAT RUNS NO MODEL, and only in a test host (<c>U-puppet-runtime</c>; ORCHESTRATION § 7): a program the test
+    /// wrote, acting only through the app's verbs with the launch's own grant. Mediated, so it is no unconfined neighbour; no shell,
+    /// so no code; no model, so the owner's proven-cell answer — which binds real-model seats — does not ask it for a cell. Outside
+    /// a test host no puppet starts at all (<c>PuppetSeats</c>).
+    /// </summary>
+    public const string Puppet = "puppet";
+
+    public static readonly string[] All = [Cli, Broker, Harness, Cell, Puppet];
 
     public static bool IsKnown(string? seatClass) => seatClass is not null && Array.IndexOf(All, seatClass) >= 0;
 
@@ -79,13 +87,14 @@ public static class SeatClasses
         Broker => SeatAssurance.Mediated,
         Harness => SeatAssurance.Brokered,
         Cell => SeatAssurance.Confined,
+        Puppet => SeatAssurance.Mediated,
         _ => null
     };
 
     /// <summary>Whether a seat of the class has a shell, and so the <see cref="Capability.Code"/> capability whatever it asked for.</summary>
     public static bool RunsShell(string seatClass) => seatClass is Cli or Cell;
 
-    /// <summary>Whether a seat of the class asks a real model. Every class this build knows does; an unknown one is taken to.</summary>
+    /// <summary>Whether a seat of the class asks a real model. Every class this build knows does but the puppet; an unknown one is taken to.</summary>
     public static bool RunsModel(string seatClass) => seatClass is Cli or Broker or Harness or Cell || !IsKnown(seatClass);
 
     /// <summary>The word a ledger row records for an assurance.</summary>

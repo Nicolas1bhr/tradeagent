@@ -2384,7 +2384,7 @@ public sealed class Database : IDisposable
             // THE ACTIVATION GATE'S RECORD — `U-thinking-seats-a`, rung 39, after `U-org-envelopes`' 38.
             // Two things the gate needs written down and had nowhere to go:
             //
-            // WHAT SEAT EACH LAUNCH RAN ON: `ai_attempt.seat_class` (cli, broker, harness, cell) and `ai_attempt.assurance`
+            // WHAT SEAT EACH LAUNCH RAN ON: `ai_attempt.seat_class` (cli, broker, harness, cell; a test host's puppet) and `ai_attempt.assurance`
             // (unconfined, mediated, brokered, confined), written by `AiAttemptStore.Begin` in the row's own insert from the seat the
             // admission verified, and never updated. NO BACKFILL: a launch recorded before this rung has NULL — unknown.
             //

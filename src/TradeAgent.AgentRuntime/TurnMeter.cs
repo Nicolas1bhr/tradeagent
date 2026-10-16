@@ -271,12 +271,6 @@ public sealed record TurnContext
     /// </summary>
     public string? PromptIn { get; init; }
 
-    /// <summary>
-    /// THE SEAT CLASS A PUPPET'S TEST MANIFEST DECLARED (<c>U-puppet-runtime</c>), or absent for every seat that is not a puppet.
-    /// No rung: it says what played the attempt in a test host, and no product attempt carries it.
-    /// </summary>
-    public string? SeatClass { get; init; }
-
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -779,8 +773,7 @@ public sealed class TurnMeter
             CanonAppOwn = ended.Canon?.AppOwn,
             CanonOverride = ended.Canon?.OverrideBeside,
             ObjectivesVersion = RoleObjectives.Version,
-            PromptIn = ended.PromptIn,
-            SeatClass = ended.SeatClass
+            PromptIn = ended.PromptIn
         };
 
     /// <summary>

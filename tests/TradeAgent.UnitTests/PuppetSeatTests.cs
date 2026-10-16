@@ -147,7 +147,6 @@ public class PuppetSeatTests : IDisposable
                 Assert.NotNull(ended);
                 Assert.Equal(0, ended!.ExitCode);
                 Assert.Equal(17232, ended.Usage?.InputTokens);
-                Assert.Null(ended.SeatClass);
                 Assert.Contains(session.History, t => t.Role == ChatRole.Ai && t.Text == "Hi!");
                 Assert.False(session.CheckSeat().Refused);
             }

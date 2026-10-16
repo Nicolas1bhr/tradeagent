@@ -378,14 +378,16 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>
     /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD LAUNCH ON, DECLARED from the runtime object this host would open it on
-    /// (<see cref="RuntimeObjectFor"/>) — the harness is <see cref="SeatClasses.Harness"/>; any CLI runtime, with a seat plan or
-    /// without one, is <see cref="SeatClasses.Cli"/>, since no seat starts in a cell yet — and null before anything is prepared.
+    /// (<see cref="RuntimeObjectFor"/>) — the harness is <see cref="SeatClasses.Harness"/>; any CLI runtime is the class its session
+    /// starts (<see cref="RuntimeManifest.SessionSeatClass"/>: <see cref="SeatClasses.Cli"/>, with a seat plan or without one, since
+    /// no seat starts in a cell yet, or a test host's puppet's declared class) — and null before anything is prepared.
     /// Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
     /// </summary>
     string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
     {
         null => null,
         ApiAgentRuntime => SeatClasses.Harness,
+        CliAgentRuntime cli => cli.Manifest.SessionSeatClass,
         _ => SeatClasses.Cli
     };
 

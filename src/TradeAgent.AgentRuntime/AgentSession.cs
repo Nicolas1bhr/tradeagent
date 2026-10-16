@@ -292,10 +292,11 @@ public sealed class AgentSession(
         // A PUPPET OUTSIDE A TEST HOST IS REFUSED HERE TOO, so the meter writes no row and reserves nothing for it (U-puppet-runtime).
         if (PuppetSeats.Refusal(manifest) is { } puppet) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, puppet);
         // A CLI SEAT, WITH A SEAT PLAN OR WITHOUT ONE (U-thinking-seats-a): every session here starts its process with a shell and
-        // outside any cell, so its class is `cli` and its assurance unconfined — the app's own answer, never the manifest's.
-        if (manifest.Seat is null) return CliSeat;
+        // outside any cell, so its class is `cli` and its assurance unconfined — or, for a test host's puppet, the class its test
+        // declared (fix pass 2, item 7) — the app's own answer in code, never a field of the manifest's file.
+        if (manifest.Seat is null) return Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
-        if (resolveExecutable() is not { } exe) return CliSeat;
+        if (resolveExecutable() is not { } exe) return Seated;
         var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: RequestedModel);
         var home = workspace();
         try
@@ -305,7 +306,7 @@ public sealed class AgentSession(
                 .GetAwaiter().GetResult();
             // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
             Volatile.Write(ref _admittedProfile, verdict.Profile);
-            return verdict.Refused ? verdict : verdict with { SeatClass = SeatClasses.Cli };
+            return verdict.Refused ? verdict : verdict with { SeatClass = manifest.SessionSeatClass };
         }
         catch (Exception ex)
         {
@@ -313,8 +314,8 @@ public sealed class AgentSession(
         }
     }
 
-    /// <summary>The verdict on a CLI seat with nothing to verify: nothing refused, and its class.</summary>
-    static readonly SeatVerdict CliSeat = SeatVerdict.None with { SeatClass = SeatClasses.Cli };
+    /// <summary>The verdict on this session's seat with nothing to verify: nothing refused, and its class.</summary>
+    SeatVerdict Seated => SeatVerdict.None with { SeatClass = manifest.SessionSeatClass };
 
     /// <summary>
     /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
@@ -729,8 +730,6 @@ public sealed class AgentSession(
                 Canon = _canon,
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
                 PromptIn = _promptIn,
-                // AND, FOR A PUPPET, THE CLASS ITS TEST'S MANIFEST DECLARED (U-puppet-runtime); nothing for any other seat.
-                SeatClass = manifest.Puppet ? manifest.PuppetSeatClass : null,
                 // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
                 GateRefused = gateRefused
             });
@@ -789,9 +788,10 @@ public sealed class AgentSession(
                 "The next turn checks them again.");
 
         // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE PROCESS (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked
-        // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — the
-        // seat actually about to start — so a position beyond the legacy pair is refused here whatever the meter answered.
-        if (PositionActivation.AtLaunch(role, SeatClasses.Cli, seats) is { } gate)
+        // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — or a
+        // test host's puppet playing its declared class — the seat actually about to start, so a position beyond the legacy pair is
+        // refused here whatever the meter answered.
+        if (PositionActivation.AtLaunch(role, manifest.SessionSeatClass, seats) is { } gate)
             throw new GateRefusedException(gate, beforeAnyWork: true);
 
         // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by

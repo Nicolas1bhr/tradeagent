@@ -256,12 +256,6 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public string? PromptIn { get; init; }
 
     /// <summary>
-    /// THE SEAT CLASS A PUPPET'S TEST MANIFEST DECLARED (<see cref="RuntimeManifest.PuppetSeatClass"/>, <c>U-puppet-runtime</c>), or
-    /// null for every seat that is not a puppet. Written into the attempt's <c>context</c>; never read from a data file.
-    /// </summary>
-    public string? SeatClass { get; init; }
-
-    /// <summary>
     /// THE ACTIVATION GATE'S REFUSAL OF THIS TURN AT ITS LAST CHECK — immediately before the process or a request, after the meter
     /// had admitted it and its wakes were consumed — or null (review of <c>U-thinking-seats-a</c>, item 1). Set by the conversation
     /// that refused, never inferred from words: the refusal's <see cref="RefusalKind"/> travels as data, so the loop gives back every

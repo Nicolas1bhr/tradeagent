@@ -467,6 +467,45 @@ public class ThinkingSeatsTests : IDisposable
             relay.CommitTurn(role, attempt, () => meter.CommitStaged(role), dispositions);
     }
 
+    // ---- (q) re-review item 7: the puppet seam ------------------------------------------------------------------
+
+    /// <summary>
+    /// (q) A PUPPET SEAT RUNS NO MODEL AND IS NO UNCONFINED NEIGHBOUR (fix pass 2, item 7; the seam owed to <c>U-puppet-runtime</c>,
+    /// ORCHESTRATION § 2.3 and § 7): a position on a puppet seat is not asked for a proven cell — the owner's answer binds real-model
+    /// seats — and neither the legacy pair's puppet launch beside an active position nor an open puppet launch is an unconfined
+    /// neighbour; the class goes into <c>ai_attempt.seat_class</c> at admission. A harness head on the same host is still refused.
+    /// RED at the rebased tip: a puppet seat was a class the gate did not know, refused, and counted as unconfined.
+    /// </summary>
+    [Fact]
+    public void A_puppet_seat_is_asked_for_no_proven_cell_and_is_no_unconfined_neighbour()
+    {
+        using var db = TestEnv.NewDb();
+        Head(db, Third);   // and no proven cell
+        var chart = new OrgStore(db);
+        var puppets = Register(db, SeatPlan.PuppetClass);
+
+        var third = PositionActivation.AtLaunch(Third, SeatPlan.PuppetClass, puppets);
+        Assert.True(third is null, $"a position on a puppet seat was refused: {third?.Kind} {third?.Words}");
+        foreach (var legacy in CouncilRoles.All)
+        {
+            Assert.Null(PositionActivation.AtLaunch(legacy, SeatPlan.PuppetClass, puppets));
+            Assert.Null(PositionActivation.Ask(legacy, chart.Standing(legacy), puppets));
+        }
+        Assert.Equal(RefusalKind.HostOrLaunch, PositionActivation.AtLaunch(Third, SeatClasses.Harness, Register(db, SeatClasses.Harness))?.Kind);
+
+        // THROUGH THE METER: the chair's puppet launch is admitted beside the active third and is no unconfined neighbour to it.
+        var meter = Meter(db, _ => SeatPlan.PuppetClass);
+        using var chair = meter.Attach(new Seated(SeatPlan.PuppetClass), CouncilRoles.Operations);
+        using var head = meter.Attach(new Seated(SeatPlan.PuppetClass), Third);
+        var first = meter.Begin("## Situation", role: CouncilRoles.Operations);
+        Assert.True(first.Admitted, first.Refusal);
+        Assert.Empty(meter.OpenUnconfined(except: Third));
+        var second = meter.Begin("## Situation", role: Third);
+        Assert.True(second.Admitted, second.Refusal);
+        foreach (var id in new[] { first.Id!, second.Id! })
+            Assert.Equal(SeatPlan.PuppetClass, new AiAttemptStore(db).Get(id)!.SeatClass);
+    }
+
     // ---- (k) review item 2: the neighbour rule is asked whatever the facts read -----------------------------------
 
     /// <summary>

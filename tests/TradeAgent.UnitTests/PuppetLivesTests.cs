@@ -72,7 +72,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             Assert.True(attempt.ReservedCost > 0m, $"{role}'s turn reserved nothing");
             using var context = JsonDocument.Parse(attempt.Context!);
             Assert.Equal(AgentArgs.OnStdin, context.RootElement.GetProperty("prompt_in").GetString());
-            Assert.Equal(SeatPlan.PuppetClass, context.RootElement.GetProperty("seat_class").GetString());
+            Assert.Equal(SeatPlan.PuppetClass, attempt.SeatClass);   // the row's own column, written at admission
             Assert.Equal(1, context.RootElement.GetProperty("command_items").GetInt32());
 
             // ITS WAKE, CONSUMED BY IT, and the prompt it read is the app's packet.
@@ -96,8 +96,10 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         life.Wake(Chair);
         await life.RunUntil(() => life.AttemptsOf(Chair).Any(a => a.State == AiAttemptState.ENDED), "the chair's turn ended");
 
-        using var context = JsonDocument.Parse(Assert.Single(life.AttemptsOf(Chair)).Context!);
-        Assert.Equal(SeatPlan.CliClass, context.RootElement.GetProperty("seat_class").GetString());
+        var row = Assert.Single(life.AttemptsOf(Chair));
+        Assert.Equal((SeatPlan.CliClass, "unconfined"), (row.SeatClass, row.Assurance));
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.False(context.RootElement.TryGetProperty("seat_class", out _), "the interim context.seat_class is still written");
     }
 
     /// <summary>
@@ -128,6 +130,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         var lost = new AiAttemptStore(life.Host.Db).Get(hung.Id)!;
         Assert.Equal(AiAttemptState.LOST, lost.State);
         Assert.Equal(hung.ReservedCost, lost.Cost);
+        // ITS DECLARED SEAT CLASS, WRITTEN AT ADMISSION, so a turn that never ended still says what it ran on (U-thinking-seats-a,
+        // fix pass 2, item 7: the seat class is the row's column from Begin, never the close's context).
+        Assert.True(lost.SeatClass == SeatPlan.PuppetClass, $"the LOST puppet attempt kept seat class '{lost.SeatClass}'");
 
         await life.RunUntil(() => life.AttemptsOf(Chair).Any(a => a.State == AiAttemptState.ENDED), "the chair's next turn ended");
 
@@ -148,13 +153,16 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
 
     /// <summary>
     /// (e) A POSITION BEYOND THE LEGACY PAIR, ACTIVE ON THE CHART AND WOKEN, IS STEPPED OVER BY THE ACTIVATION SEAM — no attempt,
-    /// no process, its wake left due and unconsumed — while the legacy puppets keep turning around it.
+    /// no process, its wake left due and unconsumed — while the legacy puppets keep turning around it. The puppets PLAY the harness
+    /// class (<c>U-thinking-seats-a</c> fix pass 2, item 7): a real-model class, so with no proven executor cell recorded on this
+    /// host the third is refused about the host, and a brokered seat is no unconfined neighbour, so the pair turn. On the puppet's
+    /// own class the third would run — a puppet runs no model and is asked for no cell — which is not this life's act.
     /// </summary>
     [Fact]
     public async Task A_position_beyond_the_legacy_pair_is_stepped_over_and_the_legacy_puppets_keep_turning()
     {
         const string third = "pos-0b5e7c21";
-        await using var life = await PuppetLife.Begin("third", seed: db => db.Write(_ =>
+        await using var life = await PuppetLife.Begin("third", seatClass: SeatClasses.Harness, seed: db => db.Write(_ =>
         {
             using var c = db.Cmd("""
                 INSERT INTO org_position(id, unit_id, home_dir, status, created_at)
@@ -173,7 +181,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
                                   && life.AttemptsOf(Research).Any(a => a.State == AiAttemptState.ENDED),
             "the legacy puppets turned beside a refused position");
 
-        Assert.NotNull(life.Host.ActivationRefusal(third));
+        var refused = life.Host.ActivationRefusal(third);
+        Assert.Equal(RefusalKind.HostOrLaunch, refused?.Kind);
+        Assert.Contains("no proven executor cell recorded", refused!.Words, StringComparison.Ordinal);
         Assert.Empty(life.AttemptsOf(third));
         Assert.Equal(0, life.Turns(third));
         var wake = life.Host.Wakes!.Get(thirds)!;
