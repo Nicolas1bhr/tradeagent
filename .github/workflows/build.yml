@@ -222,6 +222,8 @@ jobs:
       # THE SERVICE'S CGROUP IS THE ROWS' DELEGATED ROOT (U-cell-linux-b): the shell moves itself into <service>/runner before it
       # execs the tests, because a cgroup holding processes cannot hand controllers down, and enables +pids +memory below the
       # service; each row then opens a root of its own, <service>/rows-<guid>, as the app opens its service's. Printed first.
+      # $BASHPID, never $$: systemd-run reads its command line as ExecStart= does, where "$$" is an escaped "$" (run 38968581131
+      # wrote "$" to cgroup.procs and was refused with EINVAL).
       - name: Test the Linux cell rows
         if: matrix.os == 'ubuntu-latest'
         timeout-minutes: 15
@@ -237,10 +239,10 @@ jobs:
             -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
             bash -c 'set -uo pipefail
               svc="/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)"
-              state() { echo "cell cgroup ($1): service $svc owned by $(stat -c %U "$svc"); type $(cat "$svc/cgroup.type"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); processes: $(tr "\n" " " < "$svc/cgroup.procs"); this shell $$ in $(sed -n "s/^0:://p" /proc/self/cgroup)"; }
+              state() { echo "cell cgroup ($1): service $svc owned by $(stat -c %U "$svc"); type $(cat "$svc/cgroup.type"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); processes: $(tr "\n" " " < "$svc/cgroup.procs"); this shell $BASHPID in $(sed -n "s/^0:://p" /proc/self/cgroup)"; }
               state before
               mkdir "$svc/runner" || { echo "::error::mkdir $svc/runner failed"; exit 1; }
-              echo $$ > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
+              echo "$BASHPID" > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
               echo "+pids +memory" > "$svc/cgroup.subtree_control" || { state "enable refused"; echo "::error::enabling +pids +memory below $svc failed"; exit 1; }
               state after
               exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
