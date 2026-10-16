@@ -61,3 +61,4 @@ Asserted gaps (green, red the day they close): (b) granted port reaches 127.0.0.
 Found, not fixed (not my files): the cell stage leaves its .NET runtime files in /tmp on every launch (`dotnet-diagnostic-<pid>-…-socket`, `clr-debug-pipe-<pid>-in/out`, execve keeps the pid) → Core/Containment.cs (-b's file).
 tests box: NOT RUN — the machine does not answer
 Codex review (not acted on): fleet/tmp/A-org/u-cell-linux-d-build/U-cell-linux-d-review.md (its prompt's `bc26f660..HEAD` spans main's commits since, after my rebase). NOT VERIFIED: aarch64; musl/Go resolvers; the owner's host, LAN and resolver; real registries (loopback by design).
+Rebased after the run onto main `30a73c91` (main moved with code, 25 files, none of mine): code tip now `16d66370`, the same seven files byte-for-byte; CI 38968186292 ran at `4a61219a` and was NOT re-run on the new base — seat A to rule whether it carries.
