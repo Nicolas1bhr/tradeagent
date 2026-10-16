@@ -54,6 +54,17 @@ public static class ContainedLaunch
     /// <summary>The cell stage's own flag: <c>trade --cell-exec &lt;policy-file&gt; &lt;program&gt; [args]</c>. See <see cref="CellStage"/>.</summary>
     public const string CellExecFlag = "--cell-exec";
 
+    /// <summary>
+    /// <c>trade --spawn-contained --cgroup &lt;attempt-dir&gt; [--cell &lt;policy-file&gt;] &lt;program&gt; [args]</c> (<c>U-cell-linux-b</c>): the
+    /// supervisor writes itself into the attempt's cgroup BEFORE <c>setsid</c> and before it starts anything, so every process of
+    /// the attempt is born there. A flag, not a verb: it opens no pipe and grants nothing — it only puts this process where the app
+    /// already decided it goes (AUTH-001). See <see cref="JoinAttempt"/>.
+    /// </summary>
+    public const string CgroupFlag = "--cgroup";
+
+    /// <summary>Exit code of a launch whose supervisor could not join its attempt's cgroup: nothing was started.</summary>
+    public const int CgroupRefused = 126;
+
     /// <summary>How often the supervisor asks whether the app that started it is still there.</summary>
     static readonly TimeSpan Watch = TimeSpan.FromMilliseconds(250);
 
@@ -74,9 +85,23 @@ public static class ContainedLaunch
         }
         if (argv.Count == 0 || argv[0] != Flag) return false;
 
+        // THE ATTEMPT'S CGROUP, when the app holds a delegated one: joined below, before anything else happens.
+        string? cgroup = null;
+        var run = argv.Skip(1).ToList();
+        if (run.Count > 0 && run[0] == CgroupFlag)
+        {
+            if (run.Count < 3)
+            {
+                error.WriteLine($"trade: {Flag} {CgroupFlag} needs an attempt's cgroup and a program to run");
+                exitCode = 2;
+                return true;
+            }
+            cgroup = run[1];
+            run = run.Skip(2).ToList();
+        }
+
         // A CELL LAUNCH: the supervisor below is unchanged, and what it starts is the cell stage rather than the program.
         string? cellPolicy = null;
-        var run = argv.Skip(1).ToList();
         if (run.Count > 0 && run[0] == CellFlag)
         {
             if (run.Count < 3)
@@ -104,6 +129,16 @@ public static class ContainedLaunch
             // program anyway is the failure mode this refusal exists to prevent.
             error.WriteLine($"trade: {Flag} is a macOS/Linux launcher; on Windows the app uses a Job Object");
             exitCode = 2;
+            return true;
+        }
+
+        // INTO THE ATTEMPT'S CGROUP FIRST: before the session and before the program, so nothing of the attempt is ever born
+        // outside it. A cgroup this process cannot join is the end of the launch — nothing runs, and the app is told why.
+        if (cgroup is not null && JoinAttempt(cgroup) is { } refused)
+        {
+            error.WriteLine($"trade: the attempt's cgroup was not joined, so nothing was started: {refused}");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
+            exitCode = CgroupRefused;
             return true;
         }
 
@@ -172,6 +207,30 @@ public static class ContainedLaunch
             exitCode = orphaned || !command.HasExited ? 128 + 9 : command.ExitCode;
         }
         return true;
+    }
+
+    /// <summary>
+    /// PUTS THIS PROCESS INTO THE ATTEMPT'S CGROUP, or says why not (null when it did). The directory must be the app's own
+    /// attempt and nothing else: canonical, beneath <see cref="AttemptCgroups.Mount"/>, named <c>attempt-*</c>, this account's, and
+    /// empty — a path handed to this flag cannot put the supervisor into another attempt or another service's cgroup. Then this
+    /// process's pid is written to its <c>cgroup.procs</c> and the kernel is asked where this process now is.
+    /// </summary>
+    public static string? JoinAttempt(string dir)
+    {
+        if (!OperatingSystem.IsLinux()) return $"{CgroupFlag} is Linux only";
+        if (!Path.IsPathFullyQualified(dir) || CellNative.RealPath(dir) is not { } real || real != dir)
+            return $"{dir} is not a canonical path that exists";
+        if (!AttemptCgroups.Under(dir))
+            return $"{dir} is not beneath the cgroup filesystem at {AttemptCgroups.Mount}";
+        if (!Path.GetFileName(dir).StartsWith(AttemptCgroups.AttemptPrefix, StringComparison.Ordinal))
+            return $"{dir} is not an attempt's cgroup (its name does not start with {AttemptCgroups.AttemptPrefix})";
+        if (CellNative.NotOwnedByThisAccount(dir) is { } owner) return owner;
+        if (AttemptCgroups.Procs(dir) is not { } procs) return $"{dir}/cgroup.procs could not be read";
+        if (procs.Count > 0) return $"{dir} already holds process {string.Join(", ", procs.Take(8))}, so it is not a new attempt's";
+        try { AttemptCgroups.Write(Path.Combine(dir, "cgroup.procs"), Environment.ProcessId.ToString(CultureInfo.InvariantCulture)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return $"writing to {dir}/cgroup.procs failed ({ex.Message})"; }
+        var now = AttemptCgroups.OwnCgroup();
+        return now == dir ? null : $"the kernel places this process in {now ?? "an unreadable cgroup"}, not {dir}";
     }
 
     /// <summary>
