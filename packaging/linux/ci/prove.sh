@@ -173,15 +173,26 @@ assert_cgroup "after the seeded start"
 sampler_pid=$!
 
 # ---- 3. the network: one listener, one address, VNC authentication only; the display refuses strangers
+# The app's own broker door (U-thinking-seats-b) listens too — on 127.0.0.1 only, an ephemeral port, the app's own process:
+# loopback is no network, and the door answers only a live launch grant from a peer inside that launch's container. So the
+# account has exactly ONE listener on any other address (Xvnc), and at most one on loopback, which must be the app's.
 note "phase 3: what listens, and who may open the display"
 uid="$(id -u "$account")"
 listeners="$(ss -H -ltnupe | grep "uid:$uid " || true)"
 printf '%s\n' "$listeners" > "$out/listeners-of-$account.txt"
-[ "$(printf '%s\n' "$listeners" | grep -c .)" = 1 ] \
-    || fail "the account $account has $(printf '%s\n' "$listeners" | grep -c .) network listeners, not one: $listeners"
-printf '%s\n' "$listeners" | grep "^tcp .* $address:$port " > /dev/null \
-    || fail "the account's one listener is not Xvnc on $address:$port: $listeners"
-pass "the account's only network listener is $address:$port (Xvnc); the app listens on no network"
+loopback="$(printf '%s\n' "$listeners" | grep '^tcp .* 127\.0\.0\.1:[0-9][0-9]* ' || true)"
+network="$(printf '%s\n' "$listeners" | grep . | grep -v '^tcp .* 127\.0\.0\.1:[0-9][0-9]* ' || true)"
+[ "$(printf '%s\n' "$network" | grep -c .)" = 1 ] \
+    || fail "the account $account has $(printf '%s\n' "$network" | grep -c .) network listeners, not one: $network"
+printf '%s\n' "$network" | grep "^tcp .* $address:$port " > /dev/null \
+    || fail "the account's one network listener is not Xvnc on $address:$port: $network"
+[ "$(printf '%s\n' "$loopback" | grep -c .)" -le 1 ] \
+    || fail "the account $account has more than one loopback listener: $loopback"
+if [ -n "$loopback" ]; then
+    printf '%s\n' "$loopback" | grep "pid=$(main_pid)," > /dev/null \
+        || fail "the account's loopback listener is not the app's own broker door (pid $(main_pid)): $loopback"
+fi
+pass "the account's only network listener is $address:$port (Xvnc); the app listens on no network, only on loopback for its broker door"
 
 python3 -I - "$address" "$port" << 'PY' || fail "the VNC port does not offer VNC authentication alone"
 import socket, sys

@@ -28,7 +28,8 @@
 #   - the app under /opt/tradeagent/<version>-<sha>, root-owned, with a `current` link, and two system
 #     units, root-owned: the app's own account cannot change what systemd starts or what it runs.
 #     Updates arrive this way, by deploy, on the owner's word; the app does not install them itself.
-#   - the only listener is Xvnc, on --address, port 5900 + display, VNC password authentication.
+#   - the only network listener is Xvnc, on --address, port 5900 + display, VNC password authentication. The app itself
+#     listens on 127.0.0.1 only, for its broker door (an ephemeral port; a launch grant and the launch's own process only).
 set -euo pipefail
 
 kit="$(cd "$(dirname "$0")" && pwd)"
