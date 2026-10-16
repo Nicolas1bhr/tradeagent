@@ -421,7 +421,13 @@ public static class PeerImage
                 try
                 {
                     if (PidOf(pidfd) is not { } pid || Core.ProcessTable.Read(pid) is not { Zombie: false } e) return null;
-                    return PidOf(pidfd) == pid ? new PeerFacts(pid, e.Start, DateTimeOffset.UtcNow) { Source = "SO_PEERPIDFD" } : null;
+                    // THE CGROUP AND THE NAMESPACE COUNT BETWEEN THE TWO LOOKS (U-cell-linux-b): the second look proves the pid still
+                    // named the connected process while they were read.
+                    var cgroup = CgroupOf(pid);
+                    var nspids = NsPidsOf(pidfd);
+                    return PidOf(pidfd) == pid
+                        ? new PeerFacts(pid, e.Start, DateTimeOffset.UtcNow) { Source = "SO_PEERPIDFD", Cgroup = cgroup, NsPids = nspids }
+                        : null;
                 }
                 finally { close(pidfd); }
             }
@@ -429,6 +435,26 @@ public static class PeerImage
             return PeerPid(socket) is { } p && Core.ProcessTable.Read(p) is { Zombie: false } entry
                 ? new PeerFacts(p, entry.Start, DateTimeOffset.UtcNow) { Source = "SO_PEERCRED" }
                 : null;
+        }
+
+        /// <summary>proc(5): <c>/proc/&lt;pid&gt;/cgroup</c>, whole, or null when it cannot be read.</summary>
+        static string? CgroupOf(int pid)
+        {
+            try { return File.ReadAllText($"/proc/{pid}/cgroup"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>The number of fields on a pidfd's <c>NSpid:</c> line — one per pid namespace the process is seen in — or 0.</summary>
+        static int NsPidsOf(int pidfd)
+        {
+            try
+            {
+                foreach (var line in File.ReadLines($"/proc/self/fdinfo/{pidfd}"))
+                    if (line.StartsWith("NSpid:", StringComparison.Ordinal))
+                        return line[6..].Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries).Length;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            return 0;
         }
 
         /// <summary>The pid a pidfd names, or null once its process has exited (the kernel then says -1).</summary>
