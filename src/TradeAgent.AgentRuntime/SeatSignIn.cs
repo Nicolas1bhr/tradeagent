@@ -117,6 +117,12 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
     SeatSignInReading _reading = new(SeatSignInState.NotApplicable, null);
     Task<SeatSignInReading>? _inFlight;
 
+    /// <summary>
+    /// THE MANIFEST THE SIGN-IN READS for a chosen runtime id: null when none is chosen; the catalogue's own refusal — an unreadable
+    /// <c>runtimes.json</c>, an id it cannot name — thrown, so a read says Unknown in its words rather than nothing to show. Reads; starts nothing.
+    /// </summary>
+    public static RuntimeManifest? Chosen(string? id) => id is { Length: > 0 } ? RuntimeCatalog.Require(id) : null;
+
     /// <summary>The last reading. Cheap — no process — so the five-second tick may ask it as often as it likes.</summary>
     public SeatSignInReading State()
     {
