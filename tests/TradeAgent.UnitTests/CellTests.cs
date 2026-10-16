@@ -29,7 +29,7 @@ public class CellPolicyTests
     }
 
     static CellPolicy Policy(string workspace, params string[] readOnly) =>
-        new(workspace, readOnly, CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin"), new("HOME", workspace)], [8443]);
+        new(workspace, readOnly, CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin"), new("HOME", workspace)], CellEgress.ForTests([8443]));
 
     [UnixFact]
     public void A_policy_file_is_named_by_its_hash_and_reads_back_whole()
@@ -45,6 +45,7 @@ public class CellPolicyTests
         Assert.Equal(ws, back.Workspace);
         Assert.Equal(["HOME", "PATH"], back.Environment.Select(e => e.Key));
         Assert.Equal([8443], back.TcpPorts);
+        Assert.Equal("test", back.Egress.Name);
     }
 
     [UnixFact]
@@ -56,6 +57,87 @@ public class CellPolicyTests
         var ex = Assert.Throws<TradeAgentException>(() => CellPolicy.Read(path));
         Assert.Equal(ErrorCode.CELL_UNAVAILABLE, ex.Code);
         Assert.Contains("does not hash to its name", ex.Message);
+    }
+
+    /// <summary>
+    /// ONE TABLE OF EGRESS CLASSES (<c>U-cell-linux-d</c> item 2): <c>none</c> is the default and grants no port and no datagram;
+    /// <c>web</c> and <c>web-plain</c> grant 443 (and 80) plus item 1's name resolution — DNS over TCP: port 53, glibc's use-vc, the
+    /// resolver's configuration readable, datagrams still denied. Each class's profile line says what UDP and DNS are.
+    /// </summary>
+    [UnixFact]
+    public void Egress_classes_are_one_table_and_none_is_the_default()
+    {
+        var ws = Dir("ws");
+        var none = new CellPolicy(ws, [], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")]);
+        Assert.Same(CellEgress.None, none.Egress);
+        Assert.Empty(none.TcpPorts);
+        Assert.Equal(["PATH"], none.Environment.Select(e => e.Key));
+        Assert.Empty(none.ReadOnly);
+
+        Assert.Equal(["none", "web", "web-plain"], CellEgress.Table.Select(c => c.Name));
+        Assert.Equal(CellDns.Tcp, CellEgress.Decided);
+        Assert.Equal([53, 443], CellEgress.Web.TcpPorts);
+        Assert.Equal([53, 80, 443], CellEgress.WebPlain.TcpPorts);
+        Assert.All(CellEgress.Table, c => Assert.False(c.DatagramsOpen));
+
+        var web = new CellPolicy(ws, [], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")], CellEgress.Web);
+        Assert.Equal([53, 443], web.TcpPorts);
+        Assert.Contains(new KeyValuePair<string, string>("RES_OPTIONS", "use-vc"), web.Environment);
+        Assert.Equal(CellNative.RealPath("/etc/resolv.conf") is { } real ? [real] : [], web.ReadOnly);
+
+        Assert.Contains("UDP and every other datagram DENIED", CellEgress.None.Profile);
+        Assert.Contains("DNS DENIED", CellEgress.None.Profile);
+        Assert.Contains("UDP DENIED (seccomp, hard)", CellEgress.Web.Profile);
+        Assert.Contains("DNS OVER TCP — port 53 to ANY host (labelled)", CellEgress.Web.Profile);
+        Assert.Contains("port-only: a recorded gap", CellEgress.WebPlain.Profile);
+
+        // A CALLER'S OWN RES_OPTIONS BESIDE THE CLASS'S IS NOT GUESSED BETWEEN: refused, naming what the class sets.
+        var clash = new CellPolicy(ws, [], CellPolicy.SystemRoots, [new("RES_OPTIONS", "ndots:5")], CellEgress.Web);
+        Assert.Contains("names one variable twice", clash.Problem());
+        Assert.Contains("RES_OPTIONS=use-vc", clash.Problem());
+    }
+
+    /// <summary>
+    /// THE EFFECTIVE PORT SET IS IN THE HASH, AND THE CLASS IS READ BACK ONLY AS THE TABLE HAS IT: two policies differing only in
+    /// class hash differently; a file whose class name is in the table with other ports is refused, not read as that class.
+    /// </summary>
+    [UnixFact]
+    public void The_egress_class_is_in_the_hash_and_a_file_naming_another_shape_is_refused()
+    {
+        var ws = Dir("ws");
+        CellPolicy With(CellEgress e) => new(ws, [], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")], e);
+        Assert.Equal(3, new[] { With(CellEgress.None).Hash, With(CellEgress.Web).Hash, With(CellEgress.WebPlain).Hash }.Distinct().Count());
+        Assert.Contains("\"TcpPorts\":[53,443]", With(CellEgress.Web).Serialize());
+
+        var cells = Dir("cells");
+        var back = CellPolicy.Read(With(CellEgress.WebPlain).Write(cells));
+        Assert.Same(CellEgress.WebPlain, back.Egress);
+        Assert.Equal([53, 80, 443], back.TcpPorts);
+
+        // "web" claiming port 22: the bytes are re-hashed and renamed so only the class check can refuse them.
+        var forged = With(CellEgress.Web).Serialize().Replace("\"Ports\":[443]", "\"Ports\":[22]").Replace("[53,443]", "[22,53]");
+        var forgedPath = Path.Combine(cells, Sha256Hex.Of(forged) + ".0123456789abcdef.cell.json");
+        File.WriteAllText(forgedPath, forged);
+        var ex = Assert.Throws<TradeAgentException>(() => CellPolicy.Read(forgedPath));
+        Assert.Contains("names egress class 'web' with ports [22]", ex.Message);
+    }
+
+    /// <summary>
+    /// FORM 1 IS REFUSED, NAMING BOTH FORMS (no backward compatibility while building, refuse never guess): <c>U-cell-linux-a</c>'s
+    /// file with its raw port list, named by its own hash, is not read as a class-less policy.
+    /// </summary>
+    [UnixFact]
+    public void A_form_1_policy_file_is_refused_naming_both_forms()
+    {
+        var ws = Dir("ws");
+        var v1 = "{\"V\":1,\"Workspace\":" + System.Text.Json.JsonSerializer.Serialize(ws) +
+                 ",\"ReadOnly\":[],\"Executable\":[\"/usr\"],\"Environment\":[[\"PATH\",\"/usr/bin\"]],\"TcpPorts\":[443]}";
+        var path = Path.Combine(Dir("cells"), Sha256Hex.Of(v1) + ".0123456789abcdef.cell.json");
+        File.WriteAllText(path, v1);
+
+        var ex = Assert.Throws<TradeAgentException>(() => CellPolicy.Read(path));
+        Assert.Equal(ErrorCode.CELL_UNAVAILABLE, ex.Code);
+        Assert.Contains("is form 1; this build reads form 2 only", ex.Message);
     }
 
     [UnixFact]
@@ -212,9 +294,11 @@ public class CellSeccompTests
     const uint Allow = 0x7fff0000, Eacces = 0x00050000 | 13, Eperm = 0x00050000 | 1, Kill = 0x80000000;
     const uint X64 = 0xC000003E, Arm64 = 0xC00000B7, I386 = 0x40000003;
 
-    static uint Run(System.Runtime.InteropServices.Architecture arch, uint auditArch, uint nr, params ulong[] args)
+    static uint Run(System.Runtime.InteropServices.Architecture arch, uint auditArch, uint nr, params ulong[] args) =>
+        RunProgram(CellNative.SeccompProgram(arch), auditArch, nr, args);
+
+    static uint RunProgram(byte[] code, uint auditArch, uint nr, params ulong[] args)
     {
-        var code = CellNative.SeccompProgram(arch);
         var data = new byte[64];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data, nr);
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), auditArch);
@@ -231,6 +315,7 @@ public class CellSeccompTests
                 case 0x20: a = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan((int)k)); break;
                 case 0x15: pc += a == k ? jt : jf; break;
                 case 0x35: pc += a >= k ? jt : jf; break;
+                case 0x45: pc += (a & k) != 0 ? jt : jf; break;
                 case 0x54: a &= k; break;
                 case 0x06: return k;
                 default: throw new InvalidOperationException($"opcode {op:x}");
@@ -295,6 +380,53 @@ public class CellSeccompTests
         Assert.Equal(0xFFFFUL, CellNative.HandledFs(8));
         Assert.Equal(0x1FFFFUL, CellNative.HandledFs(9));
         Assert.Equal(0x1FFFFUL, CellNative.HandledFs(10));
+    }
+
+    /// <summary>
+    /// THE TWO TCP DOORS LANDLOCK DOES NOT SEE ARE SHUT (<c>U-cell-linux-d</c>): <c>listen()</c> — which picks an ephemeral port on a
+    /// socket nobody bound — is EACCES; a send carrying <c>MSG_FASTOPEN</c>, which connects without <c>connect()</c>, is EACCES on
+    /// <c>sendto</c>, <c>sendmsg</c> and <c>sendmmsg</c>, wherever the flag sits among the others; a plain send passes.
+    /// </summary>
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 50u, 44u, 46u, 307u)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 201u, 206u, 211u, 269u)]
+    public void Listen_and_a_fast_open_send_are_refused(System.Runtime.InteropServices.Architecture arch, uint audit,
+        uint listen, uint sendto, uint sendmsg, uint sendmmsg)
+    {
+        const ulong fastOpen = 0x20000000, noSignal = 0x4000, dontWait = 0x40;
+
+        Assert.Equal(Eacces, Run(arch, audit, listen, 3, 128));
+        Assert.Equal(Eacces, Run(arch, audit, sendto, 3, 0, 1, fastOpen, 0, 16));
+        Assert.Equal(Eacces, Run(arch, audit, sendto, 3, 0, 1, fastOpen | noSignal | dontWait, 0, 16));
+        Assert.Equal(Eacces, Run(arch, audit, sendmsg, 3, 0, fastOpen | noSignal));
+        Assert.Equal(Eacces, Run(arch, audit, sendmmsg, 3, 0, 1, fastOpen));
+        Assert.Equal(Allow, Run(arch, audit, sendto, 3, 0, 1, noSignal | dontWait, 0, 16));
+        Assert.Equal(Allow, Run(arch, audit, sendmsg, 3, 0, noSignal));
+        Assert.Equal(Allow, Run(arch, audit, sendmmsg, 3, 0, 1, 0));
+    }
+
+    /// <summary>
+    /// DATAGRAMS ARE THE PROBE'S OPTION ONLY (<c>U-cell-linux-d</c> item 1, mode B): with it an IPv4 or IPv6 UDP socket opens; ICMP,
+    /// raw and every other family stay EACCES; without it — every class of the table — UDP is EACCES as before.
+    /// </summary>
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 41u)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 198u)]
+    public void Datagrams_open_only_with_the_probes_option(System.Runtime.InteropServices.Architecture arch, uint audit, uint socket)
+    {
+        const ulong unix = 1, inet = 2, inet6 = 10, netlink = 16, stream = 1, dgram = 2, raw = 3, flags = 0x800 | 0x80000;
+        var open = CellNative.SeccompProgram(arch, datagrams: true);
+
+        Assert.Equal(Allow, RunProgram(open, audit, socket, inet, dgram, 0));
+        Assert.Equal(Allow, RunProgram(open, audit, socket, inet6, dgram | flags, 17));
+        Assert.Equal(Allow, RunProgram(open, audit, socket, inet, stream, 6));
+        Assert.Equal(Eacces, RunProgram(open, audit, socket, inet, dgram, 1));      // ICMP ping socket
+        Assert.Equal(Eacces, RunProgram(open, audit, socket, inet, raw, 17));
+        Assert.Equal(Eacces, RunProgram(open, audit, socket, unix, dgram, 0));
+        Assert.Equal(Eacces, RunProgram(open, audit, socket, netlink, raw, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socket, inet, dgram, 0));
+        Assert.Equal(Eacces, Run(arch, audit, socket, inet6, dgram, 17));
+        Assert.DoesNotContain(CellEgress.Table, c => c.DatagramsOpen);
     }
 
     [Fact]

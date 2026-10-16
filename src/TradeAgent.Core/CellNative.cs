@@ -64,17 +64,20 @@ public static class CellNative
     const uint EPERM = 1, EACCES = 13;
     const uint AuditArchX64 = 0xC000003E, AuditArchArm64 = 0xC00000B7;
     const uint X32SyscallBit = 0x40000000;
-    const uint AF_UNIX = 1, AF_INET = 2, AF_INET6 = 10, SOCK_STREAM = 1, SOCK_SEQPACKET = 5, SOCK_NONBLOCK = 0x800, SOCK_CLOEXEC = 0x80000,
-        IPPROTO_TCP = 6;
+    const uint AF_UNIX = 1, AF_INET = 2, AF_INET6 = 10, SOCK_STREAM = 1, SOCK_DGRAM = 2, SOCK_SEQPACKET = 5, SOCK_NONBLOCK = 0x800,
+        SOCK_CLOEXEC = 0x80000, IPPROTO_TCP = 6, IPPROTO_UDP = 17, MSG_FASTOPEN = 0x20000000;
 
-    /// <summary>The system calls the filter reads by number. Only <c>socket</c>, <c>socketpair</c> and the denied ones; everything else passes to Landlock.</summary>
-    sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint[] Denied);
+    /// <summary>
+    /// The system calls the filter reads by number: <c>socket</c>, <c>socketpair</c>, <c>listen</c>, the three sends whose flags it
+    /// reads, and the denied ones; everything else passes to Landlock.
+    /// </summary>
+    sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint Listen, uint Sendto, uint Sendmsg, uint Sendmmsg, uint[] Denied);
 
     static Table? TableFor(Architecture arch) => arch switch
     {
         // io_uring_setup/enter/register, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd
-        Architecture.X64 => new(AuditArchX64, 41, 53, [425, 426, 427, 250, 248, 249, 321, 298, 323]),
-        Architecture.Arm64 => new(AuditArchArm64, 198, 199, [425, 426, 427, 219, 217, 218, 280, 241, 282]),
+        Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, [425, 426, 427, 250, 248, 249, 321, 298, 323]),
+        Architecture.Arm64 => new(AuditArchArm64, 198, 199, 201, 206, 211, 269, [425, 426, 427, 219, 217, 218, 280, 241, 282]),
         _ => null
     };
 
@@ -231,7 +234,7 @@ public static class CellNative
         var path = Utf8(program);
         var argv = Vector([program, .. args]);
         var envp = Vector([.. policy.Environment.Select(e => e.Key + "=" + e.Value)]);
-        var filter = Program(SeccompProgram(RuntimeInformation.ProcessArchitecture));
+        var filter = Program(SeccompProgram(RuntimeInformation.ProcessArchitecture, policy.Egress.DatagramsOpen));
         var emptyMask = Zeroed(128);
 
         var ruleset = Ruleset(policy, out var failure);
@@ -264,6 +267,8 @@ public static class CellNative
         var handled = HandledFs(LandlockAbi().Abi);
         var attr = Zeroed(24);
         Marshal.WriteInt64(attr, 0, (long)handled);
+        // TCP BIND AND CONNECT ARE HANDLED FOR EVERY CELL — egress class `none` included (U-cell-linux-d): a right the ruleset does not
+        // handle is a right Landlock never checks, so a cell with no port would connect anywhere. Ports are granted below, binds never.
         Marshal.WriteInt64(attr, 8, (long)(NetBindTcp | NetConnectTcp));
         Marshal.WriteInt64(attr, 16, (long)(ScopeAbstractUnixSocket | ScopeSignal));
         var fd = (int)Syscall3(SysLandlockCreateRuleset, attr, 24, 0);
@@ -342,13 +347,20 @@ public static class CellNative
     /// x64, the x32 numbers: EPERM. <c>io_uring_*</c>, the keyring calls, <c>bpf</c>, <c>perf_event_open</c>, <c>userfaultfd</c>:
     /// EPERM. <c>socket()</c>: allowed only for AF_INET or AF_INET6, type SOCK_STREAM (SOCK_NONBLOCK and SOCK_CLOEXEC masked off),
     /// protocol 0 or IPPROTO_TCP — Landlock then governs the port — and EACCES for every other family, type or protocol: AF_UNIX,
-    /// AF_NETLINK, AF_PACKET, AF_VSOCK, datagrams and ICMP among them. <c>socketpair()</c>: allowed only for an AF_UNIX stream or
+    /// AF_NETLINK, AF_PACKET, AF_VSOCK, datagrams and ICMP among them. With <paramref name="datagrams"/> (the probe's mode (B), which
+    /// no class of this build uses) an AF_INET or AF_INET6 SOCK_DGRAM socket of protocol 0 or IPPROTO_UDP is allowed too, to any host
+    /// and port. <c>socketpair()</c>: allowed only for an AF_UNIX stream or
     /// seqpacket pair (flags masked), which runtimes wake themselves with and whose ends reach only each other — a connected stream
     /// end's <c>connect</c> and addressed <c>sendto</c> are EISCONN, a seqpacket end's address is ignored for its peer; a DATAGRAM
     /// pair is EACCES, because its end can be connected or <c>sendto</c>'d to any pathname datagram listener on the host (journald,
-    /// <c>/dev/log</c>). Everything else: allowed, and Landlock's.
+    /// <c>/dev/log</c>).
+    ///
+    /// <para><b>The two TCP doors Landlock does not see</b> (<c>U-cell-linux-d</c>; Landlock hooks <c>bind</c> and <c>connect</c>
+    /// only): <c>listen()</c> — on a socket nobody bound it picks an ephemeral port itself, so a cell would serve without a bind —
+    /// EACCES; and a send with <c>MSG_FASTOPEN</c> (<c>sendto</c>, <c>sendmsg</c>, <c>sendmmsg</c>), which opens a TCP connection
+    /// without the <c>connect</c> call Landlock checks — EACCES. Everything else: allowed, and Landlock's.</para>
     /// </summary>
-    internal static byte[] SeccompProgram(Architecture architecture)
+    internal static byte[] SeccompProgram(Architecture architecture, bool datagrams = false)
     {
         var t = TableFor(architecture) ?? throw new PlatformNotSupportedException($"no seccomp filter for {architecture}");
         var b = new Bpf();
@@ -356,11 +368,18 @@ public static class CellNative
         b.Ld(0);
         if (architecture == Architecture.X64) b.Jge(X32SyscallBit, "eperm", null);
         foreach (var nr in t.Denied) b.Jeq(nr, "eperm", null);
+        b.Jeq(t.Listen, "eacces", null);
+        b.Jeq(t.Sendto, "flags3", null);
+        b.Jeq(t.Sendmmsg, "flags3", null);
+        b.Jeq(t.Sendmsg, "flags2", null);
         b.Jeq(t.Socket, "socket", null);
         b.Jeq(t.Socketpair, "socketpair", "allow");
+        b.Label("flags3").Ld(40).Jset(MSG_FASTOPEN, "eacces", "allow");
+        b.Label("flags2").Ld(32).Jset(MSG_FASTOPEN, "eacces", "allow");
         b.Label("socket").Ld(16).Jeq(AF_INET, "type", null).Jeq(AF_INET6, "type", "eacces");
-        b.Label("type").Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, null, "eacces");
-        b.Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_TCP, "allow", "eacces");
+        b.Label("type").Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "stream", datagrams ? null : "eacces");
+        if (datagrams) b.Jeq(SOCK_DGRAM, null, "eacces").Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_UDP, "allow", "eacces");
+        b.Label("stream").Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_TCP, "allow", "eacces");
         b.Label("socketpair").Ld(16).Jeq(AF_UNIX, null, "eacces");
         b.Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "allow", null).Jeq(SOCK_SEQPACKET, "allow", "eacces");
         b.Label("allow").Ret(SeccompRetAllow);
@@ -370,7 +389,7 @@ public static class CellNative
         return b.Assemble();
     }
 
-    /// <summary>A tiny classic-BPF assembler: loads, equality and ≥ jumps to labels, an AND, returns.</summary>
+    /// <summary>A tiny classic-BPF assembler: loads, equality, ≥ and bit-test jumps to labels, an AND, returns.</summary>
     sealed class Bpf
     {
         readonly List<(ushort Code, string? True, string? False, uint K)> _code = [];
@@ -380,6 +399,7 @@ public static class CellNative
         public Bpf Ld(uint offset) => Add(0x20, null, null, offset);                  // BPF_LD | BPF_W | BPF_ABS
         public Bpf Jeq(uint k, string? t, string? f) => Add(0x15, t, f, k);          // BPF_JMP | BPF_JEQ | BPF_K
         public Bpf Jge(uint k, string? t, string? f) => Add(0x35, t, f, k);          // BPF_JMP | BPF_JGE | BPF_K
+        public Bpf Jset(uint k, string? t, string? f) => Add(0x45, t, f, k);         // BPF_JMP | BPF_JSET | BPF_K
         public Bpf And(uint k) => Add(0x54, null, null, k);                          // BPF_ALU | BPF_AND | BPF_K
         public Bpf Ret(uint k) => Add(0x06, null, null, k);                          // BPF_RET | BPF_K
 

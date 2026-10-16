@@ -7,5 +7,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+    <!-- The Linux cell rows (U-cell-linux-d) grant ephemeral ports through CellEgress.ForTests, a table no product code can name. -->
+    <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
   </ItemGroup>
 </Project>

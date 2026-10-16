@@ -34,7 +34,7 @@ public sealed class LinuxFactAttribute : FactAttribute
 /// <c>systemd-run -p User=runner -p Delegate=yes</c> (the host's shape) after <c>loginctl enable-linger runner</c>.</para>
 /// </summary>
 [Trait("Category", "Cell")]
-public class CellLinuxTests
+public partial class CellLinuxTests
 {
     const string LedgerSecret = "ledger-secret", HoldoutSecret = "holdout-secret", LoginSecret = "dummy-owner-login";
 
@@ -66,12 +66,12 @@ public class CellLinuxTests
         public string Holdout { get; }
         public static string Ledger => Paths.DatabaseFile;
 
-        public CellPolicy Policy(IEnumerable<int>? tcp = null, IEnumerable<KeyValuePair<string, string>>? more = null) =>
+        public CellPolicy Policy(CellEgress? egress = null, IEnumerable<KeyValuePair<string, string>>? more = null) =>
             new(Ws, [Ro], CellPolicy.SystemRoots,
             [
                 new("PATH", "/usr/local/bin:/usr/bin:/bin"), new("HOME", Home), new("LANG", "C.UTF-8"), new("TMPDIR", Ws),
                 new("XDG_RUNTIME_DIR", RuntimeDir), .. more ?? []
-            ], tcp);
+            ], egress);
 
         /// <summary>Writes a probe script into the workspace (from outside) and returns its path.</summary>
         public string Script(string name, string text)
@@ -380,7 +380,7 @@ public class CellLinuxTests
         var control = await Outside("/usr/bin/python3", "-I", probe, $"{deniedPort}");
         Says(control, $"tcp-{deniedPort}-connected");
 
-        var ran = await InCell(w.Policy(tcp: [grantedPort]), "/usr/bin/python3", "-I", probe, $"{deniedPort}", $"{grantedPort}");
+        var ran = await InCell(w.Policy(CellEgress.ForTests([grantedPort])), "/usr/bin/python3", "-I", probe, $"{deniedPort}", $"{grantedPort}");
         Says(ran, $"tcp-{deniedPort}-denied errno=13", $"tcp-{grantedPort}-connected", "bind-denied errno=13");
     }
 

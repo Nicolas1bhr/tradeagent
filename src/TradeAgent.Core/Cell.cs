@@ -9,8 +9,9 @@ namespace TradeAgent.Core;
 /// <summary>
 /// WHAT ONE CELL MAY TOUCH (<c>U-cell-linux-a</c>, ORCHESTRATION § 2.8): a workspace it may read, write and run in, inputs it
 /// may only read, the roots its programs are run from, the ENTIRE environment it starts with — named with its values, nothing
-/// inherited — and the TCP ports it may connect to (none when empty). Everything not named here is denied by the kernel: the
-/// app's <c>state/</c> and its holdout, the owner's logins, the home, every other process.
+/// inherited — and its egress class (<see cref="CellEgress"/>, <c>U-cell-linux-d</c>: the TCP ports it may connect to and how it
+/// resolves names; <see cref="CellEgress.None"/> when not named). Everything not named here is denied by the kernel: the app's
+/// <c>state/</c> and its holdout, the owner's logins and inbox, the home, every other process.
 ///
 /// <para><b>An app-owned file, named by its own hash.</b> The policy reaches the cell stage as a file under
 /// <see cref="Directory"/> — never through the environment or the argument list of anything a model can steer — and the file's
@@ -28,15 +29,23 @@ public sealed record CellPolicy
     /// <summary>Where the app writes cell policies: under its own home, never in a workspace.</summary>
     public static string Directory => Path.Combine(Paths.Home, "cells");
 
+    /// <summary>
+    /// A policy under egress class <paramref name="egress"/> (<see cref="CellEgress.None"/> when null). The class's own needs are
+    /// ADDED here, so the policy names everything the cell may touch: its resolver's configuration among the read-only inputs and
+    /// its resolver option in the environment, when the class resolves names.
+    /// </summary>
     public CellPolicy(string workspace, IEnumerable<string> readOnly, IEnumerable<string> executable,
-        IEnumerable<KeyValuePair<string, string>> environment, IEnumerable<int>? tcpPorts = null)
+        IEnumerable<KeyValuePair<string, string>> environment, CellEgress? egress = null)
     {
+        Egress = egress ?? CellEgress.None;
         Workspace = workspace;
-        ReadOnly = [.. readOnly];
+        ReadOnly = [.. readOnly.Concat(Egress.ReadOnly).Distinct(StringComparer.Ordinal)];
         Executable = [.. executable];
-        Environment = [.. environment.OrderBy(e => e.Key, StringComparer.Ordinal)];
-        TcpPorts = [.. (tcpPorts ?? []).Distinct().Order()];
+        Environment = [.. environment.Concat(Egress.Environment).Distinct().OrderBy(e => e.Key, StringComparer.Ordinal).ThenBy(e => e.Value, StringComparer.Ordinal)];
     }
+
+    /// <summary>The cell's egress class: which TCP ports it may connect to, and how it resolves names.</summary>
+    public CellEgress Egress { get; }
 
     /// <summary>The one directory the cell may read, write, create in, delete in and run programs from.</summary>
     public string Workspace { get; }
@@ -50,12 +59,16 @@ public sealed record CellPolicy
     /// <summary>The whole environment the cell's program starts with, sorted by name. Nothing else is inherited.</summary>
     public IReadOnlyList<KeyValuePair<string, string>> Environment { get; }
 
-    /// <summary>TCP ports the cell may connect to. Empty: no TCP at all. No port may be bound.</summary>
-    public IReadOnlyList<int> TcpPorts { get; }
+    /// <summary>The TCP ports the cell may connect to — its class's effective set, DNS's port 53 included. Empty: no TCP at all. No port may be bound.</summary>
+    public IReadOnlyList<int> TcpPorts => Egress.TcpPorts;
 
-    /// <summary>The policy as the bytes the file holds and the hash names: one canonical form, ordinal order throughout.</summary>
+    /// <summary>
+    /// The policy as the bytes the file holds and the hash names: one canonical form, ordinal order throughout. The egress class
+    /// is written by name WITH its effective port set and its name resolution, so the hash covers what the kernel will be told.
+    /// </summary>
     public string Serialize() => JsonSerializer.Serialize(new Wire(Version, Workspace, [.. ReadOnly], [.. Executable],
-        [.. Environment.Select(e => new[] { e.Key, e.Value })], [.. TcpPorts]));
+        [.. Environment.Select(e => new[] { e.Key, e.Value })],
+        new WireEgress(Egress.Name, [.. Egress.Ports], Egress.Dns.ToString(), [.. Egress.TcpPorts])));
 
     /// <summary>The SHA-256 of <see cref="Serialize"/>, lower-case hex: the policy's identity on the attempt and its file's name.</summary>
     public string Hash => Sha256Hex.Of(Serialize());
@@ -93,12 +106,19 @@ public sealed record CellPolicy
         catch (JsonException ex) { throw Refused($"the cell policy {path} is not readable ({ex.Message})"); }
         if (wire is null || wire.V != Version)
             throw Refused($"the cell policy {path} is form {wire?.V.ToString(CultureInfo.InvariantCulture) ?? "none"}; this build reads form {Version} only");
-        if (wire.Workspace is null || wire.ReadOnly is null || wire.Executable is null || wire.Environment is null || wire.TcpPorts is null
+        if (wire.Workspace is null || wire.ReadOnly is null || wire.Executable is null || wire.Environment is null || wire.Egress is null
+            || wire.Egress.Name is null || wire.Egress.Ports is null || wire.Egress.Dns is null || wire.Egress.TcpPorts is null
             || wire.Environment.Any(e => e is not { Length: 2 }))
             throw Refused($"the cell policy {path} is missing a field");
+        if (!Enum.TryParse<CellDns>(wire.Egress.Dns, ignoreCase: false, out var dns) || !Enum.IsDefined(dns) || dns.ToString() != wire.Egress.Dns)
+            throw Refused($"the cell policy {path} names a name resolution '{wire.Egress.Dns}' this build does not know");
+        var egress = CellEgress.Read(wire.Egress.Name, wire.Egress.Ports, dns)
+            ?? throw Refused($"the cell policy {path} names egress class '{wire.Egress.Name}' with ports " +
+                             $"[{string.Join(", ", wire.Egress.Ports)}] and name resolution {dns}, which is not a class this build has " +
+                             $"({string.Join("; ", CellEgress.Table.Select(c => c.Describe()))})");
 
         var policy = new CellPolicy(wire.Workspace, wire.ReadOnly, wire.Executable,
-            wire.Environment.Select(e => new KeyValuePair<string, string>(e[0], e[1])), wire.TcpPorts);
+            wire.Environment.Select(e => new KeyValuePair<string, string>(e[0], e[1])), egress);
         if (policy.Hash != hash) throw Refused($"the cell policy {path} is not in the one form this build writes");
         if (policy.Problem() is { } why) throw Refused(why);
         return policy;
@@ -135,7 +155,8 @@ public sealed record CellPolicy
             if (name.Length == 0 || name.Contains('=') || name.Contains('\0') || value.Contains('\0'))
                 return $"the cell's environment variable '{name}' cannot be passed to a program";
         if (Environment.Select(e => e.Key).Distinct(StringComparer.Ordinal).Count() != Environment.Count)
-            return "the cell's environment names one variable twice";
+            return "the cell's environment names one variable twice (its egress class sets " +
+                   $"{string.Join(", ", Egress.Environment.Select(e => e.Key + "=" + e.Value).DefaultIfEmpty("nothing"))})";
         if (TcpPorts.Where(p => p is < 1 or > 65535).Select(p => (int?)p).FirstOrDefault() is { } bad)
             return $"the cell's TCP port {bad} is not a port";
         return null;
@@ -196,14 +217,164 @@ public sealed record CellPolicy
 
     static TradeAgentException Refused(string why) => new(ErrorCode.CELL_UNAVAILABLE, why);
 
-    /// <summary>The one form this build writes and reads. No other is read on a guess.</summary>
-    const int Version = 1;
+    /// <summary>
+    /// The one form this build writes and reads. No other is read on a guess: form 1 (<c>U-cell-linux-a</c>'s raw port list) is
+    /// refused naming both forms — no backward compatibility while building.
+    /// </summary>
+    internal const int Version = 2;
 
     const string FileSuffix = ".cell.json";
 
     static readonly Regex FileName = new("^[0-9a-f]{64}\\.[0-9a-f]{16}\\.cell\\.json$", RegexOptions.CultureInvariant);
 
-    sealed record Wire(int V, string? Workspace, string[]? ReadOnly, string[]? Executable, string[][]? Environment, int[]? TcpPorts);
+    sealed record Wire(int V, string? Workspace, string[]? ReadOnly, string[]? Executable, string[][]? Environment, WireEgress? Egress);
+
+    sealed record WireEgress(string? Name, int[]? Ports, string? Dns, int[]? TcpPorts);
+}
+
+/// <summary>How a cell resolves names (<c>U-cell-linux-d</c> item 1: the probe's measurement decided which one the classes use).</summary>
+public enum CellDns
+{
+    /// <summary>No name resolution beyond <c>/etc/hosts</c>: no port 53, no datagram socket.</summary>
+    None,
+
+    /// <summary>
+    /// DNS OVER TCP: datagrams stay DENIED (seccomp), TCP port 53 is granted to ANY host (Landlock rules are port-only — labelled),
+    /// glibc is told <c>RES_OPTIONS=use-vc</c>, and the resolver's configuration (<c>/etc/resolv.conf</c> where it really is) is
+    /// readable. Seccomp sees <c>socket()</c>'s family, type and protocol, never the address behind <c>connect</c> or <c>sendto</c>,
+    /// so "datagrams only to the loopback resolver" cannot be enforced literally; this is its closest honest form.
+    /// </summary>
+    Tcp,
+
+    /// <summary>
+    /// DATAGRAMS OPEN: IPv4 and IPv6 UDP sockets allowed, to ANY host and port (no Landlock UDP rule below ABI 10, kernel 7.2), the
+    /// resolver's configuration readable. The probe's mode (B); no class of this build uses it.
+    /// </summary>
+    Datagrams
+}
+
+/// <summary>
+/// A CELL'S EGRESS CLASS (<c>U-cell-linux-d</c>, ORCHESTRATION § 2.8 "a network and IPC policy"): ONE table of named classes —
+/// <see cref="None"/> (the default: no TCP port, no datagram), <see cref="Web"/> (443) and <see cref="WebPlain"/> (80 and 443), each
+/// with item 1's name resolution — and nothing a model can add to it. What every class leaves open is said in
+/// <see cref="Profile"/>, and a row of <c>CellLinuxTests</c> asserts each gap, so the day the kernel closes one the row turns red.
+///
+/// <para><b>What a granted port reaches.</b> Landlock's TCP rules are PORT-ONLY: a cell granted 443 reaches 443 on the internet, on
+/// this host, on its loopback (IPv4 and IPv6) and on the LAN alike, and two cells granted one port reach the same outside listener —
+/// a channel between them outside the relay. That is why a class with any port never counts as unable to write the owner's inbox: a
+/// same-user listener on a granted port could write it for the cell.</para>
+///
+/// <para><b>No class listens.</b> Landlock handles TCP bind on every cell and grants no bind rule; seccomp denies <c>listen()</c>,
+/// which on a socket nobody bound picks an ephemeral port without asking Landlock.</para>
+/// </summary>
+public sealed class CellEgress
+{
+    /// <summary>
+    /// ITEM 1'S DECISION, taken by <c>A_cell_name_resolution_probe</c>'s measurement on CI's ubuntu-24.04: when glibc, Python, Node
+    /// and pip all resolve over TCP with datagrams denied, the classes resolve over TCP and datagrams stay DENIED (hard) for every
+    /// cell; otherwise UDP opens for egress-classed cells, labelled, and <see cref="None"/> keeps it denied.
+    /// </summary>
+    public const CellDns Decided = CellDns.Tcp;
+
+    /// <summary>The DNS port a <see cref="CellDns.Tcp"/> class adds: 53, to any host.</summary>
+    public const int DnsPort = 53;
+
+    /// <summary>The name a test-only table carries; never a class of the table.</summary>
+    internal const string TestName = "test";
+
+    /// <summary>No TCP connect to any port, no listening, no datagram: names resolve from <c>/etc/hosts</c> only. The default.</summary>
+    public static CellEgress None { get; } = new("none", [], CellDns.None);
+
+    /// <summary>HTTPS: TCP 443 to any host, and names (<see cref="Decided"/>).</summary>
+    public static CellEgress Web { get; } = new("web", [443], Decided);
+
+    /// <summary>HTTP and HTTPS: TCP 80 and 443 to any host, and names (<see cref="Decided"/>).</summary>
+    public static CellEgress WebPlain { get; } = new("web-plain", [80, 443], Decided);
+
+    /// <summary>The one table. A class is one of these, by name.</summary>
+    public static IReadOnlyList<CellEgress> Table { get; } = [None, Web, WebPlain];
+
+    CellEgress(string name, IEnumerable<int> ports, CellDns dns)
+    {
+        Name = name;
+        Ports = [.. ports.Distinct().Order()];
+        Dns = dns;
+        TcpPorts = dns == CellDns.Tcp ? [.. Ports.Append(DnsPort).Distinct().Order()] : Ports;
+    }
+
+    /// <summary>
+    /// A TEST-ONLY TABLE: explicit ports and name resolution, so the rows can grant ephemeral ports (an unprivileged runner cannot
+    /// listen on 443) and the probe can open datagrams. Internal: no product code names ports outside <see cref="Table"/>.
+    /// </summary>
+    internal static CellEgress ForTests(IEnumerable<int> ports, CellDns dns = CellDns.None) => new(TestName, ports, dns);
+
+    /// <summary>The class by its table name, or null.</summary>
+    public static CellEgress? Named(string name) => Table.FirstOrDefault(c => c.Name == name);
+
+    /// <summary>
+    /// The class a policy file names, or null when it is not one this build has: a table name whose ports or resolution differ from
+    /// the table's is not that class, read on a guess.
+    /// </summary>
+    internal static CellEgress? Read(string name, IReadOnlyList<int> ports, CellDns dns)
+    {
+        if (name == TestName) return ForTests(ports, dns);
+        return Named(name) is { } c && c.Dns == dns && c.Ports.SequenceEqual(ports) ? c : null;
+    }
+
+    /// <summary>The class's name: one of <see cref="Table"/>, or <c>test</c>.</summary>
+    public string Name { get; }
+
+    /// <summary>The class's own ports, without the DNS port.</summary>
+    public IReadOnlyList<int> Ports { get; }
+
+    /// <summary>How the class resolves names.</summary>
+    public CellDns Dns { get; }
+
+    /// <summary>The effective TCP connect set the kernel is told: <see cref="Ports"/>, and 53 when names resolve over TCP.</summary>
+    public IReadOnlyList<int> TcpPorts { get; }
+
+    /// <summary>Whether the cell may make IPv4 and IPv6 UDP sockets (seccomp). False for every class of the table.</summary>
+    public bool DatagramsOpen => Dns == CellDns.Datagrams;
+
+    /// <summary>What the class adds to the cell's environment: glibc's resolver told to use TCP when names resolve over TCP.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> Environment =>
+        Dns == CellDns.Tcp ? [new("RES_OPTIONS", "use-vc")] : [];
+
+    /// <summary>
+    /// What the class adds to the cell's read-only inputs: the resolver's configuration where it really is — on Ubuntu
+    /// <c>/etc/resolv.conf</c> is a link into <c>/run/systemd/resolve</c>, outside every program root, and Landlock judges a file
+    /// where the link leads. Nothing when the class resolves no names.
+    /// </summary>
+    public IReadOnlyList<string> ReadOnly =>
+        Dns != CellDns.None && CellNative.RealPath(ResolverConfiguration) is { } real ? [real] : [];
+
+    /// <summary>The resolver configuration glibc reads.</summary>
+    public const string ResolverConfiguration = "/etc/resolv.conf";
+
+    /// <summary>One line: the class, its ports and its resolution.</summary>
+    public string Describe() =>
+        $"{Name}: TCP [{string.Join(", ", Ports)}], names {Dns switch { CellDns.Tcp => "over TCP 53", CellDns.Datagrams => "over UDP", _ => "from /etc/hosts only" }}";
+
+    /// <summary>
+    /// THE CLASS'S LINE IN THE ASSURANCE PROFILE: what TCP, UDP, DNS and listening are, each DENIED (and by what) or OPEN and labelled.
+    /// </summary>
+    public string Profile => Dns switch
+    {
+        CellDns.None when Ports.Count == 0 =>
+            $"egress {Name}: TCP connect DENIED to every port (Landlock); no listening (Landlock bind, seccomp listen); UDP and every " +
+            "other datagram DENIED (seccomp); DNS DENIED — names from /etc/hosts only",
+        CellDns.None =>
+            $"egress {Name}: TCP connect to port {string.Join(", ", Ports)} on ANY host — loopback, this host and the LAN alike (Landlock " +
+            "rules are port-only: a recorded gap); no listening (Landlock bind, seccomp listen); UDP DENIED (seccomp); DNS DENIED — " +
+            "names from /etc/hosts only",
+        CellDns.Tcp =>
+            $"egress {Name}: TCP connect to port {string.Join(", ", Ports)} on ANY host — loopback, this host and the LAN alike (Landlock " +
+            "rules are port-only: a recorded gap); no listening (Landlock bind, seccomp listen); UDP DENIED (seccomp, hard); DNS OVER " +
+            "TCP — port 53 to ANY host (labelled), glibc's use-vc, the resolver's configuration readable",
+        _ =>
+            $"egress {Name}: TCP connect to port {string.Join(", ", Ports)} on ANY host (port-only, a recorded gap); no listening; UDP " +
+            "OPEN — ANY host and port, IPv4 and IPv6 (no Landlock UDP rule below ABI 10; labelled); DNS over UDP"
+    };
 }
 
 /// <summary>
