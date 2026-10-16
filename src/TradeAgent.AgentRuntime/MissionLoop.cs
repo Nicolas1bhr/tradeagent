@@ -2019,7 +2019,14 @@ public sealed class MissionLoop
         // every way out that does not launch it (admission refused, the lease taken, nothing left to answer).
         string? withheld = null;
         var gate = conversation as ILaunchGate;
-        if (gate?.Claim(out withheld) is { } claimRefused) return Barred(role, claimRefused, events);
+        if (gate?.Claim(out withheld) is { } claimRefused)
+        {
+            // THE OWNER'S WORDS GO BACK BEFORE THE REFUSAL IS SAID (fix pass 2; ORCHESTRATION § 2.5): they came off the
+            // conversation's list above for a turn that will not run, and a refusal never drops or settles them. Put back
+            // at the FRONT, so anything added meanwhile stays behind them and they reach the next turn in the order typed.
+            lock (_gate) _typedForARefusedTurn.InsertRange(0, typed);
+            return Barred(role, claimRefused, events);
+        }
         using var claimed = new ClaimHeld(gate);
 
         // THE HOLDOUT, ASKED AGAIN AT THE RENDER (U-reconcile-packet, review 1): a window declared while this turn was
