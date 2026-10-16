@@ -235,12 +235,14 @@ jobs:
           sudo systemd-run --wait --pipe --quiet -p User="$user" -p Delegate=yes -p WorkingDirectory="$GITHUB_WORKSPACE" \
             -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" \
             -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-            bash -c 'set -euo pipefail
+            bash -c 'set -uo pipefail
               svc="/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)"
-              mkdir "$svc/runner"
-              echo $$ > "$svc/runner/cgroup.procs"
-              echo "+pids +memory" > "$svc/cgroup.subtree_control"
-              echo "cell cgroup: service $svc owned by $(stat -c %U "$svc"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); tests in $(sed -n "s/^0:://p" /proc/self/cgroup)"
+              state() { echo "cell cgroup ($1): service $svc owned by $(stat -c %U "$svc"); type $(cat "$svc/cgroup.type"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); processes: $(tr "\n" " " < "$svc/cgroup.procs"); this shell $$ in $(sed -n "s/^0:://p" /proc/self/cgroup)"; }
+              state before
+              mkdir "$svc/runner" || { echo "::error::mkdir $svc/runner failed"; exit 1; }
+              echo $$ > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
+              echo "+pids +memory" > "$svc/cgroup.subtree_control" || { state "enable refused"; echo "::error::enabling +pids +memory below $svc failed"; exit 1; }
+              state after
               exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
                 --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"'
 
