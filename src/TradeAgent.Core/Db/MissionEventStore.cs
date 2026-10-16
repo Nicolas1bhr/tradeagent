@@ -444,10 +444,15 @@ public static class MissionEventIds
 
     /// <summary>
     /// ONE HEAD'S CEILING WAKE, keyed by the instant it is due: the same floor raised twice is one row, and a floor a turn moved
-    /// is a new one.
+    /// is a new one. <paramref name="again"/> is set only when a floor returns to an instant whose row is already closed — a
+    /// superseded floor keeps its record, and the returning one is a new row keyed by when it was raised again
+    /// (<see cref="MissionEventStore.MoveCeiling"/>).
     /// </summary>
-    public static string Ceiling(string position, DateTimeOffset due) =>
-        ForRole($"{MissionEventKind.Ceiling}:{due.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture)}", position);
+    public static string Ceiling(string position, DateTimeOffset due, DateTimeOffset? again = null) =>
+        ForRole($"{MissionEventKind.Ceiling}:{Instant(due)}{(again is { } a ? $"@{Instant(a)}" : "")}", position);
+
+    static string Instant(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture);
 
     /// <summary>Rounded to the minute: two ticks scheduled inside one minute are one review.</summary>
     public static string Review(DateTimeOffset at) =>
@@ -925,14 +930,42 @@ public sealed class MissionEventStore(Database db)
     /// that position is closed — consumed by no launch and <see cref="MissionEventDisposition.Superseded"/> by it — so a
     /// position holds at most one floor and its row still says what became of the old. The guard is the statement's: only an
     /// unconsumed <see cref="MissionEventKind.Ceiling"/> of exactly this position is ever closed.
+    ///
+    /// <para><b>A floor that RETURNS to an instant it once left</b> (D1, then D2, then D1 — fix pass 1): the pending floor due
+    /// then, under whatever id, is the one kept. With none pending, the instant's own id may already be a CLOSED row — the
+    /// superseded D1 — and raising it writes nothing; the floor is then raised under <see cref="MissionEventIds.Ceiling"/>'s
+    /// <c>again</c> id, so the old row keeps what became of it and the head keeps a floor. A floor that cannot be written under
+    /// either id throws, and the transaction closes nothing: the head is never left with no floor by this call.</para>
     /// </summary>
     public bool MoveCeiling(string position, DateTimeOffset at, DateTimeOffset dueAt) => db.Write(_ =>
     {
-        var id = MissionEventIds.Ceiling(position, dueAt);
-        var raised = Raise(new MissionEvent
+        string? id;
+        using (var f = db.Cmd("""
+            SELECT id FROM mission_event
+             WHERE kind=$ceiling AND role=$position AND consumed_at IS NULL AND due_at=$due
+             ORDER BY rowid LIMIT 1
+            """, ("$ceiling", MissionEventKind.Ceiling), ("$position", position), ("$due", Sql.T(dueAt))))
+            id = f.ExecuteScalar() as string;
+        var raised = false;
+        if (id is null)
         {
-            Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
-        });
+            id = MissionEventIds.Ceiling(position, dueAt);
+            raised = Raise(new MissionEvent
+            {
+                Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
+            });
+            if (!raised)
+            {
+                id = MissionEventIds.Ceiling(position, dueAt, again: at);
+                raised = Raise(new MissionEvent
+                {
+                    Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
+                });
+                if (!raised)
+                    throw new InvalidOperationException(
+                        $"The ceiling of {position} due {Sql.T(dueAt)} could not be written under a new id, so no floor was moved.");
+            }
+        }
         using var c = db.Cmd("""
             UPDATE mission_event SET consumed_at=$at, disposition=$superseded, disposition_detail=$by
              WHERE kind=$ceiling AND role=$position AND consumed_at IS NULL AND id <> $by
