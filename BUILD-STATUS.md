@@ -10746,3 +10746,36 @@ was empty"; ceiling from now ⇒ (c),(g); class ignored ⇒ (d); Hold split ⇒ 
 rebase (onto mint's fixed tip): 13 classes 3× Passed 195/195.
 **OWED:** `HeadCeilingHours` has no Safety-page control → O7 `U-org-surface` (the owner changes it without a file). **NOT VERIFIED:** no app run; the owner's surface showing a Blocked line (DB rows
 only); tests box NOT RUN (the machine does not answer).
+
+## U-cell-linux-d — a Linux cell's network is one named egress class: datagrams denied, names over TCP 53 by measurement, no cell listens or sends Fast Open, packages install into the workspace, and no cell is granted the owner's inbox; no rung (landed 2026-10-17, seat A)
+
+**Landed** in seat B's TRAIN B5 (second, after O3 `U-org-wakes`) on `main` at `7822d7fd` (code `16d66370` + the landing fixer's test wait, on main; builder code `4a61219a`). A protection unit — the cell's network and IPC
+rows of the § 9.3 benchmark (ORCHESTRATION § 2.8) and INBOX-001 / COUNCIL rule 7 (a cell never writes the inbox). **No rung.** Built by a0fd5a047793942bf
+(opus/high, dispatched 2026-10-16 20:12 from `bc26f660`, resumed after the 20:50 usage stop); landing fixer af5fe3661859256c3 (sonnet/high; review P2).
+**CI:** the train's landing run **38972962230** at `7822d7fd`: every job success incl. `linux-host`; ubuntu's step "Test the Linux cell rows": "Total tests: 30 Passed: 30". `train-check` PASS: this unit's names 2816 → 2835, removed 0; scan clean (two judged false positives in the diff — a test file name and cancellation reads — excluded by phrase at train-prep). Builder run **38968186292** at `4a61219a` (main `97b1e169`): every job success — ubuntu's Cell step "Total tests: 30 Passed: 30"
+(kernel 6.17.0-1022-azure, Landlock ABI 7), windows 1–5, linux-host, packages — EXCEPT macos-latest: Timing
+`SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` red on both attempts ("the operation deadline passed before the simulator
+answered"); the diff (Cell.cs, CellNative.cs, the Core csproj's InternalsVisibleTo, cell tests) cannot reach it; its THIRD sighting (ci-ledger :168, :206) →
+a unit for seat B (the orchestrator, 2026-10-16). Scan: clean or excluded by phrase.
+**What changed:** `CellEgress` — one class per cell from one table: `none`, `web`, `web-plain`, and a test-only explicit table (`ForTests`, internal); the
+effective ports enter the policy hash; policy form 2, form 1 refused naming both. Item 1's probe DECIDED on CI (38963476708): "datagrams DENIED (hard); DNS
+over TCP, port 53 to any host, labelled" (`CellEgress.Decided = Tcp`; glibc's use-vc, the resolver's configuration readable). Seccomp now also denies
+`listen()` and sendto/sendmsg/sendmmsg carrying MSG_FASTOPEN (EACCES). `CellPolicy.ToolEnvironment` puts a cell's TMPDIR and its pip and npm caches in the
+workspace. `Guarded` refuses the inbox, anything inside it and the workspace tree that holds it, by path and by descriptor; every cell process still enters
+the presence register (Q5's default IN — not flipped here).
+**Deviation — protection WIDENED** (measured, witness 38963476708, Landlock alone on ABI 7): a class-none cell's MSG_FASTOPEN send CONNECTED
+("fastopen-sent" beside "tcp-denied errno=13") and an unbound `listen()` got a port ("autobind-listen-open port=35299") — doors Landlock does not see; rows a, c
+assert them shut.
+**Evidence:** RED before (run 38948105394, base behaviour on a throwaway): (e) "glibc-fail rc=2 … node-fail EAI_AGAIN" for class web; (g) "npm-rc=1 … cache
+folder contains root-owned files"; (h) "Assert.Throws() Failure: No exception was thrown"; (c) "autobind-listen-open"; the unit inbox test "Not found: \"the
+owner's inbox\"". (f) GREEN at base (pip falls back to the working directory), declared, not red. WATCHED MUTANT (run 38966074389, single job): TCP connect
+unhandled with no port granted ⇒ row (a) red "expected the line 'tcp-denied errno=13'" with "tcp-connected"; restored. Release `--no-incremental` 0 warnings;
+CellPolicy/Seccomp/Launch/GrantTests 3× "Passed 23, Skipped 3"; CellLinuxTests Linux-only (skipped on the Mac).
+**Asserted gaps** (green now, red the day they close): (b) a granted port reaches 127.0.0.1, ::1 and the host's own address alike; (d) two cells meet at one
+outside listener. Inter-cell information flow is limited to the tested policy (ORCHESTRATION § 2.8).
+**Judged** (records/U-cell-linux-d-review-triage.md): Codex P2 (a late control message after `Received.Clear()`) REAL → the landing fixer's wait; Codex's two
+P1s are outside this diff (its prompt's range spanned main's commits after the rebase) — routed: the start-failure path before `Presence.Enter`
+(AgentSession.cs:828) to the orchestrator for seat B's lane; the orphaned Windows grandchild is U-cell-windows' owed card. FOUND: the cell stage leaves .NET
+runtime files in /tmp (diagnostic socket, debug pipes) — litter, not a channel (seccomp refuses AF_UNIX `socket()`; /tmp is not granted) → U-cell-linux-c's card.
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** aarch64; musl and Go resolvers; the owner's host, LAN and resolver; real package
+registries (loopback by design); nothing local on Linux (the Colima VM is off-limits).
