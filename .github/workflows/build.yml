@@ -219,6 +219,9 @@ jobs:
       # THE ROWS RUN AS THE HOST WILL RUN THE APP: a system service with User= and Delegate=yes (packaging/linux/tradeagent.service's
       # shape, U-cell-linux-b's cgroup), started with sudo because only root starts one — the app itself never uses sudo. Lingering
       # gives the account a user systemd manager, so the `systemd-run --user` escape row is a real attempt against a real manager.
+      # THE SERVICE'S CGROUP IS THE ROWS' DELEGATED ROOT (U-cell-linux-b): the shell moves itself into <service>/runner before it
+      # execs the tests, because a cgroup holding processes cannot hand controllers down, and enables +pids +memory below the
+      # service; each row then opens a root of its own, <service>/rows-<guid>, as the app opens its service's. Printed first.
       - name: Test the Linux cell rows
         if: matrix.os == 'ubuntu-latest'
         timeout-minutes: 15
@@ -232,8 +235,14 @@ jobs:
           sudo systemd-run --wait --pipe --quiet -p User="$user" -p Delegate=yes -p WorkingDirectory="$GITHUB_WORKSPACE" \
             -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" \
             -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-            dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
-              --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"
+            bash -c 'set -euo pipefail
+              svc="/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)"
+              mkdir "$svc/runner"
+              echo $$ > "$svc/runner/cgroup.procs"
+              echo "+pids +memory" > "$svc/cgroup.subtree_control"
+              echo "cell cgroup: service $svc owned by $(stat -c %U "$svc"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); tests in $(sed -n "s/^0:://p" /proc/self/cgroup)"
+              exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
+                --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"'
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
