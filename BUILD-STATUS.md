@@ -10724,3 +10724,25 @@ refusal about the launch …"); pass 2: "the card gave no reason for the owner's
 **First sightings (the landing fixer's one local full Unit run; NOT this unit's tests; 9 green runs after; CI green):** `A_host_built_without_a_ledger_still_runs_its_turns_through_the_explicit_value`,
 `The_owners_chat_turn_beside_a_research_turn_reserves_and_closes_its_own_row`, `The_turn_allowance_saves_in_one_press…` ("the probe's process never ran") — a second sighting makes a unit.
 **NOT VERIFIED:** no app run, no real model; tests box NOT RUN (the machine does not answer); `Release`/`Detach` have no test of their own (AppHost path); the clear-on-launch/Idle paths of the card reason.
+
+## U-org-wakes (O3) — the turn allocator: wakes addressed to positions, a refused position settled or stepped over by the KIND of refusal, priority by § 10 class, heads under a ceiling floor, spend read from the envelopes (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v3) in TRAIN B5 (first of two; then seat A's `U-cell-linux-d`) on `main` at tip `502b88e8`, after `U-mint-per-launch` (rebased onto `e4d3afec`, mint's commits skipped as cherry-picks); the train's CI run
+**38972962230** at `7822d7fd`: every job success incl. `linux-host`; `train-check` VERDICT PASS (O3's names 2797 → 2816, removed 0; scan clean). **No rung.**
+**What changed (build, 6 items):** 1. `RefusalKind { Position, HostOrLaunch }` + `TurnRefusal`; `AiAdmission.Kind` set by `Begin`; a refusal ABOUT THE POSITION settles its due wakes once (`SettleRefused`,
+recorded, never retried); one about the HOST OR LAUNCH steps over and keeps every wake; the owner's words are NEVER settled by either (ORCHESTRATION § 2.5). Deviations accepted: an ACTIVE non-legacy
+position with no activation gate is `HostOrLaunch` (a host fact; wakes kept); an unreadable chart throws and steps over. 2. `TurnMeter.TodayFor` and the card read the BINDING UNIT's envelope (least
+room, one cap read) — O4's owed item, the hard prerequisite of any third position's activation, CLOSED. 3. Positions in the loop (`OrgStore.Roster`, `IMissionHost.Positions/LastWokenAt`); a non-legacy
+head gets one `ceiling` wake at its last turn + `HeadCeilingHours` (default 24 h), a floor reset by every turn, never a heartbeat; members and the legacy pair keep "no open work, no look"; `KindsOf(role,
+kind)`. 4. `WakePriority`: every `MissionEventKind` mapped to a § 10 class, each line quoting § 10; an unclassed kind REFUSED at raise; order class → oldest due within the class → depth → id.
+5. A verdict or paper note on a version a non-legacy position authored also reaches its author, beside Research. 6. O2b's owed P2 CLOSED: a held output's record and its hold in one `db.Write`.
+**Fix pass 1 (review: 3 P2):** a ceiling moved back to a superseded due time keeps the head's floor (aa76d4ff); a head that becomes a member has its pending ceiling withdrawn, recorded (e61d89bd).
+Point 3 (MIN(due_at) across all due wakes) judged NOT a defect: § 2.5 says "oldest due first WITHIN a class", as built. Re-review: both closed, no regression.
+**Stacked on mint (seam, the orchestrator's ruling — ONE RefusalKind, ONE record type, the later lander maps):** mint's `AiAdmission.Launch` refusals carry `Kind = HostOrLaunch` (7e6abd26); mint's
+minted-id `BeginTurn` honours O3's gate refusal (077f7af1). RED "Expected HostOrLaunch / Actual null"; GUARD (wake half already green: mint's early return precedes the typing); MUTANT (Launch typed
+Position → a `SettleRefused` row on the review; mint's two R2 tests red). Seat A's `U-thinking-seats-a` (rung 39, not on main at this landing) ADOPTS this `RefusalKind` + `TurnRefusal` — no alias.
+**Evidence:** RED at base for (a)–(f) and MUTANTS each equal to the base: step-over restored ⇒ (a)(a3)(a4); share cap ⇒ (b) "turn 4: reading False, gate True"; legacy-only walk ⇒ (c) "collection
+was empty"; ceiling from now ⇒ (c),(g); class ignored ⇒ (d); Hold split ⇒ (f) `[]`; throw as Position ⇒ (a2); base notes ⇒ (e) ["research"]. Fix pass 1: (c4), (c5) RED + mutant each. After the last
+rebase (onto mint's fixed tip): 13 classes 3× Passed 195/195.
+**OWED:** `HeadCeilingHours` has no Safety-page control → O7 `U-org-surface` (the owner changes it without a file). **NOT VERIFIED:** no app run; the owner's surface showing a Blocked line (DB rows
+only); tests box NOT RUN (the machine does not answer).
