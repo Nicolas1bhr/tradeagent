@@ -13,6 +13,8 @@
 #   - the only network listener of the app's account is Xvnc, on the one address, offering VNC
 #     authentication only, and another account on the host cannot open the display;
 #   - systemctl stop ends it within 15 s with its quit recorded ("TradeAgent stopped");
+#   - after the seeded start and again after kill -9, the unit's cgroup is the account's (Delegate=yes), the app's
+#     main process is in its supervisor/ leaf, +pids +memory are enabled below it, and no attempt-* is left;
 #   - no built-in tape source got an answer from anywhere.
 # Evidence lands in $OUT: summary.txt, samples.csv (RSS and the tape's growth), the window's screenshot,
 # the units' journal, the activity log's tail and the tape's fetch counts.
@@ -63,6 +65,26 @@ wait_until() {
 }
 
 first_start_done() { [ -f "$db" ] && [ "$(activity_count 'TradeAgent started')" -ge 1 ]; }
+
+# THE DELEGATED CGROUP (U-cell-linux-b): the unit's cgroup is the account's, the app moved its main process into
+# supervisor/, +pids +memory are enabled below the unit, and no attempt-* is left. Asked of the kernel, not the app.
+unit_cgroup() { echo "/sys/fs/cgroup$(systemctl show -p ControlGroup --value tradeagent.service)"; }
+main_in_supervisor() { [ "$(sed -n 's/^0:://p' "/proc/$(main_pid)/cgroup" 2> /dev/null)" = "$(systemctl show -p ControlGroup --value tradeagent.service)/supervisor" ]; }
+assert_cgroup() {
+    local when="$1" dir owner control leftover
+    dir="$(unit_cgroup)"
+    [ -d "$dir" ] || fail "$when: the unit has no cgroup at $dir"
+    owner="$(stat -c %U "$dir")"
+    [ "$owner" = "$account" ] || fail "$when: the unit's cgroup $dir belongs to $owner, not $account: Delegate=yes did not take"
+    wait_until 30 main_in_supervisor \
+        || fail "$when: the app's main process $(main_pid) is in $(sed -n 's/^0:://p' "/proc/$(main_pid)/cgroup" 2> /dev/null), not $dir/supervisor"
+    control="$(cat "$dir/cgroup.subtree_control")"
+    case " $control " in *" pids "*) ;; *) fail "$when: pids is not enabled below $dir (subtree_control: $control)" ;; esac
+    case " $control " in *" memory "*) ;; *) fail "$when: memory is not enabled below $dir (subtree_control: $control)" ;; esac
+    leftover="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*' | tr '\n' ' ')"
+    [ -z "$leftover" ] || fail "$when: attempt cgroups are left under $dir: $leftover"
+    pass "$when: the unit's cgroup $dir is $account's, the app's main process $(main_pid) is in supervisor/, subtree_control '$control', no attempt-* left"
+}
 loopback_row_after() { [ "$(loopback_max_id)" -gt "$1" ]; }
 
 # ---- evidence, whatever happens ---------------------------------------------------------------------
@@ -129,6 +151,7 @@ t_start="$(now)"
 systemctl start tradeagent.service
 wait_until 120 loopback_row_after 0 || fail "no loopback tape row within 120 s of the seeded start"
 pass "a loopback tape row $(( $(now) - t_start )) s after the seeded start"
+assert_cgroup "after the seeded start"
 
 # The tape's size and the app's memory, every 15 s, to the end.
 (
@@ -250,6 +273,7 @@ done
 [ "$restart_ms" -le 30000 ] || fail "systemd's restart was confirmed only $restart_ms ms after kill -9 (the budget is 30000 ms)"
 [ "$recorded_after_ms" -le 30000 ] || fail "recorded again only $recorded_after_ms ms after kill -9"
 pass "kill -9 of $pid: systemd restarted it as $new_pid, which took the lock, started (${restart_ms} ms after the kill) and recorded again ${recorded_after_ms} ms after the kill"
+assert_cgroup "after kill -9 and the restart"
 
 # ---- 5. the window, as the owner would see it --------------------------------------------------------
 until [ $(( $(now) - t_start )) -ge $(( minutes * 60 - 90 )) ]; do sleep 5; done
