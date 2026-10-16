@@ -39,3 +39,11 @@ Test changes, no assertion weakened: in (a) the chat turn now ends while the loo
 Re-review: `fleet/tmp/B-scratch/u-mint-per-launch/fix1-review.md`. I did not act on it.
 tests box: NOT RUN — the machine does not answer
 Not done / not verified: `Release`/`Detach` have no test of their own (AppHost path; the seam host does not call them). No real model was used.
+
+## Fix report (pass 2)
+Code tip `e4ccc66b` (rebased on main `bd151496`, which carries U-ci-host-pins `d0a7f61c`; O4 not on main). Gate: Release `--no-incremental` → `0 Warning(s) 0 Error(s)`; 3× via suite.sh, all exit 0: MintPerLaunchTests `Passed: 10`, MissionLoopTests `Passed: 39`, CouncilLoopTests `Passed: 43`, BudgetReservationTests `Passed: 24`, each ×3. CI run 38944458457: every job `success`, linux-host included (`linux-host: success 20 min`). names.sh: `sets: base 2707 tip 2719`, `removed: 0`, `added: 12`. Scan: the pass-1 report line naming `InputTokens` was excluded by phrase, a judged false positive.
+Item (fix1-review's third point): DONE. A launch refusal (`AiAdmission.Launch`) keeps its words per position in `_launchRefused`, apart from `_waitingFor`. The card's `WaitingFor` for that position reads `its launch to be tried again (it was refused: …)`. It settles nothing: no `BlockOwnerMessages`, and wakes and words stay due. The kept words are cleared when that position launches, when nothing is due (`Idle`), or when the loop stops.
+RED (owner words due + `LaunchWakesTaken`, loop running): `the card gave no reason for the owner's undelivered words: waiting until 20:02`. The mutant (drop `_launchRefused[role] = …`) gave `…: Operations Director: waiting until 20:02` and was then reverted.
+Re-review: `fleet/tmp/B-scratch/u-mint-per-launch/fix2-review.md`. It says the gap is closed and flags a P2: the kept refusal outranks a later ledger refusal's reason on the card (`MissionLoop.cs:1704` vs `:3224`). I did not act on it.
+tests box: NOT RUN — the machine does not answer
+Not verified: the clear-on-launch and clear-on-`Idle` paths have no test of their own. No real model was used.
