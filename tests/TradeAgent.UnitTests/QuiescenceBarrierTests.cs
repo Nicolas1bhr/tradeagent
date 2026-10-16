@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TradeAgent.Security;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
@@ -173,5 +174,174 @@ public class QuiescenceBarrierTests
         Assert.Same(AgentPresence.Shared, ((AgentSession)runtime.OpenConversation()).Presence);
         Assert.True(new MaterialScanner(db).Attests == AgentPresence.Shared.NoneSince,
             "the scanner attests over a register that is not the one agent processes report to");
+    }
+
+    // ---- a launch the app could not hold (U-unjobbed-presence) ------------------------------------------------
+
+    /// <summary>
+    /// A conversation whose turn is <c>cmd.exe /c</c> the message, on its own presence register — the shape
+    /// <c>AgentTreeTests</c> drives the Windows faults with. Windows only: the faults below exist there alone.
+    /// </summary>
+    static AgentSession CmdSession(AgentPresence presence)
+    {
+        var dir = Path.Combine(TestEnv.Home, $"quiescence-unheld-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(dir);
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var manifest = new RuntimeManifest
+        {
+            Id = "probe", DisplayName = "Probe runtime", Executable = cmd,
+            ExecArgs = ["/c", "{prompt}"], ResumeArgs = ["/c", "{prompt}"], TaskArgs = ["/c", "{prompt}"]
+        };
+        return new AgentSession(manifest, () => cmd, () => dir, () => new Dictionary<string, string>(),
+            presence: presence, grants: new AgentGrants());
+    }
+
+    static MaterialOrigin OriginOf(Database db, string name) =>
+        new MaterialStore(db).Present().Single(m => m.Name == name).Origin;
+
+    /// <summary>
+    /// A LAUNCH WINDOWS WOULD NOT PUT IN ITS JOB WAS ALIVE, AND A PASS BESIDE IT MAY NOT ATTEST THE INBOX
+    /// (<c>U-unjobbed-presence</c>, seat A's <c>U-cell-linux-d</c> review). The launch starts, Windows refuses the assign,
+    /// and the app tears it down and refuses it (U-grant-tree RULING 2) — but the process ran from its start to that
+    /// teardown, and the presence register used to be entered only after the branch that refuses it. A file planted in
+    /// the drop folder while it ran, and a pass taken while it ran, recorded the file as the owner's. Planted and scanned
+    /// INSIDE the teardown, through its seam, so the window is the launch's own and not a guess at its timing.
+    ///
+    /// <para>Windows only: the assign is refused through <see cref="ProcessContainment.Faults"/>, and no other platform
+    /// has a launch that starts and is then found unheld. Everywhere else this returns at once and proves nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_launch_windows_would_not_hold_is_in_the_presence_register_while_it_ran()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var session = CmdSession(presence);
+        session.Admit = _ => AiAdmission.NoLedger;
+
+        // The window opens with nothing running, which is the state that can attest at all.
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+
+        var tornDown = false;
+        session.EndTree = contained =>
+        {
+            Drop(root, "signed-authority.pdf");
+            new MaterialScanner(db, root, presence.NoneSince).Scan();
+            contained.Dispose();
+            tornDown = true;
+            return contained.Ended;
+        };
+
+        ProcessContainment.Faults.Value = new WindowsFaults(RefuseAssign: true);
+        try { await session.SendAsync("ping -n 30 127.0.0.1 > nul"); }
+        finally { ProcessContainment.Faults.Value = null; }
+
+        Assert.True(tornDown, "the launch Windows would not hold was never torn down");
+        Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains("could not hold"));
+        Assert.Equal(MaterialOrigin.InboxUnattested, OriginOf(db, "signed-authority.pdf"));
+        Assert.Equal(0, presence.Live);
+    }
+
+    /// <summary>
+    /// AND WHAT ITS TEARDOWN COULD NOT END KEEPS THE INBOX UNATTESTED UNTIL IT EXITS (<c>U-unjobbed-presence</c>). The assign
+    /// and the tree kill are both refused, so the launch's processes outlive the turn as its survivors — carried to the
+    /// meter, which admits nothing while they run (U-grant-tree fix pass 1). They are agent processes still running beside
+    /// the drop folder, and every pass while they run records the inbox unattested; once they have exited and the meter's
+    /// listing shows none alive, the register closes and a pass after that attests again.
+    ///
+    /// <para>Windows only, for the reason above; the processes that keep running are real. Elsewhere it proves nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_survivor_the_teardown_could_not_end_keeps_the_inbox_unattested_until_it_exits()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var session = CmdSession(presence);
+        using var ledger = new Database(Path.Combine(TestEnv.Home, $"quiescence-meter-{Guid.NewGuid():n}.db"));
+        var meter = new TurnMeter(ledger, cap: () => 5m,
+            recordPath: Path.Combine(TestEnv.Home, $"quiescence-turns-{Guid.NewGuid():n}.jsonl"), live: new LiveAttempts());
+        using var metered = meter.Attach(session, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+
+        IReadOnlyList<ProcessEntry> left = [];
+        try
+        {
+            ProcessContainment.Faults.Value = new WindowsFaults(RefuseAssign: true, RefuseTreeKill: true);
+            try { await session.SendAsync("ping -n 120 127.0.0.1 > nul"); }
+            finally { ProcessContainment.Faults.Value = null; }
+
+            left = ended?.Survivors ?? [];
+            Assert.True(left.Count > 0, "the teardown the test refused was reported to have ended the launch");
+            Assert.True(left.Any(TreeTeardown.StillRunning), "no survivor of the launch was still running");
+
+            // THE TURN HAS ENDED AND ITS SURVIVORS RUN: a file that arrives now is not provably the owner's.
+            Drop(root, "while-it-runs.pdf");
+            new MaterialScanner(db, root, presence.NoneSince).Scan();
+            Assert.Equal(MaterialOrigin.InboxUnattested, OriginOf(db, "while-it-runs.pdf"));
+
+            // THE METER STILL HOLDS FOR THEM, AND THE PRESENCE STAYS WITH THEM.
+            Assert.False(meter.Begin("next", role: CouncilRoles.Operations, heldForTheLoop: false).Admitted,
+                "a launch was admitted while a survivor of the last launch still ran");
+            Drop(root, "still-running.pdf");
+            new MaterialScanner(db, root, presence.NoneSince).Scan();
+            Assert.Equal(MaterialOrigin.InboxUnattested, OriginOf(db, "still-running.pdf"));
+        }
+        finally
+        {
+            foreach (var p in left)
+                try { using var gone = Process.GetProcessById(p.Pid); gone.Kill(entireProcessTree: true); }
+                catch (Exception) { /* already gone */ }
+        }
+
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (left.Any(TreeTeardown.StillRunning) && DateTime.UtcNow < until) await Task.Delay(50);
+        var admitted = meter.Begin("after", role: CouncilRoles.Operations, heldForTheLoop: false);
+        Assert.True(admitted.Admitted, $"the hold did not lift once the survivors had exited: {admitted.Refusal}");
+        Assert.Equal(0, presence.Live);
+
+        // ONCE THEY HAVE EXITED, the next window with nothing in it attests again: held until they ended, not for ever.
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+        Drop(root, "after-they-ended.pdf");
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+        Assert.Equal(MaterialOrigin.Inbox, OriginOf(db, "after-they-ended.pdf"));
+    }
+
+    /// <summary>
+    /// GUARD: A LAUNCH THE APP HOLDS ENTERS THE REGISTER ONCE AND LEAVES IT ONCE (<c>U-unjobbed-presence</c>). One window while
+    /// the turn runs — not two, not none — closed when the turn returns, not left open with nothing to close it; the turn
+    /// carries no presence out; and a window after it, with nothing running, attests the owner's file. Every platform.
+    /// </summary>
+    [Fact]
+    public async Task A_held_launch_enters_the_presence_register_once_and_leaves_it_when_the_turn_returns()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var session = ChatSession(presence);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        var turn = session.SendAsync("what did the market do?");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (presence.Live == 0 && DateTimeOffset.UtcNow < deadline) await Task.Delay(5);
+        Assert.Equal(1, presence.Live);
+        await turn;
+
+        Assert.NotNull(ended);
+        Assert.True(ended!.Survivors is null or { Count: 0 }, "the held turn's teardown left a process running");
+        Assert.Equal(0, presence.Live);
+
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+        Drop(root, "broker-statement.pdf");
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+        Assert.Equal(MaterialOrigin.Inbox, OriginOf(db, "broker-statement.pdf"));
     }
 }
