@@ -10672,3 +10672,32 @@ where the old walk repaired it: fail-closed, and the price of "a refusal changes
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the Windows rows of (f), (g), (h), (h′) are green on CI but were never seen red on Windows;
 (d)'s Windows row skips on CI's admin token and is proved only on a standard account (the tests box, 2026-10-11, not re-run); (i) runs on Linux and macOS only;
 nothing local on Linux (the Colima VM is off-limits); no real codex or login.
+
+## U-puppet-runtime — scripted seats play whole organisational lives through the real kernel in CI at no AI cost (loop → admission → seam → AgentSession → containment → a real puppet process → the real `trade` with the launch's own grant → the pipe → the stores), and a puppet can never start outside a test host; no rung (landed 2026-10-16, seat A)
+
+**Landed** in train A2 (`land.sh` v3) with `U-seat-acl`, behind it, after a rebase over `U-grant-tree` (rebase fixer a69e856fd4c8f0ef6, tip `bb3a4749`, CI 38963835444 12/12) — builder's report tip `145c02f7`, code
+`0782939b` on `06471ec7`). A protection — a scripted seat holds a real launch grant (AUTH-001, ORDER-001, CRED-001): ORCHESTRATION § 7 (puppet seats), § 2.7 (the
+puppet adapter), § 2.14 (the proving ground's plumbing). **No rung.** Built by af8bbe5a725d830bb (one pass).
+**CI:** train A2 run **38967229637** at `f234d62c` (U-seat-acl → U-puppet-runtime on `main` `97b1e169`): all 12 jobs success — dedupe-gate, shard-plan, package, package-linux, test windows 1-5, ubuntu, macos, linux-host; the rebase fixer's run on the rebased tip; train A1's 38947696356 (SUCCESS on `63283056`) did not carry (U-grant-tree moved main by code). Before the train: 38943617130 at `0782939b`, every job success except linux-host (the fleet image break
+U-ci-host-pins fixed). Names 2707 → 2720, removed 0. Scan: the usage-count field names (`InputTokens`, `input_tokens`, …) judged false positives, excluded by phrase.
+**What changed:** `tests/TradeAgent.Puppet` — one C# program for Windows, macOS and Linux, in the solution and never packaged (its own Directory.Build.props): it
+reads its prompt from stdin, finds its script by position in its home and plays `trade <op…>`, `write`, `usage` (codex `--json` events, metered by AgentSession's
+own parser), `final`, `exit`, `hang`, `crash`, with `trade` found on PATH as a seat finds it. THE REFUSAL: `RuntimeManifest.Puppet` and `PuppetSeatClass` are
+`[JsonIgnore] internal`; the reserved id `puppet` (any casing) refuses `RuntimeCatalog.Read` in words; `PuppetSeats.TestHost` (set only by the UnitTests module
+initializer) is checked in `AgentSession.RunTurnAsync` before any grant is issued, again in `CheckSeat` (no row) and in `CliAgentRuntime.ResolveExecutable` (no
+probe). The declared class is recorded as `context.seat_class` at the attempt's end — an interim: `U-thinking-seats-a` (rung 39) records it at Begin. `PuppetLife`
+(UnitTests): a home, the deployed `trade`, a `GatewayPipeServer` over the composed host, scripts, `RunUntil`, store readers; a crash is a `VACUUM INTO` copy opened
+by a freshly composed host; a note says how later units add their lives.
+**Evidence:** RED before: (a) `runtimes.json naming 'puppet' was read: 5 runtimes` (at base); (b) `a puppet outside a test host was issued 1 launch grant(s)`
+(refusal short-circuited); (c), (d), (e) `the puppet seat was not built` — not a base run (they need item 2's API to compile). WATCHED MUTANT: AgentSession's
+`PuppetSeats.Refusal` check deleted ⇒ (b) `issued 1 launch grant(s)`; restored `Passed 4/4`. Release `--no-incremental` 0 warnings; Puppet/PuppetLives/ToolDeployer
+3× `Passed: 14`; neighbours `Passed: 69`. The lives' rows, identical on Windows 10.0.26100, Ubuntu 24.04.5 and macOS 26.6.2: (c) a legacy turn reaching the pipe
+with its own grant and metered usage — ai_attempt 2, mission_event 4, ledger_entry 2; (d) a restart mid-turn → LOST, reservation kept, the owner's words
+re-raised once — 2/4/0; (e) a position beyond the legacy pair stepped over while the legacy puppets turn — 3/6/0; plus the material pass waiting for a puppet's
+quiescence and the owner's words reaching a busy chair's next turn.
+**Judged** (fleet/records/U-puppet-runtime-review-triage.md): the review's P2 (a LOST attempt keeps no declared class) is owed to the seam, and part a's fix
+pass closes it at Begin. Accepted deviations: the fixture lives in UnitTests; the lives raise `self` wakes; ToolDeployerTests runs alone in grant-tree's
+`BinFolder` collection (DisableParallelization) — the rebase kept grant-tree's collection and dropped the builder's VendorOverrideFiles membership, so the lives
+cannot overlap its bin-folder clear (rebase fixer's run 38963835444, 12/12 on `bb3a4749`); guard (f) is behavioural (existing fake CLIs identical with TestHost on and off; none edited).
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** no real model or codex (by design); guard (f) has no base run; the lives run outside the
+Timing category with 3 minutes of patience (seconds on CI).
