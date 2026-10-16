@@ -130,6 +130,39 @@ public class MintPerLaunchTests : IDisposable
     }
 
     /// <summary>
+    /// (b) RED at base: <c>AiAttemptStore.Begin</c> ignored how many wakes <c>MarkConsumed</c> took. A launch asked for
+    /// two wakes and another launch had taken one of them: refused in words naming the launch and the count, its row
+    /// rolled back, nothing reserved, and its own untaken wake still due.
+    /// </summary>
+    [Fact]
+    public void A_launch_whose_wake_another_launch_consumed_is_refused_and_charges_nothing()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var at = DateTimeOffset.Now.AddSeconds(-1);
+        string taken = MissionEventIds.Fill("EXEC-1"), mine = MissionEventIds.Fill("EXEC-2");
+        events.Raise(taken, MissionEventKind.Fill, at);
+        events.Raise(mine, MissionEventKind.Fill, at);
+
+        var other = meter.Mint(CouncilRoles.Operations);
+        Assert.True(meter.Begin("## Situation", [taken], CouncilRoles.Operations, attemptId: other).Admitted);
+        var reservedBefore = meter.Today.Reserved;
+
+        var late = meter.Mint(CouncilRoles.Research);
+        var refused = meter.Begin("## Situation", [taken, mine], CouncilRoles.Research, attemptId: late);
+
+        Assert.False(refused.Admitted, "a launch whose wake another launch took was admitted");
+        Assert.Null(refused.Id);
+        Assert.Contains(late, refused.Refusal);
+        Assert.Contains("1 of the 2", refused.Refusal);
+
+        Assert.Null(new AiAttemptStore(_db).Get(late));
+        Assert.Equal(1, Rows());
+        Assert.Equal(reservedBefore, meter.Today.Reserved);
+        Assert.Equal(mine, Assert.Single(events.Due(DateTimeOffset.Now)).Id);
+    }
+
+    /// <summary>
     /// (c) THE GUARD: a wake answered by one launch buys no second paid turn, across a restart. The first loop launches
     /// once for its one wake; a new meter and a new loop over the same database find nothing due and start nothing.
     /// </summary>
