@@ -129,6 +129,23 @@ public static class CellNative
     [DllImport("libc", SetLastError = true)]
     static extern uint geteuid();
 
+    [DllImport("libc", SetLastError = true)]
+    static extern int fstatfs(int fd, nint buf);
+
+    /// <summary><c>CGROUP2_SUPER_MAGIC</c> and <c>CGROUP_SUPER_MAGIC</c> (<c>include/uapi/linux/magic.h</c>).</summary>
+    const long Cgroup2Magic = 0x63677270, Cgroup1Magic = 0x27e0eb;
+
+    /// <summary>
+    /// Whether <paramref name="fd"/> lies on a cgroup filesystem, by <c>fstatfs</c>'s <c>f_type</c> (the first word of
+    /// <c>struct statfs</c> on every 64-bit architecture) — wherever that filesystem is mounted. Null when the kernel would not say.
+    /// </summary>
+    static bool? OnCgroupFs(int fd)
+    {
+        var buf = Zeroed(256);
+        try { return fstatfs(fd, buf) != 0 ? null : Marshal.ReadInt64(buf, 0) is Cgroup2Magic or Cgroup1Magic; }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
     /// <summary>
     /// The owner and file type of what <paramref name="fd"/> holds (<paramref name="path"/> null), or of <paramref name="path"/>
     /// itself without following a final symlink — or null when the kernel would not say. <c>struct statx</c> is the same on every
@@ -304,6 +321,11 @@ public static class CellNative
             var why = target is null || !target.StartsWith('/') || target.EndsWith(" (deleted)", StringComparison.Ordinal)
                 ? "names no path the kernel can show"
                 : stat is null ? "could not be examined" : guarded.Refuses(target);
+            // ANY CGROUP FILESYSTEM, BY THE DESCRIPTOR ITSELF (U-cell-linux-b fix pass 1, R2): a second mount of the hierarchy, or one
+            // reached by a bind mount, has another path; the filesystem the descriptor is on does not lie.
+            if (why is null && OnCgroupFs(parent) is not false)
+                why = "lies on a cgroup filesystem (or the kernel would not say which filesystem it is on): a cell there could move itself " +
+                      "out of its attempt's cgroup or lift its own ceilings";
             if (why is null && readOnly && workspace is not null &&
                 (CellPolicy.Within(target!, workspace) || CellPolicy.Within(workspace, target!)))
                 why = $"lies inside, is, or contains the workspace's real {workspace}, where the cell may write, so it would not stay read-only";
