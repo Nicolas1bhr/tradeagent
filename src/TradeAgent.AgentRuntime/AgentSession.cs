@@ -812,7 +812,8 @@ public sealed class AgentSession(
         // app's life. Disposed when the turn returns, which pulls its expiry in to the grace — see
         // AgentGrants.
         // THE ATTEMPT THE LEDGER OPENED FOR THIS LAUNCH, stamped on the grant while it is still pending.
-        register.Attribute(launch, attempt?.Invoke() ?? "");
+        var attemptId = attempt?.Invoke() ?? "";
+        register.Attribute(launch, attemptId);
 
         // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
         // as a copy of this process's, so everything TradeAgent was started with used to reach the
@@ -832,6 +833,8 @@ public sealed class AgentSession(
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
         // exited has none left to walk — measured before this line existed, a detached grandchild
         // outlived CancelAsync on both platforms. See ProcessContainment.
+        // AND ON LINUX, IN THE ATTEMPT'S OWN CGROUP where the app holds a delegated one (U-cell-linux-b): every process the launch
+        // starts is born in it, whatever session it makes, and the grant below is served only from inside it.
         //
         // AND IN THE PRESENCE REGISTER BEFORE IT CAN RUN (U-unjobbed-presence): the material scanner attests an inbox sighting
         // only across a window no agent process was alive in, and a process is alive from the start below — not from the line
@@ -841,7 +844,7 @@ public sealed class AgentSession(
         // on every other — once.
         var alive = Presence.Enter();
         ContainedProcess contained;
-        try { contained = ProcessContainment.Start(psi, hold); }
+        try { contained = ProcessContainment.Start(psi, hold, attemptId: attemptId); }
         catch (Exception)
         {
             alive.Dispose();

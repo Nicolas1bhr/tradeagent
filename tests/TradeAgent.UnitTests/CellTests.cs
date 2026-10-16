@@ -547,11 +547,15 @@ public class CellLaunchTests
         File.WriteAllText(notExecutable, "#!/bin/sh\nexit 0\n");
         File.SetUnixFileMode(notExecutable, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
+        // The attempt's cgroup is a plain directory standing in for a delegated root (U-cell-linux-b), so the launch gets as far as
+        // the launcher's start — and the attempt it made for the launch is removed with the refusal.
+        var root = Path.Combine(Path.GetDirectoryName(marker)!, "cgroup-root");
         var refused = Assert.Throws<TradeAgentException>(() =>
-            TradeAgent.AgentRuntime.ProcessContainment.Start(psi, policy, [notExecutable], Linux(7)));
+            TradeAgent.AgentRuntime.ProcessContainment.Start(psi, policy, [notExecutable], Linux(7), AttemptCgroups.StandIn(root)));
         Assert.Equal(ErrorCode.CELL_UNAVAILABLE, refused.Code);
         Assert.Contains("would not start", refused.Message);
         Assert.Equal("/bin/sh", psi.FileName);        // the caller's command, put back as it was written
+        Assert.Empty(Directory.GetDirectories(root));
         await AssertNeverRan(marker);
 
         using var bare = TradeAgent.AgentRuntime.ProcessContainment.Start(psi, [notExecutable]);

@@ -694,6 +694,13 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.App, HealthState.READY, Versions.App);
 
             ToolDeployer.EnsureTradeCli();
+
+            // THE ATTEMPTS' CGROUP ROOT, BEFORE ANY LAUNCH (U-cell-linux-b): on Linux under tradeagent.service's Delegate=yes the app
+            // moves itself into supervisor/ and enables +pids +memory below its root; then what a crash left — attempts whose
+            // processes nothing was left to end, cell policy files nothing was left to remove — is killed and removed. Without a
+            // delegated root a cell is refused and other launches keep their session alone; said in the activity log below.
+            var cgroups = AttemptCgroups.ForThisProcess();
+            var swept = cgroups.Sweep();
             Health.Set(Components.TradeCli,
                 ToolDeployer.TradeCliReady(out var cliReason) ? HealthState.READY : HealthState.FAILED, cliReason);
 
@@ -831,6 +838,11 @@ public sealed class AppHost : IAsyncDisposable
             _background = Task.Run(() => BackgroundAsync(_loop.Token));
 
             Gateway.Log.Activity("TradeAgent started");
+            if (OperatingSystem.IsLinux())
+                Gateway.Log.Activity(cgroups.Held
+                    ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
+                    : $"The AI's launches are held by their session only, and no cell can start: {cgroups.Refusal}.",
+                    cgroups.Held && swept.Left.Count == 0 ? "info" : "warn");
 
             // ON START, BEFORE THE LOOP TAKES A TURN. A crash between a role's publication and the
             // copy into the recipient's folder leaves a task pointing at a file that is not there;

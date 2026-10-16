@@ -168,7 +168,8 @@ public sealed class ContainedProcess : IDisposable
     /// </summary>
     readonly int _session;
 
-    internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism, CellLaunch? cell = null)
+    internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism, CellLaunch? cell = null,
+        AttemptCgroup? cgroup = null)
     {
         Process = process;
         _job = job;
@@ -176,6 +177,7 @@ public sealed class ContainedProcess : IDisposable
         _held = held;
         Mechanism = mechanism;
         Cell = cell;
+        Cgroup = cgroup;
         _leader = process.Id;
         if (OperatingSystem.IsWindows())
         {
@@ -232,6 +234,12 @@ public sealed class ContainedProcess : IDisposable
     /// <summary>The cell it was started in — its policy's hash and the platform that confined it — or null for a launch without one.</summary>
     public CellLaunch? Cell { get; }
 
+    /// <summary>
+    /// THE ATTEMPT'S OWN CGROUP (<c>U-cell-linux-b</c>, Linux, where the app holds a delegated root), which the launcher joined before
+    /// it started anything — or null: not Linux, or no delegated root (the Mechanism line then says "session only").
+    /// </summary>
+    public AttemptCgroup? Cgroup { get; }
+
     /// <summary>What the last teardown found, or null before one has run.</summary>
     public TreeEnd? Ended { get; private set; }
 
@@ -264,7 +272,20 @@ public sealed class ContainedProcess : IDisposable
             }
 
             _over = true;
-            Ended = TreeTeardown.End(_leader, _leaderStart, _session);
+
+            // THE ATTEMPT'S CGROUP FIRST (U-cell-linux-b): cgroup.kill ends every process born in it — a setsid'd daemon that left
+            // the session and lost its parent included — and the wait is for the kernel's own "populated 0". THEN the session
+            // teardown, for anything that moved itself out of the cgroup and is still the turn's by session or parent links;
+            // THEN the cgroup is removed. What the kill could not end is named, never assumed gone.
+            var inCgroup = new List<ProcessEntry>();
+            if (Cgroup is { } attempt && !attempt.Kill(TreeTeardown.Bound))
+                foreach (var pid in attempt.Pids())
+                    if (ProcessTable.Read(pid) is { Zombie: false } left) inCgroup.Add(left);
+            var tree = TreeTeardown.End(_leader, _leaderStart, _session);
+            if (Cgroup is { } ended && inCgroup.Count == 0 && !ended.Populated()) ended.Remove();
+            Ended = inCgroup.Count == 0
+                ? tree
+                : new TreeEnd(false, [.. tree.Survivors, .. inCgroup.Where(c => tree.Survivors.All(s => s.Pid != c.Pid))], tree.Killed);
             // A CELL'S POLICY FILE GOES WITH ITS TREE (triage #6): the supervisor removes it when the cell exits, but a cancelled
             // turn's supervisor is itself killed here, so the app removes it too — only its own file, never throwing.
             if (Cell is not null) CellStage.Discard(Cell.PolicyFile);
@@ -538,7 +559,7 @@ public static class ProcessContainment
     /// so a job Windows will not make refuses while no row is written and no wake consumed; it used to be made only as the
     /// process started, after the ledger had reserved the turn and consumed its wakes for a launch that then never ran.
     /// macOS and Linux: the trade command that makes the session must be there (<see cref="CannotHold"/>). Handed to
-    /// <see cref="Start(ProcessStartInfo, PreparedHold, IReadOnlyList{string}?)"/>; disposed unused, it closes its job.
+    /// <see cref="Start(ProcessStartInfo, PreparedHold, IReadOnlyList{string}?, string?, AttemptCgroups?)"/>; disposed unused, it closes its job.
     /// </summary>
     public static PreparedHold Prepare(IReadOnlyList<string>? launcher = null)
     {
@@ -554,15 +575,16 @@ public static class ProcessContainment
 
     /// <summary>
     /// Starts a launch that carries a grant in what <see cref="Prepare"/> made for it: on Windows that job, taken here; on
-    /// macOS and Linux the launcher's session, as <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?, bool)"/> with
+    /// macOS and Linux the launcher's session, as <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?, bool, string?, AttemptCgroups?)"/> with
     /// <c>requireHeld</c> does.
     /// </summary>
-    public static ContainedProcess Start(ProcessStartInfo psi, PreparedHold hold, IReadOnlyList<string>? launcher = null)
+    public static ContainedProcess Start(ProcessStartInfo psi, PreparedHold hold, IReadOnlyList<string>? launcher = null,
+        string? attemptId = null, AttemptCgroups? cgroups = null)
     {
         ArgumentNullException.ThrowIfNull(psi);
         ArgumentNullException.ThrowIfNull(hold);
         if (OperatingSystem.IsWindows()) return StartWindows(psi, requireHeld: true, hold.Take());
-        return Start(psi, launcher, requireHeld: true);
+        return Start(psi, launcher, requireHeld: true, attemptId, cgroups);
     }
 
     /// <summary>The refusal sentence for a launch that cannot be held: what, why it matters, and the repair.</summary>
@@ -579,7 +601,13 @@ public static class ProcessContainment
     /// caller ends it at once, carries what its teardown could not end to the meter, and refuses. False is the Doctor's
     /// fixed probes, which start no agent and carry no grant, and keep the bare fallback.
     /// </param>
-    public static ContainedProcess Start(ProcessStartInfo psi, IReadOnlyList<string>? launcher = null, bool requireHeld = false)
+    /// <param name="attemptId">The ledger's attempt, which names the attempt's cgroup; a fresh name when there is none.</param>
+    /// <param name="cgroups">
+    /// The delegated root the attempt's cgroup is made in (<c>U-cell-linux-b</c>, Linux): <see cref="AttemptCgroups.Current"/> unless a
+    /// test opens its own. With none, the launch keeps the session alone and its Mechanism line says so.
+    /// </param>
+    public static ContainedProcess Start(ProcessStartInfo psi, IReadOnlyList<string>? launcher = null, bool requireHeld = false,
+        string? attemptId = null, AttemptCgroups? cgroups = null)
     {
         ArgumentNullException.ThrowIfNull(psi);
 
@@ -597,9 +625,14 @@ public static class ProcessContainment
                 "platform, is not installed");
         }
 
+        // THE ATTEMPT'S CGROUP, made before anything starts so the launcher can be born into it. A launch that carries a grant and
+        // whose cgroup cannot be made while the app holds a root is refused: refuse, never guess.
+        var cgroup = AttemptFor(cgroups, attemptId, out var sessionOnly,
+            requireHeld ? why => new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE, Unheld(why)) : null);
+
         var exe = psi.FileName;
         var args = psi.ArgumentList.ToArray();
-        Relaunch(psi, prefix);
+        Relaunch(psi, prefix, cgroup is null ? null : [ContainedLaunch.CgroupFlag, cgroup.Dir]);
 
         Process process;
         try
@@ -617,6 +650,7 @@ public static class ProcessContainment
             // — the containment broke the diagnostics that would have explained it. The honest
             // behaviour is the one this class already states: start it anyway and say it is not held.
             // EXCEPT FOR A LAUNCH THAT CARRIES A GRANT (RULING 2): that one is refused, and nothing is started.
+            cgroup?.Remove();
             if (requireHeld)
                 throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
                     Unheld($"TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message})"));
@@ -632,13 +666,42 @@ public static class ProcessContainment
         // launcher, so it is on its way to a session of its own, and the kill reads the group back
         // rather than trusting that.
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
-            "a session of its own; cancelling kills its process group");
+            cgroup is not null ? $"a session of its own and the attempt's own cgroup {Path.GetFileName(cgroup.Dir)} ({AttemptCgroups.Ceilings}); " +
+                                 "cancelling kills the cgroup, then the session"
+            : sessionOnly is not null ? $"a session of its own (session only — no delegated cgroup: {sessionOnly}); cancelling kills its process group"
+            : "a session of its own; cancelling kills its process group",
+            cgroup: cgroup);
+    }
+
+    /// <summary>
+    /// THE ATTEMPT'S CGROUP FOR ONE LAUNCH, or null with <paramref name="sessionOnly"/> saying why there is none (Linux without a
+    /// delegated root, or a cgroup that could not be made for a launch that may go on without one). Null and silent off Linux.
+    /// <paramref name="refuse"/>, when given, turns a cgroup that could not be made under a held root into the caller's refusal.
+    /// </summary>
+    static AttemptCgroup? AttemptFor(AttemptCgroups? cgroups, string? attemptId, out string? sessionOnly,
+        Func<string, TradeAgentException>? refuse)
+    {
+        sessionOnly = null;
+        if (!OperatingSystem.IsLinux()) return null;
+        var root = cgroups ?? AttemptCgroups.Current;
+        if (!root.Held)
+        {
+            sessionOnly = root.Refusal;
+            return null;
+        }
+        try { return root.Create(attemptId); }
+        catch (TradeAgentException ex)
+        {
+            if (refuse is not null) throw refuse(ex.Message);
+            sessionOnly = ex.Message;
+            return null;
+        }
     }
 
     /// <summary>
     /// STARTS <paramref name="psi"/> IN A CELL (<c>U-cell-linux-a</c> item 4), OR THROWS — and never starts it any other way.
     ///
-    /// <para>The opposite of <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?)"/>'s rule, on purpose: a caller that asked
+    /// <para>The opposite of <see cref="Start(ProcessStartInfo, IReadOnlyList{string}?, bool, string?, AttemptCgroups?)"/>'s rule, on purpose: a caller that asked
     /// for a cell is relying on what the cell denies, so a launch that cannot have one is refused with
     /// <see cref="ErrorCode.CELL_UNAVAILABLE"/> in words — a platform with a <see cref="CellPlatform.Refusal"/> (not Linux, no
     /// Landlock, an ABI below 6, a security-module list nobody can read), no launcher, or a launcher that will not start — and
@@ -648,8 +711,13 @@ public static class ProcessContainment
     /// only that file's path, and the cell's environment is the policy's alone. <paramref name="platform"/> is a test seam:
     /// production passes nothing and the machine is read.</para>
     /// </summary>
+    /// <param name="cgroups">
+    /// The delegated root the cell's attempt cgroup is made in (<c>U-cell-linux-b</c>): <see cref="AttemptCgroups.Current"/> unless a test
+    /// opens its own. A cell is never started without one: no delegated root, or one missing its controllers, is
+    /// <see cref="ErrorCode.CELL_UNAVAILABLE"/> naming <c>Delegate=yes</c>.
+    /// </param>
     public static ContainedProcess Start(ProcessStartInfo psi, CellPolicy cell, IReadOnlyList<string>? launcher = null,
-        CellPlatform? platform = null)
+        CellPlatform? platform = null, AttemptCgroups? cgroups = null, string? attemptId = null)
     {
         ArgumentNullException.ThrowIfNull(psi);
         ArgumentNullException.ThrowIfNull(cell);
@@ -663,10 +731,25 @@ public static class ProcessContainment
                 $"TradeAgent's own trade command, which is what starts a cell, is not installed at " +
                 $"{Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)}; {psi.FileName} was not started");
 
+        // NO CELL WITHOUT THE ATTEMPT'S CGROUP (U-cell-linux-b): a cell's descendants are held by it whatever session they make, and
+        // a cell started without one would be weaker than its assurance profile says.
+        var root = cgroups ?? AttemptCgroups.Current;
+        if (!root.Held)
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"A cell runs only inside the cgroup TradeAgent's service delegates to it (Delegate=yes), and this computer gives it none: " +
+                $"{root.Refusal}. {psi.FileName} was not started, in a cell or outside one");
+        AttemptCgroup attempt;
+        try { attempt = root.Create(attemptId); }
+        catch (TradeAgentException ex)
+        {
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"{ex.Message}; a cell runs only inside its attempt's cgroup (Delegate=yes), so {psi.FileName} was not started", ex);
+        }
+
         var policyFile = cell.Write();
         var exe = psi.FileName;
         var args = psi.ArgumentList.ToArray();
-        Relaunch(psi, prefix, [ContainedLaunch.CellFlag, policyFile]);
+        Relaunch(psi, prefix, [ContainedLaunch.CgroupFlag, attempt.Dir, ContainedLaunch.CellFlag, policyFile]);
         // The stage finds the app's cell folder from the app's own home, whatever the caller's environment says.
         psi.Environment["TRADEAGENT_HOME"] = Paths.Home;
 
@@ -680,14 +763,16 @@ public static class ProcessContainment
         {
             Command(psi, exe, args);
             CellStage.Discard(policyFile);
+            attempt.Remove();
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 $"TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message}); {exe} was not started, " +
                 "in a cell or outside one", ex);
         }
 
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
-            $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) in a session of its own; cancelling kills its process group",
-            new CellLaunch(cell.Hash, on, policyFile));
+            $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) in the attempt's own cgroup {Path.GetFileName(attempt.Dir)} " +
+            $"({AttemptCgroups.Ceilings}) and a session of its own; cancelling kills the cgroup, then the session",
+            new CellLaunch(cell.Hash, on, policyFile), attempt);
     }
 
     /// <summary>
