@@ -283,6 +283,56 @@ public class MintPerLaunchTests : IDisposable
     }
 
     /// <summary>
+    /// (O3 SEAM) A LAUNCH REFUSAL IS O3'S <see cref="RefusalKind.HostOrLaunch"/> — one kind, one record (the orchestrator's
+    /// ruling, 2026-10-16). The owner's words and a review look of the chair are due; another launch takes the loop's fill
+    /// between its look and its launch, so the admission is refused for its wakes. It is typed HostOrLaunch, and the loop
+    /// steps over it: the review stays due and unconsumed with no <see cref="MissionEventDisposition.Refused"/> row, and the
+    /// owner's words stay owed, neither Blocked nor settled (<c>docs/ORCHESTRATION.md</c> § 2.5).
+    /// </summary>
+    [Fact]
+    public async Task A_launch_refusal_is_typed_host_or_launch_and_settles_no_review_and_none_of_the_owners_words()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var at = DateTimeOffset.Now.AddSeconds(-1);
+        var fill = MissionEventIds.Fill("EXEC-1");
+        var review = MissionEventIds.Review(at);
+        events.Raise("owner:1", MissionEventKind.Owner, at);
+        events.Raise(review, MissionEventKind.Review, at, role: CouncilRoles.Default);
+        events.Raise(fill, MissionEventKind.Fill, at);
+
+        AiAdmission? other = null;
+        var host = new SeamHost(meter)
+        {
+            Events = events,
+            BeforeLaunch = () => other = meter.Begin("## Situation", [fill], CouncilRoles.Research,
+                attemptId: meter.Mint(CouncilRoles.Research))
+        };
+        var options = new MissionOptions();
+        var wait = await new MissionLoop(host, options).TurnAsync();
+
+        Assert.True(other!.Admitted, other.Refusal);
+        Assert.Empty(host.Launched);
+        var refused = Assert.Single(host.Refused);
+        Assert.Equal(AiAdmission.Launch, refused.Ceiling);
+        Assert.Contains("another launch had already taken", refused.Refusal);
+
+        var look = events.Get(review)!;
+        Assert.Null(look.ConsumedBy);
+        Assert.True(look.Disposition is null, $"the review was settled '{look.Disposition}' on a launch refusal: {look.DispositionDetail}");
+        Assert.DoesNotContain(events.OfKind(MissionEventKind.Review), e => e.Disposition == MissionEventDisposition.Refused);
+
+        var owed = events.Get("owner:1")!;
+        Assert.Null(owed.ConsumedBy);
+        Assert.True(owed.Disposition is null,
+            $"the owner's words were settled '{owed.Disposition}' on a launch refusal: {owed.DispositionDetail}");
+        Assert.Contains(events.Due(DateTimeOffset.Now), e => e.Id == "owner:1");
+        Assert.Contains(events.Due(DateTimeOffset.Now), e => e.Id == review);
+        Assert.Equal(options.BusyRetry, wait);
+        Assert.Equal(RefusalKind.HostOrLaunch, refused.Kind);
+    }
+
+    /// <summary>
     /// AND THE CARD SAYS WHY THE WORDS ARE STILL OWED. The refusal settles nothing, so its words are the only place the
     /// owner reads why his message is undelivered: while the loop waits after it, the status and the card's sentence name
     /// the refusal's own words, and the owner's words stay due with no disposition (<c>docs/ORCHESTRATION.md</c> § 2.5:
@@ -362,6 +412,7 @@ public class MintPerLaunchTests : IDisposable
         public Recording Conv { get; } = new();
         public List<string> Minted { get; } = [];
         public List<AiAdmission> Launched { get; } = [];
+        public List<AiAdmission> Refused { get; } = [];
         public Action? WhileComposing { get; init; }
         public Action? BeforeLaunch { get; init; }
         public MissionEventStore? Events { get; init; }
@@ -391,6 +442,7 @@ public class MintPerLaunchTests : IDisposable
             BeforeLaunch?.Invoke();
             var admission = meter.Begin(prompt, wakes, role, attemptId: attemptId);
             if (admission.Admitted) Launched.Add(admission);
+            else Refused.Add(admission);
             return admission;
         }
     }
