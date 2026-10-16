@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
@@ -104,7 +106,180 @@ public class BrokerDoorTests
         Assert.True(again.Status == HttpStatusCode.Unauthorized, $"a fresh request with an ended grant was served: {(int)again.Status} {again.Body}");
     }
 
-    static BrokerDoor Door(AgentGrants grants) => new() { Grants = grants };
+    /// <summary>
+    /// (b) A TOKEN REPLAYED FROM OUTSIDE ITS ATTEMPT'S CONTAINER IS REFUSED. A real launch, held as the product holds one — a
+    /// Windows job, or the session the launcher made — with its grant bound to that container; then THIS process, which is not in
+    /// it, presents the live token. The image rule is pointed at this process's own program, so only membership can refuse.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_replayed_to_the_door_from_outside_its_attempt_container_is_refused()
+    {
+        var grants = new AgentGrants();
+        ContainedProcess? contained = null;
+        try
+        {
+            contained = ProcessContainment.Start(Sleeper());
+            Assert.NotNull(contained.Container);
+            await HeldWithin(contained, TimeSpan.FromSeconds(30));
+            var research = grants.Issue(CouncilRoles.Research, "attempt-replayed-door");
+            Assert.True(grants.Bind(research.Token, contained.Container!));
+
+            await using var door = Door(grants);
+            door.Start();
+            using var http = Client(research.Token);
+            var reply = await Post(http, door.Url!, Rpc(1, "initialize"));
+
+            Assert.True(reply.Status == HttpStatusCode.Forbidden,
+                $"a process outside the attempt's container presented its live grant at the door and was served: {(int)reply.Status} {reply.Body}");
+            Assert.Contains("attempt-replayed-door", reply.Body);
+            // THE KERNEL NAMED THIS PROCESS, and the container said it is outside: the refusal is about membership, not a lookup.
+            Assert.Contains($"process {Environment.ProcessId}", reply.Body);
+        }
+        finally { contained?.Dispose(); }
+    }
+
+    /// <summary>
+    /// (c) THE PEER MUST BE THE PINNED RUNTIME. Inside the container, presenting a live grant — and the program the kernel names
+    /// is not the one the rule pins: another program's path, the right path with another digest, or no pin recorded at all.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_whose_image_is_not_the_pinned_codex_is_refused()
+    {
+        var self = PeerImage.PathOf(Environment.ProcessId)!;
+        var other = OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh";
+        foreach (var (what, rule) in new (string, PeerRule?)[]
+                 {
+                     ("another program", new PeerRule(other, PeerImage.HashOf(other), null, null, BrokerDoor.RuntimeWord)),
+                     ("another digest", new PeerRule(self, new string('0', 64), null, null, BrokerDoor.RuntimeWord)),
+                     ("no pin at all", null)
+                 })
+        {
+            var grants = new AgentGrants();
+            var research = grants.IssueHere(CouncilRoles.Research, "attempt-image");
+            await using var door = new BrokerDoor { Grants = grants, Image = () => rule };
+            door.Start();
+            using var http = Client(research.Token);
+            var reply = await Post(http, door.Url!, Rpc(1, "initialize"));
+            Assert.True(reply.Status == HttpStatusCode.Forbidden,
+                $"a peer that is not the pinned runtime ({what}) was served: {(int)reply.Status} {reply.Body}");
+            Assert.Contains(BrokerDoor.RuntimeWord, reply.Body);
+        }
+    }
+
+    /// <summary>
+    /// (d) A PEER LOOKUP THAT FAILS REFUSES. The kernel would not name the process holding the connection; separately, the
+    /// container could not say whether the named process is inside; separately, the named process started after the accept.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_lookup_that_fails_refuses()
+    {
+        var cases = new (string What, Func<AgentGrants, AgentGrant> Grant, BrokerDoor Door, string Words)[]
+        {
+            ("an unnamed peer", g => g.IssueHere(CouncilRoles.Research, "attempt-unnamed"),
+                new BrokerDoor { Image = SelfImage, PeerOf = (_, _) => null }, "would not say which process"),
+            ("a container that could not say", g => Bound(g, new Answers(MembershipVerdict.Unknown("the job could not be asked"))),
+                new BrokerDoor { Image = SelfImage }, "the job could not be asked"),
+            ("a peer started after the accept", g => g.IssueHere(CouncilRoles.Research, "attempt-late"),
+                new BrokerDoor
+                {
+                    Image = SelfImage,
+                    PeerOf = (l, r) => TcpPeer.OwnerOf(l, r) is { } real ? real with { Start = ProcessClock.Now() + 1_000_000_000UL } : null
+                }, "started after")
+        };
+        foreach (var (what, issue, template, words) in cases)
+        {
+            var grants = new AgentGrants();
+            var grant = issue(grants);
+            await using var door = new BrokerDoor { Grants = grants, Image = template.Image, PeerOf = template.PeerOf };
+            door.Start();
+            using var http = Client(grant.Token);
+            var reply = await Post(http, door.Url!, Rpc(1, "initialize"));
+            Assert.True(reply.Status == HttpStatusCode.Forbidden, $"{what} was served: {(int)reply.Status} {reply.Body}");
+            Assert.Contains(words, reply.Body);
+        }
+    }
+
+    /// <summary>GUARD: the kernel names THIS process as the peer of a loopback connection it made, on every runner.</summary>
+    [Fact]
+    public async Task The_kernel_names_the_process_on_the_other_end_of_a_door_connection()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+        using var accepted = await listener.AcceptTcpClientAsync();
+
+        var peer = TcpPeer.OwnerOf((IPEndPoint)accepted.Client.LocalEndPoint!, (IPEndPoint)accepted.Client.RemoteEndPoint!);
+        Assert.True(peer is not null, "the kernel would not name the process on the other end of a loopback connection");
+        Assert.Equal(Environment.ProcessId, peer!.Pid);
+        Assert.True(peer.Start > 0 && peer.Start <= ProcessClock.Now(), $"the peer's start {peer.Start} is not a start before now");
+    }
+
+    /// <summary>
+    /// GUARD: THE PRODUCT'S DOOR PINS THE BUILT-IN CODEX — its digest from code, the workspace forbidden, the managed-runtime
+    /// folder (where the pin is installed) not — and a door with no pin refuses (see (c)).
+    /// </summary>
+    [Fact]
+    public void The_product_door_pins_the_built_in_codex()
+    {
+        var pin = RuntimeCatalog.BuiltIn().Single(m => m.Id == BrokerDoor.CodexId).Install.ExecutableSha256;
+        var rule = BrokerDoor.PinnedCodex();
+        if (pin is not { Length: > 0 })
+        {
+            Assert.Null(rule);
+            return;
+        }
+        Assert.NotNull(rule);
+        Assert.Equal(pin, rule!.ExpectedHash);
+        Assert.Equal(Paths.Workspace, rule.WorkspaceDir);
+        Assert.Null(rule.ToolsDir);
+        Assert.Equal(BrokerDoor.RuntimeWord, rule.Program);
+    }
+
+    static BrokerDoor Door(AgentGrants grants) => new() { Grants = grants, Image = SelfImage };
+
+    /// <summary>THIS test process's own program as the pinned runtime, so a test's own connection passes the image rule.</summary>
+    static PeerRule SelfImage()
+    {
+        var self = PeerImage.PathOf(Environment.ProcessId);
+        return new PeerRule(self, PeerImage.HashOf(self), null, null, BrokerDoor.RuntimeWord);
+    }
+
+    static AgentGrant Bound(AgentGrants grants, AttemptContainer container)
+    {
+        var grant = grants.Issue(CouncilRoles.Research, "attempt-unsure");
+        Assert.True(grants.Bind(grant.Token, container));
+        return grant;
+    }
+
+    /// <summary>A container that gives one answer.</summary>
+    sealed class Answers(MembershipVerdict verdict) : AttemptContainer
+    {
+        public override string Name => "a container that answers one way";
+        public override MembershipVerdict Contains(PeerFacts peer) => verdict;
+    }
+
+    /// <summary>A process that waits a minute and does nothing else: the attempt whose container (b) replays from outside.</summary>
+    static ProcessStartInfo Sleeper()
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", "ping -n 60 127.0.0.1 > nul" } }
+            : new ProcessStartInfo("/bin/sleep") { ArgumentList = { "60" } };
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = psi.RedirectStandardError = true;
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
+            psi.Environment["DOTNET_ROOT"] = Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
+        return psi;
+    }
+
+    /// <summary>On macOS and Linux the session is the launcher's to make; waits until it is proved (Windows: held at start).</summary>
+    static async Task HeldWithin(ContainedProcess contained, TimeSpan bound)
+    {
+        var until = DateTime.UtcNow + bound;
+        while (!contained.Held && DateTime.UtcNow < until) await Task.Delay(50);
+        Assert.True(contained.Held, $"the launch was not held within {bound.TotalSeconds:0} s: {contained.Mechanism}");
+    }
 
     // ---- the client --------------------------------------------------------------------------------------------------------
 

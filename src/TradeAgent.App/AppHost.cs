@@ -259,6 +259,7 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     BrokerDoor ComposeTheDoor() => new()
     {
+        Image = BrokerDoor.PinnedCodex,
         Log = line =>
         {
             try { Gateway.Log.Engineering("BrokerDoor", "decision", "info", metadataJson: Json.Write(new { line })); }

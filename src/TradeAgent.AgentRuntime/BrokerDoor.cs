@@ -55,6 +55,44 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// <summary>The launch grants the door recognises: the process-wide register, as the pipe's.</summary>
     public AgentGrants Grants { get; init; } = AgentGrants.Shared;
 
+    /// <summary>What the door's pinned program is called in a refusal: the peer-image rule's <see cref="PeerRule.Program"/>.</summary>
+    public const string RuntimeWord = "pinned AI runtime";
+
+    /// <summary>
+    /// WHAT THE PROCESS ON THE OTHER END MUST BE: the pinned codex program, by path and digest (<see cref="PeerRule"/>, the pipe's
+    /// own rule with the runtime's pin), read per connection. Null — no pin this build recognises — refuses every grant: the
+    /// door's only legitimate client is that one program, with no shell and no children, so the image conjunct is exact.
+    /// </summary>
+    public Func<PeerRule?> Image { get; init; } = () => null;
+
+    /// <summary>
+    /// THE PRODUCT'S IMAGE RULE: the codex program this build pins, where this computer has it. The pin is the BUILT-IN
+    /// manifest's — code, never <c>runtimes.json</c>, which replaces a manifest whole and which any same-user process can rewrite
+    /// (<c>docs/ORCHESTRATION.md</c> § 2.7, "Seat classes live in code"). The managed-runtime folder is NOT forbidden here, as it
+    /// is to the pipe's peer: it is where the pinned codex is installed. The agent's workspace is. Null when this build pins no
+    /// codex for this computer, which refuses every grant at the door.
+    /// </summary>
+    public static PeerRule? PinnedCodex()
+    {
+        var codex = RuntimeCatalog.BuiltIn().FirstOrDefault(m => m.Id == CodexId);
+        if (codex?.Install.ExecutableSha256 is not { Length: > 0 } pin) return null;
+        return new PeerRule(new CliAgentRuntime(codex).ResolveExecutable(), pin.Trim(), ToolsDir: null, WorkspaceDir: Paths.Workspace,
+            RuntimeWord);
+    }
+
+    /// <summary>The built-in manifest whose program the door's peer must be.</summary>
+    public const string CodexId = "codex";
+
+    /// <summary>
+    /// WHICH PROCESS HOLDS THE OTHER END OF A CONNECTION THE DOOR ACCEPTED, from its two endpoints — the door's, the client's —
+    /// asked once per accepted connection. Overridable so a test can hand the check an answer the kernel will not give on
+    /// demand; the product never sets it.
+    /// </summary>
+    public Func<IPEndPoint, IPEndPoint, PeerFacts?> PeerOf { get; init; } = TcpPeer.OwnerOf;
+
+    /// <summary>The program a pid runs, as the kernel names it. Overridable for the same reason; the product never sets it.</summary>
+    public Func<int, string?> ImageOf { get; init; } = PeerImage.PathOf;
+
     /// <summary>
     /// The door's own record: a line per decision, never a token. The app writes it to its engineering log; a test reads it.
     /// </summary>
@@ -97,6 +135,16 @@ public sealed class BrokerDoor : IAsyncDisposable
         _live[connection] = 0;
         try
         {
+            // WHO IS ON THE OTHER END, ASKED ONCE, AT THE ACCEPT: the process the kernel names for this connection, when it
+            // started and what program it runs. Nothing here is a verdict yet — the grant it presents names the container it
+            // is checked against — and nothing that fails here is a pass: a null is refused when a grant is presented.
+            connection.Accepted = Core.ProcessClock.Now();
+            try
+            {
+                connection.Peer = PeerOf((IPEndPoint)client.Client.LocalEndPoint!, (IPEndPoint)client.Client.RemoteEndPoint!);
+                connection.PeerProgram = connection.Peer is { } named ? ImageOf(named.Pid) : null;
+            }
+            catch (Exception) { connection.Peer = null; }
             client.NoDelay = true;
             var stream = client.GetStream();
             var reader = new HttpReader(stream);
@@ -232,15 +280,53 @@ public sealed class BrokerDoor : IAsyncDisposable
             _ => verdict.Reason
         };
 
-        if (why is null)
+        if (why is not null)
         {
-            connection.Grant = verdict.Grant;
-            connection.Token ??= verdict.Grant!.Token;
-            return null;
+            Log?.Invoke($"door: refused a request: {why}");
+            return HttpAnswer.Text(401, why, close: true) with { Headers = [("WWW-Authenticate", "Bearer")] };
         }
 
-        Log?.Invoke($"door: refused a request: {why}");
-        return HttpAnswer.Text(401, why, close: true) with { Headers = [("WWW-Authenticate", "Bearer")] };
+        var grant = verdict.Grant!;
+        if (connection.Token is null)
+        {
+            // THE FIRST GRANT THIS CONNECTION PRESENTS IS BOUND TO IT HERE, OR THE CONNECTION IS REFUSED. Once: the process on
+            // the other end of an accepted connection cannot change, so the answer cannot either.
+            if (Binding(connection, grant) is { } outside)
+            {
+                var refusal = $"this connection presented the launch grant of the {CouncilRoles.Title(grant.Role)}'s attempt " +
+                              $"{grant.AttemptId}, and {outside} — it is served only to the {RuntimeWord} inside " +
+                              $"{grant.Container?.Name ?? "the container TradeAgent made for that attempt"}";
+                Log?.Invoke($"door: refused a connection: {refusal}");
+                return HttpAnswer.Text(403, refusal, close: true);
+            }
+            connection.Token = grant.Token;
+            Log?.Invoke($"door: bound a connection from process {connection.Peer!.Pid} to the {CouncilRoles.Title(grant.Role)}'s " +
+                        $"attempt {grant.AttemptId}");
+        }
+        connection.Grant = grant;
+        return null;
+    }
+
+    /// <summary>
+    /// NULL WHEN THE PEER IS THE PINNED RUNTIME INSIDE THE GRANT'S CONTAINER, and the reason otherwise — the pipe's three
+    /// conjuncts over a TCP peer (<c>docs/ORCHESTRATION.md</c> § 2.3): the kernel named the process and it started no later than
+    /// the accept (a pid handed on since is not the process that connected); the program it runs is the pin (<see cref="Image"/>);
+    /// and <see cref="AttemptContainer.Contains"/> answers Member — Outside and Unknown are both refusals. The membership is the
+    /// container's own answer, as landed; the door adds nothing beside the image rule.
+    /// </summary>
+    string? Binding(Connection connection, AgentGrant grant)
+    {
+        if (grant.Container is not { } container) return "it is not yet bound to a container";
+        if (connection.Peer is not { } peer) return "the operating system would not say which process holds this connection";
+        if (connection.Accepted == 0 || peer.Start > connection.Accepted)
+            return $"process {peer.Pid}, which the kernel names as the peer, started after the connection was accepted, " +
+                   "so it is not the process that connected";
+        if (Image() is not { } rule)
+            return $"TradeAgent has no {RuntimeWord} recorded to check process {peer.Pid} against";
+        if (PeerImage.Verdict(connection.PeerProgram, PeerImage.HashOf(connection.PeerProgram), rule) is { } notThePin)
+            return notThePin;
+        var verdict = container.Contains(peer);
+        return verdict.Is == Membership.Member ? null : verdict.Why;
     }
 
     /// <summary>The token of an <c>Authorization: Bearer</c> header, or null for any other header or none.</summary>
@@ -301,6 +387,15 @@ public sealed class BrokerDoor : IAsyncDisposable
         bool _inCall, _ended;
 
         public TcpClient Client { get; } = client;
+
+        /// <summary>When the door accepted the connection, in the kernel's own unit (<see cref="Core.ProcessClock"/>).</summary>
+        public ulong Accepted { get; set; }
+
+        /// <summary>The process the kernel named as the other end at the accept, or null when it would not say.</summary>
+        public PeerFacts? Peer { get; set; }
+
+        /// <summary>The program that process runs, as the kernel names it, or null.</summary>
+        public string? PeerProgram { get; set; }
 
         /// <summary>The token this connection proved on its first served request; never replaced.</summary>
         public string? Token { get; set; }

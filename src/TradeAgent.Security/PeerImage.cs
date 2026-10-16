@@ -11,7 +11,12 @@ namespace TradeAgent.Security;
 /// <param name="ExpectedHash">The SHA-256 of the CLI this app deployed, lowercase hex.</param>
 /// <param name="ToolsDir">The managed AI-runtime folder. Nothing under it may ever be the peer.</param>
 /// <param name="WorkspaceDir">The agent's own tree. Nothing under it may ever be the peer either.</param>
-public sealed record PeerRule(string? ExpectedPath, string? ExpectedHash, string? ToolsDir, string? WorkspaceDir);
+/// <param name="Program">
+/// What the expected program is, in the words a refusal names it by: the pipe's rule is TradeAgent's own trade command, the
+/// broker door's (<c>U-thinking-seats-b</c>) the pinned AI runtime.
+/// </param>
+public sealed record PeerRule(string? ExpectedPath, string? ExpectedHash, string? ToolsDir, string? WorkspaceDir,
+    string Program = "trade command");
 
 /// <summary>
 /// WHO IS ON THE OTHER END OF THE AGENT PIPE, decided the way the ATAS bridge already decides it
@@ -61,21 +66,21 @@ public static class PeerImage
                    "agent's own workspace, which the agent can write to";
 
         if (string.IsNullOrWhiteSpace(rule.ExpectedPath))
-            return "TradeAgent did not record where its own trade command is, so the caller could not be checked";
+            return $"TradeAgent did not record where its own {rule.Program} is, so the caller could not be checked";
 
         if (!Same(actualPath!, rule.ExpectedPath!))
             return $"the program holding this connection is {Show(actualPath)}, but TradeAgent's own " +
-                   $"trade command is {Show(rule.ExpectedPath)}";
+                   $"{rule.Program} is {Show(rule.ExpectedPath)}";
 
         if (string.IsNullOrWhiteSpace(rule.ExpectedHash))
-            return "TradeAgent did not record which trade command it installed, so the caller could not be checked";
+            return $"TradeAgent did not record which {rule.Program} it installed, so the caller could not be checked";
 
         if (string.IsNullOrWhiteSpace(actualHash))
             return $"the program at {Show(actualPath)} could not be read back, so it could not be checked " +
                    "against the one TradeAgent installed";
 
         if (!string.Equals(actualHash, rule.ExpectedHash, StringComparison.OrdinalIgnoreCase))
-            return $"the program at {Show(actualPath)} is not the trade command TradeAgent installed";
+            return $"the program at {Show(actualPath)} is not the {rule.Program} TradeAgent installed";
 
         return null;
     }
@@ -91,6 +96,23 @@ public static class PeerImage
         try
         {
             return GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var pid) ? ImagePathOf(pid) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// THE IMAGE OF A PROCESS NAMED BY PID, as the kernel reports it, or null when it will not say (<c>U-thinking-seats-b</c>): the
+    /// broker door learns its peer's pid from the connection table (<see cref="TcpPeer"/>), not from a pipe handle.
+    /// </summary>
+    public static string? PathOf(int pid)
+    {
+        if (pid <= 0) return null;
+        try
+        {
+            if (OperatingSystem.IsWindows()) return ImagePathOf((uint)pid);
+            if (OperatingSystem.IsMacOS()) return Darwin.ImagePathOf(pid);
+            if (OperatingSystem.IsLinux()) return LinuxPeer.ImagePathOf(pid);
+            return null;
         }
         catch (Exception) { return null; }
     }
