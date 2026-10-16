@@ -738,6 +738,9 @@ public static class ProcessContainment
 
         // NO CELL WITHOUT THE ATTEMPT'S CGROUP (U-cell-linux-b): a cell's descendants are held by it whatever session they make, and
         // a cell started without one would be weaker than its assurance profile says.
+        // A POLICY THAT IS REFUSED IS REFUSED FIRST, by its own words (the inbox, the app's own tree): what is wrong with the request
+        // is said before what the computer lacks. Write checks it again.
+        if (cell.Problem() is { } problem) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, problem);
         var root = cgroups ?? AttemptCgroups.Current;
         if (!root.Held)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
