@@ -152,12 +152,22 @@ public partial class CouncilLoopTests
             Events = new MissionEventStore(db);
             Boundaries = new CouncilBoundaries(db, () => BoundaryWindow);
             _relay = new CouncilRelay(db, HomeFor, boundaries: Boundaries);
-            foreach (var role in CouncilRoles.All)
-            {
-                Conversations[role] = new RoleConversation(role, concurrency, presence);
-                Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), ".tradeagent"));
-                Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), WorkspaceBuilder.OutDir));
-            }
+            _concurrency = concurrency;
+            foreach (var role in CouncilRoles.All) Add(role);
+        }
+
+        readonly Concurrency _concurrency;
+
+        /// <summary>
+        /// A CONVERSATION AND A HOME FOR <paramref name="position"/> — a test double, never a model (<c>U-org-wakes</c>, RULING
+        /// R3) — so a position after the legacy pair can turn on this seam host. Answers the host, for chaining.
+        /// </summary>
+        public CouncilHost Add(string position)
+        {
+            Conversations[position] = new RoleConversation(position, _concurrency, Presence);
+            Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(Root, position), ".tradeagent"));
+            Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(Root, position), WorkspaceBuilder.OutDir));
+            return this;
         }
 
         public string Root { get; }
@@ -186,9 +196,19 @@ public partial class CouncilLoopTests
         public IAgentConversation? Conversation => Conversations[CouncilRoles.Operations];
         public IAgentConversation? ConversationFor(string role) => Conversations.GetValueOrDefault(role);
 
-        /// <summary>The activation seam's refusals, by position: empty is today's legacy pair, refused by nobody.</summary>
-        public Dictionary<string, string> Refusals { get; } = [];
-        public string? ActivationRefusal(string role) => Refusals.GetValueOrDefault(role);
+        /// <summary>
+        /// The activation seam's refusals, by position: empty is today's legacy pair, refused by nobody — and every other id
+        /// runnable, which is what makes this a SEAM HOST (<c>U-org-wakes</c>, RULING R3): a test position runs here on a
+        /// conversation that is a test double, never a real model.
+        /// </summary>
+        public Dictionary<string, TurnRefusal> Refusals { get; } = [];
+
+        /// <summary>While set, the seam throws for these positions — a chart that could not be read.</summary>
+        public HashSet<string> SeamThrows { get; } = [];
+
+        public TurnRefusal? ActivationRefusal(string role) => SeamThrows.Contains(role)
+            ? throw new IOException("the organisation chart could not be read")
+            : Refusals.GetValueOrDefault(role);
 
         public string AgentHome => WorkspaceBuilder.HomeOf(Root, CouncilRoles.Operations);
         public string HomeFor(string role) => WorkspaceBuilder.HomeOf(Root, role);
@@ -247,9 +267,13 @@ public partial class CouncilLoopTests
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
             BeginTurn(prompt, wakes, CouncilRoles.Default);
 
+        /// <summary>While set, the launch gate refuses with this admission — a gate that refused for the position or the host.</summary>
+        public AiAdmission? GateRefuses { get; set; }
+
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
         {
             lock (Opened) Opened.Add((role, prompt));
+            if (GateRefuses is { } refused) return refused;
 
             // THE MINTED ID IS TAKEN, exactly as <see cref="TurnMeter.Begin"/> takes it: an id that
             // stayed here would be used by two launches the moment two callers mint before either
@@ -583,10 +607,10 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
-    /// A POSITION THE ACTIVATION SEAM REFUSES IS STEPPED OVER, AND THE LEGACY PAIR WORKS (<c>U-org-principals</c>). A
-    /// third position is representable and not runnable; its wake, older than Research's, stays due and unconsumed, and
-    /// Research takes the turn. The mutant — the loop's step-over removed — chooses the third position on every pass, and
-    /// the legacy pair never turns behind it.
+    /// A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN, AND THE LEGACY PAIR WORKS (<c>U-org-principals</c>). A
+    /// third position is representable and not runnable for this HOST; its wake, older than Research's, stays due and
+    /// unconsumed (<c>U-org-wakes</c>: a host refusal keeps every wake), and Research takes the turn. The mutant — the loop's
+    /// filter removed — chooses the third position on every pass, and the legacy pair never turns behind it.
     /// </summary>
     [Fact]
     public async Task A_position_the_activation_seam_refuses_is_stepped_over_and_the_legacy_pair_works()
@@ -596,7 +620,7 @@ public partial class CouncilLoopTests
         var host = new CouncilHost(db, root, new Concurrency());
         var loop = new MissionLoop(host, NoHeartbeat);
         const string third = "pos-7f3a90c1";
-        host.Refusals[third] = "no activation gate in this build";
+        host.Refusals[third] = new TurnRefusal(RefusalKind.HostOrLaunch, "no activation gate in this build");
 
         var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
         var thirds = MissionEventIds.ForRole(MissionEventIds.Review(earlier), third);

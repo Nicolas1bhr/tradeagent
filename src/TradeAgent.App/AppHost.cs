@@ -334,10 +334,13 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// WHY A POSITION MAY NOT TURN, in a sentence, or null: the activation seam's own answer, asked by the loop so a
-    /// position it refuses is stepped over rather than chosen and handed no conversation.
+    /// WHY A POSITION MAY NOT TURN, typed, or null: the activation seam's own answer (<see cref="PositionActivation.Typed"/>),
+    /// asked by the loop, which settles the wakes of a position refused for what it is and keeps those of one refused for this
+    /// host (<c>U-org-wakes</c>). A chart that cannot be READ is not "no such position": it THROWS, the loop steps over and
+    /// keeps every wake, and nothing is settled on a read that failed. No database yet answers as an empty chart does.
     /// </summary>
-    public string? ActivationRefusal(string role) => PositionActivation.Refusal(role, StandingOf(role));
+    public TurnRefusal? ActivationRefusal(string role) =>
+        PositionActivation.Typed(role, _db is null ? null : new OrgStore(_db).Standing(role));
 
     /// <summary>
     /// ONE ROLE'S OWN DIRECTORY, as the last prepare built it, and the managed path for that role
@@ -1708,7 +1711,7 @@ public sealed class AppHost : IAsyncDisposable
         public IAgentConversation? Conversation => host.Conversation;
 
         /// <summary>The activation seam's refusal for one position. See <see cref="AppHost.ActivationRefusal"/>.</summary>
-        public string? ActivationRefusal(string role) => host.ActivationRefusal(role);
+        public TurnRefusal? ActivationRefusal(string role) => host.ActivationRefusal(role);
 
         /// <summary>One role's conversation. The chair's is the window's; see <see cref="AppHost.ConversationFor"/>.</summary>
         public IAgentConversation? ConversationFor(string role) => host.ConversationFor(role);

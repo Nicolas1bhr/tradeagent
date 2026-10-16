@@ -228,6 +228,16 @@ public sealed record AiAdmission
     public string? Refusal { get; init; }
 
     /// <summary>
+    /// WHAT THE REFUSAL IS ABOUT, where it is a refusal to activate (<c>U-org-wakes</c>, ORCHESTRATION § 2.5):
+    /// <see cref="RefusalKind.Position"/> for a name the chart does not hold as an active position — the loop settles its due
+    /// wakes — and <see cref="RefusalKind.HostOrLaunch"/> for a refusal about this host or this launch. Null for every other
+    /// refusal — a ceiling, the ledger, a process still running — and for an admission: those keep every wake, as a
+    /// <see cref="RefusalKind.HostOrLaunch"/> does. Never a default of <see cref="RefusalKind.Position"/>: only a refusal that
+    /// says so settles anything.
+    /// </summary>
+    public RefusalKind? Kind { get; init; }
+
+    /// <summary>
     /// WHICH CEILING REFUSED IT: <see cref="Day"/> for the owner's whole-day limit, or the role id
     /// whose share ran out. The two have different repairs — the day's limit is raised on the Safety
     /// page and a role's share is a reallocation — so a caller that said one when it meant the other

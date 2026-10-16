@@ -276,18 +276,24 @@ public interface IMissionHost
     IAgentConversation? ConversationFor(string role) => Conversation;
 
     /// <summary>
-    /// WHY A POSITION MAY NOT TURN, in a sentence, or null when it may (<c>U-org-principals</c>): the host's activation
-    /// seam. The loop steps over a position it refuses — its wakes stay due and unconsumed — so a wake for a position that
-    /// is representable and not runnable never holds the legacy pair's turns behind it.
+    /// WHY A POSITION MAY NOT TURN, typed, or null when it may (<c>U-org-principals</c>; typed by <c>U-org-wakes</c>, the
+    /// orchestrator's ruling on ORCHESTRATION § 2.5): the host's activation seam.
     ///
-    /// <para><b>A host with no seam fails closed</b> (ORCHESTRATION § 2.1): it refuses every id but the legacy pair, in a
-    /// sentence. Its <see cref="ConversationFor"/> and <see cref="HomeFor"/> defaults are the host's one conversation and
-    /// one home, so a default that refused nobody would fold any other id's wake into them — the chair's, in the app.</para>
+    /// <para><b>What the loop does with the answer.</b> <see cref="RefusalKind.Position"/> — the position itself cannot run —
+    /// settles its due wakes <see cref="MissionEventDisposition.Refused"/>, once, at no cost, and Schedule raises it nothing;
+    /// <see cref="RefusalKind.HostOrLaunch"/> steps over it and keeps every wake; a seam that THROWS is no verdict and steps
+    /// over too. The owner's words are settled by neither: they stay owed and show undelivered with the sentence.</para>
+    ///
+    /// <para><b>A host with no seam fails closed</b> (ORCHESTRATION § 2.1): it refuses every id but the legacy pair, as
+    /// <see cref="RefusalKind.Position"/>. Its <see cref="ConversationFor"/> and <see cref="HomeFor"/> defaults are the host's
+    /// one conversation and one home, so a default that refused nobody would fold any other id's wake into them — the chair's,
+    /// in the app.</para>
     /// </summary>
-    string? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
+    TurnRefusal? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
         ? null
-        : $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
-          + "opened for it and nothing is folded into this host's own.";
+        : new TurnRefusal(RefusalKind.Position,
+            $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
+            + "opened for it and nothing is folded into this host's own.");
 
     /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous
@@ -1919,10 +1925,11 @@ public sealed class MissionLoop
             var due = RolesDue(events).Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
             if (due.Count == 0) return Idle(events);
 
-            // A POSITION THE ACTIVATION SEAM REFUSES IS STEPPED OVER, never chosen and handed no conversation: left in,
-            // the oldest wake of a position that cannot run would be chosen on every pass and the legacy pair would never
-            // turn. Its wakes stay due and unconsumed.
-            due = [.. due.Where(Runnable)];
+            // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of
+            // a position that cannot run would be chosen on every pass and the legacy pair would never turn. WHAT BECOMES OF
+            // ITS WAKES is the refusal's kind (U-org-wakes, ORCHESTRATION § 2.5): refused for what it IS, they settle,
+            // recorded, never retried; refused for this host or this launch — or by a seam that threw — they are kept.
+            due = [.. due.Where(r => Runnable(events, r))];
             if (due.Count == 0) return _options.BusyRetry;
 
             // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
@@ -2177,7 +2184,13 @@ public sealed class MissionLoop
             // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it —
             // the same line the pre-check writes, because the outcome is the same one.
             if (events is not null && admission.Refusal is { Length: > 0 } why)
+            {
                 BlockOwnerMessages(events, why);
+
+                // THE LAUNCH GATE REFUSED THE POSITION FOR WHAT IT IS (U-org-wakes): its due wakes settle, as the seam's own
+                // refusal settles them, so no pass buys a look at them again. Any other refusal keeps every wake.
+                if (admission.Kind == RefusalKind.Position) SettleRefused(events, role, why);
+            }
 
             // THE LEDGER'S REFUSAL IS SAID WHATEVER WOKE THE LOOP — a fill, a review, the inbox — and
             // not only onto an owner's message, which is the one wake that already carried it.
@@ -2392,6 +2405,10 @@ public sealed class MissionLoop
             // Research Director that is never scheduled at all on a quiet day.
             foreach (var role in CouncilRoles.All)
             {
+                // A POSITION REFUSED FOR WHAT IT IS IS RAISED NOTHING (U-org-wakes): no look, no renewal, no reminder — each
+                // would be a wake settled refused at the next pass. One refused for this host keeps its clock.
+                if (RefusalOf(role) is { Kind: RefusalKind.Position }) continue;
+
                 // What woke THIS role's turn, or null: nothing that happened to one role moves the
                 // other's look.
                 var woken = role == turned ? woke : null;
@@ -2584,16 +2601,62 @@ public sealed class MissionLoop
     }
 
     /// <summary>
+    /// WHETHER THE HOST'S ACTIVATION SEAM LETS THIS POSITION TURN NOW, and what a refusal does to its wakes
+    /// (<c>U-org-wakes</c>, RULING Q1). Runnable: true. Refused for what it IS (<see cref="RefusalKind.Position"/>): every due
+    /// wake but the owner's words settles <see cref="MissionEventDisposition.Refused"/> with the sentence, and the owner's
+    /// words are shown undelivered with it. Refused for this host or this launch (<see cref="RefusalKind.HostOrLaunch"/>):
+    /// every wake is kept, and the owner's words are shown undelivered with the sentence. A seam that THROWS is not a verdict:
+    /// the position is stepped over this pass and nothing is written.
+    /// </summary>
+    bool Runnable(MissionEventStore events, string role)
+    {
+        TurnRefusal? refusal;
+        try { refusal = _host.ActivationRefusal(role); }
+        catch (Exception) { return false; }
+        if (refusal is null) return true;
+
+        if (refusal.Kind == RefusalKind.Position) SettleRefused(events, role, refusal.Words);
+        else BlockOwnerWords(events, role, refusal.Words);
+        return false;
+    }
+
+    /// <summary>
+    /// The activation seam's answer for <paramref name="role"/>, or null both where it may turn and where the seam threw — the
+    /// two answers on which Schedule keeps raising its wakes.
+    /// </summary>
+    TurnRefusal? RefusalOf(string role)
+    {
+        try { return _host.ActivationRefusal(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// SETTLES <paramref name="role"/>'S DUE WAKES AS REFUSED, and shows its owner's words undelivered with the sentence
+    /// (<see cref="MissionEventStore.SettleRefused"/>). Never throws: a settle not written leaves the wakes due, and the next
+    /// pass asks the seam again.
+    /// </summary>
+    void SettleRefused(MissionEventStore events, string role, string why)
+    {
+        var now = _now();
+        try { events.SettleRefused(role, now, why); }
+        catch (Exception) { /* the wakes stay due; the next pass settles them */ }
+        BlockOwnerWords(events, role, why);
+    }
+
+    /// <summary>
+    /// SHOWS <paramref name="role"/>'S DUE OWNER'S WORDS UNDELIVERED WITH <paramref name="why"/>, still owed
+    /// (<see cref="MissionEventStore.BlockOwnerWords"/>). Never throws.
+    /// </summary>
+    void BlockOwnerWords(MissionEventStore events, string role, string why)
+    {
+        try { events.BlockOwnerWords(role, _now(), why); }
+        catch (Exception) { /* a standing reason not written; the words stay owed either way */ }
+    }
+
+    /// <summary>
     /// The roles with a due wake, longest-waiting first, or nothing at all when the queue cannot be
     /// read. A queue that throws is not a reason to launch a process nobody asked for.
     /// </summary>
-    /// <summary>Whether the host's activation seam lets this position turn. A seam that throws refuses.</summary>
-    bool Runnable(string role)
-    {
-        try { return _host.ActivationRefusal(role) is null; }
-        catch (Exception) { return false; }
-    }
-
     List<string> RolesDue(MissionEventStore events)
     {
         try { return events.RolesDue(_now()); }
