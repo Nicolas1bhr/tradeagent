@@ -1383,6 +1383,15 @@ public sealed class MissionLoop
     DateTimeOffset? _nextTurnAt;
     string? _waitingFor;
 
+    /// <summary>
+    /// EACH POSITION'S LAST LAUNCH REFUSAL (<see cref="AiAdmission.Launch"/>), in the refusal's own words, until that position
+    /// next launches or nothing is due at all. It is the reason the card gives for that position's wait — and so for the
+    /// owner's words it still owes — and it settles nothing: the wakes and the words stay due (docs/ORCHESTRATION.md § 2.5,
+    /// "his surface shows them undelivered with the reason"). Kept apart from <see cref="_waitingFor"/>, which the next
+    /// lease clears.
+    /// </summary>
+    readonly Dictionary<string, string> _launchRefused = [];
+
     /// <summary>The launch ledger's last refusal the host was told of, so a ledger that stays broken is one line.</summary>
     string? _ledgerRefusalTold;
 
@@ -1717,7 +1726,10 @@ public sealed class MissionLoop
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
                     _turns, Errors(whose.FirstOrDefault() ?? _role), _lastFirstLine)
                 {
-                    WaitingFor = state == MissionState.Waiting ? _waitingFor : null,
+                    WaitingFor = state != MissionState.Waiting ? null
+                        : card is not null && _launchRefused.TryGetValue(card, out var refused)
+                            ? $"its launch to be tried again (it was refused: {refused})"
+                            : _waitingFor,
                     Role = whose.FirstOrDefault() ?? _role,
                     Roles = whose,
                     Held = held
@@ -1776,7 +1788,7 @@ public sealed class MissionLoop
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
         // this is the second half of the same promise for a turn whose task the wait above gave up
         // on: a lease nothing releases is a role that never works again.
-        lock (_gate) { _turning.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; }
+        lock (_gate) { _turning.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _launchRefused.Clear(); }
         Changed?.Invoke();
     }
 
@@ -2158,6 +2170,12 @@ public sealed class MissionLoop
             // wake, under the refusal backoff — and the owner's words are never settled by it: they stay owed, unblocked.
             if (admission.Ceiling == AiAdmission.Launch)
             {
+                lock (_gate)
+                {
+                    _launchRefused[role] = admission.Refusal ?? "";
+                    _role = role;
+                    _nextTurnAt = _now() + _options.BusyRetry;
+                }
                 Changed?.Invoke();
                 return _options.BusyRetry;
             }
@@ -2175,7 +2193,9 @@ public sealed class MissionLoop
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
 
-        // LAUNCHED, so the minted id is the row's now and nothing forgets it.
+        // LAUNCHED, so the minted id is the row's now and nothing forgets it — and a launch refusal kept for this position
+        // is no longer the reason it waits.
+        lock (_gate) _launchRefused.Remove(role);
         minted.Launched();
 
         // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
@@ -2723,7 +2743,8 @@ public sealed class MissionLoop
             whose = null;
         }
 
-        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; }
+        // NOTHING IS DUE, so no position waits on a refused launch and no kept refusal is a reason any more.
+        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; _launchRefused.Clear(); }
         Changed?.Invoke();
 
         if (next is null) return _options.MaxDelay;
