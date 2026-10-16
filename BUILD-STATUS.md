@@ -10512,3 +10512,25 @@ FAILS the scan; tested: a leading-dash exclusion keeps 9 of 13 hits, an invalid 
 positive (fixtures, prose, the planted fake key); the orchestrator searched all 120 open remote branches and today's main commits for the high-signal
 patterns (API-key and token shapes, private-key headers, private-network addresses, the boxes' names, `TA_WIN_*`) — zero real hits, only "Tailscale"
 inside the tests-box tool's own error sentence. Every "scan clean" claim since `fd7174ee` therefore stands as re-verified, not as originally gated.
+
+## U-org-rights (O2b) — positions may backtest and ask verdicts, only `operations` trades, and a non-legacy position's output is held, recorded and routed to nobody (landed 2026-10-16, seat B)
+
+**Landed** solo (`land.sh` v3) on `main` at tip `de092881` (rebased 8233bb4b → de092881 onto `f5bc444c`, the freeze checkpoint; src+tests patch-id identical). CI run **38176243349** at `8233bb4b`
+CARRIED (build tree equal outside bookkeeping paths): every job success; `land.sh check` VERDICT PASS (names 2702 → 2707, removed 0; scan clean). **No schema rung.** Canon unchanged, still v4.
+**What changed:**
+1. `Backtests.RoleOf` is an instance on `TradingGateway.ActivePositionOf` (backtest and `VerdictFor`); `Resolve` reads `org/<id>` via `Paths.RoleHome`; `LensPropose` takes the helper and
+   registers under its answer; `BarAudience.Pipe` names a position id. An app principal may not propose a lens.
+2. `OrgIds.PositionPrefix` "pos-", `MintPosition()` (48 random bits) and `PositionIdRefusal()` — one sentence each for legacy, app principal, Windows device name, malformed.
+   `MayPlaceOrders` unchanged: only `operations` trades, never by headship.
+3. `RecipientsOf` covers only the legacy pair; a non-legacy position's file passes `Fence`, is recorded with no recipient and one `mission_event` (kind `output`, disposition `held`, "no recipient
+   until U-org-assignments"), born consumed so it is never due; `CouncilRelay.HeldNotices` → `MissionSituation.HeldOutputs`. Deviation, accepted: a non-legacy `KindFor` is Report and its
+   `KindsFor` drops assessment and challenge (a boundary is a decision verb).
+4. Guard: a non-legacy position holds no objective (`RoleObjectives.KindsOf`), so no look wakes it until its mandates and its clock land.
+**Evidence:** RED at base, quoted in the report (c) "… this connection presented no launch grant" for a backtest; (g) the same for a lens; (d) `Recipient = research, State = delivered`;
+(f) CS0117 `MintPosition`. MUTANTS red: the pipe guard also allowing a unit head → "pos-5be1c07a9d24's buy was served"; `RecipientsOf` serving a non-legacy position with [Research] → (d) red.
+Release 0 warnings; `OrgRightsTests` 3× 5/5. Tests box GREEN at pre-rebase `9ae4f719` (Unit 1790/1798, 8 not run; Integration 692/714, 22 not run; Fault 498/498; the box owner's files unchanged).
+**Review (Codex `gpt-6.1-sol`, high):** one P2 — `CouncilRelay.cs:407`: during `Run`/`Reconcile` the publication and its held disposition commit separately, so a failure between them leaves a
+recorded output with no disposition and, if the source file is gone, no Situation notice. JUDGED REAL, NOT FIXED HERE: an OWED CARD that must close before O5 `U-org-assignments` (it is the
+first unit that would route a held output); O3 `U-org-wakes` item 6 carries it — publication and disposition in one transaction, the settling check above as its red.
+**NOT done (owed):** the nameless `TurnMeter.Begin` is still the chair's without a status check (home O3 or O5). **NOT VERIFIED:** no app run; the held line in a live Situation — no non-legacy
+position can run until `U-thinking-seats` and a proven executor cell (ORCHESTRATION § 2.3); unit tests cover it.
