@@ -22,7 +22,7 @@ public sealed class LinuxFactAttribute : FactAttribute
 /// <summary>
 /// THE LINUX CELL, ROW BY ROW (<c>U-cell-linux-a</c> item 5; the § 9.3 benchmark rows the survey marked "yes", seat A's amendments).
 ///
-/// <para><b>What is driven.</b> The product's own path: <see cref="ProcessContainment.Start(ProcessStartInfo, CellPolicy, IReadOnlyList{string}?, CellPlatform?)"/>
+/// <para><b>What is driven.</b> The product's own path: <see cref="ProcessContainment.Start(ProcessStartInfo, CellPolicy, IReadOnlyList{string}?, CellPlatform?, AttemptCgroups?, string?)"/>
 /// with the built <c>trade.dll</c> as the launcher, so every row goes through the supervisor, the cell stage, the policy file the
 /// app wrote and the kernel's own Landlock and seccomp. Each row plants what a cell must not reach — a dummy ledger at
 /// <c>state/tradeagent.db</c>, a holdout-shaped file, a dummy <c>~/.codex/auth.json</c> and <c>~/.ssh/id_x</c> under a test HOME,
@@ -122,7 +122,8 @@ public partial class CellLinuxTests
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
-        using var held = ProcessContainment.Start(psi, policy, Launcher());
+        using var rows = Rows();
+        using var held = ProcessContainment.Start(psi, policy, Launcher(), cgroups: rows.Cgroups);
         Assert.NotNull(held.Cell);
         Assert.Equal(policy.Hash, held.Cell!.PolicyHash);
         held.Process.StandardInput.Close();
@@ -642,7 +643,8 @@ public partial class CellLinuxTests
         var psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add("sleep 2");
-        using var held = ProcessContainment.Start(psi, w.Policy(), Launcher());
+        using var rows = Rows();
+        using var held = ProcessContainment.Start(psi, w.Policy(), Launcher(), cgroups: rows.Cgroups);
         var file = held.Cell!.PolicyFile;
         Assert.Equal(CellPolicy.Directory, Path.GetDirectoryName(file));
         Assert.True(File.Exists(file), $"the launch's policy file {file} while its cell runs");
@@ -655,7 +657,7 @@ public partial class CellLinuxTests
         var long_ = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
         long_.ArgumentList.Add("-c");
         long_.ArgumentList.Add("sleep 60");
-        using var killed = ProcessContainment.Start(long_, w.Policy(), Launcher());
+        using var killed = ProcessContainment.Start(long_, w.Policy(), Launcher(), cgroups: rows.Cgroups);
         var killedFile = killed.Cell!.PolicyFile;
         Assert.True(File.Exists(killedFile), $"the launch's policy file {killedFile} while its cell runs");
         await Task.Delay(TimeSpan.FromSeconds(2));
