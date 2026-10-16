@@ -23,14 +23,17 @@ public partial class CellLinuxTests
     public CellLinuxTests(ITestOutputHelper output) => _output = output;
 
     /// <summary>
-    /// A NAME ONLY systemd-resolved ANSWERS ITSELF (RFC 6761's <c>.localhost</c>, synthesized as 127.0.0.1) and that no
-    /// <c>/etc/hosts</c> names: resolving it takes a DNS query to the stub, and no query leaves the runner. The loopback index
-    /// listens on 127.0.0.1, so a tool that resolves it reaches the index BY NAME.
+    /// A NAME ONLY systemd-resolved ANSWERS ITSELF — the stub's own address, 127.0.0.53 — and that no <c>/etc/hosts</c> names:
+    /// resolving it takes a DNS query to the stub, and no query leaves the runner. The loopback index listens on 127.0.0.53, so a
+    /// tool that resolves the name reaches the index BY NAME. (Not a <c>.localhost</c> name: curl answers those itself, measured.)
     /// </summary>
-    const string StubName = "ta-cell-index.localhost";
+    const string StubName = "_localdnsstub";
 
-    /// <summary>Names the stub answers from its own synthesis: the default gateway, the outbound address, the stub itself, and <see cref="StubName"/>.</summary>
-    static readonly string[] ProbeNames = ["_gateway", "_outbound", "_localdnsstub", StubName];
+    /// <summary>The stub's own address, where the loopback index listens for the by-name rows.</summary>
+    static readonly IPAddress StubAddress = IPAddress.Parse("127.0.0.53");
+
+    /// <summary>Names the stub answers from its own synthesis: the default gateway, the outbound address and the stub itself.</summary>
+    static readonly string[] ProbeNames = ["_gateway", "_outbound", StubName];
 
     /// <summary>
     /// ITEM 1, THE PROBE THAT DECIDES (seat A's ruling 5). In a cell, outside control first, each name is resolved through glibc
@@ -65,7 +68,7 @@ public partial class CellLinuxTests
         Require(pip.Code == 0, $"pip for /usr/bin/python3 ({pip.Err.Trim()})");
         _output.WriteLine($"probe: node {node} -> {CellNative.RealPath(node!)}; {pip.Out.Trim()}");
 
-        using var index = LoopbackIndex.Start(IPAddress.Loopback);
+        using var index = LoopbackIndex.Start(StubAddress);
         var wheel = Wheel.Build("ta-cell-probe", "1.0", "ta_cell_probe", "VALUE = 'from-the-loopback-index'\n");
         index.ServePython(wheel);
         var script = w.Script("resolve.py", ResolveScript);
@@ -73,9 +76,9 @@ public partial class CellLinuxTests
 
         var outside = await Outside("/usr/bin/python3", args);
         var rows = new List<(string Mode, Dictionary<string, string> Rows)> { ("outside", Rows(outside)) };
-        foreach (var name in ProbeNames)
-            Require(rows[0].Rows.GetValueOrDefault($"glibc {name}", "").StartsWith("ok", StringComparison.Ordinal),
-                $"the stub answering {name} outside the cell: {rows[0].Rows.GetValueOrDefault($"glibc {name}", outside.Err)}");
+        foreach (var key in rows[0].Rows.Keys.Where(k => k != "run nothing").DefaultIfEmpty("run nothing"))
+            Require(rows[0].Rows.GetValueOrDefault(key, "").StartsWith("ok", StringComparison.Ordinal),
+                $"{key} working outside the cell (the control): {rows[0].Rows.GetValueOrDefault(key, outside.Err)}");
 
         var useVc = new KeyValuePair<string, string>("RES_OPTIONS", "use-vc");
         (string Mode, CellPolicy Policy)[] modes =
@@ -129,11 +132,13 @@ public partial class CellLinuxTests
             host, port = target.rsplit(":", 1)
             host = host.strip("[]")
             try:
-                s = socket.socket(family(host), socket.SOCK_STREAM); s.settimeout(10)
+                s = socket.socket(family(host), socket.SOCK_STREAM)
                 if name.startswith("fastopen"):
+                    # BLOCKING, as a program that wants its bytes delivered sends them: a non-blocking fast-open send without a cookie
+                    # returns EINPROGRESS (measured) with nothing delivered.
                     s.sendto(b"fast", socket.MSG_FASTOPEN, (host, int(port))); print(name + "-sent")
                 else:
-                    s.connect((host, int(port))); s.sendall(name.encode()); print(name + "-connected")
+                    s.settimeout(10); s.connect((host, int(port))); s.sendall(name.encode()); print(name + "-connected")
             except OSError as e:
                 print(f"{name}-denied errno={e.errno}")
         try:
@@ -371,7 +376,7 @@ public partial class CellLinuxTests
     {
         PlatformIsACells();
         var w = new World("names");
-        using var index = LoopbackIndex.Start(IPAddress.Loopback);
+        using var index = LoopbackIndex.Start(StubAddress);
         var script = w.Script("names.py", $$"""
             import socket, subprocess, sys
             name = "{{StubName}}"
@@ -401,12 +406,12 @@ public partial class CellLinuxTests
 
         var web = await InCell(w.Policy(CellEgress.Web), "/usr/bin/python3", "-I", script);
         _output.WriteLine($"row (e) class web ({CellEgress.Web.Describe()}): " + web.Out.Replace('\n', ' '));
-        Says(web, "glibc-ok 127.0.0.1", "python-ok 127.0.0.1", "node-ok 127.0.0.1",
+        Says(web, "glibc-ok 127.0.0.53", "python-ok 127.0.0.53", "node-ok 127.0.0.53",
             CellEgress.Decided == CellDns.Datagrams ? "udp-open" : "udp-denied errno=13");
 
         var test = await InCell(w.Policy(CellEgress.ForTests([index.Port], CellEgress.Decided)), "/usr/bin/python3", "-I", script, $"{index.Port}");
         _output.WriteLine("row (e) test table with the index's port: " + test.Out.Replace('\n', ' '));
-        Says(test, "glibc-ok 127.0.0.1", "python-ok 127.0.0.1", "node-ok 127.0.0.1", "curl-200");
+        Says(test, "glibc-ok 127.0.0.53", "python-ok 127.0.0.53", "node-ok 127.0.0.53", "curl-200");
     }
 
     /// <summary>
@@ -437,7 +442,8 @@ public partial class CellLinuxTests
         say("curl index", rc == 0 and out.startswith("200"), out)
         dl = os.path.join(ws, "dl-" + str(os.getpid()))
         rc, out = run([sys.executable, "-I", "-m", "pip", "download", "--no-deps", "--no-cache-dir", "--disable-pip-version-check", "--no-input",
-                       "--retries", "0", "--timeout", "15", "--index-url", index + "/simple/", "-d", dl, "ta-cell-probe"], 120)
+                       "--retries", "0", "--timeout", "15", "--index-url", index + "/simple/", "--trusted-host", index.split("//")[1].split(":")[0],
+                       "-d", dl, "ta-cell-probe"], 120)
         got = os.path.isdir(dl) and any(f.endswith(".whl") for f in os.listdir(dl))
         say("pip index", rc == 0 and got, "downloaded" if rc == 0 and got else "rc=" + str(rc) + " " + out[-150:])
         """;
