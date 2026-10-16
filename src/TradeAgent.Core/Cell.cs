@@ -295,15 +295,20 @@ public enum CellDns
 /// a channel between them outside the relay. That is why a class with any port never counts as unable to write the owner's inbox: a
 /// same-user listener on a granted port could write it for the cell.</para>
 ///
-/// <para><b>No class listens.</b> Landlock handles TCP bind on every cell and grants no bind rule; seccomp denies <c>listen()</c>,
-/// which on a socket nobody bound picks an ephemeral port without asking Landlock.</para>
+/// <para><b>No class listens, and no connect slips past Landlock.</b> Landlock handles TCP bind on every cell and grants no bind
+/// rule; seccomp denies <c>listen()</c>, which on a socket nobody bound picks an ephemeral port without asking Landlock, and a send
+/// with <c>MSG_FASTOPEN</c>, which connects without the <c>connect()</c> Landlock checks — both MEASURED open under Landlock alone
+/// on ABI 7 (CI run 38963476708: a class-none cell's fast-open send connected beside a denied <c>connect</c>, and an unbound
+/// <c>listen()</c> got a port).</para>
 /// </summary>
 public sealed class CellEgress
 {
     /// <summary>
-    /// ITEM 1'S DECISION, taken by <c>A_cell_name_resolution_probe</c>'s measurement on CI's ubuntu-24.04: when glibc, Python, Node
-    /// and pip all resolve over TCP with datagrams denied, the classes resolve over TCP and datagrams stay DENIED (hard) for every
-    /// cell; otherwise UDP opens for egress-classed cells, labelled, and <see cref="None"/> keeps it denied.
+    /// ITEM 1'S DECISION, MEASURED (<c>A_cell_name_resolution_probe</c>, CI run 38963476708, ubuntu-24.04, kernel 6.17, Landlock ABI 7,
+    /// systemd-resolved's stub at 127.0.0.53, nsswitch "files dns"): with datagrams denied, TCP 53 granted, <c>RES_OPTIONS=use-vc</c>
+    /// and the resolver's configuration readable, glibc (<c>getent</c>), Python, Node, curl and <c>pip download</c> all resolved the
+    /// stub's own names; without the resolver's configuration (it links into <c>/run</c>) and under class none, none did. So the
+    /// classes resolve over TCP and datagrams stay DENIED (hard) for every cell.
     /// </summary>
     public const CellDns Decided = CellDns.Tcp;
 
