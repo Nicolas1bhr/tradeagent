@@ -246,7 +246,10 @@ public sealed class AttemptCgroups
     /// <summary>One line for a Mechanism row: the cgroup and its ceilings.</summary>
     public static string Ceilings => $"pids.max {PidsMax}, memory.max {MemoryMax / (1024 * 1024)} MiB (half of this computer's memory)";
 
-    /// <summary>Half of MemTotal in bytes — or, where it cannot be read, 1 GiB, which the Mechanism line then names.</summary>
+    /// <summary>
+    /// Half of MemTotal in bytes, in whole pages — the kernel keeps <c>memory.max</c> in pages and reads back a byte count rounded
+    /// down to one (run 38970487186) — or, where MemTotal cannot be read, 1 GiB, which the Mechanism line then names.
+    /// </summary>
     public static long MemoryMax { get; } = ReadMemoryMax();
 
     static long ReadMemoryMax()
@@ -256,7 +259,10 @@ public sealed class AttemptCgroups
             foreach (var line in File.ReadLines("/proc/meminfo"))
                 if (line.StartsWith("MemTotal:", StringComparison.Ordinal) &&
                     long.TryParse(line[9..].Trim().Split(' ')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var kb) && kb > 0)
-                    return kb * 1024 / MemoryShare;
+                {
+                    var page = Math.Max(Environment.SystemPageSize, 1);
+                    return kb * 1024 / MemoryShare / page * page;
+                }
         }
         catch (Exception) { /* not Linux, or /proc unreadable: the floor below */ }
         return 1L << 30;
