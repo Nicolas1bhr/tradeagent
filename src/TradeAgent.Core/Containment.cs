@@ -402,9 +402,14 @@ public static class Posix
 /// it began — microseconds since the epoch on macOS, clock ticks since boot on Linux — compared only with
 /// another reading from the same machine, and with a pid it is the process's identity: a pid the system
 /// has handed to somebody else comes back with a different start.
+///
+/// <para><see cref="Unlisted"/> (<c>U-grant-tree</c> fix pass 2): this entry is not one process but the WHOLE TREE under
+/// <see cref="Pid"/>, started at <see cref="Start"/>, which Windows would not list when a teardown asked. Nothing can
+/// say none of it runs, so it is still running — re-asked at every check, never cleared by a timer — until a listing
+/// succeeds and shows none of it alive (<see cref="WindowsProcessTable.StillRunning"/>). Unknown is never zero.</para>
 /// </summary>
 public readonly record struct ProcessEntry(int Pid, int Parent, int Group, int Session, ulong Start,
-    bool Stopped, bool Zombie);
+    bool Stopped, bool Zombie, bool Unlisted = false);
 
 /// <summary>
 /// THE PROCESS TABLE, READ WITHOUT SHELLING OUT. macOS through libproc (<c>proc_listallpids</c>,
@@ -530,6 +535,7 @@ public static class WindowsProcessTable
     /// </summary>
     public static bool StillRunning(ProcessEntry entry)
     {
+        if (entry.Unlisted) return AnyAlive(Tree(entry.Pid, entry.Start));
         if (!OperatingSystem.IsWindows() || entry.Pid <= 0) return false;
         var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, (uint)entry.Pid);
         if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() != ERROR_INVALID_PARAMETER;
@@ -547,16 +553,24 @@ public static class WindowsProcessTable
     }
 
     /// <summary>
-    /// The tree under <paramref name="leader"/> as the toolhelp snapshot has it now — the leader itself while it is still
-    /// the process that started at <paramref name="leaderStart"/>, and every descendant by parent pid and start order — or,
-    /// when no snapshot can be taken, the leader alone (asked by pid if its start is unknown).
+    /// Whether anything of a listed tree still runs: TRUE when there is no listing (fix pass 2) — a tree Windows would not
+    /// list is never "nothing left running" — else whether any member is still that process and still running.
     /// </summary>
-    public static IReadOnlyList<ProcessEntry> Tree(int leader, ulong leaderStart)
+    public static bool AnyAlive(IReadOnlyList<ProcessEntry>? listed) => listed is null || listed.Any(StillRunning);
+
+    /// <summary>
+    /// The tree under <paramref name="leader"/> as the toolhelp snapshot has it now — the leader itself while it is still
+    /// the process that started at <paramref name="leaderStart"/>, and every descendant by parent pid and start order — or
+    /// NULL when no snapshot can be taken (and off Windows). Null is never the leader alone (fix pass 2): read that way, a
+    /// leader that exited while a child it started ran on was a tree with nothing left in it, and the next launch was
+    /// admitted beside the child.
+    /// </summary>
+    public static IReadOnlyList<ProcessEntry>? Tree(int leader, ulong leaderStart)
     {
-        var members = new List<ProcessEntry> { new(leader, 0, 0, 0, leaderStart, false, false) };
-        if (!OperatingSystem.IsWindows()) return members;
+        if (!OperatingSystem.IsWindows()) return null;
         var parents = Snapshot();
-        if (parents is null) return members;
+        if (parents is null) return null;
+        var members = new List<ProcessEntry> { new(leader, 0, 0, 0, leaderStart, false, false) };
 
         for (var i = 0; i < members.Count; i++)
         {
@@ -678,7 +692,16 @@ public sealed record TreeEnd(bool Ended, IReadOnlyList<ProcessEntry> Survivors, 
     public static readonly TreeEnd Nothing = new(true, [], 0);
 
     /// <summary>The owner's sentence when it could not, or null when it did.</summary>
-    public string? Sentence => Ended ? null : Labels.LastTurnStillRunning(Survivors.Select(s => s.Pid));
+    public string? Sentence => Ended ? null : Held(Survivors);
+
+    /// <summary>
+    /// Why no turn starts while <paramref name="left"/> runs: the processes by number, or — when any of it is a tree Windows
+    /// would not list (<see cref="ProcessEntry.Unlisted"/>) — that, since then no number is known to be all of it.
+    /// </summary>
+    public static string Held(IReadOnlyList<ProcessEntry> left) =>
+        left.Any(p => p.Unlisted)
+            ? Labels.LastTurnUnlisted(left.Where(p => p.Unlisted).Select(p => p.Pid))
+            : Labels.LastTurnStillRunning(left.Select(p => p.Pid));
 }
 
 /// <summary>
@@ -750,7 +773,7 @@ public static class TreeTeardown
     public static bool StillRunning(ProcessEntry survivor) =>
         OperatingSystem.IsWindows()
             ? WindowsProcessTable.StillRunning(survivor)
-            : ProcessTable.Read(survivor.Pid) is { Zombie: false } now && now.Start == survivor.Start;
+            : survivor.Unlisted || ProcessTable.Read(survivor.Pid) is { Zombie: false } now && now.Start == survivor.Start;
 
     /// <summary>
     /// Every process proved the turn's, frozen. Passes are repeated until one adds nothing: a child forked

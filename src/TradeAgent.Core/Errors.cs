@@ -343,6 +343,22 @@ public static class Labels
     }
 
     /// <summary>
+    /// THE NEXT TURN HELD BECAUSE WINDOWS WOULD NOT LIST WHAT THE LAST ONE STARTED (<c>U-grant-tree</c> fix pass 2). A launch
+    /// no job held was torn down while the process snapshot failed, so nobody can say none of it still runs; it is held as
+    /// running, by the process that started it, and re-asked at every launch.
+    /// </summary>
+    public static string LastTurnUnlisted(IEnumerable<int> leaders)
+    {
+        var list = leaders.Distinct().ToList();
+        var named = list.Count == 1
+            ? $"process {list[0]}"
+            : $"processes {string.Join(", ", list.Take(list.Count - 1))} and {list[^1]}";
+        return $"Windows would not list the programs the AI's last turn started (under {named}), so TradeAgent cannot tell "
+               + "whether any still runs, and this turn was not started. Nothing was sent to the AI tool. It starts again by "
+               + "itself once Windows lists them and none is left running.";
+    }
+
+    /// <summary>
     /// THE TURN REFUSED BECAUSE ITS LAUNCH COULD NOT BE WRITTEN DOWN (<c>U-admission-fail-closed</c>). The launch ledger
     /// is where a turn's cost is reserved before the process starts, and the only place the day's limit can see it; a
     /// turn whose row would not go in is a turn no ceiling would ever count, so it is not started. It names the ledger
