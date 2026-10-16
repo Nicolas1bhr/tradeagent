@@ -159,7 +159,11 @@ public class OrgEnvelopeTests : IDisposable
         Seat("pos-2", "team-2");
         var meter = Meter(20m);
 
-        Assert.True(meter.Begin("## Situation", role: "pos-1").Admitted);
+        var first = meter.Begin("## Situation", role: "pos-1");
+        Assert.True(first.Admitted);
+        // ITS TURN IS OVER before the role launches again, as the product's are: a role holds one open launch
+        // (U-mint-per-launch). Released, its row stays LAUNCHED and keeps its reservation in team-1's spent + reserved.
+        meter.Release("pos-1", first.Id!);
         var refused = meter.Begin("## Situation", role: "pos-1");
 
         Assert.False(refused.Admitted);
@@ -219,6 +223,9 @@ public class OrgEnvelopeTests : IDisposable
                 $"{who ?? "(no role)"} at day {day}, role {role[charged]}: expected {(admit ? "admitted" : "refused")}");
             if (admit)
             {
+                // ITS TURN IS OVER before that role launches again, as the product's are: a role holds one open launch
+                // (U-mint-per-launch). Released, its row stays LAUNCHED and keeps its reservation, which the rule counts.
+                meter.Release(who, got.Id!);
                 day += Reservation;
                 role[charged] += Reservation;
             }
@@ -316,10 +323,14 @@ public class OrgEnvelopeTests : IDisposable
             Role = AppPrincipals.Perception
         });
 
+        // EACH TURN IS OVER before the role launches again, as the product's are: a role holds one open launch
+        // (U-mint-per-launch). Released, each row stays LAUNCHED and keeps its reservation in the day's total.
         var one = meter.Begin("## Situation", role: "pos-1");
-        var two = meter.Begin("## Situation", role: "pos-1");
         Assert.True(one.Admitted);
+        meter.Release("pos-1", one.Id!);
+        var two = meter.Begin("## Situation", role: "pos-1");
         Assert.True(two.Admitted);
+        meter.Release("pos-1", two.Id!);
         Assert.Equal(["team-1", OrgIds.Research, OrgIds.Root], Chain(one.Id!));
 
         var refused = meter.Begin("## Situation", role: "pos-1");
