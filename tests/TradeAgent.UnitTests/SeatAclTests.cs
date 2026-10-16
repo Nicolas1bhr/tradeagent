@@ -309,6 +309,86 @@ public class SeatAclTests
         Assert.Contains("is a link", refused.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (h) A SESSION FILE HARD-LINKED FROM OUTSIDE THE SEAT HOME IS REFUSED BEFORE ANYTHING IS CHANGED, AND THE OUTSIDE FILE KEEPS ITS
+    /// ACCESS ENTRY (the re-review's P1; CRED-001): a hard link is no link to <c>IsLink</c> — it is the same file under a second name,
+    /// so a same-user process can give the owner's own <c>~/.codex/auth.json</c> a name under <c>sessions/</c>, and clearing that name's
+    /// entries clears his. The seat home's root keeps its mode too: the check runs before any change. Red at base: the outside file's
+    /// entry is gone, and the seat is taken.
+    /// </summary>
+    [SeatAclFact("only macOS and Windows change a session file's own access entries; a Linux preparation never touches one", "macos", "windows")]
+    public void A_session_file_hard_linked_from_outside_is_refused_with_its_target_unchanged()
+    {
+        var (codex, exe, _) = SeatHomeTests.Seat(nameof(A_session_file_hard_linked_from_outside_is_refused_with_its_target_unchanged));
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var outside = Path.Combine(Path.GetDirectoryName(exe)!, "owners-auth.json");
+        File.WriteAllText(outside, "{}");
+        OpenFileToEveryone(outside);
+        var granted = Granted(outside);
+        var linked = Path.Combine(Directory.CreateDirectory(Path.Combine(seat.Root, "codex", "sessions", "2026", "10")).FullName,
+            "rollout-2026-10-16.jsonl");
+        HardLink(outside, linked);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(seat.Root, (UnixFileMode)0b111_101_101);
+        var rootBefore = State(seat.Root);
+
+        var thrown = Record.Exception(() => SeatProfile.Prepare(seat));
+
+        Assert.Equal(granted, Granted(outside));
+        Assert.Equal(rootBefore, State(seat.Root));
+        HardLinkRefused(thrown, linked);
+    }
+
+    /// <summary>
+    /// (h′) A CREDENTIAL FILE HARD-LINKED FROM OUTSIDE THE SEAT HOME IS REFUSED, AND THE OUTSIDE FILE KEEPS ITS MODE AND ITS LIST — on
+    /// every platform, Linux included: <c>codex/auth.json</c> is made 0600 (on Windows, left with no entry of its own), and a second name
+    /// for the owner's own file would carry that change to him. Red at base: the outside file is made 0600 (a new list).
+    /// </summary>
+    [Fact]
+    public void A_credential_file_hard_linked_from_outside_is_refused_with_its_target_unchanged()
+    {
+        var (codex, exe, _) = SeatHomeTests.Seat(nameof(A_credential_file_hard_linked_from_outside_is_refused_with_its_target_unchanged));
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var outside = Path.Combine(Path.GetDirectoryName(exe)!, "owners-auth.json");
+        File.WriteAllText(outside, "{}");
+        if (OperatingSystem.IsWindows()) OpenFileToEveryone(outside);
+        else File.SetUnixFileMode(outside, (UnixFileMode)0b110_100_100);
+        var before = State(outside);
+        var auth = Path.Combine(seat.Root, "codex", "auth.json");
+        HardLink(outside, auth);
+
+        var thrown = Record.Exception(() => SeatProfile.Prepare(seat));
+
+        Assert.Equal(before, State(outside));
+        HardLinkRefused(thrown, auth);
+    }
+
+    static void HardLinkRefused(Exception? thrown, string path)
+    {
+        var refused = Assert.IsType<TradeAgentException>(thrown);
+        Assert.Equal(ErrorCode.AI_SEAT_REFUSED, refused.Code);
+        Assert.Contains(path, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("hard link", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written or started", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A second name <paramref name="linked"/> for <paramref name="file"/>: <c>ln</c>, or <c>CreateHardLinkW</c> on Windows.</summary>
+    static void HardLink(string file, string linked)
+    {
+        if (!OperatingSystem.IsWindows()) Tool("/bin/ln", file, linked);
+        else Assert.True(CreateHardLinkW(linked, file, IntPtr.Zero),
+            $"CreateHardLinkW {linked}: {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()}");
+        Assert.True(File.Exists(linked));
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool CreateHardLinkW(string newName, string existing, IntPtr security);
+
+    /// <summary>Its mode (Linux, macOS) or its owner and access list (Windows): what a preparation would change.</summary>
+    static string State(string path) => OperatingSystem.IsWindows() ? Sddl(path) : File.GetUnixFileMode(path).ToString();
+
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     static string Sddl(string path)
     {

@@ -44,10 +44,18 @@ public static class SeatProfile
         // list — changed before its folder was looked at. The owner's own files are never touched.
         foreach (var rel in seat.PrivateFiles) Inside(root, rel, "private_files");
         Inside(root, seat.ConfigFile, "config_file");
+        // THE WHOLE HOME READ, AND EVERY FILE IT WOULD CHANGE LOOKED AT, BEFORE ANY CHANGE (the re-review's P1, U-seat-acl; CRED-001): a
+        // file with a second name may be the owner's own, and is refused while nothing is changed yet.
+        // The root looked at first, its owner read, never changed: a walk never reads a tree another account owns.
+        NotALink(root);
+        NotForeign(root);
+        var below = Below(root);
+        foreach (var file in SeatFiles(root, seat)) NoSecondName(file);
+
         RealFolder(root, root);
         foreach (var (name, value) in seat.ResolvedEnvironment())
             if (seat.Environment[name].Contains("{seatHome}", StringComparison.Ordinal)) RealFolder(root, Path.GetFullPath(value));
-        PrivateBelow(root, seat);
+        PrivateBelow(root, seat, below);
 
         // THE CLI'S OWN CONFIG FILE, WRITTEN BY THE APP BEFORE EVERY START. A turn ignores it (--ignore-user-config), but `login`,
         // `features` and `mcp` take no such flag, and a seat can write this file: a seat-written chatgpt_base_url would steer the
@@ -96,19 +104,40 @@ public static class SeatProfile
     }
 
     /// <summary>
-    /// EVERY FOLDER AND EVERY FILE BELOW <paramref name="root"/>, PARENTS FIRST, MADE OWNER-ONLY, AND THE CREDENTIAL AND SETTINGS FILES
-    /// MADE 0600. A folder or file that is a link, a junction or another reparse point is stepped over, never entered or changed: what
-    /// it points to is not the seat home. A FILE keeps no entry of its own (the review's P1, U-seat-acl; CRED-001): on Windows an
-    /// explicit entry on an existing session transcript outlives its folder's protected list, and traverse checking is bypassed by
-    /// default, so it would stay readable by path; on macOS an extended entry is cleared as on a folder. Each file's list is read and
-    /// written only when it is not so. Linux files are left as they are: their 0700 folders let no other account reach them.
-    /// Measured on the dev Mac: a whole preparation took 54-72 ms over a home of 377 folders and 4,032 session files (17-19 ms when the
-    /// walk listed folders only; 0.3 ms over an empty home).
+    /// EVERY FOLDER AND EVERY FILE <see cref="Below"/> READ, PARENTS FIRST, MADE OWNER-ONLY, AND THE CREDENTIAL AND SETTINGS FILES MADE
+    /// 0600. A FILE keeps no entry of its own (the review's P1, U-seat-acl; CRED-001): on Windows an explicit entry on an existing
+    /// session transcript outlives its folder's protected list, and traverse checking is bypassed by default, so it would stay readable
+    /// by path; on macOS an extended entry is cleared as on a folder. Each file's list is read and written only when it is not so. Linux
+    /// files are left as they are: their 0700 folders let no other account reach them.
     /// </summary>
-    static void PrivateBelow(string root, SeatPlan seat)
+    static void PrivateBelow(string root, SeatPlan seat, (List<string> Folders, List<string> Files) below)
+    {
+        foreach (var folder in below.Folders) OwnedHere(folder, root);
+        foreach (var file in below.Files) NoEntryOfItsOwn(file);
+
+        foreach (var (rel, key) in SeatFileEntries(seat))
+        {
+            var path = Inside(root, rel, key)!;
+            // EVERY COMPONENT FROM THE ROOT A REAL FOLDER, NOT ONLY THE LAST: a linked folder on the way would carry the change out.
+            if (Path.GetDirectoryName(path) is { } parent && Directory.Exists(parent)) RealFolder(root, parent);
+            NotALink(path);
+            if (File.Exists(path)) PrivateFile(path);
+        }
+    }
+
+    /// <summary>
+    /// THE SEAT HOME READ, NOTHING CHANGED: every folder below <paramref name="root"/>, parents first, and — on macOS and Windows, where
+    /// a preparation changes a file's own entries — every file, each looked at by <see cref="NoSecondName"/>. A folder or file that is a
+    /// link, a junction or another reparse point is stepped over, never entered or changed: what it points to is not the seat home.
+    /// Nothing when the root is not there yet. Measured on the dev Mac: a whole preparation took 67-92 ms over a home of 377 folders and
+    /// 4,032 session files (54-72 ms before each file's link count was read; 17-19 ms when the walk listed folders only).
+    /// </summary>
+    static (List<string> Folders, List<string> Files) Below(string root)
     {
         var options = new EnumerationOptions { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false };
         var files = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS();
+        var read = (Folders: new List<string>(), Files: new List<string>());
+        if (!Directory.Exists(root)) return read;
         var folders = new Stack<string>();
         folders.Push(root);
         while (folders.Count > 0)
@@ -122,23 +151,133 @@ public static class SeatProfile
                 if (IsLink(entry)) continue;
                 if (Directory.Exists(entry))
                 {
-                    OwnedHere(entry, root);
+                    read.Folders.Add(entry);
                     folders.Push(entry);
                 }
-                else if (files) NoEntryOfItsOwn(entry);
+                else if (files)
+                {
+                    NoSecondName(entry);
+                    read.Files.Add(entry);
+                }
             }
         }
-
-        foreach (var rel in seat.PrivateFiles.Append(seat.ConfigFile))
-        {
-            if (string.IsNullOrEmpty(rel)) continue;
-            var path = Inside(root, rel, rel == seat.ConfigFile ? "config_file" : "private_files")!;
-            // EVERY COMPONENT FROM THE ROOT A REAL FOLDER, NOT ONLY THE LAST: a linked folder on the way would carry the change out.
-            if (Path.GetDirectoryName(path) is { } parent && Directory.Exists(parent)) RealFolder(root, parent);
-            NotALink(path);
-            if (File.Exists(path)) PrivateFile(path);
-        }
+        return read;
     }
+
+    /// <summary>The seat's credential files and its settings file, each with the manifest key that names it.</summary>
+    static IEnumerable<(string Rel, string Key)> SeatFileEntries(SeatPlan seat) =>
+        seat.PrivateFiles.Select(rel => (rel, "private_files")).Append((seat.ConfigFile, "config_file"))
+            .Where(e => !string.IsNullOrEmpty(e.Item1));
+
+    /// <summary>Those files' full paths below <paramref name="root"/> (each already checked by <see cref="Inside"/>).</summary>
+    static IEnumerable<string> SeatFiles(string root, SeatPlan seat) =>
+        SeatFileEntries(seat).Select(e => Inside(root, e.Rel, e.Key)!);
+
+    /// <summary>
+    /// REFUSES A FILE WITH A SECOND NAME (the re-review's P1, U-seat-acl; CRED-001). A hard link is no link: it is the same file under
+    /// another name, which may be outside the seat home — a same-user process can give the owner's own <c>~/.codex/auth.json</c> a name
+    /// in <c>sessions/</c> — and a mode or list is the file's, not the name's, so changing it here would change his. Its link count is
+    /// read without following a link (<c>lstat</c> on macOS, <c>statx</c> on Linux, a reparse-point handle on Windows); above one, the
+    /// seat is refused in words naming it and the repair, never skipped, which would leave its foreign entry in the seat home. A file
+    /// that is gone is fine; one whose count cannot be read is refused.
+    /// </summary>
+    static void NoSecondName(string path)
+    {
+        var links = LinkCount(path);
+        if (links is null or <= 1) return;
+        throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+            $"TradeAgent will not use the AI's own home while {path} is a hard link: the same file has {links} names, and another may be " +
+            "outside the AI's own home — your own Codex sign-in, for one — so making it private here would change that file too. " +
+            $"Nothing was written or started, and nothing was changed. Remove {path}; removing this name leaves the file under its other " +
+            "names, and TradeAgent makes its own in its place.");
+    }
+
+    /// <summary>How many names <paramref name="path"/> has, looked at without following a link; null when it is not there.</summary>
+    static uint? LinkCount(string path) => OperatingSystem.IsWindows() ? WindowsLinkCount(path) : UnixStat(path)?.Links;
+
+    /// <summary>
+    /// LINUX AND macOS: <paramref name="path"/>'s link count and owner, looked at without following a link; null when it is not there,
+    /// and the refusal in words when the system will not say.
+    /// </summary>
+    static (uint Links, uint Uid)? UnixStat(string path)
+    {
+        var buf = new byte[512];
+        int r;
+        if (OperatingSystem.IsMacOS())
+            // struct stat with 64-bit inodes (sys/stat.h): st_nlink uint16 at 6, st_uid uint32 at 16. arm64's lstat has that layout;
+            // x86-64's plain lstat is the old 32-bit one, its 64-bit form lstat$INODE64.
+            r = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+                ? lstat_inode64(path, buf) : lstat(path, buf);
+        else
+            // struct statx is the same on every architecture: stx_nlink uint32 at 16, stx_uid uint32 at 20.
+            r = statx(AtFdCwd, path, AtSymlinkNoFollow, StatxNlink | StatxUid, buf);
+        if (r != 0)
+        {
+            var errno = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            if (errno == ENOENT) return null;
+            throw NotPrivate(path, Errno(OperatingSystem.IsMacOS() ? "lstat" : "statx", errno));
+        }
+        return OperatingSystem.IsMacOS()
+            ? (BitConverter.ToUInt16(buf, 6), BitConverter.ToUInt32(buf, 16))
+            : (BitConverter.ToUInt32(buf, 16), BitConverter.ToUInt32(buf, 20));
+    }
+
+    /// <summary>
+    /// WINDOWS: <c>nNumberOfLinks</c> of <paramref name="path"/> from <c>GetFileInformationByHandle</c>, on a handle opened for its
+    /// attributes alone with <c>FILE_FLAG_OPEN_REPARSE_POINT</c> (never through a link) and every share mode.
+    /// </summary>
+    static uint? WindowsLinkCount(string path)
+    {
+        // A path past MAX_PATH reaches CreateFileW only with the \\?\ prefix (.NET adds it for its own calls, not for this one).
+        var name = path.Length < 260 || path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+        using var handle = CreateFileW(name, FileReadAttributes, FileShareAll, IntPtr.Zero, OpenExisting,
+            FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            var error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            if (error is ErrorFileNotFound or ErrorPathNotFound) return null;
+            throw NotPrivate(path, Errno("CreateFileW", error));
+        }
+        if (!GetFileInformationByHandle(handle, out var info))
+            throw NotPrivate(path, Errno("GetFileInformationByHandle"));
+        return info.NumberOfLinks;
+    }
+
+    const int AtFdCwd = -100, AtSymlinkNoFollow = 0x100;
+    const uint StatxNlink = 0x4, StatxUid = 0x8;
+    const uint FileReadAttributes = 0x80, FileShareAll = 0x7, OpenExisting = 3, FileFlagOpenReparsePoint = 0x00200000,
+        FileFlagBackupSemantics = 0x02000000;
+    const int ErrorFileNotFound = 2, ErrorPathNotFound = 3;
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
+    static extern uint geteuid();
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "lstat", SetLastError = true)]
+    static extern int lstat([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, byte[] buf);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "lstat$INODE64", SetLastError = true)]
+    static extern int lstat_inode64([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, byte[] buf);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    static extern int statx(int dirfd, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path,
+        int flags, uint mask, byte[] buf);
+
+    /// <summary>BY_HANDLE_FILE_INFORMATION: its three FILETIMEs are pairs of DWORDs, aligned to 4 — hence the packing.</summary>
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 4)]
+    struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public ulong CreationTime, LastAccessTime, LastWriteTime;
+        public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition,
+        uint flags, IntPtr template);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out ByHandleFileInformation info);
 
     /// <summary>
     /// <paramref name="rel"/>, a seat file path from the manifest's <paramref name="key"/>, as a full path STRICTLY BELOW
@@ -301,10 +440,28 @@ public static class SeatProfile
             if (OperatingSystem.IsMacOS()) NoExtendedAcl(at);
             return;
         }
-        throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+        throw Foreign(at, owner);
+    }
+
+    static TradeAgentException Foreign(string at, string? owner) =>
+        new(ErrorCode.AI_SEAT_REFUSED,
             $"TradeAgent will not use the AI's own home while {at} belongs to another account{(owner is null ? "" : $" ({owner})")}: " +
             "whoever owns it could change the AI's settings and read its sign-in. Nothing was written or started. Remove " +
             $"{at} and TradeAgent makes its own folder there.");
+
+    /// <summary>
+    /// REFUSES <paramref name="folder"/> WHEN ANOTHER ACCOUNT OWNS IT, READ AND NEVER CHANGED — the look a preparation takes at the
+    /// seat-home root before it reads anything below it. Its owner from <c>lstat</c>/<c>statx</c> against this process's effective
+    /// uid on Linux and macOS, from its security descriptor on Windows (<see cref="OursOnWindows"/>). Nothing there is fine.
+    /// </summary>
+    static void NotForeign(string folder)
+    {
+        if (!Directory.Exists(folder)) return;
+        if (OperatingSystem.IsWindows())
+        {
+            if (!OursOnWindows(new DirectoryInfo(folder), out var owner, out _, out _)) throw Foreign(folder, owner);
+        }
+        else if (UnixStat(folder) is { } stat && stat.Uid != geteuid()) throw Foreign(folder, $"uid {stat.Uid}");
     }
 
     /// <summary>
@@ -319,24 +476,8 @@ public static class SeatProfile
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     static bool OwnedOnWindows(FileSystemInfo item, bool isRoot, out string? owner)
     {
-        owner = null;
-        System.Security.Principal.SecurityIdentifier user, sid;
+        if (!OursOnWindows(item, out owner, out var user, out var sid)) return false;
         using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
-        try
-        {
-            if (Security(item).GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) is not System.Security.Principal.SecurityIdentifier found) return false;
-            sid = found;
-            owner = sid.Value;
-            if (me.User is not { } account) return false;
-            user = account;
-            var ours = sid.Equals(user)
-                || (sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
-                    && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
-            if (!ours) return false;
-        }
-        catch (UnauthorizedAccessException) { return false; }
-        catch (InvalidOperationException) { return false; }
-
         var system = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
         var allowed = new HashSet<System.Security.Principal.SecurityIdentifier> { user, sid, system };
         // BELOW THE ROOT, the root's own owner is in what it inherits: the Administrators group when an elevated process made it.
@@ -376,6 +517,33 @@ public static class SeatProfile
         {
             throw NotPrivate(item.FullName, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// WINDOWS: whether <paramref name="item"/>'s owner, read from its security descriptor and never changed, is this account — or the
+    /// Administrators group for an elevated process, whom Windows makes the owner of what that creates. A descriptor that cannot be
+    /// read is not ours.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static bool OursOnWindows(FileSystemInfo item, out string? owner,
+        out System.Security.Principal.SecurityIdentifier user, out System.Security.Principal.SecurityIdentifier sid)
+    {
+        owner = null;
+        user = sid = null!;
+        using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
+        try
+        {
+            if (Security(item).GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) is not System.Security.Principal.SecurityIdentifier found) return false;
+            sid = found;
+            owner = sid.Value;
+            if (me.User is not { } account) return false;
+            user = account;
+            return sid.Equals(user)
+                || (sid.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid)
+                    && new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
+        }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (InvalidOperationException) { return false; }
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
