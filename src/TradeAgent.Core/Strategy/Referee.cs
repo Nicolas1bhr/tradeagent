@@ -625,7 +625,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// and a test reads every figure of the run back out of the database and asserts none of them is in
     /// the text.</para>
     ///
-    /// <para>It goes to Research, which is the role that submits versions. Operations is not a recipient:
+    /// <para>It goes to Research, which is the role that submits versions — and, beside it, to the version's author when that
+    /// is an active position after the legacy pair (<c>U-org-wakes</c>, <see cref="StrategyStore.NoteRecipients"/>). Operations is not a recipient:
     /// the chair reads the owner's report, where section 8 lists every promotion, refusal and
     /// invalidation — and an extra recipient is an extra paid turn for a fact the app already wrote
     /// down.</para>
@@ -639,7 +640,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
             Id = Publication.IdOf(RunRole, PublicationKind.Verdict, content),
             Role = RunRole,
             Kind = PublicationKind.Verdict,
-            Recipients = CouncilRoles.Research,
+            // RESEARCH, AND THE VERSION'S AUTHOR WHERE THAT IS A POSITION AFTER THE LEGACY PAIR (U-org-wakes).
+            Recipients = _strategies.NoteRecipients(promotion.VersionId),
             Classification = PublicationClass.Council,
             CreatedAt = at,
             Content = content

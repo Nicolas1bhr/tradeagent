@@ -373,6 +373,25 @@ public sealed class StrategyStore(Database db)
         return ReadVersions(c).FirstOrDefault();
     });
 
+    /// <summary>
+    /// WHO TRADEAGENT'S NOTE ON <paramref name="versionId"/> GOES TO (<c>U-org-wakes</c>): Research, always — the role that
+    /// submits versions — and BESIDE it, never instead, the version's author (<c>strategy_version.role</c>) when that author is
+    /// an active position after the legacy pair: a verdict or a paper note on a position's own version reaches the position
+    /// that wrote it. A legacy author, an app principal, an author the chart does not hold as active, and a ledger or chart
+    /// that cannot be read all answer Research alone. Comma separated, as <see cref="Publication.Recipients"/> is.
+    /// </summary>
+    public string NoteRecipients(string versionId)
+    {
+        try
+        {
+            if (VersionById(versionId)?.Role is { } author && !CouncilRoles.IsKnown(author) && !OrgStore.IsAppPrincipal(author)
+                && CouncilRoles.IsPositionId(author) && new OrgStore(db).Position(author) is { Status: OrgPositionStatus.Active })
+                return $"{CouncilRoles.Research},{author}";
+        }
+        catch (Exception) { /* Research is told either way; the author's copy waits for a ledger that reads */ }
+        return CouncilRoles.Research;
+    }
+
     /// <summary>Every version this installation has accepted, newest first.</summary>
     public IReadOnlyList<StrategyVersionRow> AllVersions(int limit = 100) => db.Read(_ =>
     {
