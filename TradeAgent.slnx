@@ -17,6 +17,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/TradeAgent.FaultTests/TradeAgent.FaultTests.csproj" />
     <Project Path="tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj" />
+    <Project Path="tests/TradeAgent.Puppet/TradeAgent.Puppet.csproj" />
     <Project Path="tests/TradeAgent.UnitTests/TradeAgent.UnitTests.csproj" />
   </Folder>
 </Solution>

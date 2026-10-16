@@ -1,0 +1,5 @@
+<Project>
+  <!-- NOT A TEST PROJECT, so not tests/Directory.Build.props: that one marks a project as a test assembly and gives it xunit.
+       The puppet is a program a test STARTS (U-puppet-runtime), and `dotnet test` over the solution must not try to run it. -->
+  <Import Project="../../Directory.Build.props" />
+</Project>

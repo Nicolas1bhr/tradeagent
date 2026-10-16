@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- THE PUPPET SEAT (U-puppet-runtime; docs/ORCHESTRATION.md § 7): a scripted stand-in for an agent CLI, started by the real
+       AgentSession in tests and nowhere else. It lives under tests/, never under src/, and no packaging script publishes it.
+       It references nothing of TradeAgent's: it reaches the gateway only as a seat does, through the `trade` on its PATH. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TradeAgent.Puppet</AssemblyName>
+    <RootNamespace>TradeAgent.Puppet</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+</Project>
