@@ -688,6 +688,60 @@ public class AgentTreeTests : IDisposable
         Assert.True(admitted.Admitted, $"the hold did not lift once the process had ended: {admitted.Refusal}");
     }
 
+    /// <summary>
+    /// A LAUNCH WINDOWS WOULD NOT PUT IN ITS JOB, WHOSE TREE KILL THEN FAILED, HOLDS EVERY LAUNCH UNTIL IT EXITS
+    /// (<c>U-grant-tree</c> fix pass 1, review P1 Containment.cs:659). The assign failure is refused and the tree killed at
+    /// once — and when that kill fails, what still runs is not dropped: it is the turn's survivor, carried to the meter, and
+    /// no launch is admitted until it has exited. Windows only: the assign and the kill are refused through
+    /// <see cref="ProcessContainment.Faults"/>, scoped to this test's own flow; the process that keeps running is real.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_windows_would_not_hold_and_could_not_end_holds_every_launch_until_it_exits()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = NewDir("unassigned");
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var manifest = new RuntimeManifest
+        {
+            Id = Probe, DisplayName = "Tree probe", Executable = cmd,
+            ExecArgs = ["/c", "{prompt}"], ResumeArgs = ["/c", "{prompt}"], TaskArgs = ["/c", "{prompt}"]
+        };
+        using var db = new Database(Path.Combine(TestEnv.Home, $"tree-{Guid.NewGuid():n}.db"));
+        var meter = new TurnMeter(db, cap: () => 5m, recordPath: Path.Combine(dir, "turns.jsonl"), live: new LiveAttempts());
+        var session = new AgentSession(manifest, () => cmd, () => dir, () => new Dictionary<string, string>(),
+            new AgentPresence(), grants: new AgentGrants());
+        using var metered = meter.Attach(session, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        IReadOnlyList<ProcessEntry> left = [];
+        try
+        {
+            ProcessContainment.Faults.Value = new WindowsFaults(RefuseAssign: true, RefuseTreeKill: true);
+            try { await session.SendAsync("ping -n 120 127.0.0.1 > nul"); }
+            finally { ProcessContainment.Faults.Value = null; }
+
+            left = ended?.Survivors ?? [];
+            Assert.True(left.Count > 0, "a launch Windows would not hold, whose tree kill failed, was reported ended while it ran");
+            Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains("could not hold"));
+
+            var held = meter.Begin("next", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.False(held.Admitted, "a launch was admitted while the uncontained process of the last launch still ran");
+        }
+        finally
+        {
+            foreach (var p in left)
+                try { using var gone = Process.GetProcessById(p.Pid); gone.Kill(entireProcessTree: true); }
+                catch (Exception) { /* already gone */ }
+        }
+
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (left.Any(TreeTeardown.StillRunning) && DateTime.UtcNow < until) await Task.Delay(50);
+        var admitted = meter.Begin("after", role: CouncilRoles.Operations, heldForTheLoop: false);
+        Assert.True(admitted.Admitted, $"the hold did not lift once the uncontained process had exited: {admitted.Refusal}");
+    }
+
     /// <summary>A process of the test's own, killed by the test's Dispose: never one the test did not start.</summary>
     Process Ours(string program, params string[] args)
     {
