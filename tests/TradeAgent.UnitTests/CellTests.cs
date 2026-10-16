@@ -190,6 +190,25 @@ public class CellPolicyTests
     }
 
     /// <summary>
+    /// THE CGROUP FILESYSTEM IS NO CELL'S (<c>U-cell-linux-b</c> fix pass 1, R2): a grant of the cgroup mount, anything beneath it — the
+    /// attempts' delegated root, the app's <c>supervisor/</c> — or anything that holds it, as the workspace or as an input, would let a
+    /// cell write a <c>cgroup.procs</c> and leave its attempt, or lift its ceilings; each is refused in words naming the cgroup.
+    /// </summary>
+    [UnixFact]
+    public void A_policy_that_grants_the_cgroup_filesystem_or_what_holds_it_is_refused()
+    {
+        var ws = Dir("ws");
+        var root = AttemptCgroups.Mount + "/system.slice/tradeagent.service";
+        foreach (var why in new[]
+        {
+            Policy(AttemptCgroups.Mount).Problem(), Policy(root).Problem(), Policy(root + "/supervisor").Problem(), Policy("/sys/fs").Problem(),
+            Policy(ws, AttemptCgroups.Mount).Problem(), Policy(ws, root).Problem(), Policy(ws, "/sys").Problem(),
+        })
+            Assert.Contains("the cgroup filesystem", why);
+        Assert.Null(Policy(ws).Problem());
+    }
+
+    /// <summary>
     /// THE PROTECTED SET IS JUDGED WHERE IT REALLY IS (triage #3): with the app's home reached through a symlink, a grant naming the
     /// REAL <c>state/</c>, the real home or its real cell folder is refused — not passed because its spelling differs from the home's.
     /// </summary>
@@ -288,6 +307,38 @@ public class CellGrantTests
 
         Assert.True(fd < 0, $"a Landlock ruleset was built granting {link}, which by then led to {Paths.State}");
         Assert.Contains("lies inside TradeAgent's state", failure!.Sentence);
+    }
+
+    /// <summary>
+    /// R2 ON DESCRIPTORS (<c>U-cell-linux-b</c> fix pass 1): an input symlink retargeted onto the cgroup filesystem after the policy's
+    /// check is refused where the descriptor really leads, as the inbox and <c>state/</c> are.
+    /// </summary>
+    [LinuxKernelFact]
+    public void A_grant_retargeted_to_the_cgroup_filesystem_after_the_policy_was_checked_is_refused()
+    {
+        var root = Path.Combine(TestEnv.Home, "cellgrant-cg-" + Guid.NewGuid().ToString("n")[..8]);
+        var ws = Path.Combine(root, "ws");
+        var shared = Path.Combine(root, "shared");
+        Directory.CreateDirectory(ws);
+        Directory.CreateDirectory(shared);
+        var link = Path.Combine(root, "input");
+        File.CreateSymbolicLink(link, shared);
+        var policy = new CellPolicy(ws, [link], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")]);
+        Assert.Null(policy.Problem());
+
+        CellNative.BeforeGrantOpen = p =>
+        {
+            if (p != link) return;
+            File.Delete(link);
+            File.CreateSymbolicLink(link, AttemptCgroups.Mount);
+        };
+        int fd;
+        CellNative.Failure? failure;
+        try { fd = CellNative.Ruleset(policy, out failure); }
+        finally { CellNative.BeforeGrantOpen = null; }
+
+        Assert.True(fd < 0, $"a Landlock ruleset was built granting {link}, which by then led to {AttemptCgroups.Mount}");
+        Assert.Contains("cgroup", failure!.Sentence);
     }
 
     /// <summary>The overlap rule on descriptors too: a workspace symlink retargeted onto a read-only input after the check is refused (re-review).</summary>

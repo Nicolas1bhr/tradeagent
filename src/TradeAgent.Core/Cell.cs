@@ -198,8 +198,15 @@ public sealed record CellPolicy
     /// <para><b>And the owner's inbox</b> (<c>U-cell-linux-d</c> item 5, COUNCIL rule 7): the inbox, anything inside it, and anything
     /// that holds it — <see cref="Paths.Workspace"/> itself — so no cell is ever granted the folder the material scanner reads as what
     /// the owner handed over. The agent's own tree beside it (<see cref="Paths.AgentHome"/>, a role's home) stays grantable.</para>
+    ///
+    /// <para><b>And the cgroup filesystem</b> (<c>U-cell-linux-b</c> fix pass 1, R2): its mount, the attempts' delegated root beneath it,
+    /// and anything that holds either. A cell granted any of it could write a <c>cgroup.procs</c> — the app's own <c>supervisor/</c>'s,
+    /// or a sibling attempt's — and leave its attempt's cgroup, or lift its own ceilings, which undoes the cgroup half of the grant's
+    /// proof. By path here, and by descriptor in the cell stage, which also refuses any descriptor on a cgroup filesystem wherever
+    /// it is mounted.</para>
     /// </summary>
-    internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside, IReadOnlyList<string> Inboxes)
+    internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside, IReadOnlyList<string> Inboxes,
+        IReadOnlyList<string> Cgroups)
     {
         public static Guarded Of(string? appHome = null)
         {
@@ -211,7 +218,10 @@ public sealed record CellPolicy
             var inboxRelative = Path.GetRelativePath(Paths.Home, Paths.Inbox);
             var inboxes = homes.Select(h => Path.Combine(h, inboxRelative)).Concat(Forms(Path.Combine(home, inboxRelative)))
                 .Distinct(StringComparer.Ordinal).ToList();
-            return new Guarded(homes, inside, inboxes);
+            var cgroups = Forms(AttemptCgroups.Mount)
+                .Concat(AttemptCgroups.Current.Root is { } root ? Forms(root) : [])
+                .Distinct(StringComparer.Ordinal).ToList();
+            return new Guarded(homes, inside, inboxes, cgroups);
         }
 
         /// <summary>Why a path — one already resolved, or one spelling of it — may not be granted, or null.</summary>
@@ -226,6 +236,10 @@ public sealed record CellPolicy
             foreach (var root in Inside)
                 if (Within(form, root))
                     return $"lies inside TradeAgent's state or its cell policies ({root})";
+            foreach (var cgroup in Cgroups)
+                if (Within(form, cgroup) || Within(cgroup, form))
+                    return $"would grant the cgroup filesystem {cgroup} (it is, lies inside or holds it): a cell there could move itself out " +
+                           "of its attempt's cgroup or lift its own ceilings";
             return null;
         }
     }

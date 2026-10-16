@@ -463,4 +463,53 @@ public partial class CellLinuxTests
             if (Alive(child, entry!.Value.Start)) Posix.Kill(child);
         }
     }
+
+    /// <summary>
+    /// (j) R2: NO CELL IS GRANTED THE CGROUP FILESYSTEM. A cell whose workspace is the attempts' delegated root — or the cgroup mount,
+    /// or what holds it, or the app's own <c>supervisor/</c> — could write <c>supervisor/cgroup.procs</c> and leave its attempt; each
+    /// is refused before anything starts, naming the cgroup, and so is the root as a read-only input. A cell with an ordinary
+    /// workspace cannot write that file either (Landlock grants it nothing there).
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_is_never_granted_the_cgroup_filesystem_and_cannot_write_the_supervisors_procs()
+    {
+        PlatformIsACells();
+        using var rows = Rows();
+        var supervisor = Path.Combine(rows.Dir, AttemptCgroups.SupervisorLeaf);
+        Directory.CreateDirectory(supervisor);
+        var script = $"if echo $$ > {supervisor}/cgroup.procs; then echo moved; else echo move-refused; fi; cat /proc/$$/cgroup";
+        var w = new World("cgroot");
+
+        foreach (var policy in new[]
+        {
+            new CellPolicy(rows.Dir, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy(AttemptCgroups.Mount, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy("/sys/fs", [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy(supervisor, [], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+            new CellPolicy(w.Ws, [rows.Dir], CellPolicy.SystemRoots, [new("PATH", CellPath)]),
+        })
+        {
+            ContainedProcess? started = null;
+            try
+            {
+                started = ProcessContainment.Start(Plain("/bin/sh", "-c", script), policy, Launcher(), cgroups: rows.Cgroups, attemptId: "cgroot");
+            }
+            catch (TradeAgentException ex)
+            {
+                Assert.Equal(ErrorCode.CELL_UNAVAILABLE, ex.Code);
+                Assert.Contains("cgroup", ex.Message);
+                continue;
+            }
+            using (started)
+            {
+                var ran = await Finish(started);
+                Assert.Fail($"a cell granted {policy.Workspace} (inputs: {string.Join(", ", policy.ReadOnly)}) started and said: {ran.Out.Trim()} {ran.Err.Trim()}");
+            }
+        }
+        Assert.Empty(AttemptCgroups.Procs(supervisor) ?? [-1]);
+
+        var ordinary = await InCell(w.Policy(), "/bin/sh", "-c", script);
+        Says(ordinary, "move-refused");
+        Assert.Empty(AttemptCgroups.Procs(supervisor) ?? [-1]);
+    }
 }
