@@ -359,6 +359,15 @@ public static class Labels
     }
 
     /// <summary>
+    /// A LAUNCH UNDER AN ID THIS LEDGER NEVER HANDED OUT, OR ALREADY LAUNCHED UNDER (<c>U-mint-per-launch</c>). A turn's
+    /// prompt, row and output's name are one id, the one it minted; a launch carrying any other is refused rather than
+    /// recorded under a name another launch owns.
+    /// </summary>
+    public static string LaunchIdNotMinted(string attemptId) =>
+        $"The launch '{attemptId}' was not minted by this launch ledger, or was already launched, so no turn was started "
+        + "under it. Nothing was written, nothing was charged and no wake was taken. The next turn mints its own.";
+
+    /// <summary>
     /// THE TURN REFUSED BECAUSE ITS LAUNCH COULD NOT BE WRITTEN DOWN (<c>U-admission-fail-closed</c>). The launch ledger
     /// is where a turn's cost is reserved before the process starts, and the only place the day's limit can see it; a
     /// turn whose row would not go in is a turn no ceiling would ever count, so it is not started. It names the ledger

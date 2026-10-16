@@ -490,6 +490,15 @@ public interface IMissionHost
     AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => BeginTurn(prompt, wakes);
 
     /// <summary>
+    /// THE SAME, UNDER THE ID THIS LAUNCH MINTED (<c>U-mint-per-launch</c>): <paramref name="attemptId"/> is what
+    /// <see cref="NextAttemptId"/> handed this turn, and the row carries exactly that id or the launch is refused — the
+    /// prompt, the row, the grant and the output's name are one id, this launch's own, never another's. Null where this
+    /// host minted nothing. A host that mints implements this; the default is the host that mints nothing.
+    /// </summary>
+    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId) =>
+        BeginTurn(prompt, wakes, role);
+
+    /// <summary>
     /// EVERYTHING THE APP OWES THE FILESYSTEM AFTER A TURN, AND ON START: an unpublished report
     /// published, a committed delivery whose file is missing re-copied. Called by the loop at both
     /// moments, and by nothing else on this interface that can change what the AI is allowed to do.
@@ -537,8 +546,19 @@ public interface IMissionHost
     /// Null where nothing records launches, and then the Situation names no id and the relay
     /// quarantines whatever the turn writes — which is the honest outcome of a turn the app could
     /// not record at all.
+    ///
+    /// <para><b>A FRESH ID ON EVERY CALL, FOR <paramref name="role"/></b> (<c>U-mint-per-launch</c>): two callers that
+    /// mint before either launches hold two ids, and the owner's chat never takes the loop's. The id is handed back to
+    /// <see cref="BeginTurn(string, IReadOnlyList{string}, string, string?)"/>, and to <see cref="ForgetAttemptId"/> when
+    /// the turn gives up without launching.</para>
     /// </summary>
-    string? NextAttemptId() => null;
+    string? NextAttemptId(string role) => null;
+
+    /// <summary>
+    /// A MINTED ID THIS TURN WILL NOT LAUNCH UNDER, forgotten: the turn went idle, was refused its lease, or threw before
+    /// its launch. Without it a minted id would outlive the turn it was minted for.
+    /// </summary>
+    void ForgetAttemptId(string attemptId) { }
 
     /// <summary>
     /// THE ARTIFACT ONE DELIVERED TASK IS ABOUT, or null where it cannot be read. The loop asks for
@@ -2007,7 +2027,12 @@ public sealed class MissionLoop
         // must name its output after, and BeginTurn hashes the prompt — so an id handed back by
         // that call could never be in the prompt it is hashed with. Minting is not recording:
         // nothing is committed until BeginTurn below, and an id nobody launched under names no row.
-        var attemptId = Mint();
+        //
+        // THIS LAUNCH'S OWN (U-mint-per-launch): minted fresh for this role, launched under by BeginTurn below or
+        // refused there, and forgotten at every exit that does not launch — `minted` is disposed with the method, as the
+        // lease is. The owner's chat typed meanwhile mints its own and can never take this one.
+        var attemptId = Mint(role);
+        using var minted = new MintedId(_host, attemptId);
 
         var known = await _host.SituationAsync(role, ct);
 
@@ -2105,7 +2130,7 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var admission = _host.BeginTurn(prompt, wakeIds, role);
+        var admission = _host.BeginTurn(prompt, wakeIds, role, attemptId);
 
         // THE TRANSACTION'S ANSWER OUTRANKS THE LOOK TAKEN ABOVE. Between that look and this commit
         // another launch can have taken the room — the owner's own chat turn, or a second role — and
@@ -2116,8 +2141,8 @@ public sealed class MissionLoop
         // (U-admission-fail-closed; see LedgerRefused).
         //
         // BEFORE the `finally` below exists, so a refused turn commits no transition: there is no
-        // launch to close, nothing was published and no wake was consumed. The id minted above is
-        // not wasted either — `TurnMeter.Mint` hands the same one to the next `Begin`.
+        // launch to close, nothing was published and no wake was consumed. The id minted above dies
+        // with this turn (`minted`); the next turn mints its own (U-mint-per-launch).
         if (!admission.Admitted)
         {
             lock (_gate) { _turning.Remove(role); _role = null; _typedForARefusedTurn.AddRange(typed); }
@@ -2134,6 +2159,9 @@ public sealed class MissionLoop
             Changed?.Invoke();
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
+
+        // LAUNCHED, so the minted id is the row's now and nothing forgets it.
+        minted.Launched();
 
         // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
         // is a new event and is told.
@@ -2548,10 +2576,29 @@ public sealed class MissionLoop
     /// host whose ledger cannot be reached gives the turn no id, the turn's output is quarantined
     /// rather than published under a launch nobody recorded, and the loop keeps working.
     /// </summary>
-    string? Mint()
+    string? Mint(string role)
     {
-        try { return _host.NextAttemptId(); }
+        try { return _host.NextAttemptId(role); }
         catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// ONE TURN'S MINTED ID, forgotten when the turn gives up without launching under it (<c>U-mint-per-launch</c>) —
+    /// idle, refused its lease, refused by the ledger, or thrown out before the launch. Never throws: a host that cannot
+    /// forget an id leaves one id nobody launches under, which names no row.
+    /// </summary>
+    sealed class MintedId(IMissionHost host, string? id) : IDisposable
+    {
+        bool _launched;
+
+        public void Launched() => _launched = true;
+
+        public void Dispose()
+        {
+            if (_launched || id is null) return;
+            try { host.ForgetAttemptId(id); }
+            catch (Exception) { /* see the summary */ }
+        }
     }
 
     /// <summary>This role's reading of today's spending, or the whole day's where the host has none.</summary>

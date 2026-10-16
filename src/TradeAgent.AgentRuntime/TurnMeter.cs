@@ -523,7 +523,7 @@ public sealed class TurnMeter
     readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop)> _open = [];
 
     /// <summary>
-    /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id its next launch will carry.
+    /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id ITS next launch will carry — that role's, and never another's.
     ///
     /// Read by the launch-grant mint (<c>U-containment</c>): the token handed to one agent process
     /// names the attempt that process's work is charged to, so "which attempt placed this order" is
@@ -531,21 +531,33 @@ public sealed class TurnMeter
     /// that is what the meter now holds — a single slot would hand the chair's grant another role's
     /// attempt id, which is the same confusion `U-budget-reserve` removed from the reservations.
     ///
-    /// The minted id is the fallback for the same reason <see cref="Mint"/> exists: a message that
-    /// names its own attempt is built before <see cref="Begin"/> writes the row.
+    /// The role's own minted id is the fallback for the same reason <see cref="Mint"/> exists: a message that
+    /// names its own attempt is built before <see cref="Begin"/> writes the row. ANOTHER role's minted id is never the
+    /// answer (<c>U-mint-per-launch</c>): it fell back to one shared slot, whoever had minted into it.
     /// </summary>
     public string? OpenAttemptIdFor(string? role)
     {
-        lock (_gate) return _open.TryGetValue(Key(role), out var held) ? held.Id : _minted;
+        lock (_gate)
+        {
+            if (_open.TryGetValue(Key(role), out var held)) return held.Id;
+            var key = Key(role);
+            for (var i = _minted.Count - 1; i >= 0; i--)
+                if (_minted[i].Role == key) return _minted[i].Id;
+            return null;
+        }
     }
 
     /// <summary>
-    /// AN ID MINTED AND NOT YET LAUNCHED UNDER. <see cref="Mint"/> puts one here so the turn's
-    /// message can name it; <see cref="Begin"/> takes it. Nothing is committed while it sits here —
-    /// a minted id nobody launched under names no row, which is why the relay's fence refuses a
-    /// file naming one.
+    /// THE IDS MINTED AND NOT YET LAUNCHED UNDER, each with the role it was minted for (<c>U-mint-per-launch</c>).
+    /// <see cref="Mint"/> adds one so the turn's message can name it; <see cref="Begin"/> takes exactly the one its
+    /// caller hands back, and <see cref="Forget"/> drops one whose turn gave up. Nothing is committed while one sits
+    /// here — a minted id nobody launched under names no row, which is why the relay's fence refuses a file naming one.
+    ///
+    /// <para>A LIST, NOT A SLOT. One slot (<c>_minted ??= NewId()</c>, taken by every <c>Begin</c>) handed two callers
+    /// the same id, and let the owner's chat — admitted through this meter — launch under the id the loop had already
+    /// written into its prompt.</para>
     /// </summary>
-    string? _minted;
+    readonly List<(string Id, string Role)> _minted = [];
 
     /// <summary>
     /// THE CLOSE OF A TURN THE MISSION LOOP OWNS, METERED AND NOT YET COMMITTED.
@@ -827,7 +839,7 @@ public sealed class TurnMeter
     /// then be lost.
     /// </param>
     public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null,
-        bool heldForTheLoop = true)
+        bool heldForTheLoop = true, string? attemptId = null)
     {
         // NOTHING IS LAUNCHED WHILE A PROCESS OF AN ENDED TURN STILL RUNS. Before the row, before the
         // reservation, before the wakes: a refused launch writes nothing and consumes nothing.
@@ -868,8 +880,21 @@ public sealed class TurnMeter
         try { CommitStaged(role); }
         catch (Exception) { /* the row stays LAUNCHED and the next restart loses it, which is safe */ }
 
+        // THE ID THIS LAUNCH MINTED, AND ONLY THAT (U-mint-per-launch). Taken out of the minted list here, so no second
+        // launch can carry it; an id this meter never minted, or already launched under, is refused in words — no row,
+        // no reservation, no wake. No id at all is a launch that minted nothing ahead (the owner's chat): it mints its
+        // own, here, and can take no one else's.
         string id;
-        lock (_gate) { id = _minted ?? NewId(); _minted = null; }
+        lock (_gate)
+        {
+            if (attemptId is null) id = NewId();
+            else if (_minted.FindIndex(m => m.Id == attemptId) is var at and >= 0)
+            {
+                id = attemptId;
+                _minted.RemoveAt(at);
+            }
+            else return new AiAdmission { Refusal = Labels.LaunchIdNotMinted(attemptId) };
+        }
 
         var attempt = new AiAttempt
         {
@@ -1010,17 +1035,35 @@ public sealed class TurnMeter
     }
 
     /// <summary>
-    /// THE ID THE NEXT <see cref="Begin"/> WILL USE, minted now so the turn's message can name it.
+    /// THE ID ONE LAUNCH WILL USE, minted now so the turn's message can name it.
     ///
     /// The message has to carry the id — staged output is bound to its launch by the file name — and
     /// <see cref="Begin"/> hashes that message, so the id cannot be something that call hands back
     /// afterwards. Nothing is written here: a minted id that never reaches <see cref="Begin"/> is an
     /// id no row carries, and the relay's fence refuses a file naming one, which is the correct
     /// reading of "a turn the app could not record".
+    ///
+    /// <para><b>A FRESH ID ON EVERY CALL</b> (<c>U-mint-per-launch</c>), remembered as minted-not-launched for
+    /// <paramref name="role"/>: two callers that mint before either launches hold two ids, and the caller hands its own
+    /// back to <see cref="Begin"/> — or to <see cref="Forget"/> when its turn gives up.</para>
     /// </summary>
-    public string Mint()
+    public string Mint(string? role = null)
     {
-        lock (_gate) return _minted ??= NewId();
+        lock (_gate)
+        {
+            var id = NewId();
+            _minted.Add((id, Key(role)));
+            return id;
+        }
+    }
+
+    /// <summary>
+    /// A MINTED ID ITS TURN WILL NOT LAUNCH UNDER, forgotten — so it outlives nothing and no later launch can carry it.
+    /// An id already launched, or never minted here, is not in the list and this does nothing.
+    /// </summary>
+    public void Forget(string attemptId)
+    {
+        lock (_gate) _minted.RemoveAll(m => m.Id == attemptId);
     }
 
     /// <summary>44 characters: the minute it started, so a person can read the table, and a guid.</summary>
@@ -1163,6 +1206,9 @@ public sealed class TurnMeter
         // safe once there were two implementations: a harness conversation that failed this type test
         // would be metered after the fact and never admitted, so a role on the app-owned harness could
         // take the last of the day's allowance and be recorded once the provider had already been paid.
+        //
+        // NO ID IS HANDED IN, SO THE OWNER'S TURN MINTS ITS OWN inside Begin (U-mint-per-launch): it can never take an id
+        // the loop minted and already wrote into its prompt.
         if (conversation is IAdmittedConversation admitted)
             admitted.Admit = prompt => Begin(prompt, role: role, heldForTheLoop: false);
 

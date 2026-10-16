@@ -176,7 +176,29 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
             return Meter.Begin(prompt, wakes, role);
         }
 
-        public string? NextAttemptId() => Meter.Mint();
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId)
+        {
+            Opened.Add((role, prompt));
+            return Meter.Begin(prompt, wakes, role, attemptId: attemptId);
+        }
+
+        /// <summary>
+        /// The id the loop's next turn is handed: the one a test minted ahead with <see cref="MintNext"/>, so a canned
+        /// tool call can name it, or a fresh one. Either way the meter minted it, so its launch is admitted under it.
+        /// </summary>
+        public string? NextAttemptId(string role)
+        {
+            var ahead = _next;
+            _next = null;
+            return ahead ?? Meter.Mint(role);
+        }
+
+        public void ForgetAttemptId(string attemptId) => Meter.Forget(attemptId);
+
+        /// <summary>Mints the id the loop's next turn will launch under, now, so a test can write it into a canned answer.</summary>
+        public string MintNext(string role) => _next = Meter.Mint(role);
+
+        string? _next;
 
         public void Relay(string role, string? attempt) => _relay.Run(role, attempt);
 
@@ -286,10 +308,10 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         File.WriteAllText(
             Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.InDir, "brief.md"), Brief);
 
-        // THE ID THE LOOP WILL LAUNCH UNDER, taken from the meter's own mint — which is idempotent
-        // until `Begin` takes it, so this is the same id `NextAttemptId` hands the turn and the name
-        // the canned `write_file` has to use. Minting is not recording: nothing is written here.
-        var attempt = host.Meter.Mint();
+        // THE ID THE LOOP WILL LAUNCH UNDER, minted by the meter ahead of the turn and handed to it by
+        // `NextAttemptId` — the name the canned `write_file` has to use. Minting is not recording:
+        // nothing is written here.
+        var attempt = host.MintNext(CouncilRoles.Research);
 
         provider
             .Answer(FakeProvider.ToolCall("read_file", new { path = $"{WorkspaceBuilder.InDir}/brief.md" },
@@ -410,7 +432,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         File.WriteAllText(
             Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.InDir, "brief.md"), Brief);
 
-        var attempt = host.Meter.Mint();
+        var attempt = host.MintNext(CouncilRoles.Research);
         provider
             .Answer(FakeProvider.ToolCall("write_file",
                 new { path = $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", content = Report },
