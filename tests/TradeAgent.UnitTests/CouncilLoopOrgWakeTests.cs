@@ -277,4 +277,154 @@ public partial class CouncilLoopTests
         Assert.False(host.Spending[spent].AdmitsAnotherTurn, $"room {host.Spending[spent].RoleRemaining} of {host.Spending[spent].RoleCap}");
         Assert.Equal([funded], host.Opened.Select(o => o.Role));
     }
+
+    // ---- (c) heads, members and the legacy pair on the clock --------------------------------------------------------------
+
+    /// <summary>The ceiling wakes of one position, every one, oldest first.</summary>
+    static List<MissionEvent> Ceilings(CouncilHost host, string position) =>
+        [.. host.Events!.OfKind(MissionEventKind.Ceiling).Where(e => e.Role == position)];
+
+    /// <summary>A turn of <paramref name="position"/> the ledger recorded at <paramref name="at"/>, taking one wake of its own.</summary>
+    static void Turned(Database db, string position, DateTimeOffset at)
+    {
+        var events = new MissionEventStore(db);
+        var wake = MissionEventIds.ForRole(MissionEventIds.Self($"turn-{at.UtcTicks}"), position);
+        events.Raise(wake, MissionEventKind.Self, at, role: position);
+        new AiAttemptStore(db).Begin(new AiAttempt { Id = $"turn-{at.UtcTicks}", StartedAt = at, Role = position }, [wake]);
+    }
+
+    /// <summary>
+    /// (c) A RUNNABLE HEAD GETS ONE CEILING WAKE FROM ITS LAST TURN (RULING Q2). A team head on the seam host last turned two
+    /// hours ago: one ceiling wake is raised, due at that turn plus the team level's maximum interval (24 h), and a later pass
+    /// raises no second one and does not move it. Past the floor the head turns on it, and its new turn moves the floor —
+    /// one pending ceiling again, due 24 h after the turn that took it.
+    ///
+    /// <para>RED at base: Schedule walked the legacy pair only, so the head had no floor at all.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_runnable_head_gets_one_ceiling_wake_from_its_last_turn()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Unit(db, "team-head", OrgIds.Research, null);
+        Seat(db, Pos, "team-head", heads: true);
+        var now = Noon();
+        Turned(db, Pos, now.AddHours(-2));
+        var host = new CouncilHost(db, root, new Concurrency()).Add(Pos);
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        await loop.TurnAsync();
+        var floor = Assert.Single(Ceilings(host, Pos));
+        Assert.Equal(now.AddHours(-2) + MissionOptions.DefaultCeiling, floor.DueAt);
+        Assert.False(floor.Consumed);
+        Assert.Empty(host.Opened);
+
+        // A LATER PASS IS NOT A TICK: no second row, the same floor.
+        now = now.AddHours(1);
+        await loop.TurnAsync();
+        Assert.Equal(floor.Id, Assert.Single(Ceilings(host, Pos)).Id);
+
+        // PAST THE FLOOR THE HEAD TURNS ON IT, and its turn moves the floor.
+        now = floor.DueAt.AddMinutes(1);
+        await loop.TurnAsync();
+        Assert.Equal([Pos], host.Opened.Select(o => o.Role));
+        var taken = Row(host, floor.Id)!;
+        Assert.True(taken.Consumed);
+        var turned = new AiAttemptStore(db).LastWoken(Pos)!;
+        Assert.Equal(turned.Id, taken.ConsumedBy);
+        var next = Assert.Single(Ceilings(host, Pos), e => !e.Consumed);
+        Assert.Equal(turned.StartedAt + MissionOptions.DefaultCeiling, next.DueAt);
+    }
+
+    /// <summary>
+    /// (c2) GUARD: A MEMBER GETS NO CLOCK WAKE (RULING Q2). With the heartbeat on and the host saying what each position owns, a
+    /// member — even one with the owner's words open — is raised no look, no ceiling and no renewal: an executor wakes for its
+    /// own request and the work addressed to it, never for the app's clock.
+    /// </summary>
+    [Fact]
+    public async Task A_member_gets_no_clock_wake()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Unit(db, "team-m", OrgIds.Research, null);
+        Seat(db, Pos, "team-m");
+        var now = Noon();
+        Turned(db, Pos, now.AddDays(-3));
+        var host = new CouncilHost(db, root, new Concurrency()) { Owns = true }.Add(Pos);
+        host.Spending[Pos] = Reading(Pos, 10m, 10m, 1m);
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) }, now: () => now);
+
+        var before = Rows(db, Pos);
+        await loop.TurnAsync();
+        now = now.AddDays(2);
+        await loop.TurnAsync();
+
+        Assert.Equal(before, Rows(db, Pos));
+        Assert.Empty(Ceilings(host, Pos));
+        Assert.DoesNotContain(host.Opened, o => o.Role == Pos);
+    }
+
+    /// <summary>
+    /// (c3) GUARD: THE LEGACY PAIR'S LOOKS ARE UNCHANGED by the positions now on the chart: the same rows — kind, role, due —
+    /// raised for the chair and Research with a head and a member beside them as without, the heartbeat on and the host saying
+    /// what each owns (<c>U-reconcile-wakes</c>' "no open work, no look"; <c>U-reconcile-packet</c>'s reminders).
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pairs_looks_are_unchanged()
+    {
+        async Task<List<string>> LegacyRows(bool chart)
+        {
+            var (db, root) = Workspace();
+            using var _ = db;
+            if (chart)
+            {
+                Unit(db, "team-c", OrgIds.Research, null);
+                Seat(db, Pos, "team-c", heads: true);
+                Seat(db, "pos-0b0b0b0b0b0b", "team-c");
+            }
+            var now = Noon();
+            var host = new CouncilHost(db, root, new Concurrency()) { Owns = true, Book = ["ES +1"] };
+            foreach (var role in CouncilRoles.All) host.Spending[role] = Reading(role, 2.50m, 5.00m, 0.5m);
+            var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) }, now: () => now);
+            await loop.TurnAsync();
+            now = now.AddHours(3);
+            await loop.TurnAsync();
+            return [.. CouncilRoles.All.SelectMany(r => host.Events!.Pending(MissionEventKind.Review, r)
+                    .Concat(host.Events.Pending(MissionEventKind.Renewal, r)))
+                .Select(e => $"{e.Kind} {e.For} {e.Id} {e.DueAt:O}")];
+        }
+
+        var without = await LegacyRows(chart: false);
+        Assert.NotEmpty(without);
+        Assert.Equal(without, await LegacyRows(chart: true));
+    }
+
+    /// <summary>
+    /// (g) GUARD: NO DUE WAKE MEANS NO PAID TURN, ACROSS A RESTART. A head with its floor a day out and a member with nothing:
+    /// a loop and then a fresh loop over the same queue — a restart — launch nothing, and the head still holds exactly one
+    /// ceiling, not one per start.
+    /// </summary>
+    [Fact]
+    public async Task No_due_wake_means_no_paid_turn()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Unit(db, "team-g", OrgIds.Research, null);
+        Seat(db, Pos, "team-g", heads: true);
+        Seat(db, "pos-0d0d0d0d0d0d", "team-g");
+        var now = Noon();
+        var host = new CouncilHost(db, root, new Concurrency()).Add(Pos).Add("pos-0d0d0d0d0d0d");
+
+        for (var start = 0; start < 2; start++)
+        {
+            var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+            await loop.TurnAsync();
+            await loop.TurnAsync();
+            now = now.AddMinutes(10);
+        }
+
+        Assert.Empty(host.Opened);
+        Assert.Equal(0, Launches(db, Pos));
+        Assert.Single(Ceilings(host, Pos));
+    }
 }

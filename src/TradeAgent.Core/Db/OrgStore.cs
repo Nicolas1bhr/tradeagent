@@ -232,6 +232,44 @@ public static class OrgEnvelopes
                 $"unit {unitId}'s envelope share '{text}' is not a fraction between 0 and 1");
 }
 
+/// <summary>
+/// THE LEVEL OF A POSITION IN TIME (<c>docs/VISION.md</c> § 7.5, "Hierarchy as time"): what horizon it holds state over, and so
+/// how long it may go unwoken — each level's maximum wake interval is policy data (<c>U-org-wakes</c>). DERIVED from the chart,
+/// never stored: a head of a division is a department head, a head deeper down a team head, any other position an executor.
+/// </summary>
+public static class OrgLevel
+{
+    /// <summary>Holds state over weeks: which families, which sources. Heads a unit directly under the root.</summary>
+    public const string Department = "department";
+
+    /// <summary>Holds state over days: which hypotheses, which assignments. Heads a unit below a division.</summary>
+    public const string Team = "team";
+
+    /// <summary>Holds state over hours: the path inside its mandate. Heads nothing.</summary>
+    public const string Executor = "executor";
+
+    public static readonly string[] All = [Department, Team, Executor];
+
+    /// <summary>The level a position of <paramref name="kind"/> in a unit at <paramref name="depth"/> holds.</summary>
+    public static string Of(string kind, int depth) =>
+        kind != OrgPositionKind.Head ? Executor : depth <= 1 ? Department : Team;
+}
+
+/// <summary>
+/// ONE ACTIVE POSITION AS THE SCHEDULER READS IT (<c>U-org-wakes</c>, ORCHESTRATION § 2.5): its exact id, its kind derived from
+/// the chart, the depth of its unit (the root is 0, a division 1) and its level (<see cref="OrgLevel"/>). Nothing here is
+/// stored; it is <see cref="OrgStore.Roster"/>'s reading of one snapshot.
+/// </summary>
+public sealed record ChartPosition(string Id, string Kind, int Depth, string Level)
+{
+    /// <summary>Whether this is one of the two positions that ran before the chart.</summary>
+    public bool IsLegacy => CouncilRoles.IsKnown(Id);
+
+    /// <summary>The legacy pair as the chart seeds them — each heads its division, directly under the root.</summary>
+    public static IReadOnlyList<ChartPosition> LegacyPair { get; } =
+        [.. CouncilRoles.All.Select(r => new ChartPosition(r, OrgPositionKind.Head, 1, OrgLevel.Department))];
+}
+
 /// <summary>One unit of the chart, as <c>org_unit</c> holds it.</summary>
 public sealed record OrgUnitRow(
     string Id,
@@ -343,6 +381,32 @@ public sealed class OrgStore(Database db)
                 CouncilRoles.IsKnown(id), CouncilRoles.HomeDir(id));
         });
     }
+
+    /// <summary>
+    /// EVERY ACTIVE POSITION, READ IN ONE SNAPSHOT (<c>U-org-wakes</c>): the legacy pair first, then every other active position
+    /// by its exact id, ordinal — each with its kind derived as <see cref="Standing"/> derives it, its unit's depth and its level.
+    /// A position whose id is not a position id, or whose unit is missing or hangs from a line that loops, is damage and throws:
+    /// the scheduler reads a chart whole or not at all.
+    /// </summary>
+    public IReadOnlyList<ChartPosition> Roster() => db.Read(_ =>
+    {
+        var units = Units().ToDictionary(u => u.Id, StringComparer.Ordinal);
+        var heads = units.Values.Where(u => u.HeadPositionId is not null).Select(u => u.HeadPositionId!).ToHashSet(StringComparer.Ordinal);
+        var roster = new List<ChartPosition>();
+        foreach (var p in Positions())
+        {
+            if (p.Status != OrgPositionStatus.Active || IsAppPrincipal(p.Id) || !CouncilRoles.IsPositionId(p.Id)) continue;
+            if (!units.TryGetValue(p.UnitId, out var unit))
+                throw Damaged($"position {p.Id} belongs to {p.UnitId}, which is not a unit");
+            var kind = heads.Contains(p.Id) ? OrgPositionKind.Head
+                : unit.Kind == OrgUnitKind.Staff ? OrgPositionKind.Staff
+                : OrgPositionKind.Member;
+            var depth = Line(units, unit).Count;
+            roster.Add(new ChartPosition(p.Id, kind, depth, OrgLevel.Of(kind, depth)));
+        }
+        return (IReadOnlyList<ChartPosition>)[.. roster.OrderBy(p => p.IsLegacy ? Array.IndexOf(CouncilRoles.All, p.Id) : CouncilRoles.All.Length)
+            .ThenBy(p => p.Id, StringComparer.Ordinal)];
+    });
 
     /// <summary>The unit a position belongs to — which it heads when that unit's head is this position — or null.</summary>
     public OrgUnitRow? UnitOf(string positionId) => db.Read(_ =>

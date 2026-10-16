@@ -96,7 +96,7 @@ public class RoleObjectivesTests
 
         Assert.Equal([RoleObjectives.OwnerAnswered, RoleObjectives.RequestFinal, RoleObjectives.PositionWatched,
                 RoleObjectives.BoundaryAssessed], RoleObjectives.KindsOf(CouncilRoles.Operations));
-        Assert.Equal(1, RoleObjectives.Version);
+        Assert.Equal(2, RoleObjectives.Version);
     }
 
     /// <summary>

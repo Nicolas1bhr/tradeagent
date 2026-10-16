@@ -914,7 +914,9 @@ public sealed class AppHost : IAsyncDisposable
             new MissionOptions
             {
                 TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
-                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes))
+                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes)),
+                Ceilings = OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, Gateway.Settings.HeadCeilingHours)),
+                    StringComparer.Ordinal)
             });
         Mission.Changed += () => Changed?.Invoke();
 
@@ -1712,6 +1714,17 @@ public sealed class AppHost : IAsyncDisposable
 
         /// <summary>The activation seam's refusal for one position. See <see cref="AppHost.ActivationRefusal"/>.</summary>
         public TurnRefusal? ActivationRefusal(string role) => host.ActivationRefusal(role);
+
+        /// <summary>
+        /// Every active position as the chart holds it now — kind, unit depth, level (<see cref="OrgStore.Roster"/>,
+        /// <c>U-org-wakes</c>). Throws where the chart cannot be read; the loop then walks the legacy pair alone.
+        /// </summary>
+        public IReadOnlyList<ChartPosition> Positions() =>
+            host._db is { } db ? new OrgStore(db).Roster() : ChartPosition.LegacyPair;
+
+        /// <summary>When the position's last woken turn started, from the launch ledger (<see cref="AiAttemptStore.LastWoken"/>).</summary>
+        public DateTimeOffset? LastWokenAt(string position) =>
+            host._db is { } db ? new AiAttemptStore(db).LastWoken(position)?.StartedAt : null;
 
         /// <summary>One role's conversation. The chair's is the window's; see <see cref="AppHost.ConversationFor"/>.</summary>
         public IAgentConversation? ConversationFor(string role) => host.ConversationFor(role);
