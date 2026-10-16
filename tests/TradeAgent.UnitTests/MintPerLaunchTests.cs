@@ -44,11 +44,19 @@ public class MintPerLaunchTests : IDisposable
     public async Task The_owners_chat_admitted_between_a_mint_and_the_loops_launch_takes_its_own_id()
     {
         var meter = Meter();
-        var chat = new Chat();
+        var chat = new Chair();
         using var attached = meter.Attach(chat, CouncilRoles.Operations);
 
+        // THE CHAT'S TURN STARTS AND ENDS WHILE THE LOOP COMPOSES: one still open refuses the loop's launch (P1, below).
         AiAdmission? typed = null;
-        var host = new SeamHost(meter) { WhileComposing = () => typed = chat.Admit!("what are you doing?") };
+        var host = new SeamHost(meter)
+        {
+            WhileComposing = () =>
+            {
+                typed = chat.Type("what are you doing?");
+                chat.EndChat(Usage);
+            }
+        };
 
         await new MissionLoop(host).TurnAsync();
 
@@ -62,6 +70,48 @@ public class MintPerLaunchTests : IDisposable
         Assert.Contains(minted, Assert.Single(host.Conv.Sent));
         Assert.NotNull(new AiAttemptStore(_db).Get(minted));
         Assert.Equal(2, Rows());
+    }
+
+    /// <summary>The usage a test turn reports, so "this row was closed by that turn" is a number on the row.</summary>
+    static readonly TurnUsage Usage = new(1000, 0, 0, 100, 0, "gpt-5.6-sol");
+
+    /// <summary>
+    /// (P1) RED at the unit's first pass: the owner's chat turn on the chair's conversation is still running when the
+    /// loop launches for the same role. The loop's admission overwrote the chat's open launch, consumed its wake, the
+    /// send threw on the busy conversation, and the chat's usage then closed the LOOP's row. A role never holds two open
+    /// launches: the loop is refused before any row, reservation or wake, and the chat's usage closes only its own row.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_while_the_same_roles_chat_turn_is_open_is_refused_and_the_chats_usage_closes_only_its_own_row()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var fill = MissionEventIds.Fill("EXEC-1");
+        events.Raise(fill, MissionEventKind.Fill, DateTimeOffset.Now.AddSeconds(-1));
+        var chair = new Chair();
+        using var attached = meter.Attach(chair, CouncilRoles.Operations);
+
+        AiAdmission? typed = null;
+        var host = new SeamHost(meter, chair)
+        {
+            Events = events,
+            WhileComposing = () => typed = chair.Type("what are you doing?")
+        };
+        await Record.ExceptionAsync(() => new MissionLoop(host).TurnAsync());
+
+        Assert.NotNull(typed);
+        Assert.True(typed!.Admitted, typed.Refusal);
+        Assert.True(host.Launched.Count == 0, "the loop launched while the same role's chat turn was open");
+        Assert.Empty(chair.Sent);
+        Assert.Equal(fill, Assert.Single(events.Due(DateTimeOffset.Now)).Id);
+        Assert.Null(new AiAttemptStore(_db).Get(Assert.Single(host.Minted)));
+
+        chair.EndChat(Usage);
+
+        var row = new AiAttemptStore(_db).Get(typed.Id!)!;
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(Usage.InputTokens, row.InputTokens);
+        Assert.Equal(1, Rows());
     }
 
     /// <summary>(a2) RED at base: <c>_minted ??=</c> handed both callers one id. Each mint is its own launch's.</summary>
@@ -114,6 +164,9 @@ public class MintPerLaunchTests : IDisposable
 
         var launched = meter.Mint(CouncilRoles.Operations);
         Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations, attemptId: launched).Admitted);
+        // ITS TURN ENDS, so what refuses below is the id and not the role's open launch (P1).
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow), CouncilRoles.Operations);
+        meter.CommitStaged(CouncilRoles.Operations);
 
         foreach (var foreign in new[] { anothers, TurnMeter.IdMintedAt(at), launched })
         {
@@ -126,7 +179,8 @@ public class MintPerLaunchTests : IDisposable
 
         Assert.Equal(1, Rows());
         Assert.Single(events.Due(DateTimeOffset.Now));
-        Assert.Equal(meter.Today.NextTurnReservation, meter.Today.Reserved);
+        // ONE LAUNCH'S WORTH ON THE DAY, as charged when its turn ended with no usage: nothing for the refusals.
+        Assert.Equal(meter.Today.NextTurnReservation, meter.Today.Reserved + meter.Today.Spent);
     }
 
     /// <summary>
@@ -190,7 +244,7 @@ public class MintPerLaunchTests : IDisposable
     /// THE SEAM HOST: an <see cref="IMissionHost"/> over a real meter, minting and launching exactly as the app's host
     /// does, with a hook between the mint and the launch where the owner's chat can be typed into.
     /// </summary>
-    sealed class SeamHost(TurnMeter meter) : IMissionHost
+    sealed class SeamHost(TurnMeter meter, IAgentConversation? conversation = null) : IMissionHost
     {
         public Recording Conv { get; } = new();
         public List<string> Minted { get; } = [];
@@ -198,7 +252,7 @@ public class MintPerLaunchTests : IDisposable
         public Action? WhileComposing { get; init; }
         public MissionEventStore? Events { get; init; }
 
-        public IAgentConversation? Conversation => Conv;
+        public IAgentConversation? Conversation => conversation ?? Conv;
         public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"mint-home-{Guid.NewGuid():n}");
         public bool InboxChangedSinceLastPass => false;
         public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
@@ -226,23 +280,54 @@ public class MintPerLaunchTests : IDisposable
         }
     }
 
-    /// <summary>The owner's chat as the meter sees it: a conversation it admits for, which starts no process.</summary>
-    sealed class Chat : IAgentConversation, IAdmittedConversation
+    /// <summary>
+    /// THE CHAIR'S CONVERSATION, as the app has it: the owner's chat and the loop's turns on one conversation. A typed
+    /// turn is admitted through the meter and held open until <see cref="EndChat"/>; a mission send while it runs throws
+    /// as <c>AgentSession</c> does. It starts no process.
+    /// </summary>
+    sealed class Chair : IAgentConversation, IAdmittedConversation
     {
+        bool _chatting;
+
         public Func<string, AiAdmission>? Admit { get; set; }
         public Func<string, bool>? RecordTyped { get; set; }
+        public List<string> Sent { get; } = [];
 
-        public bool Busy => false;
+        public bool Busy => _chatting;
         public IReadOnlyList<ChatTurn> History => [];
 
         public event Action<ChatTurn>? TurnAdded { add { } remove { } }
         public event Action<string>? Delta { add { } remove { } }
         public event Action? StateChanged { add { } remove { } }
-        public event Action<AgentTurnEnded>? TurnEnded { add { } remove { } }
+        public event Action<AgentTurnEnded>? TurnEnded;
+
+        /// <summary>The owner types: admitted through the meter, and running until <see cref="EndChat"/>.</summary>
+        public AiAdmission Type(string words)
+        {
+            var admission = Admit!(words);
+            if (admission.Admitted) _chatting = true;
+            return admission;
+        }
+
+        /// <summary>The owner's turn ends, reporting <paramref name="usage"/>.</summary>
+        public void EndChat(TurnUsage usage)
+        {
+            _chatting = false;
+            TurnEnded?.Invoke(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow) { Usage = usage });
+        }
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task SendAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
-        public Task SendMissionAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task SendMissionAsync(string message, CancellationToken ct = default)
+        {
+            if (_chatting)
+                throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "The AI is still working on the previous message.");
+            Sent.Add(message);
+            TurnEnded?.Invoke(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow));
+            return Task.CompletedTask;
+        }
+
         public void Queue(string message) { }
         public IReadOnlyList<string> TakeTyped() => [];
         public Task CancelAsync() => Task.CompletedTask;

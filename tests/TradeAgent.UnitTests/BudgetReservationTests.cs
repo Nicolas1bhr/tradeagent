@@ -79,7 +79,8 @@ public class BudgetReservationTests : IDisposable
         {
             looked[i] = meter.Today.AdmitsAnotherTurn;   // the loop's pre-check, on an empty ledger
             read.SignalAndWait();                        // neither commits until both have looked
-            admissions[i] = meter.Begin("## Situation", role: CouncilRoles.Operations);
+            // TWO ROLES, so the day's ceiling is what decides: one role holds one open launch (U-mint-per-launch).
+            admissions[i] = meter.Begin("## Situation", role: i == 0 ? CouncilRoles.Operations : CouncilRoles.Research);
         }
 
         var a = new Thread(() => Admit(0));
@@ -414,7 +415,9 @@ public class BudgetReservationTests : IDisposable
         var cap = 2m;
         var meter = new TurnMeter(_db, () => cap, runtimeId: () => "codex", now: () => now,
             recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol", share: _ => 1m);
-        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+        // ANOTHER ROLE TAKES THE ROOM: a launch of the loop's own role still open would refuse it for that, not the
+        // ceiling (U-mint-per-launch, one open launch per role).
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Research).Admitted);
 
         var host = new StaleHost(meter);
         host.Conv.Typed.Add("what are you doing?");
@@ -448,7 +451,8 @@ public class BudgetReservationTests : IDisposable
         events.Raise("owner:1", MissionEventKind.Owner, now);
 
         var meter = Meter(2m, () => now);
-        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);   // the room goes
+        // the room goes, to another role: the loop's own role with a launch open is refused for that (U-mint-per-launch)
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Research).Admitted);
 
         var host = new StaleHost(meter) { Wakes = events };
         Assert.True(await new MissionLoop(host, now: () => now).TurnAsync() > TimeSpan.Zero);   // the meter's instant, as above

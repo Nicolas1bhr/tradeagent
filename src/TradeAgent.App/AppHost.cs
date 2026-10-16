@@ -1787,8 +1787,13 @@ public sealed class AppHost : IAsyncDisposable
         /// <c>Database.Write</c>. It writes to the launch ledger, the relay's tables and the wake
         /// queue, and to nothing that decides what the AI is allowed to do.
         /// </summary>
-        public void CommitTurn(string role, string? attempt, Action dispositions) =>
-            host.Relay.CommitTurn(role, attempt, () => host.Meter?.CommitStaged(role), dispositions);
+        public void CommitTurn(string role, string? attempt, Action dispositions)
+        {
+            try { host.Relay.CommitTurn(role, attempt, () => host.Meter?.CommitStaged(role), dispositions); }
+            // A TURN THAT ENDED WITH NO END THE METER SAW (its send threw first) is not the role's open launch any more
+            // (U-mint-per-launch): a role holds one, and this one would refuse every later launch of the role.
+            finally { if (attempt is not null) host.Meter?.Release(role, attempt); }
+        }
 
         /// <summary>
         /// The id the next launch will carry, minted by the meter so the turn's message can name it.
