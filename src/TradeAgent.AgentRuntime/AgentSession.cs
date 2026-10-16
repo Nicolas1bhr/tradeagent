@@ -809,13 +809,22 @@ public sealed class AgentSession(
         // and the pipe serves it to nobody; from it, only to a peer inside this container — the job the process was put
         // in, or the session the launcher makes. A launch with no container is torn down at once and refused (RULING 2):
         // the attempt keeps its reservation, because a process that ran for any time is spend nobody can call zero.
+        //
+        // AND WHAT THAT TEARDOWN COULD NOT END IS STILL RUNNING (fix pass 1): carried out on TurnEnded as the finally's are,
+        // so the meter admits no launch while any of it runs. Dropped, it was an uncontained process spending beside the next
+        // launch with nothing anywhere saying so.
         if (contained.Container is not { } container)
         {
             _current = null;
-            EndTree(contained);
+            var end = EndTree(contained);
+            if (end is { Ended: false }) _survivors = end.Survivors;
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
-                $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it ended it " +
-                "at once. Restart TradeAgent — it puts back what it needs to hold the AI as it starts. If this stays, reinstall TradeAgent.");
+                $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it " +
+                (end is { Ended: false }
+                    ? $"tried to end it at once and could not: process {string.Join(", ", end.Survivors.Select(p => p.Pid))} " +
+                      "still runs, and no AI turn starts until it has ended. "
+                    : "ended it at once. ") +
+                "Restart TradeAgent — it puts back what it needs to hold the AI as it starts. If this stays, reinstall TradeAgent.");
         }
         register.Bind(launch.Token, container);
 

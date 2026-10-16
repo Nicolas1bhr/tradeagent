@@ -499,6 +499,143 @@ public static class ProcessTable
 }
 
 /// <summary>
+/// THE WINDOWS HALF OF "WHICH OF THE TURN'S PROCESSES STILL RUN" (<c>U-grant-tree</c> fix pass 1), for the one Windows
+/// teardown no job holds: a launch Windows would not put in its job, ended by the ordinary tree kill. A kill that failed
+/// there used to be swallowed and the tree reported ended — and an unconfirmed teardown is a process still running and
+/// spending (unknown is never zero). So the tree is read from the toolhelp snapshot — the leader, and every process whose
+/// parent is a member and which started no earlier than it (a parent's pid handed on is not a parent) — and each member is
+/// re-asked by pid and creation time, as <see cref="TreeTeardown.StillRunning"/> asks on macOS and Linux.
+/// <see cref="ProcessEntry.Start"/> is the creation FILETIME here, <see cref="ProcessClock"/>'s Windows unit; zero when it
+/// could not be read, and then the pid alone is asked, which holds more rather than less. Nothing here runs elsewhere.
+/// </summary>
+public static class WindowsProcessTable
+{
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, SYNCHRONIZE = 0x00100000;
+    const uint TH32CS_SNAPPROCESS = 0x2, WAIT_OBJECT_0 = 0;
+    const int ERROR_INVALID_PARAMETER = 87;
+
+    /// <summary>A process's creation as a FILETIME, or null when it cannot be opened or read.</summary>
+    public static ulong? StartOf(int pid)
+    {
+        if (!OperatingSystem.IsWindows() || pid <= 0) return null;
+        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (h == IntPtr.Zero) return null;
+        try { return Created(h); }
+        finally { CloseHandle(h); }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="entry"/> is still that process and still running. TRUE whenever Windows will not say: a
+    /// pid it cannot open for any reason but "no such process", a creation it will not read, a wait that fails.
+    /// </summary>
+    public static bool StillRunning(ProcessEntry entry)
+    {
+        if (!OperatingSystem.IsWindows() || entry.Pid <= 0) return false;
+        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, (uint)entry.Pid);
+        if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() != ERROR_INVALID_PARAMETER;
+        try
+        {
+            if (entry.Start != 0)
+            {
+                if (Created(h) is not { } created) return true;
+                if (created != entry.Start) return false;
+            }
+            var waited = WaitForSingleObject(h, 0);
+            return waited != WAIT_OBJECT_0;
+        }
+        finally { CloseHandle(h); }
+    }
+
+    /// <summary>
+    /// The tree under <paramref name="leader"/> as the toolhelp snapshot has it now — the leader itself while it is still
+    /// the process that started at <paramref name="leaderStart"/>, and every descendant by parent pid and start order — or,
+    /// when no snapshot can be taken, the leader alone (asked by pid if its start is unknown).
+    /// </summary>
+    public static IReadOnlyList<ProcessEntry> Tree(int leader, ulong leaderStart)
+    {
+        var members = new List<ProcessEntry> { new(leader, 0, 0, 0, leaderStart, false, false) };
+        if (!OperatingSystem.IsWindows()) return members;
+        var parents = Snapshot();
+        if (parents is null) return members;
+
+        for (var i = 0; i < members.Count; i++)
+        {
+            var m = members[i];
+            foreach (var (pid, parent) in parents)
+            {
+                if (parent != m.Pid || pid == m.Pid || members.Any(x => x.Pid == pid)) continue;
+                var start = StartOf(pid) ?? 0;
+                // A PROCESS THAT STARTED BEFORE ITS RECORDED PARENT is the child of an earlier owner of that pid, not ours.
+                if (start != 0 && m.Start != 0 && start < m.Start) continue;
+                members.Add(new ProcessEntry(pid, m.Pid, 0, 0, start, false, false));
+            }
+        }
+        return members;
+    }
+
+    /// <summary>Every process's (pid, parent pid), or null when Windows would not take the snapshot.</summary>
+    static List<(int Pid, int Parent)>? Snapshot()
+    {
+        var snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return null;
+        try
+        {
+            var all = new List<(int, int)>();
+            var e = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
+            if (!Process32FirstW(snap, ref e)) return null;
+            do all.Add(((int)e.th32ProcessID, (int)e.th32ParentProcessID));
+            while (Process32NextW(snap, ref e));
+            return all;
+        }
+        finally { CloseHandle(snap); }
+    }
+
+    static ulong? Created(IntPtr h) =>
+        GetProcessTimes(h, out var created, out _, out _, out _) && created > 0 ? (ulong)created : null;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32W
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+}
+
+/// <summary>
 /// NOW, IN THE UNIT A PROCESS'S START IS WRITTEN IN, so "did this process start before that moment" can be asked of one
 /// machine's own two readings (<c>U-grant-tree</c>: a peer that started after its connection was accepted is a pid handed
 /// on). The kernel's own clocks, never converted to a wall time: macOS's microseconds since the epoch, as
@@ -606,9 +743,14 @@ public static class TreeTeardown
         }
     }
 
-    /// <summary>Whether a process a teardown could not end is still the same process, and still running.</summary>
+    /// <summary>
+    /// Whether a process a teardown could not end is still the same process, and still running — on Windows by
+    /// <see cref="WindowsProcessTable.StillRunning"/>, which answers yes whenever Windows will not say.
+    /// </summary>
     public static bool StillRunning(ProcessEntry survivor) =>
-        ProcessTable.Read(survivor.Pid) is { Zombie: false } now && now.Start == survivor.Start;
+        OperatingSystem.IsWindows()
+            ? WindowsProcessTable.StillRunning(survivor)
+            : ProcessTable.Read(survivor.Pid) is { Zombie: false } now && now.Start == survivor.Start;
 
     /// <summary>
     /// Every process proved the turn's, frozen. Passes are repeated until one adds nothing: a child forked

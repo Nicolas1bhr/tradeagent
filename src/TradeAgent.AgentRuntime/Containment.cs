@@ -176,12 +176,15 @@ public sealed class ContainedProcess : IDisposable
         _held = held;
         Mechanism = mechanism;
         Cell = cell;
+        _leader = process.Id;
         if (OperatingSystem.IsWindows())
         {
+            // THE LEADER'S CREATION, for the one teardown no job holds: what is still running of it is asked by pid AND
+            // creation, so a pid Windows handed on is not counted (fix pass 1).
+            _leaderStart = WindowsProcessTable.StartOf(_leader) ?? 0;
             if (held && job != IntPtr.Zero) Container = new JobContainer(this);
             return;
         }
-        _leader = process.Id;
         _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
         _session = ownSession ? _leader : 0;
         if (ownSession && _leaderStart != 0) Container = new SessionContainer(this);
@@ -256,11 +259,7 @@ public sealed class ContainedProcess : IDisposable
             if (OperatingSystem.IsWindows())
             {
                 EndJob();
-                if (_job == IntPtr.Zero && !_disposed)
-                {
-                    try { if (!Process.HasExited) Process.Kill(entireProcessTree: true); }
-                    catch (Exception) { /* already gone */ }
-                }
+                if (_job == IntPtr.Zero && !_disposed) return Ended = EndUnjobbed();
                 return Ended = TreeEnd.Nothing;
             }
 
@@ -270,6 +269,37 @@ public sealed class ContainedProcess : IDisposable
             // turn's supervisor is itself killed here, so the app removes it too — only its own file, never throwing.
             if (Cell is not null) CellStage.Discard(Cell.PolicyFile);
             return Ended;
+        }
+    }
+
+    /// <summary>
+    /// THE ORDINARY TREE KILL, FOR A WINDOWS PROCESS NO JOB HOLDS, AND WHAT IT COULD NOT END (<c>U-grant-tree</c> fix pass 1).
+    /// The tree is read before the kill and again after it, and the teardown returns only once nothing of it runs or its
+    /// bound has passed — saying, then, which processes still run. A kill that threw used to be read as "already gone" and
+    /// the tree reported ended: a launch Windows would not put in its job then ran on, uncontained and spending, while the
+    /// next launch was admitted beside it. Unknown is never zero.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    TreeEnd EndUnjobbed()
+    {
+        var members = WindowsProcessTable.Tree(_leader, _leaderStart).ToList();
+        try
+        {
+            if (ProcessContainment.Faults.Value is { RefuseTreeKill: true })
+                throw new System.ComponentModel.Win32Exception(5, "the tree kill was refused (a test's fault)");
+            if (!Process.HasExited) Process.Kill(entireProcessTree: true);
+        }
+        catch (Exception) { /* what it could not end is read below, not assumed gone */ }
+
+        var deadline = DateTime.UtcNow + TreeTeardown.Bound;
+        while (true)
+        {
+            foreach (var late in WindowsProcessTable.Tree(_leader, _leaderStart))
+                if (!members.Any(m => m.Pid == late.Pid)) members.Add(late);
+            var left = members.Where(TreeTeardown.StillRunning).ToList();
+            if (left.Count == 0) return TreeEnd.Nothing;
+            if (DateTime.UtcNow >= deadline) return new TreeEnd(false, left, 0);
+            Thread.Sleep(20);
         }
     }
 
@@ -440,6 +470,13 @@ public sealed class ContainedProcess : IDisposable
 public static class ProcessContainment
 {
     const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+    /// <summary>
+    /// WINDOWS FAILURES A TEST CANNOT OTHERWISE ARRANGE (<c>U-grant-tree</c> fix pass 1): an assign Windows
+    /// refuses, a tree kill that fails. Scoped to the test's own async flow — a launch anywhere else never sees
+    /// it — and it only ever makes a launch fail, never turns a check off. Null in the product.
+    /// </summary>
+    internal static readonly AsyncLocal<WindowsFaults?> Faults = new();
     const int JobObjectExtendedLimitInformation = 9;
 
     /// <summary>
@@ -482,7 +519,8 @@ public static class ProcessContainment
     /// A launch that carries a grant (<c>U-grant-tree</c>, RULING 2): one that cannot be held is REFUSED — thrown as
     /// <see cref="ErrorCode.CONTAINMENT_UNAVAILABLE"/> — rather than started bare. Before the process when that is known
     /// first (no launcher, a launcher that will not start, a job Windows will not make); and when it is known only after
-    /// (a process Windows would not put in its job), the process is ended at once and then refused. False is the Doctor's
+    /// (a process Windows would not put in its job), it is returned with no <see cref="ContainedProcess.Container"/> and the
+    /// caller ends it at once, carries what its teardown could not end to the meter, and refuses. False is the Doctor's
     /// fixed probes, which start no agent and carry no grant, and keep the bare fallback.
     /// </param>
     public static ContainedProcess Start(ProcessStartInfo psi, IReadOnlyList<string>? launcher = null, bool requireHeld = false)
@@ -649,20 +687,16 @@ public static class ProcessContainment
         // the line below, a child that spawns instantly could spawn outside the job. From the assign
         // onwards Windows puts every descendant in the job automatically, and breakaway is not
         // permitted, so the window is bounded by the duration of one syscall and it closes for good.
-        if (!AssignProcessToJobObject(job, process.Handle))
+        var assigned = Faults.Value is not { RefuseAssign: true } && AssignProcessToJobObject(job, process.Handle);
+        if (!assigned)
         {
-            var err = Marshal.GetLastWin32Error();
+            var err = Faults.Value is { RefuseAssign: true } ? 5 : Marshal.GetLastWin32Error();
             CloseHandleSafe(job);
-            if (requireHeld)
-            {
-                // KNOWN ONLY AFTER THE START: the process is ended at once, before it can do the work it was started for.
-                try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
-                process.Dispose();
-                throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
-                    Unheld($"Windows would not put the AI's program in the job TradeAgent made for it (error {err})"));
-            }
+            // KNOWN ONLY AFTER THE START. Returned unheld — no container — never killed and dropped here: a launch that
+            // carries a grant is ended at once by its caller (AgentSession), whose teardown says what it could not end, and
+            // that is carried to the meter, which admits nothing while it runs (fix pass 1).
             return new ContainedProcess(process, IntPtr.Zero, false, false,
-                $"not held: the agent process could not be put in its job (error {err})");
+                $"not held: Windows would not put the AI's program in the job TradeAgent made for it (error {err})");
         }
 
         return new ContainedProcess(process, job, false, true,
@@ -769,3 +803,6 @@ public static class ProcessContainment
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool CloseHandle(IntPtr handle);
 }
+
+/// <summary>The Windows failures <see cref="ProcessContainment.Faults"/> arranges for a test; each one only makes a launch fail.</summary>
+internal sealed record WindowsFaults(bool RefuseAssign = false, bool RefuseTreeKill = false);
