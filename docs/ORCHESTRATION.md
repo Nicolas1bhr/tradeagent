@@ -213,8 +213,12 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **Lanes.** The loop dispatches up to N eligible attempts — one conversation lease per position; a helper is a child attempt admitted under its
   parent's mandate, not a second lease. Limits are keyed by **quota pool** (provider, account, plan window — shared by every seat on it and by the
   owner's own use outside the app, whose consumption is unknown) and by cell class, as policy data. N stays 1 by default until grants are bound to
-  containers (§ 2.3) and cells exist. **Inbox attestation is kept:** a material pass still needs every UNCONFINED seat quiet, so with N > 1 the
-  scheduler drains to a quiet window for each pass; a confined seat whose cell cannot write the inbox does not count, and outputs are sealed before
+  containers (§ 2.3) and cells exist. **At most one UNCONFINED model attempt runs in the loop at a time, a ceiling in code and not policy data**
+  (the orchestrator, 2026-10-16, from the `U-org-lanes` survey): settings live under `state/`, which an unconfined neighbour can rewrite, so a setting may
+  lower N and never raise it past that ceiling; lanes beyond it are for seats the activation gate records as confined in a PROVEN cell class, and a
+  broker-only (MEDIATED) seat counts as unconfined for lanes until a unit shows it cannot write `state/` or the inbox. **Inbox attestation is kept:** a material pass still needs every UNCONFINED seat quiet, so with N > 1 the
+  scheduler drains to a quiet window for each pass; a confined seat whose cell cannot write the inbox does not count — whether a cell process enters the presence register that
+  attestation reads is decided by the cell's recorded assurance profile, DEFAULT IN, failing closed to quiescence (the orchestrator, 2026-10-16) — and outputs are sealed before
   any pass reads them. Expensive work — checks, hashing, scans — runs outside the store's single write lock on immutable inputs; commits stay short
   and revalidate what they rest on. The app's sweeps (boundary deadlines, paper allocation and deployments) run once per tick, never once per lane.
 - **The owner's lane.** The owner's words get an immediate receipt and a visible place in the queue. An idle addressed position answers at once in a
@@ -317,6 +321,11 @@ One authority implementation (Law 8): the organisation's verbs join the gateway'
 - **Restructuring is a transaction:** a close, merge, retire or veto disposes every open mandate (re-assigned or cancelled with a reason), fences the
   grants it touches (§ 2.3), carries reservations, debts and history to the successor, and keeps funding lineage; a veto restores structure, never
   work already done.
+- **Every verb is named apart from the pipe's ops** (the orchestrator, 2026-10-16, from the `U-org-assignments` survey: `cancel` is already an order op
+  that moves money): the mandate verbs are `mandate-assign`, `mandate-accept`, `mandate-reject`, `mandate-rescope`, `mandate-cancel`, `mandate-deliver`,
+  `mandate-decline` and their kin, the names above are their meanings, and a conformance test asserts that no organisation verb shares a name with a
+  pipe op. A verb checks the seat assurance the activation gate RECORDED for the attempt (`U-thinking-seats-a`), never headship alone: today `research`
+  heads its division from an unconfined seat and holds no organisational decision right there (§ 2.3).
 - **Every verb:** grant-checked, lattice-checked, throttled where structural, written as an `org_event` with app-composed detail; none reaches
   operator authority (AUTH-001); orders stay `operations`' (ORDER-001).
 

@@ -15,6 +15,14 @@ heartbeat first; in a meeting, arm nothing), then the four blocks right after th
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
+**2026-10-16 18:28 — RESUMED on the owner's word; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("RESUMED"), then `fleet/handoff/A.md`
+and `B.md` and the board.** The owner: "giving all gas towards the correct end vision. our last sprint was towards the genuine ai organization … once we
+have that organization build out to the fullest we'll only then start giving them "head start information and tools"." So the organisation (ORGANISATION
+§ 15 rows A and B) is built out first and in full; the edge queue and the perception chain stay PARKED until it is. Fresh seats A and B opened 18:3x.
+Landed so far: O2b `U-org-rights` (`de092881`, record `cf0eb94e`). Rulings recorded in `docs/ORCHESTRATION.md` §§ 2.5, 2.9 (one unconfined lane, a code
+ceiling; cells enter the presence register by default; organisation verbs named apart from pipe ops). The owner answered GitHub Pro/Team: "Not now, stay
+on GitHub Free and keep CI as it is."
+
 **2026-10-12 01:5x — FROZEN on the owner's word, mid-build; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("AFTER ANY COMPACTION / FROZEN"),
 then `fleet/handoff/A.md` and `B.md`.** The owner: "once usage limit resets (this window), i'd like you freeze the work, bolt everything down so we can
 perfectly resume later today". **Landed 2026-10-11 pm → 10-12 (the in-app orchestration build, seats A and B):** `U-ci-dedupe` (record `ba27ce63`; a
