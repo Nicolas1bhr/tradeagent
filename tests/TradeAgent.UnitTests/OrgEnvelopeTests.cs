@@ -639,4 +639,50 @@ public class OrgEnvelopeTests : IDisposable
         Assert.Equal(OrgIds.Research, refused.Ceiling);
         Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
     }
+
+    // ---- U-org-wakes (b): the loop's first look reads the envelopes the gate enforces -------------------------------------
+
+    /// <summary>
+    /// (b) A WIDENED ENVELOPE BUYS THE FOURTH TURN (<c>U-org-wakes</c> item 2). The owner widens Research's division to 0.8 of a
+    /// 10.00 day while the Safety page's split still says 0.5: the gate admits launches of 1.28 up to 8.00, and the loop's first
+    /// look and the card — <see cref="TurnMeter.TodayFor"/> — must say yes exactly when the gate does: the fourth turn
+    /// (5.12 &gt; 5.00 but ≤ 8.00) is bought, the seventh (8.96) is not.
+    ///
+    /// <para>RED at base: the reading's <c>RoleCap</c> was 10.00 × 0.5 from the share, so it refused the fourth turn the gate
+    /// admits — a wake left waiting on a ceiling nobody enforces.</para>
+    /// </summary>
+    [Fact]
+    public void A_widened_envelope_buys_the_fourth_turn()
+    {
+        Exec("UPDATE org_unit SET envelope_share='0.8' WHERE id=$id", ("$id", OrgIds.Research));
+        var meter = Meter(10m, share: _ => 0.5m);
+
+        for (var turn = 1; turn <= 7; turn++)
+        {
+            var reading = meter.TodayFor(CouncilRoles.Research);
+            var admitted = meter.Begin("## Situation", role: CouncilRoles.Research).Admitted;
+            Assert.True(reading.AdmitsAnotherTurn == admitted,
+                $"turn {turn}: the reading said {reading.AdmitsAnotherTurn} (room {reading.RoleRemaining} of {reading.RoleCap}), the gate {admitted}");
+            Assert.Equal(turn <= 6, admitted);
+            if (turn == 4) Assert.Equal(8m, reading.RoleCap);
+        }
+    }
+
+    /// <summary>
+    /// (b, the legacy pair unchanged) WITH NO ENVELOPE SET, THE CHAIR READS ITS SHARE OF THE DAY AS BEFORE: the cap times the
+    /// Safety page's split, and what its own launches reserved.
+    /// </summary>
+    [Fact]
+    public void The_legacy_pair_with_no_envelope_set_reads_its_share_as_before()
+    {
+        var meter = Meter(10m, share: _ => 0.5m);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+
+        var chair = meter.TodayFor(CouncilRoles.Operations);
+        Assert.Equal(5m, chair.RoleCap);
+        Assert.Equal(Reservation, chair.RoleReserved);
+        var research = meter.TodayFor(CouncilRoles.Research);
+        Assert.Equal(5m, research.RoleCap);
+        Assert.Equal(0m, research.RoleReserved);
+    }
 }

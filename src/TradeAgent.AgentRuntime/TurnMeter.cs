@@ -1300,10 +1300,18 @@ public sealed class TurnMeter
     public AiSpendToday Today => Reading(null);
 
     /// <summary>
-    /// THE SAME READING, NARROWED TO ONE COUNCIL ROLE: what that role spent and committed today, and
-    /// the slice of the owner's ceiling it may spend (<c>docs/COUNCIL.md</c>, "Budgets are reserved,
-    /// not checked"). The whole-day figures stay on it — a role is bounded by both its share and the
-    /// owner's ceiling, and the loop admits a turn only when both have room.
+    /// THE SAME READING, NARROWED TO ONE POSITION: what its BINDING UNIT spent and committed today, and that unit's envelope
+    /// (<c>U-org-wakes</c>, ORCHESTRATION § 2.4; <c>docs/COUNCIL.md</c>, "Budgets are reserved, not checked"). The whole-day
+    /// figures stay on it — a position is bounded by its funding chain and the owner's ceiling, and the loop admits a turn
+    /// only when both have room.
+    ///
+    /// <para><b>The envelopes admission enforces, read the way it reads them.</b> The chain is resolved from ONE reading of
+    /// the day's cap, as <see cref="Begin"/> resolves it, and each unit's spend is read off the funding chains recorded with
+    /// the rows (<see cref="AiAttemptStore.UnitTotalsBetween"/>). The binding unit is the one with the least room left: the
+    /// reservation fits it exactly when it fits every unit of the chain, so this reading admits exactly what the gate admits
+    /// — a widened envelope buys the turn its gate would take, and an exhausted subtree is never chosen over a funded
+    /// sibling. The legacy pair, with no envelope set, read their division's — the Safety page's split of the day, as before.
+    /// A chain nobody can read admits nothing here, as the gate admits nothing.</para>
     /// </summary>
     public AiSpendToday TodayFor(string role) => Reading(role);
 
@@ -1327,9 +1335,8 @@ public sealed class TurnMeter
             // totals rather than derived from them: the two are different queries over the same
             // ledger, and a share worked out by subtracting one role from the day would be wrong the
             // moment a third role exists.
-            var cap = _cap();
-            var mine = role is null ? totals : ReadTotals(now, role);
-            var share = role is null ? cap : cap * _share(role);
+            var cap = Cap();
+            var (mine, share) = role is null ? (totals, cap) : Binding(role, now, cap);
 
             return new AiSpendToday
             {
@@ -1359,6 +1366,31 @@ public sealed class TurnMeter
                 ResumesAt = OwnerDay.Midnight(now)
             };
         }
+    }
+
+    /// <summary>
+    /// THE UNIT OF <paramref name="role"/>'S FUNDING CHAIN WITH THE LEAST ROOM, as its day's totals and its envelope: the chain
+    /// resolved from <paramref name="cap"/>, this reading's one value of the day's cap. A unit with no envelope of its own binds
+    /// nothing — its spend is inside the units above it. A chain or a total that cannot be read answers an envelope of nothing,
+    /// so the reading admits no turn the gate would refuse for the same unreadable chart.
+    /// </summary>
+    (AiAttemptTotals Totals, decimal Envelope) Binding(string role, DateTimeOffset now, decimal cap)
+    {
+        var none = new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
+        try
+        {
+            var (from, to) = OwnerDay.Window(now);
+            (AiAttemptTotals Totals, decimal Envelope)? binding = null;
+            foreach (var unit in FundingOf(role, cap))
+            {
+                if (unit.Envelope is not { } envelope) continue;
+                var funded = _attempts.UnitTotalsBetween(from, to, unit.UnitId);
+                var room = envelope - funded.Spent - funded.Reserved;
+                if (binding is not { } b || room < b.Envelope - b.Totals.Spent - b.Totals.Reserved) binding = (funded, envelope);
+            }
+            return binding ?? (none, 0m);
+        }
+        catch (Exception) { return (none, 0m); }
     }
 
     // ---- the day, summed over the launch ledger ---------------------------------------------------

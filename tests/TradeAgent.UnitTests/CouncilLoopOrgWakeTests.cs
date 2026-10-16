@@ -205,4 +205,76 @@ public partial class CouncilLoopTests
             Assert.Equal(settles ? MissionEventDisposition.Refused : null, row.Disposition);
         }
     }
+
+    // ---- (b2) an exhausted subtree --------------------------------------------------------------------------------------
+
+    /// <summary>Writes the chart rows a test needs, as only a test may: no verb writes the chart yet (<c>U-org-verbs</c>).</summary>
+    static void Chart(Database db, string sql, params (string, object?)[] ps) => db.Write(_ =>
+    {
+        using var c = db.Cmd(sql, ps);
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>A unit under <paramref name="parent"/>, with its own envelope share or none.</summary>
+    static void Unit(Database db, string id, string parent, string? share, string kind = OrgUnitKind.Team, string? head = null) =>
+        Chart(db, """
+            INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at)
+            VALUES($id, $parent, $kind, NULL, 'active', $share, '2026-10-11T12:00:00.0000000Z')
+            """, ("$id", id), ("$parent", parent), ("$kind", kind), ("$share", share));
+
+    /// <summary>An active position in <paramref name="unit"/>; with <paramref name="heads"/> it is that unit's head.</summary>
+    static void Seat(Database db, string id, string unit, bool heads = false)
+    {
+        Chart(db, """
+            INSERT INTO org_position(id, unit_id, home_dir, status, created_at)
+            VALUES($id, $unit, $home, 'active', '2026-10-11T12:00:00.0000000Z')
+            """, ("$id", id), ("$unit", unit), ("$home", $"org/{id}"));
+        if (heads) Chart(db, "UPDATE org_unit SET head_position_id=$id WHERE id=$unit", ("$id", id), ("$unit", unit));
+    }
+
+    /// <summary>
+    /// (b2) AN EXHAUSTED SUBTREE DOES NOT WIN OVER A FUNDED SIBLING (<c>U-org-wakes</c> item 2). Two positions in sibling teams
+    /// under Research; the first team's envelope (0.2 of a 10.00 day) already holds one reservation of 1.28, so the gate would
+    /// refuse its next launch. Its wake is the older, yet the loop's first look — the meter's reading of each position — must
+    /// step over it and turn the funded sibling.
+    ///
+    /// <para>RED at base: the reading's cap was the share's (here the whole day), so the exhausted position looked affordable,
+    /// won on age, and the gate then refused it: no turn at all for the sibling the money was there for.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_exhausted_subtree_does_not_win_over_a_funded_sibling()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        const string spent = "pos-1a2b3c4d5e6f", funded = "pos-6f5e4d3c2b1a";
+        Unit(db, "team-spent", OrgIds.Research, "0.2");
+        Unit(db, "team-funded", OrgIds.Research, "0.5");
+        Seat(db, spent, "team-spent");
+        Seat(db, funded, "team-funded");
+
+        var now = Noon();
+        const decimal reservation = 1.28m;
+        new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = "turn-earlier", StartedAt = now.AddMinutes(-30), ReservedCost = reservation, Role = spent,
+            Funding = ["team-spent", OrgIds.Research, OrgIds.Root]
+        });
+        var meter = new TurnMeter(db, () => 10m, now: () => now, share: _ => 1m, live: new LiveAttempts(),
+            recordPath: Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl"));
+
+        var host = new CouncilHost(db, root, new Concurrency()).Add(spent).Add(funded);
+        foreach (var p in new[] { spent, funded })
+            host.Spending[p] = meter.TodayFor(p) with { NextTurnReservation = reservation };
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Review(now.AddMinutes(-5)), spent),
+            MissionEventKind.Review, now.AddMinutes(-5), role: spent);
+        host.Events.Raise(MissionEventIds.ForRole(MissionEventIds.Review(now.AddMinutes(-1)), funded),
+            MissionEventKind.Review, now.AddMinutes(-1), role: funded);
+
+        await loop.TurnAsync();
+
+        Assert.False(host.Spending[spent].AdmitsAnotherTurn, $"room {host.Spending[spent].RoleRemaining} of {host.Spending[spent].RoleCap}");
+        Assert.Equal([funded], host.Opened.Select(o => o.Role));
+    }
 }
