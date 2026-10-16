@@ -660,7 +660,11 @@ public class OrgEnvelopeTests : IDisposable
         for (var turn = 1; turn <= 7; turn++)
         {
             var reading = meter.TodayFor(CouncilRoles.Research);
-            var admitted = meter.Begin("## Situation", role: CouncilRoles.Research).Admitted;
+            var admission = meter.Begin("## Situation", role: CouncilRoles.Research);
+            var admitted = admission.Admitted;
+            // ITS TURN IS OVER, ITS RESERVATION KEPT: the role holds one open launch (U-mint-per-launch), so each admitted
+            // launch leaves the register before the next turn's look, its LAUNCHED row still reserving its 1.28.
+            if (admitted) meter.Release(CouncilRoles.Research, admission.Id!);
             Assert.True(reading.AdmitsAnotherTurn == admitted,
                 $"turn {turn}: the reading said {reading.AdmitsAnotherTurn} (room {reading.RoleRemaining} of {reading.RoleCap}), the gate {admitted}");
             Assert.Equal(turn <= 6, admitted);

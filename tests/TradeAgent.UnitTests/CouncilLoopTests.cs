@@ -300,6 +300,7 @@ public partial class CouncilLoopTests
         {
             if (attemptId is null) return BeginTurn(prompt, wakes, role);
             lock (Opened) Opened.Add((role, prompt));
+            if (GateRefuses is { } refused) return refused;
             lock (_mint) if (_pending == attemptId) _pending = null;
             return new AiAttemptStore(_db).Begin(
                 new AiAttempt { Id = attemptId, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
