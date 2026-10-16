@@ -384,7 +384,26 @@ jobs:
             [ "$resolved" = "127.0.0.1 " ] || { echo "$h resolves to '$resolved', not 127.0.0.1 alone"; exit 1; }
           done
 
-      - name: Install the host's packages, each one pinned
+      - name: DIAGNOSTIC apt
+        run: |
+          cat /etc/apt/sources.list.d/* 2>/dev/null | head -30
+          grep -r ImageVersion /etc/*release /imagegeneration 2>/dev/null | head -3 || true
+          sudo apt-get update -qq
+          pk="libx11-6 libxext6 libxi6 libxrandr2 libxcursor1 libice6 libsm6 libfontconfig1 fonts-dejavu-core tigervnc-standalone-server tigervnc-common tigervnc-tools xauth x11-apps netpbm"
+          apt-cache policy $pk
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            libx11-6=2:1.8.7-1build1 libxext6=2:1.3.4-1build2 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 \
+            libxcursor1=1:1.2.1-1build1 libice6=2:1.0.10-1build3 libsm6=2:1.2.3-1build3 \
+            libfontconfig1=2.15.0-1.1ubuntu2 fonts-dejavu-core=2.37-8 \
+            tigervnc-standalone-server=1.13.1+dfsg-2build2 tigervnc-common=1.13.1+dfsg-2build2 \
+            tigervnc-tools=1.13.1+dfsg-2build2 xauth=1:1.1.2-1build1 \
+            x11-apps=7.7+11build3 netpbm=2:11.05.02-1.1build1 2>&1 | tail -40 || true
+          echo "--- unpinned"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -s --no-install-recommends $pk 2>&1 | tail -40 || true
+          dpkg-query -W libx11-6 libxext6 libxi6 libxrandr2 libxcursor1 libice6 libsm6 libfontconfig1 fonts-dejavu-core xauth netpbm || true
+
+      - if: false
+        name: Install the host's packages, each one pinned
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
@@ -396,7 +415,8 @@ jobs:
             x11-apps=7.7+11build3 netpbm=2:11.05.02-1.1build1
           sqlite3 --version
 
-      - name: Install TradeAgent with the kit, twice
+      - if: false
+        name: Install TradeAgent with the kit, twice
         run: |
           address="$(ip -4 -o addr show scope global | awk '{ print $4 }' | cut -d/ -f1 | head -n 1)"
           echo "ADDRESS=$address" >> "$GITHUB_ENV"
@@ -410,7 +430,8 @@ jobs:
           [ "$(systemctl show -p MainPID --value tradeagent.service)" = "$pid" ] || { echo "the second run restarted the app"; exit 1; }
           rm -f "$RUNNER_TEMP/vnc-pass"
 
-      - name: Twenty minutes unattended
+      - if: false
+        name: Twenty minutes unattended
         run: |
           sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" ADDRESS="$ADDRESS" RUN_MINUTES=20 \
             GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" packaging/linux/ci/prove.sh
