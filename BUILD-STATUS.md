@@ -10547,3 +10547,26 @@ no `-qq` on the install (apt's reason prints on a future break); `dpkg-query` pr
 **What it changes about the proof:** the job stays deterministic ON A GIVEN IMAGE (every version printed), no longer across images for packages the image ships — the price of GitHub moving the image under a pinned job.
 **CI cost:** the diagnosis ran linux-host alone; the final run the full matrix.
 **NOT VERIFIED:** a future image that carries a pinned package at another version (printed, not asserted, by design); the final run's image version not read from its log; one comment line exceeds the file's usual 110 columns.
+
+## U-org-envelopes (O4) — spend is reserved against the unit tree: a launch fits its unit and every ancestor inside the day's cap, in one transaction; rung 38 (landed 2026-10-16, seat B)
+
+**Landed** in TRAIN B3 (`land.sh` v3, first of two; then seat A's `U-seat-signin`) on `main` at tip `b4b4e1f0` (rebased 468fdec4 → onto `bd151496`, after O2b and U-ci-host-pins; src+tests patch-id identical;
++ the fix-report commit). The train's CI run **38942170772** at `5ce95569`: every job success incl. `linux-host` 20 min; `train-check` VERDICT PASS (O4's names 2707 → 2722, removed 0; scan clean).
+Run 38933247781 at `f6968f0a` was red ONLY at `linux-host` 'Install the host's packages' — the runner-image break U-ci-host-pins fixed; every other job green. **SCHEMA RUNG 38** (`ai_attempt_funding`), next free 40 (39 is seat A's `U-thinking-seats-a`).
+**What changed (build, 4 items):**
+1. Rung 38: `ai_attempt_funding(attempt_id, unit_id, depth)`, written by `Begin` in the row's commit; `OrgStore.FundingLine` (one snapshot; no position, a missing unit, a loop or a line not ending at
+   the root throws); `Begin` refuses an unreadable chain (`AiAdmission.Chart`), no row, no wake. Backfill: NULL → operations' chain, a position → its unit's chain as the chart stands.
+2. `AiAdmissionRule.Funding`: the day gate first and unchanged, then each unit's spent + reserved over the rows its recorded chain names, in the transaction; `perception`'s rule (no chain) keeps RoleCap.
+3. `OrgEnvelopes.Resolve`: root = day cap; share × nearest envelope above; NULL on the two divisions = its position's legacy share × cap; a share outside [0,1] is damage → refused.
+4. A unit refusal names unit, envelope and room (Ceiling = unit id); a turn above its unit's whole envelope → `Labels.SeatExceedsEnvelope`; `OrgStore.Unfundable` exposed for U-org-verbs.
+**Fix pass 1 (Codex review: 2 P1 + 1 P2):** P1 one admission reads the day's cap ONCE and sizes envelopes and rule from it (52e821d5); P2 rung 38 records every chain whole (guard = the chart's
+own size, only to stop a loop) and a looping chart refuses the rung in one rolled-back transaction, home left at 37 (f6968f0a). Re-review: "No remaining defect or introduced regression found".
+**Evidence (build):** RED at base quoted in the report ((a) `contained 2 matching items`; (g),(j) `no such table: ai_attempt_funding`; (h) `pos-bad was admitted on a chain nobody could read`); MUTANTS red:
+subtree check removed; totals carried in the rule; unreadable chain admitted. 28 classes 3× `Passed: 309`; tests box GREEN on pre-rebase 11ed2669 (Unit 1792/1792, Fault 498/498, Integration 692 + 1 not run).
+**Evidence (fix pass) — RE-ESTABLISHED 2026-10-16 by a seat-B evidence leg in a scratch worktree, NOT the fixer's original run** (the fixer died before its report; each fix commit folds test and fix;
+fleet/tmp/B-scratch/u-org-envelopes-evidence/evidence.md): P1 RED-before on 52e821d5~1 "div-research's envelope 5.0 is larger than the cap 2 this rule enforces"; mutant TurnMeter.cs:894 second cap read
+→ "Expected: 1 / Actual: 2". P2 RED-before on 52e821d5 "Expected: 67 / Actual: 65" and "No exception was thrown"; mutant Database.cs:2347 loop refusal disabled → "No exception was thrown"; mutant
+Database.cs:2375 ROLLBACK removed → "SQLite Error 5: 'database is locked'"; each restored green. Fix-pass suite: Unit 3× Passed 290 (fixer's logs); CI 38176161802 green at 468fdec4.
+**NOT in O4 (ruled): `TurnMeter.TodayFor` and the card's first look still read the legacy role split** (½ for a new position) — the review's first P1; the gate is `Begin`. Moved to O3 `U-org-wakes`
+item 2, a HARD PREREQUISITE of any third position's activation.
+**NOT VERIFIED:** no app run; the fix pass on the tests box (unreachable today: NOT RUN — the machine does not answer); the rung on a real owner home.
