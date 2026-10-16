@@ -189,7 +189,12 @@ public sealed class ContainedProcess : IDisposable
         }
         _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
         _session = ownSession ? _leader : 0;
-        if (ownSession && _leaderStart != 0) Container = new SessionContainer(this);
+        // THE SESSION, AND ON LINUX UNDER A DELEGATED ROOT THE ATTEMPT'S CGROUP TOO — ANDed, never one for the other (U-cell-linux-b,
+        // RULING 1): a process that left the session is refused by the first, one that moved itself to another cgroup by the second.
+        if (ownSession && _leaderStart != 0)
+            Container = cgroup is null
+                ? new SessionContainer(this)
+                : new AllOf(new SessionContainer(this), new CgroupContainer(cgroup.Dir, () => _over));
     }
 
     /// <summary>
