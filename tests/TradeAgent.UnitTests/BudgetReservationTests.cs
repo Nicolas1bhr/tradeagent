@@ -814,12 +814,17 @@ public class BudgetReservationTests : IDisposable
         TimeSpan[] refused;
         lock (waits) refused = [.. waits.Take(4)];
 
+        // THE WINDOW HELD OPEN: the pass behind the launched turn waits until the status is read, so the read lands after the
+        // turn was sent and its lease dropped and before the loop counted it — every run, not one in twenty.
+        var passGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Scanning = ct => passGate.Task.WaitAsync(ct);
         LedgerTakesRows();
         deadline = DateTimeOffset.UtcNow.AddSeconds(20);
         while ((host.Conv.Sent.Count == 0 || loop.Status.State == MissionState.Working)
                && DateTimeOffset.UtcNow < deadline)
             await Task.Delay(1);
         var after = loop.Status;
+        passGate.SetResult();
         await loop.PauseAsync();
 
         Assert.Equal(4, refused.Length);
@@ -1023,7 +1028,13 @@ public class BudgetReservationTests : IDisposable
         public IAgentConversation? Conversation => Conv;
         public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"reserve-home-{Guid.NewGuid():n}");
         public bool InboxChangedSinceLastPass => false;
-        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task ScanAsync(CancellationToken ct) => Scanning?.Invoke(ct) ?? Task.CompletedTask;
+
+        /// <summary>
+        /// The material pass the loop takes behind a launched turn, where a test needs to hold it: the turn is sent and its
+        /// lease dropped, and the loop has not yet counted it. Null is a pass that returns at once.
+        /// </summary>
+        public Func<CancellationToken, Task>? Scanning { get; set; }
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
             Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
