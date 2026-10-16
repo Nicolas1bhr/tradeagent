@@ -104,7 +104,8 @@ public sealed class SeatPlan
     /// <summary>
     /// THE FILES THAT HOLD THE SEAT'S CREDENTIAL, relative to <see cref="Home"/>: made owner-only at every preparation like the folders
     /// and <see cref="ConfigFile"/> (<c>U-seat-acl</c>; CRED-001), because a file's own access entries outlive any change to its folder's.
-    /// Everything else the CLI writes — session transcripts included — is covered by its folder's list. Data: a vendor's file names.
+    /// Every other file the CLI writes — session transcripts included — is left with no access entry of its own by the same walk, its
+    /// mode as the CLI wrote it under a 0700 folder. Data: a vendor's file names.
     /// </summary>
     public string[] PrivateFiles { get; set; } = [];
 

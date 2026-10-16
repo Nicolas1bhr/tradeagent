@@ -138,6 +138,36 @@ public class SeatAclTests
     }
 
     /// <summary>
+    /// (f) AN ACCESS ENTRY ON ANY EXISTING FILE OF THE SEAT HOME DOES NOT SURVIVE A PREPARATION (the review's P1; CRED-001) — a session
+    /// transcript deep under <c>codex/sessions</c> and a file in <c>home</c>, not only the credential: on Windows an explicit entry on a
+    /// file outlives its folder's protected list, and traverse checking is bypassed by default, so <c>Everyone: Read</c> on a transcript
+    /// stays readable by path. A file that is a link is stepped over, never followed: what it points to keeps its entry. Red at base:
+    /// the entry is still listed.
+    /// </summary>
+    [SeatAclFact("an access entry of a file's own outlives its folder's list on macOS and Windows; Linux files keep no ACL a 0700 folder lets through",
+        "macos", "windows")]
+    public void An_access_entry_on_an_existing_session_file_does_not_survive_preparation()
+    {
+        var (codex, exe, _) = SeatHomeTests.Seat(nameof(An_access_entry_on_an_existing_session_file_does_not_survive_preparation));
+        var seat = codex.Seat!;
+        SeatProfile.Prepare(seat);
+        var transcript = Path.Combine(Directory.CreateDirectory(Path.Combine(seat.Root, "codex", "sessions", "2026", "10")).FullName,
+            "rollout-2026-10-16.jsonl");
+        var note = Path.Combine(seat.Root, "home", "notes.txt");
+        var outside = Path.Combine(Path.GetDirectoryName(exe)!, "outside.txt");
+        foreach (var file in new[] { transcript, note, outside }) File.WriteAllText(file, "{}");
+        foreach (var file in new[] { transcript, note, outside }) OpenFileToEveryone(file);
+        var link = Path.Combine(seat.Root, "codex", "sessions", "linked.jsonl");
+        if (!OperatingSystem.IsWindows()) File.CreateSymbolicLink(link, outside);
+
+        SeatProfile.Prepare(seat);
+
+        foreach (var file in new[] { transcript, note })
+            Assert.True(Granted(file).Length == 0, $"{file} still grants: {string.Join(" | ", Granted(file))}");
+        Assert.NotEmpty(Granted(outside));
+    }
+
+    /// <summary>
     /// (d) A SEAT-HOME FILE THAT CANNOT BE MADE PRIVATE REFUSES THE SEAT IN WORDS, AND NOTHING IS STARTED: an <c>auth.json</c> others
     /// may read that this account cannot change — locked (<c>chflags uchg</c>) on macOS; on Windows, its owner denied the right to
     /// change its list. Red at base: the file is never looked at, and the seat is taken.
@@ -250,6 +280,24 @@ public class SeatAclTests
                 .Select(r => $"{r.IdentityReference} {r.FileSystemRights}{(r.IsInherited ? " (inherited)" : "")}")
         ];
     }
+
+    /// <summary>Gives Everyone read on <paramref name="file"/> by an entry of its own, and checks that it took.</summary>
+    static void OpenFileToEveryone(string file)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var info = new FileInfo(file);
+            var acl = info.GetAccessControl();
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(Everyone,
+                System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+            info.SetAccessControl(acl);
+        }
+        else Tool("/bin/chmod", "+a", "everyone allow read", file);
+        Assert.NotEmpty(Granted(file));
+    }
+
+    /// <summary>What <paramref name="file"/> grants beyond this account: its ACL entries (macOS), or entries naming another account (Windows).</summary>
+    static string[] Granted(string file) => OperatingSystem.IsWindows() ? Foreign(file) : AclEntries(file);
 
     /// <summary>Opens <paramref name="file"/> to others and makes that unchangeable by this account.</summary>
     static void Lock(string file)
