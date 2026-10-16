@@ -363,6 +363,10 @@ public sealed class AiAttemptStore(Database db)
             }
         }
 
+        // A SAVEPOINT, so a launch refused on its wakes below rolls back its own row and nothing else — the same whether
+        // this is the outermost write or joins one already open (Database.Write).
+        Exec("SAVEPOINT ai_attempt_begin");
+
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
@@ -381,9 +385,32 @@ public sealed class AiAttemptStore(Database db)
                     ("$id", a.Id), ("$unit", funding[depth]), ("$depth", depth));
                 f.ExecuteNonQuery();
             }
-        if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
+
+        // THE WAKES ARE THE TRANSACTION'S ANSWER (U-mint-per-launch). A launch is admitted and charged only for wakes it
+        // actually took: `MarkConsumed` writes only a wake nobody consumed, and one another launch already took is a
+        // reason this launch no longer has. Refused in words naming the launch and the count — its row rolled back,
+        // nothing reserved, and its own untaken wakes still due.
+        if (consuming is { Count: > 0 })
+        {
+            var asked = consuming.Distinct(StringComparer.Ordinal).Count();
+            var taken = MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
+            if (taken < asked)
+            {
+                Exec("ROLLBACK TO ai_attempt_begin");
+                Exec("RELEASE ai_attempt_begin");
+                return new AiAdmission { Refusal = Labels.LaunchWakesTaken(a.Id, taken, asked) };
+            }
+        }
+
+        Exec("RELEASE ai_attempt_begin");
         return new AiAdmission { Id = a.Id, ResumesAt = admit?.ResumesAt ?? default };
     });
+
+    void Exec(string sql)
+    {
+        using var c = db.Cmd(sql);
+        c.ExecuteNonQuery();
+    }
 
     /// <summary>
     /// The refusal, in the owner's words, naming the ceiling that had no room and by how much. It
