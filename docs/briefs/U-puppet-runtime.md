@@ -3,7 +3,7 @@
 cost"), § 2.7 (the puppet adapter), § 2.14 (the proving ground's plumbing); ORGANISATION § 15 row `U-puppet-runtime` (Depends O2a — landed `7be8bec7`).
 **A protection — a scripted seat holds a real launch grant (AUTH-001, ORDER-001, CRED-001): the puppet never starts outside a test host — red-first and ONE
 watched mutant.** Seat A; opus/high. **No rung.** Builds on `main`; ∥ `U-thinking-seats-a`. **Seam with part a (seat A at queueing, the orchestrator's ruling 1):** a `puppet` seat runs no model, so it is EXEMPT from part a's refusal of real-model positions before a proven cell and is no unconfined neighbour; it still meets every other check (rights, admission, the grant); whichever of the two lands second wires it.
-**Today (main `8f261176`, READ):** fake CLIs exist but none calls `trade` or the pipe: `TurnMeterTests.cs:47-110` `SessionOverStream` (a `.cmd`/`.sh`
+**Today (main `0cd79011`, READ — re-checked by seat A 2026-10-16: since `8f261176` only O2b `U-org-rights` moved code; its shifts: MissionLoop.cs past 846 +18 (:1900-2100 → :1918-2118), MissionEventStore.cs past 314 +23 (:740-840 → :763-863); the other cited files unchanged where cited — grep before trusting a number):** fake CLIs exist but none calls `trade` or the pipe: `TurnMeterTests.cs:47-110` `SessionOverStream` (a `.cmd`/`.sh`
 replaying `CodexStream` :127, usage included, through the real `AgentSession`); `QuiescenceBarrierTests.cs:54-90`; `ResumeOnStartTests.cs:276-350` (a
 probe runtime registered with `RuntimeCatalog.SaveOverrides`, run through the real `AppHost.Composed`); `ContainmentTests.cs:151-154` (a `trade` shim).
 The pipe with a real grant is tested alone (`LaunchGrantTests.cs:38-39` starts a `GatewayPipeServer`; deploy :351-356; env :370-390). `AppHost.Composed`
@@ -15,7 +15,7 @@ entry can name any program (`custom`, RuntimeManifest.cs:943; whole-entry overri
 `AgentSession` (prompt on stdin) → `ProcessContainment` → a real puppet process → the real `trade` with the launch's real grant → `GatewayPipeServer` →
 the stores — on all three CI platforms, at no AI cost. The puppet is a test-only program (`tests/TradeAgent.Puppet`, never in `src`, never packaged): on
 a wake it runs its script — `trade <op…>`, `write <out/…>`, `usage {input, cached, output}` (codex `--json` events, metered by AgentSession's own parser),
-`final "<text>"`, `exit n`, `hang`, `crash`. A puppet manifest is refused everywhere but a test host: its flag is `[JsonIgnore] internal`, its id is reserved
+`final "<text>"`, `exit n`, `hang`, `crash`. The puppet seat records the seat class its TEST MANIFEST declares — never read from runtimes.json and unreachable from production configuration (seat classes live in code) — so later units' puppet tests can reach the verbs a declared class allows (seat B's O5 survey, 2026-10-16). A puppet manifest is refused everywhere but a test host: its flag is `[JsonIgnore] internal`, its id is reserved
 (a runtimes.json entry using it refuses the file's read, in words), and AgentSession refuses to start it unless an internal test-host flag is set.
 Read first: `CLAUDE.md`; ORCHESTRATION §§ 2.5, 2.7, 7, 8; the survey § 6; AgentSession.cs (all, U-prompt-stdin's stdin path); TurnMeter.cs:820-900;
 MissionLoop.cs:1900-2100; RuntimeManifest.cs:300-450, 1075-1100; MissionEventStore.cs:740-840 (LOST and the owner's words re-raised once); the tests named above;
