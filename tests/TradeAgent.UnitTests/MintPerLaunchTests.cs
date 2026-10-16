@@ -1,4 +1,5 @@
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -279,6 +280,53 @@ public class MintPerLaunchTests : IDisposable
             $"the owner's words were settled '{owed.Disposition}' on a refusal about the launch: {owed.DispositionDetail}");
         Assert.Equal("owner:1", Assert.Single(events.Due(DateTimeOffset.Now)).Id);
         Assert.Equal(options.BusyRetry, wait);
+    }
+
+    /// <summary>
+    /// AND THE CARD SAYS WHY THE WORDS ARE STILL OWED. The refusal settles nothing, so its words are the only place the
+    /// owner reads why his message is undelivered: while the loop waits after it, the status and the card's sentence name
+    /// the refusal's own words, and the owner's words stay due with no disposition (<c>docs/ORCHESTRATION.md</c> § 2.5:
+    /// "his surface shows them undelivered with the reason").
+    /// </summary>
+    [Fact]
+    public async Task A_launch_refused_for_its_wakes_is_the_reason_the_card_gives_while_the_owners_words_stay_owed()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var at = DateTimeOffset.Now.AddSeconds(-1);
+        var fill = MissionEventIds.Fill("EXEC-1");
+        events.Raise("owner:1", MissionEventKind.Owner, at);
+        events.Raise(fill, MissionEventKind.Fill, at);
+
+        AiAdmission? other = null;
+        var host = new SeamHost(meter)
+        {
+            Events = events,
+            BeforeLaunch = () => other ??= meter.Begin("## Situation", [fill], CouncilRoles.Research,
+                attemptId: meter.Mint(CouncilRoles.Research))
+        };
+        MissionLoop? loop = null;
+        var waiting = new TaskCompletionSource<MissionStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        loop = new MissionLoop(host, new MissionOptions(), delay: (_, ct) =>
+        {
+            waiting.TrySetResult(loop!.Status);
+            return Task.Delay(Timeout.Infinite, ct);
+        });
+
+        loop.Start();
+        var status = await waiting.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        await loop.PauseAsync();
+
+        Assert.True(other!.Admitted, other.Refusal);
+        Assert.Empty(host.Launched);
+        Assert.Equal(MissionState.Waiting, status.State);
+        Assert.True(status.WaitingFor?.Contains("another launch had already taken 1 of the 2") == true,
+            $"the card gave no reason for the owner's undelivered words: {DashboardPage.MissionSentence(status)}");
+        Assert.Contains("another launch had already taken 1 of the 2", DashboardPage.MissionSentence(status));
+
+        var owed = events.Get("owner:1")!;
+        Assert.Null(owed.ConsumedBy);
+        Assert.Null(owed.Disposition);
     }
 
     /// <summary>
