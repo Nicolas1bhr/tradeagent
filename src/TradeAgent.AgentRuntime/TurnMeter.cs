@@ -901,8 +901,8 @@ public sealed class TurnMeter
         string id;
         lock (_gate)
         {
-            if (_open.TryGetValue(key, out var running)) return new AiAdmission { Refusal = Labels.LaunchRoleOpen(running.Id) };
-            if (_launching.Contains(key)) return new AiAdmission { Refusal = Labels.LaunchRoleOpen(null) };
+            if (_open.TryGetValue(key, out var running)) return AiAdmission.LaunchRefused(Labels.LaunchRoleOpen(running.Id));
+            if (_launching.Contains(key)) return AiAdmission.LaunchRefused(Labels.LaunchRoleOpen(null));
 
             if (attemptId is null) id = NewId();
             // FOR THIS ROLE (review P2): an id minted for another role is that role's launch, not this one's — refused
@@ -912,7 +912,7 @@ public sealed class TurnMeter
                 id = attemptId;
                 _minted.RemoveAt(at);
             }
-            else return new AiAdmission { Refusal = Labels.LaunchIdNotMinted(attemptId) };
+            else return AiAdmission.LaunchRefused(Labels.LaunchIdNotMinted(attemptId));
 
             _launching.Add(key);
         }

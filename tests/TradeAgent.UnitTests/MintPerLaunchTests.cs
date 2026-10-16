@@ -244,6 +244,44 @@ public class MintPerLaunchTests : IDisposable
     }
 
     /// <summary>
+    /// (R2) RED at the unit's first pass: a refusal about the LAUNCH, not the position, settled the owner's due words as
+    /// Blocked. Another launch takes one of the loop's wakes between its look and its launch, so the loop's launch is
+    /// refused for its wakes; it steps over keeping every wake, and the owner's words stay owed and unsettled
+    /// (<c>docs/ORCHESTRATION.md</c> § 2.5: "the owner's words are never settled by a refusal of either kind").
+    /// </summary>
+    [Fact]
+    public async Task A_launch_refused_for_its_wakes_steps_over_and_leaves_the_owners_words_owed()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var at = DateTimeOffset.Now.AddSeconds(-1);
+        var fill = MissionEventIds.Fill("EXEC-1");
+        events.Raise("owner:1", MissionEventKind.Owner, at);
+        events.Raise(fill, MissionEventKind.Fill, at);
+
+        AiAdmission? other = null;
+        var host = new SeamHost(meter)
+        {
+            Events = events,
+            BeforeLaunch = () => other = meter.Begin("## Situation", [fill], CouncilRoles.Research,
+                attemptId: meter.Mint(CouncilRoles.Research))
+        };
+        var options = new MissionOptions();
+        var wait = await new MissionLoop(host, options).TurnAsync();
+
+        Assert.True(other!.Admitted, other.Refusal);
+        Assert.Empty(host.Launched);
+        Assert.Empty(host.Conv.Sent);
+
+        var owed = events.Get("owner:1")!;
+        Assert.Null(owed.ConsumedBy);
+        Assert.True(owed.Disposition is null,
+            $"the owner's words were settled '{owed.Disposition}' on a refusal about the launch: {owed.DispositionDetail}");
+        Assert.Equal("owner:1", Assert.Single(events.Due(DateTimeOffset.Now)).Id);
+        Assert.Equal(options.BusyRetry, wait);
+    }
+
+    /// <summary>
     /// (c) THE GUARD: a wake answered by one launch buys no second paid turn, across a restart. The first loop launches
     /// once for its one wake; a new meter and a new loop over the same database find nothing due and start nothing.
     /// </summary>
@@ -277,6 +315,7 @@ public class MintPerLaunchTests : IDisposable
         public List<string> Minted { get; } = [];
         public List<AiAdmission> Launched { get; } = [];
         public Action? WhileComposing { get; init; }
+        public Action? BeforeLaunch { get; init; }
         public MissionEventStore? Events { get; init; }
 
         public IAgentConversation? Conversation => conversation ?? Conv;
@@ -301,6 +340,7 @@ public class MintPerLaunchTests : IDisposable
 
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId)
         {
+            BeforeLaunch?.Invoke();
             var admission = meter.Begin(prompt, wakes, role, attemptId: attemptId);
             if (admission.Admitted) Launched.Add(admission);
             return admission;

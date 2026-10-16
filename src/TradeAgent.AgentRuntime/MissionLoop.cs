@@ -2147,6 +2147,15 @@ public sealed class MissionLoop
         {
             lock (_gate) { _turning.Remove(role); _role = null; _typedForARefusedTurn.AddRange(typed); }
 
+            // A REFUSAL ABOUT THE LAUNCH, NOT THE POSITION (U-mint-per-launch; docs/ORCHESTRATION.md § 2.5): the role's
+            // other launch still open, an id not minted for it, or wakes another launch took. It steps over, keeping every
+            // wake, under the refusal backoff — and the owner's words are never settled by it: they stay owed, unblocked.
+            if (admission.Ceiling == AiAdmission.Launch)
+            {
+                Changed?.Invoke();
+                return _options.BusyRetry;
+            }
+
             // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it —
             // the same line the pre-check writes, because the outcome is the same one.
             if (events is not null && admission.Refusal is { Length: > 0 } why)
