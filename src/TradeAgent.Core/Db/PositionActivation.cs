@@ -63,6 +63,13 @@ public sealed record SeatFacts
 /// the loop and the last check before a process or a request all ask the same answer. The app fills it when it composes the AI
 /// (<c>AppHost.ComposeTheAi</c>); a test's host is handed its own. <b>Unset, a null answer or a throw is "not known"</b>, which
 /// refuses every position but the legacy pair (<see cref="PositionActivation.Decide"/>).
+///
+/// <para><b>The neighbour read stands on its own</b> (<see cref="Neighbours"/>; review of <c>U-thinking-seats-a</c>, item 2): the
+/// facts about one position can fail to read for reasons that say nothing about the host, and the legacy pair's unconfined launch
+/// must still be asked whether a position beyond them is active. On a register the app has set, the legacy pair run unconfined
+/// only when that read SUCCEEDS and names nobody; a read that fails refuses them, about the host. A register nothing set at all is
+/// a process that composed no AI — the product sets the shared one in <c>ComposeTheAi</c> before any conversation exists — and
+/// there the legacy pair keep their behaviour from before the gate.</para>
 /// </summary>
 public sealed class SeatRegister
 {
@@ -72,10 +79,26 @@ public sealed class SeatRegister
     /// <summary>The facts for one position id, read at every ask; null until the app sets it.</summary>
     public Func<string, SeatFacts?>? Facts { get; set; }
 
+    /// <summary>
+    /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, read at every ask and on its own, so a failure to read one position's facts
+    /// never skips the no-unconfined-neighbour rule; null until the app sets it.
+    /// </summary>
+    public Func<IReadOnlyList<string>>? Neighbours { get; set; }
+
+    /// <summary>Whether the app has set this register at all.</summary>
+    public bool IsSet => Facts is not null || Neighbours is not null;
+
     /// <summary>The facts for <paramref name="id"/>, or null when the register is unset, answered null, or threw.</summary>
     public SeatFacts? Read(string id)
     {
         try { return Facts?.Invoke(id); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The active positions beyond the legacy pair, or null when that read is unset, answered null, or threw.</summary>
+    public IReadOnlyList<string>? ReadNeighbours()
+    {
+        try { return Neighbours?.Invoke(); }
         catch (Exception) { return null; }
     }
 }
@@ -105,7 +128,20 @@ public static class PositionActivation
     /// words over the process-wide register. <paramref name="standing"/> is the chart's answer for that id
     /// (<see cref="OrgStore.Standing"/>), or null where the chart holds no such position or could not be read — which refuses.
     /// </summary>
-    public static string? Refusal(string id, PositionStanding? standing) => Decide(id, standing, Seats.Read(id))?.Words;
+    public static string? Refusal(string id, PositionStanding? standing) => Ask(id, standing, Seats)?.Words;
+
+    /// <summary>
+    /// <see cref="Decide"/> OVER A REGISTER, the way the seam, the loop and the last check ask it: the facts for <paramref name="id"/>
+    /// as the register reads them — and where they cannot be read for one of the legacy pair, the register's own neighbour read
+    /// (<see cref="SeatRegister.Neighbours"/>) decides, so a failed read never passes an unconfined launch beside an active position.
+    /// </summary>
+    public static GateRefusal? Ask(string id, PositionStanding? standing, SeatRegister seats, string? verifiedClass = null)
+    {
+        if (seats.Read(id) is { } facts) return Decide(id, standing, facts, verifiedClass);
+        if (standing is not { IsLegacy: true } || standing.Id != id || standing.Status != OrgPositionStatus.Active)
+            return Decide(id, standing, null, verifiedClass);
+        return Neighbour(id, seats, verifiedClass);
+    }
 
     /// <summary>
     /// THE GATE'S ONE RULE: null when <paramref name="id"/> may run, otherwise the refusal with its kind. <paramref name="facts"/>
@@ -118,7 +154,9 @@ public static class PositionActivation
             return new(RefusalKind.Position, $"'{id}' is not an active position, so no conversation is opened for it and nothing is "
                                              + "folded into another position's.");
 
-        if (facts is null) return standing.IsLegacy ? null : Unset(id);
+        // FACTS NOBODY COULD READ: every position beyond the pair is refused as unset, and so is one of the pair, whose
+        // unconfined launch cannot be shown to have no neighbour from here (Ask reads the register's neighbour read instead).
+        if (facts is null) return !standing.IsLegacy ? Unset(id) : Unconfined(verifiedClass) ? Unreadable(id) : null;
 
         if (verifiedClass is not null && facts.DeclaredClass is not null && verifiedClass != facts.DeclaredClass)
             return new(RefusalKind.HostOrLaunch,
@@ -131,13 +169,7 @@ public static class PositionActivation
         {
             // THE LEGACY PAIR, FOR THEIR EXISTING TWO-ROLE BEHAVIOUR — unless they would be an unconfined neighbour. A seat whose
             // class is not known is taken to be unconfined: the neighbour rule is never passed on a guess.
-            var assurance = SeatClasses.AssuranceOf(seatClass) ?? SeatAssurance.Unconfined;
-            if (assurance == SeatAssurance.Unconfined && facts.ActiveBeyondLegacy.Count > 0)
-                return new(RefusalKind.HostOrLaunch,
-                    $"'{id}' runs unconfined, and {Names(facts.ActiveBeyondLegacy)} {Be(facts.ActiveBeyondLegacy)} active beyond the "
-                    + "legacy pair on this host: the legacy pair run confined too, or not there (ORCHESTRATION § 2.3). Nothing is "
-                    + "started. To run it, end or put to sleep the positions named, or run the legacy pair in a cell.");
-            return null;
+            return Unconfined(seatClass) && facts.ActiveBeyondLegacy.Count > 0 ? Neighboured(id, facts.ActiveBeyondLegacy) : null;
         }
 
         // NO DECLARED SEAT IS AN UNSET REGISTER, whatever seat is about to start: the launch is checked against what the app said
@@ -172,15 +204,42 @@ public static class PositionActivation
 
     /// <summary>
     /// THE LAST CHECK, IMMEDIATELY BEFORE THE PROCESS OR THE REQUEST, on a host that may have no meter: <see cref="Decide"/> with the
-    /// seat actually about to start. A register that is unset, answered null or threw passes the legacy pair and refuses every other
-    /// id — the same fail-closed answer as the seam's.
+    /// seat actually about to start. A register that is unset, answered null or threw refuses every id beyond the legacy pair; the
+    /// pair themselves are asked the no-unconfined-neighbour rule of the register's own neighbour read (<see cref="Neighbour"/>) —
+    /// the same fail-closed answer as the seam's.
     /// </summary>
     public static GateRefusal? AtLaunch(string role, string verifiedClass, SeatRegister? seats = null)
     {
-        var facts = (seats ?? Seats).Read(role);
-        if (facts is null) return CouncilRoles.IsKnown(role) ? null : Unset(role);
-        return Decide(role, facts.Standing, facts, verifiedClass);
+        var register = seats ?? Seats;
+        if (register.Read(role) is { } facts) return Decide(role, facts.Standing, facts, verifiedClass);
+        return CouncilRoles.IsKnown(role) ? Neighbour(role, register, verifiedClass) : Unset(role);
     }
+
+    /// <summary>
+    /// THE NO-UNCONFINED-NEIGHBOUR RULE FOR ONE OF THE LEGACY PAIR WHOSE FACTS COULD NOT BE READ, asked of the register's own
+    /// neighbour read: a seat that is not unconfined is no neighbour; on a register the app set, the launch passes only when that
+    /// read succeeds and names nobody, and a read that fails refuses it, about the host. A register nothing set is a process that
+    /// composed no AI, where the pair keep their behaviour from before the gate (<see cref="SeatRegister"/>).
+    /// </summary>
+    static GateRefusal? Neighbour(string id, SeatRegister seats, string? seatClass)
+    {
+        if (!Unconfined(seatClass) || !seats.IsSet) return null;
+        if (seats.ReadNeighbours() is not { } active) return Unreadable(id);
+        return active.Count > 0 ? Neighboured(id, active) : null;
+    }
+
+    /// <summary>Whether a seat of <paramref name="seatClass"/> is unconfined; a class this build does not know is taken to be.</summary>
+    static bool Unconfined(string? seatClass) =>
+        (SeatClasses.AssuranceOf(seatClass) ?? SeatAssurance.Unconfined) == SeatAssurance.Unconfined;
+
+    static GateRefusal Neighboured(string id, IReadOnlyList<string> active) => new(RefusalKind.HostOrLaunch,
+        $"'{id}' runs unconfined, and {Names(active)} {Be(active)} active beyond the legacy pair on this host: the legacy pair run "
+        + "confined too, or not there (ORCHESTRATION § 2.3). Nothing is started. To run it, end or put to sleep the positions named, "
+        + "or run the legacy pair in a cell.");
+
+    static GateRefusal Unreadable(string id) => new(RefusalKind.HostOrLaunch,
+        $"'{id}' runs unconfined, and TradeAgent could not read whether any position beyond the legacy pair is active on this host, "
+        + "so nothing is started: an unconfined launch is never passed beside a neighbour nobody could rule out. Its wakes are kept.");
 
     static GateRefusal Unset(string id) => new(RefusalKind.HostOrLaunch,
         $"'{id}' is a position beyond the legacy pair, and nothing has told this host which seat it would run on (the activation "

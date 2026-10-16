@@ -345,7 +345,7 @@ public sealed class AppHost : IAsyncDisposable
     /// WHY A POSITION MAY NOT TURN — its kind and a sentence — or null: the activation gate's own answer with the DECLARED seat,
     /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation.
     /// </summary>
-    public GateRefusal? ActivationRefusal(string role) => PositionActivation.Decide(role, StandingOf(role), _seats.Read(role));
+    public GateRefusal? ActivationRefusal(string role) => PositionActivation.Ask(role, StandingOf(role), _seats);
 
     /// <summary>
     /// WHAT THE ACTIVATION GATE READS FOR ONE POSITION, as this host knows it now: the chart's standing, the DECLARED class of the
@@ -357,9 +357,15 @@ public sealed class AppHost : IAsyncDisposable
         Standing = StandingOf(role),
         DeclaredClass = DeclaredSeatClass(role),
         ProvenCell = new CellProofStore(_db!).HoldsProof(),
-        ActiveBeyondLegacy = new OrgStore(_db!).ActivePositionsBeyondLegacy(),
+        ActiveBeyondLegacy = ActiveBeyondLegacy(),
         OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? []
     };
+
+    /// <summary>
+    /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, read where asked: one of the facts above, and the register's own neighbour read
+    /// (<see cref="SeatRegister.Neighbours"/>), which the gate asks for the legacy pair whenever their facts could not be read.
+    /// </summary>
+    IReadOnlyList<string> ActiveBeyondLegacy() => new OrgStore(_db!).ActivePositionsBeyondLegacy();
 
     /// <summary>
     /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD LAUNCH ON, DECLARED from the runtime object this host would open it on
@@ -933,6 +939,7 @@ public sealed class AppHost : IAsyncDisposable
 
         // THE ACTIVATION GATE'S REGISTER, FILLED HERE AND NOWHERE ELSE (U-thinking-seats-a).
         _seats.Facts = FactsFor;
+        _seats.Neighbours = ActiveBeyondLegacy;
 
         Wakes = new MissionEventStore(db);
         Boundaries = new CouncilBoundaries(db);
@@ -2203,6 +2210,7 @@ public sealed class AppHost : IAsyncDisposable
         HarnessKey.Clear();
         PerceptionKey.Clear();
         _seats.Facts = null;
+        _seats.Neighbours = null;
         lock (_decisionModels)
         {
             foreach (var wire in _decisionModels.Values) wire.Dispose();

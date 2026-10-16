@@ -206,7 +206,9 @@ public class ThinkingSeatsTests : IDisposable
     /// <summary>
     /// (f) A SEAM WHOSE REGISTER IS UNSET — or answers null, or throws — REFUSES EVERY POSITION BUT THE LEGACY PAIR, as a refusal
     /// about the host, at the seam and at launch alike. The behaviour is base's (it refused every position beyond the pair); the
-    /// kind is new.
+    /// kind is new. Fix pass 1 (review item 2): a register the app SET whose reads fail refuses the legacy pair too while a position
+    /// beyond them is active, as it cannot rule that neighbour out; only a register nothing set — a process that composed no AI —
+    /// leaves the pair as they were.
     /// </summary>
     [Fact]
     public void A_seam_whose_register_is_unset_refuses_every_position_but_the_legacy_pair()
@@ -221,13 +223,23 @@ public class ThinkingSeatsTests : IDisposable
         var broken = new SeatRegister { Facts = _ => throw new InvalidOperationException("the chart is on fire") };
         foreach (var register in new[] { unset, blank, broken })
         {
-            var refused = PositionActivation.Decide(Third, chart.Standing(Third), register.Read(Third));
+            var refused = PositionActivation.Ask(Third, chart.Standing(Third), register);
             Assert.Equal(RefusalKind.HostOrLaunch, refused?.Kind);
             Assert.Equal(RefusalKind.HostOrLaunch, PositionActivation.AtLaunch(Third, SeatClasses.Harness, register)?.Kind);
             foreach (var legacy in CouncilRoles.All)
             {
-                Assert.Null(PositionActivation.Decide(legacy, chart.Standing(legacy), register.Read(legacy)));
-                Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Cli, register));
+                var seam = PositionActivation.Ask(legacy, chart.Standing(legacy), register);
+                var launch = PositionActivation.AtLaunch(legacy, SeatClasses.Cli, register);
+                if (ReferenceEquals(register, unset))
+                {
+                    Assert.Null(seam);
+                    Assert.Null(launch);
+                }
+                else
+                {
+                    Assert.Equal(RefusalKind.HostOrLaunch, seam?.Kind);
+                    Assert.Equal(RefusalKind.HostOrLaunch, launch?.Kind);
+                }
             }
         }
 
@@ -239,6 +251,56 @@ public class ThinkingSeatsTests : IDisposable
         var meter = new TurnMeter(db, () => 5m, live: new LiveAttempts());
         using var seat = meter.Attach(new Seated(SeatClasses.Harness), Third);
         Assert.Equal(RefusalKind.HostOrLaunch, meter.Begin("## Situation", role: Third).Kind);
+    }
+
+    // ---- (k) review item 2: the neighbour rule is asked whatever the facts read -----------------------------------
+
+    /// <summary>
+    /// (k) A LEGACY LAUNCH WHOSE FACTS CANNOT BE READ IS STILL ASKED THE NO-UNCONFINED-NEIGHBOUR RULE (fix pass 1, review item 2;
+    /// ORCHESTRATION § 2.3): the register's own neighbour read decides — a position beyond the pair active refuses the pair's
+    /// unconfined launch, naming it; a neighbour read that fails refuses it, about the host; a brokered seat is no neighbour; and
+    /// once the read succeeds and names nobody, the pair run as before. RED at the rebased tip: a register whose facts threw passed
+    /// <c>AtLaunch("operations", "cli")</c> beside an active position. THE WATCHED MUTANT: the neighbour read removed from
+    /// <c>AtLaunch</c>'s legacy path.
+    /// </summary>
+    [Fact]
+    public void A_legacy_launch_whose_facts_cannot_be_read_is_still_asked_the_neighbour_rule()
+    {
+        using var db = TestEnv.NewDb();
+        Head(db, Third);
+        var chart = new OrgStore(db);
+
+        var throwing = new SeatRegister { Facts = _ => throw new InvalidOperationException("the chart is on fire") };
+        Assert.Equal(RefusalKind.HostOrLaunch, PositionActivation.AtLaunch(CouncilRoles.Operations, SeatClasses.Cli, throwing)?.Kind);
+
+        var neighbours = new SeatRegister
+        {
+            Facts = _ => throw new InvalidOperationException("the chart is on fire"),
+            Neighbours = () => new OrgStore(db).ActivePositionsBeyondLegacy()
+        };
+        foreach (var legacy in CouncilRoles.All)
+        {
+            var launch = PositionActivation.AtLaunch(legacy, SeatClasses.Cli, neighbours);
+            Assert.Equal(RefusalKind.HostOrLaunch, launch?.Kind);
+            Assert.Contains($"'{Third}'", launch!.Words, StringComparison.Ordinal);
+            var seam = PositionActivation.Ask(legacy, chart.Standing(legacy), neighbours);
+            Assert.Equal(RefusalKind.HostOrLaunch, seam?.Kind);
+            Assert.Contains("confined too, or not there", seam!.Words, StringComparison.Ordinal);
+            Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Harness, neighbours));   // brokered: no unconfined neighbour
+        }
+
+        var blind = new SeatRegister { Facts = _ => null, Neighbours = () => throw new InvalidOperationException("unreadable") };
+        var unread = PositionActivation.AtLaunch(CouncilRoles.Research, SeatClasses.Cli, blind);
+        Assert.Equal(RefusalKind.HostOrLaunch, unread?.Kind);
+        Assert.Contains("could not read whether any position beyond the legacy pair is active", unread!.Words, StringComparison.Ordinal);
+
+        // THE READ SUCCEEDS AND NAMES NOBODY: the legacy pair run exactly as before.
+        SetStatus(db, Third, OrgPositionStatus.Dormant);
+        foreach (var legacy in CouncilRoles.All)
+        {
+            Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Cli, neighbours));
+            Assert.Null(PositionActivation.Ask(legacy, chart.Standing(legacy), neighbours));
+        }
     }
 
     // ---- (g) code, never data --------------------------------------------------------------------------------------
@@ -413,7 +475,7 @@ public class ThinkingSeatsTests : IDisposable
 
     /// <summary>A register over <paramref name="db"/>, as the app fills its own, every position declared on <paramref name="declared"/>.</summary>
     internal static SeatRegister Register(Database db, string declared) =>
-        new() { Facts = id => Facts(db, declared, id) };
+        new() { Facts = id => Facts(db, declared, id), Neighbours = () => new OrgStore(db).ActivePositionsBeyondLegacy() };
 
     /// <summary>A harness conversation for <paramref name="role"/> pointed at the loopback fake, with a fake key pasted for it.</summary>
     static IAgentConversation HarnessFor(FakeProvider provider, SeatRegister? seats, string role = Third)
