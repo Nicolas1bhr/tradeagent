@@ -480,6 +480,41 @@ public class ThinkingSeatsTests : IDisposable
         AssertNothingPublished(rig.Db, rig.Events);
     }
 
+    // ---- (s) re-review 2, P2: a held output never shares an identity with a published one -----------------------
+
+    /// <summary>
+    /// (s) A HELD OUTPUT NEVER TAKES THE PUBLICATION'S CONTENT IDENTITY (re-review 2, P2): the refused launch A staged an agenda and
+    /// it was held; the next launch B writes the very same text and publishes it. B's publication is attributed to B and delivered;
+    /// no publication attributed to A carries a delivery, then or ever. RED before the fix: B's identical text hashed to A's held
+    /// row, and the delivery went out under a publication that names the refused launch.
+    /// </summary>
+    [Fact]
+    public async Task A_held_output_never_shares_its_identity_with_a_later_identical_publication()
+    {
+        using var rig = RefusedTurnRig.Arrange();
+        await rig.Run();
+        var refused = rig.Attempt!;
+        AssertNothingPublished(rig.Db, rig.Events);
+
+        // LAUNCH B, ON THE SAME SEAT, WRITES THE SAME TEXT AND ENDS.
+        rig.Declared = SeatClasses.Harness;
+        string? second = null;
+        rig.Provider.Arriving = () =>
+        {
+            if (rig.Provider.Requests.Count != 2) return;
+            second = rig.Meter.OpenAttemptIdFor(CouncilRoles.Operations);
+            rig.Provider.Answer(FakeProvider.ToolCall(GrantedWorkerTools.WriteFile,
+                new { path = $"{WorkspaceBuilder.OutDir}/agenda-{second}.md", content = RefusedTurnRig.Agenda }, "call-2"));
+            rig.Provider.Answer(FakeProvider.Message("Research is briefed."));
+        };
+        await rig.Run();
+
+        Assert.NotNull(second);
+        var delivered = Count(rig.Db, $"SELECT COUNT(*) FROM delivery d JOIN publication p ON p.id = d.publication_id WHERE p.attempt = '{refused}'");
+        Assert.True(delivered == 0, $"{delivered} delivery(ies) went out under a publication attributed to the refused launch");
+        Assert.Equal(1L, Count(rig.Db, $"SELECT COUNT(*) FROM delivery d JOIN publication p ON p.id = d.publication_id WHERE p.attempt = '{second}'"));
+    }
+
     /// <summary>
     /// THE REFUSED CHAIR TURN OF (p), (r) AND (s): the chair on the harness, metered, through the real relay; request 1 stages
     /// <see cref="Agenda"/> under the launch's own id and the chair's declared seat changes, so request 2 is refused at the last check.

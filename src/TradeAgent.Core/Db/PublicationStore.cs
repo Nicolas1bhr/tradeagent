@@ -184,6 +184,15 @@ public sealed record Publication
     /// </summary>
     public static string IdOf(string role, string kind, string content) =>
         Sha256Hex.Of($"{role}\n{kind}\n{content}");
+
+    /// <summary>
+    /// THE IDENTITY OF AN OUTPUT HELD BECAUSE THE ACTIVATION GATE REFUSED THE LAUNCH THAT STAGED IT (re-review 2 of
+    /// <c>U-thinking-seats-a</c>, P2): bound to that launch and never <see cref="IdOf"/>'s content identity, so a later launch that
+    /// publishes the very same text gets a row of its own, attributed to it — and no row attributed to a refused launch can ever
+    /// carry a delivery. Distinct from every <see cref="IdOf"/> by its leading line.
+    /// </summary>
+    public static string HeldIdOf(string role, string kind, string attempt, string content) =>
+        Sha256Hex.Of($"held-by-the-activation-gate\n{attempt}\n{role}\n{kind}\n{content}");
 }
 
 /// <summary>One recipient's copy of a publication, and whether the file has actually been written.</summary>
