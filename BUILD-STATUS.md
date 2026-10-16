@@ -10570,3 +10570,36 @@ Database.cs:2375 ROLLBACK removed → "SQLite Error 5: 'database is locked'"; ea
 **NOT in O4 (ruled): `TurnMeter.TodayFor` and the card's first look still read the legacy role split** (½ for a new position) — the review's first P1; the gate is `Begin`. Moved to O3 `U-org-wakes`
 item 2, a HARD PREREQUISITE of any third position's activation.
 **NOT VERIFIED:** no app run; the fix pass on the tests box (unreachable today: NOT RUN — the machine does not answer); the rung on a real owner home.
+
+## U-seat-signin — the app signs its AI seat home in from its own window (browser, device code with expiry and retry, or a pasted key), shows a Dashboard card while the seat home holds no credential, names the seat home on a Doctor row, and signs out in two presses; no terminal, no copy of the owner's login; no rung (landed 2026-10-16, seat A, in seat B's train B3)
+
+**Landed** in train B3 (seat B's `land.sh` v3) with O4 `U-org-envelopes` (rung 38), stacked O4 `b4b4e1f0` → this unit `5ce95569` on `main` `bd151496` (fix pass 1's report
+tip `78608199`, code `ab7cd033` on `cf0eb94e`; builder tip `0bf51180`, code `70e00569`). A protection: CRED-001 (no seat holds the owner's credentials; the seat home's own
+sign-in, ORCHESTRATION § 2.7) and the no-terminal rule. **No rung.** Part 2 of `U-seat-home` (rung 37). Built by af4352b0fa3c64953 (pass 1, 2026-10-11) and a fresh fixer
+ab66e6bb32880b66c (fix pass 1, 2026-10-16).
+**CI:** train run **38942170772** on the stacked tip — every job's verdict as `land.sh train-check` read it (seat B's train record). Before the train: 38937914033 at
+`ab7cd033`, every job success except linux-host (the fleet-wide runner-image break U-ci-host-pins fixed; not this unit); 38175265113 at `70e00569`, all 12 success.
+Names 2707 → 2722, removed 0. Scan: the `ApiKey`/`SignInWithApiKeyAsync` identifiers, `PasswordChar` and codex's `--with-api-key` verb, judged false positives,
+excluded by phrase.
+**What changed:** `SeatSignIn` reads `login status` under the seat home on the background loop (5 s while signed out, unknown or signing in; 30 s otherwise); a missing
+program, a binary not the pin, a refused home, a timeout, an unreadable runtimes.json or a chosen id the catalogue cannot name all read UNKNOWN in words (NotApplicable
+only for no runtime chosen or no seat home). `SeatSignInCard` on the Dashboard, built once and updated in place, visible while signed out or unknown, offers the
+browser (the app opens the URL), a device code (link, code, "expires at HH:mm" counted from when the CLI printed it — `DeviceChallenge.ReadAt` — and Retry once it
+lapses) and a pasted key: masked, cleared before the call, sent on stdin only. A key with whitespace inside is refused in words before any program runs; the
+program's words are redacted BEFORE they are summarised — the whole key, every pasted piece ≥ 4 chars, every run of 8+ chars of a piece — in the refusal, the card
+and the activity line. The key path stops any pending login first (one sign-in at a time). `DeviceCodePlan` is data (codex 0.160.1's `login --device-auth`); a
+pattern that does not match refuses naming the CLI and shows nothing; on Linux the browser button is hidden. Doctor row "AI seat home": path, signed in or not,
+the pinned version, `SeatProfile.ProfileHash` — never the status words or an account. "Sign out of TradeAgent's AI" is a two-press `Ui.Confirm`.
+**Evidence:** pass 1 red at base was a compile red (CS0246, no card or sign-in type); WATCHED MUTANT (no `AgentEnvironment.Apply` in the device-code path) → "`login
+--device-auth` ran with CODEX_HOME=…/the-owners-codex-home-…, not the seat home", restored green. Fix pass 1 RED at its rebased base: (1) `the card carries
+"sk-FAKE-" of the key`; (2) `the browser sign-in is still waiting after the key was in`; (3) `Expected: Unknown Actual: NotApplicable`; (4) `Not found: "This code
+expires at 22:15."`; WATCHED MUTANT (redaction moved back after the summary) → `the refusal carries "AKE-0000" of the key`, 1 failed / 8 passed, restored 9 passed.
+Release `--no-incremental` 0 warnings; SeatSignInTests 3× `Passed: 12`; ResumeOnStartTests 7; PastedKeyFile/SeatHome/ApiWorker 23. Logout RUN on a throwaway home
+with a fake key ("Successfully logged out", rc 0). Screenshots of the card (dev home, fake key) in fleet/tmp/A-org/u-seat-signin-build/.
+**Judged:** the re-review's P1 (a CLI that echoes the key in 7-character chunks) is NOT a defect of this unit — the redaction guards against the pinned vendor CLI's
+ACCIDENTAL echo; a program that deliberately re-encodes a key it holds beats any threshold, which is the binary's integrity (ADVISORY until cells). `ab7cd033`
+(after the re-review) moved the sign-in's read-only `RuntimeCatalog.Require` into `SeatSignIn.Chosen` so AppHost keeps its one start-path resolution — read by
+seat A, behaviour identical, the ResumeOnStart test's purpose kept. Accepted deviation: the builder committed by file (6 commits), not one per item.
+Triage: fleet/records/U-seat-signin-review-triage.md.
+**Tests box:** NOT RUN — busy (2026-10-11), then the machine does not answer (2026-10-16). **NOT VERIFIED:** a real codex sign-in by browser, device code or key
+(fake CLI and fake keys only); the Windows card by eye; the Doctor row in the running app; no full local suite run.
