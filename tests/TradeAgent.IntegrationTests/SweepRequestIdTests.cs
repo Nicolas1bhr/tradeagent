@@ -316,6 +316,14 @@ public class SweepRequestIdTests
     /// the same deadline, opened by this press; a clock started per RPC gives the cancel a deadline a
     /// whole half-budget later than the read's, every run. The runner can no longer clip the read
     /// unless it spends the whole budget before it.</para>
+    ///
+    /// <para>AND THE BOUND THE SIMULATOR ENFORCES, NOT ONLY THE ONE THE SCOPE CARRIES (fix pass 1). A
+    /// connector that kept the shared ambient deadline but granted each call a fresh budget passed the
+    /// deadlines above and the four-second bound alike. So the cancel is given a latency longer than
+    /// any budget, which sends it down the simulator's own precheck: it waits out exactly what it will
+    /// allow the call — the <c>left</c> it hands its wait and cancels it at — and that wait is the one
+    /// seen here. Its end must be the press's deadline; a fresh budget per call ends it at least half a
+    /// budget later. No timer is judged, only two readings of the same clock a few lines apart.</para>
     /// </summary>
     // `Timing`: the two stopwatch bounds below still time a press, so the runner's file IO is inside
     // them. Same measurement and same reason as `OperatorPressIsAnEmergencyTests`. The verdict on
@@ -340,23 +348,27 @@ public class SweepRequestIdTests
         // deadline the product bounded it by. A call outside the scope (a health poll) is not the
         // sweep's and passes through. One millisecond of latency is what makes the simulator hand
         // each call to the seam; it fits any budget that has not already gone.
-        var calls = new List<(long At, long Deadline)>();
+        // The calls' own waits (`d`) are kept too: for the cancel it is what the simulator allows it.
+        var calls = new List<(long At, long Deadline, TimeSpan Allowed)>();
         conn.Faults.Wait = (d, token) =>
         {
-            if (RiskReducingScope.DeadlineAt is not { } deadline) return Task.Delay(d, token);
+            if (RiskReducingScope.DeadlineAt is not { } deadline) return Task.CompletedTask;
             int n;
-            lock (calls) { calls.Add((Environment.TickCount64, deadline)); n = calls.Count; }
+            lock (calls) { calls.Add((Environment.TickCount64, deadline, d)); n = calls.Count; }
             return n switch
             {
                 // The book read: answered once half the budget is gone by the product's own deadline.
                 1 => Task.Delay(RiskReducingScope.LeftUntil(deadline) - budget / 2 is var w && w > TimeSpan.Zero
                     ? w : TimeSpan.Zero, token),
+                // The resolution, at once — and the cancel after it is given more latency than any
+                // budget, so the simulator's precheck waits out what it allows the cancel and no more.
+                2 => SetLatency(10 * (int)budget.TotalMilliseconds),
                 // The cancel, and anything after it: held until the deadline stops the wait.
-                >= 3 => Task.Delay(Timeout.Infinite, token),
-                _ => Task.CompletedTask
+                _ => Task.Delay(Timeout.Infinite, token)
             };
         };
         conn.Faults.LatencyMs = 1;
+        Task SetLatency(int ms) { conn.Faults.LatencyMs = ms; return Task.CompletedTask; }
 
         var opened = Environment.TickCount64;
         var timer = Stopwatch.StartNew();
@@ -375,6 +387,13 @@ public class SweepRequestIdTests
         Assert.True(calls.All(c => c.Deadline == calls[0].Deadline),
             $"the sweep's calls were bounded by different deadlines ({deadlines} after the press) — each RPC is still starting its own clock");
         Assert.InRange(calls[0].Deadline - (long)budget.TotalMilliseconds, opened, calls[0].At);
+
+        // AND IT IS THE DEADLINE ENFORCED: the cancel's wait, which the simulator cancels when it ends,
+        // ends at the press's deadline. A fresh budget per call ends it a half-budget or more later.
+        var cancel = calls[2];
+        var enforced = cancel.At + (long)cancel.Allowed.TotalMilliseconds;
+        Assert.True(cancel.Allowed < budget && Math.Abs(enforced - cancel.Deadline) < (long)budget.TotalMilliseconds / 4,
+            $"the simulator allowed the cancel {cancel.Allowed.TotalMilliseconds:0} ms, to +{enforced - opened} ms after the press, where the press's deadline is +{cancel.Deadline - opened} ms — each RPC is being granted its own budget");
 
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(4),
             $"the sweep took {timer.Elapsed.TotalSeconds:0.00}s against a two-second budget — each RPC is still starting its own clock");
