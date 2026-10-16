@@ -10534,3 +10534,16 @@ recorded output with no disposition and, if the source file is gone, no Situatio
 first unit that would route a held output); O3 `U-org-wakes` item 6 carries it — publication and disposition in one transaction, the settling check above as its red.
 **NOT done (owed):** the nameless `TurnMeter.Begin` is still the chair's without a status check (home O3 or O5). **NOT VERIFIED:** no app run; the held line in a live Situation — no non-legacy
 position can run until `U-thinking-seats` and a proven executor cell (ORCHESTRATION § 2.3); unit tests cover it.
+
+## U-ci-host-pins — the linux-host job installs its packages again on the current ubuntu-24.04 image: a package the image carries is taken as it has it, the rest pinned, every version printed (landed 2026-10-16, seat B)
+
+**Landed** solo (`land.sh` v3) on `main` at tip `d0a7f61c` (rebased 3d25e98b → d0a7f61c onto `06471ec`). CI run **38937123251** (workflow_dispatch) at `ee2796ac` CARRIED (build tree equal outside
+bookkeeping paths): success on all 12 jobs, `linux-host` 20 min with "Twenty minutes unattended" run in full; `land.sh check` VERDICT PASS (names 2618 → 2618, removed 0; scan clean). **No rung, no product code.**
+**Why:** since the runner image `ubuntu24/20261012.334`, `linux-host` failed on EVERY branch in 5 s at "Install the host's packages, each one pinned" (first sighting: O4's run 38933247781, job 117083466673),
+so `land.sh check` refused every unit of both seats. Cause, apt's own words (diagnostic run 38935961186, job 117093382335, `-qq` dropped, other jobs `if: false`): the image holds `libx11-6 2:1.8.7-1ubuntu0.1`
+(noble-security) and the pin to the release pocket's `2:1.8.7-1build1` is a downgrade — `x11-apps : Depends: libx11-xcb1 (>= 2:1.8.7) but it is not going to be installed`. The other pins already matched.
+**Fix (one hunk + comment in `.github/workflows/build.yml`):** a package the image already carries is taken at the image's version; one it lacks (tigervnc-*, x11-apps, netpbm) stays pinned to the release pocket;
+no `-qq` on the install (apt's reason prints on a future break); `dpkg-query` prints every installed version. No downgrade, no `continue-on-error`, no retry, no step removed; diagnostic edits gone (final `.github` diff = fix + comment).
+**What it changes about the proof:** the job stays deterministic ON A GIVEN IMAGE (every version printed), no longer across images for packages the image ships — the price of GitHub moving the image under a pinned job.
+**CI cost:** the diagnosis ran linux-host alone; the final run the full matrix.
+**NOT VERIFIED:** a future image that carries a pinned package at another version (printed, not asserted, by design); the final run's image version not read from its log; one comment line exceeds the file's usual 110 columns.
