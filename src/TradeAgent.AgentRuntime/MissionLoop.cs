@@ -254,6 +254,12 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// than fed to argv in silence — or null where no process was launched. Written into the attempt's <c>context</c>.
     /// </summary>
     public string? PromptIn { get; init; }
+
+    /// <summary>
+    /// THE SEAT CLASS A PUPPET'S TEST MANIFEST DECLARED (<see cref="RuntimeManifest.PuppetSeatClass"/>, <c>U-puppet-runtime</c>), or
+    /// null for every seat that is not a puppet. Written into the attempt's <c>context</c>; never read from a data file.
+    /// </summary>
+    public string? SeatClass { get; init; }
 }
 
 /// <summary>

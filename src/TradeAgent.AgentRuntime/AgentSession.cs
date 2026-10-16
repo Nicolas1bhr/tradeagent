@@ -284,6 +284,8 @@ public sealed class AgentSession(
     /// <inheritdoc />
     public SeatVerdict CheckSeat()
     {
+        // A PUPPET OUTSIDE A TEST HOST IS REFUSED HERE TOO, so the meter writes no row and reserves nothing for it (U-puppet-runtime).
+        if (PuppetSeats.Refusal(manifest) is { } puppet) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, puppet);
         if (manifest.Seat is null) return SeatVerdict.None;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
         if (resolveExecutable() is not { } exe) return SeatVerdict.None;
@@ -699,7 +701,9 @@ public sealed class AgentSession(
                 // AND THE CANON IT WAS LAUNCHED UNDER, as found on disk the moment before the process started.
                 Canon = _canon,
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
-                PromptIn = _promptIn
+                PromptIn = _promptIn,
+                // AND, FOR A PUPPET, THE CLASS ITS TEST'S MANIFEST DECLARED (U-puppet-runtime); nothing for any other seat.
+                SeatClass = manifest.Puppet ? manifest.PuppetSeatClass : null
             });
         }
     }
@@ -707,6 +711,11 @@ public sealed class AgentSession(
     async Task<(int ExitCode, string Raw, TurnUsage? Usage, VendorLimit? Limit)> RunTurnAsync(string exe, string message,
         CancellationToken ct)
     {
+        // A PUPPET SEAT RUNS IN A TEST HOST AND NOWHERE ELSE (U-puppet-runtime), refused before the profile is read, before any
+        // grant is issued and before any process exists: a puppet is handed the launch's real grant, and the chair's may trade.
+        if (PuppetSeats.Refusal(manifest) is { } puppet)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, puppet);
+
         // REFUSED BEFORE ANYTHING IS STARTED, AND THIS IS THE ONLY PLACE A TURN BEGINS.
         //
         // The armed live configuration will not run an AI runtime that no operating-system sandbox

@@ -82,6 +82,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     public string? ResolveExecutable()
     {
+        // A PUPPET OUTSIDE A TEST HOST HAS NO PROGRAM (U-puppet-runtime): nothing of this runtime starts — not a turn, and not the
+        // version probe, a sign-in or a health check either. The turn's own refusal, in AgentSession, is the one that says why.
+        if (PuppetSeats.Refusal(manifest) is not null) return null;
+
         string? first = null;
         foreach (var candidate in Candidates())
         {

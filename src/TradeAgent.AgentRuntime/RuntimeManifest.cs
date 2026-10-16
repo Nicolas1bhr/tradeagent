@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
 
@@ -81,6 +82,14 @@ public sealed class SeatPlan
 
     /// <summary>The one seat class today: a CLI seat that runs commands. A broker-only class is a row here (<c>U-thinking-seats</c>).</summary>
     public const string CliClass = "cli";
+
+    /// <summary>
+    /// THE PUPPET'S OWN CLASS (<c>U-puppet-runtime</c>; <c>docs/ORCHESTRATION.md</c> § 7): a scripted seat that runs no model and
+    /// runs only in a test host (<see cref="RuntimeManifest.Puppet"/>). Named here, beside the real classes, so the activation gate
+    /// (<c>U-thinking-seats-a</c>) can exempt it from the refusal of real-model positions by name; a puppet manifest may declare
+    /// another class to play (<see cref="RuntimeManifest.PuppetSeatClass"/>).
+    /// </summary>
+    public const string PuppetClass = "puppet";
 
     /// <summary>
     /// THE DENY SET, BY SEAT CLASS: argv every turn of that class carries before its prompt, on the first turn AND on every resume
@@ -342,6 +351,32 @@ public sealed record VendorLimit(string Message, DateTimeOffset? RetryAt)
 public sealed class RuntimeManifest
 {
     public string Id { get; set; } = "";
+
+    /// <summary>
+    /// THE ID RESERVED FOR THE TESTS' PUPPET SEAT (<c>U-puppet-runtime</c>). A <c>runtimes.json</c> entry using it, in any casing,
+    /// refuses the file's whole read (<see cref="RuntimeCatalog.Read"/>), so no data file can put a program of its choosing under
+    /// the id a test host's puppet answers to.
+    /// </summary>
+    public const string PuppetId = "puppet";
+
+    /// <summary>
+    /// WHETHER THIS MANIFEST IS A PUPPET SEAT — a scripted stand-in for an agent CLI that plays positions through the real kernel
+    /// in tests, at no AI cost (<c>docs/ORCHESTRATION.md</c> § 2.7, § 7). A puppet is handed a real launch grant, so it never runs
+    /// outside a test host: <see cref="AgentSession"/> refuses one before any grant is issued unless <see cref="PuppetSeats.TestHost"/>
+    /// is set. NOT DATA: internal and never serialized, so <c>runtimes.json</c> cannot make a manifest a puppet, and only a test
+    /// assembly (<c>InternalsVisibleTo</c>) can build one.
+    /// </summary>
+    [JsonIgnore]
+    internal bool Puppet { get; init; }
+
+    /// <summary>
+    /// THE SEAT CLASS A PUPPET MANIFEST DECLARES IT PLAYS — <see cref="SeatPlan.PuppetClass"/> unless its test says otherwise — and
+    /// records on every attempt it runs (<c>seat_class</c> in <c>ai_attempt.context</c>), so a later unit's puppet can reach the
+    /// verbs a declared class allows. Declared by the test's manifest, in code: never read from <c>runtimes.json</c>, and nothing
+    /// in production configuration can reach it (seat classes live in code, § 2.7). Ignored on a manifest that is not a puppet.
+    /// </summary>
+    [JsonIgnore]
+    internal string PuppetSeatClass { get; init; } = SeatPlan.PuppetClass;
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string SignInDescription { get; set; } = "";
@@ -1140,6 +1175,13 @@ public static class RuntimeCatalog
     {
         var file = VendorFile.Read<List<RuntimeManifest>>(OverridePath);
         if (file.Unreadable is { } why) return new([], Labels.RuntimesCouldNotBeRead(why));
+
+        // THE PUPPET'S ID IS NOT THE FILE'S TO USE (U-puppet-runtime): an entry under it refuses the whole read, as an unreadable
+        // file does — trusted whole or not at all — rather than being skipped, which would start the rest of a file whose author
+        // meant something by the entry this build will not run.
+        if ((file.Value ?? []).FirstOrDefault(o => string.Equals(o.Id, RuntimeManifest.PuppetId, StringComparison.OrdinalIgnoreCase))
+            is { } reserved)
+            return new([], Labels.RuntimesNameAReservedId(reserved.Id));
 
         var builtIn = BuiltIn();
         foreach (var o in file.Value ?? [])

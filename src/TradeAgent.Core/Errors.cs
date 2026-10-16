@@ -735,6 +735,14 @@ public static class Labels
     /// <paramref name="why"/> is omitted where the sentence is already carrying a repair beside it
     /// (the error catalogue), and given where it is the whole of what the row says.
     /// </summary>
+    /// <summary>
+    /// <see cref="RuntimesFile"/> names a runtime under the id reserved for TradeAgent's own tests' puppet seat
+    /// (<c>U-puppet-runtime</c>), so the whole file is refused, as an unreadable one is.
+    /// </summary>
+    public static string RuntimesNameAReservedId(string id) =>
+        RuntimesFile + $" names a runtime '{id}', and that id is reserved for TradeAgent's own tests: a puppet seat never "
+        + "runs in the app, so TradeAgent will not start an AI assistant from this file. Remove that entry.";
+
     public static string RuntimesCouldNotBeRead(string? why = null) =>
         RuntimesFile + " could not be read, so TradeAgent will not start an AI assistant and is not "
         + "falling back to the commands it ships with." + Because(why);

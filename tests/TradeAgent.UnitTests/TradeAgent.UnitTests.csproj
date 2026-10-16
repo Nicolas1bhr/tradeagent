@@ -10,5 +10,19 @@
     <ProjectReference Include="../../src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
     <ProjectReference Include="../../src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
     <ProjectReference Include="../../src/TradeAgent.App/TradeAgent.App.csproj" />
+    <!-- THE PUPPET SEAT (U-puppet-runtime): built before this assembly so its lives can start it, and never referenced by it —
+         the puppet is a program a test runs through the real AgentSession, not a library. -->
+    <ProjectReference Include="../TradeAgent.Puppet/TradeAgent.Puppet.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Where this build's puppet and trade command are, in THIS configuration: a life runs the programs built with it. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>PuppetDll</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../TradeAgent.Puppet/bin/$(Configuration)/$(TargetFramework)/TradeAgent.Puppet.dll</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TradeCliDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../../src/TradeAgent.TradeCli/bin/$(Configuration)/$(TargetFramework)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>
