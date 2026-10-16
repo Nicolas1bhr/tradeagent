@@ -379,12 +379,12 @@ public static class Labels
         + "has ended.";
 
     /// <summary>
-    /// A LAUNCH UNDER AN ID THIS LEDGER NEVER HANDED OUT, OR ALREADY LAUNCHED UNDER (<c>U-mint-per-launch</c>). A turn's
+    /// A LAUNCH UNDER AN ID THIS LEDGER NEVER HANDED OUT FOR ITS ROLE, OR ALREADY LAUNCHED UNDER (<c>U-mint-per-launch</c>). A turn's
     /// prompt, row and output's name are one id, the one it minted; a launch carrying any other is refused rather than
     /// recorded under a name another launch owns.
     /// </summary>
     public static string LaunchIdNotMinted(string attemptId) =>
-        $"The launch '{attemptId}' was not minted by this launch ledger, or was already launched, so no turn was started "
+        $"The launch '{attemptId}' was not minted for this role by this launch ledger, or was already launched, so no turn was started "
         + "under it. Nothing was written, nothing was charged and no wake was taken. The next turn mints its own.";
 
     /// <summary>

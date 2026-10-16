@@ -184,6 +184,33 @@ public class MintPerLaunchTests : IDisposable
     }
 
     /// <summary>
+    /// (P2) RED at the unit's first pass: <c>Begin</c> matched the minted id and not the role it was minted for, so an
+    /// Operations launch could take an id minted for Research and carry it on its row and grant. Refused in words: no
+    /// row, nothing reserved, no wake consumed — and the id stays Research's to launch under.
+    /// </summary>
+    [Fact]
+    public void A_launch_under_an_id_minted_for_another_role_is_refused()
+    {
+        var meter = Meter();
+        var events = new MissionEventStore(_db);
+        var fill = MissionEventIds.Fill("EXEC-1");
+        events.Raise(fill, MissionEventKind.Fill, DateTimeOffset.Now.AddSeconds(-1));
+
+        var researchs = meter.Mint(CouncilRoles.Research);
+        var refused = meter.Begin("## Situation", [fill], CouncilRoles.Operations, attemptId: researchs);
+
+        Assert.False(refused.Admitted, "an Operations launch under an id minted for Research was admitted");
+        Assert.Null(refused.Id);
+        Assert.Contains(researchs, refused.Refusal);
+        Assert.Equal(0, Rows());
+        Assert.Equal(fill, Assert.Single(events.Due(DateTimeOffset.Now)).Id);
+        Assert.Equal(0m, meter.Today.Reserved);
+        Assert.Equal(researchs, meter.OpenAttemptIdFor(CouncilRoles.Research));
+
+        Assert.Equal(researchs, meter.Begin("## Situation", role: CouncilRoles.Research, attemptId: researchs).Id);
+    }
+
+    /// <summary>
     /// (b) RED at base: <c>AiAttemptStore.Begin</c> ignored how many wakes <c>MarkConsumed</c> took. A launch asked for
     /// two wakes and another launch had taken one of them: refused in words naming the launch and the count, its row
     /// rolled back, nothing reserved, and its own untaken wake still due.
