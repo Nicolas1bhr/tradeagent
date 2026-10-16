@@ -22,6 +22,8 @@ public sealed class BinFolder
 /// real machine: the launcher was deployed without the assemblies it loads, so it started and threw
 /// on every invocation — while the health row said READY because a file with the right name existed.
 /// </summary>
+// THE SHARED BIN FOLDER (U-puppet-runtime): these clear it and write stand-ins into it, so they may not run beside the classes
+// that deploy the real trade command there — the puppet lives, whose turns run through it. BinFolder.Name runs alone, so it keeps both.
 [Collection(BinFolder.Name)]
 public class ToolDeployerTests : IDisposable
 {
