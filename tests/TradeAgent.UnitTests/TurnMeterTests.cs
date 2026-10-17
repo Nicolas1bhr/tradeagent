@@ -107,6 +107,14 @@ internal static class AgentRuntimeProbe
             Admit = _ => AiAdmission.NoLedger
         };
     }
+
+    /// <summary>
+    /// WHAT A TURN SAID AND SAW, for an assertion's failure to name itself (<c>U-turn-tail-drain</c>): the conversation, the
+    /// exit code and the raw stream — or that no turn ended at all, which is a launch refused before it started.
+    /// </summary>
+    public static string Said(AgentSession session, AgentTurnEnded? ended) =>
+        $"History: [{string.Join(" | ", session.History.Select(t => $"{t.Role}: {t.Text}"))}]; " +
+        (ended is null ? "no TurnEnded was raised" : $"ExitCode {ended.ExitCode}; Raw: <<{ended.Raw}>>");
 }
 
 /// <summary>
@@ -184,8 +192,8 @@ public class TurnMeterTests
         session.TurnEnded += e => ended = e;
         await session.SendAsync("say hi");
 
-        Assert.NotNull(ended);
-        Assert.NotNull(ended!.Usage);
+        Assert.True(ended is not null, AgentRuntimeProbe.Said(session, ended));
+        Assert.True(ended!.Usage is not null, AgentRuntimeProbe.Said(session, ended));
         Assert.Equal(17232, ended.Usage!.InputTokens);
         Assert.Equal(6, ended.Usage.OutputTokens);
     }
