@@ -43,8 +43,12 @@ public sealed class Database : IDisposable
             // THE KIND, BEFORE ANYTHING IS WRITTEN: the journal mode below is written into the file, and a store of
             // the other kind is left exactly as it was found.
             if (KindRefusal(file) is { } refused) throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, refused);
+            Proving.HomeMark.AfterCheck?.Invoke(file);
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
+            ClaimKind(file);
             Migrate();
+            // AND READ BACK: the mark this handle stands on is the one the file carries.
+            if (KindRefusal(file) is { } after) throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, after);
         }
         catch (Exception)
         {
@@ -68,6 +72,23 @@ public sealed class Database : IDisposable
         var word = Proving.HomeMark.Read(_conn, "meta");
         if (word is null && (ReadMetaInt("schema_version") ?? 0) == 0) return null;
         return Proving.HomeMark.Refusal("the database", file, word, Kind);
+    }
+
+    /// <summary>
+    /// THE CHECK AND THE MARK, ONE WRITE TRANSACTION (R2): the check above is read-only, so that a store of the other kind
+    /// is left exactly as found, but between it and a write another open of the same file can mark it. Here the kind is
+    /// read again under SQLite's write lock (<c>BEGIN IMMEDIATE</c>), and a file with no schema and no mark is marked with
+    /// <see cref="Kind"/> in the same transaction — so of two opens of one empty file, the second sees the first's mark.
+    /// A refusal rolls back, leaving nothing written.
+    /// </summary>
+    void ClaimKind(string file)
+    {
+        using var tx = _conn.BeginTransaction(deferred: false);
+        Exec("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+        if (KindRefusal(file) is { } refused) throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, refused);
+        if (Proving.HomeMark.Read(_conn, "meta") is null && (ReadMetaInt("schema_version") ?? 0) == 0)
+            Exec($"INSERT INTO meta(key,value) VALUES('{Proving.HomeMark.Key}','{Proving.HomeMark.Word(Kind)}');");
+        tx.Commit();
     }
 
     int? ReadMetaInt(string key)
@@ -198,11 +219,10 @@ public sealed class Database : IDisposable
         var have = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         CreatedHere = have == 0;
 
-        // THE HOME'S KIND, FIRST (U-proving-ground-a): a new file is marked before its first rung, and the mark is never
-        // rewritten — a crash before the first stamp re-runs this against the mark it left, which the open compared.
-        // No rung: one key in this table, which every home has. A home stamped before this build stays unmarked, a real one.
-        if (have == 0)
-            Exec($"INSERT INTO meta(key,value) VALUES('{Proving.HomeMark.Key}','{Proving.HomeMark.Word(Kind)}') ON CONFLICT(key) DO NOTHING;");
+        // THE HOME'S KIND is already written (U-proving-ground-a, R2): ClaimKind marks a new file before its first rung, in
+        // the transaction that checked it, and the mark is never rewritten — a crash before the first stamp re-runs against
+        // the mark it left, which the open compared. No rung: one key in this table. A home stamped before this build stays
+        // unmarked, a real one.
 
         if (have < 1)
         {
