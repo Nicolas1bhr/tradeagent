@@ -631,4 +631,208 @@ public class OrgAssignmentTests
         Assert.All(new MissionEventStore(db).OfKind(MissionEventKind.Mandate), w => Assert.True(w.Consumed));
         Assert.Equal(Head, Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Escalation)).Role);
     }
+
+    // ---- item 5: triage, retry, escalation, judgment ------------------------------------------------------------------
+
+    /// <summary>A report one line too long for its size check: a clean failure when it names no deviation.</summary>
+    static readonly string TooLong = string.Join("\n", Enumerable.Range(1, MandateLimits.ReportLines + 1).Select(i => $"line {i}"));
+
+    static List<MissionEvent> Wakes(Database db, string kind, string role) =>
+        [.. new MissionEventStore(db).OfKind(kind).Where(e => e.Role == role)];
+
+    /// <summary>
+    /// (d) A CLEAN FAILURE RETRIES FRESH WITHOUT WAKING THE HEAD: a delivery that fails a check and names no deviation is code's —
+    /// a <c>retry</c> event and ONE new <c>mandate</c> wake to the holder, in the delivery's own write; the decider gets no
+    /// delivery and no escalation wake. RED at base: no triage. Watched red with triage waking the head on a clean failure.
+    /// </summary>
+    [Fact]
+    public async Task A_clean_failure_retries_fresh_without_waking_the_head()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db, retries: 3);
+
+        var reply = await server.CallAsync(DeliverFrame(m, TooLong), Member, Launch(db, Member, mandate: m));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Equal(MandateEventKind.Retry, Body(reply).GetProperty("status").GetString());
+        Assert.Equal([MandateEventKind.Issued, MandateEventKind.Delivered, MandateEventKind.Retry], gw.Org.MandateEvents(m).Select(e => e.Kind));
+        Assert.Equal(2, Wakes(db, MissionEventKind.Mandate, Member).Count);
+        Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Delivery));
+        Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Escalation));
+        Assert.Empty(new MissionEventStore(db).DueFor(Head, DateTimeOffset.UtcNow.AddMinutes(1)));
+    }
+
+    /// <summary>
+    /// (d2) THE LIMITING FAILURE ESCALATES TO THE DECIDER IN THE SAME WRITE: with a retry limit of one, the first clean failure
+    /// writes the delivery, its checks, the <c>delivered</c> and <c>escalated</c> events and ONE <c>escalation</c> wake together —
+    /// and when that wake cannot be written, NOTHING of the delivery is: no half state, no failure counted, no retry. RED at base:
+    /// no escalation. Watched red with the escalation written in a second write after the failure's.
+    /// </summary>
+    [Fact]
+    public async Task The_limiting_failure_escalates_to_the_decider_in_the_same_write()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db, retries: 1);
+        var launch = Launch(db, Member, mandate: m);
+
+        // KILL THE WRITE BETWEEN THEM: the escalation's wake cannot be written.
+        Exec(db, """
+            CREATE TRIGGER abort_escalation BEFORE INSERT ON mission_event WHEN NEW.kind = 'escalation'
+            BEGIN SELECT RAISE(ABORT, 'the escalation could not be written'); END
+            """);
+        Assert.False((await server.CallAsync(DeliverFrame(m, TooLong), Member, launch)).Ok);
+        Assert.Equal(0L, Count(db, "org_delivery"));
+        Assert.Equal(0L, Count(db, "org_check"));
+        Assert.Equal([MandateEventKind.Issued], gw.Org.MandateEvents(m).Select(e => e.Kind));
+        Assert.Single(Wakes(db, MissionEventKind.Mandate, Member));
+        Exec(db, "DROP TRIGGER abort_escalation");
+
+        var reply = await server.CallAsync(DeliverFrame(m, TooLong), Member, launch);
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Equal([MandateEventKind.Issued, MandateEventKind.Delivered, MandateEventKind.Escalated], gw.Org.MandateEvents(m).Select(e => e.Kind));
+        Assert.Contains("retry limit of 1", gw.Org.MandateEvents(m)[^1].Reason, StringComparison.Ordinal);
+        var escalation = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Escalation));
+        Assert.Equal((Head, m), (escalation.Role, escalation.Payload));
+        Assert.Single(Wakes(db, MissionEventKind.Mandate, Member));
+
+        // RETRIES HAVE STOPPED: a later clean failure goes to the decider, never back to the holder.
+        Assert.True((await server.CallAsync(DeliverFrame(m, TooLong), Member, launch)).Ok);
+        Assert.Single(Wakes(db, MissionEventKind.Mandate, Member));
+        Assert.Single(Wakes(db, MissionEventKind.Delivery, Head));
+    }
+
+    /// <summary>
+    /// (d3) A NAMED DEVIATION REACHES THE HEAD EVEN WHEN CHECKS FAIL: a delivery that fails its size check but names a deviation is
+    /// the decider's to judge — ONE <c>delivery</c> wake to it, no retry. RED at base: no triage.
+    /// </summary>
+    [Fact]
+    public async Task A_named_deviation_reaches_the_head_even_when_checks_fail()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+
+        var reply = await server.CallAsync(DeliverFrame(m, TooLong,
+            new[] { new { what = "wrote a longer report", found = "the result needs the table", cost = "none" } }), Member, Launch(db, Member, mandate: m));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Equal(MandateEventKind.Delivered, gw.Org.MandateStatus(m));
+        Assert.Contains(gw.Org.Checks(Body(reply).GetProperty("delivery").GetString()!), c => !c.Passed);
+        var wake = Assert.Single(Wakes(db, MissionEventKind.Delivery, Head));
+        Assert.Equal(m, wake.Payload);
+        Assert.Single(Wakes(db, MissionEventKind.Mandate, Member));
+        Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.DeliveryToJudge, m),
+            TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
+    }
+
+    /// <summary>
+    /// (e) A REJECTION CITES A CHECK OR A DEFECT AND ACCEPTANCE BINDS THE CHECKED DELIVERY: a rejection with neither, with both, or
+    /// citing a check that PASSED is refused; one citing a failed check, or a stated defect, is recorded and wakes the holder
+    /// again; an acceptance of a delivery that is no longer the latest is refused, and of the latest closes the mandate — and only
+    /// the decider judges. RED at base: no verbs.
+    /// </summary>
+    [Fact]
+    public async Task A_rejection_cites_a_check_or_a_defect_and_acceptance_binds_the_checked_delivery()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+        var work = Launch(db, Member, mandate: m);
+
+        var deviated = new[] { new { what = "shorter window", found = "August only", cost = "none" } };
+        var first = Body(await server.CallAsync(DeliverFrame(m, TooLong, deviated), Member, work)).GetProperty("delivery").GetString()!;
+        async Task<IpcResponse> Judge(string op, params (string, object)[] args) =>
+            await server.CallAsync(Frame(op, [("delivery", first), .. args]), Head, Launch(db, Head));
+
+        Assert.Contains("exactly one thing", (await Judge(Ops.MandateReject)).Error!.Message, StringComparison.Ordinal);
+        Assert.Contains("exactly one thing", (await Judge(Ops.MandateReject, ("check", MandateCheck.ReportSize), ("defect", "x"))).Error!.Message, StringComparison.Ordinal);
+        Assert.Contains("PASSED", (await Judge(Ops.MandateReject, ("check", MandateCheck.RefsExist))).Error!.Message, StringComparison.Ordinal);
+        Assert.False((await server.CallAsync(Frame(Ops.MandateReject, ("delivery", first), ("defect", "x")), Member, work)).Ok);
+        Assert.Equal(MandateEventKind.Delivered, gw.Org.MandateStatus(m));
+
+        Assert.True((await Judge(Ops.MandateReject, ("check", MandateCheck.ReportSize))).Ok);
+        Assert.Equal(MandateEventKind.Rejected, gw.Org.MandateStatus(m));
+        Assert.Equal("report-size failed: the report is 21 lines; a report holds at most 20", gw.Org.MandateEvents(m)[^1].Reason);
+        Assert.Equal(2, Wakes(db, MissionEventKind.Mandate, Member).Count);
+
+        // A SECOND DELIVERY: the first can no longer be judged; the stated defect is the decider's words, verbatim.
+        var second = Body(await server.CallAsync(DeliverFrame(m, "short now"), Member, work)).GetProperty("delivery").GetString()!;
+        Assert.Contains("no longer the latest", (await Judge(Ops.MandateAccept)).Error!.Message, StringComparison.Ordinal);
+        Assert.True((await server.CallAsync(Frame(Ops.MandateReject, ("delivery", second), ("defect", "it answers a different question")),
+            Head, Launch(db, Head))).Ok);
+        Assert.Equal("it answers a different question", gw.Org.MandateEvents(m)[^1].Reason);
+
+        var third = Body(await server.CallAsync(DeliverFrame(m, "the answer"), Member, work)).GetProperty("delivery").GetString()!;
+        Assert.False((await server.CallAsync(Frame(Ops.MandateAccept, ("delivery", third)), Member, work)).Ok);
+        var accepted = await server.CallAsync(Frame(Ops.MandateAccept, ("delivery", third)), Head, Launch(db, Head));
+        Assert.True(accepted.Ok, Json.Write(accepted.Error));
+        Assert.Equal(MandateEventKind.Accepted, gw.Org.MandateStatus(m));
+        Assert.Equal([third], gw.Org.MandateEvents(m)[^1].Evidence);
+        Assert.Contains("closed mandate", Begin(db, Member, 0.01m, mandate: m).Refusal, StringComparison.Ordinal);
+        Assert.False((await server.CallAsync(DeliverFrame(m, "more"), Member, work)).Ok);
+        Assert.All(Wakes(db, MissionEventKind.Mandate, Member), w => Assert.True(w.Consumed));
+    }
+
+    /// <summary>
+    /// (g) A RESTART RERAISES EACH OPEN MANDATE ONCE (ORCHESTRATION § 4 flow 3): a holder's launch that a restart declared LOST
+    /// leaves its mandate with no untaken wake and no open launch, and the sweep raises ONE wake for it — never for a mandate whose
+    /// wake is still untaken or whose launch still runs — and a second sweep raises nothing. The same sweep expires a mandate past
+    /// its deadline, once, telling its decider, and escalates one half spent, once. RED at base: no sweep.
+    /// </summary>
+    [Fact]
+    public void A_restart_reraises_each_open_mandate_once()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var lost = org.Assign(Issue(allocation: 50m), now);
+        var waiting = org.Assign(Issue(holder: Other, allocation: 50m), now);
+        var running = org.Assign(Issue(allocation: 50m), now);
+
+        var lostWake = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == lost.Id).Id;
+        Assert.True(Begin(db, Member, 0.10m, [lostWake]).Admitted);
+        Assert.Equal(1, new AiAttemptStore(db).LoseOpen(now));
+        var runningWake = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == running.Id).Id;
+        Assert.True(Begin(db, Member, 0.10m, [runningWake]).Admitted);
+
+        Assert.Equal(1, org.Sweep(now));
+        Assert.Equal(2, events.OfKind(MissionEventKind.Mandate).Count(e => e.Payload == lost.Id));
+        Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == waiting.Id);
+        Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == running.Id);
+        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(2, events.OfKind(MissionEventKind.Mandate).Count(e => e.Payload == lost.Id));
+
+        // HALF SPENT, NOTHING ACCEPTED: escalated once, never re-raised.
+        var costly = org.Assign(Issue(allocation: 1m), now);
+        var costlyWake = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == costly.Id).Id;
+        Assert.False(Begin(db, Other, 0.60m, [costlyWake]).Admitted);
+        Assert.True(Begin(db, Member, 0.60m, [costlyWake]).Admitted);
+        new AiAttemptStore(db).LoseOpen(now);
+        Assert.True(org.Sweep(now) >= 1);
+        Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(costly.Id));
+        Assert.StartsWith(OrgStore.HalfSpent, org.MandateEvents(costly.Id)[^1].Reason, StringComparison.Ordinal);
+        Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == costly.Id);
+        org.Sweep(now);
+        Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == costly.Id);
+
+        // PAST ITS DEADLINE: expired once, the holder's untaken wake closed, the decider told; nothing more after it.
+        var later = Due.AddMinutes(1);
+        org.Sweep(later);
+        Assert.Equal(MandateEventKind.Expired, org.MandateStatus(waiting.Id));
+        Assert.All(events.OfKind(MissionEventKind.Mandate).Where(e => e.Payload == waiting.Id), e => Assert.True(e.Consumed));
+        Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == waiting.Id);
+        Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.MandateExpired, waiting.Id),
+            TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
+        Assert.Equal(0, org.Sweep(later));
+    }
 }

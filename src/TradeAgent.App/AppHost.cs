@@ -1873,6 +1873,12 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public void StartPaperDeploymentsDue(DateTimeOffset now) => host.Gateway.StartPaperDeploymentsDue(now);
 
+        /// <summary>The organisation's sweep over the mandates (<c>U-org-assignments-a</c>): it writes org records and wakes, never a turn.</summary>
+        public void SweepMandates(DateTimeOffset now)
+        {
+            if (host._db is { } db) new OrgStore(db).Sweep(now);
+        }
+
         /// <summary>A launch its mandate refused: that mandate's wakes closed and, still open, its decider told, in one write.</summary>
         public void MandateLaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now)
         {

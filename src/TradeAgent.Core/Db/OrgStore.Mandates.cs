@@ -613,14 +613,201 @@ public sealed partial class OrgStore
     }
 
     /// <summary>
-    /// WHAT CODE MAKES OF A SEALED DELIVERY, in the delivery's own write: the decider is woken with ONE <c>delivery</c> wake.
-    /// Answers the id of the wake it raised.
+    /// WHAT CODE MAKES OF A SEALED DELIVERY, IN THE DELIVERY'S OWN WRITE (ORGANISATION § 11: "retry caps; numeric acceptance
+    /// checks"). A pass, or ANY deviation the holder named, wakes the decider with ONE <c>delivery</c> wake — a deviation is the
+    /// decider's to judge even when a check failed. A CLEAN failure — a check failed and nothing was named — is code's: retried
+    /// fresh, a <c>retry</c> event and ONE new <c>mandate</c> wake to the holder, the decider NOT woken; until the clean failures
+    /// reach the retry limit, or half the allocation is spent with nothing accepted, when code stops and escalates instead
+    /// (<see cref="Escalate"/>), in this same write. Once a mandate has been escalated, automatic retries have stopped: a later
+    /// clean failure goes to the decider. Answers the id of the wake it raised.
     /// </summary>
     string Triage(MandateRow m, DeliveryRow d, IReadOnlyList<CheckRow> checks, MandateEventRow delivered, DateTimeOffset now)
     {
-        var wake = MissionEventIds.Delivery(d.Id);
-        new MissionEventStore(db).Raise(wake, MissionEventKind.Delivery, now, payload: m.Id, role: m.Decider);
-        return wake;
+        var events = new MissionEventStore(db);
+        if (checks.All(c => c.Passed) || d.Deviations.Count > 0 || EverEscalated(m.Id))
+        {
+            var wake = MissionEventIds.Delivery(d.Id);
+            events.Raise(wake, MissionEventKind.Delivery, now, payload: m.Id, role: m.Decider);
+            return wake;
+        }
+
+        var failed = string.Join("; ", checks.Where(c => !c.Passed).Select(c => $"{c.Check}: {c.Reason}"));
+        var failures = CleanFailures(m.Id);
+        if (failures >= m.RetryLimit)
+            return MissionEventIds.Escalation(m.Id, Escalate(m, now,
+                $"{failures} clean failure{(failures == 1 ? "" : "s")} reach the retry limit of {m.RetryLimit} — the last: {failed}", [d.Id]).Id);
+        if (Spend(db, m.Id).Spent >= m.Allocation / 2m)
+            return MissionEventIds.Escalation(m.Id, Escalate(m, now, $"{HalfSpent} — the last delivery failed: {failed}", [d.Id]).Id);
+
+        var retry = AppendMandateEvent(m.Id, now, MandateEventKind.Retry, AppActor, null, failed, [d.Id]);
+        RaiseMandateWake(m, retry, now);
+        return MissionEventIds.Mandate(m.Id, retry.Id);
+    }
+
+    /// <summary>The words an escalation for half the allocation begins with — how the sweep knows it has raised one already.</summary>
+    public const string HalfSpent = "half its allocation is spent and nothing is accepted";
+
+    /// <summary>How many of a mandate's deliveries failed a check and named no deviation: the failures code retries.</summary>
+    int CleanFailures(string mandateId)
+    {
+        using var c = db.Cmd("""
+            SELECT COUNT(*) FROM org_delivery d
+             WHERE d.mandate_id = $m AND d.deviations = '[]'
+               AND EXISTS (SELECT 1 FROM org_check c WHERE c.delivery_id = d.id AND c.passed = 0)
+            """, ("$m", mandateId));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    bool EverEscalated(string mandateId, string? reasonStartsWith = null)
+    {
+        using var c = db.Cmd("""
+            SELECT EXISTS (SELECT 1 FROM org_mandate_event WHERE mandate_id=$m AND kind=$k AND ($r IS NULL OR substr(reason, 1, length($r)) = $r))
+            """, ("$m", mandateId), ("$k", MandateEventKind.Escalated), ("$r", reasonStartsWith));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    }
+
+    // ---- the decider's judgment ----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE DECIDER ACCEPTS THE EXACT DELIVERY IT WAS SHOWN: the mandate's latest sealed delivery, by its id — one sealed after it is
+    /// refused, so an acceptance never lands on words the decider did not read. The <c>accepted</c> event closes the mandate; the
+    /// holder's untaken wakes are closed with it. One write.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Not the decider, closed, or not the latest delivery; nothing was written.</exception>
+    public MandateEventRow Accept(string deliveryId, string caller, string? attempt, DateTimeOffset now) => db.Write(_ =>
+    {
+        var (m, d) = Judged(deliveryId, caller);
+        var accepted = AppendMandateEvent(m.Id, now, MandateEventKind.Accepted, caller, attempt, null, [d.Id]);
+        new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"its decider accepted delivery {d.Id}");
+        return accepted;
+    });
+
+    /// <summary>
+    /// THE DECIDER REJECTS THE LATEST DELIVERY, CITING EXACTLY ONE OF: a check of THAT delivery that failed, by name; or a defect it
+    /// states, in its own words (a claim, stored verbatim). The <c>rejected</c> event and ONE fresh <c>mandate</c> wake to the holder,
+    /// in one write.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Not the decider, closed, not the latest delivery, or no valid citation; nothing was written.</exception>
+    public MandateEventRow Reject(string deliveryId, string caller, string? attempt, string? check, string? defect, DateTimeOffset now) =>
+        db.Write(_ =>
+        {
+            var (m, d) = Judged(deliveryId, caller);
+            if ((check is null) == (defect is null))
+                throw Refused("a rejection cites exactly one thing: a check of that delivery that failed ('check'), or a defect you state ('defect').");
+
+            string reason;
+            IReadOnlyList<string> evidence;
+            if (check is not null)
+            {
+                var row = Checks(d.Id).FirstOrDefault(c => c.Check == check)
+                    ?? throw Refused($"'{check}' is no check TradeAgent ran on delivery {d.Id}: {string.Join(", ", Checks(d.Id).Select(c => c.Check))}.");
+                if (row.Passed)
+                    throw Refused($"'{check}' PASSED on delivery {d.Id} ({row.Reason}): a rejection cites a check that failed, or states the defect.");
+                reason = $"{check} failed: {row.Reason}";
+                evidence = [d.Id, check];
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(defect) || defect.Length > MandateLimits.MaxClaimChars)
+                    throw Refused($"a stated defect is your words, at most {MandateLimits.MaxClaimChars} characters.");
+                reason = defect;
+                evidence = [d.Id];
+            }
+
+            var rejected = AppendMandateEvent(m.Id, now, MandateEventKind.Rejected, caller, attempt, reason, evidence);
+            RaiseMandateWake(m, rejected, now);
+            return rejected;
+        });
+
+    /// <summary>The delivery and its open mandate, decided by <paramref name="caller"/>, and the latest sealed — or refused in words.</summary>
+    (MandateRow, DeliveryRow) Judged(string deliveryId, string caller)
+    {
+        var d = Delivery(deliveryId) ?? throw Refused($"'{deliveryId}' is no sealed delivery.");
+        var m = DecidedBy(d.MandateId, caller);
+        var latest = Deliveries(m.Id)[^1];
+        if (latest.Id != d.Id)
+            throw Refused($"delivery {latest.Id} was sealed on {m.Id} after {d.Id}: a judgment binds the exact delivery you were shown, "
+                          + "and that is no longer the latest. Read it with 'mandate-show' and judge that one.");
+        return (m, d);
+    }
+
+    // ---- the sweep (once per tick) ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE ORGANISATION'S ONCE-PER-TICK SWEEP (ORCHESTRATION § 4 flow 3), each mandate in its own write, every step idempotent:
+    /// an open mandate past its deadline EXPIRES (the event, the holder's untaken wakes closed, ONE <c>escalation</c> wake to the
+    /// decider); one with half its allocation spent and nothing accepted is escalated ONCE; and one whose holder's work is owed —
+    /// issued, retried or rejected — with no untaken wake and no launch open is given ONE <c>mandate</c> wake again, keyed by its
+    /// latest event and the last launch charged to it, so a restart re-raises each once and a second pass raises nothing. It buys
+    /// no turn and dispatches nothing. Answers how many records it wrote.
+    /// </summary>
+    public int Sweep(DateTimeOffset now)
+    {
+        var written = 0;
+        foreach (var id in OpenMandates())
+            written += db.Write(_ =>
+            {
+                if (Mandate(id) is not { } m || MandateStatus(id) is not { } status || MandateEventKind.Closes(status)) return 0;
+
+                if (m.Deadline <= now)
+                {
+                    var expired = AppendMandateEvent(m.Id, now, MandateEventKind.Expired, AppActor, null,
+                        $"its deadline {m.Deadline:u} passed with nothing accepted", []);
+                    new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, "the mandate expired");
+                    new MissionEventStore(db).Raise(MissionEventIds.Escalation(m.Id, expired.Id), MissionEventKind.Escalation, now,
+                        payload: m.Id, role: m.Decider);
+                    return 1;
+                }
+
+                if (status != MandateEventKind.Escalated && !EverEscalated(m.Id, HalfSpent) && Spend(db, m.Id).Spent >= m.Allocation / 2m)
+                {
+                    Escalate(m, now, HalfSpent, []);
+                    return 1;
+                }
+
+                if (status is MandateEventKind.Issued or MandateEventKind.Retry or MandateEventKind.Rejected
+                    && !HasUntakenWake(m.Id) && !HasOpenLaunch(m.Id))
+                {
+                    var latest = MandateEvents(m.Id)[^1];
+                    return new MissionEventStore(db).Raise(MissionEventIds.Mandate(m.Id, latest.Id, LastLaunch(m.Id) ?? "none"),
+                        MissionEventKind.Mandate, now, payload: m.Id, role: m.Holder) ? 1 : 0;
+                }
+                return 0;
+            });
+        return written;
+    }
+
+    IReadOnlyList<string> OpenMandates() => db.Read(_ =>
+    {
+        var closing = MandateEventKind.Closing.Select((_, i) => $"$c{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd($"""
+            SELECT m.id FROM org_mandate m
+             WHERE (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) NOT IN ({string.Join(",", closing)})
+             ORDER BY m.created_at, m.id
+            """, [.. closing.Select((n, i) => (n, (object?)MandateEventKind.Closing[i]))]);
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        return (IReadOnlyList<string>)ids;
+    });
+
+    bool HasUntakenWake(string mandateId)
+    {
+        using var c = db.Cmd("SELECT EXISTS (SELECT 1 FROM mission_event WHERE kind=$k AND payload=$m AND consumed_at IS NULL)",
+            ("$k", MissionEventKind.Mandate), ("$m", mandateId));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    }
+
+    bool HasOpenLaunch(string mandateId)
+    {
+        using var c = db.Cmd("SELECT EXISTS (SELECT 1 FROM ai_attempt WHERE mandate_id=$m AND state='LAUNCHED')", ("$m", mandateId));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    }
+
+    string? LastLaunch(string mandateId)
+    {
+        using var c = db.Cmd("SELECT id FROM ai_attempt WHERE mandate_id=$m ORDER BY started_at DESC, rowid DESC LIMIT 1", ("$m", mandateId));
+        return c.ExecuteScalar() as string;
     }
 
     /// <summary>The mandate, open, and held by <paramref name="caller"/> — or refused in words.</summary>

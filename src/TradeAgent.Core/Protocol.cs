@@ -218,10 +218,10 @@ public static class Ops
     /// <c>operations</c> (ORDER-001, RULING Q4).</para>
     /// </summary>
     public const string MandateAssign = "mandate-assign", MandateCancel = "mandate-cancel", MandateDeliver = "mandate-deliver",
-        MandateDecline = "mandate-decline";
+        MandateDecline = "mandate-decline", MandateAccept = "mandate-accept", MandateReject = "mandate-reject";
 
     /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>).</summary>
-    public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline];
+    public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

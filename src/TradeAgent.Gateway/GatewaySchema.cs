@@ -642,6 +642,21 @@ public static class GatewaySchema
                 new("why", "string", true, $"Why, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
             ]),
 
+        new(Core.Ops.MandateAccept, "trade mandate accept <delivery>", false,
+            "ACCEPT A DELIVERY ON A MANDATE YOU DECIDE — the EXACT delivery you read, by its id: it must be the latest one sealed, "
+            + "or it is refused and you read the newer one first. TradeAgent records your acceptance and closes the mandate; no "
+            + "further launch is charged to it. Only its decider may.",
+            [new("delivery", "string", true, "The delivery's id, as 'mandate-show' gave it.")]),
+        new(Core.Ops.MandateReject, "trade mandate reject <delivery> (--check C | --defect D)", false,
+            "REJECT THE LATEST DELIVERY ON A MANDATE YOU DECIDE, citing exactly one thing: a check TradeAgent ran on it that "
+            + "FAILED ('check', by name), or a defect you state in your own words ('defect'). TradeAgent records it and wakes the "
+            + "holder to work on it again. Only its decider may.",
+            [
+                new("delivery", "string", true, "The delivery's id, as 'mandate-show' gave it."),
+                new("check", "string", false, "A check that failed on it: report-size | refs-exist | refs-of-this-mandate | output-shape."),
+                new("defect", "string", false, $"What is wrong with it, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
+            ]),
+
         // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.
         new(Core.Ops.LensPropose, "trade lens propose <lens>", false,
             "PROPOSE A LENS: a question schema over the tape's own text, as one JSON object — 'id' (lower-case letters, digits "

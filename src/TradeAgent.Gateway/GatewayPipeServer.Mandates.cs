@@ -116,6 +116,29 @@ public sealed partial class GatewayPipeServer
         return MandateReply(Gateway.Org.Mandate(id)!);
     }
 
+    /// <summary>THE DECIDER ACCEPTS THE EXACT DELIVERY IT WAS SHOWN — the latest sealed one, by id (<see cref="OrgStore.Accept"/>).</summary>
+    object MandateAccept(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var delivery = Require(req, "delivery");
+        Gateway.Org.Accept(delivery, caller, ctx.AttemptId, DateTimeOffset.UtcNow);
+        return MandateReply(Gateway.Org.Mandate(Gateway.Org.Delivery(delivery)!.MandateId)!);
+    }
+
+    /// <summary>
+    /// THE DECIDER REJECTS THE LATEST DELIVERY, citing a check of it that failed or a defect it states (<see cref="OrgStore.Reject"/>);
+    /// the holder is woken to work on it again.
+    /// </summary>
+    object MandateReject(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var delivery = Require(req, "delivery");
+        Gateway.Org.Reject(delivery, caller, ctx.AttemptId, req.Str("check"), req.Str("defect"), DateTimeOffset.UtcNow);
+        return MandateReply(Gateway.Org.Mandate(Gateway.Org.Delivery(delivery)!.MandateId)!);
+    }
+
     /// <summary>The launch that registered lens <paramref name="id"/> at <paramref name="version"/>, read from the tape's registry, or null.</summary>
     LensOrigin? LensOrigin(string id, int version) =>
         Gateway.Tape?.Lens(id, version) is { } lens && lens.Version == version ? new LensOrigin(lens.Attempt) : null;
