@@ -436,6 +436,31 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// (c2) AN <c>environments.toml</c> IN THE SEAT'S CODEX HOME REFUSES THE LAUNCH (<c>U-cell-linux-b</c> fix pass 1, item 5; CRED-001):
+    /// codex reads it only from CODEX_HOME, and present it REPLACES CODEX_EXEC_SERVER_URL, which would undo the broker-only seat.
+    /// </summary>
+    [Fact]
+    public void An_environments_toml_in_the_seat_home_refuses_the_launch_in_words()
+    {
+        var (codex, exe, _) = Seat(nameof(An_environments_toml_in_the_seat_home_refuses_the_launch_in_words));
+        var workspace = Path.Combine(Path.GetDirectoryName(exe)!, "role-home");
+        Directory.CreateDirectory(workspace);
+        var session = Session(codex, exe, workspace, new FakeProbe());
+        var toml = Path.Combine(codex.Seat!.Root, "codex", "environments.toml");
+        Directory.CreateDirectory(Path.GetDirectoryName(toml)!);
+        File.WriteAllText(toml, "[environments.remote]\nexec_server_url = \"ws://127.0.0.1:1\"\n");
+        try
+        {
+            var verdict = session.CheckSeat();
+            Assert.True(verdict.Refused, $"{toml} did not refuse the admission");
+            Assert.Contains(toml, verdict.Refusal, StringComparison.Ordinal);
+            Assert.Equal(ErrorCode.AI_SEAT_REFUSED, verdict.Code);
+        }
+        finally { File.Delete(toml); }
+        Assert.False(session.CheckSeat().Refused);
+    }
+
+    /// <summary>
     /// AND WHAT THE CLI ITSELF REPORTS: a feature outside the allowlist switched on, or any MCP server, refuses the seat naming it.
     /// A new release that turns something on by default, or a deny key that stopped working, is a refusal rather than a seat that
     /// quietly has it.

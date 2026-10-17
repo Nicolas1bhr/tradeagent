@@ -775,6 +775,9 @@ public static class RuntimeCatalog
                 Forbidden =
                 [
                     "codex/AGENTS.md", "codex/AGENTS.override.md", "codex/plugins", "codex/skills", "codex/rules", "codex/hooks.json",
+                    // codex reads it only from CODEX_HOME and, present, it REPLACES CODEX_EXEC_SERVER_URL (environment_toml.rs:222-233):
+                    // one here would undo the broker-only seat (U-cell-linux-b fix pass 1, item 5; CRED-001).
+                    "codex/" + CellPolicy.CodexEnvironments,
                     "home/.agents", "home/.codex"
                 ],
                 WorkspaceForbidden = [".codex", ".agents"],
