@@ -10892,3 +10892,23 @@ U-unjobbed-presence's window (no new presence API). tools/ is refused for every 
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the owner's host (U-cell-linux-e, his word); the fstatfs refusal of a second cgroup2 mount (no root
 on CI); a sweep whose root cannot be listed (a warning only); kernels without SO_PEERPIDFD under a delegated root (every grant Unknown → refused, by design);
 cgroup.kill's time-bound path never shown red; nothing local on Linux (the Colima VM is off-limits).
+
+## U-puppet-isolation — a puppet life puts back every process-wide thing it took: the trade launcher, DOTNET_ROOT, the deployer's hash record and its side-car files; no rung (landed 2026-10-17, seat A)
+
+**Landed** at `84fc8126` (train B7, after U-cell-linux-b) (code `9c5a129c`). A test-rig light (sonnet/high), "never a flake": found by U-thinking-seats-a's adoption pass — `AiAttemptLedgerTests.
+A_turn_killed_before_its_usage_stays_charged_across_a_restart_and_midnight` red at :84 (`session.Busy`) when run beside `PuppetLivesTests`, reproduced on main. **No rung,
+test-side only.** Builder aafc37ea7f744aa74.
+**CI:** landing run **38996718307** (train B7 with seat B; every job success incl. `linux-host`; the ubuntu "Test the Linux cell rows" step Passed: 41 of 41). `land.sh train-check` VERDICT PASS (train names 2858 → 2878, removed 0; scan clean with two judged phrases of the test's grant property). Builder run 38994595285 at `9c5a129c`: every job success but the O3 clock test (`CouncilLoopOrgWakeTests.cs:305`, fixed by
+U-ceiling-clock-red; the diff cannot reach it) — JUDGED by id.
+**Cause:** `PuppetLife.DisposeAsync` DELETED the trade launcher at `Paths.Bin`, which the test home needs for every held launch on macOS and Linux, so the next class to
+start a process was refused ("TradeAgent's own trade command … is not at …/bin/trade") and that session never went Busy (reproduced at `63b295f1` with exactly the two
+classes: 12 tests, 1 failed); a life also leaked DOTNET_ROOT, the deployer's hash record and side-car files.
+**What changed:** `ProcessWide.Note` / `PutBack` in tests/TradeAgent.UnitTests/PuppetLife.cs notes those four before a life touches them and puts them back at its end —
+the launcher byte for byte and mode for mode, added files removed. No sleep, retry, order attribute or serialising collection.
+**Evidence:** guard `PuppetLivesTests.A_puppet_life_puts_back_every_process_wide_thing_it_took` RED before (DOTNET_ROOT expected null); mutant (PutBack deleting the launcher
+as before) ⇒ the guard AND the AiAttemptLedgerTests restart test red; restored green. Release `--no-incremental` 0 warnings; AiAttemptLedger + PuppetLives + PuppetSeat
+17/17 ×3.
+**Judged** (review fleet/tmp/A-org/u-puppet-isolation-build/U-puppet-isolation-review.md, 3 P2s): side-car file CONTENTS restored by name only; `Begin` has no rollback when
+startup throws partway; one failed delete skips the launcher restore — each only on a path where a test has already failed; NOT blocking → OWED light card
+"PuppetLife restores on its failure paths too" (seat A; before U-proving-ground-c, whose host shares the concern).
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the guard alone on Windows locally; the reversed class order.
