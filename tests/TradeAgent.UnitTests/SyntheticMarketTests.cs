@@ -179,6 +179,57 @@ public class SyntheticMarketTests(ITestOutputHelper log)
         log.WriteLine($"{before.Count} real-home files unchanged; the proving home holds {Directory.GetFiles(home.Dir, "*", SearchOption.AllDirectories).Length}");
     }
 
+    /// <summary>
+    /// R1 (SIM-001): A PROVING HOME OVER A REAL OR UNMARKED DIRECTORY IS REFUSED, AND THE REAL HOME IS UNCHANGED. A
+    /// <see cref="ProvingHome"/> exists only through its factory — no public constructor, no record copy that could point
+    /// one at another directory — and the factory refuses a directory holding anything but a marked proving home: a real
+    /// home (its database marked real) and an unmarked one (files, no proving mark) alike, before anything is created in
+    /// either. The writer refuses stores that do not live in the home it was handed, before it writes anything.
+    /// </summary>
+    [Fact]
+    public void A_proving_home_over_a_real_or_unmarked_directory_is_refused_and_the_real_home_is_unchanged()
+    {
+        Assert.Empty(typeof(ProvingHome).GetConstructors());
+        Assert.Null(typeof(ProvingHome).GetMethod("<Clone>$"));
+        Assert.Null(typeof(ProvingHome).GetProperty(nameof(ProvingHome.Dir))!.SetMethod);
+
+        using var scratch = TestEnv.NewScratch("proving-over-real");
+        var real = Path.Combine(scratch.Dir, "real");
+        using (var db = new Database(Path.Combine(real, "state", "tradeagent.db"))) db.SetKv("owner-row", "kept");
+        using (var tape = new TapeStore(Path.Combine(real, "state", "tape.db"))) TapeReadings.Reading(tape, Start.AddMinutes(10), "0.00010000");
+        var unmarked = Path.Combine(scratch.Dir, "unmarked");
+        Directory.CreateDirectory(Path.Combine(unmarked, "workspace", "inbox"));
+        File.WriteAllText(Path.Combine(unmarked, "workspace", "inbox", "note.txt"), "the owner's");
+        var before = (Real: Files(real), Unmarked: Files(unmarked));
+
+        foreach (var dir in new[] { real, unmarked })
+        {
+            var refused = Assert.Throws<InvalidOperationException>(() => ProvingHome.Create(dir));
+            log.WriteLine(refused.Message);
+            Assert.Contains(dir, refused.Message, StringComparison.Ordinal);
+            Assert.Contains("is not a proving home", refused.Message, StringComparison.Ordinal);
+        }
+        Assert.False(Directory.Exists(Path.Combine(unmarked, "state")));
+
+        // THE WRITER: one proving home's stores are never written as another's.
+        var one = ProvingHome.Create(Path.Combine(scratch.Dir, "one"));
+        var two = ProvingHome.Create(Path.Combine(scratch.Dir, "two"));
+        using (var db = new Database(two.DatabaseFile, HomeKind.Proving))
+        using (var tape = new TapeStore(two.TapeFile, kind: HomeKind.Proving))
+        {
+            var cross = Assert.Throws<InvalidOperationException>(() => SyntheticMarket.Write(one, db, tape, Planted(1)));
+            log.WriteLine(cross.Message);
+            Assert.Contains("does not live in the proving home", cross.Message, StringComparison.Ordinal);
+            Assert.Empty(new DatasetStore(db).All());
+            Assert.Empty(tape.Fetches());
+        }
+        Assert.False(Directory.Exists(one.DataDir));
+        Assert.False(Directory.Exists(one.TruthDir));
+
+        Assert.Equal(before.Real, Files(real));
+        Assert.Equal(before.Unmarked, Files(unmarked));
+    }
+
     /// <summary>Every file under <paramref name="home"/> outside <c>proving/</c>, by relative path, with its SHA-256.</summary>
     static SortedDictionary<string, string> Files(string home)
     {

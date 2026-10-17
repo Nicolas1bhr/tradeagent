@@ -27,6 +27,7 @@ public sealed class Database : IDisposable
     {
         var file = path ?? Paths.DatabaseFile;
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        FilePath = file;
         Kind = kind ?? Proving.ProvingGround.ThisKind;
         _conn = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -54,6 +55,9 @@ public sealed class Database : IDisposable
 
     /// <summary>The kind of home this database is (<c>U-proving-ground-a</c>): the kind it was opened for, which its mark agrees with.</summary>
     public Proving.HomeKind Kind { get; }
+
+    /// <summary>The file this database was opened on, as the caller named it.</summary>
+    public string FilePath { get; }
 
     /// <summary>
     /// WHY THIS FILE IS NOT OPENED AS <see cref="Kind"/>, or null. A file with no schema yet is new, and is marked by

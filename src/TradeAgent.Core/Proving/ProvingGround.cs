@@ -66,19 +66,37 @@ public static class HomeMark
     /// <summary>
     /// THE MARK A STORE FILE CARRIES, READ WITHOUT WRITING ANYTHING: the value under <see cref="Key"/> in
     /// <paramref name="table"/>, or null when the file, the table or the key is not there.
+    ///
+    /// <para><b>It leaves no file behind.</b> A read-only open of a store in WAL mode creates its <c>-wal</c> and
+    /// <c>-shm</c> beside it — two new files in a home that may be the owner's. A store with no <c>-wal</c> is closed and
+    /// whole in its one file, so it is read as immutable, which creates nothing; one with a <c>-wal</c> is open somewhere,
+    /// its side files are already there, and it is read as any reader would.</para>
     /// </summary>
     public static string? Read(string file, string table)
     {
         if (!File.Exists(file)) return null;
+        var closed = !File.Exists(file + "-wal");
         using var c = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = file,
+            DataSource = closed ? ImmutableUri(file) : file,
             Mode = SqliteOpenMode.ReadOnly,
             Cache = SqliteCacheMode.Private,
             Pooling = false
         }.ToString());
         c.Open();
         return Read(c, table);
+    }
+
+    /// <summary>SQLite's URI for <paramref name="file"/>, opened immutable: its characters that a URI reserves escaped.</summary>
+    static string ImmutableUri(string file)
+    {
+        var path = Path.GetFullPath(file).Replace('\\', '/');
+        var uri = new System.Text.StringBuilder("file:");
+        if (!path.StartsWith('/')) uri.Append('/');
+        foreach (var ch in path)
+            if (ch is '%' or '?' or '#') uri.Append('%').Append(((int)ch).ToString("X2", CultureInfo.InvariantCulture));
+            else uri.Append(ch);
+        return uri.Append("?immutable=1").ToString();
     }
 
     /// <summary>The mark under <see cref="Key"/> in <paramref name="table"/> on an open connection, or null. Writes nothing.</summary>
