@@ -753,12 +753,12 @@ public class OrgAssignmentTests
             await server.CallAsync(Frame(op, [("delivery", first), .. args]), Head, Launch(db, Head));
 
         Assert.Contains("exactly one thing", (await Judge(Ops.MandateReject)).Error!.Message, StringComparison.Ordinal);
-        Assert.Contains("exactly one thing", (await Judge(Ops.MandateReject, ("check", MandateCheck.ReportSize), ("defect", "x"))).Error!.Message, StringComparison.Ordinal);
-        Assert.Contains("PASSED", (await Judge(Ops.MandateReject, ("check", MandateCheck.RefsExist))).Error!.Message, StringComparison.Ordinal);
+        Assert.Contains("exactly one thing", (await Judge(Ops.MandateReject, ("failed", MandateCheck.ReportSize), ("defect", "x"))).Error!.Message, StringComparison.Ordinal);
+        Assert.Contains("PASSED", (await Judge(Ops.MandateReject, ("failed", MandateCheck.RefsExist))).Error!.Message, StringComparison.Ordinal);
         Assert.False((await server.CallAsync(Frame(Ops.MandateReject, ("delivery", first), ("defect", "x")), Member, work)).Ok);
         Assert.Equal(MandateEventKind.Delivered, gw.Org.MandateStatus(m));
 
-        Assert.True((await Judge(Ops.MandateReject, ("check", MandateCheck.ReportSize))).Ok);
+        Assert.True((await Judge(Ops.MandateReject, ("failed", MandateCheck.ReportSize))).Ok);
         Assert.Equal(MandateEventKind.Rejected, gw.Org.MandateStatus(m));
         Assert.Equal("report-size failed: the report is 21 lines; a report holds at most 20", gw.Org.MandateEvents(m)[^1].Reason);
         Assert.Equal(2, Wakes(db, MissionEventKind.Mandate, Member).Count);

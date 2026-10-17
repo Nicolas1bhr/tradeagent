@@ -693,7 +693,7 @@ public sealed partial class OrgStore
         {
             var (m, d) = Judged(deliveryId, caller);
             if ((check is null) == (defect is null))
-                throw Refused("a rejection cites exactly one thing: a check of that delivery that failed ('check'), or a defect you state ('defect').");
+                throw Refused("a rejection cites exactly one thing: a check of that delivery that failed ('failed', by its name), or a defect you state ('defect').");
 
             string reason;
             IReadOnlyList<string> evidence;

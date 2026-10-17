@@ -136,7 +136,7 @@ public sealed partial class GatewayPipeServer
         OnlyDeclared(req, MandateArgsWhy);
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var delivery = Require(req, "delivery");
-        Gateway.Org.Reject(delivery, caller, ctx.AttemptId, req.Str("check"), req.Str("defect"), DateTimeOffset.UtcNow);
+        Gateway.Org.Reject(delivery, caller, ctx.AttemptId, req.Str("failed"), req.Str("defect"), DateTimeOffset.UtcNow);
         return MandateReply(Gateway.Org.Mandate(Gateway.Org.Delivery(delivery)!.MandateId)!);
     }
 

@@ -329,9 +329,18 @@ public class OrgLedgerTests
                     Assert.DoesNotContain(word, arg.Name, StringComparison.OrdinalIgnoreCase);
         }
 
+        // REVISITED, OUT LOUD, BY U-org-assignments-a (declared): OrgStore gains the MANDATE's writers and readers — Assign, Cancel,
+        // Decline, Deliver, Accept, Reject, LaunchRefused and Sweep write org_mandate, org_mandate_event, org_delivery and org_check
+        // (rung 40), each behind the broker's caller gate (OrgVerbCaller) and the store's own chart checks. NONE writes the chart:
+        // org_unit, org_position and org_event stay the rung's alone (the source scan below is unchanged), and no op name or
+        // argument names a unit, a head, a seat or an envelope (the vocabulary check above is unchanged).
+        string[] mandate = ["Accept", "Assign", "AssignRefusal", "Cancel", "Checks", "Decline", "Deliver", "Deliveries", "DeliveriesToJudge",
+            "Delivery", "EscalationsFor", "ExpiredUnread", "IsOpen", "LaunchRefused", "Mandate", "MandateEvents", "MandateStatus", "MandatesOf",
+            "MandatesOwedBy", "Manifest", "MintMandate", "Reject", "SpendOf", "SubtreeOf", "Sweep"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
-            ["ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units"],
+            [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
+                .Concat(mandate).Order(StringComparer.Ordinal)],
             typeof(OrgStore)
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .Select(m => m.Name).Order(StringComparer.Ordinal).ToArray());

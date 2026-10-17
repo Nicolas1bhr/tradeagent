@@ -647,13 +647,13 @@ public static class GatewaySchema
             + "or it is refused and you read the newer one first. TradeAgent records your acceptance and closes the mandate; no "
             + "further launch is charged to it. Only its decider may.",
             [new("delivery", "string", true, "The delivery's id, as 'mandate-show' gave it.")]),
-        new(Core.Ops.MandateReject, "trade mandate reject <delivery> (--check C | --defect D)", false,
+        new(Core.Ops.MandateReject, "trade mandate reject <delivery> (--failed C | --defect D)", false,
             "REJECT THE LATEST DELIVERY ON A MANDATE YOU DECIDE, citing exactly one thing: a check TradeAgent ran on it that "
-            + "FAILED ('check', by name), or a defect you state in your own words ('defect'). TradeAgent records it and wakes the "
+            + "FAILED ('failed', by its name), or a defect you state in your own words ('defect'). TradeAgent records it and wakes the "
             + "holder to work on it again. Only its decider may.",
             [
                 new("delivery", "string", true, "The delivery's id, as 'mandate-show' gave it."),
-                new("check", "string", false, "A check that failed on it: report-size | refs-exist | refs-of-this-mandate | output-shape."),
+                new("failed", "string", false, "The name of a check that failed on it: report-size | refs-exist | refs-of-this-mandate | output-shape."),
                 new("defect", "string", false, $"What is wrong with it, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
             ]),
 
