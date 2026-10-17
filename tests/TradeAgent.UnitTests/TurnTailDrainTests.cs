@@ -40,7 +40,7 @@ public class TurnTailDrainTests
         try { await session.SendAsync("say hi"); }
         finally { AgentSession.BeforeTheRead.Value = null; }
 
-        var said = Said(session, ended);
+        var said = AgentRuntimeProbe.Said(session, ended);
         Assert.True(seen is [{ Ended: true }], $"the tree was not ended before the read: {seen.Count} teardown(s). {said}");
         Assert.True(ended?.Usage is { InputTokens: 17232, OutputTokens: 6 }, $"the usage line did not reach the turn's end. {said}");
     }
@@ -63,15 +63,10 @@ public class TurnTailDrainTests
         try { await session.SendAsync("reply ok"); }
         finally { AgentSession.BeforeTheRead.Value = null; }
 
-        var said = Said(session, ended);
+        var said = AgentRuntimeProbe.Said(session, ended);
         Assert.True(seen is [{ Ended: true }], $"the tree was not ended before the read: {seen.Count} teardown(s). {said}");
         Assert.True(ended?.Limit is { BeforeAnyWork: true }, $"the vendor's refusal did not reach the turn's end. {said}");
         Assert.Equal(VendorLimitTests.VendorSaid, ended!.Limit!.Message);
         Assert.Equal(VendorLimitTests.VendorSaid, session.History[^1].Text);
     }
-
-    /// <summary>What the turn said and saw, for a failure to name itself: the conversation, the exit code and the raw stream.</summary>
-    internal static string Said(AgentSession session, AgentTurnEnded? ended) =>
-        $"History: [{string.Join(" | ", session.History.Select(t => $"{t.Role}: {t.Text}"))}]; " +
-        (ended is null ? "no TurnEnded was raised" : $"ExitCode {ended.ExitCode}; Raw: <<{ended.Raw}>>");
 }

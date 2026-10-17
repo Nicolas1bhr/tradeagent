@@ -170,13 +170,15 @@ public class VendorLimitQuoteTests : IDisposable
         var meter = Meter();
         var chat = VendorLimitTests.Refusing(nameof(The_typographic_refusal_before_any_work_is_charged_nothing), Stdout);
         using var metering = meter.Attach(chat, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
 
         await chat.SendAsync("reply ok");
 
         var row = OnlyRow();
         Assert.Equal(AiAttemptState.ENDED, row.State);
         Assert.Equal(Reservation, row.ReservedCost);
-        Assert.Equal(0m, row.Cost);
+        Assert.True(row.Cost == 0m, $"the refusal was charged {row.Cost}, not 0. {AgentRuntimeProbe.Said(chat, ended)}");
         Assert.Null(row.UnpricedReason);
         Assert.Equal(VendorSaid, RefusedOn(row));
 

@@ -204,7 +204,10 @@ public class VendorLimitReadTests : IDisposable
 
         var now = VendorLimitTests.Today(12, 0);
         var host = new CouncilHost(_db, events, home) { Clock = () => now };
-        host.Conversations[CouncilRoles.Operations] = VendorLimitTests.Refusing(name);
+        var chair = VendorLimitTests.Refusing(name);
+        AgentTurnEnded? ended = null;
+        chair.TurnEnded += e => ended = e;
+        host.Conversations[CouncilRoles.Operations] = chair;
         host.Conversations[CouncilRoles.Research] =
             AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, name: name + "-research");
         host.Runtimes[CouncilRoles.Operations] = "codex";
@@ -216,6 +219,7 @@ public class VendorLimitReadTests : IDisposable
         await loop.TurnAsync();
         Assert.Equal([CouncilRoles.Operations], host.Opened);
 
+        Assert.True(host.Told.Count == 1, $"the owner was told {host.Told.Count} time(s), not once. {AgentRuntimeProbe.Said(chair, ended)}");
         var (role, hold) = Assert.Single(host.Told);
         Assert.Equal(CouncilRoles.Operations, role);
         Assert.Equal("OpenAI Codex CLI", hold.Vendor);
