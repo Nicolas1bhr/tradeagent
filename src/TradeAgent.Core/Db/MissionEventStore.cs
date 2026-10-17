@@ -1075,7 +1075,7 @@ public sealed class MissionEventStore(Database db)
             SELECT {Cols} FROM mission_event e
              WHERE e.kind = $owner AND e.consumed_at IS NOT NULL
                AND (e.disposition IS NULL OR e.disposition = $blocked)
-               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by AND a.state = 'LOST' AND a.gate_kind IS NULL)
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by AND a.state = 'LOST')
              ORDER BY e.created_at, e.rowid
             """, ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
         using var r = c.ExecuteReader();
@@ -1096,32 +1096,11 @@ public sealed class MissionEventStore(Database db)
             UPDATE mission_event SET disposition = $failed, disposition_detail = $detail
              WHERE id = $id AND kind = $owner AND consumed_at IS NOT NULL
                AND (disposition IS NULL OR disposition = $blocked)
-               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = mission_event.consumed_by AND a.state = 'LOST'
-                                                         AND a.gate_kind IS NULL)
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = mission_event.consumed_by AND a.state = 'LOST')
             """,
             ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id),
             ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
         return c.ExecuteNonQuery() == 1;
-    });
-
-    /// <summary>
-    /// GIVES BACK EVERY WAKE A LOST LAUNCH TOOK THAT THE ACTIVATION GATE HAD REFUSED (re-review 2 of <c>U-thinking-seats-a</c>, P1):
-    /// a crash between the refusal and the turn's commit left the launch LOST, and its mark (<see cref="AiAttempt.GateKind"/>) says
-    /// it was refused — so its wakes are due again exactly as <see cref="Release"/> would have made them, and the owner's words among
-    /// them are shown undelivered with <paramref name="detail"/>, never settled as a lost turn's (<see cref="LostOwnerWords"/> leaves
-    /// these alone). A wake a turn settled is never touched. Returns how many rows were given back.
-    /// </summary>
-    public int ReleaseRefusedLost(string detail) => db.Write(_ =>
-    {
-        using var c = db.Cmd("""
-            UPDATE mission_event SET consumed_at=NULL, consumed_by=NULL,
-                   disposition = CASE WHEN kind=$owner THEN $blocked ELSE NULL END,
-                   disposition_detail = CASE WHEN kind=$owner THEN $detail ELSE NULL END
-             WHERE consumed_by IN (SELECT id FROM ai_attempt WHERE state = 'LOST' AND gate_kind IS NOT NULL)
-               AND (disposition IS NULL OR disposition IN ($blocked, $delegated))
-            """, ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked), ("$detail", detail),
-            ("$delegated", MissionEventDisposition.Delegated));
-        return c.ExecuteNonQuery();
     });
 
     /// <summary>

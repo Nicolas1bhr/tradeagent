@@ -723,15 +723,6 @@ public sealed class TurnMeter
             if (_open.Remove(Key(role), out var open))
                 (id, promptChars, held) = (open.Id, open.PromptChars, open.HeldForTheLoop);
 
-        // THE GATE'S REFUSAL, ON THE ROW NOW (re-review 2 of U-thinking-seats-a, P1): its own short write, before the close is held
-        // for the loop's commit, so a crash in between leaves a LOST row that still says the launch was refused — and the start-up
-        // reconcile holds what it staged instead of publishing it. A mark that cannot be written leaves the close's own record.
-        if (id is not null && ended.GateRefused is { } refusedLate)
-        {
-            try { _attempts.MarkGateRefused(id, refusedLate.Refusal.Kind); }
-            catch (Exception) { /* the close below still records the kind in the turn's own commit */ }
-        }
-
         void Write() => Close(id, promptChars, ended, price, role);
 
         // A TURN THE MISSION LOOP OPENED IS CLOSED BY THE MISSION LOOP'S COMMIT, not here. A turn

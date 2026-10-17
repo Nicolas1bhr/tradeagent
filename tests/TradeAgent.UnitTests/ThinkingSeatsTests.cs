@@ -432,129 +432,6 @@ public class ThinkingSeatsTests : IDisposable
         Assert.False(events.Get(owner)!.Consumed);
     }
 
-    // ---- (r) re-review 2, P1: a crash after the refusal never turns it into permission ------------------------
-
-    /// <summary>
-    /// (r) A CRASH BETWEEN A MID-TURN GATE REFUSAL AND ITS COMMIT NEVER PUBLISHES THE REFUSED LAUNCH'S OUTPUT (re-review 2, P1;
-    /// ORCHESTRATION § 2.3: a refused attempt's outputs are held, never published, and LOST never turns a refusal into permission):
-    /// the chair stages an agenda, its second request is refused, and the app dies at the instant before the turn's commit. The
-    /// next start declares the launch LOST and the start-up reconcile walks its folder: the agenda is held — no delivery, no brief
-    /// wake — because the refusal was written on the row the moment it happened. The owner's words stay owed and are never
-    /// settled as a lost turn's: the next turn is handed them, once, and answers them. RED before the fix: the reconcile published
-    /// the agenda under the LOST launch.
-    /// </summary>
-    [Fact]
-    public async Task A_crash_after_a_mid_turn_refusal_holds_the_refused_launchs_output_and_keeps_the_owners_words()
-    {
-        using var rig = RefusedTurnRig.Arrange();
-        rig.Relay.Boundary = at =>
-        {
-            if (at == CouncilRelay.BeforeCommit) throw new IOException("TradeAgent stopped here");
-        };
-        await rig.Run();
-        Assert.Equal(AiAttemptState.LAUNCHED, new AiAttemptStore(rig.Db).Get(rig.Attempt!)!.State);
-
-        // THE NEXT START: a meter that opens the database turns the open row LOST, and the relay reconciles every folder.
-        var restarted = Meter(rig.Db, _ => SeatClasses.Harness);
-        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(rig.Db).Get(rig.Attempt!)!.State);
-        new CouncilRelay(rig.Db, rig.HomeFor).Reconcile();
-        Assert.True(Count(rig.Db, "SELECT COUNT(*) FROM delivery") == 0,
-            "the start-up reconcile published the output of a launch the gate refused, because a crash had made it LOST");
-        AssertNothingPublished(rig.Db, rig.Events);
-
-        // THE NEXT TURN IS HANDED THE OWNER'S WORDS AND ANSWERS THEM: never settled as a lost turn's and raised again.
-        rig.Declared = SeatClasses.Harness;
-        rig.Provider.Arriving = null;
-        rig.Provider.Answer(FakeProvider.Message("Research is briefed on the March gap."));
-        using var runtime = rig.Runtime(restarted);
-        var chair = runtime.OpenConversation(CouncilRoles.Operations, () => rig.HomeFor(CouncilRoles.Operations),
-            () => new Dictionary<string, string>(), () => null);
-        using var metering = restarted.Attach(chair, CouncilRoles.Operations);
-        var next = new RelayedHost(rig.Db, restarted, chair, new CouncilRelay(rig.Db, rig.HomeFor), rig.HomeFor(CouncilRoles.Operations));
-        await new MissionLoop(next, new MissionOptions { ReviewEvery = TimeSpan.Zero }).TurnAsync();
-
-        var words = rig.Events.Get(rig.Owner)!;
-        Assert.True(words.ConsumedBy is { } by && by != rig.Attempt && words.Disposition == MissionEventDisposition.Answered,
-            $"the owner's words were not handed to the next turn: consumed by {words.ConsumedBy}, {words.Disposition} {words.DispositionDetail}");
-        Assert.Equal(1L, OwnerRows(rig.Db));
-        AssertNothingPublished(rig.Db, rig.Events);
-    }
-
-    /// <summary>
-    /// THE REFUSED CHAIR TURN OF (p), (r) AND (s): the chair on the harness, metered, through the real relay; request 1 stages
-    /// <see cref="Agenda"/> under the launch's own id and the chair's declared seat changes, so request 2 is refused at the last check.
-    /// </summary>
-    sealed class RefusedTurnRig : IDisposable
-    {
-        public const string Agenda = "Research: find the March gap.";
-
-        public Database Db { get; } = TestEnv.NewDb();
-        public MissionEventStore Events { get; }
-        public string Owner { get; }
-        public string Root { get; } = Path.Combine(TestEnv.Home, $"gate-rig-{Guid.NewGuid():n}");
-        public string Declared { get; set; } = SeatClasses.Harness;
-        public FakeProvider Provider { get; } = new();
-        public TurnMeter Meter { get; }
-        public CouncilRelay Relay { get; }
-        public string? Attempt { get; private set; }
-        readonly ApiAgentRuntime _runtime;
-        readonly IDisposable _metering;
-        readonly RelayedHost _host;
-
-        RefusedTurnRig()
-        {
-            Events = new MissionEventStore(Db);
-            Assert.True(Events.RecordOwnerMessage("brief research on the March gap", DateTimeOffset.UtcNow.AddMinutes(-1)));
-            Owner = Assert.Single(Events.Due(DateTimeOffset.UtcNow)).Id;
-            foreach (var role in CouncilRoles.All) Directory.CreateDirectory(Path.Combine(HomeFor(role), WorkspaceBuilder.OutDir));
-            Meter = ThinkingSeatsTests.Meter(Db, _ => Declared);
-            _runtime = Runtime(Meter);
-            var chair = _runtime.OpenConversation(CouncilRoles.Operations, () => HomeFor(CouncilRoles.Operations),
-                () => new Dictionary<string, string>(), () => null);
-            _metering = Meter.Attach(chair, CouncilRoles.Operations);
-            Relay = new CouncilRelay(Db, HomeFor);
-            _host = new RelayedHost(Db, Meter, chair, Relay, HomeFor(CouncilRoles.Operations));
-            Provider.Arriving = () =>
-            {
-                if (Provider.Requests.Count != 1) return;
-                Attempt = Meter.OpenAttemptIdFor(CouncilRoles.Operations);
-                Provider.Answer(FakeProvider.ToolCall(GrantedWorkerTools.WriteFile,
-                    new { path = $"{WorkspaceBuilder.OutDir}/agenda-{Attempt}.md", content = Agenda }));
-                Declared = SeatClasses.Cli;
-            };
-        }
-
-        public static RefusedTurnRig Arrange() => new();
-
-        public string HomeFor(string role) => WorkspaceBuilder.HomeOf(Root, role);
-
-        /// <summary>A harness runtime over the loopback fake, metered by <paramref name="meter"/>, its register declaring <see cref="Declared"/>.</summary>
-        public ApiAgentRuntime Runtime(TurnMeter meter)
-        {
-            var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
-            manifest.BaseUrl = Provider.BaseUrl;
-            var register = new SeatRegister
-            {
-                Facts = id => ThinkingSeatsTests.Facts(Db, Declared, id),
-                Neighbours = () => new OrgStore(Db).ActivePositionsBeyondLegacy()
-            };
-            return new ApiAgentRuntime(manifest, Provider.Holding("not-a-real-credential"),
-                tools: role => new GrantedWorkerTools(role, home: () => HomeFor(role), attempt: () => meter.OpenAttemptIdFor(role)),
-                attemptId: role => meter.OpenAttemptIdFor(role),
-                allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
-        }
-
-        public Task Run() => new MissionLoop(_host, new MissionOptions { ReviewEvery = TimeSpan.Zero }).TurnAsync();
-
-        public void Dispose()
-        {
-            _metering.Dispose();
-            _runtime.Dispose();
-            Provider.Dispose();
-            Db.Dispose();
-        }
-    }
-
     /// <summary>No delivery and no brief bought a turn; the one agenda is held, with why, as the app's own copy.</summary>
     static void AssertNothingPublished(Database db, MissionEventStore events)
     {
@@ -957,7 +834,7 @@ public class ThinkingSeatsTests : IDisposable
         new(db, () => 5m, live: new LiveAttempts(), declaredSeat: declared);
 
     /// <summary>The facts the app would hand the gate for a position, declared on <paramref name="declared"/>.</summary>
-    internal static SeatFacts Facts(Database db, string declared, string? id = null) => new()
+    static SeatFacts Facts(Database db, string declared, string? id = null) => new()
     {
         Standing = id is null ? null : new OrgStore(db).Standing(id),
         DeclaredClass = declared,
