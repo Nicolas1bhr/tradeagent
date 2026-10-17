@@ -3,6 +3,22 @@
 (the canon per seat template, its reach generated), § 5 (the thinking-seat column); R-exec-server DECISION 2; ORGANISATION § 15 row `U-thinking-seats`.
 Part c of 3 (a gate → b door → **c**). **A protection — CRED-001 (the seat home's login offered to no model tool), Law 2 (no model-directed code in the
 process that holds the login), ORG-001: red-first and ONE watched mutant.** Seat A; opus/high. **No rung** (part a's rung 39 records the class).
+**AMENDED AT DISPATCH (seat A, 2026-10-17 ~12:10, main `bb390ed7`; these lines outrank the older ones below where they differ):**
+- **Re-grep every file:line below** (taken at `8f261176`). LANDED since: `U-seat-acl`; `U-puppet-runtime`; part a `U-thinking-seats-a` (rung 39 — `SeatClasses`
+  in Core/Db/SeatAssurance.cs already names `broker` ⇒ Mediated, `RuntimeManifest.SessionSeatClass` is the one answer, `Begin` writes `seat_class`/`assurance`,
+  `CapabilityPolicy`, `PositionActivation`, `cell_proof`; O3's `RefusalKind`); part b `U-thinking-seats-b` (`BrokerDoor`, `AppHost.DoorUrl`, `BrokerDoor.PinnedCodex`
+  — the built-in codex pin, never runtimes.json; `VerbGate` = recorded assurance ≥ Minimum(DecisionVerbs) = Mediated); O5a (`mandate_*` door verbs, rung 40);
+  `U-cell-linux-b` (Guarded refuses the seat home etc.; codex `environments.toml` is in the seat home's Forbidden — it would replace CODEX_EXEC_SERVER_URL; keep it so).
+  Reuse these; never a second class table, pin or policy. "Depends on" and "Conflicts" below are satisfied: all three landed.
+- **Item 6 (OWED from U-thinking-seats-b's review R5, a protection):** `PeerImage.HashOf`'s cache (Security/PeerImage.cs ~225) trusts path + length + mtime, so a
+  same-length replacement with a restored mtime reuses the approved digest for the pin the door and the pipe check. Key it on (device, inode, ctime, size) — ctime
+  cannot be set back by a user — or re-hash; on Windows the file id + change time. Red-first: `A_runtime_replaced_with_equal_length_bytes_and_its_mtime_restored_is_not_the_pin`
+  (prime the cache, replace, restore mtime, a new door connection → refused).
+- **Canon:** main is `Canon.Version = 4`; this unit takes v5 unless another lands first (renumber at rebase, say so).
+- **Q2 (code ceiling):** a broker-only (MEDIATED) seat counts as UNCONFINED for lanes (ORCHESTRATION § 2.5); this unit adds no lane and raises no N (U-org-lanes, seat B, in flight).
+- **No real model, no paid run, no observed run.** codex only with a throwaway CODEX_HOME + HOME, the kit's mock and a FAKE grant. The repo is public.
+- CI is shared (GitHub Free): one branch run per pass; the watched mutant on the ONE job that proves it, the others cancelled. Scan exclusions by phrase: "Bearer", "token".
+  A run red ONLY on macOS VendorLimitQuoteTests (seat B's unit) → re-run that job once and quote both.
 **Depends on parts a and b, and on `U-seat-acl`** (in flight on `SeatProfile.cs`). Canon v5 (or the next free version — the second to land renumbers).
 **Today (main `8f261176`, READ + RUN):** one seat class, `SeatPlan.CliClass` (RuntimeManifest.cs:83); the seat machinery is per runtime: `Environment`
 (:80), `KeyArgs()` reads the CLI class only (:129), `ConfigBytes` (SeatProfile.cs:187) and `SeatArgs` (AgentSession.cs:163) hard-code it, one
