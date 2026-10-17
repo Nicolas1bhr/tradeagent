@@ -58,9 +58,17 @@ public sealed record SyntheticMarketWritten(
 
 /// <summary>
 /// A PROVING GROUND'S HOME (<c>U-proving-ground-a</c>): its directory and its two stores, created marked as a proving home's.
+///
+/// <para><b>Only <see cref="Create"/> makes one</b> (SIM-001): there is no public constructor and no record copy, so no
+/// caller can point a proving home at a directory the factory did not check — a real home's least of all.</para>
 /// </summary>
-public sealed record ProvingHome(string Dir)
+public sealed class ProvingHome
 {
+    ProvingHome(string dir) => Dir = dir;
+
+    /// <summary>The home's directory, as the factory checked it.</summary>
+    public string Dir { get; }
+
     /// <summary>The home's database, marked <see cref="HomeKind.Proving"/>.</summary>
     public string DatabaseFile => Path.Combine(Dir, "state", "tradeagent.db");
 
@@ -74,21 +82,34 @@ public sealed record ProvingHome(string Dir)
     public string TruthDir => Path.Combine(Dir, "proving-truth");
 
     /// <summary>
-    /// CREATES A PROVING HOME AT <paramref name="dir"/>: both stores, each marked a proving home's before anything else
-    /// is written. Refused for the default home, and — by the stores themselves — over a store of a real home.
+    /// CREATES — OR REOPENS — A PROVING HOME AT <paramref name="dir"/>: both stores, each marked a proving home's before
+    /// anything else is written. Refused for the default home, and for a directory that already holds any file unless its
+    /// database carries the proving mark (<see cref="ProvingGround.HomeRefusal"/>'s rule): a real home, marked or not, and
+    /// anything else that is not a proving home, are left exactly as they were found.
     /// </summary>
     public static ProvingHome Create(string dir)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dir);
-        if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir)),
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(Paths.DefaultHome())), StringComparison.OrdinalIgnoreCase))
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
+        if (string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetFullPath(Paths.DefaultHome())), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"{dir} is the default home — the real one — and a proving home is never made there.");
 
-        var home = new ProvingHome(dir);
+        var home = new ProvingHome(full);
+        if (Directory.Exists(full) && Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories).Any()
+            && HomeMark.Parse(HomeMark.Read(home.DatabaseFile, "meta")) != HomeKind.Proving)
+            throw new InvalidOperationException(
+                $"{dir} is not a proving home: it already holds files and its database at {home.DatabaseFile} does not carry the "
+                + $"proving mark ('{HomeMark.Word(HomeKind.Proving)}'), so it may be a real home's. Nothing was created or written "
+                + "there; a proving home is made in an empty directory of its own.");
+
         using (new Database(home.DatabaseFile, HomeKind.Proving)) { }
         using (new TapeStore(home.TapeFile, kind: HomeKind.Proving)) { }
         return home;
     }
+
+    /// <summary>Whether <paramref name="file"/> is <paramref name="mine"/>, compared as full paths.</summary>
+    internal static bool Same(string file, string mine) =>
+        string.Equals(Path.GetFullPath(file), Path.GetFullPath(mine), OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -170,6 +191,10 @@ public static class SyntheticMarket
         if (db.Kind != HomeKind.Proving || tape.Kind != HomeKind.Proving)
             throw new InvalidOperationException(
                 "a synthetic market is written only into a proving home, and this database or tape is a real home's (SIM-001)");
+        if (!ProvingHome.Same(db.FilePath, home.DatabaseFile) || !ProvingHome.Same(tape.File, home.TapeFile))
+            throw new InvalidOperationException(
+                $"a synthetic market is written only into the stores of the home it is for, and the database at {db.FilePath} "
+                + $"or the tape at {tape.File} does not live in the proving home at {home.Dir} (SIM-001). Nothing was written.");
         if (!ProvingSources.Subjects.Contains(spec.Instrument, StringComparer.Ordinal))
             throw new ArgumentException(
                 $"'{spec.Instrument}' is not a synthetic instrument; a proving market names one of {string.Join(", ", ProvingSources.Subjects)}",
