@@ -10985,3 +10985,21 @@ platforms — a turn's LAST stream events (the usage line, the vendor-limit line
 **Review (Codex):** P1 the Quote test's path never used the modified host and no deterministic red exists — TRUE, this record's negative; it is `U-turn-tail-drain`'s. P2 `MissionLoopTests.cs:174` `FakeHost.BeginTurn`
 still stamps `UtcNow` beside an injected `Midday` — real, the class is unfinished → carried into `U-turn-tail-drain` as an item.
 **NOT VERIFIED:** the reds' cause; tests box NOT RUN — the machine does not answer.
+
+
+## U-org-lanes (O9) — the loop runs up to N lanes, one conversation lease per position, limits per quota pool and cell class as policy data, at most ONE unconfined lane in code; the material pass keeps its quiescence for every lane that can write the inbox (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v2) on `main` at tip `980d622c` (on `1f3d2e17`; code `f9ceb6f8`); CI run **39027676976** CARRIED: every job success incl. `linux-host`; `land.sh check` VERDICT PASS (names 2922 → 2945, removed 0; scan clean with one judged phrase: the test double's grant-register revoke call). **No rung, no pipe op, no verb.**
+ORCHESTRATION § 2.5 (O9, brought forward). Default N = 1: the switch-on and M-org0/M-org1 need one lane; more lanes run only when grants are bound and cells exist. Its read-only survey found U-mint-per-launch (landed first).
+**What changed (items 3–6, rulings Q2–Q5):** `TurnAsync` = `Sweep()` + `Pick(n)` + `RunAsync(position)`, call sites unchanged; the owner's words from a refused turn are kept PER POSITION (U-grant-tree's owed item (g)); the card
+shows the NEWEST refusal per position (U-mint-per-launch's owed item); settings `AiLanes` / `AiLanesPerPool` / `AiLanesPerCellClass` (default 1, clamped 1..8) on the Safety page only — raising asks twice,
+an edit disarms an armed raise; `QuotaPool(runtime, account, window)` in code, an unknown part shares with every pool (Q4); vendor holds keyed by pool; **`LanePolicy.UnconfinedCeiling = 1` a constant enforced
+AT THE LEASE whatever the settings say (Q2)**; `RuntimeManifest.PlanWindow` as vendor data (no built-in manifest names one); `TickAsync` sweeps once and starts each pick as its own lane task; pause waits
+for every lane; one lane keeps today's inline path. COUNCIL rule 7: a pass owed on inbox change or a refused pass blocks leasing and picking until every COUNTED lane is quiet; only a confined lane whose
+cell profile proves the inbox unwritable is not counted; `AppHost.LaneOfSeat` = confined only on a `cell` seat class (Q5: presence by default). Helpers: the allocator rule only (Q3).
+**Deviations (declared):** one limit per pool and one per cell class (not a per-key dictionary); `CouncilLoopTests.Two_roles_turns_overlap_…` re-posed onto two confined lanes, assertions unchanged.
+**Evidence:** RED before each item + 10 MUTANTS quoted (`fleet/tmp/B-scratch/u-org-lanes/reds.txt`); OrgLanesTests 19 ×3, CouncilLoopTests 58 ×3; CI 39025618536 and 39027676976 every job green. The
+worktree carried a mutant at the 03:30 usage stop: `MissionLoop.cs` restored from `ml5.bak` FIRST, `git diff` clean before any work. **Review (Codex): 4 defects, all fixed in `f9ceb6f8`** by the builder's own pass.
+**First sightings (local, pre-existing at base `e3344445`; one more = a unit):** `PromptStdinTests` ×3 and `MaterialPassExclusionTests.No_scan_runs_while_a_role_is_launching` fail in one wide filtered batch
+and pass alone (test isolation).
+**NOT VERIFIED:** review defect 3's fix has no test of its own; `ApplyDue` counted only via siblings; no real model; no pool concurrency measured; no helper producer/parent column (Q3); tests box NOT RUN — the machine does not answer.
