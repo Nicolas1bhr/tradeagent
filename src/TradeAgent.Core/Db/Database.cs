@@ -2413,6 +2413,109 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','39') ON CONFLICT(key) DO UPDATE SET value='39';");
         }
 
+        if (have < 40)
+        {
+            // THE MANDATE'S LIFE — `U-org-assignments-a` (O5a), rung 40, after `U-thinking-seats-a`'s 39 (docs/ORCHESTRATION.md
+            // §§ 2.2, 2.4, 2.9, 2.10; ORGANISATION §§ 2, 4). A head assigns a task or an exploration into its own subtree; the
+            // holder's launches are charged to it; its delivery is sealed and checked by the app; code triages; the head accepts or
+            // rejects. FOUR TABLES AND ONE COLUMN, written only by `OrgStore` (§ 2.1: "only OrgStore writes org_*"):
+            //
+            // `org_mandate` — the mandate as issued, never updated: who decides it, who holds it, its kind and latitude, its
+            // objective and scope (the ISSUER'S CLAIMS, stored verbatim and bounded), the output shape and the checks from closed
+            // lists, the deadline, the lifetime AI allocation as a decimal string and the retry limit. Its STATUS IS ITS LATEST
+            // EVENT: there is no status column to edit.
+            //
+            // `org_mandate_event` — append-only: what happened to a mandate, when, by whom, under which attempt, why, and the ids
+            // it rests on (a delivery, a check).
+            //
+            // `org_delivery` — a sealed delivery, never updated: its id is the SHA-256 of its manifest; the report, the named
+            // deviations and the refs are the HOLDER'S CLAIMS, stored verbatim. `org_check` — the APP'S result of each check it ran
+            // on a delivery, in the delivery's own write. Measurement and claim stay in different tables (CLAUDE.md).
+            //
+            // `ai_attempt.mandate_id` — the mandate a launch was admitted under, written by `AiAttemptStore.Begin` in the row's own
+            // insert after the mandate's allocation gate and never updated. NO BACKFILL: no launch before this rung served one.
+            //
+            // APPEND-ONLY IS THE SCHEMA'S, not a convention: every one of the four refuses UPDATE and DELETE by trigger. Vocabularies
+            // are validated TEXT (the reading rung 28 gives), so a later unit adds a word without rebuilding a table. Created only
+            // where missing and the column added only where missing, so a crash between any statement here and the stamp reopens
+            // cleanly; the stamp last.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS org_mandate(
+                  id            TEXT PRIMARY KEY CHECK (id GLOB 'man-*'),
+                  unit_id       TEXT NOT NULL REFERENCES org_unit(id),
+                  decider       TEXT NOT NULL REFERENCES org_position(id),
+                  holder        TEXT NOT NULL REFERENCES org_position(id),
+                  kind          TEXT NOT NULL,
+                  objective     TEXT NOT NULL,
+                  scope         TEXT,
+                  output_shape  TEXT,
+                  checks        TEXT NOT NULL,
+                  latitude      TEXT NOT NULL,
+                  deadline      TEXT NOT NULL,
+                  allocation_ai TEXT NOT NULL,
+                  retry_limit   INTEGER NOT NULL CHECK (retry_limit >= 1),
+                  attempt_id    TEXT,
+                  created_at    TEXT NOT NULL,
+                  CHECK (decider <> holder)
+                );
+                CREATE INDEX IF NOT EXISTS ix_mandate_holder ON org_mandate(holder, created_at);
+                CREATE INDEX IF NOT EXISTS ix_mandate_decider ON org_mandate(decider, created_at);
+
+                CREATE TABLE IF NOT EXISTS org_mandate_event(
+                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                  mandate_id  TEXT NOT NULL REFERENCES org_mandate(id),
+                  at          TEXT NOT NULL,
+                  kind        TEXT NOT NULL,
+                  actor       TEXT NOT NULL,
+                  attempt_id  TEXT,
+                  reason      TEXT,
+                  evidence    TEXT NOT NULL DEFAULT '[]'
+                );
+                CREATE INDEX IF NOT EXISTS ix_mandate_event ON org_mandate_event(mandate_id, id);
+
+                CREATE TABLE IF NOT EXISTS org_delivery(
+                  id          TEXT PRIMARY KEY,
+                  mandate_id  TEXT NOT NULL REFERENCES org_mandate(id),
+                  attempt_id  TEXT,
+                  report      TEXT NOT NULL,
+                  deviations  TEXT NOT NULL,
+                  refs        TEXT NOT NULL,
+                  manifest    TEXT NOT NULL,
+                  at          TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_delivery_mandate ON org_delivery(mandate_id, at);
+
+                CREATE TABLE IF NOT EXISTS org_check(
+                  delivery_id TEXT NOT NULL REFERENCES org_delivery(id),
+                  check_name  TEXT NOT NULL,
+                  passed      INTEGER NOT NULL CHECK (passed IN (0, 1)),
+                  reason      TEXT NOT NULL,
+                  PRIMARY KEY (delivery_id, check_name)
+                );
+
+                CREATE TRIGGER IF NOT EXISTS org_mandate_sealed_u BEFORE UPDATE ON org_mandate
+                BEGIN SELECT RAISE(ABORT, 'a mandate is never updated: its status is its latest event'); END;
+                CREATE TRIGGER IF NOT EXISTS org_mandate_sealed_d BEFORE DELETE ON org_mandate
+                BEGIN SELECT RAISE(ABORT, 'a mandate is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_mandate_event_sealed_u BEFORE UPDATE ON org_mandate_event
+                BEGIN SELECT RAISE(ABORT, 'a mandate event is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS org_mandate_event_sealed_d BEFORE DELETE ON org_mandate_event
+                BEGIN SELECT RAISE(ABORT, 'a mandate event is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS org_delivery_sealed_u BEFORE UPDATE ON org_delivery
+                BEGIN SELECT RAISE(ABORT, 'a delivery is sealed and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_delivery_sealed_d BEFORE DELETE ON org_delivery
+                BEGIN SELECT RAISE(ABORT, 'a delivery is sealed and never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_check_sealed_u BEFORE UPDATE ON org_check
+                BEGIN SELECT RAISE(ABORT, 'a check result is the app''s record and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_check_sealed_d BEFORE DELETE ON org_check
+                BEGIN SELECT RAISE(ABORT, 'a check result is the app''s record and never deleted'); END;
+                """);
+            AddColumnIfMissing("ai_attempt", "mandate_id", "TEXT");
+            Exec("CREATE INDEX IF NOT EXISTS ix_attempt_mandate ON ai_attempt(mandate_id);");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','40') ON CONFLICT(key) DO UPDATE SET value='40';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

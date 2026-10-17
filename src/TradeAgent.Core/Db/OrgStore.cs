@@ -318,7 +318,7 @@ public sealed record OrgPositionRow(
 /// a line of parents that loops or names a unit that is not there is damage, and a partial answer would make
 /// "this unit is under the root" look provable when it is not.</para>
 /// </summary>
-public sealed class OrgStore(Database db)
+public sealed partial class OrgStore(Database db)
 {
     const string UnitCols =
         "id, parent_id, kind, head_position_id, status, envelope_share, charter_publication_id, created_at, closed_at";

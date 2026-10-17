@@ -397,8 +397,16 @@ public static class Versions
     /// app when a cell provider's benchmark passes here — nothing in this build writes it — and read by the activation gate, which
     /// activates no position beyond the legacy pair on a real-model seat while it holds no row for this host, platform, release and
     /// build.</para>
+    ///
+    /// <para><b>40 — the mandate's life</b> (<c>U-org-assignments-a</c>, rung 40, after <c>U-thinking-seats-a</c>'s 39):
+    /// <c>org_mandate</c> (issued, never updated — its status is its latest event), <c>org_mandate_event</c> (append-only),
+    /// <c>org_delivery</c> (sealed: its id is the SHA-256 of its manifest; the report, deviations and refs are the holder's
+    /// claims) and <c>org_check</c> (the app's result of each check, in the delivery's own write) — each refusing UPDATE and
+    /// DELETE by trigger, written only by <c>OrgStore</c> — and <c>ai_attempt.mandate_id</c>, the mandate a launch was
+    /// admitted under, written by <c>AiAttemptStore.Begin</c> after the mandate's allocation gate. No backfill: no launch before
+    /// the rung served a mandate.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 39;
+    public const int DatabaseSchemaVersion = 40;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

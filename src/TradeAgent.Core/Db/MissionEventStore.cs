@@ -149,6 +149,28 @@ public static class MissionEventKind
     /// (<see cref="MissionEventStore.MoveCeiling"/>). Members, the staff and the legacy pair get none.
     /// </summary>
     public const string Ceiling = "ceiling";
+
+    /// <summary>
+    /// A MANDATE'S WORK IS OWED BY ITS HOLDER (<c>U-org-assignments-a</c>; ORCHESTRATION § 2.2): raised by the app — never by an
+    /// agent — in the write that issued the mandate, that retried it after a clean failure, that a rejection sent back, or by the
+    /// once-per-tick sweep for an open mandate nobody is working (§ 4 flow 3). Its payload is the mandate's id, and the launch
+    /// that consumes it is charged to that mandate (<c>ai_attempt.mandate_id</c>, <see cref="AiAttemptStore.Begin"/>).
+    /// </summary>
+    public const string Mandate = "mandate";
+
+    /// <summary>
+    /// A SEALED DELIVERY WAITS ON ITS DECIDER (<c>U-org-assignments-a</c>): raised by the app in the delivery's own write when
+    /// every check passed or the delivery named a deviation. Its payload is the mandate's id; the decider reads it with
+    /// <c>mandate-show</c> and judges it with <c>mandate-accept</c> or <c>mandate-reject</c>.
+    /// </summary>
+    public const string Delivery = "delivery";
+
+    /// <summary>
+    /// A MANDATE CODE STOPPED RETRYING (<c>U-org-assignments-a</c>): the retry limit reached, half the allocation spent with
+    /// nothing accepted, a decline, a launch its allocation could not admit, or the deadline passed — raised by the app to the
+    /// decider in the very write that found it. Its payload is the mandate's id.
+    /// </summary>
+    public const string Escalation = "escalation";
 }
 
 /// <summary>
@@ -215,6 +237,12 @@ public static class WakePriority
         [MissionEventKind.Verdict] = WakeClass.Research,
         [MissionEventKind.Note] = WakeClass.Research,
         [MissionEventKind.Self] = WakeClass.Research,
+
+        // "research", again: the organisation's own work (U-org-assignments-a) — a mandate handed down to its holder, a delivery
+        // handed up to its decider, and the escalation code raises when it stops retrying. The work itself, as a report is.
+        [MissionEventKind.Mandate] = WakeClass.Research,
+        [MissionEventKind.Delivery] = WakeClass.Research,
+        [MissionEventKind.Escalation] = WakeClass.Research,
 
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
@@ -478,6 +506,20 @@ public static class MissionEventIds
     /// hashes its role, kind and text, so a re-run of the relay over the same file holds it once.
     /// </summary>
     public static string Held(string publicationId) => $"{MissionEventKind.Output}:{publicationId}";
+
+    /// <summary>
+    /// A MANDATE'S WAKE TO ITS HOLDER, keyed by the mandate event that raised it — one wake per issue, retry or rejection — and,
+    /// for the sweep's re-raise (§ 4 flow 3), by that event and the last launch that consumed one (<paramref name="after"/>), so
+    /// a re-raise happens once per launch that ended without the work and never twice for one.
+    /// </summary>
+    public static string Mandate(string mandateId, long eventId, string? after = null) =>
+        after is null ? $"{MissionEventKind.Mandate}:{mandateId}:{eventId}" : $"{MissionEventKind.Mandate}:{mandateId}:{eventId}:after:{after}";
+
+    /// <summary>A sealed delivery's wake to its decider, keyed by the delivery's own id.</summary>
+    public static string Delivery(string deliveryId) => $"{MissionEventKind.Delivery}:{deliveryId}";
+
+    /// <summary>An escalation's wake to the decider, keyed by the mandate event that raised it.</summary>
+    public static string Escalation(string mandateId, long eventId) => $"{MissionEventKind.Escalation}:{mandateId}:{eventId}";
 
     /// <summary>
     /// THE VERDICT WAKE, KEYED BY THE PROMOTION AND NOT BY THE NOTE THAT CARRIES IT.
@@ -997,6 +1039,27 @@ public sealed class MissionEventStore(Database db)
     /// attempt id — nothing in <c>ai_attempt</c> carries it — so <see cref="AiAttemptStore.LastWoken"/> never reads it as a turn.
     /// </summary>
     public const string NoLaunch = "no-launch";
+
+    /// <summary>
+    /// THE UNTAKEN WAKES OF <paramref name="mandateId"/> TO ITS HOLDER, closed by no launch — consumed by
+    /// <see cref="NoLaunch"/> with <paramref name="disposition"/> and <paramref name="why"/> — and how many
+    /// (<c>U-org-assignments-a</c>): a cancelled or expired mandate has no work left to wake anyone for, and a launch its
+    /// allocation refused must not be offered the same wake again. <paramref name="only"/> narrows it to those ids.
+    /// </summary>
+    public int CloseMandateWakes(string mandateId, DateTimeOffset at, string disposition, string why,
+        IReadOnlyCollection<string>? only = null) => db.Write(_ =>
+    {
+        var ids = only?.ToArray() ?? [];
+        var names = ids.Select((_, i) => $"$only{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}").ToArray();
+        var keep = only is null ? "" : ids.Length == 0 ? " AND 0" : $" AND id IN ({string.Join(",", names)})";
+        using var c = db.Cmd($"""
+            UPDATE mission_event SET consumed_at=$at, consumed_by=$none, disposition=$d, disposition_detail=$why
+             WHERE kind = $mandate AND payload = $id AND consumed_at IS NULL{keep}
+            """,
+            [("$at", (object?)Sql.T(at)), ("$none", NoLaunch), ("$d", disposition), ("$why", why),
+             ("$mandate", MissionEventKind.Mandate), ("$id", mandateId), .. names.Select((n, i) => (n, (object?)ids[i]))]);
+        return c.ExecuteNonQuery();
+    });
 
     /// <summary>
     /// SETTLES EVERY DUE WAKE OF <paramref name="position"/>, consumed by no launch and <see cref="MissionEventDisposition.Refused"/>

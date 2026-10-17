@@ -108,6 +108,13 @@ public sealed record AiAttempt
     public string? Assurance { get; init; }
 
     /// <summary>
+    /// THE MANDATE THIS LAUNCH WAS ADMITTED UNDER (<c>U-org-assignments-a</c>, rung 40), or null: the one its consumed
+    /// <c>mandate</c> wake names, after the mandate's own allocation gate in <see cref="AiAttemptStore.Begin"/> — written in the
+    /// row's own insert and never updated. Its spend is the mandate's (<see cref="OrgStore.SpendOf"/>).
+    /// </summary>
+    public string? MandateId { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -335,7 +342,7 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash, role, runtime_profile, seat_class, assurance
+        input_hash, role, runtime_profile, seat_class, assurance, mandate_id
         """;
 
     /// <summary>
@@ -406,13 +413,13 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile),
-            ("$class", a.SeatClass), ("$assurance", a.Assurance));
+            ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", a.MandateId));
         c.ExecuteNonQuery();
         // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
         if (a.Funding is { Count: > 0 } funding)
@@ -748,7 +755,8 @@ public sealed class AiAttemptStore(Database db)
         Role = Sql.S(r.GetValue(20)),
         RuntimeProfile = Sql.S(r.GetValue(21)),
         SeatClass = Sql.S(r.GetValue(22)),
-        Assurance = Sql.S(r.GetValue(23))
+        Assurance = Sql.S(r.GetValue(23)),
+        MandateId = Sql.S(r.GetValue(24))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);
