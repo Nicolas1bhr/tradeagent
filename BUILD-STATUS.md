@@ -10815,3 +10815,22 @@ green INSIDE the red window — the run itself is the proof. Review (Codex): onl
 **OWED CARD (first sighting, not a unit yet):** other test hosts stamp `UtcNow` the same way (e.g. `VendorLimitReadTests`' `CouncilHost`), and `VendorLimitReadTests` had a macOS-only first sighting
 (run 38965744337) — if it is seen again, this is the likely cause and it becomes a unit.
 **NOT VERIFIED:** tests box NOT RUN — the machine does not answer.
+
+
+## U-sweep-budget-red — the recurring macOS red in the sweep's emergency-budget test is deterministic and explained: the product answered inside its budget, the test now judges by the deadline the product enforces (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v3) on `main` at tip `50d75d84`; CI run **38993615006 (attempt 2 — attempt 1 was red only on macOS `LinuxHostRuntimeTests.The_device_auth_prompt_yields_its_link_and_code`: the device-sign-in stub failed to start its .NET runtime, "Failed to create CoreCLR"; the train cannot reach it; a first sighting; the failed job re-run, no code changed)**: every job success incl. `linux-host`; `land.sh train-check` VERDICT PASS (train names 2838 → 2858, removed 0; scan clean with the phrase exclusions judged at prep). **No rung, no pipe op, no verb; test code only, no product change.**
+The money path's guard (the orchestrator's ruling, 2026-10-16: three sightings — runs 37420396771, 37529866030, 38968186292 — never "a flake"): an emergency sweep (the kill switch's flatten) pays its
+emergency budget ONCE for the whole sweep, not once per RPC, and the press always answers inside its deadline.
+**Cause, by evidence — one event, two faces, the TEST's side wrong.** The pipe opens the 2 s budget on the wall clock, store included (deliberate, `GatewayPipeServer.cs` ~1265-1284); the fixture gave each
+simulator call 1.9 s, leaving 100 ms for everything before the book read. A slow macOS runner spent more, the fake's own precheck clipped the book read, and the product answered correctly: refused
+inside the budget, "Nothing was placed or cancelled". Deterministic REDs via a seam (`RoomSpentBeforeTheBookRead`, spends exactly that room off the product's deadline) reproduced both faces 3/3.
+**Build (`de1f11bc`, `4f94c271`):** the seam; the test records each sweep call's deadline at the wire (`FaultProfile.Wait`) and asserts 3 calls, ONE deadline = press + budget, both stopwatch bounds kept, leg
+`sent-not-confirmed`. MUTANT (`RiskReducingScope.DeadlineAt` per read — the budget charged per RPC) 3/3 red: "the sweep's calls were bounded by different deadlines (+2002 ms, +3015 ms, +3017 ms …)".
+**Fix pass 1 (the review's two real P2s; `f376b8a7`, `16c825f3`):** 1. the test now reads the bound the simulator ENFORCES on the cancel (the wait its precheck allows), not deadline metadata: it must be
+under the budget and end within budget/4 of the press's deadline — the settling mutant (ambient deadline kept, each RPC a fresh budget) passed the old test, now 3/3 red: "the simulator allowed the cancel
+2000 ms, to +3020 ms after the press, where the press's deadline is +2000 ms"; the per-RPC mutant still 3/3 red. 2. the seam reads its injectable clock ONCE per pass and clamps the wait at 0; new
+`The_room_spending_seam_reads_the_time_left_once_per_wait_and_always_finishes` RED before 3/3 ("did not finish within 10 s"), mutant (second read restored) 3/3 red ("read the time left 3 times").
+**Gate:** Release 0 warnings; `SweepRequestIdTests` 3× Passed 46; the test alone ×50: 0 failures; branch CI 38977448516 every job green. Re-review (`fleet/tmp/B-scratch/u-sweep-budget-red/fix1-review.md`):
+both points closed, no regression. The "judged by id" ruling for this test ENDS with this landing.
+**NOT VERIFIED:** no Windows or macOS witness beyond branch CI; tests box NOT RUN — the machine does not answer.
