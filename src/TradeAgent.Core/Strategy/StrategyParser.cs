@@ -29,11 +29,16 @@ public static class StrategyParser
     /// Reads one program. Returns a <see cref="StrategyProgram"/> or a <see cref="StrategyRefusal"/>,
     /// and never throws, for any input.
     /// </summary>
-    public static StrategyParse Parse(string? source)
+    /// <param name="source">The program's text.</param>
+    /// <param name="kind">
+    /// The kind of home it is read in (<c>U-proving-ground-a</c>): null is this process's. A feature naming a proving
+    /// ground's synthetic row parses only in a proving home, and is refused in a real one.
+    /// </param>
+    public static StrategyParse Parse(string? source, Proving.HomeKind? kind = null)
     {
         try
         {
-            return ParseCore(source ?? "");
+            return ParseCore(source ?? "", kind ?? Proving.ProvingGround.ThisKind);
         }
         catch (Exception ex)
         {
@@ -142,11 +147,11 @@ public static class StrategyParser
         public string Text { get; } = reason;
     }
 
-    static StrategyParse ParseCore(string text)
+    static StrategyParse ParseCore(string text, Proving.HomeKind kind)
     {
         try
         {
-            return Build(text);
+            return Build(text, kind);
         }
         catch (Refused r)
         {
@@ -157,7 +162,7 @@ public static class StrategyParser
         }
     }
 
-    static StrategyParse Build(string text)
+    static StrategyParse Build(string text, Proving.HomeKind kind)
     {
         var byteLength = Encoding.UTF8.GetByteCount(text);
         if (byteLength > StrategyLimits.MaxSourceBytes)
@@ -170,7 +175,7 @@ public static class StrategyParser
 
         var constants = ReadConstants(decls);
         var indicators = ReadIndicators(decls, constants);
-        var features = ReadFeatures(decls, constants, indicators);
+        var features = ReadFeatures(decls, constants, indicators, kind);
         var settings = ReadSettings(decls, constants);
         var rules = ReadRules(decls, constants, indicators, features);
 
@@ -452,7 +457,8 @@ public static class StrategyParser
     /// the line. At most <see cref="StrategyLimits.MaxFeatures"/>, the ninth refused where it is written.
     /// </summary>
     static Dictionary<string, FeatureDecl> ReadFeatures(
-        List<Decl> decls, Dictionary<string, StrategyConstant> constants, Dictionary<string, IndicatorDecl> indicators)
+        List<Decl> decls, Dictionary<string, StrategyConstant> constants, Dictionary<string, IndicatorDecl> indicators,
+        Proving.HomeKind kind)
     {
         var features = new Dictionary<string, FeatureDecl>(StringComparer.Ordinal);
 
@@ -476,7 +482,7 @@ public static class StrategyParser
                 throw new Refused(d.No,
                     $"a program may declare at most {StrategyLimits.MaxFeatures} features, and `{name}` is one more");
 
-            var parse = FeatureSpec.Parse(d.Rest[(eq + 1)..].Trim());
+            var parse = FeatureSpec.Parse(d.Rest[(eq + 1)..].Trim(), kind);
             if (parse.Spec is not { } spec)
                 throw new Refused(d.No, $"feature `{name}` is not a spec TradeAgent computes: {parse.Why}");
 

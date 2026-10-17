@@ -212,8 +212,9 @@ public static class FeatureSeries
             case false: return Found(input, FeatureEvaluator.FirstClean(input, inRange, to), to);
         }
 
-        // ONLY A BUILT-IN ROW'S READINGS CAN BE CLEAN (TapeStore.ClassOf, ArchiveClassOf) — and the parse admits no other.
-        if (TapeSourceCatalog.BuiltInLiveRule(input.Source) is not { } rule)
+        // ONLY A BUILT-IN ROW'S READINGS CAN BE CLEAN (TapeStore.ClassOf, ArchiveClassOf) — and the parse admits no other;
+        // in a proving home, a proving row's too, by the same rule the store classed them with (U-proving-ground-a).
+        if (TapeSourceCatalog.LiveRule(input.Source, reader.Kind) is not { } rule)
             return (input, null, $"no reading of {input.Name} can be O-LIVE or O-PIT: it is not one of this build's rows");
 
         // HOW EARLY A CLEAN READING CAN HAVE BEEN FIRST SEEN BEFORE ITS STAMP: a live one, by the cadence plus 30 s; an

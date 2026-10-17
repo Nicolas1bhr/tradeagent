@@ -202,11 +202,16 @@ public sealed class FeatureSpec
     /// <summary>
     /// Reads one spec. Returns a <see cref="FeatureSpec"/> or a refusal in words, and never throws, for any text.
     /// </summary>
-    public static FeatureParse Parse(string? json)
+    /// <param name="json">The spec.</param>
+    /// <param name="kind">
+    /// The kind of home it is read in (<c>U-proving-ground-a</c>): null is this process's. A real home reads features of
+    /// this build's shipped rows only; a proving home reads its own synthetic rows beside them.
+    /// </param>
+    public static FeatureParse Parse(string? json, Proving.HomeKind? kind = null)
     {
         try
         {
-            return ParseCore(json);
+            return ParseCore(json, kind ?? Proving.ProvingGround.ThisKind);
         }
         catch (Exception ex)
         {
@@ -218,7 +223,7 @@ public sealed class FeatureSpec
         }
     }
 
-    static FeatureParse ParseCore(string? json)
+    static FeatureParse ParseCore(string? json, Proving.HomeKind home)
     {
         if (string.IsNullOrWhiteSpace(json))
             return FeatureParse.No("a feature spec is one JSON object, and this text is empty");
@@ -272,7 +277,7 @@ public sealed class FeatureSpec
                         + $"(the latest divided by the earlier), and this one is {Shown(props[ModeKey])}");
             }
 
-            if (ReadInput(props[InputKey], out var why) is not { } input) return FeatureParse.No(why);
+            if (ReadInput(props[InputKey], home, out var why) is not { } input) return FeatureParse.No(why);
 
             if (Whole(props[LatencyKey], LatencyKey, 0, MaxLatencySeconds, out why) is not { } latency)
                 return FeatureParse.No(why);
@@ -307,7 +312,7 @@ public sealed class FeatureSpec
     /// <c>tape-sources.json</c> adds is not here: whether a spec parses is a fact about the build, never about a file an
     /// agent can write.
     /// </summary>
-    static FeatureInput? ReadInput(JsonElement value, out string why)
+    static FeatureInput? ReadInput(JsonElement value, Proving.HomeKind home, out string why)
     {
         why = "";
         if (value.ValueKind != JsonValueKind.Object)
@@ -347,12 +352,20 @@ public sealed class FeatureSpec
 
         var (source, series, subject, field) = (text["source"], text["series"], text["subject"], text["field"]);
 
-        var shipped = TapeSourceCatalog.Shipped();
+        // THE HOME'S ROWS (U-proving-ground-a): this build's shipped rows, and in a proving home its synthetic rows beside
+        // them. A real home never reads a proving row, so a program fed by a synthetic market cannot be judged there.
+        var shipped = TapeSourceCatalog.Readable(home);
         var markets = shipped
             .Where(r => TapeSourceCatalog.MarketParsers.Contains(r.Parser, StringComparer.Ordinal))
             .Select(r => r.Id)
             .ToList();
         var row = shipped.FirstOrDefault(r => string.Equals(r.Id, source, StringComparison.Ordinal));
+        if (row is null && TapeSourceCatalog.IsProvingRow(source))
+        {
+            why = $"'{source}' is a proving ground's synthetic source, read only in a proving home, and this is a real home: "
+                  + $"a feature here reads one of {string.Join(", ", markets)}";
+            return null;
+        }
         if (row is null)
         {
             why = $"'{Clip(source)}' is not a source the tape records; a feature reads one of {string.Join(", ", markets)}";

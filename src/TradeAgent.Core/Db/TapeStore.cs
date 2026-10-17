@@ -398,7 +398,7 @@ public sealed class TapeStore : IDisposable
             var tally = new Tally();
             foreach (var item in prepared)
                 tally.Count(Insert(fetch.Source, fetch.Series, fetch.ReceivedAt, fetchId, item,
-                    previous => ClassOf(fetch.Source, origin, item.SourceTime, fetch.ReceivedAt, previous)));
+                    previous => ClassOf(fetch.Source, origin, item.SourceTime, fetch.ReceivedAt, previous, Kind)));
 
             return tally.Result(fetchId, prepared.Count);
         });
@@ -452,7 +452,7 @@ public sealed class TapeStore : IDisposable
         var origin = UrlOrigin.Of(fetch.Url);
         var verified = string.Equals(batch.PublishedMd5, batch.ComputedMd5, StringComparison.OrdinalIgnoreCase);
         string ClassFor(string? previous) =>
-            ArchiveClassOf(fetch.Source, origin, batch.Label, fetch.ReceivedAt, verified, batch.LastModified, previous);
+            ArchiveClassOf(fetch.Source, origin, batch.Label, fetch.ReceivedAt, verified, batch.LastModified, previous, Kind);
 
         return Write(() =>
         {
@@ -579,9 +579,11 @@ public sealed class TapeStore : IDisposable
     /// revision is archive.</para>
     /// </summary>
     static string ClassOf(string source, string? origin, DateTimeOffset sourceTime, DateTimeOffset receivedAt,
-        string? previous)
+        string? previous, Proving.HomeKind kind)
     {
-        var own = TapeSourceCatalog.BuiltInLiveRule(source) is { } rule
+        // THE RULE IS THE HOME'S (U-proving-ground-a): a built-in row's in every home, a proving row's in a proving home
+        // only — so a proving row recorded in a real home is O-ARCH, from wherever it came.
+        var own = TapeSourceCatalog.LiveRule(source, kind) is { } rule
                   && string.Equals(origin, rule.Origin, StringComparison.Ordinal)
                   && InWindow(receivedAt - sourceTime, rule.Cadence, rule.Delay)
             ? TapeClass.Live
@@ -613,11 +615,11 @@ public sealed class TapeStore : IDisposable
     /// file written after its label, or one whose storage gave no date. Never above the revision before it.</para>
     /// </summary>
     static string ArchiveClassOf(string source, string? origin, DateTimeOffset label, DateTimeOffset receivedAt,
-        bool verified, DateTimeOffset? lastModified, string? previous)
+        bool verified, DateTimeOffset? lastModified, string? previous, Proving.HomeKind kind)
     {
-        var own = ClassOf(source, origin, label, receivedAt, null) == TapeClass.Live
+        var own = ClassOf(source, origin, label, receivedAt, null, kind) == TapeClass.Live
             ? TapeClass.Live
-            : TapeSourceCatalog.BuiltInLiveRule(source) is { } rule
+            : TapeSourceCatalog.LiveRule(source, kind) is { } rule
               && string.Equals(origin, rule.Origin, StringComparison.Ordinal)
               && verified
               && lastModified is { } written && written <= label

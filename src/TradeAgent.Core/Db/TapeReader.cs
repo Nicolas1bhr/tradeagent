@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Proving;
 
 namespace TradeAgent.Core.Db;
 
@@ -205,11 +206,17 @@ public sealed class TapeReader
     /// subjects are keyed, its cadence and its credit. Null is <see cref="TapeSourceCatalog.Shipped"/>; the app passes
     /// the catalogue its collectors read.
     /// </param>
-    public TapeReader(string file, IReadOnlyList<TapeSourceEntry>? catalogue = null)
+    /// <param name="kind">
+    /// The kind of home this read is for (<c>U-proving-ground-a</c>), as the store takes it: null is this process's. A
+    /// tape marked as the other kind — or, for a proving read, one carrying no mark — is refused when the reader is made,
+    /// naming the file and both kinds. A proving reader also reads the proving ground's own rows.
+    /// </param>
+    public TapeReader(string file, IReadOnlyList<TapeSourceEntry>? catalogue = null, HomeKind? kind = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(file);
         File = file;
-        Catalogue = catalogue ?? TapeSourceCatalog.Shipped();
+        Kind = kind ?? ProvingGround.ThisKind;
+        Catalogue = catalogue ?? TapeSourceCatalog.Readable(Kind);
 
         if (!System.IO.File.Exists(file))
             throw new InvalidOperationException($"there is no market-context tape at {file} to read");
@@ -221,7 +228,16 @@ public sealed class TapeReader
                 $"the market-context tape at {file} carries layout version {(have is { } v ? v.ToString(CultureInfo.InvariantCulture) : "none")}, "
                 + $"and this build reads version {TapeStore.Schema}. Nothing has been read from it; the tape is read only once "
                 + "TradeAgent's own store has opened it at this build's layout.");
+
+        if (HomeMark.Refusal("the market-context tape", file, HomeMark.Read(c, "tape_meta"), Kind) is { } refused)
+            throw new InvalidOperationException(refused);
     }
+
+    /// <summary>
+    /// The kind of home this tape is (<c>U-proving-ground-a</c>): which rows can be clean in it
+    /// (<see cref="TapeSourceCatalog.LiveRule"/>).
+    /// </summary>
+    public HomeKind Kind { get; }
 
     /// <summary>The file read.</summary>
     public string File { get; }

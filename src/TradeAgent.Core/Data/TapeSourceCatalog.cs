@@ -609,6 +609,38 @@ public static class TapeSourceCatalog
         sourceId is not null && LiveRules.TryGetValue(sourceId, out var rule) ? rule : null;
 
     /// <summary>
+    /// The proving ground's rows' rules (<see cref="Proving.ProvingSources"/>), read from this build once — a separate
+    /// dictionary, never one of <see cref="LiveRules"/>: nothing a real home decides reads it.
+    /// </summary>
+    static readonly FrozenDictionary<string, (string Origin, TimeSpan Cadence, TimeSpan Delay)> ProvingRules =
+        Proving.ProvingSources.Rows().ToFrozenDictionary(r => r.Id,
+            r => (UrlOrigin.Of(r.BaseUrl) ?? throw new InvalidOperationException($"proving tape row '{r.Id}' has no origin"),
+                  r.Cadence, r.PublicationDelay),
+            StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE RULE THAT CAN MAKE A ROW OF <paramref name="sourceId"/> LIVE IN A HOME OF <paramref name="kind"/>
+    /// (<c>U-proving-ground-a</c>): <see cref="BuiltInLiveRule"/> in every home, and — in a proving home only — a proving
+    /// row's own (<see cref="Proving.ProvingSources"/>). In a real home a proving row has none, so whatever is recorded
+    /// under it is <c>O-ARCH</c>.
+    /// </summary>
+    public static (string Origin, TimeSpan Cadence, TimeSpan Delay)? LiveRule(string? sourceId, Proving.HomeKind kind) =>
+        BuiltInLiveRule(sourceId)
+        ?? (kind == Proving.HomeKind.Proving && sourceId is not null && ProvingRules.TryGetValue(sourceId, out var rule)
+            ? rule
+            : null);
+
+    /// <summary>
+    /// THE ROWS A HOME OF <paramref name="kind"/> READS FEATURES FROM: <see cref="Shipped"/>, and in a proving home the
+    /// proving rows beside them. A fresh copy on every call.
+    /// </summary>
+    public static List<TapeSourceEntry> Readable(Proving.HomeKind kind) =>
+        kind == Proving.HomeKind.Proving ? [.. Shipped(), .. Proving.ProvingSources.Rows()] : Shipped();
+
+    /// <summary>Whether <paramref name="sourceId"/> is a proving ground's row — reserved, whatever home reads it.</summary>
+    public static bool IsProvingRow(string? sourceId) => sourceId is not null && ProvingRules.ContainsKey(sourceId);
+
+    /// <summary>
     /// The catalogue: every shipped row and whatever valid rows the file adds, or the shipped rows alone
     /// with the reason the file could not be read. See the type summary for why an unreadable file does
     /// not stop the built-ins.
@@ -659,6 +691,9 @@ public static class TapeSourceCatalog
         if (builtIn.Contains(id))
             return $"'{id}' is one of TradeAgent's built-in rows and tape-sources.json cannot replace it: a built-in "
                    + "row's address comes from this build and from nowhere else. Give your row its own id.";
+        if (IsProvingRow(id))
+            return $"'{id}' is TradeAgent's proving-ground row, whose readings are synthetic, and tape-sources.json cannot "
+                   + "name it: a synthetic reading never wears an id a real home records. Give your row its own id.";
         if (!seen.Add(id))
             return $"'{id}' appears more than once in tape-sources.json; only its first row is recorded.";
 
