@@ -169,6 +169,55 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// <c>U-thinking-seats-c</c> ITEM 6 (owed from U-thinking-seats-b's review R5; CRED-001, Law 2): A RUNTIME REPLACED WITH BYTES OF
+    /// THE SAME LENGTH, ITS LAST WRITE PUT BACK, IS NOT THE PIN. A first connection proves the pinned file and primes the digest cache;
+    /// the file is then rewritten in place with other bytes of the same length and its last-write time restored — exactly what the old
+    /// key (path, length, last write) could not see — and a NEW door connection presenting the same live grant must be refused.
+    ///
+    /// <para>RED at base: the second connection was served (200) on the cached digest of the bytes that were gone.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_replaced_with_equal_length_bytes_and_its_mtime_restored_is_not_the_pin()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"ta-pin-{Guid.NewGuid():n}"[..20]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var runtime = Path.Combine(dir, OperatingSystem.IsWindows() ? "codex.exe" : "codex");
+            var approved = new byte[64 * 1024];
+            Random.Shared.NextBytes(approved);
+            await File.WriteAllBytesAsync(runtime, approved);
+            var rule = new PeerRule(runtime, PeerImage.HashOf(runtime), null, null, BrokerDoor.RuntimeWord);
+
+            var grants = new AgentGrants();
+            var research = grants.IssueHere(CouncilRoles.Research, "attempt-same-length");
+            await using var door = new BrokerDoor { Grants = grants, Image = () => rule, ImageOf = _ => runtime };
+            door.Start();
+
+            using (var first = Client(research.Token))
+            {
+                var served = await Post(first, door.Url!, Rpc(1, "initialize"));
+                Assert.True(served.Status == HttpStatusCode.OK, $"the pinned file itself was refused: {(int)served.Status} {served.Body}");
+            }
+
+            // THE SWAP: other bytes, the same length, the last write put back to what the cache saw.
+            var written = File.GetLastWriteTimeUtc(runtime);
+            var swapped = (byte[])approved.Clone();
+            for (var i = 0; i < swapped.Length; i++) swapped[i] ^= 0x5a;
+            await File.WriteAllBytesAsync(runtime, swapped);
+            File.SetLastWriteTimeUtc(runtime, written);
+            Assert.Equal((approved.LongLength, written), (new FileInfo(runtime).Length, File.GetLastWriteTimeUtc(runtime)));
+
+            using var second = Client(research.Token);
+            var reply = await Post(second, door.Url!, Rpc(2, "initialize"));
+            Assert.True(reply.Status == HttpStatusCode.Forbidden,
+                $"a runtime replaced with equal-length bytes and its last write restored was served as the pin: {(int)reply.Status} {reply.Body}");
+            Assert.Contains(BrokerDoor.RuntimeWord, reply.Body);
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch (Exception) { } }
+    }
+
+    /// <summary>
     /// (d) A PEER LOOKUP THAT FAILS REFUSES. The kernel would not name the process holding the connection; separately, the
     /// container could not say whether the named process is inside; separately, the named process started after the accept.
     /// </summary>
