@@ -80,8 +80,23 @@ public sealed class SeatPlan
     /// </summary>
     public Dictionary<string, string> Environment { get; set; } = new(StringComparer.Ordinal);
 
-    /// <summary>The one seat class today: a CLI seat that runs commands. A broker-only class is a row here (<c>U-thinking-seats</c>).</summary>
+    /// <summary>A CLI seat that runs commands: the legacy pair's, with a shell, unconfined.</summary>
     public const string CliClass = "cli";
+
+    /// <summary>
+    /// THE BROKER-ONLY CLASS (<c>U-thinking-seats-c</c>; <c>docs/ORCHESTRATION.md</c> § 2.7): a codex seat with no environment
+    /// (<c>CODEX_EXEC_SERVER_URL=none</c>), no shell, file or image tool, no sub-agents, and the app's door as its only tool server —
+    /// MEDIATED, on a pinned classic-tools model whose offered surface is verified before every launch (<see cref="BrokerSeat"/>).
+    /// Its fields here are DATA keyed by class, but they are the build's own: a <c>runtimes.json</c> that changes them refuses the
+    /// class (<see cref="BrokerSeat.OverrideRefusal"/>).
+    /// </summary>
+    public const string BrokerClass = TradeAgent.Core.Db.SeatClasses.Broker;
+
+    /// <summary>
+    /// WHERE THE APP'S DOOR GOES in a class's deny set: replaced at launch by the door's own address (<c>AppHost.DoorUrl</c>), never
+    /// written in a file. A class whose deny set names it cannot start while the door is not open.
+    /// </summary>
+    public const string DoorSlot = "{doorUrl}";
 
     /// <summary>
     /// THE PUPPET'S OWN CLASS (<c>U-puppet-runtime</c>; <c>docs/ORCHESTRATION.md</c> § 7): a scripted seat that runs no model and
@@ -98,9 +113,18 @@ public sealed class SeatPlan
     public Dictionary<string, string[]> Args { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// WHAT EVERY PROCESS OF ONE CLASS IS STARTED WITH ON TOP OF <see cref="Environment"/> — a turn, a resume and that class's own
+    /// probes — applied last. The broker's <c>CODEX_EXEC_SERVER_URL=none</c> is here: with it codex has no environment, so no shell,
+    /// file or patch tool can run anywhere (<c>R-exec-server</c>).
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> ClassEnvironment { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// The CLI's own config file, relative to <see cref="Home"/>, that the app WRITES before every start — or empty for none. Its
     /// keys are the <c>-c key=value</c> and <c>--disable</c>/<c>--enable</c> pairs of the <see cref="CliClass"/> deny set, because
     /// the commands that sign in and probe take no flag that ignores the file, and a seat-written file would otherwise steer them.
+    /// ONE file, the CLI class's, for every class: turns ignore it (<c>--ignore-user-config</c>), and two classes writing different
+    /// bytes would trip the same-bytes check whenever a chair turn and a broker turn overlap.
     /// </summary>
     public string ConfigFile { get; set; } = "";
 
@@ -125,35 +149,57 @@ public sealed class SeatPlan
     public string[] FeaturesArgs { get; set; } = [];
 
     /// <summary>
-    /// The features that may be ON. Every line of <see cref="FeaturesArgs"/>' output whose last word is <c>true</c> must name one of
-    /// these: a new release that switches something on by default, or a key that stopped working, refuses rather than runs.
+    /// THE FEATURES THAT MAY BE ON, BY SEAT CLASS. Every line of <see cref="FeaturesArgs"/>' output — run with that class's keys —
+    /// whose last word is <c>true</c> must name one of these: a new release that switches something on by default, or a key that
+    /// stopped working, refuses rather than runs.
     /// </summary>
-    public string[] FeatureAllowlist { get; set; } = [];
+    public Dictionary<string, string[]> FeatureAllowlist { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>The CLI's own list of its MCP servers as JSON, run the same way. Empty for none.</summary>
     public string[] McpArgs { get; set; } = [];
 
-    /// <summary>The MCP servers the app itself configures. None today, so any server is refused.</summary>
-    public string[] McpAllowlist { get; set; } = [];
+    /// <summary>
+    /// THE MCP SERVERS THE APP ITSELF CONFIGURES, BY SEAT CLASS: none for the CLI class, so any server is refused; the app's own
+    /// door, alone, for the broker.
+    /// </summary>
+    public Dictionary<string, string[]> McpAllowlist { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>What a seat whose home holds no credential is refused with: the owner's next step, in his words.</summary>
     public string SignedOut { get; set; } = "TradeAgent keeps its own AI sign-in. Sign in again.";
 
     /// <summary>
-    /// The deny set's KEYS — its <c>--disable</c>/<c>--enable</c>/<c>-c</c> pairs — which the probe commands take; the flags without a
-    /// value (<c>--ignore-user-config</c> and its kind) belong to <c>exec</c> only.
+    /// One class's deny set's KEYS — its <c>--disable</c>/<c>--enable</c>/<c>-c</c> pairs, the door's address in its slot — which the
+    /// probe commands take; the flags without a value (<c>--ignore-user-config</c> and its kind) belong to <c>exec</c> only.
     /// </summary>
-    public string[] KeyArgs()
+    public string[] KeyArgs(string seatClass, Uri? door = null)
     {
-        var args = ArgsFor(CliClass);
+        var args = ArgsFor(seatClass, door);
         var keys = new List<string>();
         for (var i = 0; i + 1 < args.Length; i++)
             if (args[i] is "--disable" or "--enable" or "-c" or "--config") { keys.Add(args[i]); keys.Add(args[++i]); }
         return [.. keys];
     }
 
-    /// <summary>The deny set of <paramref name="seatClass"/>, or none.</summary>
+    /// <summary>The deny set of <paramref name="seatClass"/> AS WRITTEN — <see cref="DoorSlot"/> unfilled — or none.</summary>
     public string[] ArgsFor(string seatClass) => Args.TryGetValue(seatClass, out var a) ? a : [];
+
+    /// <summary>
+    /// The deny set of <paramref name="seatClass"/> AS IT STARTS: <see cref="DoorSlot"/> replaced by <paramref name="door"/>, and left
+    /// as it is where there is no door — which no CLI accepts as an address, so the start fails rather than reaching another server.
+    /// Callers refuse a class that needs a door before they get here (<see cref="NeedsDoor"/>).
+    /// </summary>
+    public string[] ArgsFor(string seatClass, Uri? door) =>
+        door is null ? ArgsFor(seatClass)
+            : [.. ArgsFor(seatClass).Select(a => a.Replace(DoorSlot, door.AbsoluteUri, StringComparison.Ordinal))];
+
+    /// <summary>Whether <paramref name="seatClass"/>'s deny set names the app's door, and so cannot start while it is not open.</summary>
+    public bool NeedsDoor(string seatClass) => ArgsFor(seatClass).Any(a => a.Contains(DoorSlot, StringComparison.Ordinal));
+
+    /// <summary>The features that may be on for <paramref name="seatClass"/>, or none.</summary>
+    public string[] FeaturesFor(string seatClass) => FeatureAllowlist.TryGetValue(seatClass, out var a) ? a : [];
+
+    /// <summary>The MCP servers <paramref name="seatClass"/> may list, or none.</summary>
+    public string[] ServersFor(string seatClass) => McpAllowlist.TryGetValue(seatClass, out var a) ? a : [];
 
     /// <summary>The seat home resolved: <see cref="Home"/> with <c>{seatHome}</c> replaced.</summary>
     public string Root => Resolve(Home, Paths.SeatHome);
@@ -163,6 +209,16 @@ public sealed class SeatPlan
     {
         var root = Root;
         return Environment.ToDictionary(kv => kv.Key, kv => Resolve(kv.Value, root), StringComparer.Ordinal);
+    }
+
+    /// <summary><see cref="ResolvedEnvironment()"/>, then <paramref name="seatClass"/>'s own <see cref="ClassEnvironment"/> over it.</summary>
+    public IReadOnlyDictionary<string, string> ResolvedEnvironment(string seatClass)
+    {
+        var root = Root;
+        var all = new Dictionary<string, string>(ResolvedEnvironment(), StringComparer.Ordinal);
+        if (ClassEnvironment.TryGetValue(seatClass, out var own))
+            foreach (var (k, v) in own) all[k] = Resolve(v, root);
+        return all;
     }
 
     static string Resolve(string value, string root) =>
@@ -620,6 +676,67 @@ public sealed class RuntimeManifest
 /// </summary>
 public static class RuntimeCatalog
 {
+    /// <summary>
+    /// THE CODEX CLI CLASS'S DENY SET, proved on codex-cli 0.160.1 on 2026-10-11 against a local mock provider over a HOSTILE home (a
+    /// copy of the owner's config, plugins and skills, survey case (d)): see the seat plan below.
+    /// </summary>
+    static string[] CodexCliDeny =>
+    [
+        "--ignore-user-config", "--ignore-rules", "--strict-config",
+        "--disable", "apps", "--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing",
+        "--disable", "browser_use", "--disable", "browser_use_external", "--disable", "browser_use_full_cdp_access",
+        "--disable", "computer_use", "--disable", "in_app_browser", "--disable", "in_app_chat",
+        "--disable", "in_app_local_automation", "--disable", "multi_agent", "--disable", "multi_agent_v2",
+        "--disable", "memories", "--disable", "hooks", "--disable", "image_generation", "--disable", "goals",
+        "--disable", "tool_suggest", "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
+        "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "daemon_auto_start",
+        "--disable", "auth_elicitation", "--disable", "tool_call_mcp_elicitation", "--disable", "worktrees",
+        "--disable", "code_mode_host", "--disable", "in_app_updates",
+        "-c", "mcp_servers={}", "-c", "marketplaces={}", "-c", "notify=[]", "-c", "web_search=\"disabled\"",
+        "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false",
+        "-c", "include_apps_instructions=false", "-c", "check_for_update_on_startup=false",
+        "-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "history.persistence=\"none\"",
+        "-c", "cli_auth_credentials_store=\"file\"", "-c", "mcp_oauth_credentials_store=\"file\"",
+        "-c", "shell_environment_policy.inherit=\"all\"", "-c", "shell_environment_policy.set={}"
+    ];
+
+    /// <summary>
+    /// THE CODEX BROKER CLASS'S DENY SET (<c>U-thinking-seats-c</c>; the thinking-seats survey § 3): the CLI class's, with
+    /// <c>-c mcp_servers={}</c> replaced by the app's door as the one server — its address in <see cref="SeatPlan.DoorSlot"/>, the
+    /// launch's grant as bearer, <c>required=true</c> so a door that does not answer fails the session before any model request
+    /// (survey RUN e4) — and the shell, exec, image and sleep tools and the sub-agents switched off.
+    /// </summary>
+    static string[] CodexBrokerDeny =>
+    [
+        .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}"),
+        "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "view_image", "--disable", "sleep_tool",
+        "-c", "agents.enabled=false",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\""
+    ];
+
+    /// <summary><paramref name="args"/> less every adjacent <paramref name="flag"/> <paramref name="value"/> pair.</summary>
+    static IEnumerable<string> WithoutPair(string[] args, string flag, string value)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] == flag && i + 1 < args.Length && args[i + 1] == value) { i++; continue; }
+            yield return args[i];
+        }
+    }
+
+    /// <summary>The features on under the CLI class's keys, RUN 2026-10-11 over an empty home: anything else on is a release or a key that changed.</summary>
+    static string[] CodexCliFeatures =>
+    [
+        "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
+        "guardian_approval", "guardian_reuse_parent_compaction", "in_app_dictation", "item_ids", "mentions_v2",
+        "resize_all_images", "shell_snapshot", "shell_tool", "sleep_tool", "sqlite", "steer", "system_proxy_fallback",
+        "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server", "unbounded_connection_retries",
+        "unified_exec", "unified_exec_tty", "unified_exec_zsh_fork", "view_image", "write_stdin_approval"
+    ];
+
     public static string OverridePath => Path.Combine(Paths.Home, "runtimes.json");
 
     /// <summary>
@@ -749,25 +866,17 @@ public static class RuntimeCatalog
                 // manifest offers ("API key login is disabled. Use ChatGPT login instead.", rc 1, RUN 2026-10-11).
                 Args = new(StringComparer.Ordinal)
                 {
-                    [SeatPlan.CliClass] =
-                    [
-                        "--ignore-user-config", "--ignore-rules", "--strict-config",
-                        "--disable", "apps", "--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing",
-                        "--disable", "browser_use", "--disable", "browser_use_external", "--disable", "browser_use_full_cdp_access",
-                        "--disable", "computer_use", "--disable", "in_app_browser", "--disable", "in_app_chat",
-                        "--disable", "in_app_local_automation", "--disable", "multi_agent", "--disable", "multi_agent_v2",
-                        "--disable", "memories", "--disable", "hooks", "--disable", "image_generation", "--disable", "goals",
-                        "--disable", "tool_suggest", "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
-                        "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "daemon_auto_start",
-                        "--disable", "auth_elicitation", "--disable", "tool_call_mcp_elicitation", "--disable", "worktrees",
-                        "--disable", "code_mode_host", "--disable", "in_app_updates",
-                        "-c", "mcp_servers={}", "-c", "marketplaces={}", "-c", "notify=[]", "-c", "web_search=\"disabled\"",
-                        "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false",
-                        "-c", "include_apps_instructions=false", "-c", "check_for_update_on_startup=false",
-                        "-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "history.persistence=\"none\"",
-                        "-c", "cli_auth_credentials_store=\"file\"", "-c", "mcp_oauth_credentials_store=\"file\"",
-                        "-c", "shell_environment_policy.inherit=\"all\"", "-c", "shell_environment_policy.set={}"
-                    ]
+                    [SeatPlan.CliClass] = CodexCliDeny,
+                    // THE BROKER-ONLY CLASS (U-thinking-seats-c), RUN 2026-10-17 on codex-cli 0.160.1 against a loopback mock provider,
+                    // a throwaway home and a FAKE grant (fleet/tmp/A-org/u-thinking-seats-c-build/run/broker.sh): exit 0 under
+                    // --strict-config, the stub door initialized, listed and authenticated with the bearer, and gpt-5.5 offered exactly
+                    // list_mcp_resources, list_mcp_resource_templates, read_mcp_resource, request_user_input, tool_search.
+                    [SeatPlan.BrokerClass] = CodexBrokerDeny
+                },
+                // CODEX HAS NO ENVIRONMENT IN THE BROKER CLASS: no shell, file, patch or image tool can run anywhere (R-exec-server).
+                ClassEnvironment = new(StringComparer.Ordinal)
+                {
+                    [SeatPlan.BrokerClass] = new(StringComparer.Ordinal) { ["CODEX_EXEC_SERVER_URL"] = "none" }
                 },
                 ConfigFile = "codex/config.toml",
                 // WHERE CODEX 0.160.1 KEEPS A SECRET IN A FILE, read in its source at rust-v0.160.1: the sign-in in
@@ -793,16 +902,19 @@ public static class RuntimeCatalog
                 // 0.04 s and 0.03 s on this Mac (survey § 4). Under the deny set's keys, RUN 2026-10-11 over an empty home, exactly
                 // these were on — the allowlist is that run's list, and anything else on is a release or a key that changed.
                 FeaturesArgs = ["features", "list"],
-                FeatureAllowlist =
-                [
-                    "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
-                    "guardian_approval", "guardian_reuse_parent_compaction", "in_app_dictation", "item_ids", "mentions_v2",
-                    "resize_all_images", "shell_snapshot", "shell_tool", "sleep_tool", "sqlite", "steer", "system_proxy_fallback",
-                    "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server", "unbounded_connection_retries",
-                    "unified_exec", "unified_exec_tty", "unified_exec_zsh_fork", "view_image", "write_stdin_approval"
-                ],
+                FeatureAllowlist = new(StringComparer.Ordinal)
+                {
+                    [SeatPlan.CliClass] = CodexCliFeatures,
+                    // Under the broker's keys, RUN 2026-10-17 (broker.sh, `features list`): the CLI class's list less shell_tool, sleep_tool
+                    // and view_image. unified_exec still REPORTS on — with no environment it offers no tool, which the surface verifier proves.
+                    [SeatPlan.BrokerClass] = [.. CodexCliFeatures.Except(["shell_tool", "sleep_tool", "view_image"], StringComparer.Ordinal)]
+                },
                 McpArgs = ["mcp", "list", "--json"],
-                McpAllowlist = [],
+                McpAllowlist = new(StringComparer.Ordinal)
+                {
+                    [SeatPlan.CliClass] = [],
+                    [SeatPlan.BrokerClass] = [BrokerSeat.DoorServer]
+                },
                 // WHAT THE DASHBOARD'S "AI sign-in" CARD SAYS ABOVE ITS THREE WAYS IN (U-seat-signin), and what a refused turn says
                 // while the seat home holds no credential.
                 SignedOut = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again."
