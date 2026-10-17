@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -310,6 +311,68 @@ public class ProvingHomeTests(ITestOutputHelper log)
         log.WriteLine(string.Join(" | ", read.Refused));
         Assert.Contains(read.Refused, r => r.StartsWith("'proving-synthetic' is TradeAgent's proving-ground row", StringComparison.Ordinal));
         Assert.DoesNotContain(read.Sources, r => r.Id == ProvingSources.Synthetic);
+    }
+    /// <summary>
+    /// THE EVIDENCE PATH (<c>docs/ORCHESTRATION.md</c> § 8, SIM-001: "the proving ground's store read by no evidence path"):
+    /// the files that judge, record and serve evidence, each by the name the brief gives it.
+    /// </summary>
+    static readonly string[] EvidencePath =
+    [
+        "src/TradeAgent.Core/Strategy/Referee.cs", "src/TradeAgent.Core/Db/StrategyStore.cs", "src/TradeAgent.Core/Db/CampaignStore.cs",
+        "src/TradeAgent.Core/Db/PromotionStore.cs", "src/TradeAgent.Core/Db/ResearchLedger.cs", "src/TradeAgent.Core/Db/RefereeHoldout.cs",
+        "src/TradeAgent.Core/Db/DatasetStore.cs", "src/TradeAgent.Core/Db/TapeReader.cs", "src/TradeAgent.Core/Features/FeatureSeries.cs",
+        "src/TradeAgent.AgentRuntime/MissionLoop.cs"
+    ];
+
+    /// <summary>
+    /// What of the proving namespace an evidence-path file may name, by name: the tape reader's kind check (items 2 and 3)
+    /// and nothing else. Exactly this — a name added or one no longer used both turn this red.
+    /// </summary>
+    static readonly string[] Allowed =
+    [
+        "src/TradeAgent.Core/Db/TapeReader.cs: HomeKind",
+        "src/TradeAgent.Core/Db/TapeReader.cs: HomeMark.Read",
+        "src/TradeAgent.Core/Db/TapeReader.cs: HomeMark.Refusal",
+        "src/TradeAgent.Core/Db/TapeReader.cs: ProvingGround.ThisKind",
+        "src/TradeAgent.Core/Db/TapeReader.cs: using TradeAgent.Core.Proving"
+    ];
+
+    /// <summary>
+    /// (g) NO EVIDENCE PATH NAMES THE PROVING NAMESPACE (SIM-001 by type): beyond the reader's allowlisted kind check, no
+    /// file that judges, records or serves evidence names a type of <c>TradeAgent.Core.Proving</c> — every type there, as
+    /// the assembly lists them, so one added later is covered — and so none can read a synthetic market, a truth manifest or
+    /// a proving score. The <c>OrgLedgerTests</c> pattern: the source, scanned.
+    /// </summary>
+    [Fact]
+    public void No_evidence_path_names_the_proving_namespace()
+    {
+        var types = typeof(ProvingGround).Assembly.GetTypes()
+            .Where(t => t.Namespace == typeof(ProvingGround).Namespace && !t.IsNested && !t.Name.StartsWith('<'))
+            .Select(t => t.Name.Split('`')[0]).Distinct().Order(StringComparer.Ordinal).ToArray();
+        Assert.Contains("SyntheticMarket", types);
+        Assert.Contains("ProvingSources", types);
+        log.WriteLine("the proving namespace: " + string.Join(", ", types));
+
+        var named = new Regex(@"(?<![\w.])(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
+        var root = RepoRoot();
+        var found = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var rel in EvidencePath)
+        {
+            var text = File.ReadAllText(Path.Combine(root, rel));
+            foreach (Match m in named.Matches(text))
+                found.Add($"{rel}: {m.Groups[1].Value}{(m.Groups[2].Success && char.IsUpper(m.Groups[2].Value[0]) ? "." + m.Groups[2].Value : "")}");
+            if (Regex.IsMatch(text, @"using\s+(static\s+)?TradeAgent\.Core\.Proving\s*;")) found.Add($"{rel}: using TradeAgent.Core.Proving");
+        }
+
+        foreach (var f in found) log.WriteLine(f);
+        Assert.Equal(Allowed.Order(StringComparer.Ordinal).ToArray(), found.ToArray());
+    }
+
+    static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "src"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
     }
 }
 
