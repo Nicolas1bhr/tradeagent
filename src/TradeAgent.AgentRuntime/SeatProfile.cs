@@ -680,10 +680,52 @@ public static class SeatProfile
     /// user, so what is verified here can change between this check and the start. It turns a misconfigured seat into a refusal; it
     /// does not make a hostile one impossible.</para>
     /// </summary>
+    public static Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
+        string workingDirectory, ISeatProbe probe, CancellationToken ct) =>
+        VerifyAsync(manifest, exe, argv, workingDirectory, probe, SeatLaunch.Cli, ct);
+
+    /// <summary>
+    /// <see cref="VerifyAsync(RuntimeManifest, string, IReadOnlyList{string}, string, ISeatProbe, CancellationToken)"/> FOR ONE SEAT
+    /// CLASS (<c>U-thinking-seats-c</c>): that class's deny set, keys, environment and allowlists. For the broker class, before
+    /// anything is probed: its fields are this build's (<see cref="BrokerSeat.OverrideRefusal"/>), the door is open, and the argv
+    /// names its pinned model; after the CLI's own reports: the tools its binary, template and model would be offered are exactly the
+    /// expected set (<see cref="BrokerSeat.VerifySurfaceAsync"/>) — so a broker seat that would be offered a host tool or <c>exec</c>
+    /// is refused before its admission writes anything.
+    /// </summary>
     public static async Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
-        string workingDirectory, ISeatProbe probe, CancellationToken ct)
+        string workingDirectory, ISeatProbe probe, SeatLaunch launch, CancellationToken ct)
     {
-        if (manifest.Seat is not { } seat) return SeatVerdict.None;
+        // A BROKER SEAT IS NEVER STARTED UNVERIFIED: a manifest with no seat profile has none of the class's deny set to carry.
+        if (manifest.Seat is not { } seat)
+            return launch.SeatClass == SeatPlan.BrokerClass
+                ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, BrokerSeat.OverrideRefusal(manifest) ?? "TradeAgent will not start a broker-only seat with no seat profile.")
+                : SeatVerdict.None;
+        var seatClass = launch.SeatClass;
+        var broker = seatClass == SeatPlan.BrokerClass;
+        string? model = null;
+
+        if (broker)
+        {
+            if (BrokerSeat.OverrideRefusal(manifest) is { } overridden) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, overridden);
+            if (seat.NeedsDoor(seatClass) && launch.Door is null)
+                return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                    $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: TradeAgent's own door, the one tool server it " +
+                    "may use, is not open. Nothing was started; the next turn checks again.");
+            // THE PINNED MODEL, AND ONLY IT: a class that pins none, a command line that cannot name one, or another model refuses.
+            if (BrokerSeat.ModelRefusal(seatClass, launch.Model, manifest) is { } notPinned)
+                return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, notPinned);
+            model = BrokerSeat.ModelOf(seatClass)!;
+            string[] named = [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
+            if (!Carries(argv, named))
+                return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                    $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: the command it built does not name {model}, the " +
+                    "model a broker-only seat is pinned to, so it would run on whatever its account defaults to. This is TradeAgent's own " +
+                    "fault, not the AI's; nothing was started.");
+        }
+        else if (!seat.Args.ContainsKey(seatClass) && seatClass != SeatPlan.CliClass)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent will not start {manifest.DisplayName} as a '{seatClass}' seat: this build gives it no deny set for that class. " +
+                "Nothing was started.");
 
         try { Prepare(seat); }
         catch (TradeAgentException ex) when (ex.Code == ErrorCode.AI_SEAT_REFUSED) { return SeatVerdict.Refuse(ex.Code, ex.Message); }
@@ -691,7 +733,7 @@ public static class SeatProfile
         if (PinRefusal(manifest, exe) is { } notThePin)
             return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notThePin);
 
-        var deny = seat.ArgsFor(SeatPlan.CliClass);
+        var deny = seat.ArgsFor(seatClass, launch.Door);
         if (deny.Length > 0 && !Carries(argv, deny))
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: the command it built for {manifest.DisplayName} does not carry the seat's deny set. " +
@@ -722,19 +764,19 @@ public static class SeatProfile
                 "own settings or skills. Remove it to continue.");
 
         SeatReading reading;
-        try { reading = await probe.ReadAsync(manifest, exe, workingDirectory, ct); }
+        try { reading = await probe.ReadAsync(manifest, exe, workingDirectory, seatClass, launch.Door, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: it could not read what {manifest.DisplayName} would switch on ({ex.Message}).");
         }
 
-        if (OffTheAllowlist(seat, SeatPlan.CliClass, reading.Features) is { } feature)
+        if (OffTheAllowlist(seat, seatClass, reading.Features) is { } feature)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {feature} switched on, which the AI's profile does " +
                 $"not allow. This build of TradeAgent runs {manifest.DisplayName} {manifest.Install.Version} with only its own set on.");
 
-        if (Servers(seat, SeatPlan.CliClass, reading.Mcp) is { } server)
+        if (Servers(seat, seatClass, reading.Mcp) is { } server)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {server}, and the AI's profile allows no tool " +
                 "server TradeAgent did not configure.");
@@ -745,7 +787,24 @@ public static class SeatProfile
         if (!reading.SignedIn)
             return SeatVerdict.Refuse(ErrorCode.AI_AUTH_REQUIRED, seat.SignedOut);
 
-        return new SeatVerdict(null, null, reading) { Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading) };
+        if (!broker) return new SeatVerdict(null, null, reading) { Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading) };
+
+        // THE TOOLS THIS BINARY, TEMPLATE AND MODEL WOULD BE OFFERED, VERIFIED BEFORE EVERY LAUNCH, fresh or resumed (§ 2.7): read from
+        // the dry run's cache by (binary digest, template, model), and held to the class's expected set on every call.
+        string exeSha;
+        try { exeSha = Sha256Of(exe); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, $"TradeAgent will not start the AI: it could not read {exe} ({ex.Message}).");
+        }
+        var (refusal, offered) = await BrokerSeat.VerifySurfaceAsync(
+            new SurfaceAsk(manifest, exe, exeSha, seatClass, model!), launch.Surface ?? CodexSurfaceProbe.Instance, ct);
+        if (refusal is not null) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, refusal);
+        return new SeatVerdict(null, null, reading)
+        {
+            Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading, seatClass, offered ?? []),
+            Offered = offered
+        };
     }
 
     /// <summary>
@@ -754,13 +813,22 @@ public static class SeatProfile
     /// first turn and a resume), the config file's bytes, and the CLI's two reports verbatim. Written on the launch's
     /// <c>ai_attempt</c> row; one deny flag moved is another profile, and so is another release.
     /// </summary>
-    public static string ProfileHash(RuntimeManifest manifest, string exe, byte[] config, SeatReading reading)
+    public static string ProfileHash(RuntimeManifest manifest, string exe, byte[] config, SeatReading reading) =>
+        ProfileHash(manifest, exe, config, reading, SeatPlan.CliClass, null);
+
+    /// <summary>
+    /// <see cref="ProfileHash(RuntimeManifest, string, byte[], SeatReading)"/> FOR ONE SEAT CLASS: that class's deny set as written (the
+    /// door's slot unfilled, so a restart's new port is the same profile), and — for any class but the CLI's — the class's name, its
+    /// environment, and the offered tools its surface was verified as. The CLI class hashes exactly as it always has.
+    /// </summary>
+    public static string ProfileHash(RuntimeManifest manifest, string exe, byte[] config, SeatReading reading, string seatClass,
+        IReadOnlyList<string>? offered)
     {
         var seat = manifest.Seat;
         var argv = new List<string>();
         if (!string.IsNullOrWhiteSpace(manifest.JsonFlag)) argv.AddRange(manifest.JsonFlag.Split(' ', StringSplitOptions.RemoveEmptyEntries));
         argv.AddRange(manifest.UnattendedArgs);
-        argv.AddRange(seat?.ArgsFor(SeatPlan.CliClass) ?? []);
+        argv.AddRange(seat?.ArgsFor(seatClass) ?? []);
 
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Part(string label, ReadOnlySpan<byte> bytes)
@@ -774,6 +842,14 @@ public static class SeatProfile
         Part("config", config);
         Part("features", Encoding.UTF8.GetBytes(reading.Features));
         Part("mcp", Encoding.UTF8.GetBytes(reading.Mcp));
+        if (seatClass != SeatPlan.CliClass)
+        {
+            Part("class", Encoding.UTF8.GetBytes(seatClass));
+            Part("class-environment", Encoding.UTF8.GetBytes(string.Join('\0',
+                (seat?.ClassEnvironment.GetValueOrDefault(seatClass) ?? new Dictionary<string, string>())
+                .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))));
+            Part("offered", Encoding.UTF8.GetBytes(string.Join('\0', (offered ?? []).Order(StringComparer.Ordinal))));
+        }
         return Convert.ToHexStringLower(sha.GetHashAndReset());
     }
 
@@ -956,6 +1032,9 @@ public sealed record SeatVerdict(string? Refusal, ErrorCode? Code, SeatReading? 
     /// <summary>The assurance of <see cref="SeatClass"/>, or null for none or a class this build does not know.</summary>
     public SeatAssurance? Assurance => SeatClasses.AssuranceOf(SeatClass);
 
+    /// <summary>The tools a broker seat's surface was verified as offering (<see cref="BrokerSeat.VerifySurfaceAsync"/>), or null.</summary>
+    public IReadOnlyList<string>? Offered { get; init; }
+
     /// <summary>A runtime with no seat profile: nothing refused, nothing read.</summary>
     public static readonly SeatVerdict None = new(null, null, null);
 
@@ -994,6 +1073,17 @@ public interface ISeatProbe
     /// </summary>
     Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, string seatClass, Uri? door,
         CancellationToken ct) => ReadAsync(manifest, exe, workingDirectory, ct);
+}
+
+/// <summary>
+/// HOW ONE LAUNCH'S SEAT IS VERIFIED: its class (<see cref="SeatPlan.CliClass"/> or <see cref="SeatPlan.BrokerClass"/>), the app's
+/// door for a class that names it, the model a broker seat is pinned to, and the probe that reads its offered tools (the real dry run
+/// unless a test passes a fake).
+/// </summary>
+public sealed record SeatLaunch(string SeatClass, Uri? Door = null, string? Model = null, ISurfaceProbe? Surface = null)
+{
+    /// <summary>The CLI class, as every launch was verified before classes.</summary>
+    public static readonly SeatLaunch Cli = new(SeatPlan.CliClass);
 }
 
 /// <summary>

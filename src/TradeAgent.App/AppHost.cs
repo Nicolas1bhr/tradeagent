@@ -415,9 +415,9 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>
     /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD LAUNCH ON, DECLARED from the runtime object this host would open it on
     /// (<see cref="RuntimeObjectFor"/>) — the harness is <see cref="SeatClasses.Harness"/>; any CLI runtime is the class its session
-    /// starts (<see cref="RuntimeManifest.SessionSeatClass"/>: <see cref="SeatClasses.Cli"/>, with a seat plan or without one, since
-    /// no seat starts in a cell yet, or a test host's puppet's declared class) — and null before anything is prepared.
-    /// Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
+    /// starts (<see cref="RuntimeManifest.SessionSeatClassFor"/>: <see cref="SeatClasses.Broker"/> for a position beyond the legacy
+    /// pair on a runtime with a broker class, <see cref="SeatClasses.Cli"/> for the legacy pair, or a test host's puppet's declared
+    /// class) — and null before anything is prepared. Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
     /// </summary>
     /// <summary>
     /// A SEAT CLASS AS A LANE (<c>U-org-lanes</c>; the orchestrator's rulings Q2 and Q5, 2026-10-16): CONFINED only where the class's
@@ -435,7 +435,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         null => null,
         ApiAgentRuntime => SeatClasses.Harness,
-        CliAgentRuntime cli => cli.Manifest.SessionSeatClass,
+        CliAgentRuntime cli => cli.Manifest.SessionSeatClassFor(role),
         _ => SeatClasses.Cli
     };
 
@@ -457,6 +457,8 @@ public sealed class AppHost : IAsyncDisposable
     public string? RequestedModelFor(string role)
     {
         var chosen = Gateway.Settings.ModelForRole(role);
+        // A BROKER-ONLY SEAT RUNS ON ITS PIN, so its reservation is priced at the pin (U-thinking-seats-c).
+        if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is { } pinned) return pinned;
         // THE ROLE'S OWN RUNTIME RESOLVES IT. Asking the app's runtime for a role that is on the
         // harness answers with the CLI's rules — which is how a reservation gets priced at a model the
         // turn will not run on, in whichever direction the two happen to differ.
@@ -993,6 +995,8 @@ public sealed class AppHost : IAsyncDisposable
                 Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
             presence: _presence,
             seats: _seats,
+            // THE APP'S DOOR, read at every launch: a broker-only seat's one tool server (U-thinking-seats-c).
+            door: () => DoorUrl,
             // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
             positions: () => new OrgStore(db).Positions()
                 .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))

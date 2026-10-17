@@ -28,7 +28,8 @@ namespace TradeAgent.AgentRuntime;
 /// </param>
 public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
-    AgentPresence? presence = null, ISeatProbe? seatProbe = null, SeatRegister? seats = null) : IAgentRuntime
+    AgentPresence? presence = null, ISeatProbe? seatProbe = null, SeatRegister? seats = null,
+    Func<Uri?>? door = null, ISurfaceProbe? surfaceProbe = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -953,7 +954,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
             presence: presence, model: () => RequestedModel, role: CouncilRoles.Operations,
-            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats);
+            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats,
+            door: door, surfaceProbe: surfaceProbe);
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -973,9 +975,13 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // exactly as it does for the single conversation above. A caller resolving it itself
             // would have to know which runtime is prepared, which is the one thing this interface
             // exists to keep out of the app.
+            // A BROKER SEAT IS HANDED THE OWNER'S OWN CHOICE, UNRESOLVED (U-thinking-seats-c): it runs on its pinned model, and only
+            // a choice that names another refuses it — the runtime's default model is not a choice anybody made.
+            var broker = manifest.SessionSeatClassFor(role) == SeatPlan.BrokerClass;
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
-                presence: presence, model: () => ModelFor(model()), role: role,
-                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats);
+                presence: presence, model: broker ? model : () => ModelFor(model()), role: role,
+                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats,
+                door: door, surfaceProbe: surfaceProbe);
             _roleConversations[role] = session;
             return session;
         }

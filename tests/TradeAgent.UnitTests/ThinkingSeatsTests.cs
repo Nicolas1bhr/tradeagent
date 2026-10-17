@@ -137,11 +137,14 @@ public class ThinkingSeatsTests : IDisposable
         Assert.False(wakes.Get(wake)!.Consumed);
         Assert.Null(meter.OpenAttemptIdFor(Third));
 
-        // A HOST WITH NO METER: the CLI session refuses after verifying its seat, before any process starts.
+        // A HOST WITH NO METER: the CLI session refuses after verifying its seat, before any process starts. Since U-thinking-seats-c a
+        // position on codex verifies as a broker-only seat — its door, its reports and its offered tools faked here, so the verified
+        // seat is reached — and that seat is still not the harness the register declared.
         var (codex, exe, dump) = SeatHomeTests.Seat(nameof(The_launch_time_check_refuses_a_seat_weaker_than_the_one_declared_with_no_row_no_reservation_no_wake));
         var register = Register(db, SeatClasses.Harness);
         var session = new AgentSession(codex, () => exe, () => Path.GetDirectoryName(exe)!, () => new Dictionary<string, string>(),
-            presence: new AgentPresence(), role: Third, seatProbe: new SeatHomeTests.FakeProbe(), seats: register);
+            presence: new AgentPresence(), role: Third, seatProbe: BrokerSeatTests.BrokerProbe(), seats: register,
+            door: () => new Uri("http://127.0.0.1:1/mcp"), surfaceProbe: new BrokerSeatTests.FakeSurface(BrokerSeatTests.Classic));
         await SeatHomeTests.Turn(session);
         Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
         Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains($"'{Third}'", StringComparison.Ordinal));
