@@ -10912,3 +10912,32 @@ as before) ⇒ the guard AND the AiAttemptLedgerTests restart test red; restored
 startup throws partway; one failed delete skips the launcher restore — each only on a path where a test has already failed; NOT blocking → OWED light card
 "PuppetLife restores on its failure paths too" (seat A; before U-proving-ground-c, whose host shares the concern).
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the guard alone on Windows locally; the reversed class order.
+
+## U-thinking-seats-b — the broker's shell-free door: the app's own MCP server on loopback serves a launch's grant only to the pinned codex inside that attempt's container, the harness's own tools under the grant, and an organisation verb only to an attempt whose RECORDED seat assurance is at least Mediated; no rung (landed 2026-10-17, seat A)
+
+**Landed** at `9c3ad380` (rebased on main `93f4463e`) (item 4 pass code `3711cef5` on main `fcf545c3`, with part a's rung 39 under it; fix pass 1 code `85a831e4`; builder code `6e4b86e6`). A protection
+unit — ORCHESTRATION § 2.7 (the broker's shell-free door), § 2.3 (a grant bound to the attempt's container), § 2.9 (one authority implementation; a verb checks the seat
+assurance the gate RECORDED), AUTH-001, ORDER-001, UNKNOWN-001 (the drain). **No rung, no pipe op, no verb.** Builder aa2ac15420ec88828; fresh fixer a52206bd14c8ac17b.
+**CI:** landing run **38998716317** at `9c3ad380`: all 12 jobs success (dedupe-gate, shard-plan, package, package-linux, test ubuntu, macos, windows 1-5, linux-host) — the device-auth test GREEN on every platform on a main with U-puppet-isolation. Names: base 2878 → tip 2898, removed 0. Item 4 run 38996824471 at `3711cef5`: 11/12 success; ubuntu red ONLY on `LinuxHostRuntimeTests.The_device_auth_prompt_yields_its_link_and_code`
+("Failed to create CoreCLR, HRESULT: 0x8007FF0B"; no runtime or sign-in file in the diff) — its SECOND sighting (first: train B6 38993615006, macOS), JUDGED by id; probable
+cause the puppet lives' leaked DOTNET_ROOT, which U-puppet-isolation (93f4463e) puts back. Fix 1 run 38992686496 red ONLY on O3's clock test (since fixed). Builder run
+38975967893 12/12. Scan: "Bearer"/"token" prose and one install.sh comment ("VNC password authentication") excluded by phrase.
+**What changed:** `BrokerDoor` — 127.0.0.1:0, a minimal HTTP/1.1 + JSON-RPC MCP subset (initialize, notifications, ping, tools/list, tools/call; GET 405; no SSE; an
+Origin header → 403), started and stopped with the gateway, `AppHost.DoorUrl`. The bearer is the launch grant, verified per request (absent, unknown, expired, pending or
+turn over → 401 and close); a connection serves only the grant it proved; `AgentGrants.Ended` closes it. `TcpPeer.OwnerOf` (/proc/net/tcp{,6}; libproc; GetExtendedTcpTable)
+→ the peer must have started before the accept, run the BUILT-IN pinned codex (`BrokerDoor.PinnedCodex`, never runtimes.json; the link's final target) and be inside
+`AttemptContainer.Contains` (U-grant-tree's predicate; on Linux U-cell-linux-b's cgroup AND); a socket held by two processes and any lookup error refuse. The surface is
+`GrantedWorkerTools.Granted` under the grant's role and attempt, its order permission as issued (OrdersWithheld kept), every call a `tool_call` row, results cut to 64 KiB
+including the note, the row recording the bytes delivered. Door calls are the pipe's tracked handlers: quit and a platform switch drain them before cancelling. The session
+is `door-{attempt}`; a grant naming no attempt is refused. `VerbGate`: an organisation verb is offered and served only when the attempt's recorded `assurance` ≥
+`CapabilityPolicy.Minimum(Capability.DecisionVerbs)` = MEDIATED (the orchestrator's ruling: broker-only or confined; never unconfined; a puppet passes); a missing row or
+word, an unknown word or a failed read refuses in words, recorded. linux-host's prove.sh admits one loopback listener, the app's own pid.
+**Evidence:** RED per item (reds.txt), e.g. (e) "an Operations launch started beside a neighbour bought through the door"; fix 1: "the door's disposal returned while an
+order it had dispatched was still at the broker", a reused sweep id answered from another launch, recorded 65609 bytes vs delivered 65636; item 4: "attempt-v-puppet was
+not offered the verb … TradeAgent has recorded no seat assurance". Mutants: the membership conjunct removed ⇒ (b) red (CI ubuntu single job 38974160877); the door drain
+removed ⇒ 1/19 red; the VerbGate comparison skipped ⇒ the unconfined case red; each restored. On this Mac with codex 0.160.1 (= the pin), throwaway homes and the mock
+provider: the attempt's codex served; a second codex outside the attempt refused, 0 requests to the mock. Release `--no-incremental` 0 warnings; BrokerDoorTests 3× 20/20.
+**Judged** (records/U-thinking-seats-b-review-triage.md): R1–R3 REAL → fixed; R4 closed; re-reviews of fix 1 and item 4 found nothing. OWED: R5 PeerImage.HashOf's
+mtime-trusting cache → U-thinking-seats-c.
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the drain under a real ATAS connector (the fake connector's hold only); a real broker-only seat's
+recorded assurance end to end (part c); codex on Linux and Windows (TcpPeer proved there by CI tests only); same-user ptrace or a duplicated socket (not claimed).
