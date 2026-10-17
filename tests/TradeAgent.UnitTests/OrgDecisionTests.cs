@@ -504,6 +504,39 @@ public class OrgDecisionTests
     }
 
     /// <summary>
+    /// (d1) A VERDICT MEASURED BEFORE THE FORECAST IS NEVER DROPPED (evidence): the referee stamps its verdict before it commits,
+    /// so a forecast written in between passes the already-measured check yet a verdict stamped EARLIER than it lands afterwards.
+    /// That verdict is not skipped into "no verdict by the date" — a false record about what was measured — the forecast resolves
+    /// void for its own reason, "measured before the forecast", naming that verdict as its record. RED before the fix: void, "no
+    /// verdict was recorded", naming the version.
+    /// </summary>
+    [Fact]
+    public void A_verdict_stamped_before_the_forecast_and_committed_after_it_resolves_void_as_measured_before_the_forecast()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-race");
+        var t0 = DateTimeOffset.UtcNow;
+        var by = t0.AddDays(2);
+        // The referee has taken its timestamp (t0 - 1 min) and paused; the forecast is recorded meanwhile ...
+        var d = Decided(db, t0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-race", PromotionVerdict.Promoted, by, 0.7m));
+        var f = new OrgStore(db).ForecastsOn(d.Id).Single();
+        // ... and then the verdict commits, stamped before the forecast.
+        Verdict(db, "ver-race", PromotionVerdict.Promoted, t0.AddMinutes(-1));
+        var promotion = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT id FROM strategy_promotion WHERE version_id='ver-race'");
+            return (string)c.ExecuteScalar()!;
+        });
+
+        new ForecastResolver(db).Sweep(by.AddHours(1));
+        var r = new OrgStore(db).Resolution(f.Id)!;
+        Assert.Equal((ForecastOutcome.Void, OrgRefKind.Promotion, promotion), (r.Outcome, r.RecordKind, r.RecordId));
+        Assert.Contains("measured before the forecast", r.Why, StringComparison.Ordinal);
+        Assert.DoesNotContain("no verdict", r.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (d2) A MANDATE EVENT RESOLVES A MANDATE-STATE FORECAST: the target state by the date is yes, naming the event; another
     /// closing state first is no; the date passing with neither is no. RED at base: no resolver existed.
     /// </summary>

@@ -14,7 +14,8 @@ public sealed record ForecastSweep(int Resolved, IReadOnlyList<string> Refused);
 /// learn what the protocol keeps from it.
 ///
 /// <para><b>What it decides.</b> <c>verdict-class</c>: the first verdict for the version by the date — of the forecast's class
-/// <c>yes</c>, of another <c>no</c>; none by the date <c>void</c> (RULING Q4), never scored. <c>mandate-state</c>: the first event by
+/// <c>yes</c>, of another <c>no</c>; none by the date <c>void</c> (RULING Q4), never scored; one stamped BEFORE the forecast's write
+/// (committed after it) <c>void</c> as "measured before the forecast", naming it — never dropped into "none by the date". <c>mandate-state</c>: the first event by
 /// the date that is the target or closes the mandate — the target <c>yes</c>, another closing state <c>no</c>; the date passed with
 /// neither, <c>no</c>. Each resolution is its own immutable row naming the record it rests on, written by
 /// <see cref="OrgStore"/> with <c>ON CONFLICT DO NOTHING</c>, so a restart or a second pass writes nothing twice. A forecast whose
@@ -59,7 +60,14 @@ public sealed class ForecastResolver(Database db)
             : (MandateEventSql, (Func<string, bool>)(k => k == f.Target || MandateEventKind.Closes(k)));
         foreach (var (id, word, at) in Read(sql, f.Subject))
         {
-            if (at < f.At || at > f.ResolveBy || !closes(word)) continue;
+            if (!closes(word)) continue;
+            // MEASURED BEFORE THE FORECAST: a deciding record stamped before the forecast's write but committed after it (the
+            // referee stamps before it commits) passed the already-measured check in between. It is never dropped into "nothing by
+            // the date" — that would be a false record of what was measured: the forecast is void for this reason, naming it.
+            if (at < f.At)
+                return (ForecastOutcome.Void, f.Predicate == ForecastVocabulary.VerdictClass ? OrgRefKind.Promotion : "mandate-event", id,
+                    $"measured before the forecast: '{word}' was recorded for {f.Subject} at {at:u}, before the forecast was written at {f.At:u}");
+            if (at > f.ResolveBy) continue;
             return f.Predicate == ForecastVocabulary.VerdictClass
                 ? (word == f.Target ? ForecastOutcome.Yes : ForecastOutcome.No, OrgRefKind.Promotion, id,
                     $"the referee recorded '{word}' for version {f.Subject} at {at:u}")
