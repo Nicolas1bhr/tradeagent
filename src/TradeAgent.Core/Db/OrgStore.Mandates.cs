@@ -376,15 +376,18 @@ public sealed partial class OrgStore
     });
 
     /// <summary>
-    /// CODE STOPS RETRYING AND ASKS THE DECIDER: an <c>escalated</c> event by the app and ONE <c>escalation</c> wake to the decider,
-    /// keyed by that event. Called only inside a writer's own write — the escalation is never a second write after the one that
-    /// found it.
+    /// CODE STOPS RETRYING AND ASKS THE DECIDER: an <c>escalated</c> event by the app, every untaken <c>mandate</c> wake of the
+    /// holder's closed by no launch — a retry queued before the escalation is an automatic retry, and those have stopped (fix
+    /// pass 1, item 1) — and ONE <c>escalation</c> wake to the decider, keyed by that event. Called only inside a writer's own
+    /// write — the escalation is never a second write after the one that found it. What the decider does next (reject, which
+    /// owes the holder work again; cancel; accept) is the decider's; <see cref="AllocationRefusal"/> admits no launch meanwhile.
     /// </summary>
     MandateEventRow Escalate(MandateRow m, DateTimeOffset at, string reason, IReadOnlyList<string> evidence)
     {
         var escalated = AppendMandateEvent(m.Id, at, MandateEventKind.Escalated, AppActor, null, reason, evidence);
-        new MissionEventStore(db).Raise(MissionEventIds.Escalation(m.Id, escalated.Id), MissionEventKind.Escalation, at,
-            payload: m.Id, role: m.Decider);
+        var events = new MissionEventStore(db);
+        events.CloseMandateWakes(m.Id, at, MissionEventDisposition.Withdrawn, $"code escalated the mandate to its decider: {reason}");
+        events.Raise(MissionEventIds.Escalation(m.Id, escalated.Id), MissionEventKind.Escalation, at, payload: m.Id, role: m.Decider);
         return escalated;
     }
 
@@ -963,7 +966,7 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// WHY A LAUNCH UNDER <paramref name="mandateId"/> MAY NOT BE ADMITTED, or null — the mandate's allocation gate (ORCHESTRATION
-    /// § 2.4, BUDGET-001; RULING Q5): no such mandate; one that is closed (accepted, cancelled, expired); one this role does not
+    /// § 2.4, BUDGET-001; RULING Q5): no such mandate; one that is closed (accepted, cancelled, expired) or escalated and not sent back; one this role does not
     /// hold; one with a resolved launch of unknown cost (unknown is never zero); or measured spend + unresolved reservations + this
     /// launch's reservation above its lifetime allocation.
     /// </summary>
@@ -976,8 +979,16 @@ public sealed partial class OrgStore
         if (m is null) return MandateRefusal(mandateId, $"'{mandateId}' is no mandate, so no launch is admitted under it.");
 
         using (var last = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id ORDER BY id DESC LIMIT 1", ("$id", m.Id)))
-            if (last.ExecuteScalar() is string status && MandateEventKind.Closes(status))
-                return MandateRefusal(m.Id, $"mandate {m.Id} is {status}: no launch is admitted under a closed mandate, and its spend has stopped.");
+            switch (last.ExecuteScalar())
+            {
+                case string status when MandateEventKind.Closes(status):
+                    return MandateRefusal(m.Id, $"mandate {m.Id} is {status}: no launch is admitted under a closed mandate, and its spend has stopped.");
+                // AUTOMATIC RETRIES STOP AT AN ESCALATION (fix pass 1, item 1): until its decider sends it back (a rejection owes the
+                // holder work again), cancels it or accepts a delivery, no launch of the holder's is admitted under it.
+                case MandateEventKind.Escalated:
+                    return MandateRefusal(m.Id, $"mandate {m.Id} is escalated to its decider {m.Decider}: code has stopped retrying it, and "
+                        + "no launch is admitted under it until its decider sends it back, cancels it or accepts a delivery.");
+            }
         if (a.Role != m.Holder)
             return MandateRefusal(m.Id, $"mandate {m.Id} is held by {m.Holder}, not {a.Role ?? "the chair"}: only its holder's launches are charged to it.");
 

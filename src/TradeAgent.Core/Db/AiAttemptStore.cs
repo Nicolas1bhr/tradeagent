@@ -300,10 +300,6 @@ public sealed record AiAdmission
     public const string Launch = "launch";
 
     /// <summary>
-    /// A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words, typed
-    /// <see cref="RefusalKind.HostOrLaunch"/>: it is about this launch, so it keeps every wake and settles none.
-    /// </summary>
-    /// <summary>
     /// What <see cref="Ceiling"/> says when the MANDATE refused (<c>U-org-assignments-a</c>): the mandate the launch would serve is
     /// closed, not its own, of unknown spend, or its allocation has no room for this reservation. <see cref="MandateId"/> names it.
     /// Nothing was written and no wake consumed; the loop closes that mandate's wakes and tells its decider.
@@ -313,6 +309,10 @@ public sealed record AiAdmission
     /// <summary>The mandate a <see cref="Mandate"/> refusal is about.</summary>
     public string? MandateId { get; init; }
 
+    /// <summary>
+    /// A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words, typed
+    /// <see cref="RefusalKind.HostOrLaunch"/>: it is about this launch, so it keeps every wake and settles none.
+    /// </summary>
     public static AiAdmission LaunchRefused(string refusal) =>
         new() { Refusal = refusal, Ceiling = Launch, Kind = RefusalKind.HostOrLaunch };
 

@@ -836,6 +836,48 @@ public class OrgAssignmentTests
         Assert.Equal(0, org.Sweep(later));
     }
 
+    /// <summary>
+    /// (g2) AN ESCALATION STOPS THE RETRY ALREADY QUEUED (fix pass 1, item 1): a clean failure while its launch is still open
+    /// queues a retry; the launch then closes at more than half the allocation and the sweep escalates — and in THAT write the
+    /// queued retry is closed, and <see cref="AiAttemptStore.Begin"/> admits no launch under an escalated mandate: no row, no
+    /// reservation. RED at base: the retry stayed runnable and the gate admitted it. Watched red with the gate admitting
+    /// <c>escalated</c> again.
+    /// </summary>
+    [Fact]
+    public void An_escalation_stops_a_queued_retry_with_no_row_and_no_reservation()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue(allocation: 1m, retries: 5), now);
+        var issued = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == m.Id).Id;
+        var work = Begin(db, Member, 0.10m, [issued]);
+        Assert.True(work.Admitted, work.Refusal);
+
+        var failed = org.Deliver(m.Id, Member, work.Id, TooLong, [], [], now);
+        Assert.Equal(MandateEventKind.Retry, failed.Status);
+        var retry = failed.Wake!;
+        Assert.False(events.Get(retry)!.Consumed);
+
+        new AiAttemptStore(db).End(work.Id!, 0, now, 1000, null, null, 100, null, "model-x", 0.60m, null, null);
+        Assert.True(org.Sweep(now) >= 1);
+        Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(m.Id));
+        Assert.StartsWith(OrgStore.HalfSpent, org.MandateEvents(m.Id)[^1].Reason, StringComparison.Ordinal);
+        Assert.True(events.Get(retry)!.Consumed, "the retry queued before the escalation is still runnable");
+
+        var rows = Count(db, "ai_attempt");
+        Assert.False(Begin(db, Member, 0.10m, [retry]).Admitted);
+        var named = Begin(db, Member, 0.10m, mandate: m.Id);
+        Assert.False(named.Admitted, "a launch was admitted under an escalated mandate");
+        Assert.Equal((AiAdmission.Mandate, m.Id), (named.Ceiling, named.MandateId));
+        Assert.Contains("escalated", named.Refusal, StringComparison.Ordinal);
+        Assert.Equal(rows, Count(db, "ai_attempt"));
+        Assert.Equal(0m, org.SpendOf(m.Id).Reserved);
+        Assert.Empty(org.MandatesOwedBy(Member));
+    }
+
     // ---- item 6: the reads ---------------------------------------------------------------------------------------------
 
     /// <summary>
