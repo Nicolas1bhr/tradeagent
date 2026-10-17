@@ -305,7 +305,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 return 0;
             });
 
-        var hashed = HashPending(ct);
+        var hashed = HashPending(ct, unsealedHomes);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated)
         {
             AddedBy = addedBy,
@@ -389,12 +389,15 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// A row that fails either check is simply left unhashed: the next walk sees the new tuple and
     /// records it as the new version it is.
     /// </summary>
-    int HashPending(CancellationToken ct)
+    int HashPending(CancellationToken ct, IReadOnlySet<string> unsealedHomes)
     {
         var hashed = 0;
         foreach (var m in _store.NeedingHash(HashesPerPass))
         {
             ct.ThrowIfCancellationRequested();
+
+            // NOR IS A FILE IN AN UNSEALED HOME OPENED TO BE HASHED (U-org-lanes, review 2): the lane writing it has not committed.
+            if (unsealedHomes.Any(h => m.RelPath.StartsWith(h + "/", StringComparison.Ordinal))) continue;
             var full = Path.Combine(_root, m.RelPath.Replace('/', Path.DirectorySeparatorChar));
             try
             {

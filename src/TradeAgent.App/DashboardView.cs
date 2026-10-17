@@ -1386,6 +1386,19 @@ sealed class SafetyPage
         return b;
     }
 
+    /// <summary>
+    /// The page's lanes press over its own boxes: editing any of them DISARMS a raise armed for other figures, so a confirmation
+    /// completes only the figures it named.
+    /// </summary>
+    internal static Button BuildSaveLanes(IReadOnlyList<NumericUpDown> boxes,
+        Func<(int Lanes, int PerPool, int PerCellClass)> current,
+        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save)
+    {
+        var b = BuildSaveLanes(current, pending, save);
+        foreach (var box in boxes) box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
+        return b;
+    }
+
     internal static Button BuildSaveReviewEvery(Func<int> current, Func<int> pending, Action save)
     {
         var b = Ui.ConfirmIf(Labels.SaveReviewEvery,
@@ -1773,7 +1786,7 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.LanesPerCellClass, _lanesPerCellClass,
                 "Raising any of these lets the AI spend faster, so it asks again first."),
             Ui.Spacer(Theme.S2),
-            BuildSaveLanes(CurrentLanes, PendingLanes, SaveLanes),
+            BuildSaveLanes([_lanes, _lanesPerPool, _lanesPerCellClass], CurrentLanes, PendingLanes, SaveLanes),
             _lanesNote,
             Ui.Divider(),
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only

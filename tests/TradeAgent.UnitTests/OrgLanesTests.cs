@@ -587,6 +587,98 @@ public class OrgLanesTests : IDisposable
         Assert.Contains(new MaterialStore(_db).Present(), m => m.RelPath.EndsWith("report.md", StringComparison.Ordinal));
     }
 
+    // ---- review of the first pass ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (review 1) RED before the fix: A TICK WHILE A POSITION TURNS RAISES IT NO LOOK. The chair's look, raised half an hour ahead,
+    /// is consumed by its turn; a tick while that turn runs used to raise its next look at the base interval — and its turn's
+    /// end then kept that row, so the quiet-review backoff (twice the last interval) never applied. Its next look is the backed-
+    /// off one, as a turn run alone gets.
+    /// </summary>
+    [Fact]
+    public async Task A_tick_while_a_position_turns_raises_it_no_look_of_its_own()
+    {
+        var clock = DateTimeOffset.UtcNow;
+        var events = new MissionEventStore(_db);
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        var options = new MissionOptions();
+        var loop = new MissionLoop(host, options, now: () => clock);
+
+        Assert.Empty((await loop.TickAsync().WaitAsync(T)).Lanes);           // the first sweep raises each look, 30 min out
+        clock += options.ReviewEvery + TimeSpan.FromMinutes(1);
+        var chair = Held(host.Conv(Ops));
+        var tick = await loop.TickAsync().WaitAsync(T);
+        await host.Conv(Ops).Inside.Task.WaitAsync(T);
+
+        await loop.TickAsync().WaitAsync(T);                                  // a tick while the chair turns
+        chair.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+
+        var look = Assert.Single(events.OfKind(MissionEventKind.Review),
+            e => e.Role == Ops && e.ConsumedBy is null && e.Disposition is null);
+        Assert.Equal(clock + options.ReviewEvery + options.ReviewEvery, look.DueAt);
+    }
+
+    /// <summary>
+    /// (review 2) RED before the fix: A PASS BESIDE AN UNSEALED LANE HASHES NOTHING IN ITS HOME. A file of the director's home was
+    /// recorded, unhashed, before its lane started; the pass beside the lane leaves its hash unread; the pass after the seal reads it.
+    /// </summary>
+    [Fact]
+    public async Task A_pass_beside_an_unsealed_lane_hashes_nothing_in_its_home()
+    {
+        var root = Path.Combine(TestEnv.Home, $"lanes-ws-{Guid.NewGuid():n}");
+        var home = Path.Combine(root, CouncilRoles.HomeDir(Research), CouncilRoles.OutDir);
+        Directory.CreateDirectory(home);
+        File.WriteAllText(Path.Combine(home, "report.md"), "first draft");
+        new MaterialScanner(_db, root, noAgentSince: _ => true) { HashesPerPass = 0 }.Scan();
+        Material Report() => Assert.Single(new MaterialStore(_db).Present(), m => m.RelPath.EndsWith("report.md", StringComparison.Ordinal));
+        Assert.Null(Report().Sha256);
+
+        var events = new MissionEventStore(_db);
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        host.Profiles[Research] = Sealed;
+        var director = Held(host.Conv(Research));
+        var loop = new MissionLoop(host, new MissionOptions());
+        var tick = await loop.TickAsync().WaitAsync(T);
+        await host.Conv(Research).Inside.Task.WaitAsync(T);
+
+        var scanner = new MaterialScanner(_db, root, noAgentSince: _ => true);
+        Assert.NotNull(loop.TryPass(unsealed => scanner.Scan(default, unsealed)));
+        Assert.Null(Report().Sha256);
+
+        director.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+        Assert.NotNull(loop.TryPass(unsealed => scanner.Scan(default, unsealed)));
+        Assert.NotNull(Report().Sha256);
+    }
+
+    /// <summary>
+    /// (review 4) RED before the fix: A CONFIRMATION COMPLETES ONLY THE FIGURES IT NAMED. A raise to two lanes is armed, the box is
+    /// changed to eight, and the armed press saves nothing — it asks again, naming eight.
+    /// </summary>
+    [Fact]
+    public void Editing_a_lane_box_disarms_a_raise_armed_for_another_figure()
+    {
+        var saved = new List<int>();
+        var lanes = Ui.NumberField(1m, 1m);
+        var perPool = Ui.NumberField(1m, 1m);
+        var perCell = Ui.NumberField(1m, 1m);
+        (int, int, int) Pending() => ((int)(lanes.Value ?? 1), (int)(perPool.Value ?? 1), (int)(perCell.Value ?? 1));
+        var b = SafetyPage.BuildSaveLanes([lanes, perPool, perCell], () => (1, 1, 1), Pending, () => saved.Add(Pending().Item1));
+
+        lanes.Value = 2m;
+        Press(b);
+        Assert.Equal(Labels.RaiseLanesArmed(2, 1, 1), b.Content);
+
+        lanes.Value = 8m;
+        Press(b);
+        Assert.Empty(saved);
+        Assert.Equal(Labels.RaiseLanesArmed(8, 1, 1), b.Content);
+        Press(b);
+        Assert.Equal([8], saved);
+    }
+
     // ---- the seam host --------------------------------------------------------------------------------------------
 
     /// <summary>

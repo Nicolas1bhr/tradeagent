@@ -2088,7 +2088,12 @@ public sealed class AppHost : IAsyncDisposable
             catch (OperationCanceledException) { throw; }
             // A scan that threw must not stop the mission. It is a record-keeping pass, and the
             // engineering log already has the exception from the background loop that also runs it.
-            catch (Exception ex) { host.Gateway.Log.Engineering("Materials", "mission_scan_failed", "warn", ex: ex); }
+            // A PASS THAT THREW DID NOT RUN (U-org-lanes, review 3): an owed pass stays owed, and no counted lane is leased on it.
+            catch (Exception ex)
+            {
+                host.Gateway.Log.Engineering("Materials", "mission_scan_failed", "warn", ex: ex);
+                return Task.FromResult(false);
+            }
             return Task.FromResult(true);
         }
 

@@ -2342,6 +2342,12 @@ public sealed class MissionLoop
         }
     }
 
+    /// <summary>Whether this position holds a lease or a dispatched lane right now. Takes the lock.</summary>
+    bool InFlightNow(string role)
+    {
+        lock (_gate) return _turning.Contains(role) || _dispatched.ContainsKey(role);
+    }
+
     /// <summary>Whether a dispatched lane holds this position, or its last run left it resting. Under no lock; takes it.</summary>
     bool DispatchedOrResting(string role)
     {
@@ -2884,6 +2890,11 @@ public sealed class MissionLoop
             foreach (var position in Walk())
             {
                 var role = position.Id;
+
+                // A POSITION WHOSE TURN IS IN FLIGHT IS RAISED NOTHING HERE (U-org-lanes, review 1): its turn consumed its look, and
+                // its own end raises the next one where the quiet-review rule says (NextWait). A tick beside it raising the base
+                // interval first would leave that row standing — one pending look of a kind at a time — and the backoff unspent.
+                if (role != turned && InFlightNow(role)) continue;
 
                 // A POSITION REFUSED FOR WHAT IT IS IS RAISED NOTHING (U-org-wakes): no look, no ceiling, no renewal, no
                 // reminder — each would be a wake settled refused at the next pass. One refused for this host keeps its clock.
