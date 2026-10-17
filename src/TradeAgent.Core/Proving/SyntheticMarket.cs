@@ -210,13 +210,22 @@ public static class SyntheticMarket
         if (start.Second != 0 || start.Millisecond != 0 || start.Minute != 0)
             throw new ArgumentException("a proving market starts on the hour", nameof(spec));
 
+        // THE MARKET'S OWN NAME (R3): its raw files and its truth are named by its spec, so a second market for the same
+        // instrument and month never writes over the files an earlier dataset and its truth were recorded from.
+        var key = Key(spec, start);
+        var truth = Path.Combine(home.TruthDir, $"{spec.Instrument}-{key}.json");
+        if (File.Exists(truth))
+            throw new InvalidOperationException(
+                $"this market ({spec.Instrument}, seed {spec.Seed}, from {start:O} for {spec.Days} days) is already written in this "
+                + $"proving home — its truth is at {truth} — and a market is written once. Nothing was written.");
+
         var hours = spec.Days * 24;
         var signals = Signals(spec.Seed, hours);
         var dir = Path.Combine(home.DataDir, ProvingSources.Synthetic, spec.Instrument, Interval);
         var fetchedAt = start.AddDays(spec.Days).AddHours(1);
 
-        var files = WriteRaw(spec, start, hours, signals, Path.Combine(dir, "raw"), fetchedAt);
-        var staged = Path.Combine(dir, ".staged.csv");
+        var files = WriteRaw(spec, key, start, hours, signals, Path.Combine(dir, "raw"), fetchedAt);
+        var staged = Path.Combine(dir, $".staged-{key}.csv");
         var set = KlineNormaliser.Normalise([.. files.Select(f => new RawArchiveFile(f.Month, f.Path))], fetchedAt, staged);
 
         var record = new DatasetRecord(
@@ -255,8 +264,7 @@ public static class SyntheticMarket
         }
 
         Directory.CreateDirectory(home.TruthDir);
-        var truth = Path.Combine(home.TruthDir, spec.Instrument + ".json");
-        File.WriteAllText(truth, Json.Write(new
+        WriteOnce(truth, new UTF8Encoding(false).GetBytes(Json.Write(new
         {
             synthetic_by_construction = "hand-set constants and a seed; never fitted to, estimated from or seeded by any real tape, dataset or ledger",
             seed = spec.Seed.ToString(CultureInfo.InvariantCulture),
@@ -276,12 +284,38 @@ public static class SyntheticMarket
                     relation = "the return from the first hourly close after a reading is first seen gains beta ticks per unit of its value over the horizon"
                 }
                 : null
-        }) + "\n", new UTF8Encoding(false));
+        }) + "\n"));
 
         return new SyntheticMarketWritten(
             stored,
             Sha256Hex.Of(string.Concat(files.Select(f => f.ComputedSha256 + "\n"))),
             hours, Sha256Hex.Of(digest.ToString()), truth);
+    }
+
+    /// <summary>
+    /// THE NAME A MARKET'S FILES CARRY: the first 16 hex digits of the SHA-256 over everything its spec says — seed,
+    /// instrument, venue, start, days and planted edge — so two markets share a name only when they are the same market.
+    /// </summary>
+    static string Key(SyntheticMarketSpec spec, DateTimeOffset start) => Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
+        $"{spec.Seed}|{spec.Instrument}|{spec.VenueId}|{start:O}|{spec.Days}|{spec.Edge?.BetaTicks.ToString(CultureInfo.InvariantCulture) ?? "-"}|{spec.Edge?.HorizonMinutes.ToString(CultureInfo.InvariantCulture) ?? "-"}"))[..16];
+
+    /// <summary>
+    /// WRITES <paramref name="bytes"/> AT <paramref name="path"/>, NEVER OVER ANOTHER FILE: a file already there with the
+    /// same bytes — what a write that died after it left — is kept as it is; one with other bytes is refused.
+    /// </summary>
+    static void WriteOnce(string path, byte[] bytes)
+    {
+        try
+        {
+            using var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            f.Write(bytes);
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes))
+                throw new InvalidOperationException(
+                    $"{path} is already in this proving home with other bytes, and a proving market never writes over a file. Nothing was replaced.");
+        }
     }
 
     /// <summary>The signal's integer value for each hour, on a stream of its own.</summary>
@@ -294,7 +328,7 @@ public static class SyntheticMarket
     }
 
     /// <summary>The raw files, one per calendar month, each row a vendor-shaped closed one-minute kline.</summary>
-    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, DateTimeOffset start, int hours, long[] signals, string rawDir,
+    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, string key, DateTimeOffset start, int hours, long[] signals, string rawDir,
         DateTimeOffset fetchedAt)
     {
         Directory.CreateDirectory(rawDir);
@@ -339,9 +373,9 @@ public static class SyntheticMarket
         var files = new List<DatasetFile>();
         foreach (var (month, text) in months)
         {
-            var path = Path.Combine(rawDir, $"{spec.Instrument}-{Interval}-{month}.csv");
+            var path = Path.Combine(rawDir, $"{spec.Instrument}-{Interval}-{month}-{key}.csv");
             var bytes = new UTF8Encoding(false).GetBytes(text.ToString());
-            File.WriteAllBytes(path, bytes);
+            WriteOnce(path, bytes);
             var sha = Sha256Hex.OfFile(path)!;
             files.Add(new DatasetFile(month, $"{ProvingSources.Origin}/klines/{spec.Instrument}/{Interval}/{month}.csv",
                 sha, sha, bytes.LongLength, fetchedAt, KlineTimeUnit.Milliseconds, path));
