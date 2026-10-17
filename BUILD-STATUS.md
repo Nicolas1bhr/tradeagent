@@ -10941,3 +10941,30 @@ provider: the attempt's codex served; a second codex outside the attempt refused
 mtime-trusting cache → U-thinking-seats-c.
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the drain under a real ATAS connector (the fake connector's hold only); a real broker-only seat's
 recorded assurance end to end (part c); codex on Linux and Windows (TcpPeer proved there by CI tests only); same-user ptrace or a duplicated socket (not claimed).
+
+
+## U-org-assignments-a (O5a) — the mandate's life: a head assigns a task or an exploration into its own subtree, the holder's launches are charged to it, its delivery is sealed and checked by the app, code triages, the head accepts or rejects; rung 40 (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v2) on `main` at tip `2ed34aaf` (on `920238d3`; code `c8eca894`); CI run **39003342257** (attempt 2 — attempt 1 red only on the ubuntu first sighting named below; the failed job re-run, no code changed) CARRIED to the tip****: every job success incl. `linux-host`; `land.sh check` VERDICT PASS (names 2898 → 2922, removed 0; scan clean with judged phrases: a test's in-memory grant client and the guard's authority word list). **RUNG 40** (schema 39 → 40). No model call; nothing here reaches a real model.
+The work plane's keystone (ORCHESTRATION §§ 2.2, 2.4, 2.9). **Protects:** spend (a mandate's lifetime AI allocation is a third gate inside `Begin`'s one transaction after the day total and O4's chain;
+a LOST attempt keeps its reservation; BUDGET-001), authority (no org verb unless the attempt's RECORDED seat assurance ≥ `CapabilityPolicy.Minimum(DecisionVerbs)` — never headship, so `research`
+heading `div-research` from its unconfined seat holds none; assign only into the caller's own subtree; ORG-001), ORDER-001 (no mandate held by `operations`, no `mandate-*` op `Mutating`), AUTH-001,
+measurement vs claim (report, deviations, stated defect stored verbatim as claims; checks, seals and spend are the app's records), append-only (status = latest event; UPDATE/DELETE refused by trigger).
+**Build (items 1–6, `ccdab31b`…`80c663f0` + CI guards `8d14272c`):** rung 40 — `org_mandate`, `org_mandate_event`, `org_delivery` (id = SHA-256 of the manifest, never updated), `org_check`,
+`ai_attempt.mandate_id`; `mandate-assign/-cancel/-decline/-deliver/-accept/-reject/-list/-show` (`Ops.Organisation`, named apart from pipe ops — a disjointness test); ONE `OrgVerbCaller`; the CLI's
+AgentReach drops `mandate-*` on unconfined seats; `Begin` reads the mandate off the consumed wake; one mandate per launch, a refused one closes its wakes and escalates; `RoleObjectives` v3; deliver seals
++ four v1 checks (no code run) in one write; an exact mandate refuses a named deviation; triage/retry/escalation in one write; accept binds the delivery shown, reject cites a failed check or a defect;
+the once-per-tick `SweepMandates`; list/show own only, stated cost beside measured spend; `HeldWhy` + five comments. Deviations: wake kinds `mandate`/`delivery`/`escalation` classed in item 1;
+arg names `goal`/`due`/`failed` (guards ban `objective`/`deadline`/`check` in args); no host plumbing for the gate. RED before + 8 MUTANTS quoted in the brief's report.
+**Fix pass 1 (review P1 ×2, P2, and the door; `6e05fa46`, `d9932886`, `000554e7`, `c8eca894`):** 1. an escalation closes the holder's untaken mandate wakes in its own write and the allocation
+gate refuses `escalated` (RED + mutant). 2. the sweep re-raises ONE wake of the same kind to the decider when the latest judgment wake's launch is LOST (key `Rejudge(wake, attempt)`; RED/mutant
+"Expected: 2 Actual: 0"). 3. a delivery over `MandateLimits.MaxDeliveryBytes` (32 KiB on the wire, escaping included) is REFUSED at the seal, never cut (the refusal names the cap); `mandate-show` measures
+its frame at its widest and pages whole rows with stated totals/more/left-out. 4. U-thinking-seats-b had LANDED (19c8dfc0): this unit is the second lander of the door seam — `BrokerDoor.OrganisationVerbs`,
+one `DoorVerb` per organisation op (`mandate_*`; the door refuses pipe-op names), run through `CallAsGrantAsync` behind `VerbGate`, composed in `AppHost` (RED + mutant "VerbGate bypassed").
+**Re-review (`fleet/tmp/B-scratch/u-org-assignments-a/fix1-review.md`, the whole unit vs main incl. the never-reviewed `8d14272c`):** items 1 and 4 close; `8d14272c` no finding. Two points JUDGED by the
+orchestrator and seat B, NOT a pass: (a) an ENDED head turn that left a delivery unjudged gets no per-tick re-raise — BY DESIGN: a head owns its deliveries to judge as an open objective (§ 2.5)
+and its ceiling floor re-wakes it; a re-raise per tick would only multiply wakes. (b) the 32 KiB seal cap refuses some deliveries the old character limits allowed — BY DESIGN: a decider never accepts
+a report it has not read whole; refuse, never cut, and the refusal says the cap.
+**First sighting (the diff cannot reach it; one more = a unit):** ubuntu `TurnMeterTests.A_turn_whose_stream_reported_usage_ends_carrying_it` ("Assert.NotNull() Failure: Value is null"; builds an
+`AgentSession` over a script with no database), run 39003342257 attempt 1; the failed job re-run.
+**NOT VERIFIED:** no loop-level test drives a real launch through `OneMandate` or its refusal branch; no model call, no app run; tests box NOT RUN — the machine does not answer.
