@@ -209,6 +209,33 @@ public class CellPolicyTests
     }
 
     /// <summary>
+    /// THE SEAT HOME AND THE APP'S OWN FOLDERS ARE NO CELL'S (<c>U-cell-linux-b</c> fix pass 1, item 5; CRED-001): a grant of the AI
+    /// seat home — the codex sign-in — or of anything inside it, of the app's <c>bin/</c>, <c>tools/</c>, <c>updates/</c> or <c>logs/</c>,
+    /// as the workspace or as an input, is refused naming the folder; and so is any path named <c>environments.toml</c>, which codex
+    /// reads in place of the broker the seat is held to.
+    /// </summary>
+    [UnixFact]
+    public void A_policy_that_grants_the_seat_home_the_apps_own_folders_or_an_environments_toml_is_refused()
+    {
+        var ws = Dir("ws");
+        var seatLogin = Path.Combine(Paths.SeatHome, "codex");
+        Directory.CreateDirectory(seatLogin);
+        foreach (var (granted, named) in new[]
+        {
+            (Paths.SeatHome, "seat home"), (seatLogin, "seat home"), (Paths.Bin, "programs"), (Paths.Tools, "tools"),
+            (Paths.Updates, "updates"), (Paths.Logs, "logs"),
+        })
+        {
+            Assert.Contains(named, Policy(granted).Problem() ?? $"no refusal of {granted} as the workspace");
+            Assert.Contains(named, Policy(ws, granted).Problem() ?? $"no refusal of {granted} as an input");
+        }
+        var toml = Path.Combine(Dir("elsewhere"), "environments.toml");
+        File.WriteAllText(toml, "");
+        Assert.Contains("environments.toml", Policy(ws, toml).Problem() ?? $"no refusal of {toml} as an input");
+        Assert.Null(Policy(ws).Problem());
+    }
+
+    /// <summary>
     /// THE PROTECTED SET IS JUDGED WHERE IT REALLY IS (triage #3): with the app's home reached through a symlink, a grant naming the
     /// REAL <c>state/</c>, the real home or its real cell folder is refused — not passed because its spelling differs from the home's.
     /// </summary>

@@ -204,10 +204,25 @@ public sealed record CellPolicy
     /// or a sibling attempt's — and leave its attempt's cgroup, or lift its own ceilings, which undoes the cgroup half of the grant's
     /// proof. By path here, and by descriptor in the cell stage, which also refuses any descriptor on a cgroup filesystem wherever
     /// it is mounted.</para>
+    ///
+    /// <para><b>And the seat home and the app's own folders</b> (<c>U-cell-linux-b</c> fix pass 1, item 5; CRED-001): the AI seat home
+    /// (<see cref="Paths.SeatHome"/>, the codex sign-in), <c>bin/</c>, <c>tools/</c>, <c>updates/</c> and <c>logs/</c> — each, anything
+    /// inside it and anything that holds it, as the inbox is — and any path named <see cref="CodexEnvironments"/>, which codex reads
+    /// from its home in place of the broker its seat is held to.</para>
     /// </summary>
     internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside, IReadOnlyList<string> Inboxes,
-        IReadOnlyList<string> Cgroups)
+        IReadOnlyList<string> Cgroups, IReadOnlyList<(string Path, string What)> Owned)
     {
+        /// <summary>The app's own folders no grant may reach, each with the words its refusal names it by.</summary>
+        static IEnumerable<(string Path, string What)> OwnFolders() =>
+        [
+            (Paths.SeatHome, "the AI seat home, which holds its sign-in,"),
+            (Paths.Bin, "TradeAgent's own programs"),
+            (Paths.Tools, "the tools TradeAgent installs"),
+            (Paths.Updates, "TradeAgent's downloaded updates"),
+            (Paths.Logs, "TradeAgent's logs"),
+        ];
+
         public static Guarded Of(string? appHome = null)
         {
             var home = appHome ?? Paths.Home;
@@ -221,7 +236,12 @@ public sealed record CellPolicy
             var cgroups = Forms(AttemptCgroups.Mount)
                 .Concat(AttemptCgroups.Current.Root is { } root ? Forms(root) : [])
                 .Distinct(StringComparer.Ordinal).ToList();
-            return new Guarded(homes, inside, inboxes, cgroups);
+            var owned = OwnFolders()
+                .SelectMany(f => homes.Select(h => Path.Combine(h, Path.GetRelativePath(Paths.Home, f.Path)))
+                    .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, f.Path)))).Concat(Forms(f.Path))
+                    .Select(p => (p, f.What)))
+                .Distinct().ToList();
+            return new Guarded(homes, inside, inboxes, cgroups, owned);
         }
 
         /// <summary>Why a path — one already resolved, or one spelling of it — may not be granted, or null.</summary>
@@ -236,6 +256,11 @@ public sealed record CellPolicy
             foreach (var root in Inside)
                 if (Within(form, root))
                     return $"lies inside TradeAgent's state or its cell policies ({root})";
+            foreach (var (folder, what) in Owned)
+                if (Within(form, folder) || Within(folder, form))
+                    return $"would grant {what} {folder} (it is, lies inside or holds it): no cell's to reach";
+            if (Path.GetFileName(form) == CodexEnvironments)
+                return $"names {CodexEnvironments}, which codex reads in place of the broker its seat is held to: no cell's to reach";
             foreach (var cgroup in Cgroups)
                 if (Within(form, cgroup) || Within(cgroup, form))
                     return $"would grant the cgroup filesystem {cgroup} (it is, lies inside or holds it): a cell there could move itself out " +
@@ -261,6 +286,12 @@ public sealed record CellPolicy
     }
 
     static TradeAgentException Refused(string why) => new(ErrorCode.CELL_UNAVAILABLE, why);
+
+    /// <summary>
+    /// The file codex reads from its home and, present, lets REPLACE <c>CODEX_EXEC_SERVER_URL</c> (vendor environment_toml.rs:222-233):
+    /// no cell is granted a path by this name, and no seat starts while its home holds one (the seat profile's forbidden list).
+    /// </summary>
+    public const string CodexEnvironments = "environments.toml";
 
     /// <summary>
     /// The one form this build writes and reads. No other is read on a guess: form 1 (<c>U-cell-linux-a</c>'s raw port list) is
