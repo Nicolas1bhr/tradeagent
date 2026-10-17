@@ -221,9 +221,18 @@ public static class Ops
         MandateDecline = "mandate-decline", MandateAccept = "mandate-accept", MandateReject = "mandate-reject",
         MandateList = "mandate-list", MandateShow = "mandate-show";
 
-    /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>).</summary>
+    /// <summary>
+    /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
+    /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
+    /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
+    /// gate (the RECORDED seat assurance, never headship) and the same disjointness test hold them. NOT in <see cref="Mutating"/>:
+    /// a decision record places no order and reaches no operator authority.
+    /// </summary>
+    public const string DecisionRecord = "decision-record", DecisionList = "decision-list", DecisionShow = "decision-show";
+
+    /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>).</summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
-        MandateList, MandateShow];
+        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

@@ -337,6 +337,10 @@ public class OrgLedgerTests
         string[] mandate = ["Accept", "Assign", "AssignRefusal", "Cancel", "Checks", "Decline", "Deliver", "Deliveries", "DeliveriesToJudge",
             "Delivery", "EscalationsFor", "ExpiredUnread", "IsOpen", "LaunchRefused", "Mandate", "MandateEvents", "MandateStatus", "MandatesOf",
             "MandatesOwedBy", "Manifest", "MintMandate", "Reject", "SpendOf", "SubtreeOf", "Sweep"];
+        // REVISITED, OUT LOUD, BY U-org-decisions (O5b, rung 41): the decision records' writers and readers — Decide writes
+        // org_decision (and its rationale through the ledger's internal writer), each behind OrgVerbCaller and the store's own checks.
+        // None writes the chart.
+        mandate = [.. mandate, "Decide", "Decision", "DecisionsOf", "ForecastsOn", "Resolution"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

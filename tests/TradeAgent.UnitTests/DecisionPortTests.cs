@@ -614,6 +614,11 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         {
             foreach (var word in words)
             {
+                // REVISITED, OUT LOUD, BY U-org-decisions (O5b; RULED Q1 names): the organisation's DECISION RECORDS —
+                // decision-record, decision-list, decision-show — are named for ORGANISATION § 5's records, not for this port. They
+                // are organisation verbs (Ops.Organisation), and the rest of this guard still holds them: no argument of theirs
+                // names the port, its budget, pin, key or model, and the reflection and source checks below are unchanged.
+                if (word == "decision" && Ops.IsOrganisation(op.Op) && op.Op.StartsWith("decision-", StringComparison.Ordinal)) continue;
                 Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
             }

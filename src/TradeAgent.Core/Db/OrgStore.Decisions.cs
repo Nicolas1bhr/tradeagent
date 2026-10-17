@@ -53,6 +53,26 @@ public static class DecisionLimits
     public const int MandatelessPerDay = 2;
 }
 
+/// <summary>
+/// WHAT A DECISION RECORD IS (ORGANISATION § 5; RULING Q2): <see cref="Routine"/> is the only kind <c>decision-record</c> writes.
+/// The MANDATORY kinds — a charter, a merge, a close, a dormancy, an envelope tilt, a family's kill or branch, a verdict request,
+/// a paper nomination, a worker replaced, a proposal to the owner — are written by the verb that performs each act
+/// (<c>U-org-verbs</c>, O6), in that act's own write, so no record of one can stand without the act behind it. They are named
+/// here so the verb can refuse them in words.
+/// </summary>
+public static class OrgDecisionKind
+{
+    public const string Routine = "routine";
+
+    public static readonly string[] Mandatory =
+        ["charter", "merge", "close", "dormancy", "envelope-tilt", "family-kill", "family-branch", "verdict-request",
+         "paper-nomination", "worker-replacement", "owner-proposal"];
+
+    public static readonly string[] All = [Routine, .. Mandatory];
+
+    public static bool IsMandatory(string? kind) => kind is not null && Array.IndexOf(Mandatory, kind) >= 0;
+}
+
 /// <summary>One <c>org_decision</c> row: never updated; its rationale is the ledger entry <see cref="LedgerEntryId"/>.</summary>
 public sealed record DecisionRow(
     string Id, string Position, string? Attempt, string Kind, IReadOnlyList<string> Options, string Choice,
@@ -140,6 +160,104 @@ public sealed partial class OrgStore
         using var c = db.Cmd($"SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} = $id)", ("$id", id));
         return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
     }
+
+    const string DecisionCols = "id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at";
+
+    /// <summary>
+    /// RECORDS ONE DECISION OF <paramref name="position"/>: the options it considered and its choice (claims, stored verbatim), the
+    /// refs it cites (each checked to exist), and its rationale as the position's own <see cref="LedgerKind.Decision"/> entry in the
+    /// research ledger (marked claim) — the entry and the row in ONE write, or, refused in words, nothing. The id is the app's.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public DecisionRow Decide(string position, string? attempt, string kind, IReadOnlyList<string> options, string choice,
+        string rationale, IReadOnlyList<OrgRef> refs, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (IsAppPrincipal(position) || Position(position) is not { Status: OrgPositionStatus.Active })
+            throw Refused($"'{position}' is no active position: a decision is recorded under the position whose launch made it.");
+        if (OrgDecisionKind.IsMandatory(kind))
+            throw Refused($"a '{kind}' decision is written by the verb that performs it, in that act's own write — never by "
+                          + $"'decision-record', which writes '{OrgDecisionKind.Routine}' decisions only.");
+        if (kind != OrgDecisionKind.Routine)
+            throw Refused($"'{kind}' is no kind of decision: '{OrgDecisionKind.Routine}' — the mandatory kinds "
+                          + $"({string.Join(", ", OrgDecisionKind.Mandatory)}) are written by the verbs that perform them.");
+        if (options.Count is 0 or > DecisionLimits.MaxOptions)
+            throw Refused($"a decision names the options it considered, 1 to {DecisionLimits.MaxOptions}.");
+        foreach (var o in options.Append(choice))
+            if (string.IsNullOrWhiteSpace(o) || o.Length > DecisionLimits.MaxClaimChars)
+                throw Refused($"each option and the choice are your words, at most {DecisionLimits.MaxClaimChars} characters, never empty.");
+        if (RefsRefusal(refs) is { } badRef) throw Refused(badRef);
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(Json.Write(new { options, choice, rationale, refs }));
+        if (bytes > DecisionLimits.MaxRecordBytes)
+            throw Refused($"this decision is {bytes:N0} bytes as TradeAgent writes it (a character outside plain ASCII costs up to "
+                          + $"six), and a decision holds at most {DecisionLimits.MaxRecordBytes:N0} so it is always read whole; "
+                          + "say it shorter — longer is refused, never cut.");
+
+        // THE RATIONALE FIRST, in this same write: the row points at the entry, and neither stands without the other.
+        var entry = new ResearchLedger(db, () => now).AddDecisionRationale(position, attempt, rationale);
+        var row = new DecisionRow(Mint(DecisionPrefix), position, attempt, kind, options, choice, refs, entry.Id, now);
+        using (var c = db.Cmd($"""
+            INSERT INTO org_decision({DecisionCols}) VALUES($id,$p,$attempt,$kind,$options,$choice,$refs,$entry,$at)
+            """,
+            ("$id", row.Id), ("$p", position), ("$attempt", attempt), ("$kind", kind),
+            ("$options", JsonSerializer.Serialize(options)), ("$choice", choice), ("$refs", JsonSerializer.Serialize(refs)),
+            ("$entry", entry.Id), ("$at", Sql.T(now))))
+            c.ExecuteNonQuery();
+        return row;
+    });
+
+    /// <summary>One decision as recorded, or null.</summary>
+    public DecisionRow? Decision(string id) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {DecisionCols} FROM org_decision WHERE id=$id", ("$id", id));
+        using var r = c.ExecuteReader();
+        return r.Read() ? ReadDecision(r) : null;
+    });
+
+    /// <summary>Every decision <paramref name="position"/> recorded, newest first.</summary>
+    public IReadOnlyList<DecisionRow> DecisionsOf(string position) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {DecisionCols} FROM org_decision WHERE position=$p ORDER BY at DESC, rowid DESC", ("$p", position));
+        using var r = c.ExecuteReader();
+        var rows = new List<DecisionRow>();
+        while (r.Read()) rows.Add(ReadDecision(r));
+        return (IReadOnlyList<DecisionRow>)rows;
+    });
+
+    static DecisionRow ReadDecision(Microsoft.Data.Sqlite.SqliteDataReader r) => new(
+        r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), JsonSerializer.Deserialize<string[]>(r.GetString(4)) ?? [],
+        r.GetString(5), ReadRefs(r.GetString(6)), r.GetInt64(7), Sql.Time(r.GetValue(8)));
+
+    const string ForecastCols =
+        "id, decision_id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, " +
+        "scored, unscored_why, at";
+
+    /// <summary>The forecasts on a decision or a mandate (by its id), oldest first.</summary>
+    public IReadOnlyList<ForecastRow> ForecastsOn(string recordId) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {ForecastCols} FROM org_forecast WHERE decision_id=$id OR mandate_id=$id ORDER BY at, rowid",
+            ("$id", recordId));
+        using var r = c.ExecuteReader();
+        var rows = new List<ForecastRow>();
+        while (r.Read()) rows.Add(ReadForecast(r));
+        return (IReadOnlyList<ForecastRow>)rows;
+    });
+
+    /// <summary>The app's resolution of a forecast, or null while it is open.</summary>
+    public ResolutionRow? Resolution(string forecastId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT forecast_id, outcome, record_kind, record_id, why, at FROM org_forecast_resolution WHERE forecast_id=$id",
+            ("$id", forecastId));
+        using var r = c.ExecuteReader();
+        return r.Read()
+            ? new ResolutionRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), Sql.Time(r.GetValue(5)))
+            : null;
+    });
+
+    static ForecastRow ReadForecast(Microsoft.Data.Sqlite.SqliteDataReader r) => new(
+        r.GetString(0), Sql.S(r.GetValue(1)), Sql.S(r.GetValue(2)), r.GetString(3), Sql.S(r.GetValue(4)), r.GetInt32(5),
+        r.GetString(6), r.GetString(7), r.GetString(8), Sql.Time(r.GetValue(9)),
+        decimal.Parse(r.GetString(10), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture), r.GetInt64(11) != 0,
+        Sql.S(r.GetValue(12)), Sql.Time(r.GetValue(13)));
 
     static IReadOnlyList<OrgRef> ReadRefs(string json) => JsonSerializer.Deserialize<OrgRef[]>(json) ?? [];
 }

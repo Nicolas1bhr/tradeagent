@@ -397,6 +397,30 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade decision record <choice> <rationale> --options JSON …`, `list` and `show <id>` (U-org-decisions): the
+        // organisation's decision records. Every flag is sent on under its own name and the gateway refuses one the verb does not take.
+        case "decision":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "record":
+                    Fill(a, rest, "choice", "rationale");
+                    return (Ops.DecisionRecord, a);
+                case "list" or "ls":
+                    return (Ops.DecisionList, a);
+                case "show":
+                    Fill(a, rest, "id");
+                    return (Ops.DecisionShow, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade lens propose <lens>`, `list [--id I] [--limit N]` and `show <id> [--version V]` (U-lenses). Every flag
         // is sent on under its own name and the gateway refuses one the verb does not take; the lens's JSON takes every word
         // left, so a JSON object the shell split on its spaces arrives whole.

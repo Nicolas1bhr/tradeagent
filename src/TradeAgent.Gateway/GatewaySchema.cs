@@ -563,7 +563,7 @@ public static class GatewaySchema
             + $"continues exactly. A limit outside 1 to {Core.Db.ResearchLedger.MaxEntries} is REFUSED, never clamped.",
             [
                 new("author", "string", false, "operations | research"),
-                new("kind", "string", false, "hypothesis | experiment | finding | kill | lesson"),
+                new("kind", "string", false, "hypothesis | experiment | finding | kill | lesson | decision (a decision record's rationale, written only by 'decision-record')"),
                 new("status", "string", false, "open | held | dropped — the newest revision's"),
                 new("limit", "number", false, $"How many entries, a whole number from 1 to {Core.Db.ResearchLedger.MaxEntries}; {Core.Db.ResearchLedger.MaxEntries} when omitted."),
                 new("before", "number", false, "An entry id: serve only entries before it. Pass an answer's 'next_before' to continue it.")
@@ -674,6 +674,36 @@ public static class GatewaySchema
                 new("part", "string", false, "deliveries | events: page one list. Omit it for the newest of both."),
                 new("before", "string", false, "With 'part': serve only what is older than this delivery id or event id — an answer's 'deliveries_next_before' or 'events_next_before'.")
             ]),
+
+        // THE ORGANISATION'S DECISION RECORDS (U-org-decisions, O5b; ORGANISATION § 5): a routine decision recorded with its rationale
+        // as the author's own ledger entry, and its own read back. Served only to a launch whose recorded seat assurance carries the
+        // organisation's verbs.
+        new(Core.Ops.DecisionRecord, "trade decision record <choice> <rationale> --options JSON [--refs JSON] [--forecasts JSON] [--kind routine]", false,
+            "RECORD A DECISION YOU MADE: the options you considered ('options', a JSON list of your words), the one you chose "
+            + "('choice'), why ('rationale' — written as your own 'decision' entry in the research ledger, marked claim), the app "
+            + "records it rests on ('refs', a JSON list of {\"kind\": version | run | promotion | ledger | mandate | delivery | "
+            + "decision | escalation, \"id\"}, each of which must exist) and, if you will, forecasts TradeAgent resolves from its own "
+            + "records ('forecasts'). TradeAgent mints its id and writes the decision, the entry and the forecasts in ONE write — or "
+            + "refuses in words and writes nothing. Nothing edits it afterwards: a changed mind is a new record citing the old one. "
+            + $"Only '{Core.Db.OrgDecisionKind.Routine}' decisions are written here; the mandatory kinds are written by the verbs that "
+            + "perform them. It places no order and moves no money.",
+            [
+                new("choice", "string", true, $"What you chose, in your words: at most {Core.Db.DecisionLimits.MaxClaimChars} characters."),
+                new("rationale", "string", true, $"Why, in your words: at most {Core.Db.ResearchLedger.MaxTextChars:N0} characters. It becomes your own 'decision' ledger entry."),
+                new("options", "string", true, $"A JSON list of the options you considered, 1 to {Core.Db.DecisionLimits.MaxOptions}, each at most {Core.Db.DecisionLimits.MaxClaimChars} characters."),
+                new("refs", "string", false, $"A JSON list of at most {Core.Db.DecisionLimits.MaxRefs} {{\"kind\", \"id\"}} — app records the decision rests on."),
+                new("kind", "string", false, $"{Core.Db.OrgDecisionKind.Routine} (the only kind written here); {Core.Db.OrgDecisionKind.Routine} when omitted.")
+            ]),
+        new(Core.Ops.DecisionList, "trade decision list [--before ID]", false,
+            "YOUR DECISION RECORDS, NEWEST FIRST — never another position's: each with its kind, your choice as you wrote it, its "
+            + $"ledger entry and how many forecasts it carries. At most {GatewayPipeServer.OrgListMax} and "
+            + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped and 'before' set to 'next_before' continues it.",
+            [new("before", "string", false, "A decision id: serve only those recorded before it — an answer's 'next_before'.")]),
+        new(Core.Ops.DecisionShow, "trade decision show <id>", false,
+            "ONE DECISION RECORD OF YOURS, IN FULL: its options, your choice, your rationale (your ledger entry), the refs, and "
+            + "each forecast with its probability — your claim — BESIDE TradeAgent's resolution of it (yes, no or void) and the "
+            + "record that resolution rests on, never instead of it.",
+            [new("id", "string", true, "The decision's id, as 'decision-record' answered it.")]),
 
         // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.
         new(Core.Ops.LensPropose, "trade lens propose <lens>", false,

@@ -327,13 +327,17 @@ public class OrgAssignmentTests
     {
         var fields = typeof(Ops).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
             .Where(f => f.IsLiteral && f.FieldType == typeof(string)).ToList();
-        var organisation = fields.Where(f => f.Name.StartsWith("Mandate", StringComparison.Ordinal))
+        // O5b (U-org-decisions, RULED Q1) JOINS IT: decision-*, forecast-*, escalation-*, lateral-* are organisation verbs too.
+        string[] families = ["Mandate", "Decision", "Forecast", "Escalation", "Lateral"];
+        bool Organisational(System.Reflection.FieldInfo f) => families.Any(p => f.Name.StartsWith(p, StringComparison.Ordinal));
+        var organisation = fields.Where(Organisational)
             .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
-        var pipe = fields.Where(f => !f.Name.StartsWith("Mandate", StringComparison.Ordinal))
+        var pipe = fields.Where(f => !Organisational(f))
             .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(organisation.Order(StringComparer.Ordinal), Ops.Organisation.Order(StringComparer.Ordinal));
-        Assert.All(organisation, op => Assert.StartsWith("mandate-", op, StringComparison.Ordinal));
+        Assert.All(organisation, op => Assert.Contains(families, p => op.StartsWith(p.ToLowerInvariant() + "-", StringComparison.Ordinal)));
+        foreach (var taken in new[] { Ops.Report, Ops.Close, Ops.Status }) Assert.DoesNotContain(taken, organisation);
         Assert.Empty(organisation.Intersect(pipe));
         Assert.DoesNotContain(Ops.Cancel, organisation);
     }

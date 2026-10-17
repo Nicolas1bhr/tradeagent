@@ -165,7 +165,12 @@ public class ResearchLedgerTests
 
         // A LINK REFERENCES A LEDGER ROW, AND NOTHING ELSE IN THE DATABASE REFERENCES THE LEDGER.
         Assert.Equal(["ledger_entry", "ledger_revision"], ForeignTables(db, "ledger_link"));
-        foreach (var table in Rows(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'ledger_%' AND name NOT LIKE 'sqlite_%'"))
+        // REVISITED, OUT LOUD, BY U-org-decisions (O5b, rung 41; R21): a DECISION RECORD's rationale IS its author's own `decision`
+        // entry, so org_decision — itself a record of claims (options, choice), never a measurement — points at the entry it was
+        // written with, by one column. No measured table gains a reference; the loop below still holds every other table.
+        Assert.Equal(["ledger_entry", "org_position"], ForeignTables(db, "org_decision"));
+        Assert.Equal(["ledger_entry_id"], Columns(db, "org_decision").Where(c => c.Contains("ledger", StringComparison.OrdinalIgnoreCase)));
+        foreach (var table in Rows(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'ledger_%' AND name NOT LIKE 'sqlite_%' AND name <> 'org_decision'"))
         {
             Assert.DoesNotContain(ForeignTables(db, table), t => t.StartsWith("ledger_", StringComparison.Ordinal));
             Assert.DoesNotContain(Columns(db, table), c => c.Contains("ledger", StringComparison.OrdinalIgnoreCase));

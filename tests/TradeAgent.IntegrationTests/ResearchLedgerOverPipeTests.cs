@@ -499,7 +499,9 @@ public class ResearchLedgerOverPipeTests(ITestOutputHelper log)
 
         foreach (var limit in new object[] { 0, 101, 2.5m, 1000 })
             Refused(await wire.SendAsync(Frame(Ops.LedgerList, ("limit", limit))), "TradeAgent does not clamp it for you");
-        foreach (var (name, value) in new[] { ("author", "referee"), ("kind", "decision"), ("status", "closed") })
+        // 'decision' IS a kind since U-org-decisions (O5b) — the rationale of a decision record, listed like any other — so the
+        // unknown kind this asks for is 'memo' (declared there).
+        foreach (var (name, value) in new[] { ("author", "referee"), ("kind", "memo"), ("status", "closed") })
             Refused(await wire.SendAsync(Frame(Ops.LedgerList, (name, value))), $"'{value}' is not");
 
         // THE BYTE BOUND: entries of 2,000 characters, which fit about thirty to 64 KiB.

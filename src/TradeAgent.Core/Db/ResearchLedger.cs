@@ -5,15 +5,22 @@ namespace TradeAgent.Core.Db;
 
 /// <summary>
 /// WHAT AN ENTRY IS ABOUT, in the agent's own words — and the vocabulary is the store's, checked here when it writes,
-/// never a CHECK: a later unit adds a kind (a decision record, <c>U-org-assignments</c>) by changing this list and
-/// nothing on disk (the reading rung 28 gives).
+/// never a CHECK: a later unit adds a kind by changing this list and nothing on disk (the reading rung 28 gives).
+///
+/// <para><b><see cref="Decision"/> is <c>U-org-decisions</c>' (O5b):</b> the rationale of a decision record, written ONLY by
+/// <see cref="OrgStore.Decide"/> in the record's own write, and never revised. <see cref="ResearchLedger.Add"/> and
+/// <see cref="ResearchLedger.Revise"/> refuse it in words — else any active position, the legacy pair included, could write a
+/// decision entry with no record behind it (RULING Q8).</para>
 /// </summary>
 public static class LedgerKind
 {
     public const string Hypothesis = "hypothesis", Experiment = "experiment", Finding = "finding", Kill = "kill",
-        Lesson = "lesson";
+        Lesson = "lesson", Decision = "decision";
 
-    public static readonly string[] All = [Hypothesis, Experiment, Finding, Kill, Lesson];
+    public static readonly string[] All = [Hypothesis, Experiment, Finding, Kill, Lesson, Decision];
+
+    /// <summary>The kinds a caller of <see cref="ResearchLedger.Add"/> may write: every kind but <see cref="Decision"/>.</summary>
+    public static readonly string[] Written = [Hypothesis, Experiment, Finding, Kill, Lesson];
 
     public static bool IsKnown(string? s) => s is not null && Array.IndexOf(All, s) >= 0;
 }
@@ -222,6 +229,24 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     {
         Author(author);
         Kind(kind);
+        NotADecision(kind);
+        return Insert(author, attempt, kind, text, mark, confidence, about, source);
+    }
+
+    /// <summary>
+    /// THE RATIONALE OF A DECISION RECORD — the position's own <see cref="LedgerKind.Decision"/> entry, marked claim, with no
+    /// stated confidence. Called ONLY by <see cref="OrgStore.Decide"/>, inside the record's own write, so the entry and the
+    /// record that points at it go in together or not at all.
+    /// </summary>
+    internal LedgerEntryRow AddDecisionRationale(string author, string? attempt, string rationale)
+    {
+        Author(author);
+        return Insert(author, attempt, LedgerKind.Decision, rationale, LedgerMark.Claim, null, null, null);
+    }
+
+    LedgerEntryRow Insert(string author, string? attempt, string kind, string text, string mark, decimal? confidence,
+        long? about, string? source)
+    {
         Mark(mark);
         Confidence(confidence);
         var said = Text(text, "text", MaxTextChars);
@@ -272,6 +297,11 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
         return db.Write(_ =>
         {
             var row = Entry(entry) ?? throw NotThere(entry);
+            // A DECISION'S RATIONALE IS PRECOMMITTED (ORGANISATION § 5): an edit is a new record, never a rewrite.
+            if (row.Kind == LedgerKind.Decision)
+                throw Refused($"entry {Id(entry)} is the rationale of a decision record, and a decision's ledger entry is never "
+                    + "revised: an edit is a new record. Record the decision you hold now with 'decision-record', citing the "
+                    + $"old one as a ref. Nothing was written.");
             if (!string.Equals(row.Author, author, StringComparison.Ordinal))
                 throw Refused($"entry {Id(entry)} is the {CouncilRoles.Title(row.Author)}'s, and an entry is revised only "
                     + "by the role that wrote it: what it believed, and when, stays its own. To disagree with it, add an "
@@ -497,8 +527,20 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     static void Kind(string kind)
     {
         if (!LedgerKind.IsKnown(kind))
-            throw Refused($"'{kind}' is not a kind of entry: an entry is a {string.Join(", ", LedgerKind.All[..^1])} or "
-                + $"{LedgerKind.All[^1]}. Nothing was written.");
+            throw Refused($"'{kind}' is not a kind of entry: an entry is a {string.Join(", ", LedgerKind.Written[..^1])} or "
+                + $"{LedgerKind.Written[^1]}. Nothing was written.");
+    }
+
+    /// <summary>
+    /// A DECISION ENTRY HAS A RECORD BEHIND IT OR IT IS NOT WRITTEN (RULING Q8): <see cref="Add"/> refuses the kind in words, and
+    /// only <see cref="AddDecisionRationale"/> — <see cref="OrgStore.Decide"/>'s — writes it.
+    /// </summary>
+    static void NotADecision(string kind)
+    {
+        if (kind == LedgerKind.Decision)
+            throw Refused("a 'decision' entry is the rationale of a decision record, and only 'decision-record' writes one, "
+                + "in the record's own write — so no decision entry stands without its record. Record the decision with "
+                + "'decision-record', or write this as a hypothesis, experiment, finding, kill or lesson. Nothing was written.");
     }
 
     static void Mark(string mark)

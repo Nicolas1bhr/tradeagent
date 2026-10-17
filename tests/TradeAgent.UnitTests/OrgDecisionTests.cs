@@ -158,4 +158,133 @@ public class OrgDecisionTests
             ("$p", Head), ("$q", Member), ("$at", Stamp)));
         Assert.Equal(1L, Count(db, "org_forecast"));
     }
+
+    // ---- item 2: decisions and the ledger ------------------------------------------------------------------------------
+
+    static readonly string[] Options = ["test the funding skew on a second venue", "drop the family"];
+
+    static IpcRequest RecordFrame(object? refs = null, object? forecasts = null, string? kind = null, string choice = "test the funding skew on a second venue") =>
+        Frame(Ops.DecisionRecord, [
+            ("options", Options), ("choice", choice), ("rationale", "one venue's skew could be its own microstructure"),
+            .. refs is null ? Array.Empty<(string, object)>() : [("refs", refs)],
+            .. forecasts is null ? Array.Empty<(string, object)>() : [("forecasts", forecasts)],
+            .. kind is null ? Array.Empty<(string, object)>() : [("kind", kind)]
+        ]);
+
+    /// <summary>A strategy version the ledger recorded, as only a test may write it.</summary>
+    static void Version(Database db, string id) =>
+        Exec(db, """
+            INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
+            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, NULL)
+            """, ("$id", id), ("$at", Stamp), ("$role", Member));
+
+    /// <summary>
+    /// (a) A BROKERED POSITION RECORDS A DECISION, ITS LEDGER ENTRY AND ITS FORECASTS IN ONE WRITE: the app mints <c>dec-…</c>,
+    /// writes the decision row and the rationale as the position's own <c>decision</c> entry in the research ledger — marked claim,
+    /// linked by the row — in one write; a write killed after the entry leaves NOTHING (the entry rolls back with it). RED at base:
+    /// no <c>decision-record</c> op existed (unknown operation).
+    /// </summary>
+    [Fact]
+    public async Task A_brokered_position_records_a_decision_its_ledger_entry_and_its_forecasts_in_one_write()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-a1");
+
+        var reply = await server.CallAsync(RecordFrame(refs: new[] { new { kind = "version", id = "ver-a1" } }), Member, Launch(db, Member));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var id = Body(reply).GetProperty("decision").GetString()!;
+        Assert.StartsWith(OrgStore.DecisionPrefix, id, StringComparison.Ordinal);
+
+        var d = gw.Org.Decision(id)!;
+        Assert.Equal((Member, OrgDecisionKind.Routine, "test the funding skew on a second venue"), (d.Position, d.Kind, d.Choice));
+        Assert.Equal(Options, d.Options);
+        Assert.Equal([new OrgRef("version", "ver-a1")], d.Refs);
+        var entry = gw.Ledger.Entry(d.LedgerEntryId)!;
+        Assert.Equal((LedgerKind.Decision, Member), (entry.Kind, entry.Author));
+        var said = gw.Ledger.Latest(entry.Id)!;
+        Assert.Equal(("one venue's skew could be its own microstructure", LedgerMark.Claim), (said.Text, said.Mark));
+        Assert.Null(said.Confidence);
+
+        // A CONFINED SEAT records one too.
+        Assert.True((await server.CallAsync(RecordFrame(), Head, Launch(db, Head, SeatClasses.Cell))).Ok);
+        Assert.Equal(2L, Count(db, "org_decision"));
+
+        // KILL THE WRITE AFTER THE ENTRY: the row's insert fails, and the entry written before it in the same write is gone too.
+        var entries = Count(db, "ledger_entry");
+        Exec(db, "CREATE TRIGGER kill_decision BEFORE INSERT ON org_decision BEGIN SELECT RAISE(ABORT, 'killed after the entry'); END");
+        Assert.False((await server.CallAsync(RecordFrame(), Member, Launch(db, Member))).Ok);
+        Assert.Equal(entries, Count(db, "ledger_entry"));
+        Assert.Equal(2L, Count(db, "org_decision"));
+    }
+
+    /// <summary>
+    /// (a3) A DECISION CITING A RECORD THAT IS NOT THERE, OR OF A RESERVED KIND, IS REFUSED — in words, nothing written: a ref of a
+    /// kind outside the closed list, a ref to no record, a mandatory kind ("written by the verb that performs it"), an unknown kind,
+    /// no options, and an argument the verb does not take. RED at base: no op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_decision_citing_a_record_that_is_not_there_or_of_a_reserved_kind_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+
+        foreach (var (frame, words) in new[]
+                 {
+                     (RecordFrame(refs: new[] { new { kind = "version", id = "ver-nowhere" } }), "is not in the app's ledgers"),
+                     (RecordFrame(refs: new[] { new { kind = "ledger", id = "999999" } }), "is not in the app's ledgers"),
+                     (RecordFrame(refs: new[] { new { kind = "file", id = "notes.md" } }), "no kind of app record"),
+                     (RecordFrame(kind: "charter"), "written by the verb that performs it"),
+                     (RecordFrame(kind: "paper-nomination"), "written by the verb that performs it"),
+                     (RecordFrame(kind: "whim"), "is no kind of decision"),
+                     (Frame(Ops.DecisionRecord, ("options", Array.Empty<string>()), ("choice", "c"), ("rationale", "r")), "options it considered"),
+                     (Frame(Ops.DecisionRecord, ("options", Options), ("choice", "c"), ("rationale", "r"), ("id", "dec-chosen")), "'id' is not an argument")
+                 })
+        {
+            var refused = await server.CallAsync(frame, Member, Launch(db, Member));
+            Assert.False(refused.Ok, $"a decision was recorded: {words}");
+            Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Equal(0L, Count(db, "org_decision"));
+        Assert.Equal(0L, Count(db, "ledger_entry"));
+    }
+
+    /// <summary>
+    /// (b) LEDGER-ADD AND LEDGER-REVISE REFUSE THE DECISION KIND (GUARD; RULING Q8): a <c>decision</c> entry is written only by
+    /// <c>decision-record</c>, in its record's own write — else any active position, the legacy pair included, could write one with
+    /// no record behind it — and a decision's entry is never revised. Green at base only because <c>decision</c> was no kind;
+    /// watched red with <see cref="LedgerKind.Decision"/> accepted by the public <see cref="ResearchLedger.Add"/>.
+    /// </summary>
+    [Fact]
+    public async Task Ledger_add_and_revise_refuse_the_decision_kind()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+
+        foreach (var (role, seat) in new[] { (CouncilRoles.Research, SeatClasses.Cli), (CouncilRoles.Operations, SeatClasses.Cli), (Member, SeatClasses.Harness) })
+        {
+            var refused = await server.CallAsync(Frame(Ops.LedgerAdd, ("kind", LedgerKind.Decision), ("text", "we decided"), ("mark", "claim")),
+                role, Launch(db, role, seat));
+            Assert.False(refused.Ok, $"{role} wrote a decision entry with ledger-add");
+            Assert.Contains("only 'decision-record' writes one", refused.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Contains("only 'decision-record' writes one", Assert.Throws<TradeAgentException>(() =>
+            gw.Ledger.Add(Member, null, LedgerKind.Decision, "we decided", LedgerMark.Claim, null, null, null)).Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "ledger_entry"));
+
+        // AND A DECISION'S ENTRY IS NEVER REVISED, by its own author either.
+        Assert.True((await server.CallAsync(RecordFrame(), Member, Launch(db, Member))).Ok);
+        var entry = gw.Org.DecisionsOf(Member).Single().LedgerEntryId;
+        var revise = await server.CallAsync(Frame(Ops.LedgerRevise, ("entry", entry), ("text", "on second thoughts"), ("mark", "claim"),
+            ("why", "changed my mind")), Member, Launch(db, Member));
+        Assert.False(revise.Ok, "a decision's ledger entry was revised");
+        Assert.Contains("never revised", revise.Error!.Message, StringComparison.Ordinal);
+        Assert.Single(gw.Ledger.Revisions(entry));
+    }
 }
