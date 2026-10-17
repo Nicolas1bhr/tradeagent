@@ -99,22 +99,41 @@ public static class Paths
     public static string IpcTokenFile => Path.Combine(State, "ipc.token");
     public static string InstanceLockFile => Path.Combine(State, "gateway.lock");
 
+    /// <summary>The real gateway's pipe: what <see cref="PipeName"/> is when <c>TRADEAGENT_PIPE</c> is not set.</summary>
+    public const string DefaultPipeName = "TradeAgent.Gateway";
+
     /// <summary>Agent-facing IPC endpoint. Overridable so parallel tests do not collide.</summary>
-    public static string PipeName => Environment.GetEnvironmentVariable("TRADEAGENT_PIPE") ?? "TradeAgent.Gateway";
+    public static string PipeName => Environment.GetEnvironmentVariable("TRADEAGENT_PIPE") ?? DefaultPipeName;
 
     /// <summary>Bridge-facing IPC endpoint (ATAS side connects to this).</summary>
     public static string BridgePipeName => Environment.GetEnvironmentVariable("TRADEAGENT_BRIDGE_PIPE") ?? "TradeAgent.Bridge";
 
-    static string ResolveHome()
+    static string ResolveHome() => Resolve(
+        Environment.GetEnvironmentVariable("TRADEAGENT_HOME"), Environment.GetEnvironmentVariable("TRADEAGENT_PIPE"),
+        Proving.ProvingGround.ThisProcess, DefaultHome());
+
+    /// <summary>
+    /// THE HOME A PROCESS RUNS IN: <paramref name="over"/> when it is set, else <paramref name="defaultHome"/> — created
+    /// either way. A PROVING PROCESS (<paramref name="proving"/>, <c>U-proving-ground-a</c>) is first asked
+    /// <see cref="Proving.ProvingGround.HomeRefusal"/> and refused, before anything is created, in words naming the home
+    /// and the pipe: a proving ground never runs in the real home or on the real gateway's pipe.
+    /// </summary>
+    internal static string Resolve(string? over, string? pipe, bool proving, string defaultHome)
     {
-        var over = Environment.GetEnvironmentVariable("TRADEAGENT_HOME");
+        if (proving && Proving.ProvingGround.HomeRefusal(over, defaultHome, pipe) is { } refused)
+            throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, refused);
         if (!string.IsNullOrWhiteSpace(over)) { Directory.CreateDirectory(over); return over; }
+        Directory.CreateDirectory(defaultHome);
+        return defaultHome;
+    }
+
+    /// <summary>The home a process with no <c>TRADEAGENT_HOME</c> runs in — the real one. Computed; nothing is created.</summary>
+    public static string DefaultHome()
+    {
         var b = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(b))
             b = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-        var home = Path.Combine(b, "TradeAgent");
-        Directory.CreateDirectory(home);
-        return home;
+        return Path.Combine(b, "TradeAgent");
     }
 
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
