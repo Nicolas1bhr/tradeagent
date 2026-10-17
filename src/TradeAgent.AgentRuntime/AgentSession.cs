@@ -466,6 +466,13 @@ public sealed class AgentSession(
     readonly List<string> _typedMeanwhile = [];
 
     ContainedProcess? _current;
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-turn-tail-drain</c>), set only by the test assembly (<c>InternalsVisibleTo</c>) on its own async flow:
+    /// called with the launch's container after it is started and before its stdout and stderr are read. Nothing in the product
+    /// sets it, and no file, setting or pipe op reaches it.
+    /// </summary>
+    internal static readonly AsyncLocal<Action<ContainedProcess>?> BeforeTheRead = new();
     CancellationTokenSource? _cts;
 
     /// <summary>
@@ -1014,6 +1021,10 @@ public sealed class AgentSession(
                 try { contained.End(); }
                 catch (Exception) { /* the finally's teardown runs regardless and says what it could not end */ }
             }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
+            // A TEST'S SEAM AND NOTHING ELSE (U-turn-tail-drain): run once the reads are about to begin, so a test can end the
+            // turn's tree before a single byte of its stream is read — the order a slow reader meets on a loaded machine.
+            BeforeTheRead.Value?.Invoke(contained);
 
             var stderr = process.StandardError.ReadToEndAsync(ct);
             // A read the turn abandons — cancelled, or a pipe the teardown closed — is observed here, so
