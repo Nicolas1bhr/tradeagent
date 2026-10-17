@@ -405,11 +405,8 @@ public sealed class CouncilRelay
             // them back with every wake the launch took.
             if (RefusedAtTheGate(p.Attempt))
             {
-                // ITS OWN IDENTITY, BOUND TO THE REFUSED LAUNCH (re-review 2, P2): never the content hash, which a later launch's
-                // identical text would share — and a delivery of that text would then go out under a row naming this launch.
-                var held = p with { Id = Publication.HeldIdOf(p.Role, p.Kind, p.Attempt!, p.Content), Recipients = "" };
-                _store.Record(held, _now());
-                _events.Hold(held.Id, held.Role, _now(), GateHeldWhy);
+                _store.Record(p with { Recipients = "" }, _now());
+                _events.Hold(p.Id, p.Role, _now(), GateHeldWhy);
                 Boundary?.Invoke("transaction");
                 continue;
             }
