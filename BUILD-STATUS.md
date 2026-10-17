@@ -11003,3 +11003,25 @@ worktree carried a mutant at the 03:30 usage stop: `MissionLoop.cs` restored fro
 **First sightings (local, pre-existing at base `e3344445`; one more = a unit):** `PromptStdinTests` ×3 and `MaterialPassExclusionTests.No_scan_runs_while_a_role_is_launching` fail in one wide filtered batch
 and pass alone (test isolation).
 **NOT VERIFIED:** review defect 3's fix has no test of its own; `ApplyDue` counted only via siblings; no real model; no pool concurrency measured; no helper producer/parent column (Q3); tests box NOT RUN — the machine does not answer.
+
+
+## U-org-decisions (O5b) — decisions are records with forecasts the app resolves from its own measurements, the rationale is the position's own ledger entry, a head escalates up a chain the app chooses by capability, and a lateral note wakes nobody; rung 41 (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v2) on `main` at tip `dd813fb8` (on `673a2ca5`, after U-org-lanes; code `abeb8f5c`); CI run **39030294454**: every job success incl. `linux-host`; `land.sh check` VERDICT PASS (names 2945 → 2968, removed 0; scan clean with judged phrases: a test's in-memory grant client and the guard's authority word list). **RUNG 41** (schema 40 → 41). No model call; nothing here reaches a real model.
+ORCHESTRATION §§ 2.10–2.11. **Protects:** measurement vs claim (options, choice, rationale, probability, reasons and notes stored verbatim as claims; validation, `scored`, the resolution and its record are the app's own rows),
+evidence (EVID-001: a forecast resolves ONLY on `strategy_promotion.verdict` and `org_mandate_event` — the resolver's SQL is a named constant a guard reads), precommitment (a forecast on an outcome already
+measured is refused; nothing updates a decision, forecast or resolution; `ledger-add`/`ledger-revise` refuse the `decision` kind), authority (every verb through O5a's `OrgVerbCaller` — recorded assurance ≥ the
+`DecisionVerbs` minimum, never headship), AUTH-001 (an escalation to the owner is a RECORD — no wake, no pipe path), ORDER-001 (no op `Mutating`, no note to a seat that may place orders), append-only (triggers).
+**Build (items 1–6, `a2de9a2c`):** rung 41 — `org_decision`, `org_forecast`, `org_forecast_resolution`, `org_escalation`, `org_lateral`, UPDATE/DELETE refused by trigger; `LedgerKind.Decision` written only by
+`OrgStore.Decide` (the rationale, entry, row and forecasts in one write); `ForecastVocabulary` v1 (`verdict-class`, `mandate-state`), `forecast-add`, `mandate-assign --forecasts`; `ForecastResolver.Sweep` after
+`OrgStore.Sweep`, INSERT … ON CONFLICT DO NOTHING, an unknown vocabulary version refused and logged; `escalation-raise/-list` — the walk from the caller's topmost headed unit skips vacant heads and every head
+whose LATEST recorded seat cannot carry the verbs (Q6, by capability), the root = the owner as a record; `lateral-send/-list` write the row only; the eight ops join `Ops.Organisation`, the disjointness guard
+and `BrokerDoor.OrganisationVerbs` behind `VerbGate`. Deviations declared in the brief's report (`to_position`, `OrgDecisionKind`, arg names `id`/`on`; five guards revisited out loud). RED + 9 MUTANTS quoted.
+**Fix pass 1 (review P2 ×4 + a ruling; `abeb8f5c` and siblings):** 1. a verdict or mandate event stamped before the forecast's write resolves it VOID "measured before the forecast: …" naming the record,
+never "no verdict by the date" (RED + mutant). 2. a void forecast is never scored or counted (`scored_at_write` kept apart; `counted` = scored yes/no only). 3. `mandate-show` lists the mandate's forecasts,
+probability beside resolution, paged under O5a's byte bound. 4. the probability is an exact TEXT decimal 0..1 in the CHECK and in `IsProbabilityText` (gateway parse and the writer; RED ×2 + mutant).
+5. RULED (seat B): `lateral-send` judges its recipient by CAPABILITY (latest recorded seat ≥ the `DecisionVerbs` minimum; never-launched accepted); ORDER-001's no-note-to-operations kept as the capability
+`CouncilRoles.MayPlaceOrders` (RED + mutant).
+**Re-review (`fleet/tmp/B-scratch/u-org-decisions/fix1-review.md`):** 1, 2, 3, 5 closed, no regression. 4 PARTIAL, judged OWED (not a pass): the schema CHECK still accepts `'0.5' || char(0) || 'garbage'`
+(SQLite text functions stop at NUL) — the app's only writer refuses it (`IsProbabilityText` checks every character), so it reaches the table only through a non-app SQL writer; card: add a NUL guard to the CHECK.
+**NOT VERIFIED:** no loop-level escalation test; no puppet fixture life; no model call, no app run; tests box NOT RUN — the machine does not answer.
