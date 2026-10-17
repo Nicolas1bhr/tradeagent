@@ -148,7 +148,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// <summary>Files hashed per pass, so one 4 GB drop cannot stall the pass that follows it.</summary>
     public int HashesPerPass { get; init; } = 24;
 
-    public ScanResult Scan(CancellationToken ct = default)
+    public ScanResult Scan(CancellationToken ct = default, IReadOnlySet<string>? unsealed = null)
     {
         var now = _now();
         int seen = 0, added = 0, removed = 0, skipped = 0;
@@ -171,6 +171,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
         // The window every Inbox claim in this pass is measured over.
         var since = WindowOpenedAt(register);
+
+        // THE HOMES OF THE LANES TURNING BESIDE THIS PASS UNSEALED (U-org-lanes): a confined lane whose cell cannot write the
+        // inbox does not stop a pass, and its home is not read until its turn has committed — what is half written there is
+        // not yet what the lane delivered. A home skipped is a place this pass did not look, so its group marks nothing
+        // missing; it is not unreadable, and it does not hold the inbox's window, which that lane cannot write into.
+        var unsealedHomes = (unsealed ?? new HashSet<string>()).Select(CouncilRoles.HomeDir).ToHashSet(StringComparer.Ordinal);
 
         // ONE GROUP PER PLACE, and every role's home inside the second group. `present` and
         // MarkMissing are per GROUP, so the roles have to be walked together: marking missing after
@@ -196,6 +202,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
             foreach (var (home, dir) in paths)
             {
+                if (!isInbox && unsealedHomes.Contains(home)) { read = false; continue; }
                 var full = Path.Combine(_root, home, dir);
                 switch (LookAtFolder(full))
                 {

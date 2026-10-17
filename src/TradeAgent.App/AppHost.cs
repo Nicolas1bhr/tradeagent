@@ -1492,20 +1492,20 @@ public sealed class AppHost : IAsyncDisposable
     /// again.</para>
     /// </summary>
     public ScanResult? ScanMaterials(CancellationToken ct = default) =>
-        Mission.TryPass(() => RecordWorkspace(ct));
+        Mission.TryPass(unsealed => RecordWorkspace(ct, unsealed));
 
     /// <summary>
     /// ONE PASS, with no exclusion of its own: called only from inside one — the loop's
     /// (<see cref="MissionHost.ScanAsync"/>) or the app's (<see cref="ScanMaterials"/>).
     /// </summary>
-    ScanResult RecordWorkspace(CancellationToken ct)
+    ScanResult RecordWorkspace(CancellationToken ct, IReadOnlySet<string>? unsealed = null)
     {
         var at = DateTimeOffset.UtcNow;
         Interlocked.Exchange(ref _lastScanAtTicks, at.UtcTicks);
         // THE REGISTER THIS HOST'S AI PROCESSES REPORT TO, which the pass takes its mark in and asks.
         // The process-wide one in the product; a composed test host's own, so that its scans and its
         // agents are one register there too.
-        var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince, reads: _reads).Scan(ct);
+        var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince, reads: _reads).Scan(ct, unsealed);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
 
@@ -2058,14 +2058,20 @@ public sealed class AppHost : IAsyncDisposable
         /// than through <see cref="AppHost.ScanMaterials"/>, which would find that exclusion taken and
         /// refuse.
         /// </summary>
-        public Task ScanAsync(CancellationToken ct)
+        public Task ScanAsync(CancellationToken ct) => ScanAsync(new HashSet<string>(), ct);
+
+        /// <summary>
+        /// THE LOOP'S PASS, told which positions turn beside it unsealed (<c>U-org-lanes</c>): their homes are not read until
+        /// their outputs are sealed, and nothing in them is marked missing meanwhile.
+        /// </summary>
+        public Task<bool> ScanAsync(IReadOnlySet<string> unsealed, CancellationToken ct)
         {
-            try { host.RecordWorkspace(ct); }
+            try { host.RecordWorkspace(ct, unsealed); }
             catch (OperationCanceledException) { throw; }
             // A scan that threw must not stop the mission. It is a record-keeping pass, and the
             // engineering log already has the exception from the background loop that also runs it.
             catch (Exception ex) { host.Gateway.Log.Engineering("Materials", "mission_scan_failed", "warn", ex: ex); }
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         /// <summary>

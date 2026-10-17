@@ -632,6 +632,13 @@ public static class Labels
     public const string SaveLanes = "Save how many work at once";
 
     /// <summary>
+    /// What the card waits for while a material pass is owed (<c>U-org-lanes</c>): new turns wait for the AI's turns already
+    /// running to end, so the owner's inbox can be checked with nothing running beside it.
+    /// </summary>
+    public const string WaitingForQuietToCheckTheInbox =
+        "the AI's running turns to end, so TradeAgent can check your inbox with nothing running beside it";
+
+    /// <summary>
     /// What the second press of <see cref="SaveLanes"/> will do. RAISING any of the three asks twice: more positions at once
     /// spend the owner's money faster. Lowering only ever spends slower, so it saves in one press.
     /// </summary>

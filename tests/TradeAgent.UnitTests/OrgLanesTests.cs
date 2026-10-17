@@ -457,6 +457,122 @@ public class OrgLanesTests : IDisposable
         foreach (var role in new[] { Ops, Research, Third }) Assert.Single(host.Conv(role).Sent);
     }
 
+    // ---- item 6: the drain, and outputs sealed first --------------------------------------------------------------
+
+    static readonly LaneProfile Sealed = new(LaneAssurance.Confined, "test-cell", InboxUnwritable: true);
+
+    /// <summary>
+    /// (f) RED at base (busy lanes refuse every pass, launches continue): AN OWED PASS DRAINS THE LANES AND RUNS BEFORE THE NEXT
+    /// LAUNCH. Two counted lanes turn; the inbox changes and a third position falls due; the tick starts nothing new; once both
+    /// lanes end the pass runs, and only then does the third position launch.
+    /// </summary>
+    [Fact]
+    public async Task An_owed_pass_drains_the_lanes_and_runs_before_the_next_launch()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(3, 3, 3));
+        var release = new[] { Held(host.Conv(Ops)), Held(host.Conv(Research)) };
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var first = await loop.TickAsync().WaitAsync(T);
+        await Task.WhenAll(host.Conv(Ops).Inside.Task, host.Conv(Research).Inside.Task).WaitAsync(T);
+
+        host.InboxChanged = true;
+        events.Raise(MissionEventIds.ForRole("look:third", Third), MissionEventKind.Review, DateTimeOffset.UtcNow.AddMinutes(-1),
+            role: Third);
+        var owed = await loop.TickAsync().WaitAsync(T);
+        Assert.Empty(owed.Lanes);
+        Assert.Empty(host.Conv(Third).Sent);
+        Assert.DoesNotContain("scan", host.Log);
+
+        foreach (var r in release) r.SetResult();
+        await Task.WhenAll(first.Lanes).WaitAsync(T);
+        var after = await loop.TickAsync().WaitAsync(T);
+        await Task.WhenAll(after.Lanes).WaitAsync(T);
+
+        Assert.Single(host.Conv(Third).Sent);
+        var log = host.Log.ToList();
+        Assert.True(log.IndexOf("scan") >= 0 && log.IndexOf("scan") < log.IndexOf($"send:{Third}"),
+            $"the third position launched before the owed pass ran: {string.Join(", ", log)}");
+    }
+
+    /// <summary>
+    /// (f2) GUARD (today's <c>No_scan_runs_while_a_role_is_launching</c>, with two lanes): NO PASS WHILE AN UNCONFINED LANE TURNS
+    /// — nor while a confined lane that can write the inbox does. The app's pass is refused while both turn and while the
+    /// unconfined one turns alone, and runs once both have ended.
+    /// </summary>
+    [Fact]
+    public async Task No_pass_while_an_unconfined_lane_turns()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        host.Profiles[Ops] = LaneProfile.Unconfined;
+        var chair = Held(host.Conv(Ops));
+        var director = Held(host.Conv(Research));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(T);
+        await Task.WhenAll(host.Conv(Ops).Inside.Task, host.Conv(Research).Inside.Task).WaitAsync(T);
+        Assert.Null(loop.TryPass(_ => "ran"));
+        Assert.Null(loop.TryPass(() => "ran"));
+
+        // THE CONFINED, COUNTED LANE ENDS FIRST: the unconfined one alone still holds every pass.
+        director.SetResult();
+        await tick.Lanes[1].WaitAsync(T);
+        Assert.Null(loop.TryPass(_ => "ran"));
+
+        chair.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+        Assert.Equal("ran", loop.TryPass(_ => "ran"));
+    }
+
+    /// <summary>
+    /// (f3) RED at base (any turning role blocks every pass): A CONFINED LANE THAT CANNOT WRITE THE INBOX HOLDS NO PASS, AND ITS
+    /// HOME WAITS FOR ITS SEAL. The Research Director turns in a cell whose profile proves the inbox unwritable: the app's pass
+    /// runs beside it, records the owner's file, and does not read the director's home — nor marks what it holds missing; once
+    /// the lane has committed, the next pass records the director's file. The old pass, which cannot be told what to skip, is
+    /// refused beside it.
+    /// </summary>
+    [Fact]
+    public async Task A_confined_lane_that_cannot_write_the_inbox_holds_no_pass_and_its_home_waits_for_its_seal()
+    {
+        var root = Path.Combine(TestEnv.Home, $"lanes-ws-{Guid.NewGuid():n}");
+        var home = Path.Combine(root, CouncilRoles.HomeDir(Research), CouncilRoles.OutDir);
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(Path.Combine(root, MaterialScanner.InboxDir));
+        File.WriteAllText(Path.Combine(home, "report.md"), "half written");
+        File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, "brief.md"), "the owner's");
+        var scanner = new MaterialScanner(_db, root, noAgentSince: _ => true);
+
+        var events = new MissionEventStore(_db);
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        host.Profiles[Research] = Sealed;
+        var director = Held(host.Conv(Research));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(T);
+        await host.Conv(Research).Inside.Task.WaitAsync(T);
+
+        IReadOnlySet<string>? skipped = null;
+        var beside = loop.TryPass(unsealed => scanner.Scan(default, skipped = unsealed));
+        Assert.NotNull(beside);
+        Assert.Equal([Research], skipped!.ToArray());
+        var rows = new MaterialStore(_db).Present().Select(m => m.RelPath).ToList();
+        Assert.Contains($"{MaterialScanner.InboxDir}/brief.md", rows);
+        Assert.DoesNotContain(rows, p => p.EndsWith("report.md", StringComparison.Ordinal));
+        Assert.Null(loop.TryPass(() => "ran"));
+
+        director.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+        Assert.NotNull(loop.TryPass(unsealed => scanner.Scan(default, unsealed)));
+        Assert.Contains(new MaterialStore(_db).Present(), m => m.RelPath.EndsWith("report.md", StringComparison.Ordinal));
+    }
+
     // ---- the seam host --------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -494,14 +610,32 @@ public class OrgLanesTests : IDisposable
         public IAgentConversation? Conversation => Conv(Ops);
         public IAgentConversation? ConversationFor(string role) => Conv(role);
         public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"lanes-home-{Guid.NewGuid():n}");
-        public bool InboxChangedSinceLastPass => false;
-        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        /// <summary>Set: the inbox holds something no pass has recorded, until the next pass runs.</summary>
+        public bool InboxChanged { get; set; }
+        public bool InboxChangedSinceLastPass => InboxChanged;
+
+        /// <summary>What happened, in order: "scan" for each pass, "send:&lt;role&gt;" for each launch.</summary>
+        public List<string> Log { get; } = [];
+        public void Note(string what) { lock (Log) Log.Add(what); }
+
+        /// <summary>The positions each loop pass was told were running unsealed.</summary>
+        public List<string[]> ScannedBeside { get; } = [];
+
+        public Task ScanAsync(CancellationToken ct) => ScanAsync(new HashSet<string>(), ct);
+
+        public Task<bool> ScanAsync(IReadOnlySet<string> unsealed, CancellationToken ct)
+        {
+            Note("scan");
+            lock (ScannedBeside) ScannedBeside.Add([.. unsealed.Order(StringComparer.Ordinal)]);
+            InboxChanged = false;
+            return Task.FromResult(true);
+        }
 
         public Conversation Conv(string role)
         {
             lock (_conversations)
             {
-                if (!_conversations.TryGetValue(role, out var c)) _conversations[role] = c = new Conversation(role, () => Grants);
+                if (!_conversations.TryGetValue(role, out var c)) _conversations[role] = c = new Conversation(role, () => Grants) { OnSend = Note };
                 return c;
             }
         }
@@ -574,9 +708,12 @@ public class OrgLanesTests : IDisposable
         /// <summary>Set: every turn ends refused for this vendor limit.</summary>
         public VendorLimit? Limit { get; set; }
 
+        public Action<string>? OnSend { get; init; }
+
         public async Task SendMissionAsync(string message, CancellationToken ct = default)
         {
             lock (Sent) Sent.Add(message);
+            OnSend?.Invoke($"send:{role}");
             Inside.TrySetResult();
             var grant = Interlocked.Exchange(ref _claim, null);
             try { if (Hold is { } hold) await hold.Task.WaitAsync(ct); }

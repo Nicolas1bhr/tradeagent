@@ -401,6 +401,19 @@ public interface IMissionHost
     Task ScanAsync(CancellationToken ct);
 
     /// <summary>
+    /// ONE PASS BESIDE <paramref name="unsealed"/> (<c>U-org-lanes</c>): the positions whose confined lanes cannot write the inbox
+    /// and are still turning, whose homes the pass must not read until their outputs are sealed. Answers whether a pass RAN. A
+    /// host that cannot skip a home runs none beside one — the default — so an unsealed home is never read by a pass that was not
+    /// told of it.
+    /// </summary>
+    async Task<bool> ScanAsync(IReadOnlySet<string> unsealed, CancellationToken ct)
+    {
+        if (unsealed.Count > 0) return false;
+        await ScanAsync(ct);
+        return true;
+    }
+
+    /// <summary>
     /// THE PERSISTED REASONS THE AI MAY TAKE A TURN. With one wired the loop turns only when an
     /// unconsumed event is due; with none it turns whenever it is asked to, which is what it did
     /// before this existed.
@@ -1688,6 +1701,7 @@ public sealed class MissionLoop
         lock (_gate)
         {
             why = _passing ? "a material pass is measuring the window a launch would walk into"
+                : _passOwed && lane.Profile.Counted ? Labels.WaitingForQuietToCheckTheInbox
                 : _turning.Contains(role) ? "a turn is already running for this role"
                 : LanePolicy.Refuses(settings, lane, _lanes.Values);
             if (why is not null) return null;
@@ -1740,12 +1754,13 @@ public sealed class MissionLoop
     /// is measuring would take the same claim away, and the loop is the only thing that knows both
     /// facts.</para>
     /// </summary>
-    async Task<bool> PassAsync(CancellationToken ct)
+    async Task<bool> PassAsync(CancellationToken ct, bool owe = false)
     {
-        if (!EnterPass()) return false;
-        try { await _host.ScanAsync(ct); }
-        finally { LeavePass(); }
-        return true;
+        if (!EnterPass(owe, out var unsealed)) return false;
+        var ran = false;
+        try { ran = await _host.ScanAsync(unsealed, ct); }
+        finally { LeavePass(ran); }
+        return ran;
     }
 
     /// <summary>
@@ -1766,25 +1781,77 @@ public sealed class MissionLoop
     /// already measuring.</returns>
     public T? TryPass<T>(Func<T> pass) where T : class
     {
-        if (!EnterPass()) return null;
-        try { return pass(); }
-        finally { LeavePass(); }
+        if (!EnterPass(owe: true, out var unsealed)) return null;
+        var ran = false;
+        try
+        {
+            // A PASS THAT CANNOT BE TOLD WHAT TO SKIP is not run beside an unsealed lane (U-org-lanes): it would read a home
+            // whose outputs are not yet sealed. The overload above is the one that can.
+            if (unsealed.Count > 0) return null;
+            var result = pass();
+            ran = true;
+            return result;
+        }
+        finally { LeavePass(ran); }
     }
 
-    /// <summary>The pass half of the lease: taken only while no role is turning and no pass runs.</summary>
-    bool EnterPass()
+    /// <summary>
+    /// THE APP'S PASS, TOLD WHICH POSITIONS TURN BESIDE IT UNSEALED (<c>U-org-lanes</c>): taken while no COUNTED lane turns
+    /// (<see cref="LaneProfile.Counted"/>), it is handed the positions whose confined lanes cannot write the inbox and are still
+    /// turning — their homes are the pass's to skip until their outputs are sealed. Refused, it is OWED: no counted lane is
+    /// leased again until it has run.
+    /// </summary>
+    public T? TryPass<T>(Func<IReadOnlySet<string>, T> pass) where T : class
     {
+        if (!EnterPass(owe: true, out var unsealed)) return null;
+        var ran = false;
+        try { var result = pass(unsealed); ran = true; return result; }
+        finally { LeavePass(ran); }
+    }
+
+    /// <summary>
+    /// A MATERIAL PASS IS OWED (<c>U-org-lanes</c>, <c>docs/ORCHESTRATION.md</c> § 2.5, "the scheduler drains to a quiet window for
+    /// each pass"): the inbox changed, or a pass the app asked for was refused because a counted lane turned. While it is owed
+    /// no counted lane is leased or dispatched; the lanes already turning end, the pass runs in the quiet they leave, and
+    /// dispatch resumes. Without it, lanes that are always busy would refuse every pass and the inbox would never be read.
+    /// </summary>
+    bool _passOwed;
+
+    /// <summary>
+    /// The pass half of the lease: taken only while no COUNTED lane — and no bookkeeping slot — is turning, and no pass runs.
+    /// <paramref name="unsealed"/> is every leased lane still turning, each one uncounted. Refused for a counted lane, the pass
+    /// is owed when <paramref name="owe"/>.
+    /// </summary>
+    bool EnterPass(bool owe, out IReadOnlySet<string> unsealed)
+    {
+        unsealed = new HashSet<string>();
         lock (_gate)
         {
-            if (_turning.Count > 0 || _passing) return false;
+            if (_passing) return false;
+            if (_turning.Any(r => !_lanes.TryGetValue(r, out var lane) || lane.Profile.Counted))
+            {
+                if (owe) _passOwed = true;
+                return false;
+            }
+            unsealed = _turning.ToHashSet(StringComparer.Ordinal);
             _passing = true;
             return true;
         }
     }
 
-    void LeavePass()
+    /// <summary>The pass is over; one that RAN pays what was owed.</summary>
+    void LeavePass(bool ran)
     {
-        lock (_gate) _passing = false;
+        lock (_gate)
+        {
+            _passing = false;
+            if (ran) _passOwed = false;
+        }
+    }
+
+    bool PassOwed()
+    {
+        lock (_gate) return _passOwed;
     }
 
     /// <summary>Whether this role has a turn in flight right now.</summary>
@@ -2073,6 +2140,7 @@ public sealed class MissionLoop
         // caller of this method has always had. The dispatcher is the same three parts with up to N
         // picked, each run as its own lane.
         var swept = Sweep();
+        if (PassOwed()) await PassAsync(ct, owe: true);
         var picked = Pick(swept, 1);
         if (picked.Roles.Count == 0) return picked.Wait;
         return await RunAsync(picked.Roles[0], swept.Events, ct);
@@ -2087,19 +2155,26 @@ public sealed class MissionLoop
     ///
     /// <para>Public because, like <see cref="TurnAsync"/>, it is the unit worth driving in a test.</para>
     /// </summary>
-    public Task<LaneTick> TickAsync(CancellationToken ct = default)
+    public async Task<LaneTick> TickAsync(CancellationToken ct = default)
     {
         var swept = Sweep();
+
+        // THE DRAIN (U-org-lanes): a pass owed — the inbox changed, or the app's pass was refused — runs here the moment no
+        // counted lane turns, before anything new is leased; while counted lanes still turn it stays owed and the pick below
+        // leases none.
+        if (_host.InboxChangedSinceLastPass) lock (_gate) _passOwed = true;
+        if (PassOwed()) await PassAsync(ct, owe: true);
+
         var settings = LaneSettingsNow();
         int room;
         lock (_gate) room = LanePolicy.Clamp(settings.Lanes) - InFlight().Count;
-        if (room <= 0) return Task.FromResult(new LaneTick([], _options.BusyRetry));
+        if (room <= 0) return new LaneTick([], _options.BusyRetry);
 
         var picked = Pick(swept, room, settings);
-        if (picked.Roles.Count == 0) return Task.FromResult(new LaneTick([], Rested(picked.Wait)));
+        if (picked.Roles.Count == 0) return new LaneTick([], Rested(picked.Wait));
 
         List<Task<TimeSpan>> lanes = [.. picked.Roles.Select(r => StartLane(r, swept.Events, ct))];
-        return Task.FromResult(new LaneTick(lanes, _options.BusyRetry));
+        return new LaneTick(lanes, _options.BusyRetry);
     }
 
     /// <summary>
@@ -2291,15 +2366,25 @@ public sealed class MissionLoop
     List<string> Admitted(IEnumerable<string> eligible, int lanes, LaneSettings settings)
     {
         var running = Snapshot();
+        var owed = PassOwed();
+        var drained = false;
         var chosen = new List<string>();
         foreach (var role in eligible)
         {
             if (chosen.Count >= lanes) break;
             if (BarredForNow(role)) continue;
             var lane = LaneFor(role);
+            if (owed && lane.Profile.Counted) { drained = true; continue; }
             if (LanePolicy.Refuses(settings, lane, running) is not null) continue;
             running.Add(lane);
             chosen.Add(role);
+        }
+
+        // THE CARD SAYS WHY IT WAITS: the owed pass, not a lane limit, is what holds these positions.
+        if (drained && chosen.Count == 0)
+        {
+            lock (_gate) _waitingFor = Labels.WaitingForQuietToCheckTheInbox;
+            Changed?.Invoke();
         }
         return chosen;
     }
@@ -2359,7 +2444,7 @@ public sealed class MissionLoop
         // PassAsync is what makes that true of the OTHER role as well: quiescence is of every
         // managed agent, so the pass does not run while any role is turning, and no role may launch
         // while it runs.
-        if (_host.InboxChangedSinceLastPass) await PassAsync(ct);
+        if (_host.InboxChangedSinceLastPass) await PassAsync(ct, owe: true);
 
         // That pass may have recorded material that ARRIVED, which raises a wake of its own. Taking
         // it NOW rather than leaving it for the next turn is what keeps "the owner dropped a file"

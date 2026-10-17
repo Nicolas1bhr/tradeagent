@@ -25,6 +25,13 @@ public sealed record LaneProfile(LaneAssurance Assurance, string CellClass, bool
     public static readonly LaneProfile Unconfined = new(LaneAssurance.Unconfined, "", false);
 
     public bool IsConfined => Assurance == LaneAssurance.Confined;
+
+    /// <summary>
+    /// WHETHER THIS LANE COUNTS FOR THE MATERIAL PASS'S QUIET (COUNCIL rule 7; <c>docs/ORCHESTRATION.md</c> § 2.5): every lane
+    /// does, unless it is confined AND its cell profile records the owner's inbox as PROVEN unwritable. A pass never runs
+    /// while a counted lane turns; beside an uncounted one it runs, and skips that lane's home until its outputs are sealed.
+    /// </summary>
+    public bool Counted => !(IsConfined && InboxUnwritable);
 }
 
 /// <summary>
