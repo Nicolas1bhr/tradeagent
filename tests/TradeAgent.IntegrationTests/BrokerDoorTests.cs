@@ -521,6 +521,104 @@ public class BrokerDoorTests
         }
     }
 
+    /// <summary>
+    /// O5a ON THE DOOR (<c>U-org-assignments-a</c> fix pass 1, item 4): THE PRODUCT'S MANDATE VERBS, composed as the app composes
+    /// them (<see cref="BrokerDoor.OrganisationVerbs"/> behind <see cref="BrokerDoor.RecordedAssurance"/>), are one per
+    /// <see cref="Ops.Organisation"/> op and named apart from every pipe op and harness tool, so the door opens with them. A head's
+    /// BROKERED attempt and a member's PUPPET (mediated) attempt are offered all of them and run <c>mandate_list</c> /
+    /// <c>mandate_show</c> through the pipe under the grant, seeing their own mandate; the legacy <c>research</c> on an attempt
+    /// recorded UNCONFINED — the head of its division — is offered none and refused in words, and the verb never reaches the pipe's
+    /// record. Watched red with the verbs served without <see cref="BrokerDoor.VerbGate"/>.
+    /// </summary>
+    [Fact]
+    public async Task The_mandate_verbs_on_the_door_are_served_by_recorded_assurance_never_headship()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        const string head = "pos-d0c0ffee0001", member = "pos-d0c0ffee0002", team = "team-d0c0ffee";
+        void Exec(string sql, params (string, object?)[] ps) => db.Write(_ =>
+        {
+            using var c = db.Cmd(sql, ps);
+            return c.ExecuteNonQuery();
+        });
+        const string stamp = "2026-10-11T12:00:00.0000000Z";
+        Exec("INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,'team',NULL,'active',$at)",
+            ("$t", team), ("$p", OrgIds.Research), ("$at", stamp));
+        foreach (var p in new[] { head, member })
+            Exec("INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'active',$at)",
+                ("$id", p), ("$u", team), ("$h", $"org/{p}"), ("$at", stamp));
+        Exec("UPDATE org_unit SET head_position_id=$id WHERE id=$t", ("$id", head), ("$t", team));
+        var mandate = gw.Org.Assign(new MandateIssue(head, null, member, MandateKind.Exploration, "does the skew predict the hour", null,
+            null, false, DateTimeOffset.UtcNow.AddDays(7), 1m, 2), DateTimeOffset.UtcNow).Id;
+
+        var attempts = new AiAttemptStore(db);
+        foreach (var (id, role, seat) in new[]
+                 {
+                     ("attempt-o-head", head, SeatClasses.Harness), ("attempt-o-member", member, SeatClasses.Puppet),
+                     ("attempt-o-research", CouncilRoles.Research, SeatClasses.Cli)
+                 })
+            Assert.True(attempts.Begin(new AiAttempt
+            {
+                Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role, SeatClass = seat,
+                Assurance = SeatClasses.Name(SeatClasses.AssuranceOf(seat)!.Value)
+            }).Admitted);
+
+        var verbs = BrokerDoor.OrganisationVerbs(() => server);
+        var names = verbs.Select(v => v.Spec.Name).ToList();
+        Assert.Equal(Ops.Organisation.Select(BrokerDoor.VerbName), names);
+        var taken = GatewaySchema.Ops().Select(o => o.Op).Concat(GrantedWorkerTools.Granted.Select(t => t.Name)).Append(Ops.Hello)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.All(names, n => Assert.DoesNotContain(n, taken));
+
+        foreach (var (attempt, role, served) in new[]
+                 {
+                     ("attempt-o-head", head, true), ("attempt-o-member", member, true), ("attempt-o-research", CouncilRoles.Research, false)
+                 })
+        {
+            var grants = new AgentGrants();
+            using var grant = grants.IssueHere(role, attempt);
+            var folder = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+            Directory.CreateDirectory(folder);
+            var ledger = new ToolCallStore(db);
+            await using var door = new BrokerDoor
+            {
+                Grants = grants, Image = SelfImage, Verbs = verbs, Ledger = ledger, Pipe = () => server,
+                VerbGate = BrokerDoor.RecordedAssurance(attempts.Get),
+                Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger)
+            };
+            door.Start();
+            using var http = Client(grant.Token);
+
+            var listed = (await Post(http, door.Url!, Rpc(1, "tools/list"))).Json.GetProperty("result").GetProperty("tools")
+                .EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToList();
+            var list = (await Post(http, door.Url!, Rpc(2, "tools/call", new { name = "mandate_list", arguments = new { } })))
+                .Json.GetProperty("result");
+            var show = (await Post(http, door.Url!, Rpc(3, "tools/call", new { name = "mandate_show", arguments = new { mandate } })))
+                .Json.GetProperty("result");
+
+            if (served)
+            {
+                Assert.All(names, n => Assert.Contains(n, listed));
+                Assert.False(list.GetProperty("isError").GetBoolean(), $"{attempt} was refused mandate_list: {Text(list)}");
+                Assert.Contains(mandate, Text(list));
+                Assert.False(show.GetProperty("isError").GetBoolean(), $"{attempt} was refused mandate_show: {Text(show)}");
+                Assert.Contains("does the skew predict the hour", Text(show));
+            }
+            else
+            {
+                Assert.Empty(listed.Intersect(names));
+                foreach (var refused in new[] { list, show })
+                {
+                    Assert.True(refused.GetProperty("isError").GetBoolean(), $"a mandate verb was served to {attempt}: {Text(refused)}");
+                    Assert.Contains("is an organisation verb", Text(refused));
+                    Assert.Contains("is recorded unconfined", Text(refused));
+                }
+            }
+            Assert.Equal(2, ledger.ForAttempt(attempt).Count(r => r.Tool.StartsWith("mandate_", StringComparison.Ordinal)));
+        }
+    }
+
     /// <summary>(j), the verbs' half: a verb named like a pipe op — <c>cancel</c> moves money — or a harness tool keeps the door shut.</summary>
     [Fact]
     public async Task A_verb_named_like_a_pipe_op_or_a_harness_tool_keeps_the_door_shut()

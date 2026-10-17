@@ -572,6 +572,20 @@ public sealed class GrantedWorkerTools(
     }
 
     /// <summary>
+    /// THE PARAMETERS OF ONE OP OFFERED AS ITS OWN TOOL — the broker door's organisation verbs (<c>U-org-assignments-a</c> fix
+    /// pass 1, item 4): exactly the arguments the gateway's schema declares for <paramref name="spec"/>, each typed as the pipe
+    /// reads it and described in the schema's words, the required ones required. It widens what a provider may SEND, never what
+    /// the gateway ACCEPTS: the op's own handler reads every argument and refuses one it does not take.
+    /// </summary>
+    internal static Dictionary<string, object> OpArgsSchema(GatewaySchema.OpSpec spec)
+    {
+        var schema = Object(spec.Args.ToDictionary(a => a.Name, a => (object)Property(JsonType(spec.Op, a), a.Description),
+            StringComparer.Ordinal));
+        if (spec.Args.Where(a => a.Required).Select(a => a.Name).ToArray() is { Length: > 0 } required) schema["required"] = required;
+        return schema;
+    }
+
+    /// <summary>
     /// The arguments one op takes. <c>sell</c> declares none and says "Same arguments as buy": the gateway reads both with
     /// one parser (<c>ParsePlace</c>), so it is offered buy's — and named beside buy on each of them.
     /// </summary>

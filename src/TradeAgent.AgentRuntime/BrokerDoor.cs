@@ -183,14 +183,69 @@ public sealed class BrokerDoor : IAsyncDisposable
     }
 
     /// <summary>
-    /// ONE OF THE ORGANISATION'S VERBS, SERVED ON THE DOOR BESIDE THE HARNESS'S TOOLS (<c>docs/ORCHESTRATION.md</c> § 2.9) — none
-    /// exists on <c>main</c> yet (O5a's <c>mandate-*</c>, O5b's <c>decision-*</c>/<c>forecast-*</c>/<c>escalation-*</c>/<c>lateral-*</c>
-    /// join here). Run under the grant; never reached unless <see cref="VerbGate"/> passes the attempt.
+    /// ONE OF THE ORGANISATION'S VERBS, SERVED ON THE DOOR BESIDE THE HARNESS'S TOOLS (<c>docs/ORCHESTRATION.md</c> § 2.9): O5a's
+    /// mandate verbs (<see cref="OrganisationVerbs"/>); O5b's <c>decision-*</c>/<c>forecast-*</c>/<c>escalation-*</c>/<c>lateral-*</c>
+    /// join here. Run under the grant; never reached unless <see cref="VerbGate"/> passes the attempt.
     /// </summary>
     public sealed record DoorVerb(ToolSpec Spec, Func<AgentGrant, string, CancellationToken, Task<ToolAnswer>> Run);
 
-    /// <summary>The organisation's verbs this door serves. None today; a verb's name may be no harness tool's and no pipe op's.</summary>
+    /// <summary>The organisation's verbs this door serves; a verb's name may be no harness tool's and no pipe op's.</summary>
     public IReadOnlyList<DoorVerb> Verbs { get; init; } = [];
+
+    /// <summary>
+    /// THE ORGANISATION'S VERBS AS THE DOOR SERVES THEM (<c>U-org-assignments-a</c> fix pass 1, item 4): one per
+    /// <see cref="Ops.Organisation"/> op, named <see cref="VerbName"/>, described and parameterised by the gateway's own schema,
+    /// each running ITS op on the pipe under the grant (<see cref="Gateway.GatewayPipeServer.CallAsGrantAsync"/>) — so the pipe's
+    /// own gate (<c>OrgVerbCaller</c>: the active position the grant proved, its launch's RECORDED assurance) decides again behind
+    /// <see cref="VerbGate"/>, and the mandate row decides who may judge, deliver or cancel. The pipe server is read per call.
+    /// </summary>
+    public static IReadOnlyList<DoorVerb> OrganisationVerbs(Func<Gateway.GatewayPipeServer?> server)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        var described = Gateway.GatewaySchema.Ops();
+        return [.. Ops.Organisation.Select(op =>
+        {
+            var spec = described.Single(o => o.Op == op);
+            var name = VerbName(op);
+            return new DoorVerb(new ToolSpec(name, spec.Description, GrantedWorkerTools.OpArgsSchema(spec)),
+                (grant, arguments, ct) => RunOrganisationVerb(op, name, server, grant, arguments, ct));
+        })];
+    }
+
+    /// <summary>
+    /// THE DOOR'S NAME FOR AN ORGANISATION OP: its words joined by <c>_</c> (<c>mandate-list</c> is <c>mandate_list</c>) — a
+    /// tool's name in MCP's style, and never a pipe op's or a harness tool's, which <see cref="Start"/> refuses (§ 2.9).
+    /// </summary>
+    public static string VerbName(string op) => op.Replace('-', '_');
+
+    static async Task<ToolAnswer> RunOrganisationVerb(string op, string name, Func<Gateway.GatewayPipeServer?> server,
+        AgentGrant grant, string arguments, CancellationToken ct)
+    {
+        if (server() is not { } pipe)
+            return ToolAnswer.Refused($"'{name}' cannot be answered: TradeAgent's gateway is not running.", name);
+        Dictionary<string, JsonElement>? args = null;
+        if (!string.IsNullOrWhiteSpace(arguments))
+        {
+            try
+            {
+                using var parsed = JsonDocument.Parse(arguments);
+                if (parsed.RootElement.ValueKind != JsonValueKind.Object)
+                    return ToolAnswer.Refused($"'{name}' takes a JSON object of its arguments, and nothing was run.", name);
+                args = parsed.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone(), StringComparer.Ordinal);
+            }
+            catch (JsonException ex)
+            {
+                return ToolAnswer.Refused($"'{name}''s arguments were not JSON this build could read ({ex.Message}), and nothing was run.", name);
+            }
+        }
+        var response = await pipe.CallAsGrantAsync(new IpcRequest
+        {
+            Op = op, Session = SessionOf(grant), RequestId = "door-" + Guid.NewGuid().ToString("n")[..16], Args = args
+        }, grant, ct);
+        if (response.Ok) return ToolAnswer.Ok(Json.Write(response.Data), name);
+        var error = response.Error;
+        return ToolAnswer.Refused($"{error?.Code}: {error?.UserMessage} ({error?.Message})", name);
+    }
 
     /// <summary>
     /// WHETHER THIS ATTEMPT MAY USE AN ORGANISATION VERB: null when the seat assurance the activation gate RECORDED for the attempt
