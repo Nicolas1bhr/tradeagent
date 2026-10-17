@@ -2703,7 +2703,7 @@ public sealed class MissionLoop
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1).
-            if (ended?.GateRefused is not null) lock (_gate) _typedForARefusedTurn.AddRange(typed);
+            if (ended?.GateRefused is not null) lock (_gate) OweTyped(role, typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
             // than after it, so a turn that threw its way out still settles the question — a turn

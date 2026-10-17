@@ -419,6 +419,18 @@ public sealed class AppHost : IAsyncDisposable
     /// no seat starts in a cell yet, or a test host's puppet's declared class) — and null before anything is prepared.
     /// Code, never a field of <c>runtimes.json</c> (ORCHESTRATION § 2.7).
     /// </summary>
+    /// <summary>
+    /// A SEAT CLASS AS A LANE (<c>U-org-lanes</c>; the orchestrator's rulings Q2 and Q5, 2026-10-16): CONFINED only where the class's
+    /// assurance is <see cref="SeatAssurance.Confined"/> — a cell; a broker-only (Mediated), harness (Brokered), puppet, CLI or
+    /// unknown seat is an unconfined lane, so at most one of them turns at a time. Even a cell COUNTS for the pass's quiet: its
+    /// inbox is not recorded as PROVEN unwritable until a cell's assurance profile records it (seat A's cell units), and until then
+    /// the default is in, failing closed to quiescence.
+    /// </summary>
+    internal static LaneProfile LaneOfSeat(string? seatClass) =>
+        SeatClasses.AssuranceOf(seatClass) == SeatAssurance.Confined
+            ? new LaneProfile(LaneAssurance.Confined, seatClass!, InboxUnwritable: false)
+            : LaneProfile.Unconfined;
+
     string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
     {
         null => null,
@@ -2012,6 +2024,12 @@ public sealed class AppHost : IAsyncDisposable
             var window = runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.PlanWindow : null;
             return QuotaPool.Of(runtime, null, window);
         }
+
+        /// <summary>
+        /// THE ROLE'S LANE PROFILE FROM THE SEAT THE APP WOULD LAUNCH IT ON (<c>U-org-lanes</c> over <c>U-thinking-seats-a</c>):
+        /// <see cref="LaneOfSeat"/> of its declared seat class — code, never settings or <c>runtimes.json</c>.
+        /// </summary>
+        public LaneProfile LaneOf(string role) => LaneOfSeat(host.DeclaredSeatClass(role));
 
         /// <summary>The owner's lane settings, read on every tick so a press on the Safety page applies at the next one.</summary>
         public LaneSettings Lanes

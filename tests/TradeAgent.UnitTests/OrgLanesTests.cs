@@ -238,6 +238,20 @@ public class OrgLanesTests : IDisposable
                 .Order(StringComparer.Ordinal).ToArray());
     }
 
+    /// <summary>
+    /// THE APP'S LANE PROFILE IS READ FROM THE SEAT'S ASSURANCE (<c>U-thinking-seats-a</c>, the rulings Q2 and Q5): only a cell is a
+    /// confined lane; a broker-only, harness, puppet, CLI or unknown seat is unconfined; and even a cell counts for the pass.
+    /// </summary>
+    [Fact]
+    public void The_apps_lane_is_confined_only_on_a_cell_and_every_lane_counts_for_the_pass()
+    {
+        foreach (var seat in new[] { SeatClasses.Cli, SeatClasses.Broker, SeatClasses.Harness, SeatClasses.Puppet, "unknown", null })
+            Assert.Equal(LaneProfile.Unconfined, AppHost.LaneOfSeat(seat));
+        var cell = AppHost.LaneOfSeat(SeatClasses.Cell);
+        Assert.True(cell.IsConfined);
+        Assert.True(cell.Counted);
+    }
+
     /// <summary>RAISING THE LANE COUNT ASKS TWICE AND NAMES THE FIGURE; lowering it saves in one press.</summary>
     [Fact]
     public void Raising_the_lanes_asks_twice_and_lowering_saves_at_once()
