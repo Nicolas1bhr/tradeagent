@@ -978,4 +978,53 @@ public class OrgDecisionTests
         Assert.True(shown.GetProperty("scored_at_write").GetBoolean());
         Assert.Contains("void", shown.GetProperty("unscored_why").GetString(), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// (h3) A MANDATE'S FORECASTS ARE READ BACK BY <c>mandate-show</c>, EACH PROBABILITY BESIDE ITS RESOLUTION: the decider's forecast
+    /// made in the assign's own write is served with the mandate, the probability as stated and — once the app resolved it — the
+    /// resolution and the record it rests on next to it; the holder reads it too (it may read the mandate), a position that may not
+    /// read the mandate reads none of it, and <c>part</c> = <c>forecasts</c> pages that list alone. RED before the fix: no list.
+    /// </summary>
+    [Fact]
+    public async Task A_mandates_forecasts_are_shown_by_mandate_show_beside_their_resolutions()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var assign = Frame(Ops.MandateAssign, ("holder", Member), ("goal", "find out whether the skew predicts the hour"), ("kind", "exploration"),
+            ("due", Due.ToString("O")), ("allocation", 5m),
+            ("forecasts", new object[] { new { predicate = ForecastVocabulary.MandateState, target = "cancelled", by = Due.ToString("O"), probability = "0.25" } }));
+        var reply = await server.CallAsync(assign, Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var mandate = Body(reply).GetProperty("mandate").GetString()!;
+
+        JsonElement Show(string who, string? part = null) => Body(server.CallAsync(part is null
+                ? Frame(Ops.MandateShow, ("mandate", mandate))
+                : Frame(Ops.MandateShow, ("mandate", mandate), ("part", part)), who, Launch(db, who)).GetAwaiter().GetResult());
+        var open = Assert.Single(Show(Head).GetProperty("forecasts").EnumerateArray());
+        Assert.Equal("0.25", open.GetProperty("probability").GetString());
+        Assert.False(open.TryGetProperty("resolution", out var none) && none.ValueKind != JsonValueKind.Null);
+
+        gw.Org.Cancel(mandate, Head, null, "answered elsewhere", DateTimeOffset.UtcNow);
+        Assert.Equal(1, new ForecastResolver(db).Sweep(DateTimeOffset.UtcNow.AddSeconds(1)).Resolved);
+        foreach (var who in new[] { Head, Member })
+        {
+            var shown = Show(who);
+            Assert.Equal(1, shown.GetProperty("forecasts_total").GetInt32());
+            var f = Assert.Single(shown.GetProperty("forecasts").EnumerateArray());
+            Assert.Equal("0.25", f.GetProperty("probability").GetString());
+            Assert.Equal((ForecastOutcome.Yes, "mandate-event"),
+                (f.GetProperty("resolution").GetProperty("outcome").GetString(), f.GetProperty("resolution").GetProperty("record_kind").GetString()));
+        }
+        var paged = Show(Head, "forecasts");
+        Assert.Single(paged.GetProperty("forecasts").EnumerateArray());
+        Assert.Empty(paged.GetProperty("deliveries").EnumerateArray());
+        Assert.Empty(paged.GetProperty("events").EnumerateArray());
+
+        // A POSITION THAT MAY NOT READ THE MANDATE reads none of its forecasts.
+        var outside = await server.CallAsync(Frame(Ops.MandateShow, ("mandate", mandate)), Outsider, Launch(db, Outsider));
+        Assert.False(outside.Ok);
+        Assert.Contains("no mandate you hold or decide", outside.Error!.Message, StringComparison.Ordinal);
+    }
 }

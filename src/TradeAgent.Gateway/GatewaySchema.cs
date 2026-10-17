@@ -668,17 +668,18 @@ public static class GatewaySchema
             + "status, its goal as its issuer wrote it, its allocation and TradeAgent's measured spend. At most "
             + $"{GatewayPipeServer.MandateListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped.",
             []),
-        new(Core.Ops.MandateShow, "trade mandate show <mandate> [--part deliveries|events] [--before ID]", false,
+        new(Core.Ops.MandateShow, "trade mandate show <mandate> [--part deliveries|events|forecasts] [--before ID]", false,
             "ONE MANDATE YOU HOLD OR DECIDE, IN FULL: as issued, its sealed deliveries newest first — each verbatim, with every "
-            + "check TradeAgent ran on it — and its events newest first. A deviation's 'stated_cost' is its holder's word and "
+            + "check TradeAgent ran on it — its events newest first, and its forecasts newest first, each probability (its "
+            + "forecaster's claim) beside TradeAgent's resolution and the record it rests on. A deviation's 'stated_cost' is its holder's word and "
             + "'measured_spend' beside it is TradeAgent's, from the launches charged to the mandate. The whole answer is at most "
             + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes and never cuts a delivery or an event: 'left_out' says what it "
-            + "left out and how to read it — 'part' names one list and 'before' that list's 'deliveries_next_before' or "
-            + "'events_next_before'.",
+            + "left out and how to read it — 'part' names one list and 'before' that list's 'deliveries_next_before', "
+            + "'events_next_before' or 'forecasts_next_before'.",
             [
                 new("mandate", "string", true, "The mandate's id."),
-                new("part", "string", false, "deliveries | events: page one list. Omit it for the newest of both."),
-                new("before", "string", false, "With 'part': serve only what is older than this delivery id or event id — an answer's 'deliveries_next_before' or 'events_next_before'.")
+                new("part", "string", false, "deliveries | events | forecasts: page one list. Omit it for the newest of each."),
+                new("before", "string", false, "With 'part': serve only what is older than this delivery, event or forecast id — an answer's 'deliveries_next_before', 'events_next_before' or 'forecasts_next_before'.")
             ]),
 
         // THE ORGANISATION'S DECISION RECORDS (U-org-decisions, O5b; ORGANISATION § 5): a routine decision recorded with its rationale
