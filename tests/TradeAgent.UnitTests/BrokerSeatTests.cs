@@ -74,7 +74,7 @@ public class BrokerSeatTests : IDisposable
         var row = Assert.Single(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue), a => a.Role == Pos);
         Assert.Equal((SeatClasses.Broker, "mediated"), (row.SeatClass, row.Assurance));
 
-        var exec = Assert.Single(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
+        var exec = Unquoted(Assert.Single(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal)));
         foreach (var carried in new[]
                  {
                      $"mcp_servers.tradeagent.url=\"{DoorAt.AbsoluteUri}\"", "mcp_servers.tradeagent.required=true",
@@ -94,6 +94,14 @@ public class BrokerSeatTests : IDisposable
     }
 
     const string DoorSlotWord = SeatPlan.DoorSlot;
+
+    /// <summary>
+    /// The script's record of its command line as the arguments arrived. On Windows the <c>.cmd</c> echoes the raw line, each argument
+    /// with a quote in it wrapped and its quotes escaped (<c>-c "web_search=\"disabled\""</c>, as the CLI class's always was); elsewhere
+    /// <c>$*</c> is already the arguments.
+    /// </summary>
+    static string Unquoted(string line) =>
+        OperatingSystem.IsWindows() ? line.Replace("\\\"", "\u0001").Replace("\"", "").Replace("\u0001", "\"") : line;
 
     // ---- (b) the offered surface ---------------------------------------------------------------------------------------
 
