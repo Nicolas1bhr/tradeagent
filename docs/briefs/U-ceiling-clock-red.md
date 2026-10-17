@@ -6,3 +6,16 @@
 **Also:** every other test in `CouncilLoopOrgWakeTests` and `CouncilLoopTests` seeded from `Noon()` with a past or future offset (`grep -n 'Noon()'`) — run both classes under a `TZ` where the local hour is before 10:00 AND one where it is after 14:00, and fix any that fails the same way (same rule). Say which TZ values you used and the wall time.
 **Items, one commit each:** 1. the fix (product or test, per the cause). 2. any sibling fixed the same way (or "none failed", quoted).
 **Gate:** SPEED MODE — rebase on main first; Release `--no-incremental` 0 warnings; the two classes 3× through `suite.sh` under EACH of the two TZ values (`TZ=… $F/bin/suite.sh …`); full suite on branch CI; names vs main 0 removed; tests box `ready` once or NOT RUN. `## Report` ≤ 15 lines appended here.
+
+## Report
+Tip: see the commit this report sits on; code tip 19be6971 (CI run 38991818288, all 12 jobs green on 19be6971 incl. windows x5, ubuntu, macos, linux-host).
+Cause: TEST HOST, not product. `tests/TradeAgent.UnitTests/CouncilLoopTests.cs` `CouncilHost.BeginTurn` (both overloads, ~:291/:305) stamped a launched turn `StartedAt = DateTimeOffset.UtcNow` while the loop ran on injected `now` (product `TurnMeter.cs:941` uses its injected `_now()`; `MissionLoop.cs:1565` defaults only when none given). With Noon() in the wall clock's future, the new turn (wall) sorted BEFORE the seeded turn (noon-2h), so `AiAttemptStore.LastWoken` (ORDER BY started_at DESC, AiAttemptStore.cs:691) returned the seeded one: assertion CouncilLoopOrgWakeTests.cs:334 `turned.Id == taken.ConsumedBy` failed.
+RED before: base 00ef2a87, wall 01:4x UTC, `TZ=UTC`: Failed 1 / Passed 56 (A_runnable_head_gets_one_ceiling_wake_from_its_last_turn); same base under TZ=Pacific/Kiritimati (local 15:4x): 57/57 green. After fix both TZ: 57/57.
+Item 1 DONE (19be6971): CouncilHost gains `Clock` (init, default wall UtcNow); the BeginTurn overloads use it; the failing test passes `{ Clock = () => now }`. All assertions kept, nothing renamed/deleted.
+Item 2 DONE as "none failed": all other Noon() tests in CouncilLoopOrgWakeTests and CouncilLoopTests (the two files are one partial class CouncilLoopTests, 57 tests) pass under TZ=UTC (wall 01:4x, local hour < 10) and TZ=Pacific/Kiritimati (local 15:4x, > 14:00); wall 2026-10-17 01:39-01:45 UTC.
+Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` -> 0 Warning(s), 0 Error(s).
+Gate 2: via suite.sh, class CouncilLoopTests, 3x per TZ for UTC and Pacific/Kiritimati: Passed 57/57 all six runs.
+Gate 3: CI run 38991818288 success (all jobs). Gate 3b: review at fleet/tmp/B-scratch/u-ceiling-clock-red/U-ceiling-clock-red-review.md (one finding: no Report yet, now added).
+Gate 4: names.sh main u-ceiling-clock-red: removed: 0, added: 0, [Fact]/[Theory] base 2716 tip 2716.
+tests box: NOT RUN — the machine does not answer
+Not done: no mutant (test-only change, not money path); other test hosts that stamp UtcNow (e.g. VendorLimitReadTests CouncilHost) not examined as they do not seed from Noon().
