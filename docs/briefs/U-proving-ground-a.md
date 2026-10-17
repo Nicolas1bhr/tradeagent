@@ -43,3 +43,21 @@ Red-first tests (quote each red at base): (a) `A_real_process_refuses_a_proving_
 NOT claimed: SIM-001 against a same-user unconfined process (advisory, ORCH § 5). Out of scope: traps, half-life, regimes, power (b); host, configurations, scores (c).
 Conflicts: O5a/O5b (`Database.cs` rungs 40/41 at `Migrate`'s end; item 2 writes at its start) — rebase; `U-backtest-parity` ((e) asserts a sign). Gate and
 report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; full suite on branch CI, three platforms; Codex review with the CI wait; names vs `main` 0 removed, both sizes printed). `## Report` ≤ 20 lines appended here.
+
+## Report
+Code tip `b6bb3d4c` (rebased on main `24db59f2`; docs-only moves since dispatch). No rung: `meta.home_kind`, `tape_meta.home_kind`.
+- Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` → "Build succeeded. 0 Warning(s) 0 Error(s)".
+- Gate 2: `ProvingHomeTests|SyntheticMarketTests` 3× → "Passed! - Failed: 0, Passed: 8" ×3; neighbours (TapeStore, TapeSourceCatalog, FeatureProgramBacktest, TapeRead, TapeHoldout, TapeArchiveStore, FeatureSpec, StrategyParser) → "Passed: 55".
+- Gate 3: CI run 39026060128 → success, every job (ubuntu, macos, windows ×5, linux-host). Review (Codex, not acted on): `fleet/tmp/A-org/u-proving-ground-a-build/U-proving-ground-a-review.md`.
+- Gate 4: names.sh main → "removed: 0", "added: 8", "[Fact]/[Theory] base: 2786 tip: 2794".
+- Item 1 done: `ProvingGround.ThisProcess` (internal), `HomeRefusal`, checked in `Paths.Resolve` at first use, before anything is created; `Paths.DefaultHome()`, `Paths.DefaultPipeName`.
+- Item 2 done: both stores mark first and refuse the other kind (an unmarked store for a proving open) before any write; `Kind` is a constructor argument (default: the process's). `TapeReader` checks it too.
+- Item 3 done: `ProvingSources` (`proving-synthetic`, `https://synthetic.invalid`, 3600 s, 2 s delay, subjects SYNA–SYND); `TapeSourceCatalog.LiveRule(source, kind)`/`Readable(kind)` beside the frozen rule; parse, store class, reader, FeatureSeries, FeatureFeed read by kind; tape-sources.json may not take the id.
+- Item 4 done: `SplitMix64` + `SyntheticMarket.Write` (integer-only, raw 12-column klines → `Normalise` → `RecordNew`; signal → `TapeStore.Append`; truth in `proving-truth/`). Synthetic by construction: hand-set constants and a seed only.
+- Item 5 done: (g) source scan; its one allowlist is TapeReader's kind check (5 names); a planted `using TradeAgent.Core.Proving;` in Referee.cs went red, then reverted.
+- Deviation: StrategyParser.Parse/FeatureSpec.Parse take an optional kind (default: the process's), because Over takes a parsed program; Backtest.Over is unchanged.
+- RED at base bb390ed7: (a)–(h) fail to build ("CS0234 'Proving' does not exist in the namespace 'TradeAgent.Core'"). A base-compatible (a) gave "Assert.Throws() Failure: No exception was thrown / Expected: typeof(TradeAgent.Core.TradeAgentException)".
+- MUTANT: Database's kind check removed → (a) "[FAIL] … Assert.Throws() Failure: No exception was thrown"; restored → green.
+- (d) golden, the same on all three CI platforms: raw d2122a79…0cf4, normalised b9e22f0d…da01, payloads 0bd71369…72db. (e) on the Mac: SYNB 56 trades, net +313.03; SYNA 57 trades, net −148.02.
+- tests box: NOT RUN — the machine does not answer
+- Not done or verified: SIM-001 against an unconfined same-user process (advisory, ORCH § 5); no proving host sets ThisProcess yet (part c); (f) uses a stand-in real home, not the process's own; no model, no network.
