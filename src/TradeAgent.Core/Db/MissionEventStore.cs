@@ -134,8 +134,8 @@ public static class MissionEventKind
 
     /// <summary>
     /// A POSITION'S OUTPUT THE APP HELD, AND NEVER A WAKE (<c>U-org-rights</c>). A position after the legacy pair has no
-    /// recipient until <c>U-org-assignments</c> gives it a mandate's issuer, so what it stages in <c>out/</c> passes the
-    /// relay's fence, is recorded as the app's own copy and published to nobody — and this row is that disposition. It
+    /// recipient for a file: its work reaches its mandate's issuer through <c>mandate-deliver</c> and nothing else
+    /// (<c>U-org-assignments-a</c>, RULING Q1), so what it stages in <c>out/</c> STAYS HELD — it passes the relay's fence, is recorded as the app's own copy and published to nobody — and this row is that disposition. It
     /// is written CONSUMED, by no launch (<see cref="MissionEventStore.Hold"/>), so it is never due, buys nobody a turn and
     /// makes no launch look woken; the writer's next Situation reads it (<c>CouncilRelay.HeldNotices</c>).
     /// </summary>
@@ -354,7 +354,8 @@ public static class MissionEventDisposition
     /// <summary>
     /// AN OUTPUT PUBLISHED TO NOBODY (<see cref="MissionEventKind.Output"/>, <c>U-org-rights</c>): a position after the
     /// legacy pair staged it, the relay's fence attributed it to that position's launch, and it was recorded and handed to
-    /// no one, because no recipient exists for it until <c>U-org-assignments</c>. The detail says so. An outcome the app
+    /// no one: a position's work reaches its mandate's issuer through <c>mandate-deliver</c>, and a staged file stays held
+    /// (<c>U-org-assignments-a</c>, RULING Q1). The detail says so. An outcome the app
     /// reached without a turn, like <see cref="Withdrawn"/>; never a claim about a turn.
     /// </summary>
     public const string Held = "held";

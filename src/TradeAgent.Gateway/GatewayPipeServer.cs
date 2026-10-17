@@ -366,6 +366,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.MandateDecline, TimeSpan.Zero, "the organisation's mandate records: two events, the holder's untaken wakes closed and one wake, in process"),
         new(Core.Ops.MandateAccept, TimeSpan.Zero, "the organisation's mandate records: one event, and the holder's untaken wakes closed, in process"),
         new(Core.Ops.MandateReject, TimeSpan.Zero, "the organisation's mandate records: one event and one wake, in process"),
+        new(Core.Ops.MandateList, TimeSpan.Zero, "the organisation's mandate records and the launch ledger's spend by mandate, in process"),
+        new(Core.Ops.MandateShow, TimeSpan.Zero, "one mandate, its events, its sealed deliveries and their checks, and its spend, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1372,6 +1374,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.MandateDecline => MandateDecline(ctx, req),
                 Core.Ops.MandateAccept => MandateAccept(ctx, req),
                 Core.Ops.MandateReject => MandateReject(ctx, req),
+                Core.Ops.MandateList   => MandateList(ctx, req),
+                Core.Ops.MandateShow   => MandateShow(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),

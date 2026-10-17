@@ -835,4 +835,67 @@ public class OrgAssignmentTests
             TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
         Assert.Equal(0, org.Sweep(later));
     }
+
+    // ---- item 6: the reads ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (h) A DEVIATION'S STATED COST IS SHOWN BESIDE THE MEASURED SPEND, NEVER INSTEAD: <c>mandate-show</c> gives the delivery
+    /// verbatim, each check, and each deviation's cost as the holder STATED it, under its own name, beside the spend the app
+    /// MEASURED from the launches charged to the mandate — two fields, neither standing in for the other. A position reads only
+    /// the mandates it holds or decides. RED at base: no read.
+    /// </summary>
+    [Fact]
+    public async Task A_deviations_stated_cost_is_shown_beside_the_measured_spend_never_instead()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+        var work = Launch(db, Member, reserved: 0.50m, mandate: m);
+        new AiAttemptStore(db).End(work, 0, DateTimeOffset.UtcNow, 1000, null, null, 100, null, "model-x", 0.30m, null, null);
+
+        const string stated = "three extra backtests, about $0.90";
+        var delivered = await server.CallAsync(DeliverFrame(m, "the skew predicts nothing",
+            new[] { new { what = "added two months", found = "August alone was too short", cost = stated } }), Member, Launch(db, Member, mandate: m));
+        Assert.True(delivered.Ok, Json.Write(delivered.Error));
+
+        var show = await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m)), Head, Launch(db, Head));
+        Assert.True(show.Ok, Json.Write(show.Error));
+        var body = Body(show);
+        var delivery = Assert.Single(body.GetProperty("deliveries").EnumerateArray());
+        Assert.Equal("the skew predicts nothing", delivery.GetProperty("report").GetString());
+        var deviation = Assert.Single(delivery.GetProperty("deviations").EnumerateArray());
+        Assert.Equal(stated, deviation.GetProperty("stated_cost").GetString());
+        Assert.False(deviation.TryGetProperty("cost", out _));
+        // THE MEASURED SPEND: the ended launch's 0.30 and the open one's reservation — the app's numbers, never the claim.
+        Assert.Equal("0.3", deviation.GetProperty("measured_spend").GetProperty("spent").GetString());
+        Assert.Equal("0.1", deviation.GetProperty("measured_spend").GetProperty("reserved").GetString());
+        Assert.Equal(deviation.GetProperty("measured_spend").GetRawText(), body.GetProperty("measured_spend").GetRawText());
+        Assert.Equal(MandateCheck.All, delivery.GetProperty("checks").EnumerateArray().Select(c => c.GetProperty("check").GetString()));
+        Assert.Equal([MandateEventKind.Issued, MandateEventKind.Delivered],
+            body.GetProperty("events").EnumerateArray().Select(e => e.GetProperty("kind").GetString()));
+
+        // THE HOLDER READS IT TOO, AND LISTS IT; ANYONE ELSE IS REFUSED — another member, the outsider.
+        Assert.True((await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m)), Member, Launch(db, Member))).Ok);
+        var listed = Body(await server.CallAsync(Frame(Ops.MandateList), Member, Launch(db, Member))).GetProperty("mandates");
+        Assert.Equal("holder", Assert.Single(listed.EnumerateArray()).GetProperty("you_are").GetString());
+        foreach (var stranger in new[] { Other, Outsider })
+        {
+            Assert.False((await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m)), stranger, Launch(db, stranger))).Ok);
+            Assert.Empty(Body(await server.CallAsync(Frame(Ops.MandateList), stranger, Launch(db, stranger))).GetProperty("mandates").EnumerateArray());
+        }
+        // AND THE LEGACY PAIR READ NONE OF IT on an unconfined seat.
+        Assert.False((await server.CallAsync(Frame(Ops.MandateList), CouncilRoles.Research, Launch(db, CouncilRoles.Research, SeatClasses.Cli))).Ok);
+    }
+
+    /// <summary>THE RELAY'S WORDS: a staged file stays held, and the hold says a position's work reaches its issuer through mandate-deliver.</summary>
+    [Fact]
+    public void A_held_output_says_its_work_reaches_the_issuer_through_mandate_deliver()
+    {
+        Assert.Contains($"'{Ops.MandateDeliver}'", TradeAgent.AgentRuntime.CouncilRelay.HeldWhy, StringComparison.Ordinal);
+        Assert.Contains("stays held", TradeAgent.AgentRuntime.CouncilRelay.HeldWhy, StringComparison.Ordinal);
+        Assert.Empty(TradeAgent.AgentRuntime.CouncilRelay.RecipientsOf(Member));
+        Assert.Equal(MandateLimits.ReportLines, TradeAgent.AgentRuntime.CouncilRelay.ReportLines);
+    }
 }

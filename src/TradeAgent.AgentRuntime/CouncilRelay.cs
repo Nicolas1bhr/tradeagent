@@ -397,8 +397,9 @@ public sealed class CouncilRelay
             // ---- boundary 1: the file exists and nothing in the tables knows about it ------------
             Boundary?.Invoke("file");
 
-            // HELD, PUBLISHED TO NOBODY (U-org-rights). A position after the legacy pair has no recipient
-            // (`RecipientsOf`) until U-org-assignments names its mandate's issuer: its file passed the fence and is
+            // HELD, PUBLISHED TO NOBODY (U-org-rights). A position after the legacy pair has no recipient for a file
+            // (`RecipientsOf`): its work reaches its mandate's issuer through `mandate-deliver` and nothing else
+            // (U-org-assignments-a, RULING Q1), so a file it stages stays held — it passed the fence and is
             // recorded as the app's own copy, attributed to the launch its name carries, with no delivery and no wake —
             // and the hold is a disposition its own next Situation reads. Never routed to Research, never an assessment
             // or a challenge: those are the legacy pair's, and a boundary is a decision no unconfined seat takes.
@@ -633,8 +634,8 @@ public sealed class CouncilRelay
     /// function of the role rather than of the file name, so a role cannot change what its output IS
     /// by naming a file differently.
     ///
-    /// <para>Any other position REPORTS (<c>U-org-rights</c>): its output goes up to its mandate's issuer once
-    /// <c>U-org-assignments</c> names one, and until then it is held (<see cref="RecipientsOf"/>). It is never the
+    /// <para>Any other position REPORTS (<c>U-org-rights</c>): its work goes up to its mandate's issuer through
+    /// <c>mandate-deliver</c> (<c>U-org-assignments-a</c>), and a file it stages is held (<see cref="RecipientsOf"/>). It is never the
     /// chair's agenda, which is the only kind that carries the owner's words downward.</para>
     /// </summary>
     public static string KindFor(string role) =>
@@ -664,8 +665,8 @@ public sealed class CouncilRelay
     /// round 4 asked for, and it is the app's decision.
     ///
     /// <para><b>The legacy pair only, each by its exact id</b> (<c>U-org-rights</c>). Every other position has NOBODY:
-    /// its output is held (<see cref="Land"/>), with its disposition in its own next Situation, until
-    /// <c>U-org-assignments</c> names its mandate's issuer. Before this, every role that was not Research was sent to
+    /// its staged output is held (<see cref="Land"/>), with its disposition in its own next Situation — its work reaches its
+    /// mandate's issuer through <c>mandate-deliver</c> and nothing else (<c>U-org-assignments-a</c>, RULING Q1). Before this, every role that was not Research was sent to
     /// Research — so a third position's file landed as Research's agenda, with a paid wake.</para>
     /// </summary>
     public static string[] RecipientsOf(string role) => role switch
@@ -676,7 +677,8 @@ public sealed class CouncilRelay
     };
 
     /// <summary>What a hold's disposition says: why nobody was handed the output.</summary>
-    public const string HeldWhy = "no recipient until U-org-assignments";
+    public const string HeldWhy =
+        "a position's work reaches its mandate's issuer only through 'mandate-deliver'; a file staged in out/ stays held";
 
     /// <summary>The most held outputs one Situation names.</summary>
     public const int HeldLimit = 10;

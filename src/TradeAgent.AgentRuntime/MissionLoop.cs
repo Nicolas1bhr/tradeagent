@@ -760,8 +760,9 @@ public sealed record MissionSituation
 
     /// <summary>
     /// WHAT THE APP HELD OF WHAT THIS POSITION STAGED, one line per output, since its last turn (<c>U-org-rights</c>;
-    /// <see cref="CouncilRelay.HeldNotices"/>): a position after the legacy pair has no recipient until
-    /// <c>U-org-assignments</c>, so its file was recorded and published to nobody, and the line carries that disposition.
+    /// <see cref="CouncilRelay.HeldNotices"/>): a position after the legacy pair has no recipient for a file — its work reaches
+    /// its mandate's issuer through <c>mandate-deliver</c> (<c>U-org-assignments-a</c>) — so its file was recorded and
+    /// published to nobody, and the line carries that disposition.
     /// Empty for the legacy pair, whose outputs are always handed on.
     /// </summary>
     public IReadOnlyList<string> HeldOutputs { get; init; } = [];

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -138,6 +139,135 @@ public sealed partial class GatewayPipeServer
         Gateway.Org.Reject(delivery, caller, ctx.AttemptId, req.Str("check"), req.Str("defect"), DateTimeOffset.UtcNow);
         return MandateReply(Gateway.Org.Mandate(Gateway.Org.Delivery(delivery)!.MandateId)!);
     }
+
+    /// <summary>The most mandates one <c>mandate-list</c> answers.</summary>
+    public const int MandateListMax = 50;
+
+    /// <summary>
+    /// THE CALLER'S OWN MANDATES, NEWEST FIRST — those it holds and those it decides, never another position's: each with its status
+    /// (its latest event), the issuer's objective as written, and the app's measured spend. Bounded twice and never silently: at
+    /// most <see cref="MandateListMax"/> and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes them; 'more' says it
+    /// stopped.
+    /// </summary>
+    object MandateList(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.Reads);
+        var served = new List<object>();
+        var spent = 0;
+        string? cappedBy = null;
+        foreach (var m in Gateway.Org.MandatesOf(caller))
+        {
+            if (served.Count == MandateListMax) { cappedBy = "count"; break; }
+            var row = new
+            {
+                mandate = m.Id,
+                status = Gateway.Org.MandateStatus(m.Id),
+                you_are = m.Holder == caller ? "holder" : "decider",
+                holder = m.Holder,
+                decider = m.Decider,
+                kind = m.Kind,
+                goal = m.Objective,
+                deadline = m.Deadline,
+                allocation = m.Allocation.ToString(CultureInfo.InvariantCulture),
+                measured_spend = Measured(Gateway.Org.SpendOf(m.Id))
+            };
+            var cost = Encoding.UTF8.GetByteCount(Json.Write(row));
+            if (served.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = "bytes"; break; }
+            spent += cost;
+            served.Add(row);
+        }
+        return new
+        {
+            mandates = served,
+            more = cappedBy is not null,
+            capped_by = cappedBy,
+            note = "Each goal is its issuer's words; the status, the allocation and the measured spend are TradeAgent's records."
+        };
+    }
+
+    /// <summary>
+    /// ONE MANDATE THE CALLER HOLDS OR DECIDES, IN FULL: as issued, every event, and its sealed deliveries newest first — each
+    /// verbatim, each check TradeAgent ran on it, and each deviation's STATED cost (the holder's claim) shown BESIDE the mandate's
+    /// MEASURED spend (the app's), never instead of it. Bounded by <see cref="ResearchLedger.MaxReadBytes"/>; 'more' says the
+    /// deliveries stopped, and 'before' set to the last one served continues.
+    /// </summary>
+    object MandateShow(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.Reads);
+        var id = Require(req, "mandate");
+        var m = Gateway.Org.Mandate(id);
+        if (m is null || (m.Holder != caller && m.Decider != caller))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{id}' is no mandate you hold or decide: a position reads its own mandates and nobody else's.");
+
+        var measured = Measured(Gateway.Org.SpendOf(m.Id));
+        var deliveries = Gateway.Org.Deliveries(m.Id).Reverse().ToList();
+        if (req.Str("before") is { } before)
+        {
+            var at = deliveries.FindIndex(d => d.Id == before);
+            if (at < 0)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{before}' is no delivery of {m.Id}: pass a 'next_before' an answer gave.");
+            deliveries = deliveries.Skip(at + 1).ToList();
+        }
+
+        var served = new List<object>();
+        var spent = 0;
+        var more = false;
+        string? last = null;
+        foreach (var d in deliveries)
+        {
+            var row = new
+            {
+                delivery = d.Id,
+                at = d.At,
+                attempt = d.Attempt,
+                report = d.Report,
+                deviations = d.Deviations.Select(v => new
+                {
+                    what = v.What,
+                    found = v.Found,
+                    stated_cost = v.Cost,
+                    measured_spend = measured
+                }),
+                refs = d.Refs.Select(r => new { kind = r.Kind, id = r.Id }),
+                checks = Gateway.Org.Checks(d.Id).Select(c => new { check = c.Check, passed = c.Passed, reason = c.Reason })
+            };
+            var cost = Encoding.UTF8.GetByteCount(Json.Write(row));
+            if (served.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { more = true; break; }
+            spent += cost;
+            served.Add(row);
+            last = d.Id;
+        }
+
+        return new
+        {
+            mandate = MandateReply(m),
+            goal = m.Objective,
+            scope = m.Scope,
+            measured_spend = measured,
+            events = Gateway.Org.MandateEvents(m.Id).Select(e => new
+            {
+                at = e.At, kind = e.Kind, actor = e.Actor, attempt = e.Attempt, reason = e.Reason, evidence = e.Evidence
+            }),
+            deliveries = served,
+            more,
+            next_before = more ? last : null,
+            note = "A delivery's report, deviations and refs are its holder's CLAIMS, stored as written; a deviation's "
+                   + "'stated_cost' is the holder's word, and 'measured_spend' beside it is TradeAgent's, from the launches charged "
+                   + "to this mandate. The checks, the events and the seal are TradeAgent's records."
+        };
+    }
+
+    /// <summary>A mandate's measured spend as a read says it: resolved cost, open reservations, and how many launches' cost is unknown.</summary>
+    static object Measured(MandateSpend s) => new
+    {
+        spent = s.Spent.ToString(CultureInfo.InvariantCulture),
+        reserved = s.Reserved.ToString(CultureInfo.InvariantCulture),
+        unknown_cost_launches = s.Unknown,
+        launches = s.Launches
+    };
 
     /// <summary>The launch that registered lens <paramref name="id"/> at <paramref name="version"/>, read from the tape's registry, or null.</summary>
     LensOrigin? LensOrigin(string id, int version) =>

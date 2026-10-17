@@ -387,6 +387,11 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "reject":
                     Fill(a, rest, "delivery");
                     return (Ops.MandateReject, a);
+                case "list" or "ls":
+                    return (Ops.MandateList, a);
+                case "show":
+                    Fill(a, rest, "mandate");
+                    return (Ops.MandateShow, a);
                 default:
                     return (null, a);
             }
