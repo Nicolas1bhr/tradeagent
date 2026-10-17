@@ -454,4 +454,160 @@ public class OrgDecisionTests
         }
         Assert.Equal(0L, Count(db, "org_forecast"));
     }
+
+    // ---- item 4: the resolver ---------------------------------------------------------------------------------------------
+
+    /// <summary>A decision of <see cref="Head"/>'s carrying <paramref name="forecasts"/>, by the store — the pipe is tested above.</summary>
+    static DecisionRow Decided(Database db, DateTimeOffset at, params ForecastClaim[] forecasts) =>
+        new OrgStore(db).Decide(Head, null, OrgDecisionKind.Routine, ["a", "b"], "a", "because", [], forecasts, at);
+
+    /// <summary>
+    /// (d) A VERDICT RESOLVES A VERDICT-CLASS FORECAST YES OR NO, AND NONE BY THE DATE RESOLVES VOID (RULINGS Q3, Q4): the first
+    /// verdict by the date settles it — of the class, yes; of another, no — naming the promotion it rests on; a version with no
+    /// verdict stays open until its date and then resolves void, naming the version; a verdict after the date resolves nothing.
+    /// RED at base: no resolver existed.
+    /// </summary>
+    [Fact]
+    public void A_verdict_resolves_a_verdict_class_forecast_yes_or_no_and_none_by_the_date_resolves_void()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        foreach (var v in new[] { "ver-yes", "ver-no", "ver-void", "ver-late" }) Version(db, v);
+        var t0 = DateTimeOffset.UtcNow;
+        var by = t0.AddDays(2);
+        var d = Decided(db, t0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-yes", PromotionVerdict.Promoted, by, 0.7m),
+            new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-no", PromotionVerdict.Promoted, by, 0.7m),
+            new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-void", PromotionVerdict.PaperEligible, by, 0.4m),
+            new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-late", PromotionVerdict.Refused, by, 0.9m));
+        var org = new OrgStore(db);
+        var f = org.ForecastsOn(d.Id).ToDictionary(x => x.Subject);
+
+        Verdict(db, "ver-yes", PromotionVerdict.Promoted, t0.AddHours(1));
+        Verdict(db, "ver-no", PromotionVerdict.Refused, t0.AddHours(1));
+        Assert.Equal(2, new ForecastResolver(db).Sweep(t0.AddHours(2)).Resolved);
+        Assert.Equal((ForecastOutcome.Yes, OrgRefKind.Promotion), (org.Resolution(f["ver-yes"].Id)!.Outcome, org.Resolution(f["ver-yes"].Id)!.RecordKind));
+        Assert.Equal(ForecastOutcome.No, org.Resolution(f["ver-no"].Id)!.Outcome);
+        Assert.Contains("'refused'", org.Resolution(f["ver-no"].Id)!.Why, StringComparison.Ordinal);
+        Assert.Null(org.Resolution(f["ver-void"].Id));
+
+        // THE DATE PASSES with no verdict for two of them; one arrives after it, and is read as no verdict by the date.
+        Verdict(db, "ver-late", PromotionVerdict.Refused, by.AddHours(1));
+        Assert.Equal(2, new ForecastResolver(db).Sweep(by.AddHours(2)).Resolved);
+        foreach (var v in new[] { "ver-void", "ver-late" })
+        {
+            var r = org.Resolution(f[v].Id)!;
+            Assert.Equal((ForecastOutcome.Void, OrgRefKind.Version, v), (r.Outcome, r.RecordKind, r.RecordId));
+            Assert.Contains("no verdict was recorded", r.Why, StringComparison.Ordinal);
+        }
+        // AND IT WOKE NOBODY.
+        Assert.Equal(0L, Count(db, "mission_event"));
+    }
+
+    /// <summary>
+    /// (d2) A MANDATE EVENT RESOLVES A MANDATE-STATE FORECAST: the target state by the date is yes, naming the event; another
+    /// closing state first is no; the date passing with neither is no. RED at base: no resolver existed.
+    /// </summary>
+    [Fact]
+    public void A_mandate_event_resolves_a_mandate_state_forecast()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t0 = DateTimeOffset.UtcNow;
+        var accepted = org.Assign(Issue(), t0);
+        var cancelled = org.Assign(Issue(), t0);
+        var idle = org.Assign(Issue(), t0);
+        var by = t0.AddDays(2);
+        var d = Decided(db, t0, new ForecastClaim(ForecastVocabulary.MandateState, accepted.Id, MandateEventKind.Accepted, by, 0.6m),
+            new ForecastClaim(ForecastVocabulary.MandateState, cancelled.Id, MandateEventKind.Accepted, by, 0.6m),
+            new ForecastClaim(ForecastVocabulary.MandateState, idle.Id, MandateEventKind.Rejected, by, 0.2m));
+        var f = org.ForecastsOn(d.Id).ToDictionary(x => x.Subject);
+
+        var delivery = org.Deliver(accepted.Id, Member, null, "the skew leads by four minutes", [], [], t0.AddHours(1));
+        org.Accept(delivery.Delivery.Id, Head, null, t0.AddHours(2));
+        org.Cancel(cancelled.Id, Head, null, "answered elsewhere", t0.AddHours(2));
+        Assert.Equal(2, new ForecastResolver(db).Sweep(t0.AddHours(3)).Resolved);
+
+        var yes = org.Resolution(f[accepted.Id].Id)!;
+        Assert.Equal((ForecastOutcome.Yes, "mandate-event"), (yes.Outcome, yes.RecordKind));
+        Assert.Equal(org.MandateEvents(accepted.Id).Single(e => e.Kind == MandateEventKind.Accepted).Id.ToString(CultureInfo.InvariantCulture), yes.RecordId);
+        Assert.Equal(ForecastOutcome.No, org.Resolution(f[cancelled.Id].Id)!.Outcome);
+        Assert.Contains("was cancelled", org.Resolution(f[cancelled.Id].Id)!.Why, StringComparison.Ordinal);
+        Assert.Null(org.Resolution(f[idle.Id].Id));
+
+        new ForecastResolver(db).Sweep(by.AddMinutes(1));
+        var no = org.Resolution(f[idle.Id].Id)!;
+        Assert.Equal((ForecastOutcome.No, OrgRefKind.Mandate, idle.Id), (no.Outcome, no.RecordKind, no.RecordId));
+    }
+
+    /// <summary>
+    /// (d3) THE RESOLVER READS ONLY THE VERDICT CLASS AND MANDATE EVENTS (GUARD; EVID-001, § 2.11): its two measurement reads name
+    /// <c>strategy_promotion</c> and <c>org_mandate_event</c> alone, and its source names no run, holdout, stream or ledger table.
+    /// Watched red with the verdict read joining <c>strategy_run</c> for a figure.
+    /// </summary>
+    [Fact]
+    public void The_resolver_reads_only_the_verdict_class_and_mandate_events()
+    {
+        var tables = new System.Text.RegularExpressions.Regex(@"\b(FROM|JOIN)\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        Assert.Equal(["org_mandate_event", "strategy_promotion"],
+            ForecastResolver.MeasurementSql.SelectMany(q => tables.Matches(q).Select(m => m.Groups[2].Value)).Distinct().Order(StringComparer.Ordinal));
+        Assert.Equal(["id", "verdict", "at"], Columns(ForecastResolver.VerdictSql));
+        Assert.Equal(["id", "kind", "at"], Columns(ForecastResolver.MandateEventSql));
+
+        var source = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.Core", "Db", "ForecastResolver.cs"));
+        foreach (var banned in new[] { "strategy_run", "referee_holdout", "referee_research", "strategy_stream", "ledger_", "strategy_trade", "forward_" })
+            Assert.DoesNotContain(banned, source, StringComparison.OrdinalIgnoreCase);
+
+        static string[] Columns(string sql) =>
+            [.. sql["SELECT ".Length..sql.IndexOf(" FROM ", StringComparison.Ordinal)].Split(',').Select(c => c.Trim())];
+    }
+
+    static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new InvalidOperationException("the repository root was not found");
+    }
+
+    /// <summary>
+    /// (d4) RESOLVING TWICE WRITES ONE RESOLUTION (restart-safe): a second pass, and a restart's pass, find the forecast resolved and
+    /// write nothing; the first row stands as written, never replaced; a forecast in a vocabulary this build does not know is refused
+    /// in words and left unresolved. RED at base: no resolver existed. Watched red with the resolution written ON CONFLICT REPLACE.
+    /// </summary>
+    [Fact]
+    public void Resolving_twice_writes_one_resolution()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-twice");
+        var t0 = DateTimeOffset.UtcNow;
+        var d = Decided(db, t0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-twice", PromotionVerdict.Promoted, t0.AddDays(1), 0.5m));
+        var org = new OrgStore(db);
+        var f = Assert.Single(org.ForecastsOn(d.Id));
+        Verdict(db, "ver-twice", PromotionVerdict.Promoted, t0.AddHours(1));
+
+        Assert.Equal(1, new ForecastResolver(db).Sweep(t0.AddHours(2)).Resolved);
+        var first = org.Resolution(f.Id)!;
+        Assert.Equal(0, new ForecastResolver(db).Sweep(t0.AddHours(3)).Resolved);
+
+        // A RESTART: the same home, opened again, and its first pass writes nothing.
+        var file = db.Read(c => c.DataSource);
+        using (var reopened = new Database(file))
+            Assert.Equal(0, new ForecastResolver(reopened).Sweep(t0.AddDays(3)).Resolved);
+
+        // TWO PASSES THAT BOTH READ IT OPEN — the store's writer asked again for the same forecast — write ONE row, never replace it.
+        Assert.False(org.RecordResolution(f.Id, ForecastOutcome.No, OrgRefKind.Version, "ver-twice", "a second pass", t0.AddDays(4)));
+        Assert.Equal(1L, Count(db, "org_forecast_resolution"));
+        Assert.Equal(first, org.Resolution(f.Id));
+
+        // A VOCABULARY THIS BUILD DOES NOT KNOW: refused in words, left unresolved, never guessed.
+        Exec(db, """
+            INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+            VALUES('fc-0000000000v2', $d, $p, 2, 'verdict-class', 'ver-twice', 'promoted', $by, '0.5', 1, $at)
+            """, ("$d", d.Id), ("$p", Head), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0)));
+        var sweep = new ForecastResolver(db).Sweep(t0.AddDays(5));
+        Assert.Contains(sweep.Refused, w => w.Contains("fc-0000000000v2", StringComparison.Ordinal) && w.Contains("v1 only", StringComparison.Ordinal));
+        Assert.Null(org.Resolution("fc-0000000000v2"));
+    }
+
 }

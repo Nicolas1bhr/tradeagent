@@ -397,6 +397,36 @@ public sealed partial class OrgStore
             : null;
     });
 
+    /// <summary>The forecasts with no resolution yet, oldest first — the resolver's worklist.</summary>
+    public IReadOnlyList<ForecastRow> OpenForecasts() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {ForecastCols} FROM org_forecast f
+             WHERE NOT EXISTS (SELECT 1 FROM org_forecast_resolution r WHERE r.forecast_id = f.id)
+             ORDER BY at, rowid
+            """);
+        using var r = c.ExecuteReader();
+        var rows = new List<ForecastRow>();
+        while (r.Read()) rows.Add(ReadForecast(r));
+        return (IReadOnlyList<ForecastRow>)rows;
+    });
+
+    /// <summary>
+    /// THE APP'S RESOLUTION OF ONE FORECAST (<see cref="ForecastResolver"/>), one immutable row, in its own write: INSERT … ON CONFLICT
+    /// DO NOTHING, so a second pass or a restart writes nothing twice and never replaces the first. Answers whether it wrote one.
+    /// Raises no wake (RULING Q9).
+    /// </summary>
+    internal bool RecordResolution(string forecastId, string outcome, string recordKind, string recordId, string why, DateTimeOffset at) =>
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at)
+                VALUES($f, $outcome, $kind, $id, $why, $at)
+                ON CONFLICT(forecast_id) DO NOTHING
+                """, ("$f", forecastId), ("$outcome", outcome), ("$kind", recordKind), ("$id", recordId), ("$why", why), ("$at", Sql.T(at)));
+            return c.ExecuteNonQuery() == 1;
+        });
+
     static ForecastRow ReadForecast(Microsoft.Data.Sqlite.SqliteDataReader r) => new(
         r.GetString(0), Sql.S(r.GetValue(1)), Sql.S(r.GetValue(2)), r.GetString(3), Sql.S(r.GetValue(4)), r.GetInt32(5),
         r.GetString(6), r.GetString(7), r.GetString(8), Sql.Time(r.GetValue(9)),

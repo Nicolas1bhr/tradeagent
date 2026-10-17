@@ -1890,7 +1890,13 @@ public sealed class AppHost : IAsyncDisposable
         /// <summary>The organisation's sweep over the mandates (<c>U-org-assignments-a</c>): it writes org records and wakes, never a turn.</summary>
         public void SweepMandates(DateTimeOffset now)
         {
-            if (host._db is { } db) new OrgStore(db).Sweep(now);
+            if (host._db is not { } db) return;
+            new OrgStore(db).Sweep(now);
+            // AND THE FORECASTS (U-org-decisions), after the mandates, so a deadline that just passed is an event the resolver reads.
+            // It wakes nobody; a forecast it will not read is said, never resolved on a guess.
+            var forecasts = new ForecastResolver(db).Sweep(now);
+            if (forecasts.Refused.Count > 0)
+                host.Gateway?.Log.Activity($"Forecasts left unresolved: {string.Join(" ", forecasts.Refused)}", "warn");
         }
 
         /// <summary>A launch its mandate refused: that mandate's wakes closed and, still open, its decider told, in one write.</summary>
