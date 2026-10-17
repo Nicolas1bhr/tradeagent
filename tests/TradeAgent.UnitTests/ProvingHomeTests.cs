@@ -180,6 +180,55 @@ public class ProvingHomeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// R2: TWO OPENS OF ONE EMPTY STORE CANNOT DISAGREE WITH ITS MARK. A real open of a store that does not exist yet is
+    /// paused after its kind check passed — nothing there to disagree with — while a proving open of the same file runs to
+    /// the end and marks it; resumed, the real open is refused in words naming both kinds, and the mark stays the proving
+    /// one. The database and the tape alike: the check and the mark are one write transaction.
+    /// </summary>
+    [Fact]
+    public void Two_opens_of_one_empty_store_cannot_disagree_with_its_mark()
+    {
+        using var scratch = TestEnv.NewScratch("kind-race");
+        foreach (var store in new[] { "database", "tape" })
+        {
+            var file = Path.Combine(scratch.Dir, store + ".db");
+            IDisposable Open(HomeKind kind) => store == "database" ? new Database(file, kind) : new TapeStore(file, kind: kind);
+
+            using var validated = new ManualResetEventSlim();
+            using var resume = new ManualResetEventSlim();
+            Exception? refused = null;
+            IDisposable? opened = null;
+            var paused = new Thread(() =>
+            {
+                HomeMark.AfterCheck = f =>
+                {
+                    if (f != file) return;
+                    validated.Set();
+                    resume.Wait(TimeSpan.FromSeconds(60));
+                };
+                try { opened = Open(HomeKind.Real); }
+                catch (Exception e) { refused = e; }
+                finally { HomeMark.AfterCheck = null; }
+            });
+            paused.Start();
+            Assert.True(validated.Wait(TimeSpan.FromSeconds(60)), $"the real open of the {store} never reached its kind check");
+
+            using (var proving = Open(HomeKind.Proving)) { }
+            resume.Set();
+            Assert.True(paused.Join(TimeSpan.FromSeconds(60)), $"the real open of the {store} did not finish");
+            opened?.Dispose();
+
+            Assert.True(refused is not null, $"the real open of the {store} returned a handle over a store marked proving");
+            log.WriteLine(refused.Message);
+            Assert.Contains(file, refused.Message, StringComparison.Ordinal);
+            Assert.Contains("marked as a proving home's ('proving')", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("a real home's ('real')", refused.Message, StringComparison.Ordinal);
+            Assert.Equal("proving", Scalar(file, $"SELECT value FROM {(store == "database" ? "meta" : "tape_meta")} WHERE key='{HomeMark.Key}'"));
+            using (Open(HomeKind.Proving)) { }
+        }
+    }
+
+    /// <summary>
     /// (h) GUARD: A REAL HOME OPENS AND COLLECTS AS BEFORE. A new real database and tape are marked real and reopen; one
     /// stamped before this build — no mark — opens as a real home's and is not rewritten; and a reading recorded on time
     /// from a built-in row's own origin is O-LIVE in both, exactly as it was.

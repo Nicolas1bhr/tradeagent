@@ -28,6 +28,12 @@ public static class HomeMark
     /// <summary>The key both stores keep their kind under.</summary>
     public const string Key = "home_kind";
 
+    /// <summary>
+    /// A TEST'S PAUSE BETWEEN A STORE'S KIND CHECK AND ITS FIRST WRITE (R2): called on the opening thread with the file,
+    /// after the read-only check. Internal, per thread, null in the product.
+    /// </summary>
+    [ThreadStatic] internal static Action<string>? AfterCheck;
+
     /// <summary>The word a store carries for <paramref name="kind"/>.</summary>
     public static string Word(HomeKind kind) => kind == HomeKind.Proving ? "proving" : "real";
 

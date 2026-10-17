@@ -192,13 +192,15 @@ public sealed class TapeStore : IDisposable
 
             // THE KIND, BEFORE ANYTHING IS WRITTEN, for the reason the version is read first. A file holding no tape yet
             // is new, and is marked by the first rung.
-            var word = Proving.HomeMark.Read(_conn, "tape_meta");
-            if ((word is not null || have > 0)
-                && Proving.HomeMark.Refusal("the market-context tape", File, word, Kind) is { } refused)
+            if (KindRefusal(Proving.HomeMark.Read(_conn, "tape_meta"), have) is { } refused)
                 throw new InvalidOperationException(refused);
+            Proving.HomeMark.AfterCheck?.Invoke(File);
 
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
-            Migrate(have);
+            Migrate(ClaimKind());
+            // AND READ BACK: the mark this handle stands on is the one the file carries.
+            if (KindRefusal(Read(() => Proving.HomeMark.Read(_conn, "tape_meta")), Read(FoundVersion)) is { } after)
+                throw new InvalidOperationException(after);
             RegisterBuiltIns(builtIns ?? BuiltInLenses.All());
         }
         catch (Exception)
@@ -207,6 +209,35 @@ public sealed class TapeStore : IDisposable
             throw;
         }
     }
+
+    /// <summary>Why a tape carrying <paramref name="word"/> at layout <paramref name="have"/> is not opened as <see cref="Kind"/>, or null. A file holding no tape and no mark is new.</summary>
+    string? KindRefusal(string? word, int have) =>
+        word is null && have == 0 ? null : Proving.HomeMark.Refusal("the market-context tape", File, word, Kind);
+
+    /// <summary>
+    /// THE CHECK AND THE MARK, ONE WRITE TRANSACTION (R2), as <see cref="Database"/> claims its kind: the version and the
+    /// mark read again under SQLite's write lock, and a file holding no tape and no mark marked with <see cref="Kind"/> in
+    /// the same transaction — so of two opens of one empty file, the second sees the first's mark, and its ladder starts
+    /// from the version the file carries now, not the one it read before. A refusal rolls back, leaving nothing written.
+    /// </summary>
+    /// <returns>The layout version the file carries, read under the lock.</returns>
+    int ClaimKind() => Write(() =>
+    {
+        var have = FoundVersion();
+        if (have > Schema)
+            throw new InvalidOperationException(
+                $"the market-context tape at {File} was written by a newer TradeAgent (its layout is "
+                + $"version {have}, this build understands {Schema}). Nothing has been read from it or "
+                + "written to it, and a newer TradeAgent will open it exactly as it was left.");
+        var word = Proving.HomeMark.Read(_conn, "tape_meta");
+        if (KindRefusal(word, have) is { } refused) throw new InvalidOperationException(refused);
+        if (word is null && have == 0)
+            Exec($$"""
+                CREATE TABLE IF NOT EXISTS tape_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO tape_meta(key, value) VALUES('{{Proving.HomeMark.Key}}', '{{Proving.HomeMark.Word(Kind)}}');
+                """);
+        return have;
+    });
 
     /// <summary>The kind of home this tape is (<c>U-proving-ground-a</c>): the kind it was opened for, which its mark agrees with.</summary>
     public Proving.HomeKind Kind { get; }
@@ -258,14 +289,12 @@ public sealed class TapeStore : IDisposable
     /// </summary>
     void Migrate(int have)
     {
-        // THE HOME'S KIND, FIRST (U-proving-ground-a): a new tape is marked in the transaction of its first rung, before
-        // anything else it holds, and the mark is never rewritten. No rung: one key in this table. A tape stamped before
-        // this build stays unmarked, a real home's.
+        // THE HOME'S KIND is already written (U-proving-ground-a, R2): ClaimKind marks a new tape before its first rung, in
+        // the transaction that checked it, and the mark is never rewritten. No rung: one key in this table. A tape stamped
+        // before this build stays unmarked, a real home's.
         if (have < 1)
-            Rung($$"""
+            Rung("""
                 CREATE TABLE IF NOT EXISTS tape_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                INSERT INTO tape_meta(key, value) VALUES('{{Proving.HomeMark.Key}}', '{{Proving.HomeMark.Word(Kind)}}')
-                  ON CONFLICT(key) DO NOTHING;
 
                 CREATE TABLE IF NOT EXISTS tape_fetch(
                   id           INTEGER PRIMARY KEY AUTOINCREMENT,
