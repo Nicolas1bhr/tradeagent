@@ -10799,3 +10799,19 @@ in a job can spawn outside any listing. It is closed by starting every launch SU
 which now also carries this case: no launch, survivor or survivor's descendant may run outside a job.
 **NOT VERIFIED:** survivors left by the contained path's `finally` teardown still release presence at teardown (the brief kept that path unchanged); a held presence clears only at the meter's next admission
 re-check (errs toward unattested); no app run, no real model; tests box NOT RUN — the machine does not answer.
+
+
+## U-ceiling-clock-red — the ceiling-wake test is judged by the clock it injects, never by the hour it runs at (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v3) on `main` at tip `b7c17ea0`; CI run **38993615006 (attempt 2 — attempt 1 was red only on macOS `LinuxHostRuntimeTests.The_device_auth_prompt_yields_its_link_and_code`: the device-sign-in stub failed to start its .NET runtime, "Failed to create CoreCLR"; the train cannot reach it; a first sighting; the failed job re-run, no code changed)**: every job success incl. `linux-host`; `land.sh train-check` VERDICT PASS (train names 2838 → 2858, removed 0; scan clean with the phrase exclusions judged at prep). **No rung, no pipe op, no verb; test code only, no product change.**
+Found by seat A on `main` (2026-10-17 ~01:0x), relayed URGENT by the orchestrator: O3's `CouncilLoopOrgWakeTests.A_runnable_head_gets_one_ceiling_wake_from_its_last_turn` was RED whenever the wall clock
+was before today's local noon − 2 h — on CI ~00:00–10:00 UTC on every platform, so it stopped every landing run in those hours (a judged red only stops blocking; `check` needs a green run).
+**Cause (by evidence): the TEST HOST.** `CouncilLoopTests.cs`'s `CouncilHost.BeginTurn` stamped a launched turn with `DateTimeOffset.UtcNow` (both overloads) while the loop ran on its injected `now`; with
+`Noon()` ahead of the wall clock the new turn sorted BEFORE the seeded one and `AiAttemptStore.LastWoken` (`AiAttemptStore.cs:691`, `ORDER BY started_at DESC`) returned the seed, failing the assert at
+`CouncilLoopOrgWakeTests.cs:334`. The product is right: `TurnMeter.cs:941` stamps from its injected clock.
+**Fix (`19be6971`):** `CouncilHost.Clock` (default the wall clock), used by both overloads; the test passes `{ Clock = () => now }`; no assertion weakened, renamed or deleted. Test-only → no mutant (declared).
+**Evidence:** RED at base `00ef2a87` under `TZ=UTC` (1 failed, 56 passed), green under `TZ=Pacific/Kiritimati`; after: 57/57 under both TZ values, 3× each. Branch CI 38991818288 on `19be6971` all 12 jobs
+green INSIDE the red window — the run itself is the proof. Review (Codex): only the missing report (added).
+**OWED CARD (first sighting, not a unit yet):** other test hosts stamp `UtcNow` the same way (e.g. `VendorLimitReadTests`' `CouncilHost`), and `VendorLimitReadTests` had a macOS-only first sighting
+(run 38965744337) — if it is seen again, this is the likely cause and it becomes a unit.
+**NOT VERIFIED:** tests box NOT RUN — the machine does not answer.
