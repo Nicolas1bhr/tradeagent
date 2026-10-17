@@ -5,11 +5,13 @@ using TradeAgent.Gateway;
 namespace TradeAgent.AgentRuntime;
 
 /// <summary>
-/// The two kinds of runtime a seat can run on, as far as what it can REACH is concerned: a vendor's command-line AI,
-/// started in the seat's folder as the owner's own user (codex, OpenCode, a custom one — they reach the same things), or
-/// the app-owned harness, which runs inside TradeAgent's process and acts only through the tools the app grants it.
+/// The kinds of runtime a seat can run on, as far as what it can REACH is concerned: a vendor's command-line AI,
+/// started in the seat's folder as the owner's own user (codex, OpenCode, a custom one — they reach the same things); the
+/// app-owned harness, which runs inside TradeAgent's process and acts only through the tools the app grants it; and a
+/// broker-only codex seat (<c>U-thinking-seats-c</c>), a vendor program with no shell, no file tool and the app's door as its
+/// only tool server, which reaches what the door serves it and nothing else.
 /// </summary>
-public enum RuntimeClass { Cli, Harness }
+public enum RuntimeClass { Cli, Harness, Broker }
 
 /// <summary>
 /// One verb a seat may use. <see cref="Op"/> is the gateway's own operation; <see cref="Invocation"/> is how this runtime
@@ -163,6 +165,38 @@ public sealed record AgentReach
                 Verbs = verbs,
                 Tools = [.. verbs.Select(v => v.Invocation.Split(' ')[0]).Distinct(StringComparer.Ordinal)],
                 TurnsPerSession = Math.Max(1, turnsPerSession ?? options.TurnsPerSession)
+            };
+        }
+
+        // A BROKER-ONLY SEAT (U-thinking-seats-c): exactly what the app's door serves its grant — the harness's own tools under the
+        // grant (BrokerDoor.ToolsFor) and, since the seat is mediated, the organisation's verbs (BrokerDoor.OrganisationVerbs behind
+        // VerbGate, by the assurance recorded for its attempt). No program of its own reaching the computer, the harness's write
+        // roots as its wall, and a CLI session's length: its codex resumes like any CLI.
+        if (runtime == RuntimeClass.Broker)
+        {
+            var served = GrantedWorkerTools.Granted.Select(t => t.Name).ToList();
+            var doorVerbs = served
+                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Allowed).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
+                .Concat(Ops.Organisation.Where(op => Allowed(op) && CarriedBy(op, SeatClasses.Broker))
+                    .Select(op => new ReachVerb(op, BrokerDoor.VerbName(op), Ops.IsMutating(op))))
+                .ToList();
+            var doorWrites = GrantedWorkerTools.Writable.ToList();
+            var doorWakes = doorWrites.Contains(TopFolder(MissionLoop.WakeFile), StringComparer.Ordinal);
+            return new AgentReach
+            {
+                Role = role,
+                Runtime = runtime,
+                Os = null,
+                RunsCode = false,
+                Reads = [OwnFolder],
+                Writes = doorWrites,
+                Walled = true,
+                WakeFile = doorWakes ? MissionLoop.WakeFile : null,
+                WakeCap = doorWakes ? new MissionOptions().MaxDelay : null,
+                HandsBack = handsBack.Where(h => doorWrites.Contains(TopFolder(h.Path), StringComparer.Ordinal)).ToList(),
+                Verbs = doorVerbs,
+                Tools = [.. served, .. doorVerbs.Where(v => Ops.IsOrganisation(v.Op)).Select(v => v.Invocation).Distinct(StringComparer.Ordinal)],
+                TurnsPerSession = Math.Max(1, turnsPerSession ?? new MissionOptions().TurnsPerSession)
             };
         }
 

@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -436,8 +436,14 @@ public static class Canon
         - **Your command:** `trade`, on your PATH —
           {{verbs}}.
         {{else}}
+        {{if broker}}
+        - **Where you run:** an AI program TradeAgent starts with no shell, no file, patch or image tool and
+          no tool server but TradeAgent's own. You act only through your tools, and TradeAgent executes and
+          records every call.
+        {{else}}
         - **Where you run:** inside TradeAgent's own process. You act only through your tools, and
           TradeAgent executes and records every call.
+        {{end}}
         - **Your tools:** {{tools}}.
         {{end}}
         - **You read:** your own folder, `{{read in/}}` included{{if inbox}}, and `{{inbox_dir}}` — what the owner gave you. Read
@@ -452,7 +458,7 @@ public static class Canon
         - **Waking:** TradeAgent wakes you, on an event or on its scheduled look; you cannot set a time.
         {{end}}
         - **You hand back:** {{handbacks}}.
-        - **Sessions:** {{if code}}a fresh session starts after at most {{turns_per_session}} turns{{else}}every turn starts fresh, from this text and the
+        - **Sessions:** {{if resumes}}a fresh session starts after at most {{turns_per_session}} turns{{else}}every turn starts fresh, from this text and the
           turn's `## Situation`{{end}}; only what you wrote down crosses that gap.
 
         `{{guide}}` holds TradeAgent's procedures and reference — defaults, rewritten at every start; your
@@ -489,7 +495,7 @@ public static class Canon
 
         **If there is genuinely nothing to do, say why in one line and finish the turn.**
         An idle turn with its reason stated is a healthy outcome and not a fault.
-        {{if code}}
+        {{if resumes}}
         On a resumed session it costs your owner about what a working one does.{{if wake}} With work in progress,
         ask for your next wake in `next.json`: the scheduled look slows while nothing happens, until a
         real event.{{end}}
@@ -510,7 +516,7 @@ public static class Canon
         a request rather than a promise: anything that happens before then wakes you sooner.
         {{end}}
 
-        **Your memory is your files and your research ledger.** {{if code}}Every so often{{else}}Every turn{{end}} you start again in a fresh session with no
+        **Your memory is your files and your research ledger.** {{if resumes}}Every so often{{else}}Every turn{{end}} you start again in a fresh session with no
         recollection of anything, and the only thing that crosses that gap is what you wrote down: two
         files, both in `{{write trading/}}`, and your research ledger, below.
 
@@ -834,6 +840,10 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
         {
             "code" => reach.RunsCode,
             "harness" => reach.Runtime == RuntimeClass.Harness,
+            // A BROKER-ONLY SEAT (U-thinking-seats-c): a vendor program that acts only through the door's tools.
+            "broker" => reach.Runtime == RuntimeClass.Broker,
+            // A SEAT WHOSE SESSION CARRIES TURNS: every vendor program, the broker's included; the harness starts each turn fresh.
+            "resumes" => reach.Runtime != RuntimeClass.Harness,
             "orders" => reach.MayPlaceOrders,
             "inbox" => reach.ReadsInbox,
             "wake" => reach.Wakes,
@@ -1041,10 +1051,10 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
         }
     }
 
-    /// <summary>The harness's tools, each with the ops it carries for this seat.</summary>
+    /// <summary>The tools of a seat that acts through tools — the harness, or the broker's door — each with the ops it carries.</summary>
     string HarnessTools()
     {
-        if (reach.Runtime != RuntimeClass.Harness) throw Lacks("the harness's tools");
+        if (reach.Runtime == RuntimeClass.Cli) throw Lacks("tools of its own");
         return string.Join("; ", reach.Tools.Select(t =>
         {
             var ops = reach.Verbs.Where(v => v.Invocation == t).Select(v => v.Op).ToList();

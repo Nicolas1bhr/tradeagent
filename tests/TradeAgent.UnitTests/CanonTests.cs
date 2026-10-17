@@ -26,24 +26,30 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch (Exception) { }
     }
 
-    /// <summary>The three pairs that run, and Operations on the harness, which the reach answers for and nothing runs.</summary>
+    /// <summary>A position beyond the legacy pair: on a vendor CLI it runs only as a broker-only seat (<c>U-thinking-seats-c</c>).</summary>
+    const string Position = "pos-5c1e2d9a";
+
+    /// <summary>The pairs that run, Operations on the harness, which the reach answers for and nothing runs, and a broker seat.</summary>
     public static TheoryData<string, RuntimeClass> Reaches => new()
     {
         { CouncilRoles.Operations, RuntimeClass.Cli },
         { CouncilRoles.Research, RuntimeClass.Cli },
         { CouncilRoles.Research, RuntimeClass.Harness },
-        { CouncilRoles.Operations, RuntimeClass.Harness }
+        { CouncilRoles.Operations, RuntimeClass.Harness },
+        { Position, RuntimeClass.Broker }
     };
 
-    /// <summary>The three pairs that run, each on the built-in simulator and off it.</summary>
+    /// <summary>The pairs that run — the legacy pair's three and a position's broker seat — each on the built-in simulator and off it.</summary>
     public static TheoryData<string, RuntimeClass, bool> Pairs => new()
     {
         { CouncilRoles.Operations, RuntimeClass.Cli, true },
         { CouncilRoles.Research, RuntimeClass.Cli, true },
         { CouncilRoles.Research, RuntimeClass.Harness, true },
+        { Position, RuntimeClass.Broker, true },
         { CouncilRoles.Operations, RuntimeClass.Cli, false },
         { CouncilRoles.Research, RuntimeClass.Cli, false },
-        { CouncilRoles.Research, RuntimeClass.Harness, false }
+        { CouncilRoles.Research, RuntimeClass.Harness, false },
+        { Position, RuntimeClass.Broker, false }
     };
 
     /// <summary>The app's default settings, on the built-in simulator unless told otherwise.</summary>
@@ -171,7 +177,9 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
             .Concat(GrantedWorkerTools.Granted.SelectMany(t => GrantedWorkerTools.OpsOf(t.Name)))
             .ToHashSet(StringComparer.Ordinal);
         var allTools = GrantedWorkerTools.Granted.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
-        var harness = reach.Runtime == RuntimeClass.Harness;
+        // A SEAT THAT ACTS THROUGH TOOLS — the harness, or a broker seat through the app's door (U-thinking-seats-c) — is held to
+        // tool calls; only a CLI to command lines.
+        var harness = reach.Runtime != RuntimeClass.Cli;
 
         foreach (var span in Spans(text))
         {
@@ -188,7 +196,8 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
                 var tool = call.Groups[1].Value;
                 if (!reach.Tools.Contains(tool)) { yield return $"a tool it does not have: `{span}`"; continue; }
                 var op = Regex.Match(call.Groups[2].Value, @"\bop: ([a-z-]+)").Groups[1].Value;
-                if (op.Length == 0) op = GrantedWorkerTools.OpsOf(tool).Count == 1 ? GrantedWorkerTools.OpsOf(tool)[0] : "";
+                if (op.Length == 0) op = GrantedWorkerTools.OpsOf(tool).Count == 1 ? GrantedWorkerTools.OpsOf(tool)[0]
+                    : reach.Verbs.Where(v => v.Invocation == tool).Select(v => v.Op).SingleOrDefault() ?? "";
                 if (reach.Verb(op) is not { } verb || verb.Invocation != tool)
                     yield return $"an op its tool does not carry for it: `{span}`";
             }
@@ -273,7 +282,11 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (3, CouncilRoles.Operations, "08fd310683edf11a7723020ce5c9b5ed46ede4b5ae1580a7f711c6609789d380"),
         (3, CouncilRoles.Research, "c5a1dc574a331c63d645d2711ec7f19ed178f4f28dbc1df88735c3db0ca71c7e"),
         (4, CouncilRoles.Operations, "f438c0494cf624ceed34eae590e12bc93513f50443a94c9e2115658c72742ecf"),
-        (4, CouncilRoles.Research, "575865b5c9904963bd46657c261cba8b7dbc0e7349a6bd30e544e53e971365a5")
+        (4, CouncilRoles.Research, "575865b5c9904963bd46657c261cba8b7dbc0e7349a6bd30e544e53e971365a5"),
+        // v5 (U-thinking-seats-c): the reach section tells a broker-only seat where it runs, and a session's length follows whether
+        // the seat resumes rather than whether it runs code.
+        (5, CouncilRoles.Operations, "cbb987381e4068d09a749553a38c7916e8940ba26d30dff6d867202ba76803a0"),
+        (5, CouncilRoles.Research, "04ddafbd943d7b6a0198489f640a7e3f15117f503945635817a6afe02daa441b")
     ];
 
     /// <summary>
@@ -466,7 +479,35 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         using var home = TestEnv.NewScratch("reach");
         Directory.CreateDirectory(home.Dir);
 
-        if (runtime == RuntimeClass.Cli)
+        if (runtime == RuntimeClass.Broker)
+        {
+            // EXACTLY WHAT THE DOOR SERVES ITS GRANT (U-thinking-seats-c): the harness's own tools, as the door lists them, and the
+            // organisation's verbs under their door names — the broker class is mediated, which carries them — and nothing else.
+            var offered = new GrantedWorkerTools(role, () => home.Dir, () => null).Offered.Select(t => t.Name).ToList();
+            var verbs = BrokerDoor.OrganisationVerbs(() => null).Select(v => v.Spec.Name).ToList();
+            Assert.Equal([.. offered, .. verbs], reach.Tools);
+            Assert.Equal(
+                offered.SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(op => !Refused(op)))
+                    .Concat(Ops.Organisation.Where(op => !Refused(op) && AgentReach.CarriedBy(op, TradeAgent.Core.Db.SeatClasses.Broker))),
+                reach.Verbs.Select(v => v.Op));
+            Assert.All(reach.Verbs.Where(v => Ops.IsOrganisation(v.Op)), v => Assert.Equal(BrokerDoor.VerbName(v.Op), v.Invocation));
+            Assert.Contains(reach.Verbs, v => Ops.IsOrganisation(v.Op));
+
+            // NO PROGRAM OF ITS OWN REACHING THE COMPUTER, THE HARNESS'S WALL, AND A CLI SESSION'S LENGTH.
+            Assert.True(reach.Walled);
+            Assert.False(reach.RunsCode);
+            Assert.Null(reach.Os);
+            Assert.Equal(GrantedWorkerTools.Writable, reach.Writes);
+            Assert.Equal([AgentReach.OwnFolder], reach.Reads);
+            Assert.False(reach.ReadsInbox);
+            Assert.Null(reach.WakeFile);
+            Assert.Equal(new MissionOptions().TurnsPerSession, reach.TurnsPerSession);
+            Assert.Equal(7, AgentReach.For(role, runtime, turnsPerSession: 7).TurnsPerSession);
+            Assert.Equal(Canon.CliFile, Canon.FileFor(runtime));
+            Assert.Contains(runtime, WorkspaceBuilder.RuntimesOf(role));
+            Assert.DoesNotContain(RuntimeClass.Cli, WorkspaceBuilder.RuntimesOf(role));
+        }
+        else if (runtime == RuntimeClass.Cli)
         {
             // THE GATEWAY'S SCHEMA, in its order, less exactly what the pipe refuses — and the forms the CLI spells them in.
             var served = GatewaySchema.Ops().Where(o => !Refused(o.Op)).ToList();
