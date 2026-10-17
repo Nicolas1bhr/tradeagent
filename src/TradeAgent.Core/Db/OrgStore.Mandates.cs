@@ -741,7 +741,9 @@ public sealed partial class OrgStore
     /// an open mandate past its deadline EXPIRES (the event, the holder's untaken wakes closed, ONE <c>escalation</c> wake to the
     /// decider); one with half its allocation spent and nothing accepted is escalated ONCE; and one whose holder's work is owed —
     /// issued, retried or rejected — with no untaken wake and no launch open is given ONE <c>mandate</c> wake again, keyed by its
-    /// latest event and the last launch charged to it, so a restart re-raises each once and a second pass raises nothing. It buys
+    /// latest event and the last launch charged to it, so a restart re-raises each once and a second pass raises nothing; and
+    /// one whose judgment is owed — a sealed delivery or an escalation — whose latest wake to the decider a LOST launch took is
+    /// given ONE such wake again (<see cref="LostJudgment"/>), keyed by that wake and that launch. It buys
     /// no turn and dispatches nothing. Answers how many records it wrote.
     /// </summary>
     public int Sweep(DateTimeOffset now)
@@ -775,6 +777,14 @@ public sealed partial class OrgStore
                     return new MissionEventStore(db).Raise(MissionEventIds.Mandate(m.Id, latest.Id, LastLaunch(m.Id) ?? "none"),
                         MissionEventKind.Mandate, now, payload: m.Id, role: m.Holder) ? 1 : 0;
                 }
+
+                // THE DECIDER'S JUDGMENT, TOO (fix pass 1, item 2): a sealed delivery or an escalation waiting on the decider whose
+                // latest wake a launch took and a restart declared LOST is owed ONE wake of the same kind again, keyed by that
+                // wake and that launch — never while a wake is untaken or the launch still runs, and never for one that ENDED:
+                // that turn had the judgment in front of it, and waking it again every tick would spend the owner's allowance.
+                if (status is MandateEventKind.Delivered or MandateEventKind.Escalated && LostJudgment(m) is { } lost)
+                    return new MissionEventStore(db).Raise(MissionEventIds.Rejudge(lost.Id, lost.ConsumedBy!), lost.Kind, now,
+                        payload: m.Id, role: m.Decider) ? 1 : 0;
                 return 0;
             });
         return written;
@@ -793,6 +803,32 @@ public sealed partial class OrgStore
         while (r.Read()) ids.Add(r.GetString(0));
         return (IReadOnlyList<string>)ids;
     });
+
+    /// <summary>
+    /// The latest <c>delivery</c> or <c>escalation</c> wake of <paramref name="m"/> to its decider when the launch that took it was
+    /// declared LOST, or null — none raised, the latest still untaken, or taken by a launch that runs or ended.
+    /// </summary>
+    MissionEvent? LostJudgment(MandateRow m)
+    {
+        using var c = db.Cmd("""
+            SELECT e.id, e.kind, e.consumed_by FROM mission_event e
+             WHERE e.kind IN ($delivery, $escalation) AND e.payload = $m AND e.role = $decider
+             ORDER BY e.rowid DESC LIMIT 1
+            """, ("$delivery", MissionEventKind.Delivery), ("$escalation", MissionEventKind.Escalation), ("$m", m.Id),
+            ("$decider", m.Decider));
+        string id, kind;
+        string? by;
+        using (var r = c.ExecuteReader())
+        {
+            if (!r.Read()) return null;
+            (id, kind, by) = (r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)));
+        }
+        if (by is null) return null;
+        using var lost = db.Cmd("SELECT EXISTS (SELECT 1 FROM ai_attempt WHERE id=$by AND state='LOST')", ("$by", by));
+        return Convert.ToInt64(lost.ExecuteScalar(), CultureInfo.InvariantCulture) != 0
+            ? new MissionEvent { Id = id, Kind = kind, ConsumedBy = by }
+            : null;
+    }
 
     bool HasUntakenWake(string mandateId)
     {

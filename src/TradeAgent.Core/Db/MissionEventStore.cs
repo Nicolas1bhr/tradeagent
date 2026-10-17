@@ -523,6 +523,13 @@ public static class MissionEventIds
     public static string Escalation(string mandateId, long eventId) => $"{MissionEventKind.Escalation}:{mandateId}:{eventId}";
 
     /// <summary>
+    /// A JUDGMENT RE-RAISED BY THE SWEEP (<c>U-org-assignments-a</c> fix pass 1, item 2): the decider's <c>delivery</c> or
+    /// <c>escalation</c> wake <paramref name="lostWakeId"/>, which the LOST launch <paramref name="lostAttempt"/> took, owed
+    /// again — once per lost launch, never twice for one.
+    /// </summary>
+    public static string Rejudge(string lostWakeId, string lostAttempt) => $"{lostWakeId}:after:{lostAttempt}";
+
+    /// <summary>
     /// THE VERDICT WAKE, KEYED BY THE PROMOTION AND NOT BY THE NOTE THAT CARRIES IT.
     ///
     /// <para>The promotion is the ENTITY (<c>docs/COUNCIL.md</c>:64): its id is already the hash of the

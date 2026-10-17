@@ -878,6 +878,59 @@ public class OrgAssignmentTests
         Assert.Empty(org.MandatesOwedBy(Member));
     }
 
+    /// <summary>
+    /// (g3) A RESTART RE-RAISES A JUDGMENT A LOST TURN TOOK (fix pass 1, item 2; ORCHESTRATION § 4 flow 3): the decider's launch
+    /// that consumed a <c>delivery</c> — or an <c>escalation</c> — wake and was declared LOST leaves the judgment with no untaken
+    /// wake and no open launch; the sweep raises ONE wake of the same kind to the decider, and a second sweep raises nothing. A
+    /// judgment wake still untaken, or taken by a launch still running or one that ENDED (it had its turn at the judgment),
+    /// raises nothing. RED at base: the sweep re-raised only the holder's work. Watched red with the decider branch removed.
+    /// </summary>
+    [Fact]
+    public void A_restart_reraises_a_judgment_a_lost_turn_took_once()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var attempts = new AiAttemptStore(db);
+        var now = DateTimeOffset.UtcNow;
+
+        // A SEALED DELIVERY WAITING ON ITS DECIDER, and an ESCALATION (a decline as ambiguous) waiting on it too.
+        var delivered = org.Assign(Issue(allocation: 50m), now);
+        var work = Begin(db, Member, 0.10m, [Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == delivered.Id).Id]);
+        Assert.Equal(MandateEventKind.Delivered, org.Deliver(delivered.Id, Member, work.Id, "the answer", [], [], now).Status);
+        attempts.End(work.Id!, 0, now, 10, null, null, 10, null, "model-x", 0.01m, null, null);
+        var escalated = org.Assign(Issue(holder: Other, allocation: 50m), now);
+        org.Decline(escalated.Id, Other, null, MandateDecline.Ambiguous, "which hour?", now);
+        Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(escalated.Id));
+
+        List<MissionEvent> Judging(MandateRow m) =>
+            [.. events.OfKind(MissionEventKind.Delivery).Concat(events.OfKind(MissionEventKind.Escalation)).Where(e => e.Payload == m.Id)];
+        Assert.Equal(0, org.Sweep(now));
+
+        // THE HEAD TAKES BOTH AND ITS TURN IS LOST.
+        var head = Begin(db, Head, 0.10m, [.. Judging(delivered).Concat(Judging(escalated)).Select(e => e.Id)]);
+        Assert.True(head.Admitted, head.Refusal);
+        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(1, attempts.LoseOpen(now));
+
+        Assert.Equal(2, org.Sweep(now));
+        Assert.Equal(0, org.Sweep(now));
+        foreach (var (m, kind) in new[] { (delivered, MissionEventKind.Delivery), (escalated, MissionEventKind.Escalation) })
+        {
+            var wakes = Judging(m);
+            Assert.Equal(2, wakes.Count);
+            var again = Assert.Single(wakes, e => !e.Consumed);
+            Assert.Equal((kind, Head, m.Id), (again.Kind, again.Role, again.Payload));
+        }
+
+        // A JUDGMENT TAKEN BY A TURN THAT ENDED had its turn: nothing more is raised for it.
+        var ended = Begin(db, Head, 0.10m, [.. Judging(delivered).Where(e => !e.Consumed).Select(e => e.Id)]);
+        attempts.End(ended.Id!, 0, now, 10, null, null, 10, null, "model-x", 0.01m, null, null);
+        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(2, Judging(delivered).Count);
+    }
+
     // ---- item 6: the reads ---------------------------------------------------------------------------------------------
 
     /// <summary>
