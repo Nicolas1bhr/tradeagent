@@ -193,6 +193,12 @@ public class VendorLimitQuoteTests : IDisposable
         readonly string _tag = Guid.NewGuid().ToString("n")[..8];
         int _n;
 
+        /// <summary>
+        /// THE INSTANT A LAUNCH STARTS AT: the clock the loop is driven on, never the wall clock beside it (<c>U-test-host-clocks</c>;
+        /// the same class as <c>U-ceiling-clock-red</c>), so a launch is ordered against the owner's messages by the loop's time.
+        /// </summary>
+        public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+
         /// <summary>Every launch the loop opened, in order. The count is the verdict.</summary>
         public List<string> Opened { get; } = [];
 
@@ -208,7 +214,7 @@ public class VendorLimitQuoteTests : IDisposable
         {
             Opened.Add(prompt);
             return new AiAttemptStore(db).Begin(
-                new AiAttempt { Id = $"turn-{_tag}-{++_n}", StartedAt = DateTimeOffset.UtcNow }, wakes);
+                new AiAttempt { Id = $"turn-{_tag}-{++_n}", StartedAt = Clock() }, wakes);
         }
     }
 
@@ -226,8 +232,8 @@ public class VendorLimitQuoteTests : IDisposable
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
 
         var events = new MissionEventStore(_db);
-        var host = new Host(_db, events, VendorLimitTests.Refusing(name, Stdout), home);
         var now = VendorLimitTests.Today(12, 0);
+        var host = new Host(_db, events, VendorLimitTests.Refusing(name, Stdout), home) { Clock = () => now };
         var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
 
         Assert.True(events.RecordOwnerMessage("how is the book?", now));

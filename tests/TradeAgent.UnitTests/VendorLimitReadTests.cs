@@ -156,6 +156,12 @@ public class VendorLimitReadTests : IDisposable
         readonly string _tag = Guid.NewGuid().ToString("n")[..8];
         int _n;
 
+        /// <summary>
+        /// THE INSTANT A LAUNCH STARTS AT: the clock the loop is driven on, never the wall clock beside it (<c>U-test-host-clocks</c>;
+        /// the same class as <c>U-ceiling-clock-red</c>), so a launch is ordered against the owner's messages by the loop's time.
+        /// </summary>
+        public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+
         public Dictionary<string, IAgentConversation> Conversations { get; } = [];
         public Dictionary<string, string> Runtimes { get; } = [];
         public List<(string Role, VendorHold Hold)> Told { get; } = [];
@@ -178,7 +184,7 @@ public class VendorLimitReadTests : IDisposable
         {
             Opened.Add(role);
             return new AiAttemptStore(db).Begin(
-                new AiAttempt { Id = $"turn-{_tag}-{++_n}", StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
+                new AiAttempt { Id = $"turn-{_tag}-{++_n}", StartedAt = Clock(), Role = role }, wakes);
         }
     }
 
@@ -196,14 +202,14 @@ public class VendorLimitReadTests : IDisposable
         var home = Path.Combine(TestEnv.Home, "vendor-limit", name);
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
 
-        var host = new CouncilHost(_db, events, home);
+        var now = VendorLimitTests.Today(12, 0);
+        var host = new CouncilHost(_db, events, home) { Clock = () => now };
         host.Conversations[CouncilRoles.Operations] = VendorLimitTests.Refusing(name);
         host.Conversations[CouncilRoles.Research] =
             AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, name: name + "-research");
         host.Runtimes[CouncilRoles.Operations] = "codex";
         host.Runtimes[CouncilRoles.Research] = ApiAgentRuntime.RuntimeId;
 
-        var now = VendorLimitTests.Today(12, 0);
         var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
 
         Assert.True(events.RecordOwnerMessage("how is the book?", now));
