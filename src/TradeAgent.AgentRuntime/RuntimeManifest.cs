@@ -428,7 +428,7 @@ public sealed class RuntimeManifest
     /// <summary>
     /// THE SEAT CLASS A PUPPET MANIFEST DECLARES IT PLAYS — <see cref="SeatPlan.PuppetClass"/> unless its test says otherwise — and
     /// the class the activation gate checks it as and every attempt it runs records at admission (<c>ai_attempt.seat_class</c>,
-    /// <see cref="SessionSeatClass"/>; <c>U-thinking-seats-a</c> fix pass 2, item 7), so a later unit's puppet can reach the
+    /// <see cref="SessionSeatClassFor"/>; <c>U-thinking-seats-a</c> fix pass 2, item 7), so a later unit's puppet can reach the
     /// verbs a declared class allows. Declared by the test's manifest, in code: never read from <c>runtimes.json</c>, and nothing
     /// in production configuration can reach it (seat classes live in code, § 2.7). Ignored on a manifest that is not a puppet.
     /// </summary>
@@ -436,13 +436,17 @@ public sealed class RuntimeManifest
     internal string PuppetSeatClass { get; init; } = SeatPlan.PuppetClass;
 
     /// <summary>
-    /// THE CLASS OF THE SEAT AN <see cref="AgentSession"/> OVER THIS MANIFEST STARTS — the one answer the session's own verdict, its
-    /// last check before the process and the app's declared seat all read: a test host's puppet plays its declared class
-    /// (<see cref="PuppetSeatClass"/>), and every other CLI seat is <c>cli</c>, with a seat plan or without one, since no seat starts
-    /// in a cell yet. Code, never data: not serialized and read from no file (ORCHESTRATION § 2.7).
+    /// THE CLASS OF THE SEAT AN <see cref="AgentSession"/> OF <paramref name="role"/> OVER THIS MANIFEST STARTS — the one answer the
+    /// session's own verdict, its last check before the process and the app's declared seat all read: a test host's puppet plays its
+    /// declared class (<see cref="PuppetSeatClass"/>); a position beyond the legacy pair on a runtime this build gives a broker class
+    /// is <c>broker</c> (<c>U-thinking-seats-c</c>: no shell, the app's door as its only tool server, a pinned model, its offered tools
+    /// verified); every other CLI seat — the legacy pair's, with a seat plan or without one — is <c>cli</c>. Code, never data: not
+    /// serialized and read from no file (ORCHESTRATION § 2.7); whether a runtime has a broker class is the BUILT-IN manifest's answer.
     /// </summary>
-    [JsonIgnore]
-    public string SessionSeatClass => Puppet ? PuppetSeatClass : TradeAgent.Core.Db.SeatClasses.Cli;
+    public string SessionSeatClassFor(string role) =>
+        Puppet ? PuppetSeatClass
+        : !CouncilRoles.IsKnown(role) && BrokerSeat.Offers(Id) ? TradeAgent.Core.Db.SeatClasses.Broker
+        : TradeAgent.Core.Db.SeatClasses.Cli;
     public string DisplayName { get; set; } = "";
 
     /// <summary>

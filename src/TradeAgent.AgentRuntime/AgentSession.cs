@@ -133,7 +133,15 @@ public static class AgentArgs
         For(manifest, prompt, resuming, model, out _);
 
     /// <param name="promptInArgv">Whether the command line built carries the prompt — measured on it, see <see cref="Build"/>.</param>
-    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model, out bool promptInArgv)
+    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model, out bool promptInArgv) =>
+        For(manifest, prompt, resuming, model, SeatPlan.CliClass, null, out promptInArgv);
+
+    /// <summary>
+    /// THE ARGV FOR ONE TURN OF ONE SEAT CLASS (<c>U-thinking-seats-c</c>): the same builder, with <paramref name="seatClass"/>'s deny
+    /// set and the app's door, <paramref name="door"/>, in its slot.
+    /// </summary>
+    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model, string seatClass, Uri? door,
+        out bool promptInArgv)
     {
         var template =
             resuming && manifest.ResumeArgs.Length > 0 ? manifest.ResumeArgs :
@@ -142,7 +150,7 @@ public static class AgentArgs
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
-            ModelArgs(manifest, model), SeatArgs(manifest), manifest.PromptOnStdin, manifest.StdinMarker, out promptInArgv);
+            ModelArgs(manifest, model), SeatArgs(manifest, seatClass, door), manifest.PromptOnStdin, manifest.StdinMarker, out promptInArgv);
     }
 
     /// <summary>
@@ -158,9 +166,10 @@ public static class AgentArgs
 
     /// <summary>
     /// THE SEAT'S DENY SET, on the first turn and on every resume alike (<c>U-seat-home</c>), or nothing for a runtime with no
-    /// seat profile. One class today, <see cref="SeatPlan.CliClass"/>.
+    /// seat profile: <paramref name="seatClass"/>'s, the app's door in its slot (<c>U-thinking-seats-c</c>).
     /// </summary>
-    public static string[] SeatArgs(RuntimeManifest manifest) => manifest.Seat?.ArgsFor(SeatPlan.CliClass) ?? [];
+    public static string[] SeatArgs(RuntimeManifest manifest, string seatClass = SeatPlan.CliClass, Uri? door = null) =>
+        manifest.Seat?.ArgsFor(seatClass, door) ?? [];
 
     /// <summary>
     /// The model flag as this runtime spells it, or nothing at all. Nothing when the runtime has no
@@ -268,6 +277,13 @@ public static class AgentArgs
 /// The activation gate's register, asked immediately before the process starts (<see cref="PositionActivation.AtLaunch"/>). Null
 /// is the process-wide one, which the product fills; a test's host passes its own.
 /// </param>
+/// <param name="door">
+/// THE APP'S DOOR (<c>AppHost.DoorUrl</c>; <c>U-thinking-seats-b</c>), read at every launch: a broker-only seat's one tool server,
+/// written into its deny set's slot (<see cref="SeatPlan.DoorSlot"/>). Null, or a null answer, refuses a broker seat.
+/// </param>
+/// <param name="surfaceProbe">
+/// What reads the tools a broker seat would be offered: the real dry run (<see cref="CodexSurfaceProbe"/>) unless a test passes a fake.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
@@ -281,10 +297,42 @@ public sealed class AgentSession(
     Func<string?>? launchRefusal = null,
     AppFileManifest? appFiles = null,
     ISeatProbe? seatProbe = null,
-    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
+    SeatRegister? seats = null,
+    Func<Uri?>? door = null,
+    ISurfaceProbe? surfaceProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
 {
     /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
     ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT THIS SESSION STARTS (<see cref="RuntimeManifest.SessionSeatClassFor"/>): <c>broker</c> for a position
+    /// beyond the legacy pair on a runtime with a broker class, a test host's puppet's declared class, otherwise <c>cli</c>.
+    /// </summary>
+    public string SeatClass => manifest.SessionSeatClassFor(role);
+
+    bool Broker => SeatClass == SeatPlan.BrokerClass;
+
+    /// <summary>The door's address now, or null — a read that throws is no door.</summary>
+    Uri? Door
+    {
+        get
+        {
+            try { return door?.Invoke(); }
+            catch (Exception) { return null; }
+        }
+    }
+
+    /// <summary>
+    /// THE MODEL THE NEXT LAUNCH NAMES ON ITS COMMAND LINE: a broker seat's pin, whatever its account defaults to; otherwise the model
+    /// TradeAgent asks for (<see cref="RequestedModel"/>).
+    /// </summary>
+    string? LaunchModel => Broker ? BrokerSeat.ModelOf(SeatClass) : RequestedModel;
+
+    /// <summary>
+    /// HOW THIS LAUNCH'S SEAT IS VERIFIED: its class, the door, and — for a broker seat — the owner's own choice of model for the
+    /// position, which refuses when it names another model than the pin.
+    /// </summary>
+    SeatLaunch Launch => new(SeatClass, Door, Broker ? RequestedModel : null, surfaceProbe);
 
     /// <inheritdoc />
     public SeatVerdict CheckSeat()
@@ -294,19 +342,26 @@ public sealed class AgentSession(
         // A CLI SEAT, WITH A SEAT PLAN OR WITHOUT ONE (U-thinking-seats-a): every session here starts its process with a shell and
         // outside any cell, so its class is `cli` and its assurance unconfined — or, for a test host's puppet, the class its test
         // declared (fix pass 2, item 7) — the app's own answer in code, never a field of the manifest's file.
-        if (manifest.Seat is null) return Seated;
+        // A BROKER SEAT IS ADMITTED ONLY VERIFIED (U-thinking-seats-c): its mediated assurance is a claim about a profile, a door and an
+        // offered surface the app has checked, never one about a manifest with nothing to check.
+        var seatClass = SeatClass;
+        if (manifest.Seat is null && seatClass != SeatPlan.BrokerClass) return Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
-        if (resolveExecutable() is not { } exe) return Seated;
-        var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: RequestedModel);
+        if (resolveExecutable() is not { } exe)
+            return seatClass == SeatPlan.BrokerClass
+                ? SeatVerdict.Refuse(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} is not installed, so no broker-only seat can start.")
+                : Seated;
+        var launch = Launch;
+        var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: LaunchModel, seatClass, launch.Door, out _);
         var home = workspace();
         try
         {
             // ON THE POOL, because the meter that asks is synchronous and may be on the window's thread.
-            var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, CancellationToken.None))
+            var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, launch, CancellationToken.None))
                 .GetAwaiter().GetResult();
             // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
             Volatile.Write(ref _admittedProfile, verdict.Profile);
-            return verdict.Refused ? verdict : verdict with { SeatClass = manifest.SessionSeatClass };
+            return verdict.Refused ? verdict : verdict with { SeatClass = seatClass };
         }
         catch (Exception ex)
         {
@@ -315,7 +370,7 @@ public sealed class AgentSession(
     }
 
     /// <summary>The verdict on this session's seat with nothing to verify: nothing refused, and its class.</summary>
-    SeatVerdict Seated => SeatVerdict.None with { SeatClass = manifest.SessionSeatClass };
+    SeatVerdict Seated => SeatVerdict.None with { SeatClass = SeatClass };
 
     /// <summary>
     /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
@@ -782,12 +837,16 @@ public sealed class AgentSession(
 
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
         // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
-        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: RequestedModel, out var promptInArgv);
+        var seatClass = SeatClass;
+        var launchSeat = Launch;
+        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: LaunchModel, seatClass, launchSeat.Door,
+            out var promptInArgv);
 
         // THE SEAT'S PROFILE, VERIFIED AS IT STARTS, fresh or resumed (U-seat-home): the pin, the deny set on this very argv, the
-        // config file, the home's and the workspace's inventory, and the CLI's own report. Checked again here although the meter
-        // checked it before admitting the turn: a host with no meter starts turns too, and this is the last moment before the start.
-        var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, ct);
+        // config file, the home's and the workspace's inventory, and the CLI's own report — and for a broker seat its door, its
+        // pinned model and its offered tools (U-thinking-seats-c). Checked again here although the meter checked it before admitting
+        // the turn: a host with no meter starts turns too, and this is the last moment before the start.
+        var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, launchSeat, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
@@ -801,7 +860,7 @@ public sealed class AgentSession(
         // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — or a
         // test host's puppet playing its declared class — the seat actually about to start, so a position beyond the legacy pair is
         // refused here whatever the meter answered.
-        if (PositionActivation.AtLaunch(role, manifest.SessionSeatClass, seats) is { } gate)
+        if (PositionActivation.AtLaunch(role, seatClass, seats) is { } gate)
             throw new GateRefusedException(gate, beforeAnyWork: true);
 
         // A SESSION OPENED UNDER ANOTHER PROFILE IS NOT RESUMED: the rollout it would continue was written under other flags, by
@@ -810,7 +869,7 @@ public sealed class AgentSession(
         {
             _sessionExists = false;
             _threadId = null;
-            args = AgentArgs.For(manifest, message, resuming: false, model: RequestedModel, out promptInArgv);
+            args = AgentArgs.For(manifest, message, resuming: false, model: LaunchModel, seatClass, launchSeat.Door, out promptInArgv);
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
 
@@ -857,7 +916,7 @@ public sealed class AgentSession(
         // agent's PATH; losing them is how the agent ends up reading its own instructions about a
         // command it cannot run.
         var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
-        AgentEnvironment.Apply(psi, env, manifest);
+        AgentEnvironment.Apply(psi, env, manifest, seatClass);
 
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
         // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.
