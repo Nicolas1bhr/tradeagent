@@ -220,7 +220,8 @@ public sealed class AttemptCgroups
                     left.Add(dir);
                     // WHAT IT COULD NOT END IS STILL RUNNING (fix pass 1, R3): a leftover the kill did not empty is held by the meter
                     // and counted present until it is gone — a warning alone let paid turns and the material pass start beside it.
-                    if (attempt.Populated()) survivors.Add(AttemptCgroup.Survivor(dir, unlisted: false));
+                    var unlisted = attempt.Pids() is null;
+                    if (unlisted || attempt.Populated()) survivors.Add(AttemptCgroup.Survivor(dir, unlisted));
                 }
             }
         }
@@ -456,18 +457,40 @@ public sealed class AttemptCgroup
         return !events.Split('\n').Any(l => l.Trim() == "populated 0");
     }
 
-    /// <summary>Every process listed in the attempt and below it — what a teardown names when the kill did not end them.</summary>
-    public IReadOnlyList<int> Pids()
+    /// <summary>
+    /// Every process listed in the attempt and below it — what a teardown names when the kill did not end them — or NULL when any
+    /// part of it could not be read (fix pass 1, R4): a listing with a hole in it is not a list, and an empty one read as "none" would
+    /// report a populated cgroup ended. A cgroup that is gone lists none.
+    /// </summary>
+    public IReadOnlyList<int>? Pids()
     {
         var all = new List<int>();
         try
         {
             if (!Directory.Exists(Dir)) return all;
             foreach (var dir in Directory.EnumerateDirectories(Dir, "*", SearchOption.AllDirectories).Prepend(Dir))
-                all.AddRange(AttemptCgroups.Procs(dir) ?? []);
+            {
+                if (AttemptCgroups.Procs(dir) is not { } listed) return Directory.Exists(Dir) ? null : [];
+                all.AddRange(listed);
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* what could be listed is returned */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Directory.Exists(Dir) ? null : []; }
         return all;
+    }
+
+    /// <summary>
+    /// WHAT A KILL THAT DID NOT EMPTY THIS CGROUP LEAVES (fix pass 1, R4): every listed process still running, by pid and start, AND
+    /// the cgroup itself as a survivor while it is populated or could not be listed — unknown is never ended, and a process forked
+    /// after the listing is still held by the cgroup. Empty only when the cgroup has emptied since.
+    /// </summary>
+    public IReadOnlyList<ProcessEntry> Left()
+    {
+        var listed = Pids();
+        var left = new List<ProcessEntry>();
+        foreach (var pid in listed ?? [])
+            if (ProcessTable.Read(pid) is { Zombie: false } running) left.Add(running);
+        if (listed is null || Populated()) left.Add(Survivor(Dir, unlisted: listed is null));
+        return left;
     }
 
     /// <summary>Removes the attempt's cgroup and any it made below it, deepest first (<c>rmdir</c> each). True once it is gone.</summary>

@@ -284,16 +284,16 @@ public sealed class ContainedProcess : IDisposable
             // cgroup.kill ends every process born in the attempt — a setsid'd daemon that lost its parent included — and the wait is
             // for the kernel's own "populated 0"; then the session teardown ends what was taken and anything still the turn's by
             // session or parent links; then the cgroup is removed. What the kill could not end is named, never assumed gone.
-            var inCgroup = new List<ProcessEntry>();
+            // A KILL THAT DID NOT EMPTY THE CGROUP (fix pass 1, R4) leaves what it lists still running AND the cgroup itself, held
+            // until it is empty — a listing that could not be read is "could not tell", never "none".
             var taken = Cgroup is null ? null : TreeTeardown.Hold(_leader, _leaderStart, _session);
-            if (Cgroup is { } attempt && !attempt.Kill(TreeTeardown.Bound))
-                foreach (var pid in attempt.Pids())
-                    if (ProcessTable.Read(pid) is { Zombie: false } left) inCgroup.Add(left);
+            var inCgroup = Cgroup is { } attempt && !attempt.Kill(TreeTeardown.Bound) ? attempt.Left() : [];
             var tree = TreeTeardown.End(_leader, _leaderStart, _session, held: taken);
             if (Cgroup is { } ended && inCgroup.Count == 0 && !ended.Populated()) ended.Remove();
             Ended = inCgroup.Count == 0
                 ? tree
-                : new TreeEnd(false, [.. tree.Survivors, .. inCgroup.Where(c => tree.Survivors.All(s => s.Pid != c.Pid))], tree.Killed);
+                : new TreeEnd(false, [.. tree.Survivors, .. inCgroup.Where(c => c.Cgroup is not null || tree.Survivors.All(s => s.Pid != c.Pid))],
+                    tree.Killed);
             // A CELL'S POLICY FILE GOES WITH ITS TREE (triage #6): the supervisor removes it when the cell exits, but a cancelled
             // turn's supervisor is itself killed here, so the app removes it too — only its own file, never throwing.
             if (Cell is not null) CellStage.Discard(Cell.PolicyFile);

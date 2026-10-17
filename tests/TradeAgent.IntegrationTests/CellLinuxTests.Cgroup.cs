@@ -568,4 +568,61 @@ public partial class CellLinuxTests
             if (Alive(pid, start)) Posix.Kill(pid);
         }
     }
+
+    /// <summary>
+    /// (l) R4: UNKNOWN IS NEVER ENDED. A setsid'd daemon runs in an attempt whose <c>cgroup.kill</c> and process listing are both
+    /// denied: the teardown cannot end it and cannot list it, so <see cref="ContainedProcess.End"/> says it could not tell — never
+    /// Ended — and the meter holds every turn until the attempt's cgroup is empty.
+    /// </summary>
+    [LinuxFact]
+    public async Task An_attempt_whose_cgroup_could_neither_be_killed_nor_listed_is_never_reported_ended()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // a LinuxFact: skipped elsewhere before it gets here
+        PlatformIsACells();
+        using var rows = Rows();
+        var dir = Scratch("untold");
+        var pidFile = Path.Combine(dir, "daemon");
+        using var held = ProcessContainment.Start(Plain("/usr/bin/python3", "-I", "-c", DaemonPy, pidFile), Launcher(),
+            requireHeld: true, attemptId: "untold", cgroups: rows.Cgroups);
+        held.Process.StandardInput.Close();
+        var daemon = int.Parse((await Await(pidFile, TimeSpan.FromSeconds(30))).Split(' ')[0], CultureInfo.InvariantCulture);
+        var start = ProcessTable.Read(daemon)!.Value.Start;
+        var cgroup = held.Cgroup!.Dir;
+        var kill = Path.Combine(cgroup, "cgroup.kill");
+        var procs = Path.Combine(cgroup, "cgroup.procs");
+        var (killMode, procsMode) = (File.GetUnixFileMode(kill), File.GetUnixFileMode(procs));
+        try
+        {
+            File.SetUnixFileMode(kill, UnixFileMode.None);
+            File.SetUnixFileMode(procs, UnixFileMode.None);
+            Assert.Throws<UnauthorizedAccessException>(() => File.ReadAllText(procs));   // the denial is real
+
+            var end = held.End();
+
+            Assert.True(Alive(daemon, start), $"the daemon {daemon} did not outlive a denied cgroup.kill, so this row tests nothing");
+            Assert.False(end.Ended,
+                $"a teardown that could neither kill nor list {cgroup} reported its attempt ended while the daemon {daemon} ran there");
+            Assert.Contains(Path.GetFileName(cgroup), end.Sentence);
+            Assert.Contains("could not list", end.Sentence);
+
+            using var db = new Database(Path.Combine(TestEnv.Home, $"untold-{Guid.NewGuid():n}.db"));
+            var meter = new TurnMeter(db, cap: () => 5m, recordPath: Path.Combine(dir, "turns.jsonl"), live: new LiveAttempts());
+            meter.Hold(end.Survivors);
+            var refused = meter.Begin("next", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.False(refused.Admitted, $"a turn was admitted while the daemon {daemon} ran in {cgroup}, which nothing could list");
+
+            File.SetUnixFileMode(kill, killMode);
+            File.SetUnixFileMode(procs, procsMode);
+            Posix.Kill(daemon);
+            for (var i = 0; i < 300 && (Alive(daemon, start) || new AttemptCgroup(cgroup, false).Populated()); i++) await Task.Delay(10);
+            var admitted = meter.Begin("once it has ended", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.True(admitted.Admitted, $"the hold did not lift once the attempt's cgroup was empty: {admitted.Refusal}");
+        }
+        finally
+        {
+            try { File.SetUnixFileMode(kill, killMode); File.SetUnixFileMode(procs, procsMode); }
+            catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (Alive(daemon, start)) Posix.Kill(daemon);
+        }
+    }
 }

@@ -913,7 +913,11 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
                 $"TradeAgent could not hold the AI's program it had just started ({contained.Mechanism}), so it " +
                 (end is { Ended: false }
-                    ? end.Survivors.Any(p => p.Unlisted)
+                    ? end.Survivors.FirstOrDefault(p => p.Cgroup is not null) is { Cgroup: { } cgroup } stuck
+                        ? $"tried to end it at once and could not{(stuck.Unlisted ? " tell whether it ended" : "")}: its attempt's cgroup " +
+                          $"{Path.GetFileName(cgroup)} {(stuck.Unlisted ? "could not be listed" : "still holds processes")}, and no AI turn starts " +
+                          "until that cgroup is empty. "
+                    : end.Survivors.Any(p => p.Unlisted)
                         ? "tried to end it at once and could not tell whether it ended: Windows would not list the programs it " +
                           $"started (under process {end.Survivors.First(p => p.Unlisted).Pid}), and no AI turn starts until Windows lists them and " +
                           "none is left running. "
