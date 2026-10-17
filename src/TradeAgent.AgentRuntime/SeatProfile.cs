@@ -729,12 +729,12 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI: it could not read what {manifest.DisplayName} would switch on ({ex.Message}).");
         }
 
-        if (OffTheAllowlist(seat, reading.Features) is { } feature)
+        if (OffTheAllowlist(seat, SeatPlan.CliClass, reading.Features) is { } feature)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {feature} switched on, which the AI's profile does " +
                 $"not allow. This build of TradeAgent runs {manifest.DisplayName} {manifest.Install.Version} with only its own set on.");
 
-        if (Servers(seat, reading.Mcp) is { } server)
+        if (Servers(seat, SeatPlan.CliClass, reading.Mcp) is { } server)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: {manifest.DisplayName} reports {server}, and the AI's profile allows no tool " +
                 "server TradeAgent did not configure.");
@@ -816,8 +816,9 @@ public static class SeatProfile
     }
 
     /// <summary>The features the report shows on and the allowlist does not hold, named, or null when there are none.</summary>
-    static string? OffTheAllowlist(SeatPlan seat, string report)
+    static string? OffTheAllowlist(SeatPlan seat, string seatClass, string report)
     {
+        var allowed = seat.FeaturesFor(seatClass);
         if (seat.FeaturesArgs.Length == 0) return null;
         var on = new List<string>();
         var read = 0;
@@ -826,15 +827,16 @@ public static class SeatProfile
             var words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (words.Length < 2 || words[^1] is not ("true" or "false")) continue;
             read++;
-            if (words[^1] == "true" && !seat.FeatureAllowlist.Contains(words[0], StringComparer.Ordinal)) on.Add(words[0]);
+            if (words[^1] == "true" && !allowed.Contains(words[0], StringComparer.Ordinal)) on.Add(words[0]);
         }
         if (read == 0) return "no feature list TradeAgent could read";
         return on.Count == 0 ? null : (on.Count == 1 ? $"the feature {on[0]}" : $"the features {string.Join(", ", on)}");
     }
 
     /// <summary>The MCP servers the report lists and the allowlist does not hold, named, or null when there are none.</summary>
-    static string? Servers(SeatPlan seat, string report)
+    static string? Servers(SeatPlan seat, string seatClass, string report)
     {
+        var allowed = seat.ServersFor(seatClass);
         if (seat.McpArgs.Length == 0) return null;
         List<string> names = [];
         try
@@ -844,7 +846,7 @@ public static class SeatProfile
             foreach (var server in doc.RootElement.EnumerateArray())
             {
                 var name = server.ValueKind == JsonValueKind.Object && server.TryGetProperty("name", out var n) ? n.ToString() : server.ToString();
-                if (!seat.McpAllowlist.Contains(name, StringComparer.Ordinal)) names.Add(name);
+                if (!allowed.Contains(name, StringComparer.Ordinal)) names.Add(name);
             }
         }
         catch (JsonException) { return "a tool-server list TradeAgent could not read"; }
@@ -985,6 +987,13 @@ public interface ISeatProbe
 {
     /// <summary>The feature report and the MCP server list, run under the seat home with the deny set's keys.</summary>
     Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct);
+
+    /// <summary>
+    /// The same reports for one seat class: its keys, the door's address in its slot, its environment. A probe that does not tell the
+    /// classes apart answers as for the CLI class.
+    /// </summary>
+    Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, string seatClass, Uri? door,
+        CancellationToken ct) => ReadAsync(manifest, exe, workingDirectory, ct);
 }
 
 /// <summary>
@@ -998,19 +1007,23 @@ public sealed class CliSeatProbe : ISeatProbe
 
     static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 
-    public async Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
+    public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct) =>
+        ReadAsync(manifest, exe, workingDirectory, SeatPlan.CliClass, null, ct);
+
+    public async Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, string seatClass, Uri? door,
+        CancellationToken ct)
     {
         var seat = manifest.Seat ?? throw new InvalidOperationException($"{manifest.DisplayName} has no seat profile");
-        var keys = seat.KeyArgs();
-        var features = seat.FeaturesArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.FeaturesArgs, .. keys], workingDirectory, ct);
-        var mcp = seat.McpArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.McpArgs, .. keys], workingDirectory, ct);
+        var keys = seat.KeyArgs(seatClass, door);
+        var features = seat.FeaturesArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.FeaturesArgs, .. keys], workingDirectory, seatClass, ct);
+        var mcp = seat.McpArgs.Length == 0 ? "" : await Read(manifest, exe, [.. seat.McpArgs, .. keys], workingDirectory, seatClass, ct);
 
         // THE SIGN-IN, UNDER THE SEAT HOME: `login status` exits 0 signed in and 1 not (measured, the manifest's AuthStateArgs). It
         // reads the app's own config.toml, written above by the environment seam, so cli_auth_credentials_store="file" holds.
         var signedIn = true;
         if (manifest.AuthStateArgs.Length > 0)
         {
-            var (exit, stdout, stderr) = await Run(manifest, exe, manifest.AuthStateArgs, workingDirectory, ct);
+            var (exit, stdout, stderr) = await Run(manifest, exe, manifest.AuthStateArgs, workingDirectory, seatClass, ct);
             signedIn = manifest.AuthStateSuccessPattern is { } pattern
                 ? System.Text.RegularExpressions.Regex.IsMatch(Ansi.Strip(stdout + "\n" + stderr), pattern,
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase)
@@ -1019,9 +1032,9 @@ public sealed class CliSeatProbe : ISeatProbe
         return new SeatReading(features, mcp, signedIn);
     }
 
-    static async Task<string> Read(RuntimeManifest manifest, string exe, string[] args, string cwd, CancellationToken ct)
+    static async Task<string> Read(RuntimeManifest manifest, string exe, string[] args, string cwd, string seatClass, CancellationToken ct)
     {
-        var (exit, stdout, stderr) = await Run(manifest, exe, args, cwd, ct);
+        var (exit, stdout, stderr) = await Run(manifest, exe, args, cwd, seatClass, ct);
         if (exit != 0)
             throw new InvalidOperationException(
                 $"`{string.Join(' ', args.Take(2))}` exited {exit}: {Ansi.Strip(stderr).Trim().Split('\n').FirstOrDefault()}");
@@ -1029,7 +1042,7 @@ public sealed class CliSeatProbe : ISeatProbe
     }
 
     static async Task<(int Exit, string StdOut, string StdErr)> Run(RuntimeManifest manifest, string exe, IEnumerable<string> args,
-        string cwd, CancellationToken ct)
+        string cwd, string seatClass, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -1038,7 +1051,7 @@ public sealed class CliSeatProbe : ISeatProbe
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         CliAgentRuntime.SetCommand(psi, exe, args);
-        AgentEnvironment.Apply(psi, new Dictionary<string, string>(), manifest);
+        AgentEnvironment.Apply(psi, new Dictionary<string, string>(), manifest, seatClass);
 
         using var held = ProcessContainment.Start(psi);
         var p = held.Process;

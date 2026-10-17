@@ -130,13 +130,20 @@ public static class AgentEnvironment
     /// for a runtime with a <see cref="RuntimeManifest.Seat"/>, the seat home made ready and its variables set LAST, so an
     /// inherited <c>CODEX_HOME</c> or the owner's <c>HOME</c> can never stand in for it (<c>U-seat-home</c>).
     /// </summary>
-    public static void Apply(ProcessStartInfo psi, IReadOnlyDictionary<string, string> additions, RuntimeManifest manifest)
+    public static void Apply(ProcessStartInfo psi, IReadOnlyDictionary<string, string> additions, RuntimeManifest manifest) =>
+        Apply(psi, additions, manifest, SeatPlan.CliClass);
+
+    /// <summary>
+    /// <see cref="Apply(ProcessStartInfo, IReadOnlyDictionary{string, string}, RuntimeManifest)"/> for one seat class: the seat home's
+    /// variables and then the class's own (<see cref="SeatPlan.ClassEnvironment"/>) — the broker's <c>CODEX_EXEC_SERVER_URL=none</c>.
+    /// </summary>
+    public static void Apply(ProcessStartInfo psi, IReadOnlyDictionary<string, string> additions, RuntimeManifest manifest, string seatClass)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         Apply(psi, additions, manifest.KeepEnvironment);
         if (manifest.Seat is not { } seat) return;
 
         SeatProfile.Prepare(seat);
-        foreach (var (k, v) in seat.ResolvedEnvironment()) psi.Environment[k] = v;
+        foreach (var (k, v) in seat.ResolvedEnvironment(seatClass)) psi.Environment[k] = v;
     }
 }
