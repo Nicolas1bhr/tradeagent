@@ -26,6 +26,9 @@ public class OrgLanesTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
+    /// <summary>The longest any step waits: a hang is a red, never a stuck suite.</summary>
+    static readonly TimeSpan T = TimeSpan.FromSeconds(20);
+
     static readonly string Ops = CouncilRoles.Operations;
     static readonly string Research = CouncilRoles.Research;
 
@@ -61,16 +64,16 @@ public class OrgLanesTests : IDisposable
         };
         var loop = new MissionLoop(host, new MissionOptions());
 
-        await loop.TurnAsync();                                         // the chair's, refused by the ledger
+        await loop.TurnAsync().WaitAsync(T);                                         // the chair's, refused by the ledger
         Assert.Empty(host.Conv(Ops).Sent);
 
         host.Refusals[Ops] = new TurnRefusal(RefusalKind.HostOrLaunch, "stepped over for this test");
-        await loop.TurnAsync();                                         // the Research Director's
+        await loop.TurnAsync().WaitAsync(T);                                         // the Research Director's
         var research = Assert.Single(host.Conv(Research).Sent);
         Assert.DoesNotContain("buy nothing today", research);
 
         host.Refusals.Remove(Ops);
-        await loop.TurnAsync();                                         // the chair's again
+        await loop.TurnAsync().WaitAsync(T);                                         // the chair's again
         var chair = Assert.Single(host.Conv(Ops).Sent);
         Assert.Contains("buy nothing today, just look", chair);
     }
@@ -139,13 +142,26 @@ public class OrgLanesTests : IDisposable
         var first = Task.Run(() => loop.TurnAsync());
         await chair.Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-        await loop.TurnAsync();
+        await loop.TurnAsync().WaitAsync(T);
         Assert.Empty(host.Conv(Research).Sent);
 
         chair.Hold.SetResult();
-        await first;
-        await loop.TurnAsync();
+        await first.WaitAsync(T);
+        await loop.TurnAsync().WaitAsync(T);
         Assert.Single(host.Conv(Research).Sent);
+
+        // ---- and the dispatcher, offered three lanes, starts ONE ---------------------------------------------------
+        Due(events, Ops, TimeSpan.FromMinutes(1));
+        Due(events, Research, TimeSpan.FromMinutes(1));
+        chair.Rearm();
+        chair.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tick = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await chair.Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        _ = Assert.Single(tick.Lanes);
+        Assert.Empty((await loop.TickAsync().WaitAsync(T)).Lanes);
+        Assert.Single(host.Conv(Research).Sent);
+        chair.Hold.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
     }
 
     /// <summary>
@@ -171,10 +187,10 @@ public class OrgLanesTests : IDisposable
 
         var first = Task.Run(() => loop.TurnAsync());
         await chair.Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
-        await loop.TurnAsync();
+        await loop.TurnAsync().WaitAsync(T);
         Assert.Empty(host.Conv(Research).Sent);
         chair.Hold.SetResult();
-        await first;
+        await first.WaitAsync(T);
 
         // ---- the hold: the chair's runtime is not known, so its pool is every pool -----------------------------------
         host.Runtimes[Ops] = null;
@@ -182,11 +198,11 @@ public class OrgLanesTests : IDisposable
         chair.Limit = new VendorLimit("You've hit your usage limit.", DateTimeOffset.UtcNow.AddHours(1));
         chair.Hold = null;
         host.Refusals[Research] = new TurnRefusal(RefusalKind.HostOrLaunch, "stepped over while the chair turns");
-        await loop.TurnAsync();
+        await loop.TurnAsync().WaitAsync(T);
         Assert.Equal(2, chair.Sent.Count);
         host.Refusals.Remove(Research);
 
-        await loop.TurnAsync();
+        await loop.TurnAsync().WaitAsync(T);
         Assert.Empty(host.Conv(Research).Sent);
         Assert.Equal("codex", host.RuntimeFor(Research));
     }
@@ -261,6 +277,186 @@ public class OrgLanesTests : IDisposable
         return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
     }
 
+    // ---- item 5: dispatch up to N ---------------------------------------------------------------------------------
+
+    const string Third = "pos-third";
+
+    /// <summary>A host with the legacy pair and a third position, every one of them on this host's confined profile.</summary>
+    LaneHost Confined(MissionEventStore events, LaneSettings lanes)
+    {
+        var host = new LaneHost { Events = events, Lanes = lanes };
+        host.Extra.Add(new ChartPosition(Third, OrgPositionKind.Member, 2, OrgLevel.Executor));
+        foreach (var role in new[] { Ops, Research, Third }) host.Profiles[role] = Cell;
+        return host;
+    }
+
+    static TaskCompletionSource Held(Conversation c) =>
+        (c.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+
+    /// <summary>
+    /// (c) RED at base (one loop task, every turn inline): TWO POSITIONS TURN AT ONCE ON TWO CONFINED LANES. One tick starts
+    /// both, each in its own lane, both inside their runs at the same moment, and the card names both.
+    /// </summary>
+    [Fact]
+    public async Task Two_positions_turn_at_once_on_two_confined_lanes()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        var release = new[] { Held(host.Conv(Ops)), Held(host.Conv(Research)) };
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await Task.WhenAll(host.Conv(Ops).Inside.Task, host.Conv(Research).Inside.Task).WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(2, tick.Lanes.Count);
+        Assert.Equal([Ops, Research], loop.Status.Roles);
+        foreach (var r in release) r.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Single(host.Conv(Ops).Sent);
+        Assert.Single(host.Conv(Research).Sent);
+    }
+
+    /// <summary>
+    /// (c2) GUARD: ONE LANE BY DEFAULT — A SECOND DUE POSITION WAITS. The default policy, even with both seats confined: one tick
+    /// starts the chair; a second tick while it turns starts nothing; once it has ended the Research Director turns.
+    /// </summary>
+    [Fact]
+    public async Task One_lane_by_default_a_second_due_position_waits()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, LaneSettings.Default);
+        var chair = Held(host.Conv(Ops));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var first = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await host.Conv(Ops).Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        _ = Assert.Single(first.Lanes);
+        Assert.Empty((await loop.TickAsync().WaitAsync(T)).Lanes);
+        Assert.Empty(host.Conv(Research).Sent);
+
+        chair.SetResult();
+        await Task.WhenAll(first.Lanes).WaitAsync(T);
+        var second = await loop.TickAsync().WaitAsync(T);
+        await Task.WhenAll(second.Lanes).WaitAsync(T);
+        Assert.Single(host.Conv(Research).Sent);
+    }
+
+    /// <summary>
+    /// (c4) GUARD: ONE POSITION NEVER HOLDS TWO LEASES. The chair turns in one lane of three; a new wake for it arrives while it
+    /// turns; neither another tick nor a turn asked of the loop directly starts it a second time.
+    /// </summary>
+    [Fact]
+    public async Task One_position_never_holds_two_leases()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        var host = Confined(events, new LaneSettings(3, 3, 3));
+        var chair = Held(host.Conv(Ops));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await host.Conv(Ops).Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        events.Raise("owner:1", MissionEventKind.Owner, DateTimeOffset.UtcNow.AddSeconds(-1));
+
+        Assert.Empty((await loop.TickAsync().WaitAsync(T)).Lanes);
+        await loop.TurnAsync().WaitAsync(T);
+        Assert.Single(host.Conv(Ops).Sent);
+
+        chair.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+    }
+
+    /// <summary>
+    /// (d) RED at base (the sweeps at the top of every turn): THE SWEEPS RUN ONCE PER TICK WITH TWO LANES IN FLIGHT. One tick
+    /// starts two lanes; the paper allocation and the paper deployments — beside the boundary deadlines, in the one sweep that
+    /// holds all three — have run once, and still once after both lanes end.
+    /// </summary>
+    [Fact]
+    public async Task Sweeps_run_once_per_tick_with_two_lanes_in_flight()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        var host = Confined(events, new LaneSettings(2, 2, 2));
+        var release = new[] { Held(host.Conv(Ops)), Held(host.Conv(Research)) };
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await Task.WhenAll(host.Conv(Ops).Inside.Task, host.Conv(Research).Inside.Task).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal((1, 1), (host.Allocations, host.Deployments));
+
+        foreach (var r in release) r.SetResult();
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+        Assert.Equal(2, tick.Lanes.Count);
+        Assert.Equal((1, 1), (host.Allocations, host.Deployments));
+    }
+
+    /// <summary>
+    /// (e2) GUARD on <c>U-grant-tree</c>: AN ORDER-CAPABLE OPERATIONS TURN RUNS ALONE AND THE OTHERS KEEP THEIR WAKES. The chair's
+    /// turn holds order permission (nothing else is live when it is issued); while it runs, a tick offered three lanes starts
+    /// no other lane, and the Research Director's and the third position's wakes stay due and unconsumed. Once it ends, both turn.
+    /// </summary>
+    [Fact]
+    public async Task An_order_capable_operations_turn_runs_alone_and_the_others_keep_their_wakes()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        var host = Confined(events, new LaneSettings(3, 3, 3));
+        host.Grants = new TradeAgent.Security.AgentGrants();
+        var chair = Held(host.Conv(Ops));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var first = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await host.Conv(Ops).Inside.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Null(host.Conv(Ops).Withheld);
+
+        Due(events, Research, TimeSpan.FromMinutes(1));
+        events.Raise(MissionEventIds.ForRole("look:third", Third), MissionEventKind.Review, DateTimeOffset.UtcNow.AddMinutes(-1),
+            role: Third);
+        var during = await loop.TickAsync().WaitAsync(T);
+        Assert.Empty(during.Lanes);
+        Assert.Empty(host.Conv(Research).Sent);
+        Assert.Empty(host.Conv(Third).Sent);
+        Assert.Contains(events.Due(DateTimeOffset.UtcNow), e => e.Role == Research);
+        Assert.Contains(events.Due(DateTimeOffset.UtcNow), e => e.Role == Third);
+
+        chair.SetResult();
+        await Task.WhenAll(first.Lanes).WaitAsync(T);
+        var after = await loop.TickAsync().WaitAsync(T);
+        await Task.WhenAll(after.Lanes).WaitAsync(T);
+        Assert.Single(host.Conv(Research).Sent);
+        Assert.Single(host.Conv(Third).Sent);
+    }
+
+    /// <summary>
+    /// (h) GUARD: NO DUE WAKE MEANS NO PAID TURN, WITH THREE LANES AND ACROSS A RESTART. Three positions with one wake each turn
+    /// once; the next tick starts nothing; a new loop over the same queue starts nothing either.
+    /// </summary>
+    [Fact]
+    public async Task No_due_wake_means_no_paid_turn_with_three_lanes()
+    {
+        var events = new MissionEventStore(_db);
+        Due(events, Ops, TimeSpan.FromMinutes(3));
+        Due(events, Research, TimeSpan.FromMinutes(2));
+        events.Raise(MissionEventIds.ForRole("look:third", Third), MissionEventKind.Review, DateTimeOffset.UtcNow.AddMinutes(-1),
+            role: Third);
+        var host = Confined(events, new LaneSettings(3, 3, 3));
+        var loop = new MissionLoop(host, new MissionOptions());
+
+        var tick = await loop.TickAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await Task.WhenAll(tick.Lanes).WaitAsync(T);
+        Assert.Equal(3, tick.Lanes.Count);
+        Assert.Empty((await loop.TickAsync().WaitAsync(T)).Lanes);
+
+        var restarted = new MissionLoop(host, new MissionOptions());
+        Assert.Empty((await restarted.TickAsync().WaitAsync(T)).Lanes);
+        foreach (var role in new[] { Ops, Research, Third }) Assert.Single(host.Conv(role).Sent);
+    }
+
     // ---- the seam host --------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -278,6 +474,18 @@ public class OrgLanesTests : IDisposable
         public Dictionary<string, string?> Runtimes { get; } = new(StringComparer.Ordinal);
 
         public LaneProfile LaneOf(string role) => Profiles.TryGetValue(role, out var p) ? p : LaneProfile.Unconfined;
+
+        /// <summary>Positions after the legacy pair, each active and refused by nobody.</summary>
+        public List<ChartPosition> Extra { get; } = [];
+        public IReadOnlyList<ChartPosition> Positions() => [.. ChartPosition.LegacyPair, .. Extra];
+
+        /// <summary>Set: every conversation claims its launch's grant in this register (<c>U-grant-tree</c>).</summary>
+        public TradeAgent.Security.AgentGrants? Grants { get; set; }
+
+        public int Allocations;
+        public int Deployments;
+        public void AllocatePaperDue(DateTimeOffset now) => Interlocked.Increment(ref Allocations);
+        public void StartPaperDeploymentsDue(DateTimeOffset now) => Interlocked.Increment(ref Deployments);
         public string? RuntimeFor(string role) => Runtimes.GetValueOrDefault(role);
 
         /// <summary>The admission for (role, wakes), or null to admit it.</summary>
@@ -293,14 +501,14 @@ public class OrgLanesTests : IDisposable
         {
             lock (_conversations)
             {
-                if (!_conversations.TryGetValue(role, out var c)) _conversations[role] = c = new Conversation();
+                if (!_conversations.TryGetValue(role, out var c)) _conversations[role] = c = new Conversation(role, () => Grants);
                 return c;
             }
         }
 
         public TurnRefusal? ActivationRefusal(string role) =>
             Refusals.TryGetValue(role, out var refused) ? refused
-            : CouncilRoles.IsKnown(role) ? null
+            : CouncilRoles.IsKnown(role) || Extra.Any(p => p.Id == role) ? null
             : new TurnRefusal(RefusalKind.Position, "not on this host's chart");
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
@@ -313,9 +521,36 @@ public class OrgLanesTests : IDisposable
         }
     }
 
-    /// <summary>One position's conversation: records what it was sent and ends every turn at once.</summary>
-    internal sealed class Conversation : IAgentConversation
+    /// <summary>
+    /// One position's conversation: records what it was sent and ends every turn at once — or when the test releases it. With a
+    /// grant register it is also the launch gate the app's sessions are (<c>U-grant-tree</c>): it looks with
+    /// <see cref="TradeAgent.Security.AgentGrants.HeldBy"/>, claims its grant before admission and ends it with its turn.
+    /// </summary>
+    internal sealed class Conversation(string role, Func<TradeAgent.Security.AgentGrants?> grants) : IAgentConversation, ILaunchGate
     {
+        TradeAgent.Security.AgentGrant? _claim;
+
+        /// <summary>Why the last claimed launch holds no order permission, or null when it held what its role has.</summary>
+        public string? Withheld { get; private set; }
+
+        public LaunchBar? Barred() =>
+            grants()?.HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
+
+        public LaunchBar? Claim(out string? ordersWithheld)
+        {
+            ordersWithheld = null;
+            if (grants() is not { } register) return null;
+            try { _claim = register.Issue(role, ""); }
+            catch (TradeAgentException ex) when (ex.Code == ErrorCode.LAUNCH_HELD) { return new LaunchBar(ex.Message, Lasting: false); }
+            ordersWithheld = Withheld = _claim.OrdersWithheld;
+            return null;
+        }
+
+        public void Unclaim()
+        {
+            if (Interlocked.Exchange(ref _claim, null) is { } claim) grants()?.Revoke(claim.Token);
+        }
+
         public List<string> Sent { get; } = [];
         public List<string> Typed { get; } = [];
 
@@ -343,7 +578,9 @@ public class OrgLanesTests : IDisposable
         {
             lock (Sent) Sent.Add(message);
             Inside.TrySetResult();
-            if (Hold is { } hold) await hold.Task.WaitAsync(ct);
+            var grant = Interlocked.Exchange(ref _claim, null);
+            try { if (Hold is { } hold) await hold.Task.WaitAsync(ct); }
+            finally { grant?.Dispose(); }
             var limit = Limit;
             TurnEnded?.Invoke(new AgentTurnEnded(limit is null ? 0 : 1, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow)
                 { Limit = limit });

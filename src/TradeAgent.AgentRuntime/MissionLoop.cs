@@ -84,6 +84,12 @@ public sealed record MissionStatus(
 /// <param name="Vendor">The runtime's display name, e.g. "OpenAI Codex CLI".</param>
 /// <param name="Message">The vendor's own sentence, verbatim.</param>
 /// <param name="Until">The end of the minute the vendor named, or the mission's backoff where it named none.</param>
+/// <summary>
+/// ONE TICK OF THE DISPATCHER (<c>U-org-lanes</c>): the lanes it started, each its own task running one position's turn to the
+/// wait after it, and how long the loop may sleep before the next tick — less if a lane ends or a wake arrives first.
+/// </summary>
+public sealed record LaneTick(IReadOnlyList<Task<TimeSpan>> Lanes, TimeSpan Wait);
+
 public sealed record VendorHold(string Vendor, string Message, DateTimeOffset Until)
 {
     /// <summary>
@@ -1922,10 +1928,18 @@ public sealed class MissionLoop
         if (cts is not null) { await cts.CancelAsync(); cts.Dispose(); }
         if (run is not null) { try { await run; } catch (Exception) { /* it was cancelled */ } }
 
+        // AND EVERY LANE THE DISPATCHER STARTED (U-org-lanes), each unwinding through its own teardown before Pause returns.
+        Task[] lanes;
+        lock (_gate) lanes = [.. _laneTasks];
+        foreach (var lane in lanes)
+        {
+            try { await lane; } catch (Exception) { /* it was cancelled */ }
+        }
+
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
         // this is the second half of the same promise for a turn whose task the wait above gave up
         // on: a lease nothing releases is a role that never works again.
-        lock (_gate) { _turning.Clear(); _lanes.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
+        lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
         Changed?.Invoke();
     }
 
@@ -1962,7 +1976,16 @@ public sealed class MissionLoop
                 catch (OperationCanceledException) { return; }
             }
 
-            try { wait = await TurnAsync(ct); }
+            try
+            {
+                // ONE LANE IS TODAY'S LOOP, unchanged: the sweeps, one pick and its turn inline. More than one is the dispatcher
+                // (U-org-lanes) — and so is any tick while a lane it started is still running.
+                bool dispatching;
+                lock (_gate) dispatching = _dispatched.Count > 0;
+                wait = dispatching || LanePolicy.Clamp(LaneSettingsNow().Lanes) > 1
+                    ? (await TickAsync(ct)).Wait
+                    : await TurnAsync(ct);
+            }
             catch (OperationCanceledException) { return; }
             catch (Exception)
             {
@@ -2055,6 +2078,100 @@ public sealed class MissionLoop
         return await RunAsync(picked.Roles[0], swept.Events, ct);
     }
 
+    /// <summary>
+    /// ONE TICK OF THE DISPATCHER (<c>U-org-lanes</c>; <c>docs/ORCHESTRATION.md</c> § 2.5): the sweeps once, then up to as many
+    /// positions as the owner's lane policy has room for — O3's order, every eligibility filter, never a position already
+    /// leased or dispatched, within each quota pool's and cell class's limit and never a second unconfined lane — each started
+    /// as its OWN lane task running <see cref="RunAsync"/>, holding its own lease. It returns once they are started, not
+    /// finished: a lane that ends wakes the loop, which ticks again.
+    ///
+    /// <para>Public because, like <see cref="TurnAsync"/>, it is the unit worth driving in a test.</para>
+    /// </summary>
+    public Task<LaneTick> TickAsync(CancellationToken ct = default)
+    {
+        var swept = Sweep();
+        var settings = LaneSettingsNow();
+        int room;
+        lock (_gate) room = LanePolicy.Clamp(settings.Lanes) - InFlight().Count;
+        if (room <= 0) return Task.FromResult(new LaneTick([], _options.BusyRetry));
+
+        var picked = Pick(swept, room, settings);
+        if (picked.Roles.Count == 0) return Task.FromResult(new LaneTick([], Rested(picked.Wait)));
+
+        List<Task<TimeSpan>> lanes = [.. picked.Roles.Select(r => StartLane(r, swept.Events, ct))];
+        return Task.FromResult(new LaneTick(lanes, _options.BusyRetry));
+    }
+
+    /// <summary>
+    /// THE POSITIONS DISPATCHED AND NOT YET ENDED (<c>U-org-lanes</c>), each with the lane it was picked for. A lane is here from
+    /// the moment the dispatcher starts it until its run returns — so a position is never picked twice while its run is still
+    /// composing, before it has taken its lease — and the lane rule counts it from that moment too.
+    /// </summary>
+    readonly Dictionary<string, LaneLaunch> _dispatched = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A LANE'S POSITION AT REST until the time beside it, after a run that did not launch cleanly (<c>U-org-lanes</c>): the
+    /// backoff or retry the serial loop would have slept, kept by that position alone so the other lanes keep working.
+    /// </summary>
+    readonly Dictionary<string, DateTimeOffset> _restUntil = new(StringComparer.Ordinal);
+
+    /// <summary>The lane tasks still running, so Pause can wait for every one of them.</summary>
+    readonly HashSet<Task> _laneTasks = [];
+
+    /// <summary>Every lane running or dispatched, by position — what the lane rule is asked against. Under the lock.</summary>
+    List<LaneLaunch> InFlight()
+    {
+        var running = new Dictionary<string, LaneLaunch>(_lanes, StringComparer.Ordinal);
+        foreach (var (position, lane) in _dispatched) running.TryAdd(position, lane);
+        return [.. running.Values];
+    }
+
+    /// <summary>A pick's wait, shortened to the first rest that ends before it.</summary>
+    TimeSpan Rested(TimeSpan wait)
+    {
+        var now = _now();
+        lock (_gate)
+            foreach (var until in _restUntil.Values)
+                if (until > now && until - now < wait) wait = until - now;
+        return wait;
+    }
+
+    /// <summary>
+    /// STARTS ONE LANE: <paramref name="role"/>'s run as its own task. A run that throws is that position's failed turn, backed
+    /// off from by that position alone; a run that did not launch cleanly rests its position for the wait it returned. Either
+    /// way the lane wakes the loop when it ends, so the next tick sees the room it left.
+    /// </summary>
+    Task<TimeSpan> StartLane(string role, MissionEventStore? events, CancellationToken ct)
+    {
+        var lane = LaneFor(role);
+        lock (_gate) _dispatched[role] = lane;
+        var task = Task.Run(async () =>
+        {
+            TimeSpan wait;
+            try { wait = await RunAsync(role, events, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { lock (_gate) _dispatched.Remove(role); throw; }
+            catch (Exception)
+            {
+                int failed;
+                lock (_gate) failed = Failed(role);
+                Changed?.Invoke();
+                wait = Backoff(failed);
+            }
+
+            lock (_gate)
+            {
+                _dispatched.Remove(role);
+                if (wait > TimeSpan.Zero && (wait <= _options.BusyRetry || Errors(role) > 0)) _restUntil[role] = _now() + wait;
+                else _restUntil.Remove(role);
+            }
+            Wake();
+            return wait;
+        }, CancellationToken.None);
+        lock (_gate) _laneTasks.Add(task);
+        _ = task.ContinueWith(t => { lock (_gate) _laneTasks.Remove(t); }, TaskScheduler.Default);
+        return task;
+    }
+
     /// <summary>What one tick's sweeps leave the pick: the wake queue, and the roles whose only due wakes are held tape.</summary>
     readonly record struct Swept(MissionEventStore? Events, HashSet<string> Deferred);
 
@@ -2085,10 +2202,19 @@ public sealed class MissionLoop
     /// it takes no lease and writes nothing a launch writes, and each picked position's own run asks every gate again.
     /// Choosing none, it answers the wait the loop's single turn has always answered for the same reason.
     /// </summary>
-    Picked Pick(Swept swept, int lanes)
+    Picked Pick(Swept swept, int lanes, LaneSettings? dispatch = null)
     {
         var events = swept.Events;
-        if (events is null) return new Picked([CouncilRoles.Default], TimeSpan.Zero);
+        if (events is null)
+        {
+            if (dispatch is null) return new Picked([CouncilRoles.Default], TimeSpan.Zero);
+            lock (_gate)
+                if (_dispatched.ContainsKey(CouncilRoles.Default) || _turning.Contains(CouncilRoles.Default))
+                    return new Picked([], _options.BusyRetry);
+            return LanePolicy.Refuses(dispatch, LaneFor(CouncilRoles.Default), Snapshot()) is null
+                ? new Picked([CouncilRoles.Default], TimeSpan.Zero)
+                : new Picked([], _options.BusyRetry);
+        }
         var deferred = swept.Deferred;
         {
             // A ROLE WHOSE ONLY DUE WAKES ARE TAPE WAKES IT CANNOT CHECK NOW IS NOT A CANDIDATE: the wakes wait for the
@@ -2110,7 +2236,7 @@ public sealed class MissionLoop
             //
             // Every role due is already turning: the work is in hand, there is nothing to say and
             // nothing to record, so this is a plain wait rather than the cap's sentence below.
-            var free = due.Where(r => !Turning(r)).ToList();
+            var free = due.Where(r => !Turning(r) && (dispatch is null || !DispatchedOrResting(r))).ToList();
             if (free.Count == 0) return new Picked([], _options.BusyRetry);
 
             // The roles whose own share AND the owner's ceiling both have room for a turn.
@@ -2119,7 +2245,10 @@ public sealed class MissionLoop
             // THE FIRST OF THEM WHOSE VENDOR WILL TAKE A TURN. A role whose vendor has refused for its
             // usage limit is stepped over until the time the vendor named, exactly as a turning role
             // is: its wakes stay due and unconsumed, and a role on another runtime keeps working.
-            var open = affordable.Where(r => HeldFor(r) is null).Take(lanes).ToList();
+            var unheld = affordable.Where(r => HeldFor(r) is null);
+            var open = dispatch is null ? unheld.Take(lanes).ToList() : Admitted(unheld, lanes, dispatch);
+            if (dispatch is not null && open.Count == 0 && affordable.Any(r => HeldFor(r) is null))
+                return new Picked([], _options.BusyRetry);
             if (open.Count == 0)
             {
                 // Every role that could be afforded is held: nothing is launched, and the card says
@@ -2136,6 +2265,50 @@ public sealed class MissionLoop
             }
             return new Picked(open, TimeSpan.Zero);
         }
+    }
+
+    /// <summary>Whether a dispatched lane holds this position, or its last run left it resting. Under no lock; takes it.</summary>
+    bool DispatchedOrResting(string role)
+    {
+        lock (_gate)
+            return _dispatched.ContainsKey(role)
+                   || _restUntil.TryGetValue(role, out var until) && until > _now();
+    }
+
+    /// <summary>The running and dispatched lanes, taken under the lock for a pick to count against.</summary>
+    List<LaneLaunch> Snapshot()
+    {
+        lock (_gate) return InFlight();
+    }
+
+    /// <summary>
+    /// THE DISPATCHER'S CHOICE (<c>U-org-lanes</c>): from the eligible positions in order, each one the lane rule admits beside
+    /// the lanes already running and the ones chosen before it, up to <paramref name="lanes"/>. A position whose launch is barred
+    /// for now — the Operations Director's order-capable turn holds every other launch (ORDER-001, <c>AgentGrants.HeldBy</c>) — is
+    /// not chosen at all: its wakes stay due, and the launch it would have made never asks the ledger. Every chosen lane is
+    /// still only a look: its run takes its lease, claims its grant and meets every hard line again.
+    /// </summary>
+    List<string> Admitted(IEnumerable<string> eligible, int lanes, LaneSettings settings)
+    {
+        var running = Snapshot();
+        var chosen = new List<string>();
+        foreach (var role in eligible)
+        {
+            if (chosen.Count >= lanes) break;
+            if (BarredForNow(role)) continue;
+            var lane = LaneFor(role);
+            if (LanePolicy.Refuses(settings, lane, running) is not null) continue;
+            running.Add(lane);
+            chosen.Add(role);
+        }
+        return chosen;
+    }
+
+    /// <summary>Whether this position's launch gate bars it for now (a passing bar), asked of its conversation. Never throws.</summary>
+    bool BarredForNow(string role)
+    {
+        try { return _host.ConversationFor(role) is ILaunchGate gate && gate.Barred() is { Lasting: false }; }
+        catch (Exception) { return false; }
     }
 
     /// <summary>
