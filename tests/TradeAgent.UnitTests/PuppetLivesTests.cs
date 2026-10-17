@@ -253,6 +253,47 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Contains(chat.History, t => t.Role == ChatRole.Ai && t.Text == "Nothing sold today.");
     }
 
+    /// <summary>
+    /// A PUPPET LIFE LEAVES NOTHING PROCESS-WIDE BEHIND (U-puppet-isolation). A life deploys TradeAgent's own <c>trade</c> over the
+    /// test home's launcher, records its hash, copies the command's side-car files beside it and, where the process had none,
+    /// sets <c>DOTNET_ROOT</c>; the assembly's other classes share all four. It used to delete the launcher at its end, so
+    /// the next class to launch a held process — <c>AiAttemptLedgerTests</c>' restart test — was refused before it started
+    /// ("the trade command is not at ...") and read as not busy. Disposed, the life puts back what it found: the launcher byte
+    /// for byte and mode for mode, the hash record, the environment variable and the folder's file list.
+    /// </summary>
+    [Fact]
+    public async Task A_puppet_life_puts_back_every_process_wide_thing_it_took()
+    {
+        TestEnv.EnsureLauncher();
+        var launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
+        Assert.True(File.Exists(launcher), "this home has no launcher to put back (a build with no trade.dll)");
+        var bytes = await File.ReadAllBytesAsync(launcher);
+        var mode = OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(launcher);
+        var hashed = File.Exists(ToolDeployer.DeployedHashFile) ? await File.ReadAllTextAsync(ToolDeployer.DeployedHashFile) : null;
+        var files = Directory.GetFiles(Paths.Bin).Select(Path.GetFileName).Order().ToArray();
+        var root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("DOTNET_ROOT", null);   // the case that makes the life set it
+            await using (var life = await PuppetLife.Begin("isolation"))
+            {
+                life.Script(Chair, ["usage 10 0 5", "final Done."]);
+                life.Wake(Chair);
+                await life.RunUntil(() => life.AttemptsOf(Chair).Any(a => a.State == AiAttemptState.ENDED), "the chair's turn ended");
+                Assert.NotNull(Environment.GetEnvironmentVariable("DOTNET_ROOT"));
+            }
+
+            Assert.Null(Environment.GetEnvironmentVariable("DOTNET_ROOT"));
+            Assert.True(File.Exists(launcher), "the life deleted the home's launcher");
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(launcher));
+            if (!OperatingSystem.IsWindows()) Assert.Equal(mode, File.GetUnixFileMode(launcher));
+            Assert.Equal(hashed, File.Exists(ToolDeployer.DeployedHashFile) ? await File.ReadAllTextAsync(ToolDeployer.DeployedHashFile) : null);
+            Assert.Equal(files, Directory.GetFiles(Paths.Bin).Select(Path.GetFileName).Order().ToArray());
+            Assert.Null(ProcessContainment.CannotHold());
+        }
+        finally { Environment.SetEnvironmentVariable("DOTNET_ROOT", root); }
+    }
+
     static int Occurrences(string text, string of)
     {
         var n = 0;

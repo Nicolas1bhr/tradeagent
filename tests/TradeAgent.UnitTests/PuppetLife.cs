@@ -129,6 +129,7 @@ sealed class PuppetLife : IAsyncDisposable
 
     GatewayPipeServer? _server;
     int _wakes;
+    ProcessWide _found = null!;
 
     PuppetLife(string scripts, string? seatClass)
     {
@@ -143,11 +144,14 @@ sealed class PuppetLife : IAsyncDisposable
     /// </summary>
     public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null)
     {
+        // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
+        var found = ProcessWide.Note();
+
         // The deployed trade command is framework-dependent on a developer machine; the app hands its children the .NET it found.
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
             Environment.SetEnvironmentVariable("DOTNET_ROOT", Puppet.DotnetRoot);
 
-        var life = new PuppetLife(Puppet.NewScripts(name), seatClass);
+        var life = new PuppetLife(Puppet.NewScripts(name), seatClass) { _found = found };
         DeployTrade();
 
         life.DatabasePath = Path.Combine(TestEnv.Home, $"puppet-life-{Guid.NewGuid():n}.db");
@@ -340,7 +344,58 @@ sealed class PuppetLife : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Close();
-        try { File.Delete(Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        try { File.Delete(ToolDeployer.DeployedHashFile); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        _found.PutBack();
+    }
+}
+
+/// <summary>
+/// WHAT A PUPPET LIFE TAKES FROM THE WHOLE TEST PROCESS AND MUST GIVE BACK (U-puppet-isolation): the launcher at
+/// <c>Paths.Bin</c> every held launch in this assembly is started by (the life deploys the real <c>trade</c> over it and used
+/// to delete it at its end, so the next class to launch a held process was refused before it started), the deployer's hash
+/// record, the side-car files the deployment copies beside it, and <c>DOTNET_ROOT</c>. Noted by <see cref="Note"/> before
+/// the life touches any of them; <see cref="PutBack"/> restores the launcher byte for byte and mode for mode, the record,
+/// the variable, and removes the files the life added.
+/// </summary>
+sealed class ProcessWide
+{
+    readonly string _launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
+    byte[]? _launcherBytes;
+    UnixFileMode _mode;
+    string? _hash;
+    string? _dotnetRoot;
+    HashSet<string> _files = [];
+
+    public static ProcessWide Note()
+    {
+        var w = new ProcessWide { _dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT") };
+        if (File.Exists(w._launcher))
+        {
+            w._launcherBytes = File.ReadAllBytes(w._launcher);
+            if (!OperatingSystem.IsWindows()) w._mode = File.GetUnixFileMode(w._launcher);
+        }
+        w._hash = File.Exists(ToolDeployer.DeployedHashFile) ? File.ReadAllText(ToolDeployer.DeployedHashFile) : null;
+        if (Directory.Exists(Paths.Bin)) w._files = [.. Directory.GetFiles(Paths.Bin)];
+        return w;
+    }
+
+    public void PutBack()
+    {
+        Environment.SetEnvironmentVariable("DOTNET_ROOT", _dotnetRoot);
+        try
+        {
+            if (Directory.Exists(Paths.Bin))
+                foreach (var f in Directory.GetFiles(Paths.Bin).Where(f => !_files.Contains(f)))
+                    File.Delete(f);
+            if (_launcherBytes is null) File.Delete(_launcher);
+            else
+            {
+                File.WriteAllBytes(_launcher, _launcherBytes);
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(_launcher, _mode);
+            }
+            if (_hash is null) File.Delete(ToolDeployer.DeployedHashFile);
+            else File.WriteAllText(ToolDeployer.DeployedHashFile, _hash);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }
