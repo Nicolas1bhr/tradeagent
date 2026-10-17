@@ -1186,14 +1186,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// issued without its role's order permission (ORDER-001, <see cref="Security.AgentGrant.OrdersWithheld"/>). The pipe's read
     /// loop hands the same three to <see cref="Handle"/>; the door must not hand fewer, or an Operations launch started beside a
     /// neighbour would trade through the door after the pipe refused it.
+    ///
+    /// <para><b>A TRACKED HANDLER, AS A PIPE FRAME IS</b> (fix pass 1, R1): the call is registered in <see cref="_handlers"/> and
+    /// runs under the handlers' own token, so <see cref="DisposeAsync"/> — at the app's quit and at a platform switch alike —
+    /// waits for an order the door dispatched exactly as it waits for one a frame dispatched, and cancels it only after that
+    /// drain. One drain, not a second one beside it. <paramref name="ct"/> is therefore not handed on: a caller that goes away
+    /// — the door closing — never cancels an order already on its way to the broker. Once disposal has begun, a new call is
+    /// refused in words and nothing is started.</para>
     /// </summary>
     public Task<IpcResponse> CallAsGrantAsync(IpcRequest req, Security.AgentGrant grant, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(grant);
-        return ReservedSessionRefusal(req) is { } refusal
-            ? Task.FromResult(refusal)
-            : Handle(req, grant.Role, grant.AttemptId, ct, grant.OrdersWithheld);
+        if (ReservedSessionRefusal(req) is { } refusal) return Task.FromResult(refusal);
+        ct.ThrowIfCancellationRequested();
+        lock (_tracking)
+        {
+            if (_disposed)
+                return Task.FromResult(IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAVAILABLE,
+                    "TradeAgent's gateway is closing, so this call was not started. Ask again once TradeAgent is running."));
+            var handling = _cts.Token;
+            var handler = Task.Run(() => Handle(req, grant.Role, grant.AttemptId, handling, grant.OrdersWithheld), CancellationToken.None);
+            _handlers[handler] = 0;
+            _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
+            return handler;
+        }
     }
+
+    /// <summary>
+    /// Makes "not disposed, so register" and "disposed, so snapshot" one decision each: a door call registered under this lock
+    /// before <see cref="DisposeAsync"/> set <see cref="_disposed"/> is in the snapshot its drain waits for, and one after it is
+    /// refused.
+    /// </summary>
+    readonly Lock _tracking = new();
 
     async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct,
         string? ordersWithheld = null)
@@ -4519,8 +4543,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) return;      // idempotent: disposing twice is not an error, it is a no-op
-        _disposed = true;
+        // idempotent: disposing twice is not an error, it is a no-op. Under the lock a door call registers by, so no call is
+        // both refused nothing and missed by the drain below.
+        lock (_tracking)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
 
         // 0. Stop listening for endings. The register outlives this server — AgentGrants.Shared is
         //    process-wide — so a subscription left behind would keep every disposed server, and the

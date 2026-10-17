@@ -484,6 +484,108 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// FIX 1 (R1, UNKNOWN-001 and recovery): DISPOSING THE DOOR WAITS FOR AN ORDER IT DISPATCHED. The broker holds the placement
+    /// after the gateway wrote its DISPATCHING row; the door is disposed; disposal is still waiting when the broker lets go, and
+    /// when it returns the order is settled — durably, with no polling — and its caller got the answer. A door that cancelled
+    /// its calls and awaited only its accept loop returned at once, leaving a placement at the broker to settle after AppHost
+    /// closed the gateway and the database under it.
+    /// </summary>
+    [Fact]
+    public async Task Disposing_the_door_waits_for_an_order_it_dispatched_to_settle()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _db = db;
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-door-drain");
+        Assert.Null(chair.OrdersWithheld);
+        var door = Surface(grants, server, db);
+        door.Start();
+        var (entered, release) = HoldTheDispatch(gw, conn);
+
+        using var http = Client(chair.Token);
+        var buy = Post(http, door.Url!, Rpc(1, "tools/call", new
+        {
+            name = GrantedWorkerTools.Trade,
+            arguments = new { op = Ops.Buy, symbol = "ES", quantity = "1", request_id = "door-drain-1" }
+        }));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var disposal = door.DisposeAsync().AsTask();
+        await Task.Delay(500);
+        Assert.False(disposal.IsCompleted,
+            "the door's disposal returned while an order it had dispatched was still at the broker");
+        release.SetResult();
+        await disposal.WaitAsync(TimeSpan.FromSeconds(60));
+
+        // READ WITH NO POLLING: if disposal waited, the settle is already durable.
+        var state = gw.GetRequest("door-drain-1")!.State;
+        Assert.True(state == ExecutionState.FILLED, $"the door's order was {state} when the door's disposal returned");
+        Assert.Equal(0, Dispatching(gw));
+        var reply = await buy.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.False(reply.Json.GetProperty("result").GetProperty("isError").GetBoolean(),
+            $"the caller of a placement the door drained was not told it placed: {reply.Body}");
+        await server.DisposeAsync();
+        Assert.Single(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// FIX 1, THE SAME DRAIN FROM THE OTHER SIDE: A DOOR CALL IS ONE OF THE PIPE'S TRACKED HANDLERS. A platform switch disposes
+    /// the pipe server and not the door (<c>AppHost.SwitchConnectorAsync</c>), so the pipe's own drain — one implementation —
+    /// must wait for an order the door dispatched exactly as it waits for one a pipe frame dispatched.
+    /// </summary>
+    [Fact]
+    public async Task The_pipe_servers_drain_waits_for_an_order_the_door_dispatched()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _db = db;
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        using var chair = grants.IssueHere(CouncilRoles.Operations, "attempt-door-switch");
+        await using var door = Surface(grants, server, db);
+        door.Start();
+        var (entered, release) = HoldTheDispatch(gw, conn);
+
+        using var http = Client(chair.Token);
+        var buy = Post(http, door.Url!, Rpc(1, "tools/call", new
+        {
+            name = GrantedWorkerTools.Trade,
+            arguments = new { op = Ops.Buy, symbol = "ES", quantity = "1", request_id = "door-switch-1" }
+        }));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var disposal = server.DisposeAsync().AsTask();
+        await Task.Delay(500);
+        Assert.False(disposal.IsCompleted,
+            "the pipe server's disposal returned while an order the door had dispatched through it was still at the broker");
+        release.SetResult();
+        await disposal.WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest("door-switch-1")!.State);
+        Assert.Equal(0, Dispatching(gw));
+        await buy.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>
+    /// THE BROKER HOLDS THE PLACEMENT, AND ONLY IT: every connector call waits on the latch once the gateway has a DISPATCHING
+    /// row — the placement's own wire — and none before, so the pre-flight reads run free.
+    /// </summary>
+    static (TaskCompletionSource Entered, TaskCompletionSource Release) HoldTheDispatch(TradingGateway gw, Connectors.Fake.FakeConnector conn)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        conn.Faults.Hold = () =>
+        {
+            if (Dispatching(gw) == 0) return Task.CompletedTask;
+            entered.TrySetResult();
+            return release.Task;
+        };
+        return (entered, release);
+    }
+
+    static int Dispatching(TradingGateway gw) => gw.Requests.Query("execution_state='DISPATCHING'").Count;
+
+    /// <summary>
     /// A door serving the PRODUCT's surface (<see cref="BrokerDoor.ToolsFor"/>) over a real gateway, its calls recorded in
     /// <paramref name="db"/>; this test process's own program as the pinned runtime, and the grants bound to this process.
     /// </summary>
@@ -494,7 +596,7 @@ public class BrokerDoorTests
         var ledger = new ToolCallStore(db);
         return new BrokerDoor
         {
-            Grants = grants, Image = SelfImage,
+            Grants = grants, Image = SelfImage, Pipe = () => server,
             Tools = grant => BrokerDoor.ToolsFor(grant, _ => folder, () => server, ledger)
         };
     }

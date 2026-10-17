@@ -42,9 +42,40 @@ public sealed class BrokerDoor : IAsyncDisposable
     static readonly string[] KnownProtocols = ["2025-06-18", "2025-03-26"];
 
     readonly ConcurrentDictionary<Connection, byte> _live = new();
+
+    /// <summary>
+    /// EVERY CONNECTION'S HANDLER STILL RUNNING (fix pass 1, R1) — the pipe's <c>_handlers</c>, for the door. A handler inside
+    /// a call is doing no I/O the door can close: it is waiting on the gateway, perhaps on a placement at the broker, and
+    /// disposal that walked past it left that placement to settle after AppHost closed the gateway and the database.
+    /// </summary>
+    readonly ConcurrentDictionary<Task, byte> _serving = new();
+
+    /// <summary>Stops the accept loop and every read of a NEW request. Cancelled first at disposal.</summary>
     readonly CancellationTokenSource _stop = new();
+
+    /// <summary>
+    /// What a call in flight and its reply run under: cancelled only AFTER disposal's drain, as the pipe cancels its handlers'
+    /// token only after its own. The gateway call itself never takes it (<see cref="Gateway.GatewayPipeServer.CallAsGrantAsync"/>
+    /// runs under the pipe's handler token), so not even this cancels an order already dispatched.
+    /// </summary>
+    readonly CancellationTokenSource _calls = new();
     TcpListener? _listener;
     Task? _loop;
+    int _disposed;
+
+    /// <summary>
+    /// THE PIPE SERVER THE DOOR'S CALLS GO THROUGH, read at disposal for how long a call in flight may take to finish and
+    /// settle: that server's own <see cref="Gateway.GatewayPipeServer.HandlerDrainTimeout"/> — derived from the connector's
+    /// worst case, never picked — and its write-back margin. Null (no gateway) leaves <see cref="ReplyMargin"/> alone, enough
+    /// for a verb's answer and a reply. The product reads the app's current server; the door holds no gateway of its own.
+    /// </summary>
+    public Func<Gateway.GatewayPipeServer?> Pipe { get; init; } = () => null;
+
+    /// <summary>What disposal waits beyond the gateway's own drain: a reply's write, or a verb with no gateway call.</summary>
+    public static readonly TimeSpan ReplyMargin = TimeSpan.FromSeconds(5);
+
+    TimeSpan DrainTimeout() =>
+        Pipe() is { } pipe ? pipe.HandlerDrainTimeout + pipe.SettleAfterCancelTimeout + ReplyMargin : ReplyMargin;
 
     /// <summary>
     /// Where the door is listening, once <see cref="Start"/> has run — <c>http://127.0.0.1:&lt;port&gt;/mcp</c>, the URL a seat's
@@ -210,11 +241,16 @@ public sealed class BrokerDoor : IAsyncDisposable
                 if (ct.IsCancellationRequested) return;
                 continue;
             }
-            _ = Task.Run(() => Serve(client, ct), CancellationToken.None);
+            // TRACKED, as the pipe tracks its handlers: disposal waits for this task, not merely for the loop that started it.
+            var serving = Task.Run(() => Serve(client, ct, _calls.Token), CancellationToken.None);
+            _serving[serving] = 0;
+            _ = serving.ContinueWith(t => _serving.TryRemove(t, out _), TaskScheduler.Default);
         }
     }
 
-    async Task Serve(TcpClient client, CancellationToken ct)
+    /// <param name="ct">Stops the read of a new request: cancelled first at disposal.</param>
+    /// <param name="calls">What a request already read is answered and replied under: cancelled only after disposal's drain.</param>
+    async Task Serve(TcpClient client, CancellationToken ct, CancellationToken calls)
     {
         var connection = new Connection(client);
         _live[connection] = 0;
@@ -242,10 +278,10 @@ public sealed class BrokerDoor : IAsyncDisposable
                 if (!connection.EnterCall()) return;
                 HttpAnswer response;
                 bool endedMidCall;
-                try { response = await Answer(connection, request, ct); }
+                try { response = await Answer(connection, request, calls); }
                 finally { endedMidCall = connection.LeaveCall(); }
                 var close = response.Close || request.WantsClose || endedMidCall;
-                await response.WriteAsync(stream, close, ct);
+                await response.WriteAsync(stream, close, calls);
                 if (close) return;
             }
         }
@@ -514,21 +550,51 @@ public sealed class BrokerDoor : IAsyncDisposable
             ["error"] = new Dictionary<string, object> { ["code"] = code, ["message"] = message }
         });
 
-    /// <summary>Closes the door: the listener first, then every connection it holds.</summary>
+    /// <summary>
+    /// CLOSES THE DOOR AND DRAINS IT, as the pipe server drains (fix pass 1, R1; UNKNOWN-001 and recovery): no new connection
+    /// and no new request; every idle connection closed now; every call in flight left to FINISH — its order to settle, its
+    /// reply to be written — within the gateway's own drain bound, and only then cancelled. AppHost disposes the door before
+    /// the pipe server, the gateway and the database, so a settle that completes here completes while all three are open; one
+    /// still running past the bound is the pipe's to drain next, because the gateway call is the pipe's tracked handler.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (_stop.IsCancellationRequested) return;
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         Grants.Ended -= OnGrantEnded;
+
+        // 1. Stop taking connections and stop reading requests. A call already read is untouched by this.
         await _stop.CancelAsync();
         try { _listener?.Stop(); } catch (Exception) { /* already closed */ }
-        foreach (var connection in _live.Keys) connection.Close();
+
+        // 2. Every connection ends as an ended grant's does: an idle one closes now, one inside a call answers it and closes.
+        foreach (var connection in _live.Keys)
+            if (connection.End()) connection.Close();
         if (_loop is not null)
         {
             try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (Exception) { /* the loop ends on the cancel; a stop is not held up by it */ }
         }
+
+        // 3. THEN WAIT FOR THE CALLS, with their token still uncancelled: the step that lets an order already at the broker
+        //    finish and settle, and its caller hear so. Bounded by the gateway's own derived drain.
+        var serving = _serving.Keys.ToArray();
+        if (serving.Length > 0)
+        {
+            try { await Task.WhenAll(serving).WaitAsync(DrainTimeout()); }
+            catch (Exception) { /* faulted or over the bound: the pipe's drain still holds the gateway call */ }
+        }
+
+        // 4. Only now cancel what is left of the replies, close what is still open, and give the unwind a moment.
+        await _calls.CancelAsync();
+        foreach (var connection in _live.Keys) connection.Close();
+        if (serving.Length > 0)
+        {
+            try { await Task.WhenAll(serving).WaitAsync(ReplyMargin); }
+            catch (Exception) { /* over the bound: nothing of the gateway's is waiting on it */ }
+        }
         Url = null;
         _stop.Dispose();
+        _calls.Dispose();
     }
 
     // ---- one connection -------------------------------------------------------------------------------------------------
