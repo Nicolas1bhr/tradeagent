@@ -112,11 +112,15 @@ public static class WorkspaceBuilder
     }
 
     /// <summary>
-    /// The runtimes a role can run on: a vendor CLI for every role, and the app-owned harness for a role
-    /// <see cref="ApiAgentRuntime.Serves"/> — so the chair, which never leaves the CLI, is written no harness canon.
+    /// The runtimes a role can run on: a vendor CLI for each of the legacy pair, and the app-owned harness for a role
+    /// <see cref="ApiAgentRuntime.Serves"/> — so the chair, which never leaves the CLI, is written no harness canon. A position
+    /// beyond the legacy pair runs a vendor CLI only as a broker-only seat (<c>U-thinking-seats-c</c>;
+    /// <see cref="RuntimeManifest.SessionSeatClassFor"/>), so its <c>AGENTS.md</c> is the broker's canon, never one that tells it
+    /// of a shell.
     /// </summary>
     public static RuntimeClass[] RuntimesOf(string role) =>
-        ApiAgentRuntime.Serves(role) ? [RuntimeClass.Cli, RuntimeClass.Harness] : [RuntimeClass.Cli];
+        !CouncilRoles.IsKnown(role) ? [RuntimeClass.Broker, RuntimeClass.Harness]
+        : ApiAgentRuntime.Serves(role) ? [RuntimeClass.Cli, RuntimeClass.Harness] : [RuntimeClass.Cli];
 
     /// <summary>One app-owned text into the role's home, and onto the app's record of what it wrote, at that moment.</summary>
     static void Write(string home, string homeDir, string relPath, string text, AppFileManifest files)
