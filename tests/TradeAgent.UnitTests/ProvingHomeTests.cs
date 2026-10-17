@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Core.Proving;
 using Xunit;
 using Xunit.Abstractions;
@@ -89,4 +91,127 @@ public class ProvingHomeTests(ITestOutputHelper log)
         Assert.False(ProvingGround.ThisProcess);
         Assert.Equal(HomeKind.Real, ProvingGround.ThisKind);
     }
+    static string? Scalar(string file, string sql)
+    {
+        using var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString());
+        c.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd.ExecuteScalar() is { } o and not DBNull ? Convert.ToString(o, System.Globalization.CultureInfo.InvariantCulture) : null;
+    }
+
+    static void Exec(string file, string sql)
+    {
+        using var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString());
+        c.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
+    static string Hash(string file) => Sha256Hex.OfFile(file)!;
+
+    /// <summary>
+    /// (a) A REAL PROCESS REFUSES A PROVING DATABASE AND TAPE, NAMING BOTH KINDS — and the other direction: a proving open
+    /// refuses a store marked real and one carrying no mark, a real home's. Each refusal names the file and both kinds,
+    /// and leaves the file's bytes as they were. A new store is marked with the kind it was opened for.
+    ///
+    /// <para><b>The watched mutant</b> — the kind comparison in <see cref="Database"/>'s open skipped — goes red here.</para>
+    /// </summary>
+    [Fact]
+    public void A_real_process_refuses_a_proving_database_and_tape_naming_both_kinds()
+    {
+        using var scratch = TestEnv.NewScratch("home-kind");
+        var provingDb = Path.Combine(scratch.Dir, "proving.db");
+        var provingTape = Path.Combine(scratch.Dir, "proving-tape.db");
+        var realDb = Path.Combine(scratch.Dir, "real.db");
+        var realTape = Path.Combine(scratch.Dir, "real-tape.db");
+
+        using (var db = new Database(provingDb, HomeKind.Proving)) Assert.Equal(HomeKind.Proving, db.Kind);
+        using (var tape = new TapeStore(provingTape, kind: HomeKind.Proving)) Assert.Equal(HomeKind.Proving, tape.Kind);
+        using (var db = new Database(realDb)) Assert.Equal(HomeKind.Real, db.Kind);
+        using (var tape = new TapeStore(realTape)) Assert.Equal(HomeKind.Real, tape.Kind);
+
+        Assert.Equal("proving", Scalar(provingDb, $"SELECT value FROM meta WHERE key='{HomeMark.Key}'"));
+        Assert.Equal("proving", Scalar(provingTape, $"SELECT value FROM tape_meta WHERE key='{HomeMark.Key}'"));
+        Assert.Equal("real", Scalar(realDb, $"SELECT value FROM meta WHERE key='{HomeMark.Key}'"));
+        Assert.Equal("real", Scalar(realTape, $"SELECT value FROM tape_meta WHERE key='{HomeMark.Key}'"));
+
+        void Refuses<T>(string file, Func<object> open, params string[] words) where T : Exception
+        {
+            var before = Hash(file);
+            var refused = Assert.Throws<T>(open);
+            log.WriteLine(refused.Message);
+            Assert.Contains(file, refused.Message, StringComparison.Ordinal);
+            Assert.Contains("Nothing has been read from it or written to it.", refused.Message, StringComparison.Ordinal);
+            foreach (var w in words) Assert.Contains(w, refused.Message, StringComparison.Ordinal);
+            Assert.Equal(before, Hash(file));
+        }
+
+        // A REAL PROCESS — this one, opening with its own kind — REFUSES A PROVING HOME'S STORES.
+        Refuses<TradeAgentException>(provingDb, () => new Database(provingDb),
+            "the database", "marked as a proving home's ('proving')", "a real home's ('real')");
+        Refuses<InvalidOperationException>(provingTape, () => new TapeStore(provingTape),
+            "the market-context tape", "marked as a proving home's ('proving')", "a real home's ('real')");
+
+        // A PROVING OPEN REFUSES A REAL HOME'S, MARKED OR NOT.
+        Refuses<TradeAgentException>(realDb, () => new Database(realDb, HomeKind.Proving),
+            "marked as a real home's ('real')", "a proving ground's, which reads only a proving home's ('proving')");
+        Refuses<InvalidOperationException>(realTape, () => new TapeStore(realTape, kind: HomeKind.Proving),
+            "marked as a real home's ('real')", "a proving ground's, which reads only a proving home's ('proving')");
+
+        Exec(realDb, $"DELETE FROM meta WHERE key='{HomeMark.Key}'");
+        Exec(realTape, $"DELETE FROM tape_meta WHERE key='{HomeMark.Key}'");
+        Refuses<TradeAgentException>(realDb, () => new Database(realDb, HomeKind.Proving),
+            "carries no home mark, so it is a real home's ('real')", "('proving')");
+        Refuses<InvalidOperationException>(realTape, () => new TapeStore(realTape, kind: HomeKind.Proving),
+            "carries no home mark, so it is a real home's ('real')", "('proving')");
+
+        // A MARK THIS BUILD DOES NOT KNOW IS REFUSED BY BOTH KINDS.
+        Exec(provingDb, $"UPDATE meta SET value='shadow' WHERE key='{HomeMark.Key}'");
+        Refuses<TradeAgentException>(provingDb, () => new Database(provingDb), "marked 'shadow'");
+        Refuses<TradeAgentException>(provingDb, () => new Database(provingDb, HomeKind.Proving), "marked 'shadow'");
+
+        // AND EACH KIND OPENS ITS OWN.
+        using (new TapeStore(provingTape, kind: HomeKind.Proving)) { }
+    }
+
+    /// <summary>
+    /// (h) GUARD: A REAL HOME OPENS AND COLLECTS AS BEFORE. A new real database and tape are marked real and reopen; one
+    /// stamped before this build — no mark — opens as a real home's and is not rewritten; and a reading recorded on time
+    /// from a built-in row's own origin is O-LIVE in both, exactly as it was.
+    /// </summary>
+    [Fact]
+    public void A_real_home_opens_and_collects_as_before()
+    {
+        using var scratch = TestEnv.NewScratch("real-home");
+        var dbFile = Path.Combine(scratch.Dir, "tradeagent.db");
+        var tapeFile = Path.Combine(scratch.Dir, "tape.db");
+        var at = new DateTimeOffset(2026, 8, 3, 0, 10, 0, TimeSpan.Zero);
+
+        using (var db = new Database(dbFile)) Assert.True(db.CreatedHere);
+        using (var tape = new TapeStore(tapeFile)) TapeReadings.Reading(tape, at, "0.00010000");
+        Assert.Equal("real", Scalar(dbFile, $"SELECT value FROM meta WHERE key='{HomeMark.Key}'"));
+
+        Exec(dbFile, $"DELETE FROM meta WHERE key='{HomeMark.Key}'");
+        Exec(tapeFile, $"DELETE FROM tape_meta WHERE key='{HomeMark.Key}'");
+
+        using (var db = new Database(dbFile))
+        {
+            Assert.False(db.CreatedHere);
+            Assert.Equal(HomeKind.Real, db.Kind);
+        }
+        Assert.Null(Scalar(dbFile, $"SELECT value FROM meta WHERE key='{HomeMark.Key}'"));
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Scalar(dbFile, "SELECT value FROM meta WHERE key='schema_version'"));
+
+        using (var tape = new TapeStore(tapeFile))
+        {
+            TapeReadings.Reading(tape, at.AddHours(1), "0.00020000");
+            Assert.Equal([TapeClass.Live, TapeClass.Live],
+                tape.Fetches().SelectMany(f => tape.ObservationsOf(f.Id)).Select(o => o.EvidenceClass).ToArray());
+        }
+        Assert.Null(Scalar(tapeFile, $"SELECT value FROM tape_meta WHERE key='{HomeMark.Key}'"));
+    }
 }
+

@@ -157,9 +157,16 @@ public sealed class TapeStore : IDisposable
     /// </summary>
     /// <param name="file">The file to open. Null is <see cref="Paths.TapeFile"/>; a test passes its own.</param>
     /// <param name="builtIns">The lenses this build ships. Null is <see cref="BuiltInLenses.All"/>; a test passes its own.</param>
-    public TapeStore(string? file = null, IReadOnlyList<BuiltInLens>? builtIns = null)
+    /// <param name="kind">
+    /// THE KIND OF HOME THIS OPEN IS FOR (<c>U-proving-ground-a</c>), as <see cref="Database"/> takes it: null is this
+    /// process's. A new tape is marked with it in its first rung; a tape of the other kind — or, for a proving open, one
+    /// carrying no mark — is refused with the file and both kinds named, after the version read and before anything is
+    /// written, as a newer tape is.
+    /// </param>
+    public TapeStore(string? file = null, IReadOnlyList<BuiltInLens>? builtIns = null, Proving.HomeKind? kind = null)
     {
         File = file ?? Paths.TapeFile;
+        Kind = kind ?? Proving.ProvingGround.ThisKind;
         var dir = Path.GetDirectoryName(File);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
@@ -183,6 +190,13 @@ public sealed class TapeStore : IDisposable
                     + $"version {have}, this build understands {Schema}). Nothing has been read from it or "
                     + "written to it, and a newer TradeAgent will open it exactly as it was left.");
 
+            // THE KIND, BEFORE ANYTHING IS WRITTEN, for the reason the version is read first. A file holding no tape yet
+            // is new, and is marked by the first rung.
+            var word = Proving.HomeMark.Read(_conn, "tape_meta");
+            if ((word is not null || have > 0)
+                && Proving.HomeMark.Refusal("the market-context tape", File, word, Kind) is { } refused)
+                throw new InvalidOperationException(refused);
+
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
             Migrate(have);
             RegisterBuiltIns(builtIns ?? BuiltInLenses.All());
@@ -193,6 +207,9 @@ public sealed class TapeStore : IDisposable
             throw;
         }
     }
+
+    /// <summary>The kind of home this tape is (<c>U-proving-ground-a</c>): the kind it was opened for, which its mark agrees with.</summary>
+    public Proving.HomeKind Kind { get; }
 
     /// <summary>
     /// OPENS THE TAPE FOR THE APP, OR SAYS IN THE ACTIVITY LOG WHY IT WILL NOT — the
@@ -241,9 +258,14 @@ public sealed class TapeStore : IDisposable
     /// </summary>
     void Migrate(int have)
     {
+        // THE HOME'S KIND, FIRST (U-proving-ground-a): a new tape is marked in the transaction of its first rung, before
+        // anything else it holds, and the mark is never rewritten. No rung: one key in this table. A tape stamped before
+        // this build stays unmarked, a real home's.
         if (have < 1)
-            Rung("""
+            Rung($$"""
                 CREATE TABLE IF NOT EXISTS tape_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO tape_meta(key, value) VALUES('{{Proving.HomeMark.Key}}', '{{Proving.HomeMark.Word(Kind)}}')
+                  ON CONFLICT(key) DO NOTHING;
 
                 CREATE TABLE IF NOT EXISTS tape_fetch(
                   id           INTEGER PRIMARY KEY AUTOINCREMENT,
