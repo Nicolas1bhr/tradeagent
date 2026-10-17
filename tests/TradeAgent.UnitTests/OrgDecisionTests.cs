@@ -142,7 +142,10 @@ public class OrgDecisionTests
         foreach (var (d, m, prob, scored, why) in new (string?, string?, object, int, string?)[]
                  {
                      ("dec-000000000001", "man-x", "0.5", 1, null), (null, null, "0.5", 1, null), ("dec-000000000001", null, "1.5", 1, null),
-                     ("dec-000000000001", null, "-0.1", 1, null),
+                     ("dec-000000000001", null, "-0.1", 1, null), ("dec-000000000001", null, "0garbage", 1, null),
+                     ("dec-000000000001", null, "1.0000000000000000000000000001", 1, null), ("dec-000000000001", null, "0.", 1, null),
+                     ("dec-000000000001", null, ".5", 1, null), ("dec-000000000001", null, "0.5e0", 1, null),
+                     ("dec-000000000001", null, "0." + new string('9', 29), 1, null),
                      ("dec-000000000001", null, "0.5", 1, "why"), ("dec-000000000001", null, "0.5", 0, null)
                  })
             Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db, forecast, ("$id", "fc-000000000002"), ("$d", d), ("$m", m),
@@ -445,6 +448,10 @@ public class OrgDecisionTests
                      (ForecastFrame(on, "ver-c3", "promoted", 0.5m, ForecastVocabulary.VerdictClass, DateTimeOffset.UtcNow.AddDays(400)), "horizon"),
                      (ForecastFrame(on, "ver-c3", "promoted", 1.2m, ForecastVocabulary.VerdictClass), "no probability"),
                      (ForecastFrame(on, "ver-c3", "promoted", "likely", ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
+                     (ForecastFrame(on, "ver-c3", "promoted", "0garbage", ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
+                     (ForecastFrame(on, "ver-c3", "promoted", "1.0000000000000000000000000001", ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
+                     (ForecastFrame(on, "ver-c3", "promoted", "1.00000000000000000000000000001", ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
+                     (ForecastFrame(on, "ver-c3", "promoted", "0." + new string('9', 29), ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
                      (ForecastFrame("ver-c3", "ver-c3", "promoted", 0.5m, ForecastVocabulary.VerdictClass), "neither a decision")
                  })
         {

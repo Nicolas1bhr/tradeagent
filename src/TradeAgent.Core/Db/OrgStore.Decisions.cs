@@ -102,6 +102,21 @@ public static class ForecastVocabulary
     };
 
     public static bool IsKnown(string? predicate) => predicate is not null && Array.IndexOf(Predicates, predicate) >= 0;
+
+    /// <summary>The longest probability text: "0." and the 28 places a decimal holds exactly, so no stated digit is ever rounded.</summary>
+    public const int MaxProbabilityChars = 30;
+
+    /// <summary>
+    /// THE ONE SHAPE OF A PROBABILITY, the schema's CHECK on <c>org_forecast.probability</c> stated again for the writers: <c>0</c>,
+    /// <c>1</c>, <c>0.</c> and one or more digits, or <c>1.</c> and one or more zeros — at most <see cref="MaxProbabilityChars"/>
+    /// characters. Decided on the TEXT, never on a conversion: a prefix that merely looks like a number, or a value a REAL or a
+    /// decimal would round into the range, is no probability.
+    /// </summary>
+    public static bool IsProbabilityText(string? text) =>
+        text is { Length: > 0 and <= MaxProbabilityChars }
+        && (text is "0" or "1"
+            || (text.Length > 2 && text.StartsWith("0.", StringComparison.Ordinal) && text.AsSpan(2).IndexOfAnyExceptInRange('0', '9') < 0)
+            || (text.Length > 2 && text.StartsWith("1.", StringComparison.Ordinal) && text.AsSpan(2).IndexOfAnyExcept('0') < 0));
 }
 
 /// <summary>
@@ -290,7 +305,7 @@ public sealed partial class OrgStore
             throw Refused($"the forecast's date {claim.By:u} is not in the future: a forecast is made before its outcome.");
         if (claim.By > now + DecisionLimits.ForecastHorizon)
             throw Refused($"the forecast's date {claim.By:u} is beyond the {DecisionLimits.ForecastHorizon.TotalDays:N0}-day horizon.");
-        if (claim.Probability is < 0m or > 1m)
+        if (claim.Probability is < 0m or > 1m || !ForecastVocabulary.IsProbabilityText(Sql.D(claim.Probability)))
             throw Refused($"{claim.Probability.ToString(CultureInfo.InvariantCulture)} is no probability: a number from 0 to 1.");
         var subject = claim.Subject ?? mandateId
             ?? throw Refused("a forecast names its subject: the version or the mandate it is about.");

@@ -2565,8 +2565,10 @@ public sealed class Database : IDisposable
                   subject       TEXT NOT NULL,
                   target        TEXT NOT NULL,
                   resolve_by    TEXT NOT NULL,
-                  probability   TEXT NOT NULL CHECK (typeof(probability) = 'text' AND probability GLOB '[01]*'
-                                                     AND CAST(probability AS REAL) >= 0 AND CAST(probability AS REAL) <= 1),
+                  probability   TEXT NOT NULL CHECK (typeof(probability) = 'text' AND length(probability) <= 30
+                                                     AND (probability IN ('0', '1')
+                                                          OR (probability GLOB '0.?*' AND substr(probability, 3) NOT GLOB '*[^0-9]*')
+                                                          OR (probability GLOB '1.?*' AND substr(probability, 3) NOT GLOB '*[^0]*'))),
                   scored        INTEGER NOT NULL CHECK (scored IN (0, 1)),
                   unscored_why  TEXT,
                   at            TEXT NOT NULL,

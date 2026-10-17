@@ -338,9 +338,12 @@ public sealed partial class GatewayPipeServer
             JsonValueKind.String => raw.GetString(),
             _ => null
         };
-        if (text is null || !decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var p))
+        // THE TEXT DECIDES, as the schema's CHECK does: a value a decimal would round into 0..1 is refused, never rounded.
+        if (!ForecastVocabulary.IsProbabilityText(text)
+            || !decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var p))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"a forecast's probability is a number from 0 to 1, such as 0.7 — '{raw.GetRawText()}' is not one. Nothing was written.");
+                $"{raw.GetRawText()} is no probability: a forecast's probability is a number from 0 to 1, such as 0.7, written as "
+                + $"0, 1, 0.digits or 1.zeros in at most {ForecastVocabulary.MaxProbabilityChars} characters — never rounded. Nothing was written.");
         return p;
     }
 
