@@ -127,7 +127,7 @@ public sealed class FeatureFeed : IDisposable
         // at this build's own cadence for it — a guess that only saves refused reads, never decides a value, because a
         // slice still over the caps is halved like any other. A function of the program and this build: deterministic.
         var densest = _features.SelectMany(f => f.Spec.Inputs)
-            .Select(i => TapeSourceCatalog.BuiltInLiveRule(i.Source)?.Cadence ?? TimeSpan.FromSeconds(1))
+            .Select(i => TapeSourceCatalog.LiveRule(i.Source, reader.Kind)?.Cadence ?? TimeSpan.FromSeconds(1))
             .Min();
         var rowsPerDay = Math.Max(1, TimeSpan.TicksPerDay / Math.Max(TimeSpan.TicksPerSecond, densest.Ticks));
         _days = Math.Max(1, Math.Min(FeatureSeries.MaxPoints / _pointsPerDay, FeatureSeries.MaxRowsPerInput / 2 / rowsPerDay));

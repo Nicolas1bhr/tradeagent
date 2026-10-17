@@ -2,6 +2,8 @@ using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Features;
+using TradeAgent.Core.Strategy;
 using TradeAgent.Core.Proving;
 using Xunit;
 using Xunit.Abstractions;
@@ -212,6 +214,102 @@ public class ProvingHomeTests(ITestOutputHelper log)
                 tape.Fetches().SelectMany(f => tape.ObservationsOf(f.Id)).Select(o => o.EvidenceClass).ToArray());
         }
         Assert.Null(Scalar(tapeFile, $"SELECT value FROM tape_meta WHERE key='{HomeMark.Key}'"));
+    }
+    /// <summary>A feature over the proving ground's synthetic signal for SYNB.</summary>
+    const string SyntheticSpec =
+        """{"kind":"latest","input":{"source":"proving-synthetic","series":"signal","subject":"SYNB","field":"value"},"latency_s":5,"max_age_s":7200}""";
+
+    static string SyntheticProgram => $"""
+        instrument SYNB
+        bars 1h
+        feature signal = {SyntheticSpec}
+        size fixed 1
+        stop percent 50
+        exit when signal <= 0
+        entry when signal > 0
+        """;
+
+    /// <summary>One synthetic reading, received its declared delay after its source time, from the row's own origin.</summary>
+    static void SyntheticReading(TapeStore tape, DateTimeOffset at) =>
+        tape.Append(new TapeFetch
+        {
+            Source = ProvingSources.Synthetic, Series = ProvingSources.Signal, Url = ProvingSources.Origin + "/signal",
+            RequestedAt = at, ReceivedAt = at + ProvingSources.Delay, HttpStatus = 200
+        },
+        [
+            new TapeItem("SYNB", at,
+                $$"""{"symbol":"SYNB","time":{{at.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture)}},"value":"0.0042"}""")
+        ]);
+
+    /// <summary>
+    /// (c) A FEATURE NAMING THE PROVING SOURCE IS REFUSED IN A REAL HOME AND PARSED IN A PROVING ONE — the spec and a program
+    /// reading it alike. The proving row is never one of the shipped rows or the frozen live rule; only a store or reader
+    /// of kind proving consults it, so the same on-time reading from its own origin is O-LIVE in a proving tape and O-ARCH
+    /// in a real one; a real reader refuses a proving tape; and tape-sources.json cannot take the row's id.
+    /// </summary>
+    [Fact]
+    public void A_feature_naming_the_proving_source_is_refused_in_a_real_home_and_parsed_in_a_proving_one()
+    {
+        // THE PARSE: refused in this process's own kind and in a real one, in words naming the source; parsed in a proving one.
+        foreach (var refused in new[] { FeatureSpec.Parse(SyntheticSpec), FeatureSpec.Parse(SyntheticSpec, HomeKind.Real) })
+        {
+            Assert.False(refused.Ok);
+            log.WriteLine(refused.Why);
+            Assert.StartsWith("'proving-synthetic' is a proving ground's synthetic source, read only in a proving home, and this is a real home",
+                refused.Why, StringComparison.Ordinal);
+        }
+        var parsed = FeatureSpec.Parse(SyntheticSpec, HomeKind.Proving);
+        Assert.True(parsed.Ok, parsed.Why);
+        Assert.Equal(new FeatureInput(ProvingSources.Synthetic, ProvingSources.Signal, "SYNB", ProvingSources.ValueField), parsed.Spec!.Input);
+        Assert.Equal(parsed.Spec.Id, FeatureSpec.Parse(SyntheticSpec, HomeKind.Proving).Spec!.Id);
+
+        var program = StrategyParser.Parse(SyntheticProgram);
+        Assert.False(program.Ok);
+        Assert.Contains("is a proving ground's synthetic source", program.Why, StringComparison.Ordinal);
+        Assert.True(StrategyParser.Parse(SyntheticProgram, HomeKind.Proving).Ok);
+
+        // A SUBJECT OF NO PROVING ROW IS REFUSED EVEN THERE: the row names its own synthetic instruments, no venue's symbols.
+        Assert.False(FeatureSpec.Parse(SyntheticSpec.Replace("SYNB", "BTCUSDT", StringComparison.Ordinal), HomeKind.Proving).Ok);
+
+        // THE RULE: never in the shipped rows or the frozen dictionary; consulted for a proving home only.
+        Assert.DoesNotContain(TapeSourceCatalog.Shipped(), r => r.Id == ProvingSources.Synthetic || r.Id.StartsWith("proving", StringComparison.Ordinal));
+        Assert.Null(TapeSourceCatalog.BuiltInLiveRule(ProvingSources.Synthetic));
+        Assert.Null(TapeSourceCatalog.LiveRule(ProvingSources.Synthetic, HomeKind.Real));
+        Assert.Equal(("https://synthetic.invalid", TimeSpan.FromHours(1), TimeSpan.FromSeconds(2)),
+            TapeSourceCatalog.LiveRule(ProvingSources.Synthetic, HomeKind.Proving));
+        Assert.Equal(TapeSourceCatalog.Shipped().Count, TapeSourceCatalog.Readable(HomeKind.Real).Count);
+        Assert.Equal(TapeSourceCatalog.Shipped().Count + 1, TapeSourceCatalog.Readable(HomeKind.Proving).Count);
+
+        // THE CLASS: the same reading is O-LIVE in a proving tape, O-ARCH in a real one.
+        using var scratch = TestEnv.NewScratch("proving-source");
+        var provingTape = Path.Combine(scratch.Dir, "proving-tape.db");
+        var realTape = Path.Combine(scratch.Dir, "real-tape.db");
+        var at = new DateTimeOffset(2026, 8, 3, 0, 10, 0, TimeSpan.Zero);
+        foreach (var (tapeFile, kind, expected) in new[] { (provingTape, HomeKind.Proving, TapeClass.Live), (realTape, HomeKind.Real, TapeClass.Arch) })
+            using (var tape = new TapeStore(tapeFile, kind: kind))
+            {
+                SyntheticReading(tape, at);
+                Assert.Equal(expected, tape.ObservationsOf(Assert.Single(tape.Fetches()).Id).Single().EvidenceClass);
+            }
+
+        // THE READER: of its own kind only; a proving one reads the proving row.
+        Assert.Contains(new TapeReader(provingTape, kind: HomeKind.Proving).Catalogue, r => r.Id == ProvingSources.Synthetic);
+        Assert.DoesNotContain(new TapeReader(realTape).Catalogue, r => r.Id == ProvingSources.Synthetic);
+        var wrong = Assert.Throws<InvalidOperationException>(() => new TapeReader(provingTape));
+        log.WriteLine(wrong.Message);
+        Assert.Contains("marked as a proving home's ('proving')", wrong.Message, StringComparison.Ordinal);
+        Assert.Throws<InvalidOperationException>(() => new TapeReader(realTape, kind: HomeKind.Proving));
+
+        // AND A FILE CANNOT TAKE THE ROW'S ID.
+        var file = Path.Combine(scratch.Dir, "tape-sources.json");
+        File.WriteAllText(file, """
+            [{"id":"proving-synthetic","displayName":"x","baseUrl":"https://example.org","cadenceSeconds":60,"perSymbol":false,
+              "series":[{"id":"s","urlShape":"{base}/s","timeField":"time","symbolField":"symbol"}]}]
+            """);
+        var read = TapeSourceCatalog.Read(file);
+        log.WriteLine(string.Join(" | ", read.Refused));
+        Assert.Contains(read.Refused, r => r.StartsWith("'proving-synthetic' is TradeAgent's proving-ground row", StringComparison.Ordinal));
+        Assert.DoesNotContain(read.Sources, r => r.Id == ProvingSources.Synthetic);
     }
 }
 
