@@ -2516,6 +2516,131 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','40') ON CONFLICT(key) DO UPDATE SET value='40';");
         }
 
+        if (have < 41)
+        {
+            // DECISIONS, FORECASTS, ESCALATIONS AND LATERAL NOTES — `U-org-decisions` (O5b), rung 41, after O5a's 40
+            // (docs/ORCHESTRATION.md §§ 2.3, 2.9–2.11, 8; ORGANISATION §§ 4, 5). FIVE TABLES, written only by `OrgStore`:
+            //
+            // `org_decision` — a position's decision record: its kind, the options it considered and its choice (CLAIMS, stored
+            // verbatim), the refs it cites (app records, checked to exist at the write), and the research-ledger entry that holds its
+            // rationale as the position's own `decision` entry, written in the same write.
+            //
+            // `org_forecast` — a forecast on exactly one decision or one mandate (CHECKed): a predicate from a closed, versioned
+            // vocabulary, its subject and target, its resolution date, and the probability (the forecaster's CLAIM, a decimal text
+            // from 0 to 1, CHECKed); `scored` and `unscored_why` are the APP'S, computed at the write.
+            //
+            // `org_forecast_resolution` — the APP'S resolution of one forecast from its own measurements (a verdict, a mandate
+            // event): yes, no or void, the kind and id of the record it rests on, and why — one row per forecast, in its own table,
+            // never merged with the claim it resolves.
+            //
+            // `org_escalation` — a head's escalation: its reason (a claim), the mandate it is about if any, and the position the
+            // APP chose (`to_position`) by walking up the chain (NULL = the owner — a record, never a wake and never a pipe request) beside the
+            // heads it skipped and why. `org_lateral` — a note from one position to another: the sender the app stamped, the text
+            // (a claim) and its refs. A note wakes nobody, assigns nothing and publishes nothing.
+            //
+            // APPEND-ONLY IS THE SCHEMA'S: every one of the five refuses UPDATE and DELETE by trigger. Created only where missing, so
+            // a crash between any statement here and the stamp reopens cleanly; the stamp last.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS org_decision(
+                  id              TEXT PRIMARY KEY CHECK (id GLOB 'dec-*'),
+                  position        TEXT NOT NULL REFERENCES org_position(id),
+                  attempt_id      TEXT,
+                  kind            TEXT NOT NULL,
+                  options         TEXT NOT NULL,
+                  choice          TEXT NOT NULL,
+                  refs            TEXT NOT NULL,
+                  ledger_entry_id INTEGER NOT NULL UNIQUE REFERENCES ledger_entry(id),
+                  at              TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_decision_position ON org_decision(position, at);
+
+                CREATE TABLE IF NOT EXISTS org_forecast(
+                  id            TEXT PRIMARY KEY CHECK (id GLOB 'fc-*'),
+                  decision_id   TEXT REFERENCES org_decision(id),
+                  mandate_id    TEXT REFERENCES org_mandate(id),
+                  forecaster    TEXT NOT NULL REFERENCES org_position(id),
+                  attempt_id    TEXT,
+                  vocabulary    INTEGER NOT NULL,
+                  predicate     TEXT NOT NULL,
+                  subject       TEXT NOT NULL,
+                  target        TEXT NOT NULL,
+                  resolve_by    TEXT NOT NULL,
+                  probability   TEXT NOT NULL CHECK (typeof(probability) = 'text' AND probability GLOB '[01]*'
+                                                     AND CAST(probability AS REAL) >= 0 AND CAST(probability AS REAL) <= 1),
+                  scored        INTEGER NOT NULL CHECK (scored IN (0, 1)),
+                  unscored_why  TEXT,
+                  at            TEXT NOT NULL,
+                  CHECK ((decision_id IS NULL) <> (mandate_id IS NULL)),
+                  CHECK ((scored = 1) = (unscored_why IS NULL))
+                );
+                CREATE INDEX IF NOT EXISTS ix_forecast_decision ON org_forecast(decision_id);
+                CREATE INDEX IF NOT EXISTS ix_forecast_mandate ON org_forecast(mandate_id);
+
+                CREATE TABLE IF NOT EXISTS org_forecast_resolution(
+                  forecast_id  TEXT PRIMARY KEY REFERENCES org_forecast(id),
+                  outcome      TEXT NOT NULL CHECK (outcome IN ('yes', 'no', 'void')),
+                  record_kind  TEXT NOT NULL,
+                  record_id    TEXT NOT NULL,
+                  why          TEXT NOT NULL,
+                  at           TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS org_escalation(
+                  id          TEXT PRIMARY KEY CHECK (id GLOB 'esc-*'),
+                  sender      TEXT NOT NULL REFERENCES org_position(id),
+                  attempt_id  TEXT,
+                  unit_id     TEXT NOT NULL REFERENCES org_unit(id),
+                  mandate_id  TEXT REFERENCES org_mandate(id),
+                  to_position TEXT REFERENCES org_position(id),
+                  reason      TEXT NOT NULL,
+                  skipped     TEXT NOT NULL,
+                  wake_id     TEXT,
+                  day         TEXT NOT NULL,
+                  at          TEXT NOT NULL,
+                  CHECK ((to_position IS NULL) = (wake_id IS NULL))
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_escalation_mandate ON org_escalation(sender, mandate_id) WHERE mandate_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS ix_escalation_sender ON org_escalation(sender, day);
+                CREATE INDEX IF NOT EXISTS ix_escalation_recipient ON org_escalation(to_position, at);
+
+                CREATE TABLE IF NOT EXISTS org_lateral(
+                  id          TEXT PRIMARY KEY CHECK (id GLOB 'lat-*'),
+                  sender      TEXT NOT NULL REFERENCES org_position(id),
+                  attempt_id  TEXT,
+                  to_position TEXT NOT NULL REFERENCES org_position(id),
+                  text        TEXT NOT NULL,
+                  refs        TEXT NOT NULL,
+                  at          TEXT NOT NULL,
+                  CHECK (sender <> to_position)
+                );
+                CREATE INDEX IF NOT EXISTS ix_lateral_recipient ON org_lateral(to_position, at);
+                CREATE INDEX IF NOT EXISTS ix_lateral_sender ON org_lateral(sender, at);
+
+                CREATE TRIGGER IF NOT EXISTS org_decision_sealed_u BEFORE UPDATE ON org_decision
+                BEGIN SELECT RAISE(ABORT, 'a decision is never updated: an edit is a new record'); END;
+                CREATE TRIGGER IF NOT EXISTS org_decision_sealed_d BEFORE DELETE ON org_decision
+                BEGIN SELECT RAISE(ABORT, 'a decision is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_forecast_sealed_u BEFORE UPDATE ON org_forecast
+                BEGIN SELECT RAISE(ABORT, 'a forecast is precommitted and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_forecast_sealed_d BEFORE DELETE ON org_forecast
+                BEGIN SELECT RAISE(ABORT, 'a forecast is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_forecast_resolution_sealed_u BEFORE UPDATE ON org_forecast_resolution
+                BEGIN SELECT RAISE(ABORT, 'a resolution is the app''s record and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_forecast_resolution_sealed_d BEFORE DELETE ON org_forecast_resolution
+                BEGIN SELECT RAISE(ABORT, 'a resolution is the app''s record and never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_escalation_sealed_u BEFORE UPDATE ON org_escalation
+                BEGIN SELECT RAISE(ABORT, 'an escalation is never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_escalation_sealed_d BEFORE DELETE ON org_escalation
+                BEGIN SELECT RAISE(ABORT, 'an escalation is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS org_lateral_sealed_u BEFORE UPDATE ON org_lateral
+                BEGIN SELECT RAISE(ABORT, 'a lateral note is never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS org_lateral_sealed_d BEFORE DELETE ON org_lateral
+                BEGIN SELECT RAISE(ABORT, 'a lateral note is never deleted'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','41') ON CONFLICT(key) DO UPDATE SET value='41';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

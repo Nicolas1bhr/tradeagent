@@ -405,8 +405,16 @@ public static class Versions
     /// DELETE by trigger, written only by <c>OrgStore</c> — and <c>ai_attempt.mandate_id</c>, the mandate a launch was
     /// admitted under, written by <c>AiAttemptStore.Begin</c> after the mandate's allocation gate. No backfill: no launch before
     /// the rung served a mandate.</para>
+    ///
+    /// <para><b>41 — decisions, forecasts, escalations and lateral notes</b> (<c>U-org-decisions</c>, O5b, rung 41, after O5a's 40):
+    /// <c>org_decision</c> (a position's record: options, choice and refs, its rationale the position's own <c>decision</c> entry in
+    /// the research ledger), <c>org_forecast</c> (on exactly one decision or mandate; a closed, versioned predicate; the probability a
+    /// claim; <c>scored</c> the app's), <c>org_forecast_resolution</c> (the app's yes, no or void from a verdict or a mandate event,
+    /// naming the record it rests on), <c>org_escalation</c> (the recipient the app chose up the chain, NULL the owner — a record,
+    /// no wake) and <c>org_lateral</c> (a sender-stamped note that wakes nobody) — each refusing UPDATE and DELETE by trigger,
+    /// written only by <c>OrgStore</c>. No backfill: nothing before the rung wrote any of them.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 40;
+    public const int DatabaseSchemaVersion = 41;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its
