@@ -205,6 +205,7 @@ public sealed class AttemptCgroups
     {
         var killed = new List<string>();
         var left = new List<string>();
+        var survivors = new List<ProcessEntry>();
         if (Root is not null)
         {
             IEnumerable<string> attempts;
@@ -214,7 +215,13 @@ public sealed class AttemptCgroups
             {
                 var attempt = new AttemptCgroup(dir, _standIn);
                 if (attempt.Kill(TreeTeardown.Bound) && attempt.Remove()) killed.Add(dir);
-                else left.Add(dir);
+                else
+                {
+                    left.Add(dir);
+                    // WHAT IT COULD NOT END IS STILL RUNNING (fix pass 1, R3): a leftover the kill did not empty is held by the meter
+                    // and counted present until it is gone — a warning alone let paid turns and the material pass start beside it.
+                    if (attempt.Populated()) survivors.Add(AttemptCgroup.Survivor(dir, unlisted: false));
+                }
             }
         }
 
@@ -232,15 +239,20 @@ public sealed class AttemptCgroups
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { left.Add($"{CellPolicy.Directory} ({ex.Message})"); }
 
-        return new SweepReport(killed, left, discarded);
+        return new SweepReport(killed, left, discarded) { Survivors = survivors };
     }
 
     /// <summary>What a sweep did: the attempts it ended and removed, what it could not, and how many policy files it discarded.</summary>
     public sealed record SweepReport(IReadOnlyList<string> Removed, IReadOnlyList<string> Left, int PolicyFiles)
     {
+        /// <summary>What the sweep could not end, as survivors the meter holds every turn on until each is gone.</summary>
+        public IReadOnlyList<ProcessEntry> Survivors { get; init; } = [];
+
         public string Sentence =>
             $"removed {Removed.Count} leftover attempt cgroup(s) and {PolicyFiles} leftover cell policy file(s)" +
-            (Left.Count > 0 ? $"; could not remove {string.Join(", ", Left)}" : "");
+            (Left.Count > 0 ? $"; could not remove {string.Join(", ", Left)}" : "") +
+            (Survivors.Count > 0 ? $"; no AI turn starts until {string.Join(", ", Survivors.Select(s => Path.GetFileName(s.Cgroup)))} " +
+                                   "holds no process" : "");
     }
 
     /// <summary>One line for a Mechanism row: the cgroup and its ceilings.</summary>
@@ -424,6 +436,16 @@ public sealed class AttemptCgroup
             Thread.Sleep(10);
         }
     }
+
+    /// <summary>
+    /// A SURVIVOR STANDING FOR EVERYTHING IN <paramref name="dir"/> (<see cref="ProcessEntry.Cgroup"/>): what a teardown or the
+    /// restart's sweep could not end, held by the meter until <see cref="StillHolds"/> says no. <paramref name="unlisted"/>: its
+    /// processes could not be listed either.
+    /// </summary>
+    public static ProcessEntry Survivor(string dir, bool unlisted) => new(0, 0, 0, 0, 0, false, false, unlisted, dir);
+
+    /// <summary>Whether <paramref name="dir"/> still holds a process — yes while the kernel will not say, never ended on a guess.</summary>
+    public static bool StillHolds(string dir) => new AttemptCgroup(dir, standIn: false).Populated();
 
     /// <summary>Whether any process is in the attempt or below it; a cgroup that is gone holds none, and one that cannot be read does.</summary>
     public bool Populated()

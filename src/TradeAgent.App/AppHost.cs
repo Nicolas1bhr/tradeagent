@@ -878,6 +878,9 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.Gateway, HealthState.READY);
 
             ComposeTheAi(_db);
+            // WHAT THE SWEEP COULD NOT END HOLDS EVERY TURN AND COUNTS AS AN AGENT PRESENT until it is gone (U-cell-linux-b fix pass 1,
+            // R3): a crash's leftover still runs as the owner's user and may spend or write the inbox.
+            Meter!.Hold(swept.Survivors, _presence);
 
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();

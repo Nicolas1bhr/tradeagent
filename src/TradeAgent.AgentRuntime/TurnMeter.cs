@@ -989,6 +989,26 @@ public sealed class TurnMeter
     }
 
     /// <summary>
+    /// HOLDS EVERY LAUNCH ON <paramref name="survivors"/> until each has ended: what a turn's teardown could not end
+    /// (<see cref="Record"/>), and what the restart's sweep could not (<c>U-cell-linux-b</c> fix pass 1).
+    /// </summary>
+    /// <param name="presence">
+    /// The register the material pass asks (<see cref="AgentPresence"/>): given, the survivors count as an agent present — a window
+    /// opened here and closed with the last of them, as a turn's survivors' is (<c>U-unjobbed-presence</c>) — so no inbox sighting is
+    /// attested beside them: what a restart's leftover is, since it ran before this register existed and runs on after it.
+    /// </param>
+    public void Hold(IReadOnlyList<ProcessEntry> survivors, AgentPresence? presence = null)
+    {
+        if (survivors.Count == 0) return;
+        var present = presence?.Enter();
+        lock (_gate)
+        {
+            _survivors.AddRange(survivors);
+            if (present is not null) _survivorPresence.Add(present);
+        }
+    }
+
+    /// <summary>
     /// The refusal while any process an earlier teardown could not end is still that process and still
     /// running, or null. The ones that have ended are forgotten here, which is how the hold lifts.
     /// </summary>

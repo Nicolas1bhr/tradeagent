@@ -343,6 +343,24 @@ public static class Labels
     }
 
     /// <summary>
+    /// THE NEXT TURN HELD BECAUSE AN ATTEMPT'S CGROUP STILL HOLDS PROCESSES TRADEAGENT COULD NOT END (<c>U-cell-linux-b</c> fix pass 1):
+    /// a teardown or the restart's sweep wrote <c>cgroup.kill</c> and the cgroup did not empty — or could not even be listed, and then
+    /// nobody can say none of it runs. It names the cgroup, and any process it could name; the hold lifts once the cgroup is empty.
+    /// </summary>
+    public static string AttemptStillHeld(IEnumerable<string> cgroups, IEnumerable<int> pids, bool unlisted)
+    {
+        var names = cgroups.Distinct().ToList();
+        var named = pids.Distinct().ToList();
+        var where = names.Count == 1 ? $"the attempt cgroup {names[0]}" : $"the attempt cgroups {string.Join(", ", names)}";
+        var what = unlisted
+            ? $"could not end what an AI turn started in {where}, and could not list it either, so it cannot tell whether any of it still runs"
+            : $"could not end what an AI turn started in {where}" + (named.Count > 0 ? $" (process {string.Join(", ", named)})" : "") +
+              ", which still holds processes";
+        return $"TradeAgent {what}, so this turn was not started. Nothing was sent to the AI tool. It starts again by itself once " +
+               (names.Count == 1 ? "that cgroup is" : "those cgroups are") + " empty.";
+    }
+
+    /// <summary>
     /// THE NEXT TURN HELD BECAUSE WINDOWS WOULD NOT LIST WHAT THE LAST ONE STARTED (<c>U-grant-tree</c> fix pass 2). A launch
     /// no job held was torn down while the process snapshot failed, so nobody can say none of it still runs; it is held as
     /// running, by the process that started it, and re-asked at every launch.

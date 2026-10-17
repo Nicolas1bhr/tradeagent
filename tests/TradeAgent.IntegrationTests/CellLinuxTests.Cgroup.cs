@@ -512,4 +512,60 @@ public partial class CellLinuxTests
         Says(ordinary, "move-refused");
         Assert.Empty(AttemptCgroups.Procs(supervisor) ?? [-1]);
     }
+
+    /// <summary>
+    /// (k) R3: A LEFTOVER THE RESTART COULD NOT END HOLDS EVERY TURN, AND COUNTS AS AN AGENT PRESENT. A crash left an attempt running
+    /// whose <c>cgroup.kill</c> the restart's sweep cannot write: the meter refuses every turn naming it, and no inbox sighting is
+    /// attested while it runs, until it has ended — then the next turn is admitted.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_leftover_the_restart_could_not_end_holds_every_turn_and_counts_as_present_until_it_ends()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // a LinuxFact: skipped elsewhere before it gets here
+        PlatformIsACells();
+        using var rows = Rows();
+        var dir = Scratch("leftover");
+        using var held = ProcessContainment.Start(Plain("/bin/sh", "-c", $"sleep 300 & echo $! > {dir}/sleep; wait"), Launcher(),
+            requireHeld: true, attemptId: "stuck", cgroups: rows.Cgroups);
+        held.Process.StandardInput.Close();
+        var pid = int.Parse(await Await(Path.Combine(dir, "sleep"), TimeSpan.FromSeconds(30)), CultureInfo.InvariantCulture);
+        var start = ProcessTable.Read(pid)!.Value.Start;
+        Posix.Kill(held.Process.Id);                     // the supervisor, as a crash ends it
+        await held.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var cgroup = held.Cgroup!.Dir;
+        var kill = Path.Combine(cgroup, "cgroup.kill");
+        var mode = File.GetUnixFileMode(kill);
+        try
+        {
+            File.SetUnixFileMode(kill, UnixFileMode.None);   // THE SWEEP CANNOT END IT
+            var report = AttemptCgroups.Open(rows.Dir).Sweep(before: DateTime.MinValue);
+            Assert.True(Alive(pid, start), $"sleep {pid} did not outlive a sweep that could not write {kill}, so this row tests nothing");
+            Assert.Contains(cgroup, report.Left);
+
+            var presence = new AgentPresence();
+            var mark = presence.Mark();
+            using var db = new Database(Path.Combine(TestEnv.Home, $"leftover-{Guid.NewGuid():n}.db"));
+            var meter = new TurnMeter(db, cap: () => 5m, recordPath: Path.Combine(dir, "turns.jsonl"), live: new LiveAttempts());
+            meter.Hold(report.Survivors, presence);      // what the restarted app does with its sweep
+
+            var refused = meter.Begin("first after the restart", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.False(refused.Admitted,
+                $"a turn was admitted beside sleep {pid}, which the restart's sweep left running in {cgroup}: {report.Sentence}");
+            Assert.Contains(Path.GetFileName(cgroup), refused.Refusal);
+            Assert.False(presence.NoneSince(mark), $"no agent was counted present while sleep {pid} ran in {cgroup}");
+
+            File.SetUnixFileMode(kill, mode);
+            Posix.Kill(pid);
+            for (var i = 0; i < 300 && (Alive(pid, start) || new AttemptCgroup(cgroup, false).Populated()); i++) await Task.Delay(10);
+
+            var admitted = meter.Begin("once it has ended", role: CouncilRoles.Operations, heldForTheLoop: false);
+            Assert.True(admitted.Admitted, $"the hold did not lift once the leftover had ended: {admitted.Refusal}");
+            Assert.Equal(0, presence.Live);
+        }
+        finally
+        {
+            try { File.SetUnixFileMode(kill, mode); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (Alive(pid, start)) Posix.Kill(pid);
+        }
+    }
 }
