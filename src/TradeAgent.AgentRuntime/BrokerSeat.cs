@@ -25,6 +25,25 @@ public static class BrokerSeat
     /// <summary>The name the app's door is configured under in a broker seat's deny set, and the one tool server it may list.</summary>
     public const string DoorServer = "tradeagent";
 
+    /// <summary>
+    /// THE CLASSIC-TOOLS MODEL A BROKER SEAT RUNS ON. RUN 2026-10-17 (codex-cli 0.160.1, the loopback mock, a throwaway home): offered
+    /// exactly <see cref="Expected"/>'s set; gpt-6-astra under the same argv was offered <c>exec</c> and refused.
+    /// </summary>
+    public const string Model = "gpt-5.5";
+
+    /// <summary>The model <paramref name="seatClass"/> is pinned to, or null for a class that pins none.</summary>
+    public static string? ModelOf(string seatClass) => seatClass == SeatPlan.BrokerClass ? Model : null;
+
+    /// <summary>
+    /// THE TOOLS EACH PINNED MODEL IS OFFERED UNDER THE BROKER CLASS, compiled: the app's door's tools are deferred behind
+    /// <c>tool_search</c>, and the rest are codex's own MCP-resource and question tools, none of which reaches the computer. A set that
+    /// differs refuses — a release, a key or a model that changed what is offered is a new set this build has not seen.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string[]> Expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        [Model] = ["list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input", "tool_search"]
+    };
+
     /// <summary>Whether this build has a broker class for the built-in runtime <paramref name="runtimeId"/> — code, read once.</summary>
     public static bool Offers(string runtimeId) => WithBrokerClass.Value.Contains(runtimeId);
 
@@ -85,4 +104,25 @@ public static class BrokerSeat
     /// <summary>A value as the refusal names it: its SHA-256's first twelve hex digits and its length.</summary>
     static string Fingerprint(string value) =>
         $"SHA-256 {Sha256Hex.Of(value)[..12]} ({Encoding.UTF8.GetByteCount(value)} bytes)";
+
+    // ---- the pinned model --------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// NULL WHEN A <paramref name="seatClass"/> SEAT MAY RUN ON ITS PINNED MODEL, or the refusal: a class that pins no model, a runtime
+    /// that cannot name one on its command line, or an owner's choice for the position that names another model.
+    /// <paramref name="chosen"/> is the owner's own choice for the position, null or empty for none — the pin then stands.
+    /// </summary>
+    public static string? ModelRefusal(string seatClass, string? chosen, RuntimeManifest manifest)
+    {
+        if (ModelOf(seatClass) is not { } pin)
+            return $"TradeAgent will not start {manifest.DisplayName} as a {seatClass} seat: the class pins no model, and a broker-only seat runs " +
+                   "only on the model whose offered tools this build knows. Nothing was started.";
+        if (!manifest.ModelArgs.Any(a => a.Contains("{model}", StringComparison.Ordinal)))
+            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: its command line cannot name the model, so it " +
+                   $"would run on whatever its account defaults to rather than {pin}. Nothing was started.";
+        if (chosen is { Length: > 0 } other && !string.Equals(other, pin, StringComparison.Ordinal))
+            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat on {other}: a broker-only seat runs only on {pin}, " +
+                   $"the model whose offered tools this build knows. Choose {pin} for this position, or no model, to continue. Nothing was started.";
+        return null;
+    }
 }
