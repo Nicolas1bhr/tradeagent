@@ -354,20 +354,17 @@ public class ThinkingSeatsTests : IDisposable
             db.Write(_ => { meter.CommitStaged(role); dispositions(); return 0; });
     }
 
-    // ---- (p) re-review item 6: a refused turn publishes nothing ------------------------------------------------
+    // ---- (p) re-review item 6: a refused turn gives the owner's words back ------------------------------------------------
 
     /// <summary>
-    /// (p) A TURN THE GATE REFUSED MID-WAY PUBLISHES NOTHING AND GIVES THE OWNER'S WORDS BACK (fix pass 2, item 6; ORCHESTRATION
-    /// § 2.3, the outputs of a refused attempt are held, never published; § 2.5, the owner's words are never settled by a refusal):
-    /// the chair on the harness stages an agenda in its first request, its seat changes, and its second request is refused at the
-    /// last check. Through the real relay's committed transition, the agenda is held — recorded as the app's own copy with a held
-    /// disposition, delivered to nobody, buying no turn — so it never delegates the owner's message: every wake the launch took is
-    /// due again and the owner's words stay open, shown undelivered with the refusal's sentence. A later pass over the same folder
-    /// holds it again. RED at the rebased tip: the relay published the agenda and delegated the owner's words before they were
-    /// given back.
+    /// (p) A TURN THE GATE REFUSED MID-WAY GIVES THE OWNER'S WORDS BACK (fix pass 2, item 6, the wake release; ORCHESTRATION § 2.5,
+    /// the owner's words are never settled by a refusal): the chair on the harness stages an agenda in its first request, its seat
+    /// changes, and its second request is refused at the last check. Through the real relay's committed transition, every wake the
+    /// launch took is due again and the owner's words stay open, shown undelivered with the refusal's sentence. (The hold of the
+    /// staged output was reverted by decision A; this keeps the release.)
     /// </summary>
     [Fact]
-    public async Task A_turn_the_gate_refused_mid_way_publishes_nothing_and_gives_the_owners_words_back()
+    public async Task A_turn_the_gate_refused_mid_way_gives_the_owners_words_back()
     {
         using var db = TestEnv.NewDb();
         var events = new MissionEventStore(db);
@@ -422,30 +419,8 @@ public class ThinkingSeatsTests : IDisposable
         Assert.False(words.Consumed || words.Disposition == MissionEventDisposition.Delegated,
             $"the owner's words were taken by a turn the gate refused: consumed {words.Consumed}, {words.Disposition} {words.DispositionDetail}");
         Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
-        AssertNothingPublished(db, events);
-
-        // A LATER PASS OVER THE SAME FOLDER, AND THE START-UP RECONCILE, HOLD IT AGAIN: the attempt's row says it was refused.
-        relay.Run(CouncilRoles.Operations, attempt: null);
-        relay.Reconcile();
-        AssertNothingPublished(db, events);
-        Assert.Equal(MissionEventDisposition.Blocked, events.Get(owner)!.Disposition);
         Assert.False(events.Get(owner)!.Consumed);
     }
-
-    /// <summary>No delivery and no brief bought a turn; the one agenda is held, with why, as the app's own copy.</summary>
-    static void AssertNothingPublished(Database db, MissionEventStore events)
-    {
-        Assert.Equal(0L, Count(db, "SELECT COUNT(*) FROM delivery"));
-        Assert.Equal(0L, Count(db, $"SELECT COUNT(*) FROM mission_event WHERE kind='{MissionEventKind.Brief}'"));
-        var held = Assert.Single(events.HeldSince(CouncilRoles.Operations, null, 10));
-        Assert.Contains("refused", held.DispositionDetail, StringComparison.Ordinal);
-    }
-
-    static long Count(Database db, string sql) => db.Read(_ =>
-    {
-        using var c = db.Cmd(sql);
-        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
-    });
 
     /// <summary>A host whose committed transition is the real relay's, as the app wires it: close, land, snapshot, dispositions.</summary>
     sealed class RelayedHost(Database db, TurnMeter meter, IAgentConversation conversation, CouncilRelay relay, string home)
