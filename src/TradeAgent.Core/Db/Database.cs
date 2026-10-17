@@ -16,10 +16,18 @@ public sealed class Database : IDisposable
     // a NullReferenceException deep inside the provider while closing the connection.
     readonly Lock _gate = new();
 
-    public Database(string? path = null)
+    /// <param name="path">The file. Null is <see cref="Paths.DatabaseFile"/>.</param>
+    /// <param name="kind">
+    /// THE KIND OF HOME THIS OPEN IS FOR (<c>U-proving-ground-a</c>). Null is this process's
+    /// (<see cref="Proving.ProvingGround.ThisKind"/>): a real home's in the product. A new file is marked with it before
+    /// anything else is written; a file marked as the other kind — or, for a proving open, carrying no mark, which every
+    /// real home before this build is — is refused in words naming both kinds and the file, and nothing is written to it.
+    /// </param>
+    public Database(string? path = null, Proving.HomeKind? kind = null)
     {
         var file = path ?? Paths.DatabaseFile;
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        Kind = kind ?? Proving.ProvingGround.ThisKind;
         _conn = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = file,
@@ -27,9 +35,44 @@ public sealed class Database : IDisposable
             Cache = SqliteCacheMode.Private,
             Pooling = false
         }.ToString());
-        _conn.Open();
-        Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
-        Migrate();
+        try
+        {
+            _conn.Open();
+            Exec("PRAGMA busy_timeout=5000;");
+            // THE KIND, BEFORE ANYTHING IS WRITTEN: the journal mode below is written into the file, and a store of
+            // the other kind is left exactly as it was found.
+            if (KindRefusal(file) is { } refused) throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, refused);
+            Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
+            Migrate();
+        }
+        catch (Exception)
+        {
+            _conn.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>The kind of home this database is (<c>U-proving-ground-a</c>): the kind it was opened for, which its mark agrees with.</summary>
+    public Proving.HomeKind Kind { get; }
+
+    /// <summary>
+    /// WHY THIS FILE IS NOT OPENED AS <see cref="Kind"/>, or null. A file with no schema yet is new, and is marked by
+    /// <see cref="Migrate"/>; a file with a schema and no mark is a real home's. Reads only.
+    /// </summary>
+    string? KindRefusal(string file)
+    {
+        var word = Proving.HomeMark.Read(_conn, "meta");
+        if (word is null && (ReadMetaInt("schema_version") ?? 0) == 0) return null;
+        return Proving.HomeMark.Refusal("the database", file, word, Kind);
+    }
+
+    int? ReadMetaInt(string key)
+    {
+        using (var exists = Cmd("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meta'"))
+            if (Convert.ToInt64(exists.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0) return null;
+        using var c = Cmd("SELECT value FROM meta WHERE key=$k", ("$k", key));
+        var o = c.ExecuteScalar();
+        return o is null || o is DBNull ? null : int.TryParse(o.ToString(), out var i) ? i : null;
     }
 
     public SqliteConnection Connection => _conn;
@@ -150,6 +193,12 @@ public sealed class Database : IDisposable
         Exec("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);");
         var have = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         CreatedHere = have == 0;
+
+        // THE HOME'S KIND, FIRST (U-proving-ground-a): a new file is marked before its first rung, and the mark is never
+        // rewritten — a crash before the first stamp re-runs this against the mark it left, which the open compared.
+        // No rung: one key in this table, which every home has. A home stamped before this build stays unmarked, a real one.
+        if (have == 0)
+            Exec($"INSERT INTO meta(key,value) VALUES('{Proving.HomeMark.Key}','{Proving.HomeMark.Word(Kind)}') ON CONFLICT(key) DO NOTHING;");
 
         if (have < 1)
         {
