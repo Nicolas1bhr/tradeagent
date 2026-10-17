@@ -159,6 +159,12 @@ public class MissionLoopTests
         public string AgentHome => Path.Combine(Root, MaterialScanner.AgentDir);
 
         /// <summary>
+        /// THE INSTANT A LAUNCH STARTS AT: the clock the loop is driven on, never the wall clock beside it (<c>U-turn-tail-drain</c>,
+        /// carried from <c>U-test-host-clocks</c>' review; as <c>CouncilHost.Clock</c>). The wall clock where a test drives none.
+        /// </summary>
+        public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+
+        /// <summary>
         /// The launch record, through the REAL store, so the one-transaction consumption in
         /// <see cref="AiAttemptStore.Begin"/> is the thing under test rather than a stand-in for it.
         /// A host with no queue records nothing and answers null, exactly as the interface's default
@@ -171,7 +177,7 @@ public class MissionLoopTests
 
             var id = $"turn-{_tag}-{++_attempts}";
             var admission = new AiAttemptStore(_db).Begin(
-                new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow }, wakes);
+                new AiAttempt { Id = id, StartedAt = Clock() }, wakes);
             LastAttemptId = id;
             return admission;
         }
@@ -446,13 +452,13 @@ public class MissionLoopTests
         var yesterday = new FakeConversation(presence);
         events.Raise(MissionEventIds.Owner(1), MissionEventKind.Owner, Midday,
             OwnerSaid("how did today go?"));
-        await new MissionLoop(new FakeHost(db, root, presence, yesterday) { Events = events },
+        await new MissionLoop(new FakeHost(db, root, presence, yesterday) { Events = events, Clock = () => Midday },
             NoHeartbeat, now: () => Midday).TurnAsync();
         Assert.Single(yesterday.Sent);
 
         // From here nothing new has happened, and nothing may be launched.
         var conversation = new FakeConversation(presence);
-        var host = new FakeHost(db, root, presence, conversation) { Events = new MissionEventStore(db) };
+        var host = new FakeHost(db, root, presence, conversation) { Events = new MissionEventStore(db), Clock = () => Midday };
         var restarted = new MissionLoop(host, NoHeartbeat, now: () => Midday);
 
         for (var i = 0; i < 5; i++) await restarted.TurnAsync();          // ticks
@@ -479,7 +485,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
-        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        var host = new FakeHost(db, root, presence, conversation) { Events = events, Clock = () => Midday };
         var loop = new MissionLoop(host, NoHeartbeat, now: () => Midday);
 
         events.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, Midday);
@@ -534,7 +540,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
-        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        var host = new FakeHost(db, root, presence, conversation) { Events = events, Clock = () => Midday };
         events.Raise(MissionEventIds.Review(Midday), MissionEventKind.Review, Midday);
         File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
             """{"after_seconds": 600}""");
@@ -548,7 +554,7 @@ public class MissionLoopTests
 
         // A fresh loop over the same database honours it too, and takes no turn until it is due.
         var later = new FakeConversation(presence);
-        await new MissionLoop(new FakeHost(db, root, presence, later) { Events = new MissionEventStore(db) },
+        await new MissionLoop(new FakeHost(db, root, presence, later) { Events = new MissionEventStore(db), Clock = () => Midday },
             NoHeartbeat, now: () => Midday).TurnAsync();
         Assert.Empty(later.Sent);
     }
@@ -577,12 +583,13 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
+        var late = new DateTimeOffset(DateTime.Today.AddHours(23).AddMinutes(55), DateTimeOffset.Now.Offset);
         var host = new FakeHost(db, root, presence, conversation)
         {
             Events = events,
-            Spending = role => role == CouncilRoles.Research ? StoppedReading(role) : AiSpendToday.NotMetered
+            Spending = role => role == CouncilRoles.Research ? StoppedReading(role) : AiSpendToday.NotMetered,
+            Clock = () => late
         };
-        var late = new DateTimeOffset(DateTime.Today.AddHours(23).AddMinutes(55), DateTimeOffset.Now.Offset);
         events.Raise(MissionEventIds.Review(late), MissionEventKind.Review, late);
         File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
             """{"after_seconds": 600}""");
@@ -627,7 +634,8 @@ public class MissionLoopTests
         var loop = new MissionLoop(new FakeHost(db, root, presence, conversation)
             {
                 Events = events,
-                Spending = StoppedReading
+                Spending = StoppedReading,
+                Clock = () => Midday
             },
             new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) }, now: () => Midday);
 
@@ -653,7 +661,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var conversation = new FakeConversation(presence);
         var loop = new MissionLoop(new FakeHost(db, root, presence, conversation)
-        { Events = new MissionEventStore(db) },
+        { Events = new MissionEventStore(db), Clock = () => Midday },
             new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) },
             now: () => Midday, delay: (_, ct) => Task.Delay(1, ct));
 
@@ -750,7 +758,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var clock = new Clock(Midday);
-        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events, Clock = () => clock.Now },
             Heartbeat, now: () => clock.Now);
 
         await loop.TurnAsync();                                         // nothing due: the first looks are raised
@@ -797,7 +805,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var clock = new Clock(Midday);
-        var host = new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events };
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events, Clock = () => clock.Now };
         var loop = new MissionLoop(host, Heartbeat, now: () => clock.Now);
 
         await loop.TurnAsync();
@@ -835,7 +843,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var clock = new Clock(Midday);
-        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events, Clock = () => clock.Now },
             Heartbeat, now: () => clock.Now);
 
         await loop.TurnAsync();
@@ -870,7 +878,7 @@ public class MissionLoopTests
         var presence = new AgentPresence();
         var events = new MissionEventStore(db);
         var clock = new Clock(Midday);
-        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events },
+        var loop = new MissionLoop(new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events, Clock = () => clock.Now },
             Heartbeat, now: () => clock.Now);
 
         await loop.TurnAsync();
@@ -880,7 +888,7 @@ public class MissionLoopTests
 
         // A RESTART: a new loop and a new host over the same database, and nothing else carried across.
         var restarted = new MissionLoop(
-            new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = new MissionEventStore(db) },
+            new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = new MissionEventStore(db), Clock = () => clock.Now },
             Heartbeat, now: () => clock.Now);
         await SleepToTheNextWake(restarted, events, clock);
 
