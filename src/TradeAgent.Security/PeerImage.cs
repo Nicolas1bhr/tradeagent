@@ -218,9 +218,12 @@ public static class PeerImage
     /// <summary>
     /// The hash of a file on disk, or null when it cannot be read.
     ///
-    /// Cached on (path, length, last write) because this runs once per connection and the file is a
-    /// whole CLI. A swap changes at least one of the three, and a swap that somehow changed none of
-    /// them still fails the PATH rule when it is anywhere but the app's own bin.
+    /// <para><b>Cached only on what its writer cannot set back</b> (<c>U-thinking-seats-c</c> item 6, owed from U-thinking-seats-b's
+    /// review R5): on Linux and macOS the file's device, inode, CHANGE time and size, read before the bytes and again after them — a
+    /// write moves the change time and no user can put it back, and a rename onto the path is another inode. The first pass keyed it
+    /// on path, length and last write, and a same-length replacement with its last write restored reused the approved digest for the
+    /// pin the door and the pipe check. On Windows nothing is cached: a same-user writer can set a file's change time there too
+    /// (<c>SetFileInformationByHandle</c>), so the bytes are read at every call.</para>
     /// </summary>
     public static string? HashOf(string? path)
     {
@@ -229,25 +232,66 @@ public static class PeerImage
         {
             var info = new FileInfo(path!);
             if (!info.Exists) return null;
-            var key = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+            var key = Identity(info.FullName);
 
-            lock (Cache)
-                if (Cache.TryGetValue(key, out var known)) return known;
+            if (key is not null)
+                lock (Cache)
+                    if (Cache.TryGetValue(key, out var known)) return known;
 
-            using var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            var hash = Core.Sha256Hex.Of(stream);
+            string hash;
+            using (var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                hash = Core.Sha256Hex.Of(stream);
 
-            lock (Cache)
-            {
-                if (Cache.Count > 32) Cache.Clear();
-                Cache[key] = hash;
-            }
+            // KEPT ONLY WHEN NOTHING CHANGED WHILE IT WAS READ: bytes that moved under the read are hashed again next time.
+            if (key is not null && Identity(info.FullName) == key)
+                lock (Cache)
+                {
+                    if (Cache.Count > 32) Cache.Clear();
+                    Cache[key] = hash;
+                }
             return hash;
         }
         catch (Exception) { return null; }
     }
 
     static readonly Dictionary<string, string> Cache = [];
+
+    /// <summary>
+    /// WHAT A FILE'S CACHED HASH IS KEYED ON: its full path, device, inode, change time to the nanosecond and size — or null on
+    /// Windows, or when the system will not say, and then nothing is cached.
+    /// </summary>
+    static string? Identity(string path)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        var buf = new byte[512];
+        if (OperatingSystem.IsMacOS())
+        {
+            // struct stat with 64-bit inodes (sys/stat.h): st_dev int32 at 0, st_ino uint64 at 8, st_ctimespec at 64 (two int64),
+            // st_size int64 at 96. arm64's stat has that layout; x86-64's plain stat is the old one, its 64-bit form stat$INODE64.
+            var r = RuntimeInformation.ProcessArchitecture == Architecture.X64 ? stat_inode64(path, buf) : stat(path, buf);
+            if (r != 0) return null;
+            return $"{path}|{BitConverter.ToInt32(buf, 0)}|{BitConverter.ToUInt64(buf, 8)}|{BitConverter.ToInt64(buf, 64)}." +
+                   $"{BitConverter.ToInt64(buf, 72)}|{BitConverter.ToInt64(buf, 96)}";
+        }
+        // struct statx, the same on every architecture: stx_mask at 0, stx_ino at 32, stx_size at 40, stx_ctime at 96 (int64 seconds,
+        // uint32 nanoseconds), stx_dev_major/minor at 136/140. A field the kernel did not fill is no key.
+        const uint wanted = StatxCtime | StatxIno | StatxSize;
+        if (statx(AtFdCwd, path, 0, wanted, buf) != 0 || (BitConverter.ToUInt32(buf, 0) & wanted) != wanted) return null;
+        return $"{path}|{BitConverter.ToUInt32(buf, 136)}:{BitConverter.ToUInt32(buf, 140)}|{BitConverter.ToUInt64(buf, 32)}|" +
+               $"{BitConverter.ToInt64(buf, 96)}.{BitConverter.ToUInt32(buf, 104)}|{BitConverter.ToUInt64(buf, 40)}";
+    }
+
+    const int AtFdCwd = -100;
+    const uint StatxCtime = 0x80, StatxIno = 0x100, StatxSize = 0x200;
+
+    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
+    static extern int stat([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] buf);
+
+    [DllImport("libc", EntryPoint = "stat$INODE64", SetLastError = true)]
+    static extern int stat_inode64([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] buf);
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    static extern int statx(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mask, byte[] buf);
 
     [SupportedOSPlatform("windows")]
     static string? ImagePathOf(uint pid)
