@@ -10834,3 +10834,35 @@ under the budget and end within budget/4 of the press's deadline — the settlin
 **Gate:** Release 0 warnings; `SweepRequestIdTests` 3× Passed 46; the test alone ×50: 0 failures; branch CI 38977448516 every job green. Re-review (`fleet/tmp/B-scratch/u-sweep-budget-red/fix1-review.md`):
 both points closed, no regression. The "judged by id" ruling for this test ENDS with this landing.
 **NOT VERIFIED:** no Windows or macOS witness beyond branch CI; tests box NOT RUN — the machine does not answer.
+
+## U-thinking-seats-a — the activation gate: no position beyond the legacy pair activates on a real-model seat until this host records a proven executor cell, each capability checked against the seat assurance the app RECORDED for the attempt, fail-closed before model work; RUNG 39 (landed 2026-10-17, seat A)
+
+**Landed** at `35d3843c` (train B6, after seat B's U-ceiling-clock-red and U-sweep-budget-red) (main's code under it: O4 rung 38, U-mint-per-launch, O3 U-org-wakes). A protection unit — ORCHESTRATION § 2.3 (the owner's 2026-10-11 answer: nothing
+runs on real agents until executors have confined cells, as code, never a flag), § 2.7 (seat classes in code), ORG-001, BUDGET-001. **RUNG 39** (schema 39 after O4's 38):
+`ai_attempt.seat_class` / `assurance` written in `Begin`'s insert, and `cell_proof` (provider, platform, build, profile hash, machine = SHA-256 of the id, os_release). Builder
+(2026-10-11), fixers a657d361798fae547 (pass 1), a0c0f94eed5ebd1d1 (pass 2 + the O3 adoption pass), revert leg af01dd9d05ed95300 (decision A).
+**CI:** landing run **38993615006 (attempt 2 — attempt 1 was red only on macOS `LinuxHostRuntimeTests.The_device_auth_prompt_yields_its_link_and_code`: the device-sign-in stub failed to start its .NET runtime, "Failed to create CoreCLR"; the train cannot reach it; a first sighting; the failed job re-run, no code changed)** (the train with seat B's clock fix). Every job success incl. `linux-host`; `land.sh train-check` VERDICT PASS (train names 2838 → 2858, removed 0; scan clean with the phrase exclusions judged at prep).. Revert run 38991744531 at `ea1838f0`: every job success but test ubuntu, macos and windows 2 — red ONLY on O3's `CouncilLoopTests.A_runnable_head_gets_one_ceiling_wake_from_its_last_turn` (clock-dependent, 00:00–10:00 UTC; the diff cannot reach it; fixed by the train's U-ceiling-clock-red) — JUDGED by id. Before: 38977215811 at `9b651f7b` (adoption pass) 12/12; 38971189858 at `4baa7143` (pass 2) 12/12; 38945757464 (pass 1) red only on the
+BudgetReservation race later closed by U-ledger-backoff-red; 38938865051 (builder) red only on linux-host's image break (U-ci-host-pins). Scan: `AiTurnAllowanceOutputTokens`
+(a settings property name) excluded by phrase.
+**What changed:** one rule, `PositionActivation.Decide`, asked at the seam (declared seat), in `Begin` (verified seat) and by `AtLaunch` immediately before model work. A
+capability the seat cannot carry refuses as O3's `RefusalKind.Position` (settles its wakes); no proven cell, an unconfined neighbour, an unset seat register outside a test
+host, a verified seat that differs from the declared one, or an unreadable chart refuses as `HostOrLaunch` (steps over, keeps every wake); the owner's words are never
+settled. O3's `RefusalKind` + `TurnRefusal` are THE types on every path (the gate's own `GateRefusal` deleted, no alias); mint's `AiAdmission.Launch` → HostOrLaunch kept.
+A late refusal closes the row charged 0 when nothing started and gives back every wake it took, a delegated one included. Seat classes in code: `cli`, `harness`,
+`SeatClasses.Puppet` (Mediated, runs no model and no shell); `RuntimeManifest.SessionSeatClass` is the one answer; `Begin` writes `seat_class`. A proof counts only on the
+machine, os_release, platform and build that recorded it. `PositionActivation.TestHost` (internal; a test module initializer) is the only way an unset register passes.
+**Evidence:** RED at base: (a) "a position beyond the legacy pair was admitted on a CLI seat"; (b1) "a head ran on a real-model seat with no proven cell recorded"; pass 1:
+(1) "the owner's words were taken by a launch the gate refused: failed", (3) "a proof recorded on another machine counted here", (4) "a chart read failure was a refusal
+about the position"; pass 2: (o) "an unset register passed 'operations' unconfined beside an active position outside a test host", (p) "the owner's words were taken by a
+turn the gate refused", (q) "a position on a puppet seat was refused", life (d) "the LOST puppet attempt kept seat class 'cli'". Mutants: `Begin`'s gate line removed ⇒ (c)
+red; the neighbour read removed ⇒ (k) red; the TestHost condition removed ⇒ (o) red; each restored green. Release `--no-incremental` 0 warnings.
+**Decision A (the orchestrator, 2026-10-17):** item 6's HOLD of a gate-refused attempt's staged output (and its re-review fixes: `gate_kind`, `MarkGateRefused`,
+`HeldIdOf`) was REVERTED after re-review 3 found its crash window still open and a write-failure regression; the gate refuses before model work, so a refused attempt
+produces nothing new, and main had no gate before. Reverted by `git revert` of 878a94e7 and 4cd74f26 and by hand from the replayed 0388a1c3 (`RefusedAtTheGate`, `GateHeldWhy`, the `CouncilRelay.Land` branch); one test renamed to `A_turn_the_gate_refused_mid_way_gives_the_owners_words_back` with its hold assertions deleted, its wake-release assertions kept (names vs main: removed 0). **OWED CARD:** "a gate-refused attempt's staged outputs are quarantined, crash- and
+write-failure-safe" → O5a's delivery sealing or U-org-lanes. Re-review 3's schema finding (a home of the unlanded intermediate 0388a1c3) judged not a defect (no released
+home had that shape; CLAUDE.md). Triage: records/U-thinking-seats-a-review-triage.md.
+**Found on main** (named, not this diff): O3's `CouncilLoopTests.A_runnable_head_gets_one_ceiling_wake_from_its_last_turn` is clock-dependent (red 00:00–10:00 UTC; seat
+B's card); `AiAttemptLedgerTests…restart_and_midnight` red beside `PuppetLivesTests` (U-puppet-isolation, in flight).
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** no model call, observed run or codex; NOTHING WRITES `cell_proof` yet (U-cell-linux-c's host
+benchmark will, in its own rung — the orchestrator's ruling 2026-10-17), so on every host today no non-legacy position activates on a real-model seat; a puppet that
+declares a real-model class is gated as that class; the macOS/Windows identity reads are proven by CI's tests on those runners only.
