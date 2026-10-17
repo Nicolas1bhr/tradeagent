@@ -10866,3 +10866,29 @@ B's card); `AiAttemptLedgerTests…restart_and_midnight` red beside `PuppetLives
 **Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** no model call, observed run or codex; NOTHING WRITES `cell_proof` yet (U-cell-linux-c's host
 benchmark will, in its own rung — the orchestrator's ruling 2026-10-17), so on every host today no non-legacy position activates on a real-model seat; a puppet that
 declares a real-model class is gated as that class; the macOS/Windows identity reads are proven by CI's tests on those runners only.
+
+## U-cell-linux-b — a Linux attempt runs in its own cgroup under the service's delegated subtree: cgroup.kill ends it whole, a restart sweeps what a crash left, ceilings hold, and a grant is served only to a peer inside BOTH its session tree and its attempt's cgroup; no rung (landed 2026-10-17, seat A)
+
+**Landed** at `8f086508` (train B7, first) (fix pass 1 code `11c7ff58`; builder code `786aef1f`). A protection unit — ORCHESTRATION § 2.3 (a grant bound to the attempt's container: on Linux
+a per-attempt cgroup, descendants cannot leave it) and § 2.8; the orchestrator's Q1 ruling: cgroup membership is ADDED to U-grant-tree's session and parent-chain proof
+(an AND), never a replacement; CRED-001 (item 5). **No rung.** Builder a113dc0e0e1884a11 (opus/high, 2026-10-16 from `835efe4a`); fresh fixer af2a51a8d11abe7b9.
+**CI:** landing run **38996718307** (train B7 with seat B; every job success incl. `linux-host`; the ubuntu "Test the Linux cell rows" step Passed: 41 of 41). `land.sh train-check` VERDICT PASS (train names 2858 → 2878, removed 0; scan clean with two judged phrases of the test's grant property). Fix pass run 38992981982 at `11c7ff58`: every job success but test ubuntu, macos and windows 2 — red ONLY on O3's clock test
+`CouncilLoopTests.A_runnable_head_gets_one_ceiling_wake_from_its_last_turn` (fixed by U-ceiling-clock-red; the diff cannot reach it) — JUDGED by id; the Cell step it
+skipped ran in 38995102325 (the same code + `!cancelled()` on the Cell steps only, ubuntu): "Total tests: 41 Passed: 41". Builder run 38976069500: all 12 success (Cell
+step kernel 6.17.0-1022-azure x86_64, Landlock ABI 7, a delegated run-u20.service, "Total 37 Passed 37"; linux-host on the real unit). Scan: at train-check.
+**What changed:** `AttemptCgroups` (ForThisProcess / Open / Create / Kill / Sweep; memory.max rounded to pages); the launcher joins its cgroup with `--cgroup` before
+`setsid` (a failure exits 126 naming the step); every Start takes the attempt id; End() snapshots the session tree, then `cgroup.kill` → populated 0 → ends the snapshot →
+rmdir, survivors named; an unreadable listing is UNKNOWN, never ended. AppHost moves the app into `supervisor/` and sweeps leftovers at start; a leftover that will not
+end is a survivor the meter holds (no turn admitted) and counts in presence. `PeerFacts.Cgroup` + NsPids read between the two PidOf looks; the container is
+`AllOf(session, cgroup)`. `Guarded` refuses the cgroup filesystem and the delegated root, the seat home (the login), bin/, tools/, updates/, logs/ and any
+`environments.toml`, by path and descriptor; codex's `environments.toml` joins the seat home's Forbidden (it would replace CODEX_EXEC_SERVER_URL). `Delegate=yes` in
+tradeagent.service; prove.sh asserts the cgroup on the real unit after start and after kill -9.
+**Evidence:** builder RED (throwaway, run 38972100205): 7 of 28, incl. (h) "a process of attempt A that moved itself into attempt B's cgroup presented A's grant and was
+served", (a) a setsid daemon outlived its cancel, (d) a sleeper outlived the restart's sweep; mutant (container = session proof alone, 38973696991) ⇒ only (h) red.
+Fix pass RED: unit rows 38979515767, Cell rows 38992144164 ("Passed: 37 Failed: 4"), item 5 on the Mac; mutant (Pids reads an unread listing as empty, 38992963414) ⇒ only
+(l) red "Not found: could not list"; each restored. Release `--no-incremental` 0 warnings; touched classes 3×.
+**Judged** (records/U-cell-linux-b-review-triage.md): review R1–R4 REAL → fixed; re-review (fleet/tmp/A-org/u-cell-linux-b-fix/rereview.md) no findings. R3 reuses
+U-unjobbed-presence's window (no new presence API). tools/ is refused for every grant kind — U-cell-linux-c needs an execute-only grant to run the pinned CLI in a cell.
+**Tests box:** NOT RUN — the machine does not answer. **NOT VERIFIED:** the owner's host (U-cell-linux-e, his word); the fstatfs refusal of a second cgroup2 mount (no root
+on CI); a sweep whose root cannot be listed (a warning only); kernels without SO_PEERPIDFD under a delegated root (every grant Unknown → refused, by design);
+cgroup.kill's time-bound path never shown red; nothing local on Linux (the Colima VM is off-limits).
