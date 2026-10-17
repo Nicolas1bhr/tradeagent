@@ -196,12 +196,47 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// WHETHER THIS ATTEMPT MAY USE AN ORGANISATION VERB: null when the seat assurance the activation gate RECORDED for the attempt
     /// carries decision verbs, the refusal in words otherwise — never headship, never a role name (ORCHESTRATION § 2.3, § 2.9).
     /// The answer is the activation gate's (<c>U-thinking-seats-a</c>: <c>CapabilityPolicy.Minimum(Capability.DecisionVerbs)</c>
-    /// against the attempt's recorded <c>ai_attempt.assurance</c>), wired here by whichever lands second of this unit and part a;
-    /// until it is, no assurance is recorded for any attempt and EVERY verb is refused — refuse, never guess.
+    /// against the attempt's recorded <c>ai_attempt.assurance</c>): the app sets <see cref="RecordedAssurance"/>. A door composed
+    /// without one refuses EVERY verb — refuse, never guess.
     /// </summary>
     public Func<AgentGrant, string?> VerbGate { get; init; } = NoRecordedAssurance;
 
-    /// <summary>The gate before part a: nothing recorded, so nothing carries a decision verb.</summary>
+    /// <summary>
+    /// THE PRODUCT'S GATE (<c>U-thinking-seats-b</c> item 4, on part a's rung 39): the seat assurance the admission RECORDED on the
+    /// attempt's <c>ai_attempt</c> row, against part a's one policy — <see cref="Core.Db.CapabilityPolicy.Minimum"/> of
+    /// <see cref="Core.Db.Capability.DecisionVerbs"/>, MEDIATED (the orchestrator's ruling: a broker-only, brokered or confined seat
+    /// passes, a puppet is mediated and passes, an unconfined seat never). Null to serve, the refusal in words otherwise. Read per
+    /// call, from the row and from nothing else: an attempt with no row, no recorded word, a word this build does not name
+    /// (<see cref="Core.Db.SeatClasses.Name"/>) or a read that fails is refused — refuse, never guess.
+    /// </summary>
+    public static Func<AgentGrant, string?> RecordedAssurance(Func<string, Core.Db.AiAttempt?> attemptOf)
+    {
+        ArgumentNullException.ThrowIfNull(attemptOf);
+        return grant =>
+        {
+            var minimum = Core.Db.CapabilityPolicy.Minimum(Core.Db.Capability.DecisionVerbs);
+            string? recorded;
+            try { recorded = attemptOf(grant.AttemptId)?.Assurance; }
+            catch (Exception ex)
+            {
+                return $"the seat assurance recorded for attempt {grant.AttemptId} could not be read ({ex.Message}), so it holds no " +
+                       "organisational decision right";
+            }
+            var assurance = Enum.GetValues<Core.Db.SeatAssurance>()
+                .Where(a => string.Equals(Core.Db.SeatClasses.Name(a), recorded, StringComparison.Ordinal))
+                .Select(a => (Core.Db.SeatAssurance?)a).FirstOrDefault();
+            if (assurance is not { } carried)
+                return $"the seat assurance recorded for attempt {grant.AttemptId} could not be read " +
+                       $"({(recorded is null ? "none is recorded" : $"'{recorded}' is not one this build names")}), so it holds no " +
+                       "organisational decision right";
+            return carried < minimum
+                ? $"attempt {grant.AttemptId} is recorded {Core.Db.SeatClasses.Name(carried)}, and an organisation verb needs at least a " +
+                  $"{Core.Db.SeatClasses.Name(minimum)} seat, so it holds no organisational decision right"
+                : null;
+        };
+    }
+
+    /// <summary>The gate of a door composed with no ledger to read: nothing recorded, so nothing carries a decision verb.</summary>
     public static string? NoRecordedAssurance(AgentGrant grant) =>
         $"TradeAgent has recorded no seat assurance for attempt {grant.AttemptId}, so it holds no organisational decision right: an " +
         "organisation verb is served only to an attempt whose recorded assurance carries it, never by role or headship";

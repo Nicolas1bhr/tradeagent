@@ -444,6 +444,83 @@ public class BrokerDoorTests
         }
     }
 
+    /// <summary>
+    /// ITEM 4 PASS: THE PRODUCT'S VERB GATE IS THE ATTEMPT'S RECORDED ASSURANCE AGAINST PART A'S POLICY
+    /// (<see cref="CapabilityPolicy.Minimum"/> of <see cref="Capability.DecisionVerbs"/>, MEDIATED — the orchestrator's ruling).
+    /// Rows written to <c>ai_attempt</c> as the admission writes them: an attempt recorded unconfined is refused the test verb in
+    /// words, not offered it, and the verb never runs; a puppet (mediated) and a confined attempt are offered and served; an
+    /// attempt whose assurance cannot be read — a word this build does not know, no word, or no row — is refused.
+    /// </summary>
+    [Fact]
+    public async Task The_door_serves_a_verb_by_the_assurance_recorded_for_the_attempt()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var attempts = new AiAttemptStore(db);
+        void Recorded(string id, string? seatClass, string? assurance) => attempts.Begin(new AiAttempt
+        {
+            Id = id, StartedAt = DateTimeOffset.UtcNow, Role = CouncilRoles.Research, SeatClass = seatClass, Assurance = assurance
+        });
+        Recorded("attempt-v-unconfined", SeatClasses.Cli, SeatClasses.Name(SeatAssurance.Unconfined));
+        Recorded("attempt-v-puppet", SeatClasses.Puppet, SeatClasses.Name(SeatAssurance.Mediated));
+        Recorded("attempt-v-confined", SeatClasses.Cell, SeatClasses.Name(SeatAssurance.Confined));
+        Recorded("attempt-v-unknown", SeatClasses.Cli, "carried");
+        Recorded("attempt-v-none", null, null);
+
+        var ran = new List<string>();
+        var verb = new BrokerDoor.DoorVerb(new ToolSpec("test-verb-show", "A verb that exists only in this test.",
+                new Dictionary<string, object> { ["type"] = "object", ["properties"] = new Dictionary<string, object>() }),
+            (g, _, _) => { lock (ran) ran.Add(g.AttemptId); return Task.FromResult(ToolAnswer.Ok("the test verb answered", "test-verb-show")); });
+
+        foreach (var (attempt, served, words) in new (string, bool, string)[]
+                 {
+                     ("attempt-v-puppet", true, ""),
+                     ("attempt-v-confined", true, ""),
+                     ("attempt-v-unconfined", false, "is recorded unconfined"),
+                     ("attempt-v-unknown", false, "could not be read"),
+                     ("attempt-v-none", false, "could not be read"),
+                     ("attempt-v-no-row", false, "could not be read")
+                 })
+        {
+            var grants = new AgentGrants();
+            using var research = grants.IssueHere(CouncilRoles.Research, attempt);
+            var folder = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+            Directory.CreateDirectory(folder);
+            var ledger = new ToolCallStore(db);
+            await using var door = new BrokerDoor
+            {
+                Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger, Pipe = () => server,
+                VerbGate = BrokerDoor.RecordedAssurance(attempts.Get),
+                Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger)
+            };
+            door.Start();
+            using var http = Client(research.Token);
+
+            var listed = (await Post(http, door.Url!, Rpc(1, "tools/list"))).Json.GetProperty("result").GetProperty("tools")
+                .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToList();
+            var call = (await Post(http, door.Url!, Rpc(2, "tools/call", new { name = "test-verb-show", arguments = new { } })))
+                .Json.GetProperty("result");
+
+            if (served)
+            {
+                Assert.True(listed.Contains("test-verb-show"), $"{attempt} was not offered the verb; tools/call said: {Text(call)}");
+                Assert.False(call.GetProperty("isError").GetBoolean(), $"{attempt} was refused the verb: {Text(call)}");
+                Assert.Equal("the test verb answered", Text(call));
+                Assert.Contains(attempt, ran);
+            }
+            else
+            {
+                Assert.DoesNotContain("test-verb-show", listed);
+                Assert.True(call.GetProperty("isError").GetBoolean(), $"an organisation verb was served to {attempt}: {Text(call)}");
+                Assert.Contains("is an organisation verb", Text(call));
+                Assert.Contains(words, Text(call));
+                Assert.DoesNotContain(attempt, ran);
+            }
+            Assert.True(ledger.ForAttempt(attempt).Count(r => r.Tool == "test-verb-show") == 1, $"the verb call of {attempt} was not recorded once");
+        }
+    }
+
     /// <summary>(j), the verbs' half: a verb named like a pipe op — <c>cancel</c> moves money — or a harness tool keeps the door shut.</summary>
     [Fact]
     public async Task A_verb_named_like_a_pipe_op_or_a_harness_tool_keeps_the_door_shut()

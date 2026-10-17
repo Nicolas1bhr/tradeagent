@@ -265,8 +265,9 @@ public sealed class AppHost : IAsyncDisposable
         Tools = grant => BrokerDoor.ToolsFor(grant, HomeFor, () => _server, _db is null ? null : new ToolCallStore(_db)),
         // AND ITS DRAIN: the door's disposal waits for a call in flight as long as the current pipe server's own drain would.
         Pipe = () => _server,
-        // NO ORGANISATION VERB YET, and the gate's default refuses every one: no seat assurance is recorded on this build. The
-        // second lander of this unit, part a (U-thinking-seats-a) and O5a wires the gate to the recorded assurance and the verbs.
+        // NO ORGANISATION VERB YET (O5a brings them). The gate is part a's recorded assurance against its one policy: a verb is
+        // served only to an attempt whose ai_attempt row carries at least a mediated seat, and an unreadable row refuses.
+        VerbGate = _db is { } attemptsDb ? BrokerDoor.RecordedAssurance(new AiAttemptStore(attemptsDb).Get) : BrokerDoor.NoRecordedAssurance,
         Ledger = _db is null ? null : new ToolCallStore(_db),
         Log = line =>
         {
