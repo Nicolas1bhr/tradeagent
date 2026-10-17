@@ -154,7 +154,8 @@ public sealed partial class GatewayPipeServer
         OnlyDeclared(req, MandateArgsWhy);
         var caller = OrgVerbCaller(ctx, Capability.Reads);
         var served = new List<object>();
-        var spent = 0;
+        // THE FRAME FIRST, at its widest, and a comma between two rows: the WHOLE answer is bounded, not its rows alone.
+        long spent = ReplyBytes(ListAnswer([], "bytes"));
         string? cappedBy = null;
         foreach (var m in Gateway.Org.MandatesOf(caller))
         {
@@ -172,25 +173,36 @@ public sealed partial class GatewayPipeServer
                 allocation = m.Allocation.ToString(CultureInfo.InvariantCulture),
                 measured_spend = Measured(Gateway.Org.SpendOf(m.Id))
             };
-            var cost = Encoding.UTF8.GetByteCount(Json.Write(row));
+            var cost = ReplyBytes(row) + (served.Count > 0 ? 1 : 0);
             if (served.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = "bytes"; break; }
             spent += cost;
             served.Add(row);
         }
-        return new
-        {
-            mandates = served,
-            more = cappedBy is not null,
-            capped_by = cappedBy,
-            note = "Each goal is its issuer's words; the status, the allocation and the measured spend are TradeAgent's records."
-        };
+        return ListAnswer(served, cappedBy);
     }
 
+    static object ListAnswer(List<object> served, string? cappedBy) => new
+    {
+        mandates = served,
+        more = cappedBy is not null,
+        capped_by = cappedBy,
+        note = "Each goal is its issuer's words; the status, the allocation and the measured spend are TradeAgent's records."
+    };
+
+    /// <summary>What <c>mandate-show</c>'s <c>part</c> names: its deliveries (the default) or its events.</summary>
+    public const string ShowDeliveries = "deliveries", ShowEvents = "events";
+
     /// <summary>
-    /// ONE MANDATE THE CALLER HOLDS OR DECIDES, IN FULL: as issued, every event, and its sealed deliveries newest first — each
-    /// verbatim, each check TradeAgent ran on it, and each deviation's STATED cost (the holder's claim) shown BESIDE the mandate's
-    /// MEASURED spend (the app's), never instead of it. Bounded by <see cref="ResearchLedger.MaxReadBytes"/>; 'more' says the
-    /// deliveries stopped, and 'before' set to the last one served continues.
+    /// ONE MANDATE THE CALLER HOLDS OR DECIDES, IN FULL: as issued, its sealed deliveries newest first — each verbatim, each check
+    /// TradeAgent ran on it, and each deviation's STATED cost (the holder's claim) shown BESIDE the mandate's MEASURED spend (the
+    /// app's), never instead of it — and its events newest first. THE WHOLE ANSWER IS BOUNDED by
+    /// <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes it, escaping included (fix pass 1, item 3): the frame at its
+    /// longest, then whole rows — a delivery or an event is never cut — and what it left out is said, never silent: each list's
+    /// total, whether more is left and the cursor that continues it, and <c>left_out</c> in words. With no <c>part</c> it serves
+    /// the newest deliveries and then as many of the newest events as still fit; <c>part</c> = <c>deliveries</c> or
+    /// <c>events</c> pages ONE list from <c>before</c>. The first row of the list asked for is always served and always fits: a
+    /// delivery is at most <see cref="MandateLimits.MaxDeliveryBytes"/> at its seal, and the frame at most its fields' caps
+    /// (<c>OrgAssignmentTests.A_mandate_show_is_bounded_whole_and_says_what_it_left_out</c> measures both at their widest).
     /// </summary>
     object MandateShow(AgentContext ctx, IpcRequest req)
     {
@@ -201,64 +213,129 @@ public sealed partial class GatewayPipeServer
         if (m is null || (m.Holder != caller && m.Decider != caller))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"'{id}' is no mandate you hold or decide: a position reads its own mandates and nobody else's.");
+        var part = req.Str("part");
+        if (part is not null and not ShowDeliveries and not ShowEvents)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'part' is '{ShowDeliveries}' or '{ShowEvents}' — '{part}' is neither. Omit it to read the newest of both.");
+        var before = req.Str("before");
+        if (before is not null && part is null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'before' continues one list: name it with 'part' ('{ShowDeliveries}' or '{ShowEvents}'), as an answer's 'left_out' says.");
 
         var measured = Measured(Gateway.Org.SpendOf(m.Id));
         var deliveries = Gateway.Org.Deliveries(m.Id).Reverse().ToList();
-        if (req.Str("before") is { } before)
+        var events = Gateway.Org.MandateEvents(m.Id).Reverse().ToList();
+        var dFrom = 0;
+        var eFrom = 0;
+        if (before is not null && part == ShowDeliveries)
         {
             var at = deliveries.FindIndex(d => d.Id == before);
             if (at < 0)
-                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{before}' is no delivery of {m.Id}: pass a 'next_before' an answer gave.");
-            deliveries = deliveries.Skip(at + 1).ToList();
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{before}' is no delivery of {m.Id}: pass a 'deliveries_next_before' an answer gave.");
+            dFrom = at + 1;
+        }
+        if (before is not null && part == ShowEvents)
+        {
+            var at = long.TryParse(before, NumberStyles.None, CultureInfo.InvariantCulture, out var eventId)
+                ? events.FindIndex(e => e.Id == eventId) : -1;
+            if (at < 0)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{before}' is no event of {m.Id}: pass an 'events_next_before' an answer gave.");
+            eFrom = at + 1;
         }
 
-        var served = new List<object>();
-        var spent = 0;
-        var more = false;
-        string? last = null;
-        foreach (var d in deliveries)
-        {
-            var row = new
-            {
-                delivery = d.Id,
-                at = d.At,
-                attempt = d.Attempt,
-                report = d.Report,
-                deviations = d.Deviations.Select(v => new
-                {
-                    what = v.What,
-                    found = v.Found,
-                    stated_cost = v.Cost,
-                    measured_spend = measured
-                }),
-                refs = d.Refs.Select(r => new { kind = r.Kind, id = r.Id }),
-                checks = Gateway.Org.Checks(d.Id).Select(c => new { check = c.Check, passed = c.Passed, reason = c.Reason })
-            };
-            var cost = Encoding.UTF8.GetByteCount(Json.Write(row));
-            if (served.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { more = true; break; }
-            spent += cost;
-            served.Add(row);
-            last = d.Id;
-        }
+        // THE FRAME FIRST, AT THE MOST ITS OWN FIELDS CAN COST once the lists are in: every count and cursor at its widest.
+        var widest = new string('f', 64);
+        long spent = ReplyBytes(Show(m, measured, [], [], int.MaxValue, int.MaxValue, true, widest, true, long.MaxValue,
+            LeftOut(m.Id, int.MaxValue, widest, int.MaxValue, long.MaxValue)));
 
-        return new
-        {
-            mandate = MandateReply(m),
-            goal = m.Objective,
-            scope = m.Scope,
-            measured_spend = measured,
-            events = Gateway.Org.MandateEvents(m.Id).Select(e => new
+        var servedD = new List<object>();
+        string? lastD = null;
+        if (part is null or ShowDeliveries)
+            foreach (var d in deliveries.Skip(dFrom))
             {
-                at = e.At, kind = e.Kind, actor = e.Actor, attempt = e.Attempt, reason = e.Reason, evidence = e.Evidence
-            }),
-            deliveries = served,
-            more,
-            next_before = more ? last : null,
-            note = "A delivery's report, deviations and refs are its holder's CLAIMS, stored as written; a deviation's "
-                   + "'stated_cost' is the holder's word, and 'measured_spend' beside it is TradeAgent's, from the launches charged "
-                   + "to this mandate. The checks, the events and the seal are TradeAgent's records."
-        };
+                var row = DeliveryShown(d, measured);
+                var cost = ReplyBytes(row) + (servedD.Count > 0 ? 1 : 0);
+                // NEVER MORE THAN THE BOUND, the first row included: the seal's cap is what makes the first always fit.
+                if (spent + cost > ResearchLedger.MaxReadBytes) break;
+                spent += cost;
+                servedD.Add(row);
+                lastD = d.Id;
+            }
+
+        var servedE = new List<object>();
+        long? lastE = null;
+        if (part is null or ShowEvents)
+            foreach (var e in events.Skip(eFrom))
+            {
+                var row = new { id = e.Id, at = e.At, kind = e.Kind, actor = e.Actor, attempt = e.Attempt, reason = e.Reason, evidence = e.Evidence };
+                var cost = ReplyBytes(row) + (servedE.Count > 0 ? 1 : 0);
+                if (spent + cost > ResearchLedger.MaxReadBytes) break;
+                spent += cost;
+                servedE.Add(row);
+                lastE = e.Id;
+            }
+
+        // WHAT IS LEFT, PER LIST: a list this call did not page is left whole, from its newest.
+        var dLeft = part == ShowEvents ? deliveries.Count : deliveries.Count - dFrom - servedD.Count;
+        var eLeft = part == ShowDeliveries ? events.Count : events.Count - eFrom - servedE.Count;
+        var dNext = part == ShowEvents || dLeft == 0 ? null : lastD;
+        var eNext = part == ShowDeliveries || eLeft == 0 ? null : lastE;
+        return Show(m, measured, servedD, servedE, deliveries.Count, events.Count, dLeft > 0, dNext, eLeft > 0, eNext,
+            dLeft == 0 && eLeft == 0 ? null : LeftOut(m.Id, dLeft, dNext, eLeft, eNext));
     }
+
+    /// <summary>The answer of <c>mandate-show</c>, in one place, so the frame measured is the frame sent.</summary>
+    object Show(MandateRow m, object measured, List<object> deliveries, List<object> events, int deliveriesTotal, int eventsTotal,
+        bool deliveriesMore, string? deliveriesNext, bool eventsMore, long? eventsNext, string? leftOut) => new
+    {
+        mandate = MandateReply(m),
+        goal = m.Objective,
+        scope = m.Scope,
+        measured_spend = measured,
+        deliveries,
+        deliveries_total = deliveriesTotal,
+        deliveries_more = deliveriesMore,
+        deliveries_next_before = deliveriesNext,
+        events,
+        events_total = eventsTotal,
+        events_more = eventsMore,
+        events_next_before = eventsNext?.ToString(CultureInfo.InvariantCulture),
+        left_out = leftOut,
+        note = "A delivery's report, deviations and refs are its holder's CLAIMS, stored as written; a deviation's "
+               + "'stated_cost' is the holder's word, and 'measured_spend' beside it is TradeAgent's, from the launches charged "
+               + "to this mandate. The checks, the events and the seal are TradeAgent's records."
+    };
+
+    /// <summary>What a bounded answer left out, in words naming each list's rest and the call that reads it.</summary>
+    static string LeftOut(string mandate, int deliveries, string? deliveriesNext, int events, long? eventsNext)
+    {
+        var parts = new List<string>();
+        if (deliveries > 0)
+            parts.Add($"{deliveries.ToString(CultureInfo.InvariantCulture)} more deliver{(deliveries == 1 ? "y" : "ies")} — read with "
+                      + $"part '{ShowDeliveries}'{(deliveriesNext is null ? "" : $" and before '{deliveriesNext}'")}");
+        if (events > 0)
+            parts.Add($"{events.ToString(CultureInfo.InvariantCulture)} more event{(events == 1 ? "" : "s")} — read with part '{ShowEvents}'"
+                      + (eventsNext is null ? "" : $" and before '{eventsNext.Value.ToString(CultureInfo.InvariantCulture)}'"));
+        return $"This answer is bounded at {ResearchLedger.MaxReadBytes:N0} bytes and left out of {mandate}: {string.Join("; ", parts)}.";
+    }
+
+    /// <summary>One sealed delivery as <c>mandate-show</c> serves it: verbatim, its checks, each stated cost beside the measured spend.</summary>
+    object DeliveryShown(DeliveryRow d, object measured) => new
+    {
+        delivery = d.Id,
+        at = d.At,
+        attempt = d.Attempt,
+        report = d.Report,
+        deviations = d.Deviations.Select(v => new
+        {
+            what = v.What,
+            found = v.Found,
+            stated_cost = v.Cost,
+            measured_spend = measured
+        }),
+        refs = d.Refs.Select(r => new { kind = r.Kind, id = r.Id }),
+        checks = Gateway.Org.Checks(d.Id).Select(c => new { check = c.Check, passed = c.Passed, reason = c.Reason })
+    };
 
     /// <summary>A mandate's measured spend as a read says it: resolved cost, open reservations, and how many launches' cost is unknown.</summary>
     static object Measured(MandateSpend s) => new

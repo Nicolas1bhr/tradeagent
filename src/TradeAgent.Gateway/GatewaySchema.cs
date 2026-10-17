@@ -662,15 +662,17 @@ public static class GatewaySchema
             + "status, its goal as its issuer wrote it, its allocation and TradeAgent's measured spend. At most "
             + $"{GatewayPipeServer.MandateListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped.",
             []),
-        new(Core.Ops.MandateShow, "trade mandate show <mandate> [--before D]", false,
-            "ONE MANDATE YOU HOLD OR DECIDE, IN FULL: as issued, every event, and its sealed deliveries newest first — each "
-            + "verbatim, with every check TradeAgent ran on it. A deviation's 'stated_cost' is its holder's word and "
-            + "'measured_spend' beside it is TradeAgent's, from the launches charged to the mandate. At most "
-            + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes of deliveries a call: when 'more' is true, ask again with 'before' "
-            + "set to its 'next_before'.",
+        new(Core.Ops.MandateShow, "trade mandate show <mandate> [--part deliveries|events] [--before ID]", false,
+            "ONE MANDATE YOU HOLD OR DECIDE, IN FULL: as issued, its sealed deliveries newest first — each verbatim, with every "
+            + "check TradeAgent ran on it — and its events newest first. A deviation's 'stated_cost' is its holder's word and "
+            + "'measured_spend' beside it is TradeAgent's, from the launches charged to the mandate. The whole answer is at most "
+            + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes and never cuts a delivery or an event: 'left_out' says what it "
+            + "left out and how to read it — 'part' names one list and 'before' that list's 'deliveries_next_before' or "
+            + "'events_next_before'.",
             [
                 new("mandate", "string", true, "The mandate's id."),
-                new("before", "string", false, "A delivery id: serve only the deliveries sealed before it. Pass an answer's 'next_before'.")
+                new("part", "string", false, "deliveries | events: page one list. Omit it for the newest of both."),
+                new("before", "string", false, "With 'part': serve only what is older than this delivery id or event id — an answer's 'deliveries_next_before' or 'events_next_before'.")
             ]),
 
         // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.

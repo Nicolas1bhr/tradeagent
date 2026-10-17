@@ -158,6 +158,14 @@ public static class MandateLimits
     /// <summary>The most deviations and refs one delivery names, and the most a deviation's what, found or cost holds.</summary>
     public const int MaxDeviations = 10, MaxRefs = 20, MaxClaimChars = 500;
 
+    /// <summary>
+    /// THE MOST A DELIVERY TAKES ON THE WIRE (fix pass 1, item 3): its report, deviations and refs and the app's checks on them,
+    /// as <see cref="Json.Write"/> writes them — escaping included, so a character outside ASCII costs the six or twelve bytes of
+    /// its escape. A longer delivery is refused at the seal, never cut, so <c>mandate-show</c> always serves a delivery WHOLE
+    /// beside its mandate inside <see cref="ResearchLedger.MaxReadBytes"/>: a decider never judges words it was not shown.
+    /// </summary>
+    public const int MaxDeliveryBytes = 32 * 1024;
+
     /// <summary>The retry limit when the issuer names none, and the most it may name.</summary>
     public const int DefaultRetryLimit = 2, MaxRetryLimit = 10;
 }
@@ -511,6 +519,14 @@ public sealed partial class OrgStore
             c.ExecuteNonQuery();
 
         var checks = m.Checks.Select(check => Run(check, m, delivery, lensOf)).ToList();
+        var bytes = Encoding.UTF8.GetByteCount(Json.Write(new
+        {
+            report, deviations, refs, checks = checks.Select(c => new { check = c.Check, passed = c.Passed, reason = c.Reason })
+        }));
+        if (bytes > MandateLimits.MaxDeliveryBytes)
+            throw Refused($"this delivery is {bytes:N0} bytes as TradeAgent writes it (a character outside plain ASCII costs up to "
+                          + $"six), and a delivery holds at most {MandateLimits.MaxDeliveryBytes:N0} so its decider reads it whole; "
+                          + "shorten the report or the claims — longer is refused, never cut.");
         foreach (var check in checks)
         {
             using var c = db.Cmd("INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($d,$c,$p,$r)",

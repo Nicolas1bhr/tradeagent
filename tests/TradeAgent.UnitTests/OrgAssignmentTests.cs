@@ -968,7 +968,8 @@ public class OrgAssignmentTests
         Assert.Equal("0.1", deviation.GetProperty("measured_spend").GetProperty("reserved").GetString());
         Assert.Equal(deviation.GetProperty("measured_spend").GetRawText(), body.GetProperty("measured_spend").GetRawText());
         Assert.Equal(MandateCheck.All, delivery.GetProperty("checks").EnumerateArray().Select(c => c.GetProperty("check").GetString()));
-        Assert.Equal([MandateEventKind.Issued, MandateEventKind.Delivered],
+        // NEWEST FIRST (fix pass 1, item 3: under the byte bound the latest events are the ones a page keeps).
+        Assert.Equal([MandateEventKind.Delivered, MandateEventKind.Issued],
             body.GetProperty("events").EnumerateArray().Select(e => e.GetProperty("kind").GetString()));
 
         // THE HOLDER READS IT TOO, AND LISTS IT; ANYONE ELSE IS REFUSED — another member, the outsider.
@@ -982,6 +983,86 @@ public class OrgAssignmentTests
         }
         // AND THE LEGACY PAIR READ NONE OF IT on an unconfined seat.
         Assert.False((await server.CallAsync(Frame(Ops.MandateList), CouncilRoles.Research, Launch(db, CouncilRoles.Research, SeatClasses.Cli))).Ok);
+    }
+
+    /// <summary>
+    /// (h2) A MANDATE-SHOW IS BOUNDED WHOLE AND SAYS WHAT IT LEFT OUT (fix pass 1, item 3): with the frame at its widest — a goal
+    /// and a scope of JSON-escaped characters at their caps — a 16,000-character report of them is refused at the seal in words,
+    /// nothing written, rather than shown cut; the widest delivery the seal admits is served WHOLE; and with three of them and many
+    /// events the WHOLE answer, as the wire writes it, is at most <see cref="ResearchLedger.MaxReadBytes"/>, says what it left out
+    /// and how to read it, and paging each list serves every row exactly once, each page inside the bound. <c>mandate-list</c>'s
+    /// whole answer is bounded too. RED at base: the first delivery and every event were served whatever their size.
+    /// </summary>
+    [Fact]
+    public async Task A_mandate_show_is_bounded_whole_and_says_what_it_left_out()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var now = DateTimeOffset.UtcNow;
+        var wide = new string('<', MandateLimits.MaxObjectiveChars);
+        var m = gw.Org.Assign(new MandateIssue(Head, null, Member, MandateKind.Task, wide, wide, MandateShape.Report, false, Due, 5m, 10), now);
+        var work = Launch(db, Member, mandate: m.Id);
+
+        var huge = await server.CallAsync(DeliverFrame(m.Id, new string('<', MandateLimits.MaxReportChars)), Member, work);
+        Assert.False(huge.Ok);
+        Assert.Contains("never cut", huge.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_delivery"));
+        Assert.Throws<TradeAgentException>(() => gw.Org.Deliver(m.Id, Member, work, new string('<', 5_600), [], [], now));
+
+        // THREE DELIVERIES AS WIDE AS THE SEAL ADMITS, AND MANY EVENTS: each rejected with a stated defect of escaped characters.
+        var defect = new string('&', MandateLimits.MaxClaimChars);
+        for (var i = 0; i < 3; i++)
+        {
+            var d = gw.Org.Deliver(m.Id, Member, work, new string('<', 5_300) + i.ToString(System.Globalization.CultureInfo.InvariantCulture), [], [], now);
+            for (var j = 0; j < 10; j++) gw.Org.Reject(d.Delivery.Id, Head, null, null, defect, now);
+        }
+        var allEvents = gw.Org.MandateEvents(m.Id).Select(e => e.Id).Reverse().ToList();
+        var allDeliveries = gw.Org.Deliveries(m.Id).Select(d => d.Id).Reverse().ToList();
+
+        async Task<JsonElement> Show(params (string, object)[] args)
+        {
+            var reply = await server.CallAsync(Frame(Ops.MandateShow, [("mandate", m.Id), .. args]), Head, Launch(db, Head));
+            Assert.True(reply.Ok, Json.Write(reply.Error));
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(Json.Write(reply.Data));
+            Assert.True(bytes <= ResearchLedger.MaxReadBytes, $"mandate-show answered {bytes:N0} bytes");
+            return Body(reply);
+        }
+
+        var first = await Show();
+        Assert.Equal(allDeliveries[0], Assert.Single(first.GetProperty("deliveries").EnumerateArray()).GetProperty("delivery").GetString());
+        Assert.Equal(new string('<', 5_300) + "2", first.GetProperty("deliveries")[0].GetProperty("report").GetString());
+        Assert.Equal(wide, first.GetProperty("goal").GetString());
+        Assert.Equal((3, allEvents.Count), (first.GetProperty("deliveries_total").GetInt32(), first.GetProperty("events_total").GetInt32()));
+        Assert.True(first.GetProperty("deliveries_more").GetBoolean());
+        Assert.True(first.GetProperty("events_more").GetBoolean());
+        Assert.Contains("2 more deliveries", first.GetProperty("left_out").GetString(), StringComparison.Ordinal);
+        Assert.Contains("more events", first.GetProperty("left_out").GetString(), StringComparison.Ordinal);
+        Assert.False((await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m.Id), ("before", allDeliveries[0])), Head, Launch(db, Head))).Ok);
+
+        foreach (var (part, key, all) in new[] { ("deliveries", "delivery", allDeliveries), ("events", "id", allEvents.Select(e => e.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList()) })
+        {
+            var seen = new List<string>();
+            string? before = null;
+            for (var page = 0; page < 50; page++)
+            {
+                var body = await Show([("part", part), .. before is null ? Array.Empty<(string, object)>() : [("before", before)]]);
+                var rows = body.GetProperty(part).EnumerateArray().ToList();
+                Assert.NotEmpty(rows);
+                seen.AddRange(rows.Select(r => r.GetProperty(key).ValueKind == JsonValueKind.Number ? r.GetProperty(key).GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture) : r.GetProperty(key).GetString()!));
+                if (!body.GetProperty($"{part}_more").GetBoolean()) break;
+                before = body.GetProperty($"{part}_next_before").GetString();
+            }
+            Assert.Equal(all, seen);
+        }
+
+        // AND THE LIST: many mandates with wide goals — the WHOLE answer inside the bound, and 'more' says it stopped.
+        for (var i = 0; i < 8; i++)
+            gw.Org.Assign(new MandateIssue(Head, null, Other, MandateKind.Exploration, wide, null, null, false, Due, 1m, 2), now);
+        var list = await server.CallAsync(Frame(Ops.MandateList), Head, Launch(db, Head));
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(Json.Write(list.Data)) <= ResearchLedger.MaxReadBytes);
+        Assert.True(Body(list).GetProperty("more").GetBoolean());
     }
 
     /// <summary>THE RELAY'S WORDS: a staged file stays held, and the hold says a position's work reaches its issuer through mandate-deliver.</summary>
