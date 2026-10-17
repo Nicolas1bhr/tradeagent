@@ -310,7 +310,7 @@ public partial class CouncilLoopTests
         Seat(db, Pos, "team-head", heads: true);
         var now = Noon();
         Turned(db, Pos, now.AddHours(-2));
-        var host = new CouncilHost(db, root, new Concurrency()).Add(Pos);
+        var host = new CouncilHost(db, root, new Concurrency()) { Clock = () => now }.Add(Pos);
         var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
 
         await loop.TurnAsync();
@@ -412,7 +412,7 @@ public partial class CouncilLoopTests
         Seat(db, Pos, "team-x", heads: true);
         var now = Noon();
         Turned(db, Pos, now.AddHours(-2));
-        var host = new CouncilHost(db, root, new Concurrency()).Add(Pos);
+        var host = new CouncilHost(db, root, new Concurrency()) { Clock = () => now }.Add(Pos);
         var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
 
         await loop.TurnAsync();

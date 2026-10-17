@@ -141,6 +141,14 @@ public partial class CouncilLoopTests
         readonly string _tag = Guid.NewGuid().ToString("n")[..8];
         int _attempts;
 
+        /// <summary>
+        /// THE INSTANT A TURN THIS HOST LAUNCHES STARTS AT. The real host stamps it from the meter's injected <c>now</c> seam,
+        /// the same clock the loop reads; a test that drives the loop on its own clock hands that clock here, so a turn the
+        /// loop takes is ordered against the turns it seeded by the loop's time and never by the hour the suite runs at
+        /// (<c>U-ceiling-clock-red</c>). The default is the wall clock, for the tests that seed nothing.
+        /// </summary>
+        public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+
         readonly CouncilRelay _relay;
 
         public CouncilHost(Database db, string root, Concurrency concurrency,
@@ -289,7 +297,7 @@ public partial class CouncilLoopTests
             lock (_mint) { id = _pending ?? NewId(); _pending = null; }
 
             return new AiAttemptStore(_db).Begin(
-                new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
+                new AiAttempt { Id = id, StartedAt = Clock(), Role = role }, wakes);
         }
 
         /// <summary>
@@ -303,7 +311,7 @@ public partial class CouncilLoopTests
             if (GateRefuses is { } refused) return refused;
             lock (_mint) if (_pending == attemptId) _pending = null;
             return new AiAttemptStore(_db).Begin(
-                new AiAttempt { Id = attemptId, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
+                new AiAttempt { Id = attemptId, StartedAt = Clock(), Role = role }, wakes);
         }
 
         /// <summary>
