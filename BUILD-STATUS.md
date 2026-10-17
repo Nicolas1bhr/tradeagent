@@ -10968,3 +10968,20 @@ a report it has not read whole; refuse, never cut, and the refusal says the cap.
 **First sighting (the diff cannot reach it; one more = a unit):** ubuntu `TurnMeterTests.A_turn_whose_stream_reported_usage_ends_carrying_it` ("Assert.NotNull() Failure: Value is null"; builds an
 `AgentSession` over a script with no database), run 39003342257 attempt 1; the failed job re-run.
 **NOT VERIFIED:** no loop-level test drives a real launch through `OneMandate` or its refusal branch; no model call, no app run; tests box NOT RUN — the machine does not answer.
+
+
+## U-test-host-clocks — three VendorLimit test hosts stamp a launched turn from the clock the loop is driven on; the sighted reds are NOT a clock (an honest negative, handed to a unit) (landed 2026-10-17, seat B)
+
+**Landed** (`land.sh` v2) on `main` at tip `7274181c` (on `24db59f2`; code `bdb39719`); CI run **39025538461** CARRIED: every job success incl. macOS and `linux-host`; `land.sh check` VERDICT PASS (names 2922 → 2922, removed 0; scan clean). **No rung, no product change.**
+**Found:** main RED (the orchestrator, 12:04): main's push run 39005916685 on `bb390ed7` failed on macOS only on `VendorLimitQuoteTests.The_typographic_refusal_before_any_work_is_charged_nothing` — the same tree green 12/12 on
+O5a's landing run; the SECOND sighting in the family (first: `VendorLimitReadTests`, macOS, run 38965744337). Briefed on `U-ceiling-clock-red`'s cause class (a test host stamping the wall clock beside an injected one).
+**HONEST NEGATIVE — the cause is NOT a clock:** all 21 VendorLimit tests pass under all 25 `Etc/GMT` zones; 640 concurrent refusal replays under 16 busy loops gave 0 bad results; a CI-shaped parallel run under
+24 busy loops passed (0 failures) → no deterministic RED. Both reds fail the SAME way: the vendor limit was not recognised (`AgentTurnEnded.Limit` null: `VendorLimitQuoteTests.cs:179` cost 1.28 ≠ 0;
+`VendorLimitReadTests.cs:213` `host.Told` empty; `TurnMeter.cs:773` charges 0 only when `Limit.BeforeAnyWork`; the limit is set at `AgentSession.cs:1167`).
+**What landed (hygiene, not the fix; `d1df5fb8`, `bdb39719`):** `VendorLimitQuoteTests`' `Host`, `VendorLimitReadTests`' `CouncilHost` and `VendorLimitTests`' `Host` stamp `StartedAt` from an injected `Clock`
+= the loop's now. Every assertion kept.
+**RULING (the orchestrator, 13:0x):** with the ubuntu first sighting `TurnMeterTests.A_turn_whose_stream_reported_usage_ends_carrying_it` (run 39003342257, "Value is null") these are ONE shape on two
+platforms — a turn's LAST stream events (the usage line, the vendor-limit line) missing at turn end — a candidate PRODUCT race on the spend path (BUDGET-001) → the unit `U-turn-tail-drain` (seat B, opus/high).
+**Review (Codex):** P1 the Quote test's path never used the modified host and no deterministic red exists — TRUE, this record's negative; it is `U-turn-tail-drain`'s. P2 `MissionLoopTests.cs:174` `FakeHost.BeginTurn`
+still stamps `UtcNow` beside an injected `Midday` — real, the class is unfinished → carried into `U-turn-tail-drain` as an item.
+**NOT VERIFIED:** the reds' cause; tests box NOT RUN — the machine does not answer.
