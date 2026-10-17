@@ -112,22 +112,35 @@ public sealed partial class GatewayPipeServer
         };
     }
 
-    /// <summary>A forecast as a read shows it: the claim, the app's scoring, and the app's resolution beside it, or null while open.</summary>
-    object ForecastShown(ForecastRow f) => new
+    /// <summary>
+    /// A forecast as a read shows it: the claim, the app's scoring, and the app's resolution beside it, or null while open. A
+    /// forecast resolved VOID is never scored (RULING Q4): <c>scored</c> is false for it, with the reason, whatever its write
+    /// found — that write-time eligibility is shown apart as <c>scored_at_write</c>; <c>counted</c> is true only for a scored
+    /// forecast resolved yes or no.
+    /// </summary>
+    object ForecastShown(ForecastRow f)
     {
-        forecast = f.Id,
-        predicate = f.Predicate,
-        vocabulary = f.Vocabulary,
-        subject = f.Subject,
-        target = f.Target,
-        by = f.ResolveBy,
-        probability = f.Probability.ToString(CultureInfo.InvariantCulture),
-        scored = f.Scored,
-        unscored_why = f.UnscoredWhy,
-        resolution = Gateway.Org.Resolution(f.Id) is { } r
-            ? new { outcome = r.Outcome, record_kind = r.RecordKind, record_id = r.RecordId, why = r.Why, at = r.At }
-            : null
-    };
+        var r = Gateway.Org.Resolution(f.Id);
+        var isVoid = r?.Outcome == ForecastOutcome.Void;
+        var scored = f.Scored && !isVoid;
+        return new
+        {
+            forecast = f.Id,
+            predicate = f.Predicate,
+            vocabulary = f.Vocabulary,
+            subject = f.Subject,
+            target = f.Target,
+            by = f.ResolveBy,
+            probability = f.Probability.ToString(CultureInfo.InvariantCulture),
+            scored,
+            scored_at_write = f.Scored,
+            counted = scored && r is not null,
+            unscored_why = f.Scored && isVoid ? "it resolved void, and a void forecast is never scored" : f.UnscoredWhy,
+            resolution = r is not null
+                ? new { outcome = r.Outcome, record_kind = r.RecordKind, record_id = r.RecordId, why = r.Why, at = r.At }
+                : null
+        };
+    }
 
     /// <summary>A decision as the app recorded it.</summary>
     object DecisionReply(DecisionRow d) => new

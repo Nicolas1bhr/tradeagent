@@ -946,9 +946,36 @@ public class OrgDecisionTests
         Assert.Equal((ForecastOutcome.Yes, OrgRefKind.Promotion),
             (resolved.GetProperty("resolution").GetProperty("outcome").GetString(), resolved.GetProperty("resolution").GetProperty("record_kind").GetString()));
         Assert.True(resolved.GetProperty("scored").GetBoolean());
+        Assert.True(resolved.GetProperty("counted").GetBoolean());
 
         // ANOTHER POSITION'S DECISION is not shown at all.
         Assert.Contains("no decision of yours", (await server.CallAsync(Frame(Ops.DecisionShow, ("id", id)), Member, Launch(db, Member))).Error!.Message,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (h2) A FORECAST RESOLVED VOID IS NEVER SCORED (RULING Q4): a verdict-class forecast that was scorable when written and whose
+    /// date passed with no verdict is shown by <c>decision-show</c> as void, NOT scored and NOT counted, with the reason — the
+    /// write-time eligibility shown apart, as <c>scored_at_write</c>, never as <c>scored</c>. RED before the fix: <c>scored: true</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_forecast_resolved_void_is_shown_unscored_and_uncounted()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-v");
+        var by = DateTimeOffset.UtcNow.AddHours(1);
+        Assert.True((await server.CallAsync(RecordFrame(forecasts: new object[] { Fc("ver-v", "promoted", "0.70", by: by) }), Head, Launch(db, Head))).Ok);
+        var id = gw.Org.DecisionsOf(Head).Single().Id;
+        Assert.Equal(1, new ForecastResolver(db).Sweep(by.AddMinutes(1)).Resolved);
+
+        var shown = Body(await server.CallAsync(Frame(Ops.DecisionShow, ("id", id)), Head, Launch(db, Head))).GetProperty("forecasts")[0];
+        Assert.Equal(ForecastOutcome.Void, shown.GetProperty("resolution").GetProperty("outcome").GetString());
+        Assert.False(shown.GetProperty("scored").GetBoolean());
+        Assert.False(shown.GetProperty("counted").GetBoolean());
+        Assert.True(shown.GetProperty("scored_at_write").GetBoolean());
+        Assert.Contains("void", shown.GetProperty("unscored_why").GetString(), StringComparison.Ordinal);
     }
 }
