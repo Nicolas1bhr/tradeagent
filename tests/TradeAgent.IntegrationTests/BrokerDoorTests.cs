@@ -567,6 +567,53 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// FIX 2 (R2): A LATER LAUNCH OF THE SAME ROLE IS ANOTHER SESSION ON THE DOOR. The first launch's cancel-all completes; a
+    /// separately issued launch of the same role, with a working order of its own, reuses that request id — and is refused
+    /// with the gateway's own "belongs to another session", never answered from the first sweep's result while its order
+    /// stays working. A session named by role alone made every launch of a role one session for ever.
+    /// </summary>
+    [Fact]
+    public async Task A_later_launch_reusing_a_sweeps_request_id_is_another_session()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var grants = new AgentGrants();
+        await using var door = Surface(grants, server, db);
+        door.Start();
+        var sweep = Rpc(1, "tools/call", new
+        {
+            name = GrantedWorkerTools.Trade, arguments = new { op = Ops.CancelAll, request_id = "door-sweep-1" }
+        });
+
+        var first = grants.IssueHere(CouncilRoles.Operations, "attempt-sweep-first");
+        using (var http = Client(first.Token))
+        {
+            var done = await Post(http, door.Url!, sweep);
+            Assert.False(done.Json.GetProperty("result").GetProperty("isError").GetBoolean(), $"the first sweep was refused: {done.Body}");
+        }
+        first.Dispose();
+
+        conn.Faults.Fill = Connectors.Fake.FillBehaviour.LeaveWorking;
+        using var later = grants.IssueHere(CouncilRoles.Operations, "attempt-sweep-later");
+        Assert.Null(later.OrdersWithheld);
+        using var http2 = Client(later.Token);
+        var working = await Post(http2, door.Url!, Rpc(2, "tools/call", new
+        {
+            name = GrantedWorkerTools.Trade,
+            arguments = new { op = Ops.Buy, symbol = "ES", quantity = "1", request_id = "door-working-1" }
+        }));
+        Assert.False(working.Json.GetProperty("result").GetProperty("isError").GetBoolean(), $"the later launch's buy was refused: {working.Body}");
+
+        var reused = await Post(http2, door.Url!, sweep);
+        var result = reused.Json.GetProperty("result");
+        Assert.True(result.GetProperty("isError").GetBoolean(),
+            $"a later launch reusing the first launch's sweep id was answered from the first sweep: {reused.Body}");
+        Assert.Contains("belongs to another session", Text(result));
+        Assert.Contains(conn.Broker.Orders, o => o.State == ExecutionState.WORKING);
+    }
+
+    /// <summary>
     /// THE BROKER HOLDS THE PLACEMENT, AND ONLY IT: every connector call waits on the latch once the gateway has a DISPATCHING
     /// row — the placement's own wire — and none before, so the pre-flight reads run free.
     /// </summary>

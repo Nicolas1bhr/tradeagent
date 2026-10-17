@@ -163,7 +163,16 @@ public sealed class BrokerDoor : IAsyncDisposable
             attempt: () => grant.AttemptId,
             gateway: () => server() is { } s ? new GrantCalls(s, grant) : null,
             ledger: ledger,
-            session: () => $"door-{grant.Role}");
+            session: () => SessionOf(grant));
+
+    /// <summary>
+    /// THE SESSION A GRANT'S DOOR CALLS CARRY: one per LAUNCH (fix pass 1, R2) — its attempt, minted per launch
+    /// (<c>U-mint-per-launch</c>) — never per role. The gateway binds a reused request id to the session that made it
+    /// (<c>CompositeBindingOrThrow</c>), and a session named by role alone made every launch of a role one session for ever, so
+    /// a later launch reusing a finished sweep's id was answered from that sweep while its own orders stayed working. The door
+    /// serves no grant that names no attempt (<see cref="Binding"/>), so this is never the bare prefix.
+    /// </summary>
+    public static string SessionOf(AgentGrant grant) => $"door-{grant.AttemptId}";
 
     /// <summary>The gateway seen through one grant: every call carries the grant itself, whatever role and attempt it is handed.</summary>
     sealed class GrantCalls(Gateway.GatewayPipeServer server, AgentGrant grant) : IGatewayCalls
@@ -446,6 +455,8 @@ public sealed class BrokerDoor : IAsyncDisposable
     string? Binding(Connection connection, AgentGrant grant)
     {
         if (grant.Container is not { } container) return "it is not yet bound to a container";
+        // A GRANT WITH NO ATTEMPT HAS NO SESSION OF ITS OWN (SessionOf) and no attempt for its rows: refused, never pooled.
+        if (string.IsNullOrWhiteSpace(grant.AttemptId)) return "it names no attempt for its launch";
         if (connection.Peer is not { } peer) return "the operating system would not say which process holds this connection";
         if (connection.Accepted == 0 || peer.Start > connection.Accepted)
             return $"process {peer.Pid}, which the kernel names as the peer, started after the connection was accepted, " +
