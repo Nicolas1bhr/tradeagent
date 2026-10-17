@@ -165,7 +165,11 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   seat shares the host and user (a neighbour's shell can rewrite `state/`, `runtimes.json` and any seat's home, and read any seat's environment). Assurance-required work never falls back to a degraded
   start: today's bare-start fallbacks (§ 1, Containment) refuse instead, for such work. **And literally, as he answered:** until the host offers a
   PROVEN executor cell class, no position other than the legacy pair activates on ANY real-model seat — a broker-only head included, though it
-  would pass the capability minimum (the thinking-seats survey, 2026-10-11); puppet seats, which run no model, are exempt (§ 7).
+  would pass the capability minimum (the thinking-seats survey, 2026-10-11); puppet seats, which run no model, are exempt (§ 7). **The proven cell is RECORDED by measurement, never set** (the orchestrator on seat A's ruling,
+  2026-10-17, from `U-cell-linux-c`'s survey): on Linux the app runs the § 9.3 rows that matter through the product path at every start and writes a cell
+  proof only when every row holds, bound to the machine (a hash of its id), the kernel's full release, the boot, the deployed `trade` binary's hash and the
+  cell profile's hash; any change voids it, only the current boot's proof counts, each launch re-checks the profile hash, and a failed canary appends a
+  revocation. Lifting the gate starts nothing paid: positions still come through the owner's appointment chain, and runs on his host need his word.
 - **Fences.** Every authority-changing transition — a subtree put to sleep, a mandate cancelled, a position retired, a seat replaced, a veto — bumps
   the generation of every grant it touches; the broker checks the generation on every operation; a running attempt under a stale generation is
   ended with its process tree, and its outputs are quarantined at completion, never published. Fences and the circuit breaker act on the
@@ -300,7 +304,10 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   claims are limited to the cell's tested network, IPC and file policy, and inter-cell communication is part of the benchmark.
 - **Acceptance:** each provider passes the factory plan's § 9.3 containment benchmark (workspace, read-only, `state/`, user secrets, reparse
   escapes, descendants, persistence, host processes, IPC, the broker, grant expiry, network, packages, cancellation, restart, credentials, no
-  terminal), plus session changes inside a container and host-to-cell pid translation for the broker.
+  terminal), plus session changes inside a container and host-to-cell pid translation for the broker. Each attempt records its assurance PER PROPERTY (the cell's side
+  and the harness's side, each with its class) and takes the weaker side: in route (a) the harness is an unconfined codex holding the login, so the
+  attempt's `inbox` and `state` rows are MEDIATED until the harness itself is confined (a card) — which is why a cell flips neither the presence default nor
+  the lane ceiling (§ 2.5) by itself.
 
 ### 2.9 The broker, the verbs and the rights matrix
 One authority implementation (Law 8): the organisation's verbs join the gateway's pipe ops under the same grant, and domain handlers still validate.
@@ -326,6 +333,9 @@ One authority implementation (Law 8): the organisation's verbs join the gateway'
   `mandate-decline` and their kin, the names above are their meanings, and a conformance test asserts that no organisation verb shares a name with a
   pipe op. A verb checks the seat assurance the activation gate RECORDED for the attempt (`U-thinking-seats-a`), never headship alone: today `research`
   heads its division from an unconfined seat and holds no organisational decision right there (§ 2.3).
+- **The decision verbs** (O5b, the orchestrator 2026-10-17): `decision-record`, `decision-list`, `decision-show`, `forecast-add`, `escalation-raise`,
+  `escalation-list`, `lateral-send`, `lateral-list`. An escalation climbs past empty head seats and past every head whose RECORDED seat cannot carry the
+  organisation's verbs (by capability, not by name), and at the root reaches the owner as a record only — no wake, no pipe path; his surface shows it.
 - **Every verb:** grant-checked, lattice-checked, throttled where structural, written as an `org_event` with app-composed detail; none reaches
   operator authority (AUTH-001); orders stay `operations`' (ORDER-001).
 
@@ -487,8 +497,8 @@ thinks · a proving-ground score read as market truth.
 | 2.7 Runtimes and seat homes | `U-seat-home`, `R-exec-server`, `U-prompt-stdin`, `U-thinking-seats` (the broker's shell-free door), `U-harness-responses`, `U-puppet-runtime` |
 | 2.8 Cells | `U-cell-linux` a–e (`U-contain-seats`' Linux provider), `U-execution-environment`, `U-cell-windows` |
 | 2.9 Broker and verbs | `U-org-assignments`, `U-org-verbs` |
-| 2.10 Relay | `U-org-assignments` (deliveries), `U-org-chief` (the owner's words), `U-org-verbs` (boundaries' assessor sets) |
-| 2.11 Decisions | `U-org-assignments`, `U-org-scorecards` (O8) |
+| 2.10 Relay | `U-org-assignments` (deliveries), `U-org-decisions` (escalations, lateral notes), `U-org-chief` (the owner's words), `U-org-verbs` (boundaries' assessor sets) |
+| 2.11 Decisions | `U-org-decisions` (O5b: records, forecasts, resolution), `U-org-scorecards` (O8) |
 | 2.12 Truth per position | `U-org-principals` (ledger authors), `U-org-packets` |
 | 2.13 Audit line and watcher | `U-org-audit`, `U-org-watcher` |
 | 2.14 Proving ground | `U-proving-ground` |
