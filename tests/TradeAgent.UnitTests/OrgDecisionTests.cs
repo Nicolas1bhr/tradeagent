@@ -828,7 +828,11 @@ public class OrgDecisionTests
 
     /// <summary>
     /// (f2) A NOTE TO ITSELF, AN APP PRINCIPAL OR THE LEGACY PAIR IS REFUSED — in words, nothing written: and to no position, to an
-    /// inactive one, with no text, or citing a record that is not there. No note reaches <c>operations</c> (ORDER-001). RED at base.
+    /// inactive one, with no text, or citing a record that is not there. No note reaches a position that may place orders
+    /// (ORDER-001). The legacy pair's <c>research</c> is refused BY CAPABILITY (fix pass 1, item 5; RULING Q6): its latest recorded
+    /// seat is unconfined and cannot carry the organisation's verbs, so it could never read the note — as is any position whose
+    /// latest seat is such, with no role named; a position that has never launched is accepted, to read it on a capable seat.
+    /// RED at base.
     /// </summary>
     [Fact]
     public async Task A_note_to_itself_an_app_principal_or_the_legacy_pair_is_refused()
@@ -838,6 +842,8 @@ public class OrgDecisionTests
         using var _db = db;
         await using var _server = server;
         Seat(db, "pos-a1c0ffee00d0", Team, OrgPositionStatus.Dormant);
+        Launch(db, CouncilRoles.Research, SeatClasses.Cli);
+        Launch(db, Outsider, SeatClasses.Cli);
 
         foreach (var (frame, words) in new[]
                  {
@@ -845,7 +851,8 @@ public class OrgDecisionTests
                      (NoteFrame(AppPrincipals.Referee), "app's own principals"),
                      (NoteFrame(AppPrincipals.Allocator), "app's own principals"),
                      (NoteFrame(CouncilRoles.Operations), "ORDER-001"),
-                     (NoteFrame(CouncilRoles.Research), "legacy pair"),
+                     (NoteFrame(CouncilRoles.Research), "cannot carry the organisation's verbs"),
+                     (NoteFrame(Outsider), "cannot carry the organisation's verbs"),
                      (NoteFrame("pos-nobody"), "no position on the chart"),
                      (NoteFrame("pos-a1c0ffee00d0"), "not active"),
                      (NoteFrame(Member, " "), "never empty"),
@@ -858,6 +865,11 @@ public class OrgDecisionTests
             Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
         }
         Assert.Equal(0L, Count(db, "org_lateral"));
+
+        // A POSITION THAT HAS NEVER LAUNCHED is accepted: it reads the note when it launches on a capable seat.
+        var unlaunched = await server.CallAsync(NoteFrame(Other), Head, Launch(db, Head));
+        Assert.True(unlaunched.Ok, Json.Write(unlaunched.Error));
+        Assert.Equal(1L, Count(db, "org_lateral"));
     }
 
     /// <summary>One frame of each of the eight verbs, each well formed.</summary>

@@ -552,6 +552,16 @@ public sealed partial class OrgStore
         return null;
     }
 
+    /// <summary>
+    /// Whether <paramref name="position"/> has launched at all, and its latest recorded seat's assurance (null: none recorded, or
+    /// a word this build does not know — refused, never guessed).
+    /// </summary>
+    (bool Launched, SeatAssurance? Assurance) LatestLaunch(string position)
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM ai_attempt WHERE role=$p", ("$p", position));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) == 0 ? (false, null) : (true, RecordedAssurance(position));
+    }
+
     static string SeatName(SeatAssurance? a) => a is { } known ? SeatClasses.Name(known) : "none recorded";
 
     /// <summary>One escalation as recorded, or null.</summary>
@@ -584,9 +594,13 @@ public sealed partial class OrgStore
     /// <summary>
     /// A NOTE FROM ONE POSITION TO ANOTHER — information moves, authority does not (ORGANISATION § 4): the row, sender-stamped by the
     /// app, and NOTHING ELSE — no wake, no mandate event, no publication, no assignment; an approval inside it is void. The recipient
-    /// reads it with <c>lateral-list</c>. Refused in words, nothing written: a recipient that is the sender, an app principal, the
-    /// legacy pair (unconfined seats that hold no organisation verb to read it with, and <c>operations</c>, whose trading no note
-    /// shapes — ORDER-001), not a position or not active; a text empty or too long; a ref that is not there.
+    /// reads it with <c>lateral-list</c>. Refused in words, nothing written: a recipient that is the sender, an app principal, one
+    /// that may place orders (<see cref="CouncilRoles.MayPlaceOrders"/> — what it trades is never shaped by a note, ORDER-001), not
+    /// a position or not active, or one whose LATEST RECORDED SEAT cannot carry the organisation's verbs (its assurance below
+    /// <c>CapabilityPolicy.Minimum(DecisionVerbs)</c>, or none recorded) — it could never read <c>lateral-list</c>; by CAPABILITY,
+    /// never by naming a role (RULING Q6, fix pass 1, item 5), so the legacy pair's unconfined seats are refused and a confined
+    /// one later is not. A position that has never launched is accepted: it reads the note when it launches on a capable seat. A
+    /// text empty or too long, or a ref that is not there, is refused too.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public LateralRow SendLateral(string sender, string? attempt, string to, string text, IReadOnlyList<OrgRef> refs, DateTimeOffset now) =>
@@ -598,14 +612,16 @@ public sealed partial class OrgStore
                 throw Refused("a note goes to another position, never to yourself — your own beliefs go in the research ledger.");
             if (IsAppPrincipal(to))
                 throw Refused($"'{to}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it reads no note.");
-            if (CouncilRoles.IsKnown(to))
-                throw Refused($"'{to}' is one of the legacy pair, on unconfined seats that hold no organisation verb to read a note with; "
-                              + (to == CouncilRoles.Operations ? "and what operations trades is never shaped by a note (ORDER-001). " : "")
-                              + "Escalate through your chain instead.");
+            if (CouncilRoles.MayPlaceOrders(to))
+                throw Refused($"'{to}' may place orders, and what it trades is never shaped by a note (ORDER-001). Escalate through your chain instead.");
             if (Position(to) is not { } recipient)
                 throw Refused($"'{to}' is no position on the chart.");
             if (recipient.Status != OrgPositionStatus.Active)
                 throw Refused($"'{to}' is {recipient.Status}, not active: a note goes to an active position.");
+            if (LatestLaunch(to) is { Launched: true, Assurance: var seat }
+                && (seat is not { } a || a < CapabilityPolicy.Minimum(Capability.DecisionVerbs)))
+                throw Refused($"'{to}''s latest recorded seat ({SeatName(seat)}) cannot carry the organisation's verbs, so it could never "
+                              + "read a note with lateral-list. Escalate through your chain instead.");
             if (string.IsNullOrWhiteSpace(text) || text.EnumerateRunes().Count() > ResearchLedger.MaxTextChars)
                 throw Refused($"a note's text is your words, never empty, at most {ResearchLedger.MaxTextChars:N0} characters; longer is refused, never cut.");
             if (RefsRefusal(refs) is { } badRef) throw Refused(badRef);
