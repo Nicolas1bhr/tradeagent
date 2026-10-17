@@ -11,9 +11,31 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the four blocks right after this paragraph (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20), the newest checkpoint below (2026-10-11, the close)
+heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-17, the wrap-up), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-17 14:3x — WRAPPED UP on the owner's word; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("WRAPPED UP"), then
+`fleet/handoff/A.md` and `B.md` and the board.** The owner: "okay let's wrap up work gracefully we'll resume later". Nothing runs: no locks, no legs,
+`fleet/ready/` empty, the crons deleted, the external wake paused. **Landed 2026-10-16 18:28 → 10-17 14:16 — 22 units (seats A and B; all twelve
+CI jobs green at each landing — a red its diff could not reach re-run once, both attempts quoted in its record; each Codex-reviewed but the CI-only
+`U-ci-host-pins`), in landing order:** O2b `U-org-rights` (record `cf0eb94e`) · `U-ci-host-pins` (`bd151496`) · O4
+`U-org-envelopes` (rung 38, `9616e37b`) · `U-seat-signin` (`291e8aae`) · `U-grant-tree` (`cc17d93e`) · `U-ledger-backoff-red` (`97b1e169`) · `U-seat-acl`
+(`cf7e3926`) · `U-puppet-runtime` (`fd8ac67b`) · `U-mint-per-launch` (`e4d3afec`) · O3 `U-org-wakes` (`a97d69aa`) · `U-cell-linux-d` (`4a9aca8b`) ·
+`U-unjobbed-presence` (`a89bda95`) · `U-ceiling-clock-red` (`1dd3c69f`) · `U-sweep-budget-red` (`bd5f0996`) · `U-thinking-seats-a` (rung 39, the activation
+gate, `d320bdbf`) · `U-cell-linux-b` (`0e912189`) · `U-puppet-isolation` (`93f4463e`) · `U-thinking-seats-b` (the broker's door, `19c8dfc0`) · O5a
+`U-org-assignments-a` (rung 40, `bb390ed7`) · `U-test-host-clocks` (`8f2821f5`) · O9 `U-org-lanes` (`673a2ca5`) · O5b `U-org-decisions` (rung 41,
+`e94ee00d`). Schema 41; next free rung 42. **Docs:** `docs/ORCHESTRATION.md` rulings `bdf66e1b`, `920238d3` (one unconfined loop lane, a ceiling in code;
+a cell enters the presence register by default; organisation verbs named apart from the pipe's ops and checking the recorded seat assurance; the gate's
+proven cell recorded by measurement at every start; assurance per property takes the weaker side). **Not landed, each one fixer from landing (branches
+pushed; triage in `fleet/records/` and the seats' handoffs):** `U-thinking-seats-c` (the override check skips two broker fields) · `U-proving-ground-a`
+(compare absolute handle paths; refuse an overlapping second market) · `U-turn-tail-drain` (an honest negative; its test stub sends the refusal twice).
+**Next by § 15:** seat A `U-cell-linux-c` ∥ `U-org-watcher-a` (brought forward by seat A; its § 15 row is rewritten first on resume); seat B the
+`U-org-packets` survey; § 15's status cells lag the 10-17 landings (O5a, O9, O5b) until the seats refresh them. **NOT VERIFIED this session:** any run on
+a real Windows machine (both boxes unreachable) and any real-model or observed run (none ran: no paid or observed run before his word, and no real-model organisation seat before
+the gate records a proven cell).
+**For the owner:** when the trial runs may start (M0 attempt 4 → M-org0); the Linux-host cell questions and the nine of 2026-10-09. He answered: "Not now,
+stay on GitHub Free and keep CI as it is." · "Keep extra usage off; let the weekly limit pause the fleet."
 
 **2026-10-16 18:28 — RESUMED on the owner's word; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("RESUMED"), then `fleet/handoff/A.md`
 and `B.md` and the board.** The owner: "giving all gas towards the correct end vision. our last sprint was towards the genuine ai organization … once we
