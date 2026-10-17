@@ -230,6 +230,48 @@ public class SyntheticMarketTests(ITestOutputHelper log)
         Assert.Equal(before.Unmarked, Files(unmarked));
     }
 
+    /// <summary>
+    /// R3: A SECOND MARKET FOR THE SAME INSTRUMENT AND MONTH LEAVES THE FIRST DATASET VALID AND ITS TRUTH UNCHANGED. Two
+    /// seeds for SYNB in August, a week apart, in one proving home: each market's raw files and truth are its own — named by
+    /// its spec — so the first dataset still passes the ledger's integrity check and its truth file is the same bytes; and
+    /// the same market written again is refused before anything is written, never written over.
+    /// </summary>
+    [Fact]
+    public void A_second_market_for_the_same_instrument_and_month_leaves_the_first_dataset_valid_and_its_truth_unchanged()
+    {
+        using var scratch = TestEnv.NewScratch("second-market");
+        var home = ProvingHome.Create(Path.Combine(scratch.Dir, "proving"));
+        using var db = new Database(home.DatabaseFile, HomeKind.Proving);
+        using var tape = new TapeStore(home.TapeFile, kind: HomeKind.Proving);
+        var store = new DatasetStore(db);
+
+        var first = SyntheticMarket.Write(home, db, tape, Planted(2));
+        var truth = File.ReadAllBytes(first.TruthFile);
+        var second = SyntheticMarket.Write(home, db, tape, Planted(2) with { Seed = 13, Start = Start.AddDays(7) });
+
+        Assert.Equal(first.Dataset.Files.Single().Month, second.Dataset.Files.Single().Month);
+        Assert.NotEqual(first.RawSha256, second.RawSha256);
+        Assert.NotEqual(first.Dataset.Files.Single().Path, second.Dataset.Files.Single().Path);
+        Assert.NotEqual(first.TruthFile, second.TruthFile);
+
+        void Valid()
+        {
+            foreach (var set in new[] { first.Dataset, second.Dataset })
+            {
+                var now = store.Checked(store.ById(set.Id)!);
+                Assert.True(now.State == DatasetState.ACCEPTED, $"dataset {set.Id}: {now.RejectedReason}");
+            }
+            Assert.Equal(truth, File.ReadAllBytes(first.TruthFile));
+        }
+        Valid();
+
+        var again = Assert.Throws<InvalidOperationException>(() => SyntheticMarket.Write(home, db, tape, Planted(2)));
+        log.WriteLine(again.Message);
+        Assert.Contains("is already written in this proving home", again.Message, StringComparison.Ordinal);
+        Assert.Equal(2, store.All().Count);
+        Valid();
+    }
+
     /// <summary>Every file under <paramref name="home"/> outside <c>proving/</c>, by relative path, with its SHA-256.</summary>
     static SortedDictionary<string, string> Files(string home)
     {
