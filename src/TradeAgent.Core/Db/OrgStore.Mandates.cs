@@ -191,6 +191,34 @@ public sealed record MandateSpend(decimal Spent, decimal Reserved, int Unknown, 
     public decimal Committed => Spent + Reserved;
 }
 
+/// <summary>A deviation a delivery names — what the holder changed, what it found, what it says it cost: ALL CLAIMS, stored verbatim.</summary>
+public sealed record MandateDeviation(
+    [property: System.Text.Json.Serialization.JsonPropertyName("what")] string What,
+    [property: System.Text.Json.Serialization.JsonPropertyName("found")] string Found,
+    [property: System.Text.Json.Serialization.JsonPropertyName("cost")] string Cost);
+
+/// <summary>An app record a delivery cites (<see cref="MandateRefKind"/>): a lens is <c>id@version</c>, a ledger entry its number.</summary>
+public sealed record MandateRef(
+    [property: System.Text.Json.Serialization.JsonPropertyName("kind")] string Kind,
+    [property: System.Text.Json.Serialization.JsonPropertyName("id")] string Id);
+
+/// <summary>A sealed delivery (<c>org_delivery</c>): its id is the SHA-256 of its manifest; never updated.</summary>
+public sealed record DeliveryRow(
+    string Id, string MandateId, string? Attempt, string Report, IReadOnlyList<MandateDeviation> Deviations,
+    IReadOnlyList<MandateRef> Refs, DateTimeOffset At);
+
+/// <summary>The app's result of one check on one delivery (<c>org_check</c>).</summary>
+public sealed record CheckRow(string DeliveryId, string Check, bool Passed, string Reason);
+
+/// <summary>What a delivery came to: the seal, each check, the mandate's status after triage, and the wake code raised.</summary>
+public sealed record DeliveryResult(DeliveryRow Delivery, IReadOnlyList<CheckRow> Checks, string Status, string? Wake);
+
+/// <summary>The launch that registered a lens, as the tape's registry recorded it.</summary>
+public sealed record LensOrigin(string? Attempt);
+
+/// <summary>The launches a cited record came from: its own, and for a run its version's.</summary>
+public sealed record RefOrigin(IReadOnlyList<string?> Attempts);
+
 /// <summary>
 /// THE MANDATE'S LIFE, AS ONLY <see cref="OrgStore"/> WRITES IT (<c>U-org-assignments-a</c>, rung 40; ORCHESTRATION §§ 2.1–2.4,
 /// 2.9, 2.10). Every writer here is one <see cref="Database.Write"/>: the rows it adds, the events and the wakes it raises go in
@@ -404,6 +432,245 @@ public sealed partial class OrgStore
         var ids = new List<string>();
         while (r.Read()) ids.Add(r.GetString(0));
         return (IReadOnlyList<string>)ids;
+    });
+
+    // ---- the holder's verbs: decline and deliver ------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE HOLDER DECLINES AN OPEN MANDATE, saying whether it is infeasible or ambiguous and why: the <c>declined</c> event, the
+    /// holder's untaken wakes closed, and — code stopping there — the <c>escalated</c> event and ONE <c>escalation</c> wake to the
+    /// decider, in one write. Automatic retries stop.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Not the holder, not open, an unknown reason or no words; nothing was written.</exception>
+    public MandateEventRow Decline(string mandateId, string caller, string? attempt, string reason, string why, DateTimeOffset now) =>
+        db.Write(_ =>
+        {
+            var m = HeldBy(mandateId, caller);
+            if (!MandateDecline.IsKnown(reason))
+                throw Refused($"'{reason}' is no reason to decline: {string.Join(" | ", MandateDecline.All)}.");
+            if (string.IsNullOrWhiteSpace(why) || why.Length > MandateLimits.MaxClaimChars)
+                throw Refused($"a decline says why, in at most {MandateLimits.MaxClaimChars} characters.");
+
+            var declined = AppendMandateEvent(m.Id, now, MandateEventKind.Declined, caller, attempt, $"{reason}: {why}", []);
+            new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"its holder declined it ({reason})");
+            Escalate(m, now, $"its holder declined it as {reason}: {why}", [declined.Id.ToString(CultureInfo.InvariantCulture)]);
+            return declined;
+        });
+
+    /// <summary>
+    /// THE HOLDER HANDS A DELIVERY BACK, SEALED: the report, the deviations it names and the refs it cites — its CLAIMS, stored
+    /// verbatim — go into an immutable <c>org_delivery</c> whose id is the SHA-256 of its manifest (the mandate, the launch, the
+    /// delivery's ordinal, the time and every claim); the app runs each of the mandate's v1 checks and records each result in
+    /// <c>org_check</c>; the <c>delivered</c> event and what code makes of it (<see cref="Triage"/>) — all in one write. No check
+    /// runs code (RULING Q3). An EXACT mandate refuses a delivery that names a deviation, with nothing written (RULING Q7). A later
+    /// delivery is a new delivery, never an edit.
+    /// </summary>
+    /// <param name="lensOf">The attempt that registered a lens <c>id@version</c>, or null when no such lens is registered; the
+    /// lens registry is the tape's file, which this store does not open.</param>
+    /// <exception cref="TradeAgentException">Not the holder, not open, a claim out of bounds, or exact with a deviation; nothing was written.</exception>
+    public DeliveryResult Deliver(string mandateId, string caller, string? attempt, string report,
+        IReadOnlyList<MandateDeviation> deviations, IReadOnlyList<MandateRef> refs, DateTimeOffset now,
+        Func<string, int, LensOrigin?>? lensOf = null) => db.Write(_ =>
+    {
+        var m = HeldBy(mandateId, caller);
+        if (report.Length > MandateLimits.MaxReportChars)
+            throw Refused($"a report holds at most {MandateLimits.MaxReportChars:N0} characters; longer is refused, never cut.");
+        if (deviations.Count > MandateLimits.MaxDeviations || refs.Count > MandateLimits.MaxRefs)
+            throw Refused($"a delivery names at most {MandateLimits.MaxDeviations} deviations and {MandateLimits.MaxRefs} refs.");
+        foreach (var d in deviations)
+            if (new[] { d.What, d.Found, d.Cost }.Any(t => string.IsNullOrWhiteSpace(t) || t.Length > MandateLimits.MaxClaimChars))
+                throw Refused($"a deviation names what it changed, what it found and what it cost, each in at most {MandateLimits.MaxClaimChars} characters.");
+        foreach (var r in refs)
+            if (!MandateRefKind.IsKnown(r.Kind) || string.IsNullOrWhiteSpace(r.Id) || r.Id.Length > 200)
+                throw Refused($"a ref names an app record — {string.Join(" | ", MandateRefKind.All)} — and its id; '{r.Kind}' is not one.");
+        // RULING Q7 — THE CODE HALF OF "EXACT": a deviation is refused, never sealed and judged later.
+        if (m.Exact && deviations.Count > 0)
+            throw Refused($"mandate {m.Id} is exact: a delivery that names a deviation is refused. Deliver what was asked, or decline it.");
+
+        long ordinal;
+        using (var n = db.Cmd("SELECT COUNT(*) FROM org_delivery WHERE mandate_id=$m", ("$m", m.Id)))
+            ordinal = Convert.ToInt64(n.ExecuteScalar(), CultureInfo.InvariantCulture) + 1;
+        var manifest = JsonSerializer.Serialize(new
+        {
+            mandate = m.Id, attempt, ordinal, at = Sql.T(now), report,
+            deviations = deviations.Select(d => new { what = d.What, found = d.Found, cost = d.Cost }),
+            refs = refs.Select(r => new { kind = r.Kind, id = r.Id })
+        });
+        var delivery = new DeliveryRow(Sha256Hex(manifest), m.Id, attempt, report, deviations, refs, now);
+
+        using (var c = db.Cmd("""
+            INSERT INTO org_delivery(id, mandate_id, attempt_id, report, deviations, refs, manifest, at)
+            VALUES($id,$m,$attempt,$report,$deviations,$refs,$manifest,$at)
+            """,
+            ("$id", delivery.Id), ("$m", m.Id), ("$attempt", attempt), ("$report", report),
+            ("$deviations", JsonSerializer.Serialize(deviations)), ("$refs", JsonSerializer.Serialize(refs)),
+            ("$manifest", manifest), ("$at", Sql.T(now))))
+            c.ExecuteNonQuery();
+
+        var checks = m.Checks.Select(check => Run(check, m, delivery, lensOf)).ToList();
+        foreach (var check in checks)
+        {
+            using var c = db.Cmd("INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($d,$c,$p,$r)",
+                ("$d", delivery.Id), ("$c", check.Check), ("$p", check.Passed ? 1 : 0), ("$r", check.Reason));
+            c.ExecuteNonQuery();
+        }
+
+        var delivered = AppendMandateEvent(m.Id, now, MandateEventKind.Delivered, caller, attempt, null, [delivery.Id]);
+        var triaged = Triage(m, delivery, checks, delivered, now);
+        return new DeliveryResult(delivery, checks, MandateStatus(m.Id)!, triaged);
+    });
+
+    /// <summary>
+    /// ONE V1 CHECK OF A DELIVERY, BY THE APP: what it found, and in words why it passed or failed. No code is run; every record is
+    /// read from the app's own ledgers.
+    /// </summary>
+    CheckRow Run(string check, MandateRow m, DeliveryRow d, Func<string, int, LensOrigin?>? lensOf)
+    {
+        switch (check)
+        {
+            case MandateCheck.ReportSize:
+            {
+                var lines = d.Report.Length == 0 ? 0 : d.Report.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n').Length;
+                return new CheckRow(d.Id, check, lines <= MandateLimits.ReportLines,
+                    $"the report is {lines} line{(lines == 1 ? "" : "s")}; a report holds at most {MandateLimits.ReportLines}");
+            }
+            case MandateCheck.RefsExist:
+            {
+                var missing = d.Refs.Where(r => Origin(r, lensOf) is null).Select(Name).ToList();
+                return new CheckRow(d.Id, check, missing.Count == 0, missing.Count == 0
+                    ? $"every one of the {d.Refs.Count} records named is in the app's ledgers"
+                    : $"not in the app's ledgers: {string.Join(", ", missing)}");
+            }
+            case MandateCheck.RefsOfThisMandate:
+            {
+                var foreign = d.Refs.Where(r => Origin(r, lensOf) is not { } o || !o.Attempts.Any(a => MandateOfAttempt(a) == m.Id))
+                    .Select(Name).ToList();
+                return new CheckRow(d.Id, check, foreign.Count == 0, foreign.Count == 0
+                    ? $"every one of the {d.Refs.Count} records named was produced by a launch charged to {m.Id}"
+                    : $"not produced by a launch charged to {m.Id}: {string.Join(", ", foreign)}");
+            }
+            case MandateCheck.OutputShape:
+            {
+                var shape = m.OutputShape;
+                var present = shape == MandateShape.Report ? !string.IsNullOrWhiteSpace(d.Report) : d.Refs.Any(r => r.Kind == shape);
+                return new CheckRow(d.Id, check, present, present
+                    ? $"the task's output shape, {shape}, is present"
+                    : shape == MandateShape.Report ? "the task's output shape is a report, and the report is empty"
+                    : $"the task's output shape is a {shape}, and the delivery names none");
+            }
+            default:
+                // REFUSE, NEVER GUESS: a check this build does not know fails, in words naming it.
+                return new CheckRow(d.Id, check, false, $"'{check}' is no check this build runs");
+        }
+
+        static string Name(MandateRef r) => $"{r.Kind} {r.Id}";
+    }
+
+    /// <summary>The launches a ref's record came from — its own, and for a run its version's — or null when it is not in the ledgers.</summary>
+    RefOrigin? Origin(MandateRef r, Func<string, int, LensOrigin?>? lensOf)
+    {
+        switch (r.Kind)
+        {
+            case MandateRefKind.Version:
+            {
+                using var c = db.Cmd("SELECT attempt FROM strategy_version WHERE id=$id", ("$id", r.Id));
+                using var x = c.ExecuteReader();
+                return x.Read() ? new RefOrigin([Sql.S(x.GetValue(0))]) : null;
+            }
+            case MandateRefKind.Run:
+            {
+                using var c = db.Cmd("""
+                    SELECT r.attempt, v.attempt FROM strategy_run r JOIN strategy_version v ON v.id = r.version_id WHERE r.id=$id
+                    """, ("$id", r.Id));
+                using var x = c.ExecuteReader();
+                return x.Read() ? new RefOrigin([Sql.S(x.GetValue(0)), Sql.S(x.GetValue(1))]) : null;
+            }
+            case MandateRefKind.Ledger:
+            {
+                if (!long.TryParse(r.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var entry)) return null;
+                using var c = db.Cmd("SELECT attempt FROM ledger_entry WHERE id=$id", ("$id", entry));
+                using var x = c.ExecuteReader();
+                return x.Read() ? new RefOrigin([Sql.S(x.GetValue(0))]) : null;
+            }
+            case MandateRefKind.Lens:
+            {
+                var at = r.Id.LastIndexOf('@');
+                if (lensOf is null || at <= 0
+                    || !int.TryParse(r.Id[(at + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var version)) return null;
+                return lensOf(r.Id[..at], version) is { } lens ? new RefOrigin([lens.Attempt]) : null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>The mandate a launch was admitted under, or null.</summary>
+    string? MandateOfAttempt(string? attempt)
+    {
+        if (attempt is null) return null;
+        using var c = db.Cmd("SELECT mandate_id FROM ai_attempt WHERE id=$id", ("$id", attempt));
+        return c.ExecuteScalar() as string;
+    }
+
+    /// <summary>
+    /// WHAT CODE MAKES OF A SEALED DELIVERY, in the delivery's own write: the decider is woken with ONE <c>delivery</c> wake.
+    /// Answers the id of the wake it raised.
+    /// </summary>
+    string Triage(MandateRow m, DeliveryRow d, IReadOnlyList<CheckRow> checks, MandateEventRow delivered, DateTimeOffset now)
+    {
+        var wake = MissionEventIds.Delivery(d.Id);
+        new MissionEventStore(db).Raise(wake, MissionEventKind.Delivery, now, payload: m.Id, role: m.Decider);
+        return wake;
+    }
+
+    /// <summary>The mandate, open, and held by <paramref name="caller"/> — or refused in words.</summary>
+    MandateRow HeldBy(string mandateId, string caller)
+    {
+        var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
+        if (m.Holder != caller)
+            throw Refused($"'{mandateId}' is held by '{m.Holder}', not by you: only its holder delivers or declines it.");
+        if (!IsOpen(m.Id))
+            throw Refused($"'{mandateId}' is {MandateStatus(m.Id)}: nothing more is owed on a closed mandate.");
+        return m;
+    }
+
+    /// <summary>A mandate's sealed deliveries, oldest first.</summary>
+    public IReadOnlyList<DeliveryRow> Deliveries(string mandateId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT id, mandate_id, attempt_id, report, deviations, refs, at FROM org_delivery WHERE mandate_id=$m ORDER BY rowid",
+            ("$m", mandateId));
+        using var r = c.ExecuteReader();
+        var rows = new List<DeliveryRow>();
+        while (r.Read())
+            rows.Add(new DeliveryRow(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3),
+                JsonSerializer.Deserialize<MandateDeviation[]>(r.GetString(4)) ?? [],
+                JsonSerializer.Deserialize<MandateRef[]>(r.GetString(5)) ?? [], Sql.Time(r.GetValue(6))));
+        return (IReadOnlyList<DeliveryRow>)rows;
+    });
+
+    /// <summary>One sealed delivery, or null.</summary>
+    public DeliveryRow? Delivery(string deliveryId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT mandate_id FROM org_delivery WHERE id=$id", ("$id", deliveryId));
+        return c.ExecuteScalar() is string m ? Deliveries(m).FirstOrDefault(d => d.Id == deliveryId) : null;
+    });
+
+    /// <summary>The app's check results on a delivery, in the order the mandate lists its checks.</summary>
+    public IReadOnlyList<CheckRow> Checks(string deliveryId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT delivery_id, check_name, passed, reason FROM org_check WHERE delivery_id=$d ORDER BY rowid",
+            ("$d", deliveryId));
+        using var r = c.ExecuteReader();
+        var rows = new List<CheckRow>();
+        while (r.Read()) rows.Add(new CheckRow(r.GetString(0), r.GetString(1), r.GetInt64(2) != 0, r.GetString(3)));
+        return (IReadOnlyList<CheckRow>)rows;
+    });
+
+    /// <summary>The manifest a delivery's id is the hash of, as sealed.</summary>
+    public string? Manifest(string deliveryId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT manifest FROM org_delivery WHERE id=$id", ("$id", deliveryId));
+        return c.ExecuteScalar() as string;
     });
 
     // ---- reads ----------------------------------------------------------------------------------------------------------

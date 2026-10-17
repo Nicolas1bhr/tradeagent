@@ -310,11 +310,10 @@ public class OrgAssignmentTests
             Assert.False(Ops.IsMutating(op), $"{op} is mutating");
             var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == op);
             Assert.False(spec.Mutating, $"{op} is described mutating");
+            // WORD BY WORD of the name and each argument, so 'deliver' is not read as 'live'.
+            var words = op.Split('-').Concat(spec.Args.SelectMany(a => a.Name.Split('_'))).ToList();
             foreach (var word in authority)
-            {
-                Assert.DoesNotContain(word, op, StringComparison.OrdinalIgnoreCase);
-                Assert.DoesNotContain(spec.Args, a => a.Name.Contains(word, StringComparison.OrdinalIgnoreCase));
-            }
+                Assert.DoesNotContain(words, w => w.StartsWith(word, StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -469,5 +468,167 @@ public class OrgAssignmentTests
         Assert.Equal((Head, m.Id), (escalation.Role, escalation.Payload));
         Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.EscalationOpen, m.Id),
             TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
+    }
+
+    // ---- item 4: decline and deliver ------------------------------------------------------------------------------
+
+    /// <summary>Assigns through the pipe as <see cref="Head"/> on a brokered seat and answers the mandate's id.</summary>
+    static async Task<string> Assigned(GatewayPipeServer server, Database db, string holder = Member, bool exact = false,
+        decimal allocation = 5m, int retries = MandateLimits.DefaultRetryLimit, string kind = MandateKind.Task)
+    {
+        var reply = await server.CallAsync(AssignFrame(holder, kind, exact, allocation, retries), Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        return Body(reply).GetProperty("mandate").GetString()!;
+    }
+
+    static IpcRequest DeliverFrame(string mandate, string report, object? deviations = null, object? refs = null) =>
+        Frame(Ops.MandateDeliver, [
+            ("mandate", mandate), ("report", report),
+            .. deviations is null ? Array.Empty<(string, object)>() : [("deviations", deviations)],
+            .. refs is null ? Array.Empty<(string, object)>() : [("refs", refs)]
+        ]);
+
+    /// <summary>A strategy version the ledger recorded under <paramref name="attempt"/>, as only a test may write it.</summary>
+    static void Version(Database db, string id, string? attempt) =>
+        Exec(db, """
+            INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
+            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, $attempt)
+            """, ("$id", id), ("$at", Stamp), ("$role", Member), ("$attempt", attempt));
+
+    /// <summary>
+    /// (c) A DELIVERY IS SEALED BY ITS MANIFEST HASH AND A SECOND IS A NEW DELIVERY: the holder's report goes into an immutable
+    /// <c>org_delivery</c> whose id is the SHA-256 of the manifest the app wrote, each check is recorded in the same write, and the
+    /// same words handed back again are a new delivery with its own id — never an edit. Only the holder delivers. RED at base: no
+    /// <c>mandate-deliver</c> op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_delivery_is_sealed_by_its_manifest_hash_and_a_second_is_a_new_delivery()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+
+        // NOT THE HOLDER: the decider itself is refused, and nothing is sealed.
+        Assert.Contains("only its holder", (await server.CallAsync(DeliverFrame(m, "done"), Head, Launch(db, Head))).Error!.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_delivery"));
+
+        var first = await server.CallAsync(DeliverFrame(m, "the skew does not predict the next hour"), Member, Launch(db, Member, mandate: m));
+        Assert.True(first.Ok, Json.Write(first.Error));
+        var id = Body(first).GetProperty("delivery").GetString()!;
+        var manifest = gw.Org.Manifest(id)!;
+        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(manifest))).ToLowerInvariant(), id);
+        Assert.Contains("the skew does not predict the next hour", manifest, StringComparison.Ordinal);
+        Assert.Equal(MandateCheck.All, gw.Org.Checks(id).Select(c => c.Check));
+        Assert.All(gw.Org.Checks(id), c => Assert.True(c.Passed, c.Reason));
+
+        var second = await server.CallAsync(DeliverFrame(m, "the skew does not predict the next hour"), Member, Launch(db, Member, mandate: m));
+        Assert.True(second.Ok, Json.Write(second.Error));
+        Assert.NotEqual(id, Body(second).GetProperty("delivery").GetString());
+        Assert.Equal(2, gw.Org.Deliveries(m).Count);
+
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db, "UPDATE org_delivery SET report='better'"));
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db, "UPDATE org_check SET passed=1"));
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db, "DELETE FROM org_delivery"));
+        Assert.Equal("the skew does not predict the next hour", gw.Org.Delivery(id)!.Report);
+    }
+
+    /// <summary>
+    /// (c2) AN EXACT MANDATE REFUSES A DELIVERY NAMING A DEVIATION (RULING Q7), with nothing written; the same deviation on an open
+    /// mandate is sealed. RED at base: no op, and no latitude.
+    /// </summary>
+    [Fact]
+    public async Task An_exact_mandate_refuses_a_delivery_naming_a_deviation()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var deviation = new[] { new { what = "used 5-minute bars", found = "minute bars were missing for August", cost = "one extra backtest" } };
+
+        var exact = await Assigned(server, db, exact: true);
+        var refused = await server.CallAsync(DeliverFrame(exact, "done", deviation), Member, Launch(db, Member, mandate: exact));
+        Assert.False(refused.Ok);
+        Assert.Contains("is exact", refused.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_delivery"));
+        Assert.Equal(0L, Count(db, "org_check"));
+        Assert.Equal(MandateEventKind.Issued, gw.Org.MandateStatus(exact));
+
+        // THE SAME DELIVERY WITHOUT IT IS SEALED; and on an open mandate the deviation is sealed verbatim, as a JSON string too.
+        Assert.True((await server.CallAsync(DeliverFrame(exact, "done"), Member, Launch(db, Member, mandate: exact))).Ok);
+        var open = await Assigned(server, db);
+        var sealedOne = await server.CallAsync(DeliverFrame(open, "done", JsonSerializer.Serialize(deviation)), Member, Launch(db, Member, mandate: open));
+        Assert.True(sealedOne.Ok, Json.Write(sealedOne.Error));
+        var d = gw.Org.Delivery(Body(sealedOne).GetProperty("delivery").GetString()!)!;
+        Assert.Equal(new MandateDeviation("used 5-minute bars", "minute bars were missing for August", "one extra backtest"), Assert.Single(d.Deviations));
+
+        // A DEVIATION WITH A FIELD IT DOES NOT TAKE, OR MISSING ONE, is refused, never cut or filled.
+        Assert.False((await server.CallAsync(DeliverFrame(open, "x", new[] { new { what = "a", found = "b" } }), Member, Launch(db, Member, mandate: open))).Ok);
+        Assert.False((await server.CallAsync(DeliverFrame(open, "x", new[] { new { what = "a", found = "b", cost = "c", measured = "0" } }), Member, Launch(db, Member, mandate: open))).Ok);
+    }
+
+    /// <summary>
+    /// (c3) A REF NOT PRODUCED UNDER THIS MANDATE FAILS ITS CHECK: a version the holder made under a launch charged to this mandate
+    /// passes <c>refs-of-this-mandate</c>; one made under another launch — the holder's own, uncharged — fails it in words naming
+    /// it; one that does not exist fails <c>refs-exist</c>. The checks are the app's, never the claim's. RED at base: no checks.
+    /// </summary>
+    [Fact]
+    public async Task A_ref_not_produced_under_this_mandate_fails_its_check()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+        var charged = Launch(db, Member, mandate: m);
+        var uncharged = Launch(db, Member);
+        Version(db, "ver-charged", charged);
+        Version(db, "ver-elsewhere", uncharged);
+
+        async Task<IReadOnlyList<CheckRow>> Checked(params string[] versions)
+        {
+            var reply = await server.CallAsync(DeliverFrame(m, "a version", refs: versions.Select(v => new { kind = "version", id = v }).ToArray()),
+                Member, charged);
+            Assert.True(reply.Ok, Json.Write(reply.Error));
+            return gw.Org.Checks(Body(reply).GetProperty("delivery").GetString()!);
+        }
+
+        var good = await Checked("ver-charged");
+        Assert.True(good.Single(c => c.Check == MandateCheck.RefsOfThisMandate).Passed);
+
+        var foreign = (await Checked("ver-charged", "ver-elsewhere")).Single(c => c.Check == MandateCheck.RefsOfThisMandate);
+        Assert.False(foreign.Passed);
+        Assert.Contains("version ver-elsewhere", foreign.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("ver-charged", foreign.Reason, StringComparison.Ordinal);
+
+        var missing = await Checked("ver-nowhere");
+        Assert.False(missing.Single(c => c.Check == MandateCheck.RefsExist).Passed);
+        Assert.False(missing.Single(c => c.Check == MandateCheck.RefsOfThisMandate).Passed);
+
+        // AN UNKNOWN REF KIND is refused at the seal; a too-long report is sealed and fails its size check.
+        Assert.False((await server.CallAsync(DeliverFrame(m, "x", refs: new[] { new { kind = "file", id = "out/x.md" } }), Member, charged)).Ok);
+        var tall = await server.CallAsync(DeliverFrame(m, string.Join("\n", Enumerable.Range(1, MandateLimits.ReportLines + 1))), Member, charged);
+        Assert.False(gw.Org.Checks(Body(tall).GetProperty("delivery").GetString()!).Single(c => c.Check == MandateCheck.ReportSize).Passed);
+    }
+
+    /// <summary>A HOLDER DECLINES: the event, its wakes closed, and the decider told once — retries stop.</summary>
+    [Fact]
+    public async Task A_decline_stops_retries_and_tells_the_decider()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+
+        Assert.False((await server.CallAsync(Frame(Ops.MandateDecline, ("mandate", m), ("reason", "boring"), ("why", "x")), Member, Launch(db, Member))).Ok);
+        var declined = await server.CallAsync(Frame(Ops.MandateDecline, ("mandate", m), ("reason", MandateDecline.Ambiguous),
+            ("why", "'the next hour' could mean the funding hour or the clock hour")), Member, Launch(db, Member));
+        Assert.True(declined.Ok, Json.Write(declined.Error));
+        Assert.Equal([MandateEventKind.Issued, MandateEventKind.Declined, MandateEventKind.Escalated], gw.Org.MandateEvents(m).Select(e => e.Kind));
+        Assert.All(new MissionEventStore(db).OfKind(MissionEventKind.Mandate), w => Assert.True(w.Consumed));
+        Assert.Equal(Head, Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Escalation)).Role);
     }
 }

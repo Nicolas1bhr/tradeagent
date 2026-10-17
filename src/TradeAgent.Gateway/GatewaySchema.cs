@@ -617,6 +617,31 @@ public static class GatewaySchema
                 new("why", "string", true, $"Why, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
             ]),
 
+        new(Core.Ops.MandateDeliver, "trade mandate deliver <mandate> <report> [--deviations JSON] [--refs JSON]", false,
+            "HAND YOUR WORK ON A MANDATE YOU HOLD BACK TO ITS DECIDER — the only way a position's work reaches its issuer (a file "
+            + "you stage in out/ stays held). 'report' is what you found, in your words; 'deviations' names every way you departed "
+            + "from what was asked — a JSON list of {\"what\", \"found\", \"cost\"}, each your own words — and 'refs' cites the "
+            + "app records the work produced — a JSON list of {\"kind\": version | run | ledger | lens, \"id\"} (a lens is "
+            + "id@version). TradeAgent SEALS it: its id is the SHA-256 of what you handed back and nothing edits it; a later "
+            + "delivery is a new one. It then runs its own checks — the report's size, that every ref exists, that every ref was "
+            + "produced by a launch charged to THIS mandate, and for a task its output shape — and records each. Code triages: a "
+            + "clean failure is retried without waking your decider; a pass, or any deviation you named, wakes it. An exact "
+            + "mandate refuses a delivery that names a deviation. Your words are your claims, never TradeAgent's measurements.",
+            [
+                new("mandate", "string", true, "The mandate's id."),
+                new("report", "string", true, $"What you found or made, in your words: at most {Core.Db.MandateLimits.ReportLines} lines pass the size check."),
+                new("deviations", "string", false, "A JSON list of {\"what\", \"found\", \"cost\"} — every departure from what was asked, and what you say it cost."),
+                new("refs", "string", false, "A JSON list of {\"kind\", \"id\"} — the app records your work produced: version | run | ledger | lens.")
+            ]),
+        new(Core.Ops.MandateDecline, "trade mandate decline <mandate> <reason> <why>", false,
+            "DECLINE A MANDATE YOU HOLD: 'infeasible' or 'ambiguous', and why, in your words. TradeAgent records it, stops "
+            + "retrying and wakes its decider. Only its holder may.",
+            [
+                new("mandate", "string", true, "The mandate's id."),
+                new("reason", "string", true, "infeasible | ambiguous"),
+                new("why", "string", true, $"Why, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
+            ]),
+
         // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.
         new(Core.Ops.LensPropose, "trade lens propose <lens>", false,
             "PROPOSE A LENS: a question schema over the tape's own text, as one JSON object — 'id' (lower-case letters, digits "

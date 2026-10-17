@@ -81,6 +81,88 @@ public sealed partial class GatewayPipeServer
         return MandateReply(Gateway.Org.Mandate(id)!);
     }
 
+    /// <summary>
+    /// THE HOLDER HANDS ITS WORK BACK, SEALED (<see cref="OrgStore.Deliver"/>): the report, the deviations and the refs are its
+    /// claims, stored verbatim; the seal, the checks and what code makes of them are TradeAgent's. A position's work reaches its
+    /// issuer through this op and nothing else (RULING Q1): a file staged in <c>out/</c> stays held.
+    /// </summary>
+    object MandateDeliver(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var deviations = Claims(req, "deviations", ["what", "found", "cost"],
+            o => new MandateDeviation(o["what"], o["found"], o["cost"]));
+        var refs = Claims(req, "refs", ["kind", "id"], o => new MandateRef(o["kind"], o["id"]));
+        var result = Gateway.Org.Deliver(Require(req, "mandate"), caller, ctx.AttemptId, Require(req, "report"), deviations, refs,
+            DateTimeOffset.UtcNow, LensOrigin);
+        return new
+        {
+            delivery = result.Delivery.Id,
+            mandate = result.Delivery.MandateId,
+            status = result.Status,
+            checks = result.Checks.Select(c => new { check = c.Check, passed = c.Passed, reason = c.Reason }),
+            note = "Sealed: the id is the SHA-256 of what you handed back, and nothing edits it — a later delivery is a new one. "
+                   + "The checks are TradeAgent's; your report, deviations and refs are your claims, stored as written."
+        };
+    }
+
+    /// <summary>THE HOLDER DECLINES AN OPEN MANDATE, infeasible or ambiguous, saying why (<see cref="OrgStore.Decline"/>).</summary>
+    object MandateDecline(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var id = Require(req, "mandate");
+        Gateway.Org.Decline(id, caller, ctx.AttemptId, Require(req, "reason"), Require(req, "why"), DateTimeOffset.UtcNow);
+        return MandateReply(Gateway.Org.Mandate(id)!);
+    }
+
+    /// <summary>The launch that registered lens <paramref name="id"/> at <paramref name="version"/>, read from the tape's registry, or null.</summary>
+    LensOrigin? LensOrigin(string id, int version) =>
+        Gateway.Tape?.Lens(id, version) is { } lens && lens.Version == version ? new LensOrigin(lens.Attempt) : null;
+
+    /// <summary>
+    /// A LIST OF CLAIMS THE FRAME CARRIES, AS JSON OBJECTS WITH EXACTLY <paramref name="keys"/>, each a string: absent is none; a
+    /// JSON array or a string holding one is read; anything else — another shape, a key it does not take, a missing one — is
+    /// refused, never cut or filled in.
+    /// </summary>
+    static IReadOnlyList<T> Claims<T>(IpcRequest req, string arg, string[] keys, Func<IReadOnlyDictionary<string, string>, T> make)
+    {
+        if (req.Args is null || !req.Args.TryGetValue(arg, out var raw) || raw.ValueKind == System.Text.Json.JsonValueKind.Null) return [];
+        System.Text.Json.JsonElement list;
+        try
+        {
+            list = raw.ValueKind == System.Text.Json.JsonValueKind.String
+                ? System.Text.Json.JsonDocument.Parse(raw.GetString() ?? "[]").RootElement.Clone()
+                : raw;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{arg}' is not JSON. {Shape()}");
+        }
+        if (list.ValueKind != System.Text.Json.JsonValueKind.Array)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{arg}' is not a list. {Shape()}");
+
+        var items = new List<T>();
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != System.Text.Json.JsonValueKind.Object)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"an item of '{arg}' is not an object. {Shape()}");
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var p in item.EnumerateObject())
+            {
+                if (Array.IndexOf(keys, p.Name) < 0 || p.Value.ValueKind != System.Text.Json.JsonValueKind.String)
+                    throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{p.Name}' is not a text field of an item of '{arg}'. {Shape()}");
+                fields[p.Name] = p.Value.GetString()!;
+            }
+            if (keys.FirstOrDefault(k => !fields.ContainsKey(k)) is { } missing)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"an item of '{arg}' has no '{missing}'. {Shape()}");
+            items.Add(make(fields));
+        }
+        return items;
+
+        string Shape() => $"'{arg}' is a JSON list of objects with exactly {string.Join(", ", keys.Select(k => $"'{k}'"))}, each text. Nothing was written.";
+    }
+
     /// <summary>What an organisation verb's refusal of an argument it does not take says.</summary>
     const string MandateArgsWhy = "A mandate's record is the app's: its id, its events, its seal and its checks are written by "
                                   + "TradeAgent and by nothing a frame carries. Nothing was written.";

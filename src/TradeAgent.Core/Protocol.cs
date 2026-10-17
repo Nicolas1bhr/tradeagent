@@ -217,10 +217,11 @@ public static class Ops
     /// approval, live activation, an update or a credential (AUTH-001) — those stay in-process only. No mandate is ever held by
     /// <c>operations</c> (ORDER-001, RULING Q4).</para>
     /// </summary>
-    public const string MandateAssign = "mandate-assign", MandateCancel = "mandate-cancel";
+    public const string MandateAssign = "mandate-assign", MandateCancel = "mandate-cancel", MandateDeliver = "mandate-deliver",
+        MandateDecline = "mandate-decline";
 
     /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>).</summary>
-    public static readonly string[] Organisation = [MandateAssign, MandateCancel];
+    public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 
