@@ -526,7 +526,7 @@ public static class ProcessContainment
     /// none of it alive; any other survivor is asked as <see cref="TreeTeardown.StillRunning"/> asks it.
     /// </summary>
     internal static bool StillRunning(ProcessEntry survivor) =>
-        survivor.Unlisted
+        survivor.Unlisted && survivor.Cgroup is null
             ? WindowsProcessTable.AnyAlive(ListTree(survivor.Pid, survivor.Start))
             : TreeTeardown.StillRunning(survivor);
 

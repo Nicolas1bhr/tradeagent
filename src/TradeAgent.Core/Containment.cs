@@ -466,9 +466,14 @@ public static class Posix
 /// <see cref="Pid"/>, started at <see cref="Start"/>, which Windows would not list when a teardown asked. Nothing can
 /// say none of it runs, so it is still running — re-asked at every check, never cleared by a timer — until a listing
 /// succeeds and shows none of it alive (<see cref="WindowsProcessTable.StillRunning"/>). Unknown is never zero.</para>
+///
+/// <para><see cref="Cgroup"/> (<c>U-cell-linux-b</c> fix pass 1, R3 and R4): this entry is not one process but EVERYTHING IN AN
+/// ATTEMPT'S CGROUP on Linux, which a teardown or the restart's sweep could not end — still running until the kernel says the
+/// cgroup is empty or it is gone (<see cref="AttemptCgroup.StillHolds"/>), an unreadable one included. With <see cref="Unlisted"/>
+/// as well, its processes could not even be listed.</para>
 /// </summary>
 public readonly record struct ProcessEntry(int Pid, int Parent, int Group, int Session, ulong Start,
-    bool Stopped, bool Zombie, bool Unlisted = false);
+    bool Stopped, bool Zombie, bool Unlisted = false, string? Cgroup = null);
 
 /// <summary>
 /// THE PROCESS TABLE, READ WITHOUT SHELLING OUT. macOS through libproc (<c>proc_listallpids</c>,
@@ -758,7 +763,10 @@ public sealed record TreeEnd(bool Ended, IReadOnlyList<ProcessEntry> Survivors, 
     /// would not list (<see cref="ProcessEntry.Unlisted"/>) — that, since then no number is known to be all of it.
     /// </summary>
     public static string Held(IReadOnlyList<ProcessEntry> left) =>
-        left.Any(p => p.Unlisted)
+        left.Any(p => p.Cgroup is not null)
+            ? Labels.AttemptStillHeld(left.Where(p => p.Cgroup is not null).Select(p => Path.GetFileName(p.Cgroup!)),
+                left.Where(p => p.Cgroup is null).Select(p => p.Pid), left.Any(p => p.Cgroup is not null && p.Unlisted))
+        : left.Any(p => p.Unlisted)
             ? Labels.LastTurnUnlisted(left.Where(p => p.Unlisted).Select(p => p.Pid))
             : Labels.LastTurnStillRunning(left.Select(p => p.Pid));
 }
@@ -849,7 +857,8 @@ public static class TreeTeardown
     /// <see cref="WindowsProcessTable.StillRunning"/>, which answers yes whenever Windows will not say.
     /// </summary>
     public static bool StillRunning(ProcessEntry survivor) =>
-        OperatingSystem.IsWindows()
+        survivor.Cgroup is { } cgroup ? AttemptCgroup.StillHolds(cgroup)
+        : OperatingSystem.IsWindows()
             ? WindowsProcessTable.StillRunning(survivor)
             : survivor.Unlisted || ProcessTable.Read(survivor.Pid) is { Zombie: false } now && now.Start == survivor.Start;
 
