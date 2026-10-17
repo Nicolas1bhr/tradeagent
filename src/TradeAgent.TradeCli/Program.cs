@@ -357,6 +357,29 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade mandate assign <holder> <goal> --kind K --due T --allocation A …` and `cancel <mandate> <why>` (U-org-assignments-a):
+        // the organisation's verbs. Every flag is sent on under its own name and the gateway refuses one the verb does not take; the
+        // positionals fill, in the form's order, what no flag named, and the last takes every word left.
+        case "mandate":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "assign":
+                    Fill(a, rest, "holder", "goal");
+                    return (Ops.MandateAssign, a);
+                case "cancel":
+                    Fill(a, rest, "mandate", "why");
+                    return (Ops.MandateCancel, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade lens propose <lens>`, `list [--id I] [--limit N]` and `show <id> [--version V]` (U-lenses). Every flag
         // is sent on under its own name and the gateway refuses one the verb does not take; the lens's JSON takes every word
         // left, so a JSON object the shell split on its spaces arrives whole.

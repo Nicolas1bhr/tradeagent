@@ -368,6 +368,15 @@ public sealed class TradingGateway : IAsyncDisposable
     public const string PaperAllocatorRole = "allocator";
 
     /// <summary>
+    /// THE ORGANISATION'S STORE (<c>U-org-assignments-a</c>): the chart's readers and the mandate's writers. Its writers check the
+    /// chart and the mandate row again; the broker proves the caller first (<c>OrgVerbCaller</c>).
+    /// </summary>
+    public OrgStore Org => new(_db);
+
+    /// <summary>One launch as the ledger recorded it, or null — read by the broker for the seat assurance a launch was admitted on.</summary>
+    public AiAttempt? Attempt(string id) => new AiAttemptStore(_db).Get(id);
+
+    /// <summary>
     /// THE ACTIVE POSITION A CALLER'S LAUNCH GRANT PROVED, or null (<c>U-org-principals</c>): the role string when the
     /// chart holds a position by exactly that id and it is active — the legacy pair or any other — and null for an app
     /// principal, a dormant or ended position, an unknown name, nobody, or a chart that could not be read. The one

@@ -203,6 +203,27 @@ public static class Ops
     /// </summary>
     public const string LensPropose = "lens-propose", LensList = "lens-list", LensShow = "lens-show";
 
+    /// <summary>
+    /// THE ORGANISATION'S VERBS (<c>U-org-assignments-a</c>; ORCHESTRATION § 2.9 at <c>bdf66e1b</c>): a mandate's life, through
+    /// the broker. EVERY ONE IS NAMED APART FROM THE PIPE'S OTHER OPS — <c>mandate-*</c>, never a bare <c>cancel</c>, which is an
+    /// order op that moves money — and a conformance test holds the two sets disjoint.
+    ///
+    /// <para><b>Inside authority, by code at the broker.</b> The caller is the active position its launch grant proved, and its
+    /// launch's RECORDED seat assurance must be at least <c>CapabilityPolicy.Minimum(Capability.DecisionVerbs)</c> — never
+    /// headship, so <c>research</c>, which heads <c>div-research</c> from an unconfined seat, holds none of them (§ 2.3). A
+    /// decider-only or holder-only verb reads the mandate row, never a claim in the frame.</para>
+    ///
+    /// <para>NOT in <see cref="Mutating"/>: no mandate verb reaches a broker, and none touches the mode, the kill switch, an
+    /// approval, live activation, an update or a credential (AUTH-001) — those stay in-process only. No mandate is ever held by
+    /// <c>operations</c> (ORDER-001, RULING Q4).</para>
+    /// </summary>
+    public const string MandateAssign = "mandate-assign", MandateCancel = "mandate-cancel";
+
+    /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>).</summary>
+    public static readonly string[] Organisation = [MandateAssign, MandateCancel];
+
+    public static bool IsOrganisation(string op) => Organisation.Contains(op);
+
     public static readonly string[] Mutating =
         [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll, DeploymentStop];
     public static bool IsMutating(string op) => Mutating.Contains(op);

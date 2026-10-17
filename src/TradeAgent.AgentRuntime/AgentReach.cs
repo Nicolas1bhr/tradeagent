@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 
 namespace TradeAgent.AgentRuntime;
@@ -139,7 +140,10 @@ public sealed record AgentReach
         {
             // THE CLI'S VERBS ARE THE GATEWAY'S, less what the gateway refuses this role. Its one tool is the command
             // those forms are spelled with — the first word of every one of them.
-            var verbs = GatewaySchema.Ops().Where(o => Allowed(o.Op))
+            //
+            // AND LESS THE ORGANISATION'S VERBS, which the broker serves only to a launch whose recorded seat assurance carries
+            // them (U-org-assignments-a; ORCHESTRATION § 2.3): a CLI seat is unconfined, so none of them is in its reach.
+            var verbs = GatewaySchema.Ops().Where(o => Allowed(o.Op) && CarriedBy(o.Op, SeatClasses.Cli))
                 .Select(o => new ReachVerb(o.Op, o.Cli, Ops.IsMutating(o.Op))).ToList();
             var writes = WorkspaceBuilder.SubDirs.Append(CouncilRoles.OutDir).Append(TopFolder(MissionLoop.WakeFile)).ToList();
             var options = new MissionOptions();
@@ -189,6 +193,15 @@ public sealed record AgentReach
             TurnsPerSession = 1
         };
     }
+
+    /// <summary>
+    /// WHETHER A SEAT OF <paramref name="seatClass"/> CAN BE SERVED <paramref name="op"/> AT ALL: every op but the organisation's
+    /// verbs, and those only on a seat whose assurance carries <see cref="Capability.DecisionVerbs"/> (the broker's own line,
+    /// <c>GatewayPipeServer.OrgVerbCaller</c>).
+    /// </summary>
+    public static bool CarriedBy(string op, string seatClass) =>
+        !Ops.IsOrganisation(op)
+        || SeatClasses.AssuranceOf(seatClass) is { } assurance && assurance >= CapabilityPolicy.Minimum(Capability.DecisionVerbs);
 
     /// <summary>The first folder of a path relative to a seat's own folder.</summary>
     public static string TopFolder(string path) => path.Replace('\\', '/').Split('/')[0];

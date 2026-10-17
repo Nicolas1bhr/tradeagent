@@ -447,7 +447,10 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
     public void The_reach_is_read_from_what_enforces_it(string role, RuntimeClass runtime)
     {
         var reach = AgentReach.For(role, runtime);
-        bool Refused(string op) => Ops.IsMutating(op) && !CouncilRoles.MayPlaceOrders(role);
+        // AND THE ORGANISATION'S VERBS ON A SEAT THAT CANNOT CARRY THEM (U-org-assignments-a): the broker serves them only to a
+        // launch whose recorded assurance carries the decision verbs, and a CLI seat is unconfined.
+        bool Refused(string op) => Ops.IsMutating(op) && !CouncilRoles.MayPlaceOrders(role)
+                                   || runtime == RuntimeClass.Cli && !AgentReach.CarriedBy(op, TradeAgent.Core.Db.SeatClasses.Cli);
         log.WriteLine($"{role}·{runtime}: {reach.Verbs.Count} verbs, tools {string.Join(" ", reach.Tools)}, "
                       + $"writes {string.Join(" ", reach.Writes)}, wake {reach.WakeFile ?? "none"}");
 

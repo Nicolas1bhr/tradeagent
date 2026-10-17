@@ -586,6 +586,37 @@ public static class GatewaySchema
                 new("before", "number", false, "In that list, serve only rows before it — a revision number, or the cursor an answer's 'next' names.")
             ]),
 
+        // THE ORGANISATION'S VERBS (U-org-assignments-a; ORCHESTRATION § 2.9): a mandate's life. Each is named apart from the pipe's
+        // other ops, and each is served only to a launch whose recorded seat assurance carries the organisation's decision verbs.
+        new(Core.Ops.MandateAssign, "trade mandate assign <holder> <goal> --kind K --due T --allocation A [--shape S] [--scope S] [--retries N] [--exact true]", false,
+            "GIVE SOMEONE IN YOUR OWN SUBTREE A MANDATE: a 'task' with an output shape, or an 'exploration'; what you want found or "
+            + "made ('goal', YOUR words, stored as written), by when ('due', an ISO-8601 time), with how much AI spend over its "
+            + "whole life ('allocation'), how many clean failures code retries before it wakes you ('retries', default "
+            + $"{Core.Db.MandateLimits.DefaultRetryLimit}), and whether it must be done EXACTLY as asked ('exact' true refuses a "
+            + "delivery that names a deviation). TradeAgent mints the mandate's id, records it and wakes the holder once. Refused, "
+            + "with nothing written, to yourself, to an app principal, to an inactive position, to 'operations', and to anyone "
+            + "outside the subtree you head; and to a launch whose seat cannot carry the organisation's verbs — heading a unit grants "
+            + "none by itself. It places no order and moves no money.",
+            [
+                new("holder", "string", true, "The position that will do it: active, and in the subtree you head."),
+                new("goal", "string", true, $"What you want found or made, in your words: at most {Core.Db.MandateLimits.MaxObjectiveChars:N0} characters."),
+                new("kind", "string", true, "task | exploration"),
+                new("due", "string", true, "Its deadline, an ISO-8601 time in the future (UTC when it names no offset)."),
+                new("allocation", "number", true, "The most AI spend its holder's launches may commit over its whole life, in the price list's currency; above 0."),
+                new("shape", "string", false, "For a task: report | version | run | ledger | lens — what it must hand back. Not for an exploration."),
+                new("scope", "string", false, $"What is in and out of bounds, in your words: at most {Core.Db.MandateLimits.MaxObjectiveChars:N0} characters."),
+                new("retries", "number", false, $"How many clean failures code handles before it wakes you, 1 to {Core.Db.MandateLimits.MaxRetryLimit}; {Core.Db.MandateLimits.DefaultRetryLimit} when omitted."),
+                new("exact", "string", false, "true: a delivery that names a deviation is refused. false when omitted.")
+            ]),
+        new(Core.Ops.MandateCancel, "trade mandate cancel <mandate> <why>", false,
+            "CANCEL A MANDATE YOU DECIDE, saying why: TradeAgent records the cancellation as an event, closes the holder's untaken "
+            + "wakes, and admits no further launch under it — its spend stops there. Only its decider may; a closed mandate is "
+            + "refused. It places no order and moves no money.",
+            [
+                new("mandate", "string", true, "The mandate's id, as 'mandate-assign' answered it."),
+                new("why", "string", true, $"Why, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
+            ]),
+
         // THE LENSES (U-lenses): a definition proposed, the app's registration of it, and reads of every role's.
         new(Core.Ops.LensPropose, "trade lens propose <lens>", false,
             "PROPOSE A LENS: a question schema over the tape's own text, as one JSON object — 'id' (lower-case letters, digits "

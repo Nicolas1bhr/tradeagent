@@ -17,7 +17,7 @@ namespace TradeAgent.Gateway;
 /// mode changes, the kill switch, live activation, approvals — is NOT reachable here, so an agent
 /// that decides it would like more permission has nowhere to ask.
 /// </summary>
-public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null)
+public sealed partial class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null)
     : IAsyncDisposable, IGatewayCalls
 {
     /// <summary>
@@ -298,6 +298,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     TimeSpan DerivedDrainTimeout => HandlerPaths.Max(p => p.Path) + HandlerOverhead + SettleAfterCancelTimeout;
 
+    /// <summary>The gateway this server serves, for the handlers declared in its other parts (<c>GatewayPipeServer.Mandates.cs</c>).</summary>
+    TradingGateway Gateway => gateway;
+
     /// <summary>
     /// EVERY HANDLER, WITH ITS OWN SERIAL DEPTH — and the drain is the maximum over this table.
     ///
@@ -357,6 +360,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.LensPropose, TimeSpan.Zero, "the app's lens registrar: one parse and at most one insert into the tape's lens table, in process"),
         new(Core.Ops.LensList, TimeSpan.Zero, "the tape's own file, opened read-only: the registered lenses, newest first, on disk"),
         new(Core.Ops.LensShow, TimeSpan.Zero, "the tape's own file, opened read-only: one registered lens, on disk"),
+        new(Core.Ops.MandateAssign, TimeSpan.Zero, "the organisation's mandate records: one validated insert, its event and one wake, in process"),
+        new(Core.Ops.MandateCancel, TimeSpan.Zero, "the organisation's mandate records: one event, and the holder's untaken wakes closed, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1357,6 +1362,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.LensPropose  => LensPropose(ctx, req),
                 Core.Ops.LensList     => LensList(req),
                 Core.Ops.LensShow     => LensShow(req),
+                Core.Ops.MandateAssign => MandateAssign(ctx, req),
+                Core.Ops.MandateCancel => MandateCancel(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
