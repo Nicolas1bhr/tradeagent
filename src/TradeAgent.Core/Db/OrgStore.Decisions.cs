@@ -562,5 +562,62 @@ public sealed partial class OrgStore
         r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), Sql.S(r.GetValue(4)), Sql.S(r.GetValue(5)), r.GetString(6),
         JsonSerializer.Deserialize<string[]>(r.GetString(7)) ?? [], Sql.S(r.GetValue(8)), Sql.Time(r.GetValue(9)));
 
+    // ---- lateral notes ------------------------------------------------------------------------------------------------
+
+    const string LateralCols = "id, sender, attempt_id, to_position, text, refs, at";
+
+    /// <summary>
+    /// A NOTE FROM ONE POSITION TO ANOTHER — information moves, authority does not (ORGANISATION § 4): the row, sender-stamped by the
+    /// app, and NOTHING ELSE — no wake, no mandate event, no publication, no assignment; an approval inside it is void. The recipient
+    /// reads it with <c>lateral-list</c>. Refused in words, nothing written: a recipient that is the sender, an app principal, the
+    /// legacy pair (unconfined seats that hold no organisation verb to read it with, and <c>operations</c>, whose trading no note
+    /// shapes — ORDER-001), not a position or not active; a text empty or too long; a ref that is not there.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public LateralRow SendLateral(string sender, string? attempt, string to, string text, IReadOnlyList<OrgRef> refs, DateTimeOffset now) =>
+        db.Write(_ =>
+        {
+            if (IsAppPrincipal(sender) || Position(sender) is not { Status: OrgPositionStatus.Active })
+                throw Refused($"'{sender}' is no active position: a note is sent by the position whose launch wrote it.");
+            if (to == sender)
+                throw Refused("a note goes to another position, never to yourself — your own beliefs go in the research ledger.");
+            if (IsAppPrincipal(to))
+                throw Refused($"'{to}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it reads no note.");
+            if (CouncilRoles.IsKnown(to))
+                throw Refused($"'{to}' is one of the legacy pair, on unconfined seats that hold no organisation verb to read a note with; "
+                              + (to == CouncilRoles.Operations ? "and what operations trades is never shaped by a note (ORDER-001). " : "")
+                              + "Escalate through your chain instead.");
+            if (Position(to) is not { } recipient)
+                throw Refused($"'{to}' is no position on the chart.");
+            if (recipient.Status != OrgPositionStatus.Active)
+                throw Refused($"'{to}' is {recipient.Status}, not active: a note goes to an active position.");
+            if (string.IsNullOrWhiteSpace(text) || text.EnumerateRunes().Count() > ResearchLedger.MaxTextChars)
+                throw Refused($"a note's text is your words, never empty, at most {ResearchLedger.MaxTextChars:N0} characters; longer is refused, never cut.");
+            if (RefsRefusal(refs) is { } badRef) throw Refused(badRef);
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(Json.Write(new { text, refs }));
+            if (bytes > DecisionLimits.MaxRecordBytes)
+                throw Refused($"this note is {bytes:N0} bytes as TradeAgent writes it, and a note holds at most {DecisionLimits.MaxRecordBytes:N0} "
+                              + "so it is always read whole; say it shorter.");
+
+            var row = new LateralRow(Mint(LateralPrefix), sender, attempt, to, text, refs, now);
+            using var c = db.Cmd($"INSERT INTO org_lateral({LateralCols}) VALUES($id,$s,$attempt,$to,$text,$refs,$at)",
+                ("$id", row.Id), ("$s", sender), ("$attempt", attempt), ("$to", to), ("$text", text),
+                ("$refs", JsonSerializer.Serialize(refs)), ("$at", Sql.T(now)));
+            c.ExecuteNonQuery();
+            return row;
+        });
+
+    /// <summary>The notes <paramref name="position"/> sent or received, newest first — never another position's.</summary>
+    public IReadOnlyList<LateralRow> LateralsOf(string position) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {LateralCols} FROM org_lateral WHERE sender=$p OR to_position=$p ORDER BY at DESC, rowid DESC", ("$p", position));
+        using var r = c.ExecuteReader();
+        var rows = new List<LateralRow>();
+        while (r.Read())
+            rows.Add(new LateralRow(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), r.GetString(4),
+                ReadRefs(r.GetString(5)), Sql.Time(r.GetValue(6))));
+        return (IReadOnlyList<LateralRow>)rows;
+    });
+
     static IReadOnlyList<OrgRef> ReadRefs(string json) => JsonSerializer.Deserialize<OrgRef[]>(json) ?? [];
 }

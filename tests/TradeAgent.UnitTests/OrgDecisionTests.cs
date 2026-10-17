@@ -734,4 +734,188 @@ public class OrgDecisionTests
         Assert.Equal(3, Escalations(db).Count);
         Assert.All(Escalations(db), w => Assert.Equal(Chief, w.Role));
     }
+
+    // ---- item 6: lateral notes, and the guards over all eight ---------------------------------------------------------------
+
+    static readonly string[] Eight =
+        [Ops.DecisionRecord, Ops.DecisionList, Ops.DecisionShow, Ops.ForecastAdd, Ops.EscalationRaise, Ops.EscalationList, Ops.LateralSend, Ops.LateralList];
+
+    static IpcRequest NoteFrame(string to, string text = "the funding feed for venue B skips the 02:00 print", object? refs = null) =>
+        Frame(Ops.LateralSend, [("to", to), ("text", text), .. refs is null ? Array.Empty<(string, object)>() : [("refs", refs)]]);
+
+    static (long Wakes, long Events, long Publications, long Mandates) Quiet(Database db) =>
+        (Count(db, "mission_event"), Count(db, "org_mandate_event"), Count(db, "publication"), Count(db, "org_mandate"));
+
+    /// <summary>
+    /// (f) A LATERAL NOTE WRITES ITS ROW AND NO WAKE, NO MANDATE EVENT, NO PUBLICATION (ORGANISATION § 4: information moves,
+    /// authority does not): the app mints <c>lat-…</c> with the sender it proved, and writes nothing else; the recipient reads it with
+    /// <c>lateral-list</c>, the sender sees it as sent, and a third position sees nothing. RED at base: no op existed; a GUARD after it.
+    /// Watched red with <c>lateral-send</c> raising a <c>mission_event</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_lateral_note_writes_its_row_and_no_wake_no_mandate_event_no_publication()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-f");
+        gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+        var launch = Launch(db, Outsider);
+        var before = Quiet(db);
+
+        var reply = await server.CallAsync(NoteFrame(Member, refs: new[] { new { kind = "version", id = "ver-f" } }), Outsider, launch);
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var id = Body(reply).GetProperty("note").GetProperty("lateral").GetString()!;
+        Assert.StartsWith(OrgStore.LateralPrefix, id, StringComparison.Ordinal);
+        Assert.Equal(before, Quiet(db));
+
+        var n = Assert.Single(gw.Org.LateralsOf(Member));
+        Assert.Equal((id, Outsider, launch, Member), (n.Id, n.Sender, n.Attempt!, n.Recipient));
+        Assert.Equal([new OrgRef("version", "ver-f")], n.Refs);
+
+        var read = Body(await server.CallAsync(Frame(Ops.LateralList), Member, Launch(db, Member))).GetProperty("notes");
+        Assert.Equal(("recipient", Outsider, "the funding feed for venue B skips the 02:00 print"),
+            (read[0].GetProperty("you_are").GetString(), read[0].GetProperty("from").GetString(), read[0].GetProperty("text").GetString()));
+        Assert.Equal("sender", Body(await server.CallAsync(Frame(Ops.LateralList), Outsider, Launch(db, Outsider))).GetProperty("notes")[0]
+            .GetProperty("you_are").GetString());
+        Assert.Equal(0, Body(await server.CallAsync(Frame(Ops.LateralList), Other, Launch(db, Other))).GetProperty("notes").GetArrayLength());
+        // A SENDER NAMED IN THE FRAME is refused: the stamp is the app's.
+        Assert.Contains("'from' is not an argument", (await server.CallAsync(Frame(Ops.LateralSend, ("to", Member), ("text", "t"), ("from", Head)),
+            Outsider, Launch(db, Outsider))).Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(1L, Count(db, "org_lateral"));
+    }
+
+    /// <summary>
+    /// (f2) A NOTE TO ITSELF, AN APP PRINCIPAL OR THE LEGACY PAIR IS REFUSED — in words, nothing written: and to no position, to an
+    /// inactive one, with no text, or citing a record that is not there. No note reaches <c>operations</c> (ORDER-001). RED at base.
+    /// </summary>
+    [Fact]
+    public async Task A_note_to_itself_an_app_principal_or_the_legacy_pair_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Seat(db, "pos-a1c0ffee00d0", Team, OrgPositionStatus.Dormant);
+
+        foreach (var (frame, words) in new[]
+                 {
+                     (NoteFrame(Head), "never to yourself"),
+                     (NoteFrame(AppPrincipals.Referee), "app's own principals"),
+                     (NoteFrame(AppPrincipals.Allocator), "app's own principals"),
+                     (NoteFrame(CouncilRoles.Operations), "ORDER-001"),
+                     (NoteFrame(CouncilRoles.Research), "legacy pair"),
+                     (NoteFrame("pos-nobody"), "no position on the chart"),
+                     (NoteFrame("pos-a1c0ffee00d0"), "not active"),
+                     (NoteFrame(Member, " "), "never empty"),
+                     (NoteFrame(Member, new string('x', ResearchLedger.MaxTextChars + 1)), "never cut"),
+                     (NoteFrame(Member, refs: new[] { new { kind = "decision", id = "dec-nowhere" } }), "is not in the app's ledgers")
+                 })
+        {
+            var refused = await server.CallAsync(frame, Head, Launch(db, Head));
+            Assert.False(refused.Ok, $"a note was sent: {words}");
+            Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Equal(0L, Count(db, "org_lateral"));
+    }
+
+    /// <summary>One frame of each of the eight verbs, each well formed.</summary>
+    static IEnumerable<IpcRequest> OneOfEach(string decision, string mandate) =>
+    [
+        RecordFrame(), Frame(Ops.DecisionList), Frame(Ops.DecisionShow, ("id", decision)),
+        ForecastFrame(decision, mandate, "accepted", 0.5m), EscalateFrame(), Frame(Ops.EscalationList), NoteFrame(Member), Frame(Ops.LateralList)
+    ];
+
+    /// <summary>
+    /// (a2) THE LEGACY PAIR ON UNCONFINED SEATS HOLD NO DECISION, FORECAST, ESCALATION OR LATERAL VERB (GUARD; RULING R2): every one of
+    /// the eight is refused to <c>research</c> — which heads <c>div-research</c> — and to <c>operations</c> on their CLI seats, as to a
+    /// non-legacy head on one, at the caller gate, with nothing written to any of the five tables, the ledger or the wake queue; and the
+    /// CLI's reach names none of them. Watched red with the assurance check removed from <c>OrgVerbCaller</c> (headship kept).
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pair_on_unconfined_seats_hold_no_decision_forecast_escalation_or_lateral_verb()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+        var d = gw.Org.Decide(Head, null, OrgDecisionKind.Routine, ["a"], "a", "why", [], [], DateTimeOffset.UtcNow);
+        var tables = new[] { "org_decision", "org_forecast", "org_escalation", "org_lateral", "ledger_entry", "mission_event" };
+        var before = tables.Select(t => Count(db, t)).ToArray();
+        Assert.Equal(OrgPositionKind.Head, gw.Org.Standing(CouncilRoles.Research)!.Kind);
+
+        foreach (var caller in new[] { CouncilRoles.Research, CouncilRoles.Operations, Head })
+            foreach (var frame in OneOfEach(d.Id, m.Id))
+            {
+                var refused = await server.CallAsync(frame, caller, Launch(db, caller, SeatClasses.Cli));
+                Assert.False(refused.Ok, $"{caller}'s {frame.Op} on an unconfined seat was served");
+                Assert.Contains("Heading a unit grants no verb by itself", refused.Error!.Message, StringComparison.Ordinal);
+            }
+        Assert.Equal(before, tables.Select(t => Count(db, t)).ToArray());
+
+        foreach (var role in CouncilRoles.All)
+            Assert.DoesNotContain(TradeAgent.AgentRuntime.AgentReach.For(role, TradeAgent.AgentRuntime.RuntimeClass.Cli).Verbs,
+                v => Eight.Contains(v.Op));
+    }
+
+    /// <summary>
+    /// (g) NO DECISION, FORECAST, ESCALATION OR LATERAL OP IS MUTATING OR REACHES OPERATOR AUTHORITY (GUARD; AUTH-001, ORDER-001):
+    /// <see cref="Ops.Mutating"/> is exactly the order ops and <c>deployment-stop</c>, as before; each of the eight is an organisation
+    /// verb, none is in it or described mutating, and no word of its name or arguments speaks of the mode, the kill switch, an
+    /// approval, live trading, an update, a credential or an order. Watched red with an op added to <see cref="Ops.Mutating"/>.
+    /// </summary>
+    [Fact]
+    public void No_decision_forecast_escalation_or_lateral_op_is_mutating_or_reaches_operator_authority()
+    {
+        Assert.Equal([Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll, Ops.DeploymentStop], Ops.Mutating);
+        string[] authority = ["mode", "kill", "approv", "live", "update", "credential", "token", "key", "order", "symbol", "side",
+            "quantity", "size", "account", "trade", "grant", "permission"];
+        foreach (var op in Eight)
+        {
+            Assert.True(Ops.IsOrganisation(op), $"{op} is not an organisation verb");
+            Assert.False(Ops.IsMutating(op), $"{op} is mutating");
+            var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == op);
+            Assert.False(spec.Mutating, $"{op} is described mutating");
+            var words = op.Split('-').Concat(spec.Args.SelectMany(a => a.Name.Split('_'))).ToList();
+            foreach (var word in authority)
+                Assert.DoesNotContain(words, w => w.StartsWith(word, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// (h) A PROBABILITY IS SHOWN BESIDE ITS RESOLUTION, NEVER INSTEAD (measurement versus claim): <c>decision-show</c> serves each
+    /// forecast's probability — the forecaster's claim, as stated — and, once the app resolved it, the resolution and the record it
+    /// rests on next to it; the probability is unchanged by the resolution, and an open forecast shows no resolution. RED at base.
+    /// </summary>
+    [Fact]
+    public async Task A_probability_is_shown_beside_its_resolution_never_instead()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-h");
+        Assert.True((await server.CallAsync(RecordFrame(forecasts: new object[] { Fc("ver-h", "promoted", "0.70") }), Head, Launch(db, Head))).Ok);
+        var id = gw.Org.DecisionsOf(Head).Single().Id;
+
+        JsonElement Shown() => Body(server.CallAsync(Frame(Ops.DecisionShow, ("id", id)), Head, Launch(db, Head)).GetAwaiter().GetResult())
+            .GetProperty("forecasts")[0];
+        var open = Shown();
+        Assert.Equal("0.70", open.GetProperty("probability").GetString());
+        Assert.False(open.TryGetProperty("resolution", out var none) && none.ValueKind != JsonValueKind.Null);
+
+        Verdict(db, "ver-h", PromotionVerdict.Promoted, DateTimeOffset.UtcNow);
+        Assert.Equal(1, new ForecastResolver(db).Sweep(DateTimeOffset.UtcNow.AddSeconds(1)).Resolved);
+        var resolved = Shown();
+        Assert.Equal("0.70", resolved.GetProperty("probability").GetString());
+        Assert.Equal((ForecastOutcome.Yes, OrgRefKind.Promotion),
+            (resolved.GetProperty("resolution").GetProperty("outcome").GetString(), resolved.GetProperty("resolution").GetProperty("record_kind").GetString()));
+        Assert.True(resolved.GetProperty("scored").GetBoolean());
+
+        // ANOTHER POSITION'S DECISION is not shown at all.
+        Assert.Contains("no decision of yours", (await server.CallAsync(Frame(Ops.DecisionShow, ("id", id)), Member, Launch(db, Member))).Error!.Message,
+            StringComparison.Ordinal);
+    }
 }

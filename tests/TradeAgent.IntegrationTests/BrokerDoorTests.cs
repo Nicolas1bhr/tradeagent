@@ -619,6 +619,96 @@ public class BrokerDoorTests
         }
     }
 
+    /// <summary>
+    /// O5b ON THE DOOR (<c>U-org-decisions</c>): THE DECISION, FORECAST, ESCALATION AND LATERAL VERBS join
+    /// <see cref="BrokerDoor.OrganisationVerbs"/> as one <c>_</c>-named door verb each, behind the same
+    /// <see cref="BrokerDoor.RecordedAssurance"/> gate. A position's BROKERED attempt is offered all eight and runs
+    /// <c>decision_record</c> and <c>lateral_list</c> through the pipe under its grant; the legacy <c>research</c> on an attempt recorded
+    /// UNCONFINED is offered none and refused in words, and nothing is written.
+    /// </summary>
+    [Fact]
+    public async Task The_decision_and_note_verbs_on_the_door_are_served_by_recorded_assurance_never_headship()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        const string head = "pos-d0c0ffee0011", member = "pos-d0c0ffee0012", team = "team-d0c0ffee01";
+        void Exec(string sql, params (string, object?)[] ps) => db.Write(_ =>
+        {
+            using var c = db.Cmd(sql, ps);
+            return c.ExecuteNonQuery();
+        });
+        const string stamp = "2026-10-11T12:00:00.0000000Z";
+        Exec("INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,'team',NULL,'active',$at)",
+            ("$t", team), ("$p", OrgIds.Research), ("$at", stamp));
+        foreach (var p in new[] { head, member })
+            Exec("INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'active',$at)",
+                ("$id", p), ("$u", team), ("$h", $"org/{p}"), ("$at", stamp));
+        Exec("UPDATE org_unit SET head_position_id=$id WHERE id=$t", ("$id", head), ("$t", team));
+        gw.Org.SendLateral(member, null, head, "the venue B feed skips the 02:00 print", [], DateTimeOffset.UtcNow);
+
+        var attempts = new AiAttemptStore(db);
+        foreach (var (id, role, seat) in new[] { ("attempt-d-head", head, SeatClasses.Harness), ("attempt-d-research", CouncilRoles.Research, SeatClasses.Cli) })
+            Assert.True(attempts.Begin(new AiAttempt
+            {
+                Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role, SeatClass = seat,
+                Assurance = SeatClasses.Name(SeatClasses.AssuranceOf(seat)!.Value)
+            }).Admitted);
+
+        var verbs = BrokerDoor.OrganisationVerbs(() => server);
+        string[] eight = [.. new[] { Ops.DecisionRecord, Ops.DecisionList, Ops.DecisionShow, Ops.ForecastAdd, Ops.EscalationRaise,
+            Ops.EscalationList, Ops.LateralSend, Ops.LateralList }.Select(BrokerDoor.VerbName)];
+        Assert.Equal(["decision_record", "decision_list", "decision_show", "forecast_add", "escalation_raise", "escalation_list",
+            "lateral_send", "lateral_list"], eight);
+        Assert.All(eight, n => Assert.Contains(verbs, v => v.Spec.Name == n));
+
+        foreach (var (attempt, role, served) in new[] { ("attempt-d-head", head, true), ("attempt-d-research", CouncilRoles.Research, false) })
+        {
+            var grants = new AgentGrants();
+            using var grant = grants.IssueHere(role, attempt);
+            var folder = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+            Directory.CreateDirectory(folder);
+            var ledger = new ToolCallStore(db);
+            await using var door = new BrokerDoor
+            {
+                Grants = grants, Image = SelfImage, Verbs = verbs, Ledger = ledger, Pipe = () => server,
+                VerbGate = BrokerDoor.RecordedAssurance(attempts.Get),
+                Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger)
+            };
+            door.Start();
+            using var http = Client(grant.Token);
+
+            var listed = (await Post(http, door.Url!, Rpc(1, "tools/list"))).Json.GetProperty("result").GetProperty("tools")
+                .EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToList();
+            var record = (await Post(http, door.Url!, Rpc(2, "tools/call", new
+            {
+                name = "decision_record",
+                arguments = new { options = new[] { "read the note", "ignore it" }, choice = "read the note", rationale = "a data defect costs a run" }
+            }))).Json.GetProperty("result");
+            var notes = (await Post(http, door.Url!, Rpc(3, "tools/call", new { name = "lateral_list", arguments = new { } }))).Json.GetProperty("result");
+
+            if (served)
+            {
+                Assert.All(eight, n => Assert.Contains(n, listed));
+                Assert.False(record.GetProperty("isError").GetBoolean(), $"{attempt} was refused decision_record: {Text(record)}");
+                Assert.Contains("dec-", Text(record));
+                Assert.False(notes.GetProperty("isError").GetBoolean(), $"{attempt} was refused lateral_list: {Text(notes)}");
+                Assert.Contains("the venue B feed skips the 02:00 print", Text(notes));
+            }
+            else
+            {
+                Assert.Empty(listed.Intersect(eight));
+                foreach (var refused in new[] { record, notes })
+                {
+                    Assert.True(refused.GetProperty("isError").GetBoolean(), $"an organisation verb was served to {attempt}: {Text(refused)}");
+                    Assert.Contains("is recorded unconfined", Text(refused));
+                }
+            }
+        }
+        Assert.Single(gw.Org.DecisionsOf(head));
+        Assert.Empty(gw.Org.DecisionsOf(CouncilRoles.Research));
+    }
+
     /// <summary>(j), the verbs' half: a verb named like a pipe op — <c>cancel</c> moves money — or a harness tool keeps the door shut.</summary>
     [Fact]
     public async Task A_verb_named_like_a_pipe_op_or_a_harness_tool_keeps_the_door_shut()

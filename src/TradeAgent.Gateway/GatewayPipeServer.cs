@@ -374,6 +374,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.ForecastAdd, TimeSpan.Zero, "the organisation's forecast records: the subject and its verdicts or mandate events read, one insert, in process"),
         new(Core.Ops.EscalationRaise, TimeSpan.Zero, "the organisation's chart walked up from the caller, the launch ledger's recorded seats, one insert and at most one wake, in process"),
         new(Core.Ops.EscalationList, TimeSpan.Zero, "the organisation's escalation records, the caller's own, newest first, in process"),
+        new(Core.Ops.LateralSend, TimeSpan.Zero, "the organisation's lateral notes: the recipient and the refs checked, one insert, in process"),
+        new(Core.Ops.LateralList, TimeSpan.Zero, "the organisation's lateral notes, the caller's own, newest first, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1388,6 +1390,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.ForecastAdd   => ForecastAdd(ctx, req),
                 Core.Ops.EscalationRaise => EscalationRaise(ctx, req),
                 Core.Ops.EscalationList => EscalationList(ctx, req),
+                Core.Ops.LateralSend   => LateralSend(ctx, req),
+                Core.Ops.LateralList   => LateralList(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),

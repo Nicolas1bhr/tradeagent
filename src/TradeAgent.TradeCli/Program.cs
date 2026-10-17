@@ -441,6 +441,26 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade lateral send <to> <text> [--refs JSON]` and `list` (U-org-decisions).
+        case "lateral":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "send":
+                    Fill(a, rest, "to", "text");
+                    return (Ops.LateralSend, a);
+                case "list" or "ls":
+                    return (Ops.LateralList, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade forecast add <on> <predicate> <target> <by> <probability> [--subject ID]` (U-org-decisions).
         case "forecast":
         {

@@ -243,9 +243,17 @@ public static class Ops
     /// </summary>
     public const string EscalationRaise = "escalation-raise", EscalationList = "escalation-list";
 
+    /// <summary>
+    /// A LATERAL NOTE BETWEEN POSITIONS, AND ITS READ (<c>U-org-decisions</c>; ORGANISATION § 4: information moves, authority does
+    /// not): the row, sender-stamped by the app, and nothing else — no wake, no mandate, no publication. NOT in <see cref="Mutating"/>,
+    /// and no note reaches <c>operations</c> (ORDER-001).
+    /// </summary>
+    public const string LateralSend = "lateral-send", LateralList = "lateral-list";
+
     /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>).</summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
-        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList];
+        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
+        LateralList];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 
