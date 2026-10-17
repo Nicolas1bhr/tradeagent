@@ -36,7 +36,7 @@ public static class RoleObjectives
     /// kind is added, removed or derived differently — the attempt that ran under the old meaning stays true about
     /// what it ran under.
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>Operations: every message the owner typed reaches a turn, and that turn's outcome is written.</summary>
     public const string OwnerAnswered = "owner-message-answered";
@@ -65,6 +65,21 @@ public static class RoleObjectives
     /// </summary>
     public const string ResearchMandate = "research-mandate";
 
+    /// <summary>
+    /// A MANDATE THIS POSITION HOLDS AND OWES WORK ON (<c>U-org-assignments-a</c>): issued to it, retried by code or sent back by a
+    /// rejection. Closed by its delivery, its decline, or its decider's cancellation; the entity is the mandate's id.
+    /// </summary>
+    public const string MandateOwed = "mandate-owed";
+
+    /// <summary>A SEALED DELIVERY ON A MANDATE THIS POSITION DECIDES, waiting on its judgment (<c>mandate-accept</c> / <c>mandate-reject</c>).</summary>
+    public const string DeliveryToJudge = "delivery-to-judge";
+
+    /// <summary>A MANDATE THIS POSITION DECIDES THAT CODE ESCALATED: retries stopped, and the decision is its own.</summary>
+    public const string EscalationOpen = "escalation-open";
+
+    /// <summary>A MANDATE THIS POSITION DECIDES THAT PASSED ITS DEADLINE, until a turn of its own has been woken for it.</summary>
+    public const string MandateExpired = "mandate-expired";
+
     /// <summary>The entity of <see cref="PositionWatched"/> when the host has no reading of the book to give.</summary>
     public const string UnreadBook = "the book has not been read";
 
@@ -74,17 +89,18 @@ public static class RoleObjectives
         + ")";
 
     /// <summary>
-    /// The objective kinds a role holds, in this build (<c>U-org-wakes</c>, version 2): the legacy pair's, each by its exact id;
-    /// a HEAD after them (<paramref name="kind"/> as the chart derives it) owns the owner's words addressed to it
-    /// (ORCHESTRATION § 2.5 — its deliveries to judge, mandates and kill rules are <c>U-org-assignments</c>'); a member or the
-    /// staff, and a position whose kind is not given, hold NONE — an executor's objective is its open mandate, never the app's
-    /// clock. <c>U-org-rights</c>' guard ("a non-legacy position holds none") holds still for every position but a head.
+    /// The objective kinds a role holds, in this build (<c>U-org-assignments-a</c>, version 3): the legacy pair's, each by its
+    /// exact id, unchanged; a HEAD after them (<paramref name="kind"/> as the chart derives it) owns the owner's words addressed to
+    /// it (<c>U-org-wakes</c>), the mandates it holds, and — as a decider — its deliveries to judge, its escalations and its
+    /// mandates past their deadline; a member or the staff owns the mandates it holds and nothing else — an executor's objective is
+    /// its open mandate, never the app's clock (ORCHESTRATION § 2.5); a position whose kind is not given holds NONE.
     /// </summary>
     public static IReadOnlyList<string> KindsOf(string role, string? kind = null) => role switch
     {
         CouncilRoles.Operations => [OwnerAnswered, RequestFinal, PositionWatched, BoundaryAssessed],
         CouncilRoles.Research => [ResearchMandate, VerdictRead, ForwardRunFollowed, BoundaryAssessed],
-        _ when kind == OrgPositionKind.Head => [OwnerAnswered],
+        _ when kind == OrgPositionKind.Head => [OwnerAnswered, MandateOwed, DeliveryToJudge, EscalationOpen, MandateExpired],
+        _ when kind is not null => [MandateOwed],
         _ => []
     };
 
@@ -137,9 +153,22 @@ public static class RoleObjectives
             default:
                 // A POSITION AFTER THE LEGACY PAIR, by the kind the chart derives for it now (U-org-wakes): a head owns the
                 // owner's words addressed to it, read as the chair's are; anyone else owns nothing here.
-                if (KindsOf(role, new OrgStore(db).Standing(role)?.Kind).Contains(OwnerAnswered))
+                var org = new OrgStore(db);
+                var kinds = KindsOf(role, org.Standing(role)?.Kind);
+                if (kinds.Contains(OwnerAnswered))
                     foreach (var e in events.OwnerWordsOpen(role))
                         open.Add(new RoleObjective(OwnerAnswered, e.Id));
+
+                // AND THE MANDATE'S LIFE (U-org-assignments-a, v3): a member owns its open mandates; a head also its deliveries
+                // to judge, its escalations and its mandates past their deadline — each read from the mandate's latest event.
+                if (kinds.Contains(MandateOwed))
+                    foreach (var m in org.MandatesOwedBy(role)) open.Add(new RoleObjective(MandateOwed, m));
+                if (kinds.Contains(DeliveryToJudge))
+                    foreach (var m in org.DeliveriesToJudge(role)) open.Add(new RoleObjective(DeliveryToJudge, m));
+                if (kinds.Contains(EscalationOpen))
+                    foreach (var m in org.EscalationsFor(role)) open.Add(new RoleObjective(EscalationOpen, m));
+                if (kinds.Contains(MandateExpired))
+                    foreach (var m in org.ExpiredUnread(role)) open.Add(new RoleObjective(MandateExpired, m));
                 return open;
         }
 

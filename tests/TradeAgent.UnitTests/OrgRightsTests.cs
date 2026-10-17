@@ -443,7 +443,9 @@ public class OrgRightsTests
             Json.Write(new MissionOwnerMessage("status?", DateTimeOffset.UtcNow)), Third);
 
         Assert.Empty(RoleObjectives.KindsOf(Third));
-        Assert.Empty(RoleObjectives.KindsOf(Third, OrgPositionKind.Member));
+        // FLIPPED FOR MANDATES by U-org-assignments-a (declared): a member owns the mandates it holds — and it holds none here, so
+        // nothing is open for it, which is what this guard is about.
+        Assert.Equal([RoleObjectives.MandateOwed], RoleObjectives.KindsOf(Third, OrgPositionKind.Member));
         Assert.Empty(RoleObjectives.Open(db, Third, book: null));
         Assert.Empty(RoleObjectives.Open(db, Third, book: ["ES 1 long"]));
 
@@ -467,7 +469,9 @@ public class OrgRightsTests
         events.Raise(MissionEventIds.ForRole(MissionEventIds.Verdict("promotion-x"), Third),
             MissionEventKind.Verdict, DateTimeOffset.UtcNow, role: Third);
 
-        Assert.Equal([RoleObjectives.OwnerAnswered], RoleObjectives.KindsOf(Third, OrgPositionKind.Head));
+        // AND, SINCE U-org-assignments-a (declared), the mandate's life — none of which is open here.
+        Assert.Equal([RoleObjectives.OwnerAnswered, RoleObjectives.MandateOwed, RoleObjectives.DeliveryToJudge,
+            RoleObjectives.EscalationOpen, RoleObjectives.MandateExpired], RoleObjectives.KindsOf(Third, OrgPositionKind.Head));
         Assert.Empty(RoleObjectives.Open(db, Third, book: null));
 
         events.Raise(MissionEventIds.ForRole(MissionEventIds.Owner(800), Third), MissionEventKind.Owner, DateTimeOffset.UtcNow,

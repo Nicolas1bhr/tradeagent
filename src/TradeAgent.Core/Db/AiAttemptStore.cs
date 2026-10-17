@@ -303,6 +303,16 @@ public sealed record AiAdmission
     /// A refusal of the launch itself (<see cref="Launch"/>), in <paramref name="refusal"/>'s words, typed
     /// <see cref="RefusalKind.HostOrLaunch"/>: it is about this launch, so it keeps every wake and settles none.
     /// </summary>
+    /// <summary>
+    /// What <see cref="Ceiling"/> says when the MANDATE refused (<c>U-org-assignments-a</c>): the mandate the launch would serve is
+    /// closed, not its own, of unknown spend, or its allocation has no room for this reservation. <see cref="MandateId"/> names it.
+    /// Nothing was written and no wake consumed; the loop closes that mandate's wakes and tells its decider.
+    /// </summary>
+    public const string Mandate = "mandate";
+
+    /// <summary>The mandate a <see cref="Mandate"/> refusal is about.</summary>
+    public string? MandateId { get; init; }
+
     public static AiAdmission LaunchRefused(string refusal) =>
         new() { Refusal = refusal, Ceiling = Launch, Kind = RefusalKind.HostOrLaunch };
 
@@ -406,6 +416,16 @@ public sealed class AiAttemptStore(Database db)
             }
         }
 
+        // THE MANDATE'S OWN ALLOCATION — THE THIRD GATE (U-org-assignments-a; ORCHESTRATION § 2.4, BUDGET-001), after the day
+        // and the funding chain, in this same transaction: the mandate this launch serves is the one its consumed `mandate` wake
+        // names (or the one the caller named, which must agree), and it is admitted only while that mandate is open, held by this
+        // role, its spend is known, and its measured spend + its unresolved reservations + this reservation fit its lifetime
+        // allocation. A LOST launch keeps its reservation as its cost, so it stays counted. Refused with no row, no reservation
+        // and no wake consumed — nothing below has run.
+        string? mandateId;
+        if (OrgStore.MandateServed(db, a, consuming, out mandateId) is { } served) return served;
+        if (mandateId is not null && OrgStore.AllocationRefusal(db, mandateId, a) is { } unaffordable) return unaffordable;
+
         // A SAVEPOINT, so a launch refused on its wakes below rolls back its own row and nothing else — the same whether
         // this is the outermost write or joins one already open (Database.Write).
         Exec("SAVEPOINT ai_attempt_begin");
@@ -419,7 +439,7 @@ public sealed class AiAttemptStore(Database db)
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile),
-            ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", a.MandateId));
+            ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", mandateId));
         c.ExecuteNonQuery();
         // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
         if (a.Funding is { Count: > 0 } funding)

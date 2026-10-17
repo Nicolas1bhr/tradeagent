@@ -338,4 +338,136 @@ public class OrgAssignmentTests
         Assert.Empty(organisation.Intersect(pipe));
         Assert.DoesNotContain(Ops.Cancel, organisation);
     }
+
+    // ---- item 3: the launch carries its mandate ------------------------------------------------------------------
+
+    /// <summary>A launch of <paramref name="role"/> as the ledger would admit it, answering <paramref name="consuming"/> — its admission, not asserted.</summary>
+    static AiAdmission Begin(Database db, string role, decimal reserved, IReadOnlyList<string>? consuming = null, string? mandate = null,
+        string? id = null) =>
+        new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id ?? $"turn-{Guid.NewGuid():n}"[..17], StartedAt = DateTimeOffset.UtcNow, Role = role, ReservedCost = reserved,
+            SeatClass = SeatClasses.Harness, Assurance = SeatClasses.Name(SeatAssurance.Brokered), MandateId = mandate
+        }, consuming);
+
+    /// <summary>A <c>mandate</c> wake to the holder, as the app raises one.</summary>
+    static string MandateWake(Database db, MandateRow m, long seq)
+    {
+        var id = MissionEventIds.Mandate(m.Id, seq, "test");
+        new MissionEventStore(db).Raise(id, MissionEventKind.Mandate, DateTimeOffset.UtcNow, payload: m.Id, role: m.Holder);
+        return id;
+    }
+
+    /// <summary>
+    /// (b) A LAUNCH PAST ITS MANDATE'S ALLOCATION IS REFUSED WITH NO ROW, NO RESERVATION, NO WAKE: the holder's first launch
+    /// answers the mandate's wake and is charged to it (<c>ai_attempt.mandate_id</c>, in the admission write); the next one, whose
+    /// reservation would take the mandate past its lifetime allocation, is refused in <see cref="AiAttemptStore.Begin"/> — the
+    /// third gate, after the day and the chain — naming the mandate, and nothing is written. A closed mandate admits nothing;
+    /// a launch serves one mandate. RED at base: no gate — the second launch was admitted. Watched red with the gate removed.
+    /// </summary>
+    [Fact]
+    public void A_launch_past_its_mandates_allocation_is_refused_with_no_row_no_reservation_no_wake()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var m = org.Assign(Issue(allocation: 1.00m), DateTimeOffset.UtcNow);
+        var issued = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate)).Id;
+
+        var first = Begin(db, Member, 0.60m, [issued]);
+        Assert.True(first.Admitted, first.Refusal);
+        Assert.Equal(m.Id, new AiAttemptStore(db).Get(first.Id!)!.MandateId);
+        Assert.Equal(new MandateSpend(0m, 0.60m, 0, 1), org.SpendOf(m.Id));
+
+        var again = MandateWake(db, m, 2);
+        var reservedBefore = Count(db, "ai_attempt");
+        var refused = Begin(db, Member, 0.60m, [again], id: "turn-over-the-cap");
+        Assert.False(refused.Admitted);
+        Assert.Equal(AiAdmission.Mandate, refused.Ceiling);
+        Assert.Equal(m.Id, refused.MandateId);
+        Assert.Contains("allocation is 1.00", refused.Refusal, StringComparison.Ordinal);
+        Assert.Null(new AiAttemptStore(db).Get("turn-over-the-cap"));
+        Assert.Equal(reservedBefore, Count(db, "ai_attempt"));
+        Assert.False(new MissionEventStore(db).Get(again)!.Consumed);
+        Assert.Equal(new MandateSpend(0m, 0.60m, 0, 1), org.SpendOf(m.Id));
+
+        // A LAUNCH THAT NAMES THE MANDATE without a wake is gated the same way; one that fits is admitted.
+        Assert.False(Begin(db, Member, 0.60m, mandate: m.Id).Admitted);
+        Assert.True(Begin(db, Member, 0.40m, mandate: m.Id).Admitted);
+
+        // NOT THE HOLDER, TWO MANDATES IN ONE LAUNCH, A CLOSED MANDATE: refused, nothing written.
+        var second = org.Assign(Issue(holder: Other), DateTimeOffset.UtcNow);
+        Assert.Contains("held by", Begin(db, Member, 0.01m, mandate: second.Id).Refusal, StringComparison.Ordinal);
+        var otherWake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate), e => e.Payload == second.Id).Id;
+        var third = org.Assign(Issue(holder: Other), DateTimeOffset.UtcNow);
+        var thirdWake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate), e => e.Payload == third.Id).Id;
+        Assert.Contains("a launch serves one", Begin(db, Other, 0.01m, [otherWake, thirdWake]).Refusal, StringComparison.Ordinal);
+        // THE LOOP TAKES ONE MANDATE'S WAKES PER LAUNCH, the first due, and keeps every other wake.
+        var due = new MissionEventStore(db).DueFor(Other, DateTimeOffset.UtcNow.AddMinutes(1));
+        Assert.Equal(2, due.Where(e => e.Kind == MissionEventKind.Mandate).Select(e => e.Payload).Distinct().Count());
+        var taken = TradeAgent.AgentRuntime.MissionLoop.OneMandate(due);
+        Assert.Single(taken.Where(e => e.Kind == MissionEventKind.Mandate).Select(e => e.Payload).Distinct());
+
+        org.Cancel(second.Id, Head, null, "no longer needed", DateTimeOffset.UtcNow);
+        Assert.Contains("closed mandate", Begin(db, Other, 0.01m, mandate: second.Id).Refusal, StringComparison.Ordinal);
+        Assert.False(new MissionEventStore(db).Get(thirdWake)!.Consumed);
+
+    }
+
+    /// <summary>
+    /// (b2) A LOST ATTEMPT KEEPS ITS RESERVATION AGAINST THE MANDATE: a holder's launch that never reported its usage is declared
+    /// LOST, its reservation becomes its cost, and the mandate's measured spend counts it — so the next launch that would pass the
+    /// allocation is refused. A resolved launch of unknown cost refuses the next one too: unknown is never zero. RED at base: no
+    /// gate, and no spend read by mandate.
+    /// </summary>
+    [Fact]
+    public void A_lost_attempt_keeps_its_reservation_against_the_mandate()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var m = org.Assign(Issue(allocation: 1.00m), DateTimeOffset.UtcNow);
+        var issued = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate)).Id;
+
+        Assert.True(Begin(db, Member, 0.70m, [issued]).Admitted);
+        Assert.Equal(1, new AiAttemptStore(db).LoseOpen(DateTimeOffset.UtcNow));
+        Assert.Equal(new MandateSpend(0.70m, 0m, 0, 1), org.SpendOf(m.Id));
+
+        var refused = Begin(db, Member, 0.40m, [MandateWake(db, m, 2)]);
+        Assert.Equal(AiAdmission.Mandate, refused.Ceiling);
+        Assert.True(Begin(db, Member, 0.30m, mandate: m.Id).Admitted);
+
+        // UNKNOWN IS NEVER ZERO: a launch that ended reporting usage nobody could price, under another mandate.
+        var n = org.Assign(Issue(allocation: 100m), DateTimeOffset.UtcNow);
+        var unpriced = Begin(db, Member, 0m, mandate: n.Id);
+        new AiAttemptStore(db).End(unpriced.Id!, 0, DateTimeOffset.UtcNow, 10, null, null, 10, null, "model-x", null, "no price", null);
+        Assert.Equal(1, org.SpendOf(n.Id).Unknown);
+        Assert.Contains("never read as zero", Begin(db, Member, 0.01m, mandate: n.Id).Refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A LAUNCH ITS MANDATE REFUSED closes that mandate's wakes by no launch and tells the decider ONCE, in one write; the
+    /// objectives say who owns what: the holder its open mandate, the decider its escalation.
+    /// </summary>
+    [Fact]
+    public void A_refused_mandate_launch_closes_its_wakes_and_escalates_once()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var m = org.Assign(Issue(allocation: 1.00m), DateTimeOffset.UtcNow);
+        var issued = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate)).Id;
+        Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.MandateOwed, m.Id),
+            TradeAgent.AgentRuntime.RoleObjectives.Open(db, Member, null));
+
+        org.LaunchRefused(m.Id, [issued], "its allocation has no room", DateTimeOffset.UtcNow);
+        org.LaunchRefused(m.Id, [issued], "its allocation has no room", DateTimeOffset.UtcNow);
+        var closed = new MissionEventStore(db).Get(issued)!;
+        Assert.Equal((true, MissionEventDisposition.Refused), (closed.Consumed, closed.Disposition));
+        Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(m.Id));
+        var escalation = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Escalation));
+        Assert.Equal((Head, m.Id), (escalation.Role, escalation.Payload));
+        Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.EscalationOpen, m.Id),
+            TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
+    }
 }

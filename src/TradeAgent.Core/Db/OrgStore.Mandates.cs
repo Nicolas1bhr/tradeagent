@@ -333,6 +333,79 @@ public sealed partial class OrgStore
         return cancelled;
     });
 
+    /// <summary>
+    /// A LAUNCH ITS MANDATE REFUSED (<see cref="AiAdmission.Mandate"/>), recorded in one write: the mandate's untaken
+    /// <paramref name="wakes"/> closed by no launch with the refusal's sentence, so no pass offers them again, and — the mandate
+    /// still open and not already escalated — an <c>escalated</c> event and ONE <c>escalation</c> wake to its decider. A closed
+    /// mandate's wakes are only closed: there is nobody left to tell.
+    /// </summary>
+    public void LaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now) => db.Write(_ =>
+    {
+        new MissionEventStore(db).CloseMandateWakes(mandateId, now, MissionEventDisposition.Refused, why, wakes);
+        if (Mandate(mandateId) is not { } m || !IsOpen(m.Id) || MandateStatus(m.Id) == MandateEventKind.Escalated) return 0;
+        Escalate(m, now, $"a launch under it was refused: {why}", []);
+        return 1;
+    });
+
+    /// <summary>
+    /// CODE STOPS RETRYING AND ASKS THE DECIDER: an <c>escalated</c> event by the app and ONE <c>escalation</c> wake to the decider,
+    /// keyed by that event. Called only inside a writer's own write — the escalation is never a second write after the one that
+    /// found it.
+    /// </summary>
+    MandateEventRow Escalate(MandateRow m, DateTimeOffset at, string reason, IReadOnlyList<string> evidence)
+    {
+        var escalated = AppendMandateEvent(m.Id, at, MandateEventKind.Escalated, AppActor, null, reason, evidence);
+        new MissionEventStore(db).Raise(MissionEventIds.Escalation(m.Id, escalated.Id), MissionEventKind.Escalation, at,
+            payload: m.Id, role: m.Decider);
+        return escalated;
+    }
+
+    // ---- what each position owns (RoleObjectives v3) ----------------------------------------------------------------------
+
+    /// <summary>The open mandates <paramref name="holder"/> owes work on: issued, retried or sent back by a rejection.</summary>
+    public IReadOnlyList<string> MandatesOwedBy(string holder) => OpenWith("holder", holder,
+        [MandateEventKind.Issued, MandateEventKind.Retry, MandateEventKind.Rejected]);
+
+    /// <summary>The open mandates <paramref name="decider"/> has a sealed delivery to judge on.</summary>
+    public IReadOnlyList<string> DeliveriesToJudge(string decider) => OpenWith("decider", decider, [MandateEventKind.Delivered]);
+
+    /// <summary>The open mandates code escalated to <paramref name="decider"/>.</summary>
+    public IReadOnlyList<string> EscalationsFor(string decider) => OpenWith("decider", decider, [MandateEventKind.Escalated]);
+
+    /// <summary>
+    /// The mandates <paramref name="decider"/> issued that EXPIRED and whose expiry it has not yet been woken for — the escalation
+    /// wake the sweep raised is still untaken.
+    /// </summary>
+    public IReadOnlyList<string> ExpiredUnread(string decider) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT m.id FROM org_mandate m
+             WHERE m.decider = $p
+               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) = $expired
+               AND EXISTS (SELECT 1 FROM mission_event w WHERE w.kind = $escalation AND w.payload = m.id AND w.consumed_at IS NULL)
+             ORDER BY m.created_at, m.id
+            """, ("$p", decider), ("$expired", MandateEventKind.Expired), ("$escalation", MissionEventKind.Escalation));
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        return (IReadOnlyList<string>)ids;
+    });
+
+    IReadOnlyList<string> OpenWith(string column, string position, string[] statuses) => db.Read(_ =>
+    {
+        var names = statuses.Select((_, i) => $"$s{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd($"""
+            SELECT m.id FROM org_mandate m
+             WHERE m.{column} = $p
+               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) IN ({string.Join(",", names)})
+             ORDER BY m.created_at, m.id
+            """, [("$p", (object?)position), .. names.Select((n, i) => (n, (object?)statuses[i]))]);
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        return (IReadOnlyList<string>)ids;
+    });
+
     // ---- reads ----------------------------------------------------------------------------------------------------------
 
     /// <summary>One mandate as issued, or null.</summary>
@@ -398,6 +471,77 @@ public sealed partial class OrgStore
             r.IsDBNull(2) ? 0 : Convert.ToInt32(r.GetValue(2), CultureInfo.InvariantCulture),
             Convert.ToInt32(r.GetValue(3), CultureInfo.InvariantCulture));
     }
+
+    // ---- the launch gate (read by AiAttemptStore.Begin, inside its transaction) ------------------------------------------
+
+    /// <summary>
+    /// THE MANDATE A LAUNCH SERVES: the one its consumed <c>mandate</c> wakes name, or the one the attempt names — or a refusal when
+    /// they name more than one, or disagree. Null refusal and null <paramref name="mandateId"/> is a launch that serves none. Read
+    /// inside <see cref="AiAttemptStore.Begin"/>'s transaction, from the wake rows themselves, so no host can drop the mandate on
+    /// its way to the ledger.
+    /// </summary>
+    internal static AiAdmission? MandateServed(Database db, AiAttempt a, IReadOnlyList<string>? consuming, out string? mandateId)
+    {
+        mandateId = a.MandateId;
+        if (consuming is not { Count: > 0 }) return null;
+
+        var ids = consuming.Distinct(StringComparer.Ordinal).ToArray();
+        var names = ids.Select((_, i) => $"$w{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd(
+            $"SELECT DISTINCT payload FROM mission_event WHERE kind = $mandate AND id IN ({string.Join(",", names)}) ORDER BY payload",
+            [("$mandate", (object?)MissionEventKind.Mandate), .. names.Select((n, i) => (n, (object?)ids[i]))]);
+        var named = new List<string>();
+        using (var r = c.ExecuteReader())
+            while (r.Read()) named.Add(r.IsDBNull(0) ? "" : r.GetString(0));
+
+        if (named.Count > 1)
+            return MandateRefusal(named[0],
+                $"launch {a.Id} would answer the wakes of {named.Count} mandates ({string.Join(", ", named)}), and a launch serves one: "
+                + "its spend is charged to exactly one mandate.");
+        if (named.Count == 1)
+        {
+            if (a.MandateId is { } stated && stated != named[0])
+                return MandateRefusal(named[0], $"launch {a.Id} names mandate {stated} and answers a wake of {named[0]}: a launch serves the mandate its wake names.");
+            mandateId = named[0];
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// WHY A LAUNCH UNDER <paramref name="mandateId"/> MAY NOT BE ADMITTED, or null — the mandate's allocation gate (ORCHESTRATION
+    /// § 2.4, BUDGET-001; RULING Q5): no such mandate; one that is closed (accepted, cancelled, expired); one this role does not
+    /// hold; one with a resolved launch of unknown cost (unknown is never zero); or measured spend + unresolved reservations + this
+    /// launch's reservation above its lifetime allocation.
+    /// </summary>
+    internal static AiAdmission? AllocationRefusal(Database db, string mandateId, AiAttempt a)
+    {
+        MandateRow? m;
+        using (var row = db.Cmd($"SELECT {MandateCols} FROM org_mandate WHERE id=$id", ("$id", mandateId)))
+        using (var r = row.ExecuteReader())
+            m = r.Read() ? ReadMandate(r) : null;
+        if (m is null) return MandateRefusal(mandateId, $"'{mandateId}' is no mandate, so no launch is admitted under it.");
+
+        using (var last = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id ORDER BY id DESC LIMIT 1", ("$id", m.Id)))
+            if (last.ExecuteScalar() is string status && MandateEventKind.Closes(status))
+                return MandateRefusal(m.Id, $"mandate {m.Id} is {status}: no launch is admitted under a closed mandate, and its spend has stopped.");
+        if (a.Role != m.Holder)
+            return MandateRefusal(m.Id, $"mandate {m.Id} is held by {m.Holder}, not {a.Role ?? "the chair"}: only its holder's launches are charged to it.");
+
+        var spend = Spend(db, m.Id);
+        if (spend.Unknown > 0)
+            return MandateRefusal(m.Id,
+                $"mandate {m.Id} has {spend.Unknown} launch{(spend.Unknown == 1 ? "" : "es")} whose cost is not known, and an unknown "
+                + "cost is never read as zero: no further launch is admitted under it until its decider decides.");
+        if (spend.Spent + spend.Reserved + a.ReservedCost > m.Allocation)
+            return MandateRefusal(m.Id,
+                $"mandate {m.Id}'s allocation is {Sql.D(m.Allocation)}: {Sql.D(spend.Spent)} spent and {Sql.D(spend.Reserved)} reserved "
+                + $"leave no room for this launch's {Sql.D(a.ReservedCost)}. Its decider is told; nothing was started.",
+                spend.Spent + spend.Reserved + a.ReservedCost - m.Allocation);
+        return null;
+    }
+
+    static AiAdmission MandateRefusal(string mandateId, string why, decimal over = 0m) =>
+        new() { Refusal = why, Ceiling = AiAdmission.Mandate, MandateId = mandateId, Over = over };
 
     // ---- the writers' parts ----------------------------------------------------------------------------------------------
 

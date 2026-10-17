@@ -457,6 +457,21 @@ public interface IMissionHost
     void StartPaperDeploymentsDue(DateTimeOffset now) { }
 
     /// <summary>
+    /// THE ORGANISATION'S ONCE-PER-TICK SWEEP (<c>U-org-assignments-a</c>; ORCHESTRATION § 4 flow 3): every open mandate past its
+    /// deadline expired, every one half spent with nothing accepted escalated to its decider, and every one whose holder's work is
+    /// owed with no wake due and no launch open given ONE wake again — deduplicated, so a pass that runs twice raises nothing
+    /// twice. It is NOT a turn: no inference is bought and nothing is dispatched. A default of nothing, for a host with no ledger.
+    /// </summary>
+    void SweepMandates(DateTimeOffset now) { }
+
+    /// <summary>
+    /// A LAUNCH ITS MANDATE REFUSED (<see cref="AiAdmission.Mandate"/>): that mandate's untaken wakes in this launch are closed
+    /// by no launch, so no pass offers them again, and — the mandate still open — its decider is told in one write
+    /// (<see cref="OrgStore.LaunchRefused"/>). A default of nothing, for a host with no ledger.
+    /// </summary>
+    void MandateLaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now) { }
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -2077,7 +2092,7 @@ public sealed class MissionLoop
         // one turn: the turn about to run is the one that should be told about it.
         if (events is not null)
         {
-            wake = Unheld(events, role, events.DueFor(role, _now()), HoldoutsOf(role));
+            wake = OneMandate(Unheld(events, role, events.DueFor(role, _now()), HoldoutsOf(role)));
             if (wake.Count == 0) return Idle(events);
         }
 
@@ -2230,6 +2245,19 @@ public sealed class MissionLoop
         if (!admission.Admitted)
         {
             lock (_gate) { _turning.Remove(role); _role = null; _typedForARefusedTurn.AddRange(typed); }
+
+            // THE MANDATE REFUSED IT (U-org-assignments-a): closed, not this role's, of unknown spend, or its allocation has no room.
+            // That mandate's wakes in this launch are closed by no launch and its decider is told — so the next look is a fresh one
+            // without them — and every other wake is kept, the owner's words included.
+            if (admission.Ceiling == AiAdmission.Mandate && admission.MandateId is { } refusedMandate)
+            {
+                var its = wake.Where(e => e.Kind == MissionEventKind.Mandate && e.Payload == refusedMandate).Select(e => e.Id).ToList();
+                try { _host.MandateLaunchRefused(refusedMandate, its, admission.Refusal ?? "", _now()); }
+                catch (Exception) { /* the wakes stay due; the next look is refused the same way and tries again */ }
+                Refused?.Invoke($"{CouncilRoles.Title(role)}: {admission.Refusal}");
+                Changed?.Invoke();
+                return _options.BusyRetry;
+            }
 
             // A REFUSAL ABOUT THE LAUNCH, NOT THE POSITION (U-mint-per-launch; docs/ORCHESTRATION.md § 2.5): the role's
             // other launch still open, an id not minted for it, or wakes another launch took. It steps over, keeping every
@@ -2992,6 +3020,11 @@ public sealed class MissionLoop
         // — and a sweep that could not run starts nothing and is tried again on the next tick.
         try { _host.StartPaperDeploymentsDue(_now()); }
         catch (Exception) { /* nothing was started; the next tick tries again */ }
+
+        // AND THE ORGANISATION'S SWEEP (U-org-assignments-a), on the same seam and for the same reason: a deadline passes, and a
+        // holder's launch dies, with nobody running. It launches nothing; a sweep that could not run is tried on the next tick.
+        try { _host.SweepMandates(_now()); }
+        catch (Exception) { /* nothing was swept; the next tick tries again */ }
     }
 
     /// <summary>The earliest deadline still to come, or null — the other thing the loop may sleep until.</summary>
@@ -3197,6 +3230,18 @@ public sealed class MissionLoop
     /// <summary>The order wake's payload as the gateway writes it.</summary>
     sealed record OrderWake(string? Request, string? State);
 
+    /// <summary>
+    /// A LAUNCH SERVES ONE MANDATE (<c>U-org-assignments-a</c>; survey Q6): of the <c>mandate</c> wakes due, only those of the
+    /// mandate whose wake is due first — then by id — are taken; every other wake is kept. The other mandates' wakes stay due for the
+    /// launches that serve them, so each launch's spend is charged to exactly the mandate it worked on.
+    /// </summary>
+    internal static List<MissionEvent> OneMandate(List<MissionEvent> wake)
+    {
+        var first = wake.Where(e => e.Kind == MissionEventKind.Mandate)
+            .OrderBy(e => e.DueAt).ThenBy(e => e.Id, StringComparer.Ordinal).FirstOrDefault();
+        return first is null ? wake : [.. wake.Where(e => e.Kind != MissionEventKind.Mandate || e.Payload == first.Payload)];
+    }
+
     /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>
     static string[] Reasons(IEnumerable<MissionEvent> wake) =>
         [.. wake.Select(Reason).Distinct()];
@@ -3242,6 +3287,9 @@ public sealed class MissionLoop
         MissionEventKind.Boundary => "a consequential boundary opened and it is waiting on your assessment",
         MissionEventKind.Deadline => "a consequential boundary you have not assessed is near its deadline",
         MissionEventKind.Tape => "TradeAgent stored something new on the tape that your work reads",
+        MissionEventKind.Mandate => "a mandate of yours is owed work — `trade mandate show` has it",
+        MissionEventKind.Delivery => "a delivery on a mandate you decide was sealed and waits on your judgment",
+        MissionEventKind.Escalation => "code stopped retrying a mandate you decide and is asking you",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };

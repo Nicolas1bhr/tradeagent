@@ -1873,6 +1873,12 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public void StartPaperDeploymentsDue(DateTimeOffset now) => host.Gateway.StartPaperDeploymentsDue(now);
 
+        /// <summary>A launch its mandate refused: that mandate's wakes closed and, still open, its decider told, in one write.</summary>
+        public void MandateLaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now)
+        {
+            if (host._db is { } db) new OrgStore(db).LaunchRefused(mandateId, wakes, why, now);
+        }
+
         /// <summary>
         /// The launch record and its reservation, written before the CLI starts, together with the
         /// wakes this turn is answering. Nothing else on this interface writes to the database, and
