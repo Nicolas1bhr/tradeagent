@@ -44,6 +44,16 @@ public static class BrokerSeat
         [Model] = ["list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input", "tool_search"]
     };
 
+    /// <summary>
+    /// TOOLS NO BROKER SEAT IS EVER OFFERED, named in the refusal: what runs a command, writes a file, reads an image off the disk, starts
+    /// a sub-agent or runs model-written code — on this computer or inside the process that holds the sign-in.
+    /// </summary>
+    public static readonly string[] HostTools =
+    [
+        "exec", "exec_command", "write_stdin", "shell", "shell_command", "local_shell", "unified_exec", "apply_patch", "view_image",
+        "js_repl", "spawn_agent", "send_input", "image_generation", "web_search"
+    ];
+
     /// <summary>Whether this build has a broker class for the built-in runtime <paramref name="runtimeId"/> — code, read once.</summary>
     public static bool Offers(string runtimeId) => WithBrokerClass.Value.Contains(runtimeId);
 
@@ -125,4 +135,105 @@ public static class BrokerSeat
                    $"the model whose offered tools this build knows. Choose {pin} for this position, or no model, to continue. Nothing was started.";
         return null;
     }
+
+    // ---- the offered surface -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE ARGUMENT TEMPLATE A SURFACE IS KEYED BY: the stream flag, the unattended flags, the turn command, the class's deny set as
+    /// written (its door slot unfilled), the model flag and the class's environment — what decides which tools a binary offers a model.
+    /// </summary>
+    public static string TemplateHash(RuntimeManifest manifest, string seatClass)
+    {
+        var seat = manifest.Seat;
+        var parts = new[]
+        {
+            manifest.JsonFlag ?? "", string.Join('\0', manifest.UnattendedArgs), string.Join('\0', manifest.ExecArgs),
+            string.Join('\0', seat?.ArgsFor(seatClass) ?? []), string.Join('\0', manifest.ModelArgs),
+            string.Join('\0', (seat?.ClassEnvironment.GetValueOrDefault(seatClass) ?? new Dictionary<string, string>())
+                .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))
+        };
+        return Sha256Hex.Of(string.Join('\u001e', parts));
+    }
+
+    /// <summary>What was captured per (binary digest, argument template, model), for this process's life.</summary>
+    static readonly ConcurrentDictionary<(string Binary, string Template, string Model), IReadOnlyList<string>> Surfaces = new();
+
+    /// <summary>
+    /// THE SURFACE <paramref name="ask"/>'s SEAT WOULD BE OFFERED, VERIFIED: read from the cache or, on a key not yet seen, from
+    /// <paramref name="probe"/> — then held to <see cref="SurfaceRefusal"/> on every call. A probe that fails is a refusal, never cached.
+    /// </summary>
+    public static async Task<(string? Refusal, IReadOnlyList<string>? Offered)> VerifySurfaceAsync(SurfaceAsk ask, ISurfaceProbe probe,
+        CancellationToken ct)
+    {
+        var key = (ask.ExeSha256, TemplateHash(ask.Manifest, ask.SeatClass), ask.Model);
+        if (!Surfaces.TryGetValue(key, out var offered))
+        {
+            try { offered = await probe.OfferedAsync(ask, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return ($"TradeAgent will not start the AI: it could not read which tools {ask.Manifest.DisplayName} would offer {ask.Model} " +
+                        $"as a broker-only seat ({ex.Message}). Nothing was started.", null);
+            }
+            Surfaces[key] = offered;
+        }
+        return (SurfaceRefusal(ask.Model, offered, ask.Manifest.DisplayName), offered);
+    }
+
+    /// <summary>Forgets every captured surface: a test's way to make the next ask reach its probe.</summary>
+    internal static void ForgetSurfaces() => Surfaces.Clear();
+
+    /// <summary>
+    /// NULL WHEN <paramref name="offered"/> IS EXACTLY THE SET <see cref="Expected"/> HOLDS FOR <paramref name="model"/>, otherwise the
+    /// refusal in words: a host tool or <c>exec</c> named first, then what is offered beyond the set and what is missing from it.
+    /// </summary>
+    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who)
+    {
+        var names = offered.Select(ToolName).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var host = names.Where(n => HostTools.Contains(n, StringComparer.Ordinal)).ToList();
+        if (host.Count > 0)
+            return $"TradeAgent will not start {who} as a broker-only seat: on {model} it would offer {Words(host)}, which runs on this " +
+                   "computer or runs model-written code inside the program that holds the AI's sign-in. A broker-only seat is offered " +
+                   "TradeAgent's tools and nothing that reaches the computer. Nothing was started.";
+        if (!Expected.TryGetValue(model, out var expected))
+            return $"TradeAgent will not start {who} as a broker-only seat on {model}: this build knows no offered surface for that model. " +
+                   "Nothing was started.";
+        var extra = names.Except(expected, StringComparer.Ordinal).ToList();
+        var missing = expected.Except(names, StringComparer.Ordinal).ToList();
+        if (extra.Count == 0 && missing.Count == 0) return null;
+        return $"TradeAgent will not start {who} as a broker-only seat: on {model} it would be offered " +
+               (extra.Count > 0 ? $"{Words(extra)} beyond " : "") + "the tools this build expects" +
+               (missing.Count > 0 ? $"{(extra.Count > 0 ? ", and not" : " less")} {Words(missing)}" : "") +
+               ". A release or a model that changes what a seat is offered is refused until a build knows it. Nothing was started.";
+    }
+
+    /// <summary>
+    /// A captured tool's bare name: the namespace before its last dot, a <c>[kind]</c> after it and an <c>(additional_tools)</c> mark
+    /// dropped — <c>(additional_tools) functions.exec[custom]</c> is <c>exec</c>, <c>tool_search[tool_search]</c> is <c>tool_search</c>.
+    /// </summary>
+    public static string ToolName(string captured)
+    {
+        var name = captured.Trim();
+        if (name.StartsWith('(') && name.IndexOf(')') is var close and > 0) name = name[(close + 1)..].Trim();
+        if (name.IndexOf('[') is var bracket and >= 0) name = name[..bracket];
+        if (name.LastIndexOf('.') is var dot and >= 0) name = name[(dot + 1)..];
+        return name.Trim();
+    }
+
+    static string Words(IReadOnlyList<string> names) => string.Join(", ", names.Select(n => $"'{n}'"));
+}
+
+/// <summary>
+/// ONE ASK OF A SURFACE PROBE: the runtime, its program and that program's SHA-256, the seat class and the pinned model. The probe
+/// starts the class's own argument template (<see cref="BrokerSeat.TemplateHash"/>) with a stub door in the door's slot.
+/// </summary>
+public sealed record SurfaceAsk(RuntimeManifest Manifest, string Exe, string ExeSha256, string SeatClass, string Model);
+
+/// <summary>
+/// WHICH TOOLS A SEAT WOULD BE OFFERED, read without a real model, behind an interface because CI has no codex: a test hands a fake,
+/// the product the real dry run (<see cref="CodexSurfaceProbe"/>).
+/// </summary>
+public interface ISurfaceProbe
+{
+    /// <summary>The tool names the first model request carried, as captured (namespaces dotted, kinds bracketed).</summary>
+    Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct);
 }
