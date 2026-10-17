@@ -266,9 +266,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     {
         TestEnv.EnsureLauncher();
         var launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
-        Assert.True(File.Exists(launcher), "this home has no launcher to put back (a build with no trade.dll)");
-        var bytes = await File.ReadAllBytesAsync(launcher);
-        var mode = OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(launcher);
+        // Windows holds a launch in a job and has no launcher: there the life must leave none, as it found none.
+        var bytes = File.Exists(launcher) ? await File.ReadAllBytesAsync(launcher) : null;
+        var mode = bytes is null || OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(launcher);
         var hashed = File.Exists(ToolDeployer.DeployedHashFile) ? await File.ReadAllTextAsync(ToolDeployer.DeployedHashFile) : null;
         var files = Directory.GetFiles(Paths.Bin).Select(Path.GetFileName).Order().ToArray();
         var root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
@@ -284,9 +284,12 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             }
 
             Assert.Null(Environment.GetEnvironmentVariable("DOTNET_ROOT"));
-            Assert.True(File.Exists(launcher), "the life deleted the home's launcher");
-            Assert.Equal(bytes, await File.ReadAllBytesAsync(launcher));
-            if (!OperatingSystem.IsWindows()) Assert.Equal(mode, File.GetUnixFileMode(launcher));
+            Assert.Equal(bytes is not null, File.Exists(launcher));
+            if (bytes is not null)
+            {
+                Assert.Equal(bytes, await File.ReadAllBytesAsync(launcher));
+                if (!OperatingSystem.IsWindows()) Assert.Equal(mode, File.GetUnixFileMode(launcher));
+            }
             Assert.Equal(hashed, File.Exists(ToolDeployer.DeployedHashFile) ? await File.ReadAllTextAsync(ToolDeployer.DeployedHashFile) : null);
             Assert.Equal(files, Directory.GetFiles(Paths.Bin).Select(Path.GetFileName).Order().ToArray());
             Assert.Null(ProcessContainment.CannotHold());
