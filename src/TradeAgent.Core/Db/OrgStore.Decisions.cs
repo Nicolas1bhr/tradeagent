@@ -73,6 +73,50 @@ public static class OrgDecisionKind
     public static bool IsMandatory(string? kind) => kind is not null && Array.IndexOf(Mandatory, kind) >= 0;
 }
 
+/// <summary>
+/// THE FORECAST VOCABULARY — closed and versioned (ORGANISATION § 5; RULING Q3). Version 1 holds two predicates, each resolved by
+/// the app from ONE record of its own and nothing else (§ 2.11, EVID-001): <see cref="VerdictClass"/> — the verdict class the
+/// referee records for a strategy version (<c>strategy_promotion.verdict</c>), never a holdout figure, a run's numbers, a stream or
+/// an E2–E4 value — and <see cref="MandateState"/> — the state a mandate reaches (<c>org_mandate_event</c>). A forecast outside it
+/// is refused at the write; a stored forecast whose version this build does not know is refused at resolve, never guessed.
+/// </summary>
+public static class ForecastVocabulary
+{
+    /// <summary>The vocabulary this build writes and resolves.</summary>
+    public const int Version = 1;
+
+    /// <summary><c>verdict-class(version, promoted | paper-eligible | refused, by)</c>.</summary>
+    public const string VerdictClass = "verdict-class";
+
+    /// <summary><c>mandate-state(mandate, accepted | rejected | expired | cancelled, by)</c>.</summary>
+    public const string MandateState = "mandate-state";
+
+    public static readonly string[] Predicates = [VerdictClass, MandateState];
+
+    /// <summary>The targets a predicate may name.</summary>
+    public static IReadOnlyList<string> Targets(string predicate) => predicate switch
+    {
+        VerdictClass => [PromotionVerdict.Promoted, PromotionVerdict.PaperEligible, PromotionVerdict.Refused],
+        MandateState => [MandateEventKind.Accepted, MandateEventKind.Rejected, MandateEventKind.Expired, MandateEventKind.Cancelled],
+        _ => []
+    };
+
+    public static bool IsKnown(string? predicate) => predicate is not null && Array.IndexOf(Predicates, predicate) >= 0;
+}
+
+/// <summary>
+/// A FORECAST AS ITS FORECASTER STATES IT, before the app has validated it or minted an id: the predicate, its subject (a version
+/// or a mandate id; null on <c>mandate-assign</c>, where it is the mandate being issued), the target, the date by which it
+/// resolves and the probability — all claims.
+/// </summary>
+public sealed record ForecastClaim(string Predicate, string? Subject, string Target, DateTimeOffset By, decimal Probability);
+
+/// <summary>THE APP'S RESOLUTION WORDS: what a resolution rests on.</summary>
+public static class ForecastOutcome
+{
+    public const string Yes = "yes", No = "no", Void = "void";
+}
+
 /// <summary>One <c>org_decision</c> row: never updated; its rationale is the ledger entry <see cref="LedgerEntryId"/>.</summary>
 public sealed record DecisionRow(
     string Id, string Position, string? Attempt, string Kind, IReadOnlyList<string> Options, string Choice,
@@ -170,7 +214,7 @@ public sealed partial class OrgStore
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public DecisionRow Decide(string position, string? attempt, string kind, IReadOnlyList<string> options, string choice,
-        string rationale, IReadOnlyList<OrgRef> refs, DateTimeOffset now) => db.Write(_ =>
+        string rationale, IReadOnlyList<OrgRef> refs, IReadOnlyList<ForecastClaim> forecasts, DateTimeOffset now) => db.Write(_ =>
     {
         if (IsAppPrincipal(position) || Position(position) is not { Status: OrgPositionStatus.Active })
             throw Refused($"'{position}' is no active position: a decision is recorded under the position whose launch made it.");
@@ -202,8 +246,108 @@ public sealed partial class OrgStore
             ("$options", JsonSerializer.Serialize(options)), ("$choice", choice), ("$refs", JsonSerializer.Serialize(refs)),
             ("$entry", entry.Id), ("$at", Sql.T(now))))
             c.ExecuteNonQuery();
+        if (forecasts.Count > DecisionLimits.MaxForecasts)
+            throw Refused($"a decision carries at most {DecisionLimits.MaxForecasts} forecasts.");
+        foreach (var f in forecasts) AddForecast(position, attempt, row.Id, null, f, now);
         return row;
     });
+
+    /// <summary>
+    /// ATTACHES ONE FORECAST TO A RECORD OF THE CALLER'S: its own decision (<c>dec-…</c>), or an open mandate it decides
+    /// (<c>man-…</c>). Validated and scored by the app (<see cref="AddForecast"/>) in one write — or refused in words, nothing written.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ForecastRow Forecast(string position, string? attempt, string on, ForecastClaim claim, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (on.StartsWith(DecisionPrefix, StringComparison.Ordinal))
+        {
+            var d = Decision(on) ?? throw Refused($"'{on}' is no decision.");
+            if (d.Position != position)
+                throw Refused($"'{on}' is {d.Position}'s decision, not yours: a forecast is attached to your own decision, or to a mandate you decide.");
+            return AddForecast(position, attempt, d.Id, null, claim, now);
+        }
+        if (on.StartsWith(MandatePrefix, StringComparison.Ordinal))
+            return AddForecast(position, attempt, null, DecidedBy(on, position).Id, claim, now);
+        throw Refused($"'{on}' is neither a decision ({DecisionPrefix}…) nor a mandate ({MandatePrefix}…): a forecast is attached to one of them.");
+    });
+
+    /// <summary>
+    /// ONE FORECAST, VALIDATED AND SCORED BY THE APP, INSIDE ITS CALLER'S WRITE: the predicate and target from
+    /// <see cref="ForecastVocabulary"/> v1; a subject that is there; a date in the future and inside the horizon; a probability from 0
+    /// to 1; an outcome NOT already measured — a version with a verdict, a mandate that is closed or already reached the target —
+    /// since a forecast is timestamped before its outcome (precommitment); at most <see cref="DecisionLimits.MaxForecasts"/> on one
+    /// record. <c>scored</c> is computed here (<see cref="Unscored"/>), never stated by the forecaster.
+    /// </summary>
+    ForecastRow AddForecast(string forecaster, string? attempt, string? decisionId, string? mandateId, ForecastClaim claim, DateTimeOffset now)
+    {
+        if (!ForecastVocabulary.IsKnown(claim.Predicate))
+            throw Refused($"'{claim.Predicate}' is no predicate of the forecast vocabulary v{ForecastVocabulary.Version}: "
+                          + $"{string.Join(" | ", ForecastVocabulary.Predicates)}. A prediction outside it stays a claim — write it in your rationale.");
+        var targets = ForecastVocabulary.Targets(claim.Predicate);
+        if (!targets.Contains(claim.Target))
+            throw Refused($"'{claim.Target}' is no target of {claim.Predicate}: {string.Join(" | ", targets)}.");
+        if (claim.By <= now)
+            throw Refused($"the forecast's date {claim.By:u} is not in the future: a forecast is made before its outcome.");
+        if (claim.By > now + DecisionLimits.ForecastHorizon)
+            throw Refused($"the forecast's date {claim.By:u} is beyond the {DecisionLimits.ForecastHorizon.TotalDays:N0}-day horizon.");
+        if (claim.Probability is < 0m or > 1m)
+            throw Refused($"{claim.Probability.ToString(CultureInfo.InvariantCulture)} is no probability: a number from 0 to 1.");
+        var subject = claim.Subject ?? mandateId
+            ?? throw Refused("a forecast names its subject: the version or the mandate it is about.");
+        if (subject.Length > DecisionLimits.MaxRefIdChars)
+            throw Refused($"a forecast's subject is an id of at most {DecisionLimits.MaxRefIdChars} characters.");
+
+        string? unscored = null;
+        if (claim.Predicate == ForecastVocabulary.VerdictClass)
+        {
+            if (!RefExists(new OrgRef(OrgRefKind.Version, subject)))
+                throw Refused($"'{subject}' is no strategy version the app recorded.");
+            using var v = db.Cmd("SELECT verdict FROM strategy_promotion WHERE version_id=$v ORDER BY at, rowid LIMIT 1", ("$v", subject));
+            if (v.ExecuteScalar() is string verdict)
+                throw Refused($"version {subject} already has a verdict ({verdict}): a forecast on an outcome already measured is no forecast.");
+        }
+        else
+        {
+            var m = Mandate(subject) ?? throw Refused($"'{subject}' is no mandate.");
+            if (!IsOpen(m.Id))
+                throw Refused($"mandate {m.Id} is {MandateStatus(m.Id)}: a forecast on an outcome already measured is no forecast.");
+            if (MandateEvents(m.Id).Any(e => e.Kind == claim.Target))
+                throw Refused($"mandate {m.Id} has already been {claim.Target}: a forecast on an outcome already measured is no forecast.");
+            unscored = Unscored(forecaster, m);
+        }
+
+        var on = decisionId ?? mandateId!;
+        if (ForecastsOn(on).Count >= DecisionLimits.MaxForecasts)
+            throw Refused($"{on} carries {DecisionLimits.MaxForecasts} forecasts already, the most one record holds.");
+
+        var row = new ForecastRow(Mint(ForecastPrefix), decisionId, mandateId, forecaster, attempt, ForecastVocabulary.Version,
+            claim.Predicate, subject, claim.Target, claim.By, claim.Probability, unscored is null, unscored, now);
+        using var c = db.Cmd($"""
+            INSERT INTO org_forecast({ForecastCols})
+            VALUES($id,$d,$m,$f,$attempt,$vocabulary,$predicate,$subject,$target,$by,$probability,$scored,$why,$at)
+            """,
+            ("$id", row.Id), ("$d", decisionId), ("$m", mandateId), ("$f", forecaster), ("$attempt", attempt),
+            ("$vocabulary", row.Vocabulary), ("$predicate", row.Predicate), ("$subject", subject), ("$target", row.Target),
+            ("$by", Sql.T(row.ResolveBy)), ("$probability", Sql.D(row.Probability)), ("$scored", row.Scored ? 1 : 0),
+            ("$why", unscored), ("$at", Sql.T(now)));
+        c.ExecuteNonQuery();
+        return row;
+    }
+
+    /// <summary>
+    /// WHY A FORECAST ON <paramref name="m"/>'S STATE IS NOT SCORED, or null when it is (ORGANISATION § 5, R17 #5): a predicate is
+    /// scored only when neither the forecaster nor its subtree controls the outcome — and the decider and the holder of a mandate
+    /// control whether it is accepted, rejected, cancelled or lets its deadline pass. Recorded, never scored, in fixed words.
+    /// </summary>
+    string? Unscored(string forecaster, MandateRow m)
+    {
+        if (m.Decider == forecaster) return "the forecaster decides this mandate";
+        if (m.Holder == forecaster) return "the forecaster holds this mandate";
+        var subtree = SubtreeOf(forecaster).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        if (Position(m.Decider) is { } decider && subtree.Contains(decider.UnitId)) return "this mandate's decider is in the forecaster's subtree";
+        if (Position(m.Holder) is { } holder && subtree.Contains(holder.UnitId)) return "this mandate's holder is in the forecaster's subtree";
+        return null;
+    }
 
     /// <summary>One decision as recorded, or null.</summary>
     public DecisionRow? Decision(string id) => db.Read(_ =>

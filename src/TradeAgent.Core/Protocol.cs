@@ -230,9 +230,15 @@ public static class Ops
     /// </summary>
     public const string DecisionRecord = "decision-record", DecisionList = "decision-list", DecisionShow = "decision-show";
 
+    /// <summary>
+    /// A FORECAST ATTACHED TO THE CALLER'S OWN DECISION, OR TO A MANDATE IT DECIDES (<c>U-org-decisions</c>; ORGANISATION § 5): a
+    /// predicate from the app's closed, versioned vocabulary, resolved by the app from its own records. NOT in <see cref="Mutating"/>.
+    /// </summary>
+    public const string ForecastAdd = "forecast-add";
+
     /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>).</summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
-        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow];
+        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

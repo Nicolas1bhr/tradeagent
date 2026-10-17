@@ -15,6 +15,11 @@ public static class GatewaySchema
     public const int LensListMax = 50, LensListDefault = 20;
     public sealed record OpSpec(string Op, string Cli, bool Mutating, string Description, ArgSpec[] Args);
 
+    /// <summary>What a 'forecasts' argument is (<c>U-org-decisions</c>).</summary>
+    const string ForecastsArg = "A JSON list of forecasts TradeAgent resolves from its own records, each {\"predicate\": verdict-class | "
+                                + "mandate-state, \"subject\": the version or mandate id, \"target\", \"by\": an ISO-8601 time, "
+                                + "\"probability\": 0 to 1}; see 'forecast-add'.";
+
     public static object Describe(GatewayStatus? status = null) => new
     {
         protocol_version = Versions.ProtocolVersion,
@@ -606,7 +611,8 @@ public static class GatewaySchema
                 new("shape", "string", false, "For a task: report | version | run | ledger | lens — what it must hand back. Not for an exploration."),
                 new("scope", "string", false, $"What is in and out of bounds, in your words: at most {Core.Db.MandateLimits.MaxObjectiveChars:N0} characters."),
                 new("retries", "number", false, $"How many clean failures code handles before it wakes you, 1 to {Core.Db.MandateLimits.MaxRetryLimit}; {Core.Db.MandateLimits.DefaultRetryLimit} when omitted."),
-                new("exact", "string", false, "true: a delivery that names a deviation is refused. false when omitted.")
+                new("exact", "string", false, "true: a delivery that names a deviation is refused. false when omitted."),
+                new("forecasts", "string", false, ForecastsArg + " On an assign, a forecast that names no 'subject' is about the mandate being issued — recorded, never scored: you decide it.")
             ]),
         new(Core.Ops.MandateCancel, "trade mandate cancel <mandate> <why>", false,
             "CANCEL A MANDATE YOU DECIDE, saying why: TradeAgent records the cancellation as an event, closes the holder's untaken "
@@ -692,7 +698,25 @@ public static class GatewaySchema
                 new("rationale", "string", true, $"Why, in your words: at most {Core.Db.ResearchLedger.MaxTextChars:N0} characters. It becomes your own 'decision' ledger entry."),
                 new("options", "string", true, $"A JSON list of the options you considered, 1 to {Core.Db.DecisionLimits.MaxOptions}, each at most {Core.Db.DecisionLimits.MaxClaimChars} characters."),
                 new("refs", "string", false, $"A JSON list of at most {Core.Db.DecisionLimits.MaxRefs} {{\"kind\", \"id\"}} — app records the decision rests on."),
+                new("forecasts", "string", false, ForecastsArg),
                 new("kind", "string", false, $"{Core.Db.OrgDecisionKind.Routine} (the only kind written here); {Core.Db.OrgDecisionKind.Routine} when omitted.")
+            ]),
+        new(Core.Ops.ForecastAdd, "trade forecast add <on> <predicate> <target> <by> <probability> [--subject ID]", false,
+            "ATTACH A FORECAST to a decision of yours or to an open mandate you decide ('on', its dec-… or man-… id): a predicate "
+            + $"from TradeAgent's vocabulary v{Core.Db.ForecastVocabulary.Version} — 'verdict-class' (a strategy version's verdict: "
+            + "promoted | paper-eligible | refused) or 'mandate-state' (a mandate reaching accepted | rejected | expired | "
+            + "cancelled) — its 'subject' (the version or mandate id; the mandate itself when it is the one you attach to), the "
+            + "'target', the date 'by' which it resolves, and your 'probability' from 0 to 1. TradeAgent refuses one whose outcome is "
+            + "already measured, records whether it is SCORED — a forecast on an outcome you or your subtree control is recorded, "
+            + "never scored, and says why — and resolves it itself from its own records: yes, no, or void when no verdict came by "
+            + "the date. Nothing edits it.",
+            [
+                new("on", "string", true, "The decision (dec-…) or mandate (man-…) the forecast is attached to."),
+                new("predicate", "string", true, string.Join(" | ", Core.Db.ForecastVocabulary.Predicates)),
+                new("target", "string", true, "For verdict-class: promoted | paper-eligible | refused. For mandate-state: accepted | rejected | expired | cancelled."),
+                new("by", "string", true, $"When it resolves: an ISO-8601 time in the future, at most {Core.Db.DecisionLimits.ForecastHorizon.TotalDays:N0} days ahead."),
+                new("probability", "number", true, "How likely you hold it, from 0 to 1."),
+                new("subject", "string", false, "The version or mandate id it is about; the mandate it is attached to when omitted.")
             ]),
         new(Core.Ops.DecisionList, "trade decision list [--before ID]", false,
             "YOUR DECISION RECORDS, NEWEST FIRST — never another position's: each with its kind, your choice as you wrote it, its "

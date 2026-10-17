@@ -193,7 +193,8 @@ public class OrgDecisionTests
         await using var _server = server;
         Version(db, "ver-a1");
 
-        var reply = await server.CallAsync(RecordFrame(refs: new[] { new { kind = "version", id = "ver-a1" } }), Member, Launch(db, Member));
+        var reply = await server.CallAsync(RecordFrame(refs: new[] { new { kind = "version", id = "ver-a1" } },
+            forecasts: new object[] { Fc("ver-a1", "promoted", 0.3m), Fc("ver-a1", "refused", "0.6") }), Member, Launch(db, Member));
         Assert.True(reply.Ok, Json.Write(reply.Error));
         var id = Body(reply).GetProperty("decision").GetString()!;
         Assert.StartsWith(OrgStore.DecisionPrefix, id, StringComparison.Ordinal);
@@ -207,10 +208,21 @@ public class OrgDecisionTests
         var said = gw.Ledger.Latest(entry.Id)!;
         Assert.Equal(("one venue's skew could be its own microstructure", LedgerMark.Claim), (said.Text, said.Mark));
         Assert.Null(said.Confidence);
+        var forecasts = gw.Org.ForecastsOn(id);
+        Assert.Equal([(0.3m, "promoted"), (0.6m, "refused")], forecasts.Select(f => (f.Probability, f.Target)));
+        Assert.All(forecasts, f => Assert.Equal((id, (string?)null, Member, ForecastVocabulary.Version, true), (f.DecisionId!, f.MandateId, f.Forecaster, f.Vocabulary, f.Scored)));
+        Assert.StartsWith(OrgStore.ForecastPrefix, forecasts[0].Id, StringComparison.Ordinal);
+
+        // A REFUSED FORECAST REFUSES THE WHOLE DECISION: nothing of it is written.
+        var before = (Count(db, "org_decision"), Count(db, "ledger_entry"), Count(db, "org_forecast"));
+        Assert.False((await server.CallAsync(RecordFrame(forecasts: new object[] { Fc("ver-a1", "promoted", 0.3m), Fc("ver-a1", "famous", 0.3m) }),
+            Member, Launch(db, Member))).Ok);
+        Assert.Equal(before, (Count(db, "org_decision"), Count(db, "ledger_entry"), Count(db, "org_forecast")));
 
         // A CONFINED SEAT records one too.
         Assert.True((await server.CallAsync(RecordFrame(), Head, Launch(db, Head, SeatClasses.Cell))).Ok);
         Assert.Equal(2L, Count(db, "org_decision"));
+        Assert.Equal(2L, Count(db, "org_forecast"));
 
         // KILL THE WRITE AFTER THE ENTRY: the row's insert fails, and the entry written before it in the same write is gone too.
         var entries = Count(db, "ledger_entry");
@@ -286,5 +298,160 @@ public class OrgDecisionTests
         Assert.False(revise.Ok, "a decision's ledger entry was revised");
         Assert.Contains("never revised", revise.Error!.Message, StringComparison.Ordinal);
         Assert.Single(gw.Ledger.Revisions(entry));
+    }
+
+    // ---- item 3: forecasts -----------------------------------------------------------------------------------------------
+
+    /// <summary>A forecast as a frame states it.</summary>
+    static object Fc(string subject, string target, object probability, string predicate = ForecastVocabulary.VerdictClass, DateTimeOffset? by = null) =>
+        new { predicate, subject, target, by = (by ?? Due).ToString("O"), probability };
+
+    /// <summary>A verdict the referee recorded for <paramref name="version"/>, as only a test may write it (its references off).</summary>
+    static void Verdict(Database db, string version, string verdict, DateTimeOffset at)
+    {
+        db.Exec("PRAGMA foreign_keys=OFF");
+        Exec(db, """
+            INSERT INTO strategy_promotion(id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id,
+                                           holdout_dataset_sha256, execution_model, evaluator_version, holdout_run_id, verdict, reason, at)
+            VALUES($id, $v, 1, 'p', 'b', 1, 's', 'm', 'e', 'run-h', $verdict, 'r', $at)
+            """, ("$id", $"prom-{Guid.NewGuid():n}"), ("$v", version), ("$verdict", verdict), ("$at", Sql(at)));
+        db.Exec("PRAGMA foreign_keys=ON");
+    }
+
+    static string Sql(DateTimeOffset t) => t.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+
+    static MandateIssue Issue(string holder = Member) =>
+        new(Head, null, holder, MandateKind.Exploration, "find out whether the funding skew predicts the next hour", null, null, false,
+            Due, 5m, MandateLimits.DefaultRetryLimit);
+
+    static IpcRequest ForecastFrame(string on, string subject, string target, object probability, string predicate = ForecastVocabulary.MandateState,
+        DateTimeOffset? by = null) =>
+        Frame(Ops.ForecastAdd, ("on", on), ("predicate", predicate), ("subject", subject), ("target", target),
+            ("by", (by ?? Due).ToString("O")), ("probability", probability));
+
+    /// <summary>
+    /// (c) A FORECAST ON AN OUTCOME ALREADY MEASURED IS REFUSED (precommitment, ORGANISATION § 5): a verdict-class forecast on a
+    /// version that already has a verdict, and a mandate-state forecast on a closed mandate or on a state it has already reached —
+    /// in words, nothing written. RED at base: no op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_forecast_on_an_outcome_already_measured_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-judged");
+        Verdict(db, "ver-judged", PromotionVerdict.Refused, DateTimeOffset.UtcNow.AddHours(-1));
+        Assert.True((await server.CallAsync(RecordFrame(), Head, Launch(db, Head))).Ok);
+        var decision = gw.Org.DecisionsOf(Head).Single().Id;
+
+        var judged = await server.CallAsync(ForecastFrame(decision, "ver-judged", PromotionVerdict.Promoted, 0.2m, ForecastVocabulary.VerdictClass),
+            Head, Launch(db, Head));
+        Assert.False(judged.Ok, "a forecast on a judged version was recorded");
+        Assert.Contains("already has a verdict", judged.Error!.Message, StringComparison.Ordinal);
+
+        var closed = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+        gw.Org.Cancel(closed.Id, Head, null, "answered elsewhere", DateTimeOffset.UtcNow);
+        var onClosed = await server.CallAsync(ForecastFrame(decision, closed.Id, MandateEventKind.Accepted, 0.5m), Head, Launch(db, Head));
+        Assert.Contains("already measured", onClosed.Error!.Message, StringComparison.Ordinal);
+
+        // A STATE ALREADY REACHED: a rejection recorded before the forecast.
+        var open = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+        var delivered = gw.Org.Deliver(open.Id, Member, null, "found nothing", [], [], DateTimeOffset.UtcNow);
+        gw.Org.Reject(delivered.Delivery.Id, Head, null, null, "the report says nothing", DateTimeOffset.UtcNow);
+        var reached = await server.CallAsync(ForecastFrame(decision, open.Id, MandateEventKind.Rejected, 0.9m), Head, Launch(db, Head));
+        Assert.Contains("has already been rejected", reached.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_forecast"));
+
+        // AND THE SAME RULE ON A DECISION'S OWN FORECASTS: the whole record is refused.
+        Assert.False((await server.CallAsync(RecordFrame(forecasts: new object[] { Fc("ver-judged", "promoted", 0.5m) }), Head, Launch(db, Head))).Ok);
+        Assert.Single(gw.Org.DecisionsOf(Head));
+    }
+
+    /// <summary>
+    /// (c2) THE ISSUER'S FORECAST ON ITS OWN MANDATE IS RECORDED UNSCORED, WITH THE REASON (ORGANISATION § 5, R17 #5): a
+    /// mandate-state forecast by the mandate's decider — on <c>mandate-assign</c>, in the assign's own write, or with
+    /// <c>forecast-add</c> — is recorded with <c>scored</c> false and "the forecaster decides this mandate"; one by a head whose
+    /// subtree holds the decider is unscored too; one by a position outside it is scored. RED at base: no forecast existed. Watched
+    /// red with <c>scored</c> left true for the decider.
+    /// </summary>
+    [Fact]
+    public async Task The_issuers_forecast_on_its_own_mandate_is_recorded_unscored_with_the_reason()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+
+        var assign = Frame(Ops.MandateAssign, ("holder", Member), ("goal", "find out whether the skew predicts the hour"), ("kind", "exploration"),
+            ("due", Due.ToString("O")), ("allocation", 5m),
+            ("forecasts", new object[] { new { predicate = ForecastVocabulary.MandateState, target = "accepted", by = Due.ToString("O"), probability = 0.8m } }));
+        var reply = await server.CallAsync(assign, Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var mandate = Body(reply).GetProperty("mandate").GetString()!;
+        var own = Assert.Single(gw.Org.ForecastsOn(mandate));
+        Assert.Equal((mandate, (string?)null, mandate, Head, false, "the forecaster decides this mandate"),
+            (own.Subject, own.DecisionId, own.MandateId!, own.Forecaster, own.Scored, own.UnscoredWhy));
+
+        var added = await server.CallAsync(ForecastFrame(mandate, mandate, MandateEventKind.Expired, 0.1m), Head, Launch(db, Head));
+        Assert.True(added.Ok, Json.Write(added.Error));
+        Assert.False(Body(added).GetProperty("forecast").GetProperty("scored").GetBoolean());
+        Assert.Equal("the forecaster decides this mandate", Body(added).GetProperty("forecast").GetProperty("unscored_why").GetString());
+
+        // THE HEAD ABOVE THE DECIDER controls it through its subtree; a position outside it does not.
+        Assert.True((await server.CallAsync(RecordFrame(), Chief, Launch(db, Chief))).Ok);
+        var chiefs = await server.CallAsync(ForecastFrame(gw.Org.DecisionsOf(Chief).Single().Id, mandate, "accepted", 0.5m), Chief, Launch(db, Chief));
+        Assert.True(chiefs.Ok, Json.Write(chiefs.Error));
+        Assert.Equal("this mandate's decider is in the forecaster's subtree",
+            Body(chiefs).GetProperty("forecast").GetProperty("unscored_why").GetString());
+        Assert.True((await server.CallAsync(RecordFrame(), Outsider, Launch(db, Outsider))).Ok);
+        var outside = await server.CallAsync(ForecastFrame(gw.Org.DecisionsOf(Outsider).Single().Id, mandate, "accepted", 0.5m), Outsider, Launch(db, Outsider));
+        Assert.True(outside.Ok, Json.Write(outside.Error));
+        Assert.True(Body(outside).GetProperty("forecast").GetProperty("scored").GetBoolean());
+        Assert.False(Body(outside).GetProperty("forecast").TryGetProperty("unscored_why", out var why) && why.ValueKind != JsonValueKind.Null);
+
+        // ONLY THE DECIDER attaches one to a mandate, and only an author to its own decision.
+        Assert.Contains("only its decider", (await server.CallAsync(ForecastFrame(mandate, mandate, "accepted", 0.5m), Member, Launch(db, Member))).Error!.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("not yours", (await server.CallAsync(ForecastFrame(gw.Org.DecisionsOf(Chief).Single().Id, mandate, "accepted", 0.5m), Outsider,
+            Launch(db, Outsider))).Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(4L, Count(db, "org_forecast"));
+    }
+
+    /// <summary>
+    /// (c3) A FORECAST OUTSIDE THE VOCABULARY OR WITH A PAST DATE IS REFUSED (RULING Q3): a predicate v1 does not hold, a target its
+    /// predicate does not name, a subject that is not there, a date in the past or beyond the horizon, a probability outside 0..1 —
+    /// in words, nothing written. RED at base: no op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_forecast_outside_the_vocabulary_or_with_a_past_date_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Version(db, "ver-c3");
+        Assert.True((await server.CallAsync(RecordFrame(), Head, Launch(db, Head))).Ok);
+        var on = gw.Org.DecisionsOf(Head).Single().Id;
+
+        foreach (var (frame, words) in new[]
+                 {
+                     (ForecastFrame(on, "ver-c3", "promoted", 0.5m, "sharpe-above"), "no predicate of the forecast vocabulary v1"),
+                     (ForecastFrame(on, "ver-c3", "accepted", 0.5m, ForecastVocabulary.VerdictClass), "no target of verdict-class"),
+                     (ForecastFrame(on, "ver-nowhere", "promoted", 0.5m, ForecastVocabulary.VerdictClass), "no strategy version"),
+                     (ForecastFrame(on, "man-nowhere", "accepted", 0.5m), "no mandate"),
+                     (ForecastFrame(on, "ver-c3", "promoted", 0.5m, ForecastVocabulary.VerdictClass, DateTimeOffset.UtcNow.AddMinutes(-1)), "not in the future"),
+                     (ForecastFrame(on, "ver-c3", "promoted", 0.5m, ForecastVocabulary.VerdictClass, DateTimeOffset.UtcNow.AddDays(400)), "horizon"),
+                     (ForecastFrame(on, "ver-c3", "promoted", 1.2m, ForecastVocabulary.VerdictClass), "no probability"),
+                     (ForecastFrame(on, "ver-c3", "promoted", "likely", ForecastVocabulary.VerdictClass), "is a number from 0 to 1"),
+                     (ForecastFrame("ver-c3", "ver-c3", "promoted", 0.5m, ForecastVocabulary.VerdictClass), "neither a decision")
+                 })
+        {
+            var refused = await server.CallAsync(frame, Head, Launch(db, Head));
+            Assert.False(refused.Ok, $"a forecast was recorded: {words}");
+            Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Equal(0L, Count(db, "org_forecast"));
     }
 }

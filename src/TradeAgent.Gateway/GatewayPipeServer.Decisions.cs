@@ -33,8 +33,31 @@ public sealed partial class GatewayPipeServer
         OnlyDeclared(req, OrgRecordArgsWhy);
         var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var row = Gateway.Org.Decide(position, ctx.AttemptId, req.Str("kind") ?? OrgDecisionKind.Routine, TextList(req, "options"),
-            Require(req, "choice"), Require(req, "rationale"), OrgRefs(req), DateTimeOffset.UtcNow);
+            Require(req, "choice"), Require(req, "rationale"), OrgRefs(req), ForecastClaims(req, "forecasts"), DateTimeOffset.UtcNow);
         return DecisionReply(row);
+    }
+
+    /// <summary>
+    /// ATTACHES ONE FORECAST TO THE CALLER'S OWN DECISION, OR TO AN OPEN MANDATE IT DECIDES (<see cref="OrgStore.Forecast"/>): the
+    /// app validates it against the vocabulary, refuses an outcome already measured, computes whether it is scored and says why
+    /// not — or refuses in words with nothing written.
+    /// </summary>
+    object ForecastAdd(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, OrgRecordArgsWhy);
+        var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var claim = new ForecastClaim(Require(req, "predicate"), req.Str("subject"), Require(req, "target"),
+            When(Require(req, "by"), "by"),
+            Probability(req.Args?.TryGetValue("probability", out var p) == true ? p
+                : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "'probability' is required: how likely you hold it, from 0 to 1. Nothing was written.")));
+        var f = Gateway.Org.Forecast(position, ctx.AttemptId, Require(req, "on"), claim, DateTimeOffset.UtcNow);
+        return new
+        {
+            forecast = ForecastShown(f),
+            on = f.DecisionId ?? f.MandateId,
+            note = "Recorded and precommitted: nothing edits a forecast. The probability is your claim; whether it is scored, and "
+                   + "its resolution when TradeAgent's own records settle it, are TradeAgent's."
+        };
     }
 
     /// <summary>
@@ -162,6 +185,74 @@ public sealed partial class GatewayPipeServer
         ["next_before"] = next,
         ["note"] = note
     };
+
+    /// <summary>
+    /// THE FORECASTS A FRAME STATES: a JSON list (or a string holding one) of objects with 'predicate', 'target', 'by' (an ISO-8601
+    /// time) and 'probability' (a number from 0 to 1, or its text), and 'subject' where the record is not the mandate being issued.
+    /// Absent is none; another shape is refused, never cut or filled in.
+    /// </summary>
+    static IReadOnlyList<ForecastClaim> ForecastClaims(IpcRequest req, string arg)
+    {
+        if (req.Args is null || !req.Args.TryGetValue(arg, out var raw) || raw.ValueKind == JsonValueKind.Null) return [];
+        JsonElement list;
+        try
+        {
+            list = raw.ValueKind == JsonValueKind.String ? JsonDocument.Parse(raw.GetString() ?? "[]").RootElement.Clone() : raw;
+        }
+        catch (JsonException)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{arg}' is not JSON. {Shape()}");
+        }
+        if (list.ValueKind != JsonValueKind.Array) throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{arg}' is not a list. {Shape()}");
+        var claims = new List<ForecastClaim>();
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"an item of '{arg}' is not an object. {Shape()}");
+            var fields = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var p in item.EnumerateObject())
+            {
+                if (p.Name is not ("predicate" or "subject" or "target" or "by" or "probability"))
+                    throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{p.Name}' is not a field of a forecast. {Shape()}");
+                fields[p.Name] = p.Value;
+            }
+            string Text(string key) => fields.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString()!
+                : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"a forecast's '{key}' is text, and it is required. {Shape()}");
+            if (!fields.TryGetValue("probability", out var probability))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"a forecast states its 'probability'. {Shape()}");
+            claims.Add(new ForecastClaim(Text("predicate"), fields.ContainsKey("subject") ? Text("subject") : null, Text("target"),
+                When(Text("by"), "by"), Probability(probability)));
+        }
+        return claims;
+
+        string Shape() => $"'{arg}' is a JSON list of forecasts, each {{\"predicate\": {string.Join(" | ", ForecastVocabulary.Predicates)}, "
+                          + "\"subject\", \"target\", \"by\": an ISO-8601 time, \"probability\": 0 to 1}. Nothing was written.";
+    }
+
+    /// <summary>A probability as a frame states it — a JSON number or its text — read exactly, never rounded; the range is the store's.</summary>
+    static decimal Probability(JsonElement raw)
+    {
+        var text = raw.ValueKind switch
+        {
+            JsonValueKind.Number => raw.GetRawText(),
+            JsonValueKind.String => raw.GetString(),
+            _ => null
+        };
+        if (text is null || !decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var p))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"a forecast's probability is a number from 0 to 1, such as 0.7 — '{raw.GetRawText()}' is not one. Nothing was written.");
+        return p;
+    }
+
+    /// <summary>A time as a frame names it: ISO-8601, read as UTC when it names no offset; unreadable is refused.</summary>
+    static DateTimeOffset When(string raw, string key)
+    {
+        if (!DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var at))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{key}' is an ISO-8601 time, such as 2026-10-20T18:00:00Z — '{raw}' is not one. Nothing was written.");
+        return at;
+    }
 
     /// <summary>The app records a frame cites, as a JSON list of {"kind", "id"} — absent is none; any other shape is refused.</summary>
     static IReadOnlyList<OrgRef> OrgRefs(IpcRequest req) => Claims(req, "refs", ["kind", "id"], o => new OrgRef(o["kind"], o["id"]));

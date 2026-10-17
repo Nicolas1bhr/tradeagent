@@ -321,7 +321,9 @@ public sealed partial class OrgStore
     /// words (<see cref="AssignRefusal"/>), nothing. The id is the app's (<see cref="MintMandate"/>).
     /// </summary>
     /// <exception cref="TradeAgentException">The issue is refused; nothing was written.</exception>
-    public MandateRow Assign(MandateIssue issue, DateTimeOffset now) => db.Write(_ =>
+    /// <param name="forecasts">The issuer's forecasts on this mandate (RULING Q5: optional), each attached to it in this same write
+    /// (<c>U-org-decisions</c>) — a forecast on its own mandate's state is recorded, never scored: its decider controls it.</param>
+    public MandateRow Assign(MandateIssue issue, DateTimeOffset now, IReadOnlyList<ForecastClaim>? forecasts = null) => db.Write(_ =>
     {
         if (AssignRefusal(issue, now) is { } refused)
             throw new TradeAgentException(ErrorCode.INVALID_REQUEST, refused + " Nothing was written.");
@@ -349,6 +351,9 @@ public sealed partial class OrgStore
             c.ExecuteNonQuery();
 
         var issued = AppendMandateEvent(row.Id, now, MandateEventKind.Issued, row.Decider, issue.Attempt, null, []);
+        if (forecasts?.Count > DecisionLimits.MaxForecasts)
+            throw Refused($"a mandate carries at most {DecisionLimits.MaxForecasts} forecasts.");
+        foreach (var f in forecasts ?? []) AddForecast(row.Decider, issue.Attempt, null, row.Id, f, now);
         RaiseMandateWake(row, issued, now);
         return row;
     });

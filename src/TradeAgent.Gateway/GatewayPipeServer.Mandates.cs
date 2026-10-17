@@ -68,7 +68,8 @@ public sealed partial class GatewayPipeServer
 
         var row = Gateway.Org.Assign(new MandateIssue(
             decider, ctx.AttemptId, Require(req, "holder"), Require(req, "kind"), Require(req, "goal"), req.Str("scope"),
-            req.Str("shape"), NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow);
+            req.Str("shape"), NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow,
+            ForecastClaims(req, "forecasts"));
         return MandateReply(row);
     }
 
