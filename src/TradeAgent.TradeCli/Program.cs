@@ -421,6 +421,26 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade escalation raise <reason> [--mandate M]` and `list` (U-org-decisions).
+        case "escalation":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "raise":
+                    Fill(a, rest, "reason");
+                    return (Ops.EscalationRaise, a);
+                case "list" or "ls":
+                    return (Ops.EscalationList, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade forecast add <on> <predicate> <target> <by> <probability> [--subject ID]` (U-org-decisions).
         case "forecast":
         {

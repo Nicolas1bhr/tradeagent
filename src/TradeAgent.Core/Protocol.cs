@@ -236,9 +236,16 @@ public static class Ops
     /// </summary>
     public const string ForecastAdd = "forecast-add";
 
+    /// <summary>
+    /// A HEAD'S ESCALATION UP ITS CHAIN, AND ITS OWN READ (<c>U-org-decisions</c>; ORGANISATION § 4): the APP chooses the recipient —
+    /// the nearest head above whose recorded seat carries the organisation's verbs — and wakes it once; at the root the owner gets a
+    /// RECORD, never a wake and never a pipe request. NOT in <see cref="Mutating"/>; nothing here reaches operator authority.
+    /// </summary>
+    public const string EscalationRaise = "escalation-raise", EscalationList = "escalation-list";
+
     /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>).</summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
-        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd];
+        MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

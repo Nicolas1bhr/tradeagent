@@ -523,6 +523,12 @@ public static class MissionEventIds
     public static string Escalation(string mandateId, long eventId) => $"{MissionEventKind.Escalation}:{mandateId}:{eventId}";
 
     /// <summary>
+    /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,
+    /// so it is raised once and never twice. Its payload is that id — never a mandate's, which O5a's escalation wakes carry.
+    /// </summary>
+    public static string EscalationRaised(string escalationId) => $"{MissionEventKind.Escalation}:{escalationId}";
+
+    /// <summary>
     /// A JUDGMENT RE-RAISED BY THE SWEEP (<c>U-org-assignments-a</c> fix pass 1, item 2): the decider's <c>delivery</c> or
     /// <c>escalation</c> wake <paramref name="lostWakeId"/>, which the LOST launch <paramref name="lostAttempt"/> took, owed
     /// again — once per lost launch, never twice for one.

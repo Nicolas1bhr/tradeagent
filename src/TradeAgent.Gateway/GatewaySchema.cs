@@ -718,6 +718,22 @@ public static class GatewaySchema
                 new("probability", "number", true, "How likely you hold it, from 0 to 1."),
                 new("subject", "string", false, "The version or mandate id it is about; the mandate it is attached to when omitted.")
             ]),
+        new(Core.Ops.EscalationRaise, "trade escalation raise <reason> [--mandate M]", false,
+            "ESCALATE, AS THE HEAD OF A UNIT: say why ('reason', your words) and, if it is about one, the mandate you decide or hold "
+            + "('mandate'). TradeAgent chooses who receives it — walking up your chain past every vacant head and every head whose "
+            + "recorded seat cannot carry the organisation's verbs — records it and wakes that head ONCE; at the top of the chain it "
+            + "is recorded for the owner, who reads it in TradeAgent — no wake and no request is sent. One escalation per mandate; "
+            + $"without a mandate at most {Core.Db.DecisionLimits.MandatelessPerDay} a day (UTC). A member is refused: it tells its "
+            + "head through its mandate or a lateral note. It grants nothing, places no order and moves no money.",
+            [
+                new("reason", "string", true, $"Why, in your words: at most {Core.Db.DecisionLimits.MaxClaimChars} characters."),
+                new("mandate", "string", false, "A mandate you decide or hold that it is about.")
+            ]),
+        new(Core.Ops.EscalationList, "trade escalation list [--before ID]", false,
+            "THE ESCALATIONS YOU RAISED OR RECEIVED, NEWEST FIRST — never another position's: each with its sender, the recipient "
+            + "TradeAgent chose (null: the owner), the mandate, the reason as written and every head passed over and why. At most "
+            + $"{GatewayPipeServer.OrgListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped.",
+            [new("before", "string", false, "An escalation id: serve only those before it — an answer's 'next_before'.")]),
         new(Core.Ops.DecisionList, "trade decision list [--before ID]", false,
             "YOUR DECISION RECORDS, NEWEST FIRST — never another position's: each with its kind, your choice as you wrote it, its "
             + $"ledger entry and how many forecasts it carries. At most {GatewayPipeServer.OrgListMax} and "

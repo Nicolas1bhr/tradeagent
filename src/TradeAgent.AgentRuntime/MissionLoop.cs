@@ -3675,7 +3675,8 @@ public sealed class MissionLoop
         MissionEventKind.Tape => "TradeAgent stored something new on the tape that your work reads",
         MissionEventKind.Mandate => "a mandate of yours is owed work — `trade mandate show` has it",
         MissionEventKind.Delivery => "a delivery on a mandate you decide was sealed and waits on your judgment",
-        MissionEventKind.Escalation => "code stopped retrying a mandate you decide and is asking you",
+        MissionEventKind.Escalation => "an escalation reached you — code stopped retrying a mandate you decide, or a head below you "
+                                       + "raised one (`trade escalation list`)",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };

@@ -610,4 +610,128 @@ public class OrgDecisionTests
         Assert.Null(org.Resolution("fc-0000000000v2"));
     }
 
+    // ---- item 5: escalations ----------------------------------------------------------------------------------------------
+
+    static IpcRequest EscalateFrame(string? mandate = null, string reason = "the skew question needs a second venue's data, which we hold no grant for") =>
+        Frame(Ops.EscalationRaise, [("reason", reason), .. mandate is null ? Array.Empty<(string, object)>() : [("mandate", mandate)]]);
+
+    static List<MissionEvent> Escalations(Database db) => [.. new MissionEventStore(db).OfKind(MissionEventKind.Escalation)];
+
+    /// <summary>
+    /// (e) A TEAM HEAD'S ESCALATION REACHES THE NEXT HEAD WITH ONE WAKE: <see cref="Head"/> heads a team under <see cref="Sub"/>,
+    /// whose head <see cref="Chief"/> last launched on a brokered seat — the app writes <c>esc-…</c> addressed to Chief and ONE
+    /// <c>escalation</c> wake to it, keyed by the escalation, in one write; the list shows it to both, and to nobody else. RED at
+    /// base: no <c>escalation-raise</c> op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_team_heads_escalation_reaches_the_next_head_with_one_wake()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Launch(db, Chief);
+        var m = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+
+        var reply = await server.CallAsync(EscalateFrame(m.Id), Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var id = Body(reply).GetProperty("escalation").GetProperty("escalation").GetString()!;
+        Assert.StartsWith(OrgStore.EscalationPrefix, id, StringComparison.Ordinal);
+        var e = gw.Org.Escalation(id)!;
+        Assert.Equal((Head, Chief, Team, m.Id), (e.Sender, e.Recipient!, e.UnitId, e.MandateId!));
+        Assert.Equal(MissionEventIds.EscalationRaised(id), e.WakeId);
+
+        var wake = Assert.Single(Escalations(db));
+        Assert.Equal((MissionEventIds.EscalationRaised(id), Chief, id), (wake.Id, wake.Role!, wake.Payload!));
+        Assert.Equal(WakeClass.Research, WakePriority.ClassOf(wake.Kind));
+        // THE MANDATE IS UNTOUCHED: an escalation by a head is a record and one wake, not a mandate event.
+        Assert.Equal([MandateEventKind.Issued], gw.Org.MandateEvents(m.Id).Select(x => x.Kind));
+
+        var chiefs = await server.CallAsync(Frame(Ops.EscalationList), Chief, Launch(db, Chief));
+        Assert.Equal("recipient", Body(chiefs).GetProperty("escalations")[0].GetProperty("you_are").GetString());
+        var heads = await server.CallAsync(Frame(Ops.EscalationList), Head, Launch(db, Head));
+        Assert.Equal("sender", Body(heads).GetProperty("escalations")[0].GetProperty("you_are").GetString());
+        var others = await server.CallAsync(Frame(Ops.EscalationList), Outsider, Launch(db, Outsider));
+        Assert.Equal(0, Body(others).GetProperty("escalations").GetArrayLength());
+    }
+
+    /// <summary>
+    /// (e2) AN ESCALATION FROM INSIDE DIV-RESEARCH SKIPS RESEARCH AND REACHES THE OWNER WITH NO WAKE (RULING Q6): <see cref="Outsider"/>
+    /// heads a team directly under <c>div-research</c>, whose head <c>research</c> last launched on an UNCONFINED seat — the walk passes
+    /// over it, by its recorded seat's CAPABILITY, and reaches the root: the record is addressed to the owner (<c>to</c> NULL), with no
+    /// wake of any kind. A non-legacy head on an unconfined seat is passed over the same way; and once <c>research</c>'s recorded seat
+    /// is CONFINED, the next escalation reaches it. RED at base: no op existed. Watched red with the capability skip removed from the walk.
+    /// </summary>
+    [Fact]
+    public async Task An_escalation_from_inside_div_research_skips_research_and_reaches_the_owner_with_no_wake()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Launch(db, CouncilRoles.Research, SeatClasses.Cli);
+        var wakes = Count(db, "mission_event");
+
+        var reply = await server.CallAsync(EscalateFrame(), Outsider, Launch(db, Outsider));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var e = gw.Org.Escalation(Body(reply).GetProperty("escalation").GetProperty("escalation").GetString()!)!;
+        Assert.Null(e.Recipient);
+        Assert.Null(e.WakeId);
+        Assert.True(Body(reply).GetProperty("escalation").GetProperty("to_owner").GetBoolean());
+        Assert.Contains(e.Skipped, w => w.StartsWith($"{OrgIds.Research}: its head {CouncilRoles.Research}'s recorded seat (unconfined)", StringComparison.Ordinal));
+        Assert.Equal(wakes, Count(db, "mission_event"));
+        Assert.Empty(Escalations(db));
+
+        // BY CAPABILITY, NEVER BY NAME: a non-legacy head whose recorded seat is unconfined is passed over too — and with it research.
+        Launch(db, Chief, SeatClasses.Cli);
+        var past = await server.CallAsync(EscalateFrame(), Head, Launch(db, Head));
+        var skipped = gw.Org.Escalation(Body(past).GetProperty("escalation").GetProperty("escalation").GetString()!)!;
+        Assert.Null(skipped.Recipient);
+        Assert.Contains(skipped.Skipped, w => w.StartsWith($"{Sub}: its head {Chief}'s recorded seat (unconfined)", StringComparison.Ordinal));
+        Assert.Empty(Escalations(db));
+
+        // AND A CONFINED RESEARCH SEAT RECEIVES ONE: what is read is the seat the ledger recorded, not who the position is.
+        Launch(db, CouncilRoles.Research, SeatClasses.Cell);
+        var confined = await server.CallAsync(EscalateFrame(), Outsider, Launch(db, Outsider));
+        Assert.Equal(CouncilRoles.Research, gw.Org.Escalation(Body(confined).GetProperty("escalation").GetProperty("escalation").GetString()!)!.Recipient);
+        Assert.Equal(CouncilRoles.Research, Assert.Single(Escalations(db)).Role);
+    }
+
+    /// <summary>
+    /// (e3) A MEMBER, A SECOND ESCALATION OF A MANDATE, OR A THIRD MANDATE-LESS ONE IS REFUSED (RULING Q7) — in words, nothing
+    /// written: a member heads no unit; a head escalates one mandate once; without a mandate at most two a UTC day; a mandate it
+    /// neither decides nor holds is not its to escalate; and the legacy pair on their unconfined seats hold no escalation verb at
+    /// all. RED at base: no op existed.
+    /// </summary>
+    [Fact]
+    public async Task A_member_a_second_escalation_of_a_mandate_or_a_third_mandate_less_one_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Launch(db, Chief);
+        var m = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
+
+        var member = await server.CallAsync(EscalateFrame(), Member, Launch(db, Member));
+        Assert.Contains("heads no unit", member.Error!.Message, StringComparison.Ordinal);
+        var research = await server.CallAsync(EscalateFrame(), CouncilRoles.Research, Launch(db, CouncilRoles.Research, SeatClasses.Cli));
+        Assert.Contains("Heading a unit grants no verb by itself", research.Error!.Message, StringComparison.Ordinal);
+        var foreign = await server.CallAsync(EscalateFrame(m.Id), Outsider, Launch(db, Outsider));
+        Assert.Contains("neither decided nor held by you", foreign.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_escalation"));
+
+        Assert.True((await server.CallAsync(EscalateFrame(m.Id), Head, Launch(db, Head))).Ok);
+        var again = await server.CallAsync(EscalateFrame(m.Id), Head, Launch(db, Head));
+        Assert.Contains("you escalated", again.Error!.Message, StringComparison.Ordinal);
+
+        Assert.True((await server.CallAsync(EscalateFrame(), Head, Launch(db, Head))).Ok);
+        Assert.True((await server.CallAsync(EscalateFrame(), Head, Launch(db, Head))).Ok);
+        var third = await server.CallAsync(EscalateFrame(), Head, Launch(db, Head));
+        Assert.Contains($"{DecisionLimits.MandatelessPerDay} escalations without a mandate today", third.Error!.Message, StringComparison.Ordinal);
+
+        Assert.Equal(3L, Count(db, "org_escalation"));
+        Assert.Equal(3, Escalations(db).Count);
+        Assert.All(Escalations(db), w => Assert.Equal(Chief, w.Role));
+    }
 }

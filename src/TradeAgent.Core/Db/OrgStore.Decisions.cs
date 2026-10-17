@@ -433,5 +433,134 @@ public sealed partial class OrgStore
         decimal.Parse(r.GetString(10), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture), r.GetInt64(11) != 0,
         Sql.S(r.GetValue(12)), Sql.Time(r.GetValue(13)));
 
+    // ---- escalations ----------------------------------------------------------------------------------------------------
+
+    const string EscalationCols = "id, sender, attempt_id, unit_id, mandate_id, to_position, reason, skipped, wake_id, at";
+
+    /// <summary>
+    /// A HEAD ESCALATES (ORGANISATION § 4; RULINGS Q6, Q7): the APP chooses the recipient, walking UP the chain from the unit the
+    /// caller heads — past every VACANT head and every head whose RECORDED seat cannot carry the organisation's verbs (its latest
+    /// launch's assurance below <c>CapabilityPolicy.Minimum(DecisionVerbs)</c> — by capability, never by naming the legacy pair, so
+    /// a confined <c>research</c> seat later receives them) — and writes the escalation and ONE <c>escalation</c> wake to that head in
+    /// one write; at the root it is addressed to the OWNER as a record only — no wake, no pipe path (O7 shows it). Refused in words,
+    /// nothing written: a caller that heads no unit, a mandate it neither decides nor holds, a second escalation of one mandate, a
+    /// third without a mandate in one UTC day.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public EscalationRow RaiseEscalation(string sender, string? attempt, string reason, string? mandateId, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (Standing(sender) is not { Status: OrgPositionStatus.Active, Kind: OrgPositionKind.Head })
+            throw Refused($"'{sender}' heads no unit: a head escalates up its chain. A member tells its head through its mandate "
+                          + "(mandate-decline) or a lateral note.");
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length > DecisionLimits.MaxClaimChars)
+            throw Refused($"an escalation says why, in your words: at most {DecisionLimits.MaxClaimChars} characters.");
+        var day = now.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (mandateId is not null)
+        {
+            var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
+            if (m.Decider != sender && m.Holder != sender)
+                throw Refused($"'{mandateId}' is neither decided nor held by you: an escalation names a mandate of your own.");
+            using var once = db.Cmd("SELECT id FROM org_escalation WHERE sender=$s AND mandate_id=$m", ("$s", sender), ("$m", m.Id));
+            if (once.ExecuteScalar() is string earlier)
+                throw Refused($"you escalated {m.Id} already ({earlier}): one escalation per mandate wakes the chain once.");
+        }
+        else
+        {
+            using var today = db.Cmd("SELECT COUNT(*) FROM org_escalation WHERE sender=$s AND mandate_id IS NULL AND day=$d",
+                ("$s", sender), ("$d", day));
+            if (Convert.ToInt32(today.ExecuteScalar(), CultureInfo.InvariantCulture) >= DecisionLimits.MandatelessPerDay)
+                throw Refused($"you have raised {DecisionLimits.MandatelessPerDay} escalations without a mandate today (UTC), the most "
+                              + "one head may: name the mandate it is about, or wait for tomorrow.");
+        }
+
+        var (start, recipient, skipped) = Walk(sender);
+        var id = Mint(EscalationPrefix);
+        var wake = recipient is null ? null : MissionEventIds.EscalationRaised(id);
+        using (var c = db.Cmd($"""
+            INSERT INTO org_escalation({EscalationCols}, day)
+            VALUES($id,$s,$attempt,$unit,$m,$to,$reason,$skipped,$wake,$at,$day)
+            """,
+            ("$id", id), ("$s", sender), ("$attempt", attempt), ("$unit", start), ("$m", mandateId), ("$to", recipient),
+            ("$reason", reason), ("$skipped", JsonSerializer.Serialize(skipped)), ("$wake", wake), ("$at", Sql.T(now)), ("$day", day)))
+            c.ExecuteNonQuery();
+        // ONE WAKE, TO ONE HEAD, ONCE — keyed by the escalation's id. The owner is never woken here: a record, shown by the app.
+        if (wake is not null)
+            new MissionEventStore(db).Raise(wake, MissionEventKind.Escalation, now, payload: id, role: recipient);
+        return Escalation(id)!;
+    });
+
+    /// <summary>
+    /// THE CHAIN ABOVE <paramref name="sender"/>, AS THE APP WALKS IT: from the topmost unit it heads, up through each parent — the
+    /// first head that is active, not the sender, and whose RECORDED seat carries the organisation's verbs; the root's head is the
+    /// owner (null). Every unit passed over is named with why, in the record.
+    /// </summary>
+    (string Start, string? Recipient, List<string> Skipped) Walk(string sender)
+    {
+        var headed = Units().Where(u => u.HeadPositionId == sender).ToList();
+        var ids = headed.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        var start = headed.First(u => !Ancestors(u.Id).Any(a => ids.Contains(a.Id)));
+        var minimum = CapabilityPolicy.Minimum(Capability.DecisionVerbs);
+        var skipped = new List<string>();
+        foreach (var unit in Ancestors(start.Id))
+        {
+            if (unit.IsRoot) return (start.Id, null, skipped);
+            if (unit.HeadPositionId is not { } head) { skipped.Add($"{unit.Id}: no head (vacant)"); continue; }
+            if (head == sender) { skipped.Add($"{unit.Id}: headed by you"); continue; }
+            if (Position(head) is not { Status: OrgPositionStatus.Active })
+            {
+                skipped.Add($"{unit.Id}: its head {head} is not active (vacant)");
+                continue;
+            }
+            var recorded = RecordedAssurance(head);
+            if (recorded is not { } assurance || assurance < minimum)
+            {
+                skipped.Add($"{unit.Id}: its head {head}'s recorded seat ({SeatName(recorded)}) cannot carry the organisation's verbs, "
+                            + $"which need at least {SeatClasses.Name(minimum)}");
+                continue;
+            }
+            return (start.Id, head, skipped);
+        }
+        return (start.Id, null, skipped);
+    }
+
+    /// <summary>
+    /// THE ASSURANCE OF <paramref name="position"/>'S RECORDED SEAT: what the ledger wrote for its latest launch
+    /// (<c>ai_attempt.assurance</c>, from the seat the app verified at admission), or null — never launched, or a word this build
+    /// does not know, which is refused rather than guessed.
+    /// </summary>
+    SeatAssurance? RecordedAssurance(string position)
+    {
+        using var c = db.Cmd("SELECT assurance FROM ai_attempt WHERE role=$p ORDER BY started_at DESC, rowid DESC LIMIT 1", ("$p", position));
+        var name = c.ExecuteScalar() as string;
+        foreach (var a in Enum.GetValues<SeatAssurance>())
+            if (SeatClasses.Name(a) == name) return a;
+        return null;
+    }
+
+    static string SeatName(SeatAssurance? a) => a is { } known ? SeatClasses.Name(known) : "none recorded";
+
+    /// <summary>One escalation as recorded, or null.</summary>
+    public EscalationRow? Escalation(string id) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {EscalationCols} FROM org_escalation WHERE id=$id", ("$id", id));
+        using var r = c.ExecuteReader();
+        return r.Read() ? ReadEscalation(r) : null;
+    });
+
+    /// <summary>The escalations <paramref name="position"/> raised or received, newest first — never another position's.</summary>
+    public IReadOnlyList<EscalationRow> EscalationsOf(string position) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {EscalationCols} FROM org_escalation WHERE sender=$p OR to_position=$p ORDER BY at DESC, rowid DESC",
+            ("$p", position));
+        using var r = c.ExecuteReader();
+        var rows = new List<EscalationRow>();
+        while (r.Read()) rows.Add(ReadEscalation(r));
+        return (IReadOnlyList<EscalationRow>)rows;
+    });
+
+    static EscalationRow ReadEscalation(Microsoft.Data.Sqlite.SqliteDataReader r) => new(
+        r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), Sql.S(r.GetValue(4)), Sql.S(r.GetValue(5)), r.GetString(6),
+        JsonSerializer.Deserialize<string[]>(r.GetString(7)) ?? [], Sql.S(r.GetValue(8)), Sql.Time(r.GetValue(9)));
+
     static IReadOnlyList<OrgRef> ReadRefs(string json) => JsonSerializer.Deserialize<OrgRef[]>(json) ?? [];
 }

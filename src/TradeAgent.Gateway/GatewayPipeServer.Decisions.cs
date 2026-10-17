@@ -141,6 +141,53 @@ public sealed partial class GatewayPipeServer
                + "and nothing edits either — a changed mind is a new record. Each forecast resolves from TradeAgent's own records."
     };
 
+    /// <summary>
+    /// A HEAD ESCALATES (<see cref="OrgStore.RaiseEscalation"/>): its reason, and the mandate it decides or holds if it names one. The
+    /// APP chooses who receives it, walking up the chain, and wakes that head once — or, at the root, records it for the owner with
+    /// no wake and no request of any kind. Refused in words, nothing written, to a member, a second escalation of one mandate and a
+    /// third without one in a day.
+    /// </summary>
+    object EscalationRaise(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, OrgRecordArgsWhy);
+        var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var e = Gateway.Org.RaiseEscalation(position, ctx.AttemptId, Require(req, "reason"), req.Str("mandate"), DateTimeOffset.UtcNow);
+        return new
+        {
+            escalation = EscalationShown(e, position),
+            note = e.Recipient is null
+                ? "Recorded for the owner: no head above you can carry it, so it reached the top of the chain. The owner reads it in "
+                  + "TradeAgent; nothing was sent and nobody was woken."
+                : $"Recorded, and {e.Recipient} — the head TradeAgent chose above you — is woken once. Your reason is your words; "
+                  + "who receives it, and every head passed over and why, are TradeAgent's."
+        };
+    }
+
+    /// <summary>The escalations the caller raised or received, newest first — never another position's — bounded and never silently.</summary>
+    object EscalationList(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, OrgRecordArgsWhy);
+        var position = OrgVerbCaller(ctx, Capability.Reads);
+        var all = Gateway.Org.EscalationsOf(position).ToList();
+        var from = From(all.FindIndex(e => e.Id == req.Str("before")), req.Str("before"), "escalation");
+        return Bounded(all.Skip(from), e => e.Id, e => EscalationShown(e, position), "escalations",
+            "Each reason is its sender's words; the sender, the recipient (null: the owner) and the heads passed over are TradeAgent's.");
+    }
+
+    static object EscalationShown(EscalationRow e, string caller) => new
+    {
+        escalation = e.Id,
+        you_are = e.Sender == caller ? "sender" : "recipient",
+        from = e.Sender,
+        to = e.Recipient,
+        to_owner = e.Recipient is null,
+        unit = e.UnitId,
+        mandate = e.MandateId,
+        reason = e.Reason,
+        passed_over = e.Skipped,
+        at = e.At
+    };
+
     // ---- the parts the handlers share --------------------------------------------------------------------------------
 
     /// <summary>Where a list continues: the row after <paramref name="before"/>, or the first — or refused, never guessed.</summary>

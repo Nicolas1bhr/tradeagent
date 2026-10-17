@@ -340,7 +340,8 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-org-decisions (O5b, rung 41): the decision records' writers and readers — Decide writes
         // org_decision (and its rationale through the ledger's internal writer), each behind OrgVerbCaller and the store's own checks.
         // None writes the chart.
-        mandate = [.. mandate, "Decide", "Decision", "DecisionsOf", "Forecast", "ForecastsOn", "OpenForecasts", "Resolution"];
+        mandate = [.. mandate, "Decide", "Decision", "DecisionsOf", "Escalation", "EscalationsOf", "Forecast", "ForecastsOn", "OpenForecasts",
+            "RaiseEscalation", "Resolution"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
