@@ -614,6 +614,38 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// FIX 3 (R3): THE ROW MEASURES WHAT THE CALLER RECEIVED. A read longer than one door result is cut by the door; the
+    /// <c>tool_call</c> row's bytes are the UTF-8 length of the text the MCP reply carried, not of the answer before the cut.
+    /// </summary>
+    [Fact]
+    public async Task A_cut_door_result_is_recorded_at_the_bytes_the_caller_received()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-door-" + Guid.NewGuid().ToString("n")[..12]);
+        var home = Path.Combine(TestEnv.Home, "door-home-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(Path.Combine(home, "in"));
+        File.WriteAllText(Path.Combine(home, "in", "long.md"), new string('é', BrokerDoor.MaxResultBytes));
+        var grants = new AgentGrants();
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-door-bytes");
+        await using var door = Surface(grants, server, db, home);
+        door.Start();
+
+        using var http = Client(research.Token);
+        var cut = await Post(http, door.Url!, Rpc(1, "tools/call", new { name = GrantedWorkerTools.ReadFile, arguments = new { path = "in/long.md" } }));
+        var received = Text(cut.Json.GetProperty("result"));
+        Assert.Contains("fetch by id", received);
+
+        var rows = new ToolCallStore(db).ForAttempt("attempt-door-bytes");
+        Assert.Single(rows);
+        Assert.True(rows[0].Bytes == Encoding.UTF8.GetByteCount(received),
+            $"the row says {rows[0].Bytes} bytes were delivered; the caller received {Encoding.UTF8.GetByteCount(received)}");
+        // AND THE CAP IS THE WHOLE RESULT'S, THE WORDS SAYING SO INCLUDED: one door result carries at most MaxResultBytes.
+        Assert.True(Encoding.UTF8.GetByteCount(received) <= BrokerDoor.MaxResultBytes,
+            $"one door result carried {Encoding.UTF8.GetByteCount(received)} bytes against a cap of {BrokerDoor.MaxResultBytes}");
+    }
+
+    /// <summary>
     /// THE BROKER HOLDS THE PLACEMENT, AND ONLY IT: every connector call waits on the latch once the gateway has a DISPATCHING
     /// row — the placement's own wire — and none before, so the pre-flight reads run free.
     /// </summary>

@@ -163,7 +163,8 @@ public sealed class BrokerDoor : IAsyncDisposable
             attempt: () => grant.AttemptId,
             gateway: () => server() is { } s ? new GrantCalls(s, grant) : null,
             ledger: ledger,
-            session: () => SessionOf(grant));
+            session: () => SessionOf(grant),
+            deliver: Bounded);
 
     /// <summary>
     /// THE SESSION A GRANT'S DOOR CALLS CARRY: one per LAUNCH (fix pass 1, R2) — its attempt, minted per launch
@@ -508,28 +509,35 @@ public sealed class BrokerDoor : IAsyncDisposable
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { answer = ToolAnswer.Refused($"'{verb.Spec.Name}' could not be answered: {ex.Message}", verb.Spec.Name); }
         }
+        // THE ROW MEASURES WHAT THE CALLER RECEIVES (fix pass 1, R3): the cut first, then the record.
+        var delivered = Bounded(answer.Content);
         try
         {
             Ledger?.Record(new Core.Db.ToolCallRow
             {
                 At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = verb.Spec.Name,
-                Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(answer.Content), Served = answer.Served,
-                Refusal = answer.Served ? null : answer.Content
+                Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(delivered), Served = answer.Served,
+                Refusal = answer.Served ? null : delivered
             });
         }
         catch (Exception) { /* a row that could not be written does not turn a refusal into a call */ }
-        return ToolResult(Bounded(answer.Content), answer.Served);
+        return ToolResult(delivered, answer.Served);
     }
 
-    /// <summary>The text cut to <see cref="MaxResultBytes"/> at a character boundary, saying so, or the text whole.</summary>
-    static string Bounded(string text)
+    /// <summary>
+    /// The text cut so that it, WITH the words saying so, is at most <see cref="MaxResultBytes"/> — at a character boundary —
+    /// or the text whole. So it is idempotent: a result already cut is within the cap and passes unchanged, which lets the
+    /// product surface cut before its record (<see cref="ToolsFor"/>) and the door cut any surface it is handed.
+    /// </summary>
+    public static string Bounded(string text)
     {
         var bytes = Encoding.UTF8.GetBytes(text);
         if (bytes.Length <= MaxResultBytes) return text;
-        var cut = MaxResultBytes;
+        var note = Encoding.UTF8.GetBytes(
+            $"\n[truncated — fetch by id: the answer was {bytes.Length:N0} bytes and one door result carries at most {MaxResultBytes:N0}]");
+        var cut = MaxResultBytes - note.Length;
         while (cut > 0 && (bytes[cut] & 0xC0) == 0x80) cut--;
-        return Encoding.UTF8.GetString(bytes, 0, cut) +
-               $"\n[truncated — fetch by id: the answer was {bytes.Length:N0} bytes and one door result carries at most {MaxResultBytes:N0}]";
+        return Encoding.UTF8.GetString(bytes, 0, cut) + Encoding.UTF8.GetString(note);
     }
 
     static Dictionary<string, object> Initialize(JsonElement parameters)

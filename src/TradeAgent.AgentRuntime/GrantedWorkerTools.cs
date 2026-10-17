@@ -38,6 +38,10 @@ namespace TradeAgent.AgentRuntime;
 /// a null answer — refuses <c>trade</c>, <c>data</c> and <c>report</c> in words rather than leaving them
 /// silently absent, because a worker told a tool exists and then given nothing reports a broken platform.
 /// </param>
+/// <param name="deliver">
+/// What a transport hands the caller of an answer, or null for the answer whole: applied before the <c>tool_call</c> row is
+/// written, so its bytes are the bytes delivered (the broker door's cut, <c>BrokerDoor.Bounded</c>).
+/// </param>
 public sealed class GrantedWorkerTools(
     string role,
     Func<string> home,
@@ -45,7 +49,8 @@ public sealed class GrantedWorkerTools(
     Func<IGatewayCalls?>? gateway = null,
     ToolCallStore? ledger = null,
     Func<DateTimeOffset>? now = null,
-    Func<string>? session = null) : IWorkerTools
+    Func<string>? session = null,
+    Func<string, string>? deliver = null) : IWorkerTools
 {
     public const string ReadFile = "read_file";
     public const string ListFiles = "list_files";
@@ -187,6 +192,9 @@ public sealed class GrantedWorkerTools(
                 _ => ToolAnswer.Refused(WorkerTools.NotGranted(call.Name), call.Name)
             };
 
+        // WHAT THE CALLER RECEIVES IS WHAT THE ROW MEASURES (U-thinking-seats-b fix pass 1, R3): a transport that cuts an
+        // answer — the broker door's per-result cap — cuts it here, before the record, never after it.
+        if (deliver is not null) answer = answer with { Content = deliver(answer.Content) };
         Record(call, answer);
         return answer;
     }
