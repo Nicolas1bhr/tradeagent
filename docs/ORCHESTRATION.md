@@ -513,7 +513,11 @@ thinks · a proving-ground score read as market truth.
 - Which Linux confinement the host supports: answered for CI's runner and a local VM by `U-cell-linux`'s survey (the stack in § 2.8); the host's
   own answers are the owner's — the nine questions of 2026-10-09 and five for the cells (the kernel, 6.12 or newer for Landlock ABI 6; `landlock` in
   the LSM list; the app as a systemd service under its own non-root user with `Delegate=yes`; no other agent CLI run as that user; an executor
-  cell's default network) — then his go to deploy.
+  cell's default network) — then his go to deploy. **2026-10-21, his answers:** the host is his Linux server (in Belgium; the fleet reaches it over his
+  existing access); its first deploy records the tape only, the AI off, and its recon answers the kernel, LSM and cgroup questions; an executor cell's
+  default network is "Web (443) for every executor" — the `web` class by default, its loopback and LAN reach on 443 accepted by him and recorded as GAP
+  rows of the proof (ORGANISATION § 16; `U-cell-linux-c`). Still his: no other agent CLI under the app's user (the kit makes its own account), and his
+  go for M-org1 on that host.
 - How many concurrent turns a quota pool allows, with the owner's own use beside it → measured under `U-org-lanes`.
 - Does a manager layer pay? → the proving ground, then M-org2's paired run (ORGANISATION § 17).
 - **The owner's:** when testing may start (M-org0 first); the go to deploy on the Linux host and its nine questions; funding beyond the plan after

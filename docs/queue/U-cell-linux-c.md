@@ -1,4 +1,31 @@
 # U-cell-linux-c — route (a) for codex seats: the harness in `attempt-<id>/harness`, `codex exec-server --listen stdio` in `attempt-<id>/cell` with its environment built from scratch and an empty read-only home, the host benchmark that writes `cell_proof`, and the cell's assurance profile on the attempt
+**AMENDED 2026-10-21 (the orchestrator's preparation session, main `25bae9bc`; from the pointer re-check `fleet/tmp/PREP-2026-10-21/recheck/recheck.md` and
+survey S-execution-environment `fleet/tmp/A-org/execution-environment/survey.md` § 2 — these lines outrank the older ones below where they differ):**
+- **Order and rung:** after `U-thinking-seats-c` (shared files: `RuntimeManifest.cs`, `SeatProfile.cs`, `AgentSession.cs`); `U-proving-ground-a` may land before or after —
+  rebase over whichever lands first (`Database.cs`). O5b is rung 41 on main; this unit takes the next free rung at dispatch (42, unless seat B's `U-forecast-nul` dispatches first).
+- **Pointers moved:** the supervisor's `ProcessStartInfo` is `Core/Containment.cs:150-175` (`:164`), the inherited environment `AgentEnvironment.cs:8`; codex's `Forbidden`
+  is `RuntimeManifest.cs:784-791` and ALREADY lists `codex/environments.toml` (`:789`); `Guarded` already refuses the seat home, `bin/`, `tools/`, `updates/`, `logs/` and
+  `environments.toml` (`Cell.cs:208-224, 262-263`) — item 2's Guarded and Forbidden parts are DONE by -b; only the EXECUTE-ONLY grant on `tools/` remains. `Versions.App` is
+  `Versioning.cs:448-450`.
+- **Item 5 needs this unit's rung:** `cell_proof` (`Database.cs:2401-2410`) has no boot column and `Proven()` (`CellProofStore.cs:105-114`) filters platform, machine,
+  os_release and build only — the boot-id binding is a new column, carried by item 6's rung.
+- **L1 (MUST — a cell executor otherwise cannot deliver), item 4:** the class's harness carries the door exactly as the broker class does — `mcp_servers.tradeagent`
+  url / bearer_token_env_var / required / approve (`RuntimeManifest.cs:713-722` on ts-c), `McpAllowlist[cell] = [BrokerSeat.DoorServer]` — and no MCP server on the cell
+  side; row `A_route_a_seat_reaches_the_door_from_its_harness_and_never_from_its_cell`. Why: the CLI deny set's `-c mcp_servers={}` (`RuntimeManifest.cs:764`) removes
+  the door, and a cell cannot reach the pipe (`CellNative.cs:371`; `CellLinuxTests.cs:308`), so the executor verbs (deliver, decline, note) would have no path at all.
+- **L2 (MUST — Law 2; add "Law 2" to Protections), item 4:** the class pins a classic-tools model and runs ts-c's surface verifier with the cell class's own expected set
+  (shell, patch and image tools + the door's); `exec` refuses before admission. Why: on a code-mode-only model, model-written JS runs in the harness's isolate — in the
+  process that holds the login (R-exec-server DECISION 1; ORCHESTRATION § 2.7).
+- **L3 (MUST since the owner's c5 answer below), item 3:** the harness's grant binds to `attempt-<id>/harness`, not the attempt dir; GUARD row
+  `A_cell_leaf_process_is_outside_the_harness_grant`. Why: the container is `AllOf(Session, CgroupContainer(cgroup.Dir))` (`AgentRuntime/Containment.cs:195-197`) and a
+  cgroup beneath the attempt is a Member (`AttemptContainer.cs:106`); with egress `none` the cell could not reach the door anyway — with `web` it is one port away.
+- **L4, item 5 — and the owner's c5 answer (2026-10-21, verbatim: "Web (443) for every executor"):** the proof names the egress classes its rows proved, and a launch
+  whose policy names a class the counted proof did not measure is refused. The benchmark proves BOTH `none` and `web` (TCP 443; `U-cell-linux-d`'s rows): executors
+  will default to `web` (`U-execution-environment`), and the reach the owner accepted with it — loopback and his LAN on 443 — is recorded as GAP rows, stated, never hidden.
+- **L5 (FIX), item 4:** "the cell workspace = the turn cwd under `AgentHome`" becomes the position's own home (`AppHost.HomeFor`, `AppHost.cs:448`; `workspace/org/<id>`,
+  `Council.cs:90-94`) — never `Paths.Workspace`; `Paths.AgentHome` is operations' home (`Paths.cs:46`).
+- **L6 (SCOPE), NOT in scope:** assigning `cell` to any product position — `SessionSeatClassFor` stays broker/cli in the product, a test manifest declares `cell`
+  (`U-execution-environment` assigns it); the `door` egress class is `U-capability-broker-sandbox`'s.
 **Arrow closed:** `docs/ORCHESTRATION.md` § 2.8 (route (a) on its four conditions; Acceptance *the broker*, *credentials*), § 2.3 (no non-legacy position on a real-model seat
 until the host offers a PROVEN executor cell class), § 2.5 (lanes and presence read the RECORDED profile), § 5; R-exec-server DECISION 1; ORGANISATION § 15 `U-cell-linux-c` (:445).
 **Protections — CRED-001 (the login never in a cell), AUTH-001 (no verb, pipe op or setting lifts the gate), INBOX-001 / COUNCIL rule 7 (presence DEFAULT IN), BUDGET-001,

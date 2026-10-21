@@ -1,0 +1,52 @@
+# U-org-watcher-a — the owner's private line, layer 1: its own file outside every `org_*` table and agent-reachable total, eight code detectors scoped per unit, a code-composed digest whose every sentence cites, and the guards
+that prove the organisation cannot see it
+**AMENDED 2026-10-21 (the orchestrator's preparation session, main `25bae9bc`; queued from seat A's survey S-org-watcher, `fleet/tmp/A-org/org-watcher/`; pointer
+re-check `fleet/tmp/PREP-2026-10-21/recheck/recheck.md` § 2 — these lines outrank the older ones below where they differ):**
+- **Order:** BESIDE `U-cell-linux-c` on seat A (brought forward by seat A at the 2026-10-17 wrap-up; the gate row of ORGANISATION § 15 lets the watcher land before
+  the cells — it touches no model, cell or money path); part b after `U-execution-environment`. Opus/high.
+- **O5b is LANDED** (rung 41, record `e94ee00d`): guard (b) enumerates O5b's door verbs and its tables (`org_decision`, `org_forecast`, escalations, lateral notes —
+  `OrgStore.Decisions.cs`) on its FIRST run; "independent of O5b … whichever lands second" and "O5b (none in src)" below are stale. `U-org-lanes` is landed too
+  (`673a2ca5`): rebase onto that code, not around it.
+- **Pointers:** § 13 has no numbered sub-items (cite its table, `ORGANISATION.md:356`); the app's sweep is `MissionLoop.Sweep()` (`MissionLoop.cs:2142`, the tick
+  `:2139-2150`; `SweepMandates` `:479-484` is an empty stub), not `:3027`; `AppHost.cs` has NO timer (its one loop is a 5 s `Task.Delay`, `:1387`) — the watcher's
+  60 s cadence is this unit's own design choice, to be named, not an existing hook to share.
+**Arrow closed:** ORGANISATION § 9 (:279-298: mandate, layer 1, invisible, no authority, cadence), § 13.4/13.6, § 14 (:389), § 16's 2026-10-02 answer ("code checks only for now", :549-551); VISION § 5.2 (detectors scoped per
+unit, a routing identity), § 5.3, § 11 (:487-488); ORCHESTRATION § 2.13 (:371-373), § 5, § 8; ORGANISATION § 15 `U-org-watcher` (:428). Survey: `fleet/tmp/A-org/org-watcher/survey.md` (main `1f3d2e17`) — grep every pointer.
+**Protections — ORG-001 / AUTH-001 (no authority: it cannot instruct, pause, block or wake anything; nothing of it on the pipe), measurement versus claim (findings are app measurements over app rows; organisation claims are
+cited by id, never copied as fact), BUDGET-001 (no spend, no `ai_attempt` row, no total moved), INBOX-001, EVID-001 (it writes no measurement table), honesty (each detector names what it cannot see), refuse-never-guess, no
+terminal: red-first and ONE watched mutant.** Seat A; **opus/high**. **No rung:** its own file `state/oversight.db`, its own ladder (`oversight_meta` schema 1) — the `tape.db` precedent (`Paths.cs:89-98`, `TapeStore.cs:214-240`);
+a newer layout refused naming both versions, nothing read or written. **After** O5a (LANDED, rung 40); independent of O5b (rung 41, in flight) — whichever lands second re-runs guard (b), which enumerates `Ops` by reflection.
+**Today:** no such line exists ("watcher" in `src` is the gateway's LOSS watcher, `LossBreach.cs` — name this line **Oversight** in code); every agent-reachable total sums `ai_attempt` (`AiAttemptStore.cs:634`, `:642`);
+`engineering_log`/`activity` are pruned (`Stores.cs:570-575`); app sweeps run in `MissionLoop` (`:3027`, agent-runtime code) — this one must not. Read first: `CLAUDE.md`; the docs above; the survey; `TapeStore.cs`;
+`OrgStore.Mandates.cs`; `AiAttemptStore.cs`; `MissionEventStore.cs` (`WakePriority`); `DecisionPortTests.cs:600-660`, `TapeHoldoutTests.cs:355-372` (the guard patterns).
+**Observable result:** with the app running, a sweep every 60 s on AppHost's own timer reads `tradeagent.db` READ-ONLY and appends findings to `oversight.db` — each with its unit, cited ids and BLIND sentence; when a new
+finding exists a digest is composed by code and passes `DigestCheck`; every op, door verb, Situation and report the organisation can reach answers byte-identically whether or not it ran; `tradeagent.db` and `logs/` untouched.
+Items, one commit each, one-sentence messages:
+1. **The store (Core, `TradeAgent.Core.Oversight`):** `OversightStore` over `Path.Combine(Paths.State, "oversight.db")` — the constant HERE, not in `Paths`; rung 1 in one transaction with its version row: `oversight_scope` (id,
+   unit_id, created_at; seeded `org`, the owner's private line), `oversight_finding` (id `wf-` + SHA-256 of detector+scope+subject+window, ON CONFLICT DO NOTHING; detector, severity `info|severe`, scope_id, unit_id, unit_path,
+   subject, cites JSON over a closed list `attempt|mandate|delivery|check|ledger|run|promotion|event|tool_call|log`, measured JSON, blind, at), `oversight_cursor` (source, last_id — logs are pruned), `oversight_digest` (id, at,
+   text, finding ids); UPDATE/DELETE refused by trigger (`Database.cs:2496-2511`'s pattern). Its own failures recorded IN THIS FILE, never `Log.Activity`.
+2. **The read side and the sweep:** a `Mode=ReadOnly` connection on `tradeagent.db`; an `OrgSnapshot` per window (chart, mandates, events, checks, deliveries, funding, attempts; a unit by funding chain, `org_mandate.unit_id`
+   or `org_position.unit_id`); `OversightSweep.Run(now)` from `AppHost`'s own timer over every scope row — never `MissionLoop`, never a wake; idempotent on restart.
+3. **The detectors** (one class each, `Detect(snapshot, scope, window)` → its scope's subtree only; thresholds named policy constants): `spend-no-accept`, `stall` (legacy divisions: no `report` publication),
+   `owner-words-late`, `material-unwoken` (classes ≤ Unblocking past the level's maximum interval), `refusals` (`tool_call.served=0`; `engineering_log` Ipc `grant_rejected|auth_rejected|protocol_rejected|operator_session_refused`,
+   the last two SEVERE), `claim-without-evidence` (accepted `refs='[]'`; a `claim` revision with no `ledger_link`), `accepted-failed-check` (SEVERE), `dead-version-rerun` (exact id after a `refused` promotion). Each declares a
+   fixed BLIND sentence (§ 9: file reads, shared-file side channels, shell-started runs unmetered on CLI seats).
+4. **The digest:** `DigestComposer` — a closed list of fact templates (no recommendation: § 9's first eight weeks), one sentence per finding ending in its citations, only when a finding newer than the last digest exists;
+   `DigestCheck.Verify` refuses a sentence with no citation or an id that resolves in neither file — run before every digest is written.
+5. **The guards** (the survey's Q1 list): structural, differential, untouched — (b)–(d) below.
+Red-first (`OversightTests`, UnitTests; `OversightInvisibilityTests`, IntegrationTests — in-process `GatewayPipeServer`, a seeded Brokered attempt, the `OrgRightsTests` pattern; each red at base quoted):
+(a) `Each_detector_fires_on_its_seeded_records_and_stays_silent_on_a_quiet_home` (a theory, eight); (b) GUARD `No_agent_reachable_surface_answers_differently_when_the_line_has_run` — every `Ops` const (reflection), every door
+verb, the Situation, `report`, on a fixed clock, any exclusion named with its reason; (b2) GUARD `Every_total_an_agent_can_read_is_on_the_enumerated_list` — public methods of `AiAttemptStore`/`OrgStore` returning
+`AiAttemptTotals`, `AiSpendToday` or `MandateSpend`, pinned; (c) GUARD `No_agent_reachable_assembly_or_source_names_the_line` (Gateway, AgentRuntime, TradeCli, GatewayHost: no Oversight type held, taken or returned; no source
+names the namespace, `oversight.db` or `oversight_`; the canon and role objectives name neither "watcher" nor "oversight"); (d) GUARD `A_sweep_leaves_the_organisations_database_and_logs_unchanged` (every table, before/after);
+(e) `A_findings_scope_is_its_subtree_only` (root vs `div-research`); (f) `The_same_fact_swept_twice_is_one_finding`; (g) `A_digest_sentence_without_a_resolving_citation_is_refused`, `A_quiet_window_writes_no_digest`;
+(h) `A_newer_oversight_file_is_refused_with_both_versions_named_and_left_untouched`; (i) `Every_detector_names_what_it_cannot_see`; (j) `Its_file_is_outside_every_workspace_and_refused_to_every_cell_grant` (`CellPolicy.Guarded`).
+**The watched mutant:** the sweep also writes a severe finding's sentence through `Log.Activity` ⇒ (d) red. Quoted red, restored, green.
+**Evidence beyond CI:** none needed — no model, no cell, no paid run; tests box `ready` once or NOT RUN. **Advisory, said in the code and the report:** on the legacy pair's unconfined CLI seats `state/oversight.db` is readable
+and the public repository names the line (ORCH § 5); hard on app paths, mediated on broker-only seats, hard in cells.
+Out of scope: the page, the banner, the cap, the structured pipe refusal row (part b); layer 2 (`U-org-watcher-model`); calibration, charter and replacement churn, canaries, typed contradictions, near-duplicates
+(`U-org-watcher-c`). No organisation verb, op, wake or setting.
+Conflicts: `U-org-lanes` (`AppHost.cs` — one timer, one field here; rebase); `U-thinking-seats-c` (`AppHost` adjacent; `Canon.cs` read only); O5b (none in src; guard (b) re-run by whichever lands second); `U-proving-ground-a`
+(none: nothing added to `Paths`/`Database`). Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; branch CI on three platforms; Codex review with the CI wait; names vs `main`
+0 removed; tests box line). `## Report` ≤ 20 lines appended here.

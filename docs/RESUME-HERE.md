@@ -11,9 +11,28 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-17, the wrap-up), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
+heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-21, PREPARED for the next build run), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-21 — PREPARED for the next build run (a planning session: no heartbeat, no seat, no builder); resume from `fleet/handoff/ORCHESTRATOR.md`'s
+top block ("PREPARED 2026-10-21"), then `fleet/handoff/A.md` and `B.md` (their PREPARED notes on top).** The owner: "okay let's do a check up on the current
+position of the project and what we should address the best next course of action aka things to build towards. this is a planning phase let's not initiate
+anything" — then: "you seem to understand exactly what needs to be done next. i'd like you to prepare and do everything so next run has a maximum positive
+impact on our progress." **The check-up:** no model had run for 14 days (attempt 3, 2026-10-07) while about 80 units landed, many on the launch and spend
+path the legacy pair uses; the tape — the moat only calendar time builds — had stopped at about 6 h; the path to M-org1 ran through the owner's own decisions
+and seat A's cells more than through more spine. **His answers (ORGANISATION § 16, verbatim there):** M0 attempt 4 in the next run, its allowance raised to
+10 €; a recording-only deploy on his Linux server (Belgium; his existing access); his plan is ChatGPT Plus (the Codex reviews share it — none while an observed
+run is live); an executor cell's default network is `web` (443). Mihael is not to be contacted until there is a working product. **The orchestrator's
+rulings:** M0 attempt 4 ≡ M-org0 (one run, baseline attempt 3); the surveys' recommendations accepted (BOARD, Decisions 2026-10-21). **Ready:** in
+`docs/queue/` 11 new briefs (`U-forecast-nul`, `U-vendor-limit-wakes`, `U-org-packets-a`/`-b`, `U-org-verbs-a`…`-e`, `U-org-watcher-a`, `U-cell-row-every-os`,
+`U-host-recording`) and 4 amended against `25bae9bc` (`U-cell-linux-c` with S-execution-environment's six lines, `U-proving-ground-b`/`-c`); the three fixers'
+prompts and the run's words block in `fleet/tmp/PREP-2026-10-21/prompts/`; the tape runbook in `fleet/tmp/PREP-2026-10-21/tape-host/`; attempt 4's runbook,
+blockers and helper scripts in `fleet/tmp/M-attempt4/`; ORGANISATION § 15's status cells refreshed and a row for the run and the tape. **The next run, in
+order:** heartbeat → fresh seats → the three fixers and the lights at once → the tape deploy (the orchestrator) → attempt 4 once step 0 is on `main` → the
+order (A: `U-cell-linux-c` ∥ `U-org-watcher-a` → `U-execution-environment`; B: `U-org-packets` → O6). **Verified this session:** Cell row (f) on macOS at
+`25bae9bc` — "Total tests: 41 · Passed: 1 · Skipped: 40"; the canon test 6/6 (S-attempt4's run). **NOT VERIFIED:** anything on the Linux server (nothing
+was run there); any model call; the tape's recording-only start on Linux (by reading only — `U-host-recording` proves it on CI).
 
 **2026-10-17 14:3x — WRAPPED UP on the owner's word; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("WRAPPED UP"), then
 `fleet/handoff/A.md` and `B.md` and the board.** The owner: "okay let's wrap up work gracefully we'll resume later". Nothing runs: no locks, no legs,

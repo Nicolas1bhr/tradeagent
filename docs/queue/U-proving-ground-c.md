@@ -1,4 +1,10 @@
 # U-proving-ground-c — the proving host process, a configuration as data, the no-model floor and one puppet agent at equal budgets, scored into the shadow home's own store
+**AMENDED 2026-10-21 (the orchestrator's preparation session; pointer re-check `fleet/tmp/PREP-2026-10-21/recheck/recheck.md` § 4, main `25bae9bc`; re-check
+again at dispatch):** "`OrgStore` has no public writer" is FALSE now — `OrgStore.Decisions.cs` exposes `Decide` (`:231`), `Forecast` (`:275`), `RaiseEscalation`
+(`:465`), `SendLateral` (`:606`), and `OrgStore.Mandates.cs` `Assign` (`:326`), `Cancel` (`:367`), `LaunchRefused` (`:383`): a puppet life writes through them, never
+seeded SQL. The tests' seed SQL is `PuppetLivesTests.cs:165-168`; `class OrgStore` is at `OrgStore.cs:321`; the app's composition is `AppHost.Composed`
+(`AppHost.cs:1081`) — `:950-970` is the inbox copy pass and `:1711-1830` the owner's failure sentences. "VISION § 3 route 2" means § 3's earning rule's second
+route (`VISION.md:122`). `U-org-lanes` is landed (`MissionLoop.Sweep()` `:2142`). Order: after `U-org-audit` and parts a, b (ORGANISATION § 15).
 **Arrow closed:** `docs/ORCHESTRATION.md` § 2.14 ("a configuration — chart template, seats and policies — works a brief under a budget and is scored in
 hours"; "a deterministic search with no model as the floor, one agent … at equal budgets on the same markets"; "a separate app process"; "plumbing
 proved with puppet seats at no cost"), § 7; VISION § 3 route 2. Part c of 5. **A protection — puppets run only in a test host (the puppet runtime's

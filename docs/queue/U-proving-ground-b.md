@@ -1,4 +1,7 @@
 # U-proving-ground-b — the market's full vocabulary: planted edges of known size, half-life and regime inside and beside doctrine, the three traps, and the referee's own power measured on them
+**AMENDED 2026-10-21 (the orchestrator's preparation session; pointer re-check `fleet/tmp/PREP-2026-10-21/recheck/recheck.md` § 3, main `25bae9bc`):** every
+pointer resolves on main. Order: seat A's row puts `-b … -e` after `U-org-watcher` → `U-org-audit` (ORGANISATION § 15); its Depends (part a landed) still holds —
+part a is one fixer from landing. Part a's brief names an O5a/O5b rung conflict in `Database.cs` that is resolved: both are on main (rungs 40, 41).
 **Arrow closed:** VISION § 6.4 ("planted edges of known size, half-life and regime, inside and outside current doctrine … and traps — leaky joins, edges
 that exist only before fees, regimes that exist only in-sample"; "an empirical check of the referee's own power (EDGE § 4.5)"); `docs/ORCHESTRATION.md`
 § 2.14; EDGE-FACTORY § 4.5 (canaries, the referee computes its own power). Part b of 5. **Evidence-adjacent — a wrong generator scores every later
