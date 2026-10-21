@@ -11025,3 +11025,30 @@ probability beside resolution, paged under O5a's byte bound. 4. the probability 
 **Re-review (`fleet/tmp/B-scratch/u-org-decisions/fix1-review.md`):** 1, 2, 3, 5 closed, no regression. 4 PARTIAL, judged OWED (not a pass): the schema CHECK still accepts `'0.5' || char(0) || 'garbage'`
 (SQLite text functions stop at NUL) — the app's only writer refuses it (`IsProbabilityText` checks every character), so it reaches the table only through a non-app SQL writer; card: add a NUL guard to the CHECK.
 **NOT VERIFIED:** no loop-level escalation test; no puppet fixture life; no model call, no app run; tests box NOT RUN — the machine does not answer.
+
+## 2026-10-21 — the tests box's catch-up run on `main`'s tip: RED on one Cell row that CI never runs on Windows; the product is not reached
+
+The tests box left the network on 2026-10-12 and every unit from 10-16 to 10-17 landed on hosted CI alone ("NOT RUN — the machine does not
+answer"; `docs/FLEET.md`, the tests box, `7e372c9b`). It answered again on 10-21 and ran the catch-up `docs/FLEET.md` asks for.
+
+**Run `20261021-151027-7e372c9b`** (`main` @ `7e372c9b`, 0 uncommitted; no product or test code since `dd813fb8` — `git diff --stat dd813fb8 7e372c9b --
+src tests packaging TradeAgent.sln Directory.Build.props` is empty): **RED in 27 m 39 s.** Restore 7 s; Release build 111 s, `0 Warning(s)` `0 Error(s)`;
+`Category!=Timing` 1008 s, exit 1; `Category=Timing` 530 s, exit 0 on the first attempt (no retry). Unit 1985/2004 passed, 19 not run · Fault 498/498 ·
+Integration 726/768 passed, **1 failed**, 41 not run · timing Unit 20/20, Fault 6/6, Integration 91/91. His files: unchanged.
+
+**The one red:** `CellLinuxTests.A_cell_launch_without_a_delegated_cgroup_is_refused_naming_delegate_yes` (`CellLinuxTests.Cgroup.cs:350`) —
+`Assert.Contains() Failure: Sub-string not found` · String `"the cell's program root '/usr' is not an "···` · Not found `"Delegate=yes"`.
+
+**Why CI never saw it.** Since `1471d8a9` (2026-10-11) CI excludes `Category=Cell` from the Windows and macOS test steps and runs the Cell rows on
+ubuntu alone, under `systemd-run` with `Delegate=yes`. `tools/win-test-run.ps1` still runs `Category!=Timing`, so on the tests box the Cell rows run on
+Windows — the only place they do. Most skip off Linux (40 of the 41 Integration not run are `CellLinuxTests`, the 41st is `PipeContractTests`' attribute skip); row (f) (`ec33edf6`, U-cell-linux-b, 2026-10-16) says
+"Every OS: the platform is a stand-in", and on Windows it is not true: with the stand-in Linux platform accepted, `ProcessContainment.Start` checks the
+policy before the cgroup (`Containment.cs`, "A POLICY THAT IS REFUSED IS REFUSED FIRST"), and `CellPolicy.SystemRoots`' `/usr` is not
+`Path.IsPathFullyQualified` on Windows, so the refusal names the path instead of `Delegate=yes`. It is still `CELL_UNAVAILABLE` and nothing is started.
+
+**Judged a test defect, not a product one** (read, not run): in production `Start` reads `CellPlatform.Read()` first, and on Windows its `Refusal()` refuses
+every cell before the policy is looked at. Every other test of the 22 units landed 10-16 → 10-17 is green on real Windows hardware.
+
+**NOT done, NOT verified:** the row is not fixed (it needs a policy whose roots are absolute on the OS it runs on, or a Windows skip with its reason); the
+runner is not aligned with CI's Cell exclusion, nor CI widened to run the every-OS rows off Linux — that choice is open; the macOS run of row (f) is not
+quoted here; nothing GUI-bound, no app and no ATAS ran on the box.
