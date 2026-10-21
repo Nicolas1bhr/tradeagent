@@ -146,6 +146,9 @@ public sealed record ForecastRow(
     string Subject, string Target, DateTimeOffset ResolveBy, decimal Probability, bool Scored, string? UnscoredWhy,
     DateTimeOffset At);
 
+/// <summary>The resolver's worklist: the open forecasts the app can read, and each open row it cannot, refused in words.</summary>
+public sealed record OpenForecastList(IReadOnlyList<ForecastRow> Rows, IReadOnlyList<string> Refused);
+
 /// <summary>One <c>org_forecast_resolution</c> row — the APP'S: yes, no or void, and the record it rests on.</summary>
 public sealed record ResolutionRow(string ForecastId, string Outcome, string RecordKind, string RecordId, string Why, DateTimeOffset At);
 
@@ -412,8 +415,13 @@ public sealed partial class OrgStore
             : null;
     });
 
-    /// <summary>The forecasts with no resolution yet, oldest first — the resolver's worklist.</summary>
-    public IReadOnlyList<ForecastRow> OpenForecasts() => db.Read(_ =>
+    /// <summary>
+    /// The forecasts with no resolution yet, oldest first — the resolver's worklist — and, in words, each open row whose probability
+    /// is not the one shape <see cref="ForecastVocabulary.IsProbabilityText"/> states (a row only a writer past this store could make,
+    /// <c>U-forecast-nul</c>): read as TEXT and refused by name, never parsed on a guess and never thrown, so one such row stops no
+    /// other forecast's resolution. The refusal names the row, never its text.
+    /// </summary>
+    public OpenForecastList OpenForecasts() => db.Read(_ =>
     {
         using var c = db.Cmd($"""
             SELECT {ForecastCols} FROM org_forecast f
@@ -422,8 +430,17 @@ public sealed partial class OrgStore
             """);
         using var r = c.ExecuteReader();
         var rows = new List<ForecastRow>();
-        while (r.Read()) rows.Add(ReadForecast(r));
-        return (IReadOnlyList<ForecastRow>)rows;
+        var refused = new List<string>();
+        while (r.Read())
+        {
+            if (r.GetValue(10) is string text && ForecastVocabulary.IsProbabilityText(text)
+                && decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var probability))
+                rows.Add(ReadForecast(r, probability));
+            else
+                refused.Add($"forecast {r.GetString(0)} holds a probability that is not a decimal text from 0 to 1 (written past the app's "
+                            + "writer): it is left unresolved, never guessed.");
+        }
+        return new OpenForecastList(rows, refused);
     });
 
     /// <summary>
@@ -442,10 +459,12 @@ public sealed partial class OrgStore
             return c.ExecuteNonQuery() == 1;
         });
 
-    static ForecastRow ReadForecast(Microsoft.Data.Sqlite.SqliteDataReader r) => new(
+    static ForecastRow ReadForecast(Microsoft.Data.Sqlite.SqliteDataReader r) =>
+        ReadForecast(r, decimal.Parse(r.GetString(10), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture));
+
+    static ForecastRow ReadForecast(Microsoft.Data.Sqlite.SqliteDataReader r, decimal probability) => new(
         r.GetString(0), Sql.S(r.GetValue(1)), Sql.S(r.GetValue(2)), r.GetString(3), Sql.S(r.GetValue(4)), r.GetInt32(5),
-        r.GetString(6), r.GetString(7), r.GetString(8), Sql.Time(r.GetValue(9)),
-        decimal.Parse(r.GetString(10), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture), r.GetInt64(11) != 0,
+        r.GetString(6), r.GetString(7), r.GetString(8), Sql.Time(r.GetValue(9)), probability, r.GetInt64(11) != 0,
         Sql.S(r.GetValue(12)), Sql.Time(r.GetValue(13)));
 
     // ---- escalations ----------------------------------------------------------------------------------------------------
