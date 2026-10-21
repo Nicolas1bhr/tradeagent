@@ -7,6 +7,9 @@
 # It reads the app's home and nothing else of the app — sqlite3 -readonly as the app's own account, never
 # the pipe — and asserts the observable result of the unit:
 #   - the kit's first start, stopped on its setup screen, ends within 15 s with its quit recorded;
+#   - THE RECORDING-ONLY START (U-host-recording): the same home, still UNSEEDED, started with the loopback source's file
+#     withheld records no loopback row (the assertion's red), then with the file records one within 120 s, makes no AI attempt,
+#     runs no AI process, and lives RECORDING_ONLY_MINUTES on its setup screen with RSS and CPU sampled; read via tape-health;
 #   - a seeded paper home (onboarding done, paper, GDELT off) records a loopback tape row;
 #   - after kill -9 the app records again within 30 s: systemd restarted it and the new process took the
 #     single-instance lock the dead one held;
@@ -25,8 +28,10 @@ home="${HOME_DIR:-/var/lib/tradeagent}"
 address="${ADDRESS:?ADDRESS: the address the display listens on}"
 display="${DISPLAY_NUMBER:-1}"
 minutes="${RUN_MINUTES:-20}"
+recording_minutes="${RECORDING_ONLY_MINUTES:-10}"
 out="${OUT:?OUT: where the evidence goes}"
 here="$(cd "$(dirname "$0")" && pwd)"
+tape_health=/opt/tradeagent/kit/tape-health   # the kit's read path (U-host-recording item 2), where install.sh puts it
 
 port=$((5900 + display))
 data="$home/.local/share/TradeAgent"     # Paths.Home: ~/.local/share/TradeAgent for an account with no XDG_DATA_HOME
@@ -98,6 +103,7 @@ collect() {
     read_db "$tape" "SELECT source, coalesce(http_status, 'none'), count(*) FROM tape_fetch GROUP BY 1, 2 ORDER BY 1, 2;" \
         > "$out/tape-fetch-counts.txt" 2>&1
     ss -H -ltnupe > "$out/listeners.txt" 2>&1
+    "$tape_health" --account "$account" --home "$home" > "$out/tape-health-at-the-end.txt" 2>&1
     chmod -R a+rX "$out"
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         { echo '### linux-host'; echo; echo '```'; cat "$summary"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -120,8 +126,92 @@ note "the first start's stop took $first_stop_ms ms; Result=$(systemctl show -p 
 [ "$(activity_count 'TradeAgent stopped')" -ge 1 ] || fail "the first start's stop recorded no 'TradeAgent stopped'"
 pass "the first start, stopped on its setup screen, ended in $first_stop_ms ms with its quit recorded"
 
+# ---- 0b. THE RECORDING-ONLY START (U-host-recording item 1) ------------------------------------------
+# A home nobody onboarded, as the owner's Linux server will be. This script writes nothing to the app's database in this
+# phase or before it (the seed is phase 1, after it), so the home's truth is the point: no onboarding row, and above all no
+# AI_AUTHENTICATED that nobody earned. The app is expected to record the tape from its first start, with no AI, on its setup
+# screen. Everything is read through the kit's own tape-health where it can be.
+note "phase 0b: the recording-only start (an unseeded home, AI off)"
+mkdir -p "$loopback_root"
+install -m 0644 "$here/loopback/quote.json" "$loopback_root/quote.json"
+systemd-run --quiet --unit=ta-ci-loopback --property=DynamicUser=yes \
+    python3 -m http.server 8765 --bind 127.0.0.1 --directory "$loopback_root"
+loopback_answers() { curl -fsS -o /dev/null "http://127.0.0.1:8765/quote.json"; }
+wait_until 20 loopback_answers || fail "the loopback source never answered"
+
+onboarding_named() { read_db "$db" "SELECT count(*) FROM onboarding WHERE step IN ('SETUP_COMPLETE', 'AI_AUTHENTICATED');" 2> /dev/null || echo unreadable; }
+tape_rows() { read_db "$tape" "SELECT count(*) FROM tape_fetch;" 2> /dev/null || echo 0; }
+tape_has_rows() { [ "$(tape_rows)" -gt 0 ]; }
+health() { "$tape_health" --account "$account" --home "$home"; }
+cpu_ticks() { sed 's/.*) //' "/proc/$1/stat" 2> /dev/null | awk '{ print $12 + $13 }'; }
+[ -x "$tape_health" ] || fail "the kit did not install $tape_health"
+[ ! -e "$data/tape-sources.json" ] || fail "tape-sources.json is already in the home before the recording-only phase"
+[ "$(onboarding_named)" = 0 ] || fail "the home holds SETUP_COMPLETE or AI_AUTHENTICATED before anything was seeded: $(onboarding_named)"
+
+# 0b-i. RED ON PURPOSE: the loopback source's file WITHHELD. The app runs and records (the built-in sources are asked and
+# refused, each attempt a tape_fetch row), and no loopback row appears in 90 s — so the loopback row asserted next is the
+# file's doing, and that assertion is one that can be red.
+systemctl start tradeagent.service
+wait_until 120 tape_has_rows || fail "withheld source file: the running app recorded no tape row at all in 120 s"
+sleep 90
+[ "$(loopback_max_id)" = 0 ] || fail "withheld source file: a loopback row exists without tape-sources.json: the proof below proves nothing"
+health > "$out/tape-health-withheld.txt"
+pass "tape-sources.json withheld: the app recorded $(tape_rows) tape rows from its built-in sources and no loopback row in 90 s (the assertion below can be red)"
+systemctl stop tradeagent.service
+
+# 0b-ii. the file installed, the home still unseeded.
+install -m 0600 -o "$account" -g "$account" "$here/tape-sources.json" "$data/tape-sources.json"
+restarts_0="$(systemctl show -p NRestarts --value tradeagent.service)"
+t_rec="$(now)"
+systemctl start tradeagent.service
+wait_until 120 loopback_row_after 0 || fail "recording-only: no loopback tape row within 120 s of the start, the home unseeded"
+pass "recording-only: a loopback tape row $(( $(now) - t_rec )) s after the start of a home nobody onboarded"
+
+# ... on the setup screen for RECORDING_ONLY_MINUTES, sampled every 15 s: RSS, and CPU as a share of one core between samples.
+# The setup screen's poll looped once (the defect behind 269b02c2): a loop shows here as a pinned core or a dead process.
+rec_pid="$(main_pid)"
+[ "$rec_pid" -gt 0 ] || fail "recording-only: no main process"
+clk="$(getconf CLK_TCK)"
+echo "utc,main_pid,vm_rss_kb,cpu_percent_of_one_core,tape_fetch_rows,loopback_200_rows" > "$out/recording-only-samples.csv"
+prev_ticks="$(cpu_ticks "$rec_pid")" prev_at="$(now_ms)" rec_peak_kb=0 samples=0
+until [ $(( $(now) - t_rec )) -ge $(( recording_minutes * 60 )) ]; do
+    sleep 15
+    [ "$(main_pid)" = "$rec_pid" ] || fail "recording-only: the main process changed from $rec_pid to $(main_pid): the app died or was restarted on its setup screen"
+    ticks="$(cpu_ticks "$rec_pid")" at="$(now_ms)"
+    [ -n "$ticks" ] || fail "recording-only: /proc/$rec_pid/stat is unreadable: the app is gone"
+    cpu="$(awk -v t="$ticks" -v p="$prev_ticks" -v dt="$(( at - prev_at ))" -v c="$clk" 'BEGIN { printf "%.1f", (t - p) * 100000 / (c * dt) }')"
+    rss="$(awk '/^VmRSS:/ { print $2 }' "/proc/$rec_pid/status" 2> /dev/null || echo 0)"
+    [ "${rss:-0}" -le "$rec_peak_kb" ] || rec_peak_kb="$rss"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$rec_pid,${rss:-0},$cpu,$(tape_rows),$(read_db "$tape" "SELECT count(*) FROM tape_fetch WHERE source = '$source_id' AND http_status = 200;" 2> /dev/null || echo 0)" >> "$out/recording-only-samples.csv"
+    prev_ticks="$ticks" prev_at="$at" samples=$(( samples + 1 ))
+done
+[ "$(systemctl show -p NRestarts --value tradeagent.service)" = "$restarts_0" ] || fail "recording-only: systemd restarted the app during the $recording_minutes minutes"
+# The first two minutes are the start (the 7-day backfill is refused at once here); the rest is the setup screen at rest.
+mean_cpu="$(awk -F, 'NR > 1 && NR > 9 { s += $4; n++ } END { if (n) printf "%.1f", s / n; else print "none" }' "$out/recording-only-samples.csv")"
+rows_200="$(read_db "$tape" "SELECT count(*) FROM tape_fetch WHERE source = '$source_id' AND http_status = 200;")"
+note "recording-only: $samples samples 15 s apart over $recording_minutes minutes; peak RSS $rec_peak_kb kB; mean CPU after the first two minutes ${mean_cpu}% of one core; $rows_200 loopback rows"
+[ "$mean_cpu" != none ] || fail "recording-only: no sample after the first two minutes"
+awk -v m="$mean_cpu" 'BEGIN { exit !(m < 50) }' || fail "recording-only: the setup screen holds ${mean_cpu}% of a core on average (more than 50%): it is looping"
+[ "$rec_peak_kb" -lt 1048576 ] || fail "recording-only: peak RSS $rec_peak_kb kB is over 1 GiB on the setup screen"
+[ "$rows_200" -ge 5 ] || fail "recording-only: only $rows_200 loopback rows in $recording_minutes minutes at a 60 s cadence"
+pass "recording-only: alive on its setup screen for $recording_minutes minutes, peak RSS $rec_peak_kb kB, mean CPU ${mean_cpu}%, $rows_200 loopback rows"
+
+# ... with no AI: no attempt row, no AI process, no AI step in the home. Read through the kit's tape-health.
+health > "$out/tape-health-recording-only.txt"
+grep '^service|' "$out/tape-health-recording-only.txt" | tee -a "$summary"
+grep '^delivery|' "$out/tape-health-recording-only.txt" | tee -a "$summary"
+grep -qx 'ai_attempt|0' "$out/tape-health-recording-only.txt" || fail "recording-only: ai_attempt is not 0: $(grep '^ai_attempt|' "$out/tape-health-recording-only.txt")"
+grep -qx 'ai_process|none' "$out/tape-health-recording-only.txt" || fail "recording-only: an AI process runs under $account: $(grep '^ai_process|' "$out/tape-health-recording-only.txt")"
+grep -q "^delivery|$source_id|age_s=[0-9]" "$out/tape-health-recording-only.txt" || fail "recording-only: tape-health reads no delivery age for $source_id"
+grep -q "^fetch|$source_id|200|" "$out/tape-health-recording-only.txt" || fail "recording-only: tape-health reads no per-source count for $source_id"
+[ "$(onboarding_named)" = 0 ] || fail "recording-only: the app itself wrote SETUP_COMPLETE or AI_AUTHENTICATED: $(onboarding_named)"
+pass "recording-only: ai_attempt 0, no codex/opencode/node process, no AI step in the home; tape-health reads the counts and the newest delivery's age"
+stopped_rec="$(activity_count 'TradeAgent stopped')"
+systemctl stop tradeagent.service
+[ "$(activity_count 'TradeAgent stopped')" -gt "$stopped_rec" ] || fail "recording-only: the stop recorded no 'TradeAgent stopped'"
+
 # ---- 1. the seeded paper home, and the one source that answers ---------------------------------------
-note "phase 1: seeding the home (onboarding done, paper, GDELT off) and the loopback source"
+note "phase 1: seeding the home (onboarding done, paper, GDELT off); the loopback source is already installed and answering"
 seeded_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sql=""
 for step in WELCOME SYSTEM_CHECK AI_RUNTIME_SELECTED AI_RUNTIME_INSTALLED AI_AUTHENTICATED TRADING_PLATFORM_SELECTED \
@@ -135,21 +225,14 @@ sql="$sql INSERT INTO kv(key, value) VALUES ('settings', '{\"selected_account_id
           ON CONFLICT(key) DO UPDATE SET value = json_patch(value, excluded.value);"
 # Written as the app's account, with the app stopped: the one write this script makes to the home.
 sudo -u "$account" sqlite3 -batch "$db" "$sql"
-install -m 0600 -o "$account" -g "$account" "$here/tape-sources.json" "$data/tape-sources.json"
-
-mkdir -p "$loopback_root"
-install -m 0644 "$here/loopback/quote.json" "$loopback_root/quote.json"
-systemd-run --quiet --unit=ta-ci-loopback --property=DynamicUser=yes \
-    python3 -m http.server 8765 --bind 127.0.0.1 --directory "$loopback_root"
-loopback_answers() { curl -fsS -o /dev/null "http://127.0.0.1:8765/quote.json"; }
-wait_until 20 loopback_answers || fail "the loopback source never answered"
 
 # ---- 2. the seeded start records a loopback row --------------------------------------------------------
 note "phase 2: the seeded start"
 started="$(activity_count 'TradeAgent started')"
+before_seed="$(loopback_max_id)"   # the recording-only phase left rows: this start's row is one past them
 t_start="$(now)"
 systemctl start tradeagent.service
-wait_until 120 loopback_row_after 0 || fail "no loopback tape row within 120 s of the seeded start"
+wait_until 120 loopback_row_after "$before_seed" || fail "no loopback tape row within 120 s of the seeded start"
 pass "a loopback tape row $(( $(now) - t_start )) s after the seeded start"
 assert_cgroup "after the seeded start"
 
