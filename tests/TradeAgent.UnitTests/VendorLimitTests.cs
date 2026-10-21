@@ -461,4 +461,62 @@ public class VendorLimitTests : IDisposable
         Assert.Equal(MissionEventDisposition.Failed, events.Get(owner)!.Disposition);
         Assert.Equal(1, OwnerWakesWaiting(events, now));    // the one retry
     }
+
+    // ---- (e) where the vendor's error code is, and where it is not (U-vendor-limit-wakes, item 2) -------------
+
+    /// <summary>
+    /// THE VENDOR'S SENTENCE AS <c>codex exec --json</c> PRINTS IT TODAY, RECORDED: codex-cli 0.160.1 on this Mac,
+    /// 2026-10-21T22:22:18Z, <c>codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-sol -</c>
+    /// with the prompt on stdin, a throwaway <c>CODEX_HOME</c> and <c>HOME</c>, a fake key, and a local mock provider that answers
+    /// every request HTTP 429 with the body <c>{"error":{"type":"usage_limit_reached",…,"plan_type":"plus","resets_in_seconds":3600}}</c>.
+    /// Exit 1 after two seconds; standard error empty; standard output exactly this, the thread id the one thing replaced and the
+    /// typographic apostrophe written as its escape. <b>Stdout carries no error code.</b> The code is in the same run's session log
+    /// only, on the <c>task_complete</c> event:
+    /// <c>"error":{"message":"You’ve hit your usage limit. … try again at 1:22 AM.","codex_error_info":"usage_limit_exceeded"}</c>.
+    /// The 429 body is the mock's, not a recording of the vendor's server; the sentence and the event shapes are codex's own.
+    /// </summary>
+    public const string Recorded0160 =
+        "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-0000-0000-000000000000\"}\n"
+        + "{\"type\":\"turn.started\"}\n"
+        + "{\"type\":\"error\",\"message\":\"" + Said0160 + "\"}\n"
+        + "{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + Said0160 + "\"}}";
+
+    /// <summary>The sentence of <see cref="Recorded0160"/>, verbatim.</summary>
+    public const string Said0160 =
+        "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+        + "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 1:22 AM.";
+
+    /// <summary>
+    /// ITEM 2, AS THE FIXTURE THAT PROVES IT: <c>codex exec --json</c> 0.160.1 names the limit on stdout by its sentence alone —
+    /// no event carries <c>usage_limit_exceeded</c> or any code field — so the manifest keeps recognising it by the sentence, and
+    /// this recording, with the typographic apostrophe the session logs showed, is recognised: charged nothing, the vendor's
+    /// sentence on the row. A guard, green on the base: the pattern already took either apostrophe; what was NOT VERIFIED was
+    /// that stdout carries U+2019, and this stream is that run's stdout.
+    /// </summary>
+    [Fact]
+    public async Task The_limit_codex_0160_prints_on_stdout_carries_no_code_and_is_recognised_by_its_sentence()
+    {
+        foreach (var line in Recorded0160.Split('\n'))
+        {
+            using var doc = JsonDocument.Parse(line);
+            Assert.DoesNotContain("codex_error_info", line, StringComparison.Ordinal);
+            Assert.DoesNotContain("usage_limit_exceeded", line, StringComparison.Ordinal);
+            Assert.False(doc.RootElement.TryGetProperty("code", out _));
+        }
+
+        var meter = Meter();
+        var chat = AgentRuntimeProbe.SessionOverStream(Recorded0160, stderr: "", exitCode: 1, manifest: Codex,
+            name: nameof(The_limit_codex_0160_prints_on_stdout_carries_no_code_and_is_recognised_by_its_sentence));
+        using var metering = meter.Attach(chat, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
+
+        await chat.SendAsync("reply ok");
+
+        Assert.Equal(Said0160, ended?.Limit?.Message);
+        Assert.True(ended!.Limit!.BeforeAnyWork);
+        var row = OnlyRow();
+        Assert.Equal(0m, row.Cost);
+        Assert.Equal(Said0160, RefusedOn(row));
+    }
 }

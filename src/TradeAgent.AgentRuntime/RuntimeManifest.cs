@@ -1065,9 +1065,16 @@ public static class RuntimeCatalog
             // and the same sentence ending "try again at Oct 7th, 2026 1:10 AM." — the dated form, in a
             // vendor sentence for the first time. So the pattern takes either apostrophe at that one place
             // (U+2019 written as \u2019 below) and is widened nowhere else: no IgnoreCase and no bare "usage
-            // limit", because another error read as the limit would be held and charged nothing. NOT
-            // VERIFIED: that `codex exec --json`'s stdout carries the U+2019 sentence under 0.160.1 — the
-            // session log's error message does; on 2026-10-01 both carried U+0027.
+            // limit", because another error read as the limit would be held and charged nothing.
+            //
+            // STDOUT CARRIES THE U+2019 SENTENCE AND NO CODE (U-vendor-limit-wakes, item 2). codex-cli 0.160.1,
+            // 2026-10-21T22:22:18Z, `codex exec --json` under a throwaway CODEX_HOME and HOME against a local mock
+            // provider answering HTTP 429 `{"error":{"type":"usage_limit_reached",…}}`: stdout's `error` and
+            // `turn.failed` events carry "You’ve hit your usage limit. … try again at 1:22 AM." and nothing else;
+            // the vendor's code, `usage_limit_exceeded`, is only in the session log (`codex_error_info` on
+            // `task_complete`), which the app does not read. So the sentence stays the one reading, and the
+            // recording is VendorLimitTests.Recorded0160. NOT VERIFIED: the vendor's own server's 429 body — the
+            // mock's is the shape codex parses into its limit error, not a recording of OpenAI's.
             UsageLimit = new UsageLimitPlan
             {
                 Pattern = "You['\u2019]ve hit your usage limit",
