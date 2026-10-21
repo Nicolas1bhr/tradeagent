@@ -128,7 +128,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          filter='Category!=Timing&Category!=Cell'
+          # CellScope=EveryOs: the Cell rows whose claim holds on every OS (row (f) of CellLinuxTests) run here on all three platforms;
+          # the rest of the Cell category runs below, on ubuntu alone, under Delegate=yes.
+          filter='Category!=Timing&(Category!=Cell|CellScope=EveryOs)'
           if [ -n "${{ matrix.shard }}" ]; then
             shard=$(.github/ci/shard-filter.sh filter "${{ matrix.shard }}")
             filter="$filter&($shard)"
@@ -201,7 +203,8 @@ jobs:
 
       # THE LINUX CELL'S BENCHMARK ROWS (U-cell-linux-a) — in THIS job, the ubuntu entry only: no job of their own, because the
       # 20 concurrent jobs GitHub gives the repository are shared by every seat's branch, and the rows take a minute or two. The
-      # Cell category is excluded from both test steps above on every platform and run here alone, so it still runs exactly once.
+      # Cell category is excluded from both test steps above on every platform (but its CellScope=EveryOs rows, which the normal step runs
+      # on all three) and run here alone, so every row still runs exactly once per platform it belongs to.
       #
       # THE PLATFORM FIRST, AND A RUNNER THAT CANNOT HOLD A CELL FAILS — never skips: the kernel, the Landlock ABI the kernel itself
       # reports, and the active security modules are printed, and Landlock missing from the list or an ABI below 6 is a red run.
@@ -245,7 +248,7 @@ jobs:
               echo "$BASHPID" > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
               echo "+pids +memory" > "$svc/cgroup.subtree_control" || { state "enable refused"; echo "::error::enabling +pids +memory below $svc failed"; exit 1; }
               state after
-              exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell" \
+              exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope!=EveryOs" \
                 --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"'
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
