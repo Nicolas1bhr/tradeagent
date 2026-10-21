@@ -105,6 +105,12 @@ public static class BrokerSeat
             Join(kv?.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value));
 
         yield return ("program pin", pin);
+        // WHAT MUST NOT EXIST IN THE SEAT'S HOME AND WORKSPACE, AND WHICH FILES HOLD ITS CREDENTIAL (fix pass 1, R2): codex's
+        // environments.toml in the home replaces CODEX_EXEC_SERVER_URL=none, and the surface probe's throwaway home has none, so its
+        // accepted surface proves nothing about a launched seat whose override dropped the entry (CRED-001, Law 2).
+        yield return ("home's forbidden paths", Join(seat.Forbidden));
+        yield return ("workspace's forbidden names", Join(seat.WorkspaceForbidden));
+        yield return ("credential files", Join(seat.PrivateFiles));
         yield return ("deny set", Join(seat.ArgsFor(SeatPlan.BrokerClass)));
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(SeatPlan.BrokerClass)));
         yield return ("seat environment", Pairs(seat.Environment));

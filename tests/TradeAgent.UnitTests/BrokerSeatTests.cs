@@ -193,8 +193,8 @@ public class BrokerSeatTests : IDisposable
 
     /// <summary>
     /// (d) A <c>runtimes.json</c> OVERRIDE OF THE BROKER CLASS IS REFUSED, NAMING BOTH: an entry whose broker deny set, class environment,
-    /// feature or tool-server allowlist, or model flag differs from this build's refuses the class with the field, the file's version and
-    /// this build's; nothing is admitted. The file's other runtimes and the legacy pair's CLI class are untouched.
+    /// feature or tool-server allowlist, model flag, workspace's forbidden names or credential files differs from this build's refuses the
+    /// class with the field, the file's version and this build's; nothing is admitted (the pin and the home's forbidden paths: below). The file's other runtimes and the legacy pair's CLI class are untouched.
     ///
     /// <para>RED at base: it did not compile — no class had fields of its own and nothing compared them.</para>
     /// </summary>
@@ -207,7 +207,9 @@ public class BrokerSeatTests : IDisposable
                      ("class environment", m => m.Seat!.ClassEnvironment.Remove(SeatPlan.BrokerClass)),
                      ("feature allowlist", m => m.Seat!.FeatureAllowlist[SeatPlan.BrokerClass] = [.. m.Seat.FeaturesFor(SeatPlan.BrokerClass), "shell_tool"]),
                      ("tool-server allowlist", m => m.Seat!.McpAllowlist[SeatPlan.BrokerClass] = [BrokerSeat.DoorServer, "elsewhere"]),
-                     ("model flag", m => m.ModelArgs = ["--model", "{model}"])
+                     ("model flag", m => m.ModelArgs = ["--model", "{model}"]),
+                     ("workspace's forbidden names", m => m.Seat!.WorkspaceForbidden = [".agents"]),
+                     ("credential files", m => m.Seat!.PrivateFiles = ["codex/auth.json"])
                  })
         {
             using var db = TestEnv.NewDb();
@@ -269,6 +271,45 @@ public class BrokerSeatTests : IDisposable
         Assert.False(meter.Begin("## Situation", role: Pos).Admitted, "a broker seat on a swapped program was admitted");
         await session.SendAsync("go");
         Assert.False(File.Exists(ran), "the swapped program ran for the turn");
+        Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+    }
+
+    /// <summary>
+    /// (d) THE HOME'S FORBIDDEN PATHS ARE THIS BUILD'S (fix pass 1, R2): a <c>runtimes.json</c> that drops codex's
+    /// <c>environments.toml</c> from the seat home's forbidden list — the file that, present, replaces <c>CODEX_EXEC_SERVER_URL=none</c>
+    /// — is refused at admission with one seeded in the seat home, although the CLI's reports and the offered surface would both pass:
+    /// the surface probe's throwaway home has no such file, so its answer says nothing about the launched seat's (CRED-001, Law 2).
+    ///
+    /// <para>RED at the pre-fix tip: the forbidden list was not among the compared fields, the dropped entry was not looked for, and
+    /// the seat was admitted.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_runtimes_json_that_drops_a_forbidden_home_path_is_refused_although_the_surface_passes()
+    {
+        using var db = TestEnv.NewDb();
+        var register = Position(db);
+        var (codex, exe, dump) = SeatHomeTests.Seat(nameof(A_runtimes_json_that_drops_a_forbidden_home_path_is_refused_although_the_surface_passes));
+        var environments = "codex/" + CellPolicy.CodexEnvironments;
+        Assert.Contains(environments, codex.Seat!.Forbidden);
+        codex.Seat.Forbidden = [.. codex.Seat.Forbidden.Where(f => f != environments)];
+        RuntimeCatalog.SaveOverrides([codex]);
+        var loaded = RuntimeCatalog.Find("codex")!;
+        var seeded = Path.Combine(loaded.Seat!.Root, environments);
+        Directory.CreateDirectory(Path.GetDirectoryName(seeded)!);
+        File.WriteAllText(seeded, "# seeded by the test: codex would read this in place of CODEX_EXEC_SERVER_URL\n");
+
+        var surface = new FakeSurface(Classic);
+        var session = Session(loaded, exe, register, surface);
+        var verdict = session.CheckSeat();
+        Assert.True(verdict.Refused, "a runtimes.json that dropped the seat home's environments.toml from its forbidden paths was admitted");
+        Assert.Contains("runtimes.json gives its home's forbidden paths as SHA-256 ", verdict.Refusal);
+        Assert.Equal(0, surface.Asks);
+
+        var meter = ThinkingSeatsTests.Meter(db, _ => SeatClasses.Broker);
+        using var metering = meter.Attach(session, Pos);
+        Assert.False(meter.Begin("## Situation", role: Pos).Admitted, "a broker seat with a dropped forbidden path was admitted");
+        await session.SendAsync("go");
+        Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
         Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
     }
 
