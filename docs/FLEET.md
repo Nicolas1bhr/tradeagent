@@ -140,6 +140,10 @@ The operational text is `fleet/SPEED-MODE.md`, with the compact builder prompt `
   apps open), then `start --src <worktree>` and `wait` (detached, like every wait). No `lock.sh` lock: the box refuses a second run itself (exit 4 — wait up to
   30 min, then write NOT RUN). It is a lent laptop with its owner's own TradeAgent and ATAS installed: nothing of ours starts or touches them, a run is a
   gate or a diagnosis, never a loop, and experiments (`R-containment`, the bridge, the app) go to the ATAS box, never there.
+  **A silent box is the owner's ask, not a line to repeat** (the owner, 2026-10-21): it left the network on 2026-10-12 and every unit through 10-17 wrote
+  NOT RUN while nobody told him. When `ready` has said "does not answer" for a day, the orchestrator tells the owner once (bringing a lent laptop back is
+  a physical action, his to arrange); the first run back is on `main`'s tip — the catch-up for everything landed meanwhile, recorded in `BUILD-STATUS.md`.
+  It is never a CI runner: hosted CI is free for a public repository and the laptop is too slow for it (the owner, 2026-10-21).
 - Worktrees at `~/Projects/ai-trading-software-for-mihael-worktrees/<branch>`, branch = the unit's name in lower case; `git -C`, never `cd` into one inside
   a compound command. Each agent keeps scratch files in its own `<scratchpad>/<seat-or-unit>/` subfolder; nothing durable lives in a scratchpad.
 

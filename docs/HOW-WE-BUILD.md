@@ -37,7 +37,8 @@ item with one-sentence messages, and appends a `## Report` of at most 20 lines t
 counts pasted, one line per item, and what it did NOT do. The report is the record. The ATAS box is not part of a unit
 unless the brief grants it, for code that compiles only there; otherwise it is used once, at the milestone. **The tests
 box is in every unit's gate when it is available** (`TA_WIN_BOX=tests tools/win-test.sh ready`, then `start` and `wait`
-on the tip): the report quotes the run id and its counts, or "tests box: NOT RUN — <ready's answer>".
+on the tip): the report quotes the run id and its counts, or "tests box: NOT RUN — <ready's answer>". A box silent for a
+day is told to the owner, and its first run back covers `main`'s tip (`docs/FLEET.md`, the tests box).
 
 **Pass 2 — land.** The manager, in the same session, runs the landing checklist below on the reported tip, writes a
 `BUILD-STATUS.md` section of at most 40 lines from the report, and deletes the brief. `docs/briefs/` holds only work

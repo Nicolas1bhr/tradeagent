@@ -36,6 +36,10 @@ a real Windows machine (both boxes unreachable) and any real-model or observed r
 the gate records a proven cell).
 **For the owner:** when the trial runs may start (M0 attempt 4 → M-org0); the Linux-host cell questions and the nine of 2026-10-09. He answered: "Not now,
 stay on GitHub Free and keep CI as it is." · "Keep extra usage off; let the weekly limit pause the fleet."
+**2026-10-21 — the tests box has been off the network since 2026-10-12 13:33 CEST** (the private network's last sighting; `ready` exit 1 on 10-21). Its last
+run was green on 10-11 23:19 (`U-org-rights`), so every unit above landed on hosted CI alone, each record saying NOT RUN and nobody telling the owner.
+The doctrine never dropped it; the owner wants it used again for tests, never as a CI runner. Bringing the laptop back is his to arrange; the first run
+back is on `main`'s tip, recorded in `BUILD-STATUS.md` as the catch-up (`docs/FLEET.md`, the tests box).
 
 **2026-10-16 18:28 — RESUMED on the owner's word; resume from `fleet/handoff/ORCHESTRATOR.md`'s top block ("RESUMED"), then `fleet/handoff/A.md`
 and `B.md` and the board.** The owner: "giving all gas towards the correct end vision. our last sprint was towards the genuine ai organization … once we
