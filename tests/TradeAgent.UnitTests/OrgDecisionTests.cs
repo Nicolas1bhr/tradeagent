@@ -716,6 +716,38 @@ public class OrgDecisionTests
     }
 
     /// <summary>
+    /// (c) A MALFORMED FORECAST ROW IS REFUSED BY NAME AND THE OTHERS STILL RESOLVE: a row only a writer past the store could make —
+    /// seeded here by raw SQL with the trigger dropped in this test's own home — is listed by the resolver as refused, left
+    /// unresolved and never guessed, and every other forecast resolves in the same pass. RED at base: <c>decimal.Parse</c> threw
+    /// out of <see cref="OrgStore.OpenForecasts"/>, so the sweep resolved nothing.
+    /// </summary>
+    [Fact]
+    public void A_malformed_forecast_row_is_refused_by_name_and_the_others_still_resolve()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        foreach (var v in new[] { "ver-before", "ver-after" }) Version(db, v);
+        var t0 = DateTimeOffset.UtcNow;
+        var d = Decided(db, t0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-before", PromotionVerdict.Promoted, t0.AddDays(1), 0.5m));
+        db.Exec("DROP TRIGGER IF EXISTS org_forecast_probability_bytes");
+        Exec(db, RawForecast.Replace("$prob", "'0.5' || char(0) || 'garbage'", StringComparison.Ordinal), ("$id", "fc-0000000nul03"),
+            ("$d", d.Id), ("$p", Head), ("$v", "ver-before"), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0)));
+        Decided(db, t0.AddMinutes(1), new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-after", PromotionVerdict.Promoted, t0.AddDays(1), 0.5m));
+        Verdict(db, "ver-before", PromotionVerdict.Promoted, t0.AddHours(1));
+        Verdict(db, "ver-after", PromotionVerdict.Refused, t0.AddHours(1));
+
+        var sweep = new ForecastResolver(db).Sweep(t0.AddHours(2));
+        Assert.Equal(2, sweep.Resolved);
+        var refused = Assert.Single(sweep.Refused);
+        Assert.Contains("fc-0000000nul03", refused, StringComparison.Ordinal);
+        Assert.Contains("never guessed", refused, StringComparison.Ordinal);
+        Assert.DoesNotContain("\0", refused, StringComparison.Ordinal);
+        Assert.Null(new OrgStore(db).Resolution("fc-0000000nul03"));
+        Assert.Equal(2L, Count(db, "org_forecast_resolution"));
+        Assert.Single(new ForecastResolver(db).Sweep(t0.AddHours(3)).Refused);
+    }
+
+    /// <summary>
     /// THE TRIGGER ARRIVES AT ITS RUNG, AND A CRASH BEFORE THE STAMP RUNS IT AGAIN: a new home has it at this build's stamp; the
     /// home reopened with the stamp one lower — the trigger in place, and again with it never made — climbs to the stamp with the
     /// trigger present and refusing, every forecast in place.

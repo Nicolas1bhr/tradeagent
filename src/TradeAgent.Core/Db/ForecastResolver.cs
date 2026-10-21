@@ -38,8 +38,11 @@ public sealed class ForecastResolver(Database db)
     {
         var org = new OrgStore(db);
         var resolved = 0;
-        var refused = new List<string>();
-        foreach (var f in org.OpenForecasts())
+        // A ROW THE STORE CANNOT READ (U-forecast-nul) arrives here as a refusal, never a throw: it is listed with the others,
+        // and every forecast the store could read still resolves in this pass.
+        var open = org.OpenForecasts();
+        var refused = new List<string>(open.Refused);
+        foreach (var f in open.Rows)
         {
             if (f.Vocabulary != ForecastVocabulary.Version || !ForecastVocabulary.IsKnown(f.Predicate))
             {
