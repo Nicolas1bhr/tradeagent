@@ -2643,6 +2643,24 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','41') ON CONFLICT(key) DO UPDATE SET value='41';");
         }
 
+        if (have < 42)
+        {
+            // A FORECAST'S PROBABILITY IS ITS TEXT, BYTE FOR BYTE — `U-forecast-nul`, rung 42, after O5b's 41 (docs/ORCHESTRATION.md
+            // §§ 2.11, 8). SQLite's `length`, `GLOB` and `substr` stop at the first NUL, so rung 41's CHECK reads
+            // '0.5' || char(0) || 'garbage' as 0.5 and stores it, though the writer (`ForecastVocabulary.IsProbabilityText`) refuses
+            // it — and the resolver could not read the row back. The one shape the CHECK states is ASCII, so a probability whose
+            // byte length differs from its character length is no probability: refused before it is stored. A trigger, not a
+            // rebuilt table: the CHECK and the append-only triggers stand as rung 41 wrote them. `IF NOT EXISTS` and the stamp
+            // last, because the rungs run in autocommit and a crash before the stamp runs this again over what it made.
+            Exec("""
+                CREATE TRIGGER IF NOT EXISTS org_forecast_probability_bytes BEFORE INSERT ON org_forecast
+                WHEN length(CAST(NEW.probability AS BLOB)) <> length(NEW.probability)
+                BEGIN SELECT RAISE(ABORT, 'a forecast''s probability is refused: its bytes and its characters differ (a NUL or a character beyond ASCII inside it), so it is not the decimal text it reads as.'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','42') ON CONFLICT(key) DO UPDATE SET value='42';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

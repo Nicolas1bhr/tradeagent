@@ -650,6 +650,111 @@ public class OrgDecisionTests
         Assert.Null(org.Resolution("fc-0000000000v2"));
     }
 
+    // ---- U-forecast-nul: a probability with a NUL inside it, and a row the reader cannot parse ----------------------------
+
+    const string RawForecast = """
+        INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+        VALUES($id, $d, $p, 1, 'verdict-class', $v, 'promoted', $by, $prob, 1, $at)
+        """;
+
+    /// <summary>
+    /// (a) A PROBABILITY WITH A NUL INSIDE IT IS REFUSED BY THE SCHEMA (<c>U-forecast-nul</c>, rung 42): SQLite's <c>length</c>,
+    /// <c>GLOB</c> and <c>substr</c> stop at the first NUL, so rung 41's CHECK reads <c>'0.5' || char(0) || 'garbage'</c> as
+    /// <c>0.5</c> — on THIS connection, the app's bundled SQLite, the first two lines say so — and the writer would refuse it. The
+    /// trigger refuses a probability whose bytes and characters differ, as an SQL value and as a bound parameter alike. RED at
+    /// base: both inserts were stored.
+    /// </summary>
+    [Fact]
+    public void A_probability_with_a_nul_inside_is_refused_by_the_schema()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var t0 = DateTimeOffset.UtcNow;
+        var d = Decided(db, t0);
+        Assert.Equal((3L, 11L), db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT length(x), length(CAST(x AS BLOB)) FROM (SELECT '0.5' || char(0) || 'garbage' AS x)");
+            using var r = c.ExecuteReader();
+            r.Read();
+            return (r.GetInt64(0), r.GetInt64(1));
+        }));
+        Assert.False(ForecastVocabulary.IsProbabilityText("0.5\0garbage"));
+
+        var bySql = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db,
+            RawForecast.Replace("$prob", "'0.5' || char(0) || 'garbage'", StringComparison.Ordinal), ("$id", "fc-0000000nul01"),
+            ("$d", d.Id), ("$p", Head), ("$v", "ver-nul"), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0))));
+        Assert.Contains("bytes and its characters differ", bySql.Message, StringComparison.Ordinal);
+        var byParameter = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(db, RawForecast, ("$id", "fc-0000000nul02"),
+            ("$d", d.Id), ("$p", Head), ("$v", "ver-nul"), ("$by", Sql(t0.AddDays(1))), ("$prob", "0.5\0garbage"), ("$at", Sql(t0))));
+        Assert.Contains("bytes and its characters differ", byParameter.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Count(db, "org_forecast"));
+    }
+
+    /// <summary>
+    /// (b) GUARD — EVERY PROBABILITY THE WRITER ACCEPTS, THE SCHEMA ACCEPTS: the shapes <see cref="ForecastVocabulary.IsProbabilityText"/>
+    /// passes — the two ends, a middle, the longest a decimal holds and one with trailing zeros — are stored, through the store's own
+    /// writer and by raw SQL, so the trigger refuses nothing the app writes. Green at base by design; red under the watched mutant.
+    /// </summary>
+    [Fact]
+    public void Every_probability_the_writer_accepts_the_schema_accepts()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var t0 = DateTimeOffset.UtcNow;
+        Version(db, "ver-ok");
+        var texts = new[] { "0", "1", "0.5", "0." + new string('0', 27) + "1", "1.000" };
+        var d = Decided(db, t0, [.. texts.Select(t => new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-ok", PromotionVerdict.Promoted,
+            t0.AddDays(1), decimal.Parse(t, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture)))]);
+        Assert.Equal(texts.Length, new OrgStore(db).ForecastsOn(d.Id).Count);
+        for (var i = 0; i < texts.Length; i++)
+        {
+            Assert.True(ForecastVocabulary.IsProbabilityText(texts[i]), texts[i]);
+            Exec(db, RawForecast, ("$id", $"fc-0000000raw{i:d2}"), ("$d", d.Id), ("$p", Head), ("$v", "ver-ok"), ("$by", Sql(t0.AddDays(1))),
+                ("$prob", texts[i]), ("$at", Sql(t0)));
+        }
+        Assert.Equal(2L * texts.Length, Count(db, "org_forecast"));
+    }
+
+    /// <summary>
+    /// THE TRIGGER ARRIVES AT ITS RUNG, AND A CRASH BEFORE THE STAMP RUNS IT AGAIN: a new home has it at this build's stamp; the
+    /// home reopened with the stamp one lower — the trigger in place, and again with it never made — climbs to the stamp with the
+    /// trigger present and refusing, every forecast in place.
+    /// </summary>
+    [Fact]
+    public void The_probability_trigger_arrives_at_its_rung_and_a_crash_before_its_stamp_runs_it_again()
+    {
+        const int rung = 42;
+        Assert.True(Versions.DatabaseSchemaVersion >= rung, $"the trigger arrives at rung {rung}; this build says {Versions.DatabaseSchemaVersion}");
+        var file = Path.Combine(TestEnv.Home, $"forecast-nul-rung-{Guid.NewGuid():n}.db");
+        var t0 = DateTimeOffset.UtcNow;
+        string decision;
+        using (var db = new Database(file))
+        {
+            Chart(db);
+            Version(db, "ver-rung");
+            decision = Decided(db, t0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-rung", PromotionVerdict.Promoted, t0.AddDays(1), 0.5m)).Id;
+        }
+
+        foreach (var dropped in new[] { false, true })
+        {
+            using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+            {
+                raw.Open();
+                using var c = raw.CreateCommand();
+                c.CommandText = (dropped ? "DROP TRIGGER org_forecast_probability_bytes; " : "")
+                                + $"UPDATE meta SET value='{rung - 1}' WHERE key='schema_version';";
+                c.ExecuteNonQuery();
+            }
+            using var rerun = new Database(file);
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture),
+                rerun.Read(_ => { using var c = rerun.Cmd("SELECT value FROM meta WHERE key='schema_version'"); return c.ExecuteScalar() as string; }));
+            Assert.Equal(1L, Count(rerun, "sqlite_master", "type='trigger' AND name='org_forecast_probability_bytes'"));
+            Assert.Single(new OrgStore(rerun).ForecastsOn(decision));
+            Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(rerun, RawForecast, ("$id", "fc-0000000nul04"), ("$d", decision),
+                ("$p", Head), ("$v", "ver-rung"), ("$by", Sql(t0.AddDays(1))), ("$prob", "0.5\0garbage"), ("$at", Sql(t0))));
+        }
+    }
+
     // ---- item 5: escalations ----------------------------------------------------------------------------------------------
 
     static IpcRequest EscalateFrame(string? mandate = null, string reason = "the skew question needs a second venue's data, which we hold no grant for") =>
