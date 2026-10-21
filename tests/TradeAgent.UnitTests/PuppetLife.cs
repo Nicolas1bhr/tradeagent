@@ -391,8 +391,10 @@ sealed class ProcessWide
             if (_launcherBytes is null) File.Delete(_launcher);
             else
             {
-                File.WriteAllBytes(_launcher, _launcherBytes);
-                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(_launcher, _mode);
+                // Renamed into place, never written in place: the life's own trade command may still be running from this path,
+                // and opening a running program for writing is refused (ETXTBSY) — which the catch below would swallow, leaving the
+                // real command where the script was (CI run 39692232483, PuppetLivesTests.cs:290).
+                TestEnv.WriteExecutable(_launcher, _launcherBytes, OperatingSystem.IsWindows() ? null : _mode);
             }
             if (_hash is null) File.Delete(ToolDeployer.DeployedHashFile);
             else File.WriteAllText(ToolDeployer.DeployedHashFile, _hash);

@@ -91,8 +91,27 @@ public static class TestEnv
         if (string.IsNullOrWhiteSpace(host) || !File.Exists(host)) host = Environment.ProcessPath;
         Directory.CreateDirectory(Paths.Bin);
         var exe = Path.Combine(Paths.Bin, AgentRuntime.ToolDeployer.TradeCliName);
-        File.WriteAllText(exe, $"#!/bin/sh\nexec \"{host}\" \"{dll}\" \"$@\"\n");
-        File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        WriteExecutable(exe, System.Text.Encoding.UTF8.GetBytes($"#!/bin/sh\nexec \"{host}\" \"{dll}\" \"$@\"\n"));
+    }
+
+    /// <summary>
+    /// A PROGRAM THE PROCESS MAY BE RUNNING OR ABOUT TO RUN, PUT WHERE IT IS FOUND WHOLE AND ONLY THEN (U-launcher-race): written under
+    /// a name nothing launches, closed, given its mode, then renamed over <paramref name="path"/>. A write in place opens the file
+    /// that a launch in another thread may be executing — <c>ETXTBSY</c> (errno 26, "the turn ended 154") on Linux and macOS, and
+    /// a half-written launcher read by a launch that started beside it. A rename replaces the directory entry in one step; a
+    /// process already running the old file keeps its inode. Off Windows the mode is user read, write, execute.
+    /// </summary>
+    public static void WriteExecutable(string path, byte[] content, UnixFileMode? mode = null)
+    {
+        var temp = Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Guid.NewGuid():n}.tmp");
+        try
+        {
+            File.WriteAllBytes(temp, content);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(temp, mode ?? (UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
+            File.Move(temp, path, overwrite: true);
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
     }
 
     /// <summary>The assembly's stand-in for a launch of the Operations Director. See <see cref="Init"/>.</summary>
