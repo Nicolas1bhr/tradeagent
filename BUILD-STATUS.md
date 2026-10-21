@@ -11052,3 +11052,30 @@ every cell before the policy is looked at. Every other test of the 22 units land
 **NOT done, NOT verified:** the row is not fixed (it needs a policy whose roots are absolute on the OS it runs on, or a Windows skip with its reason); the
 runner is not aligned with CI's Cell exclusion, nor CI widened to run the every-OS rows off Linux — that choice is open; the macOS run of row (f) is not
 quoted here; nothing GUI-bound, no app and no ATAS ran on the box.
+
+## U-proving-ground-a — the shadow home: a proving process with its own home and pipe, both stores marked and refused across kinds, and a synthetic market written through the real collection path that the unchanged backtest reads; no rung (landed 2026-10-22, seat A)
+
+**Landed** at `2aaf5a6e` (rebased on main `f7b2ab02`; fix pass 2 code `4ecc0344`; fix pass 1 code `2f1b774e`; builder code `b6bb3d4c`). A protection unit —
+ORCHESTRATION § 2.14 (a separate app process with its own home, pipe and registers; markets in the tape's formats), § 8 SIM-001, EVID-001; VISION § 6.4.
+Part a of five (b edges and traps → c host, floor, one agent, score → d ladder → e real models on the owner's word). **No rung**: `meta.home_kind`, `tape_meta.home_kind`.
+Builder aea5466b881a60626; fixer 1 a1a0fbade26745f34; fixer 2 ae95fe5a2c804aaeb (BUILD RUN 2026-10-22).
+**CI:** landing run **39686189687** (at `4ecc0344`, CARRIED to the tip: build tree equal outside bookkeeping) — all jobs success (ubuntu, macos, windows ×5, linux-host, package, package-linux). Earlier: builder 39026060128, fix 1 39028629168, all green.
+Names: sets 2968 → 2981, [Fact]/[Theory] 2828 → 2841, removed 0; scan clean.
+**What changed:** `ProvingGround.ThisProcess` checked in `Paths.Resolve` at first use (a missing or default home or pipe, or a home without the proving
+mark, refused in words). Both stores carry the home's kind, marked first in one `BEGIN IMMEDIATE` transaction and read back after the ladder; an open
+refuses the other kind (an unmarked store for a proving open) before any write. `ProvingHome` exists only through its factory (refuses a directory holding
+files without the mark). Store paths are resolved to full paths at open and compared as stored, so a relative handle cannot name another home after a
+working-directory move. The `proving-synthetic` source row lives beside the shipped rows, never in the frozen live rule, read only in a proving home: a real
+home refuses a program naming it. `SyntheticMarket.Write` (seeded SplitMix64, integer-only) writes raw klines → `Normalise` → `RecordNew` and the signal →
+`TapeStore.Append`, truth in `proving-truth/`; raw and truth files are named by the spec and never written over; a second market for one instrument over an
+overlapping window is refused in words before any write. A source scan fails when an evidence-path file names a `TradeAgent.Core.Proving` type beyond the
+tape reader's allowlisted kind check.
+**Evidence:** builder RED "CS0234 'Proving' does not exist" and a base-compatible (a) "No exception was thrown"; mutant: Database's kind check removed ⇒ (a)
+red. Fix 1: R1/R2/R3 RED quoted in the brief; mutant: the factory check disabled ⇒ R1 red. Fix 2: R1 RED "Assert.Throws() Failure: No exception was thrown"
+(relative handle after a cwd move); overlap RED the same; mutant: the overlap check disabled ⇒ red; each restored. (d) golden hashes equal on all three CI
+platforms (raw d2122a79…0cf4, normalised b9e22f0d…da01, payloads 0bd71369…72db). (e) on the Mac: the planted-edge instrument trades net positive, noise negative.
+**Judged** (records/U-proving-ground-a-review-triage.md): R1–R3 REAL → fixed (R1 over two passes); fixer 1's overlapping-window finding REAL → fixed in pass 2;
+re-review of pass 2: "R1-incomplete CLOSED", "NEW CLOSED", "No regression found in the scoped diff".
+**Tests box:** run 20261022-011621-2aaf5a6e on 2aaf5a6e: RED on ONE row only, `CellLinuxTests.A_cell_launch_without_a_delegated_cgroup_is_refused_naming_delegate_yes` (row (f), the known test defect of 25bae9bc that U-cell-row-every-os fixes; not in this diff) — Fault 498/498, Unit 1998 passed 0 failed, Integration 726 passed 1 failed, timing 117/117; his files unchanged.
+**NOT VERIFIED:** SIM-001 against an unconfined same-user process (advisory, ORCH § 5); no proving host sets ThisProcess yet (part c); "canonical" is
+`GetFullPath`, not symlink resolution (a symlinked path is a false refusal, never a false match); no model, no network.
