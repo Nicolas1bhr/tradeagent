@@ -16,6 +16,23 @@ namespace TradeAgent.Tests.Unit;
 [Collection(VendorOverrideFiles.Name)]
 public class TurnTailDrainTests
 {
+    /// <summary>
+    /// THE RECORDED REFUSAL, EMITTED ONCE AND LAST: the recording without its closing <c>turn.failed</c>, so the vendor's
+    /// <c>error</c> event is the stream's FINAL line. The recording carries the refusal twice (<c>error</c>, then
+    /// <c>turn.failed</c>), and an earlier copy satisfies every assertion below even when the final one is lost — the witness
+    /// would not see the tail it exists to see.
+    /// </summary>
+    static string RefusalOnceAndLast
+    {
+        get
+        {
+            var lines = VendorLimitTests.Stdout.Split('\n');
+            var kept = lines[..^1];
+            Assert.Contains("\"type\":\"error\"", kept[^1], StringComparison.Ordinal);
+            return string.Join('\n', kept);
+        }
+    }
+
     /// <summary>The seam: the leader exits, the tree is ended, and only then may the turn read. Says what the teardown found.</summary>
     static Action<ContainedProcess> EndBeforeTheRead(List<TreeEnd?> seen) => contained =>
     {
@@ -54,7 +71,8 @@ public class TurnTailDrainTests
     public async Task A_vendor_limit_written_last_reaches_the_turns_end_though_the_tree_ended_before_the_read()
     {
         var session = VendorLimitTests.Refusing(
-            nameof(A_vendor_limit_written_last_reaches_the_turns_end_though_the_tree_ended_before_the_read));
+            nameof(A_vendor_limit_written_last_reaches_the_turns_end_though_the_tree_ended_before_the_read),
+            RefusalOnceAndLast);
         AgentTurnEnded? ended = null;
         session.TurnEnded += e => ended = e;
         var seen = new List<TreeEnd?>();
