@@ -20,7 +20,8 @@
 #
 # WHAT IT TOUCHES, AND NOTHING ELSE:
 #   - packages: the libraries the window loads (Avalonia.X11 12.1.1 and libSkiaSharp.so), one font, and
-#     TigerVNC's X server, its password tool and xauth. Installed when missing; nothing is ever upgraded.
+#     TigerVNC's X server, its password tool, xauth and sqlite3 (the fleet's read path, kit/tape-health, reads the
+#     home with `sqlite3 -readonly`). Installed when missing; nothing is ever upgraded.
 #   - an account of its own with no login shell and a 0700 home, holding the app's data, its TMPDIR,
 #     the X cookie and the VNC password file. The app's credentials are 0600 inside it from their first
 #     byte (OwnerOnlyFile) — which keeps them from every OTHER account, and not from the agent: the
@@ -127,7 +128,7 @@ fi
 # ---------------------------------------------------------------------------------------------------
 
 packages=(libx11-6 libxext6 libxi6 libxrandr2 libxcursor1 libice6 libsm6 libfontconfig1 fonts-dejavu-core
-          tigervnc-standalone-server tigervnc-tools xauth)
+          tigervnc-standalone-server tigervnc-tools xauth sqlite3)
 missing=()
 for p in "${packages[@]}"; do
     # shellcheck disable=SC2016 # ${Status} is dpkg-query's own field name, not the shell's
@@ -221,6 +222,10 @@ install -m 0755 -o root -g root "$kit/display-prepare" "$root_dir/kit/display-pr
 if cmp -s "$root_dir/kit/display-prepare.new" "$root_dir/kit/display-prepare"; then rm -f "$root_dir/kit/display-prepare.new"
 else mv -f "$root_dir/kit/display-prepare.new" "$root_dir/kit/display-prepare"; changed_display=yes
 fi
+
+# The fleet's read path (U-host-recording item 2): a script, not a service; replacing it restarts nothing.
+install -m 0755 -o root -g root "$kit/tape-health" "$root_dir/kit/tape-health.new"
+mv -f "$root_dir/kit/tape-health.new" "$root_dir/kit/tape-health"
 
 # ---------------------------------------------------------------------------------------------------
 # The two units, root-owned

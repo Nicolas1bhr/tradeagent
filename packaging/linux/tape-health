@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# THE KIT'S READ PATH (U-host-recording item 2): what the tape of a recording host looks like right now, read the one way
+# that is always safe — sqlite3 -readonly as the app's own account, never the agent pipe — plus what systemd and the
+# process table say. install.sh puts this file at /opt/tradeagent/kit/tape-health, root-owned. Run it as root (sudo -n) or as
+# the app's account; it writes nothing, anywhere, and starts nothing.
+#
+#   tape-health [--account tradeagent] [--home /var/lib/tradeagent]
+#
+# One line per fact, fields separated by '|', so the fleet reads it by eye and packaging/linux/ci/prove.sh reads it by grep:
+#   service|<unit>|active=<state>|NRestarts=<n>|since=<when>|pid=<main pid>
+#   tape|<path>|<bytes>                        the tape's size on disk, WAL included
+#   fetch|<source>|<http status or none>|<count>|<newest received_at>       prove.sh's per-source counts
+#   delivery|<source>|age_s=<seconds>|<newest received_at>                 the newest answered (HTTP 200) fetch per source
+#   ai_attempt|<rows>                          launches of the agent CLI ever recorded in this home (a recording-only home: 0)
+#   ai_process|<pid name>                      a codex, opencode or node process of the account (none: the line says none)
+#   report|<file>                              the newest daily report, and under it
+#   report_tape|<line>                         its tape line (DailyReports.cs: "N rows recorded from M requests, ...")
+# A fact that cannot be read is a line saying so, never a guess; the exit status is 0 whenever the script ran to its end.
+set -euo pipefail
+
+account=tradeagent home=/var/lib/tradeagent
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --account) account="${2:?--account needs a name}"; shift 2 ;;
+        --home) home="${2:?--home needs a folder}"; shift 2 ;;
+        *) echo "tape-health: unknown argument '$1'" >&2; exit 2 ;;
+    esac
+done
+
+command -v sqlite3 > /dev/null || { echo "tape-health: sqlite3 is not installed (the kit installs it; run install.sh again)" >&2; exit 2; }
+id "$account" > /dev/null 2>&1 || { echo "tape-health: no account '$account' on this host" >&2; exit 2; }
+
+data="$home/.local/share/TradeAgent/state"
+db="$data/tradeagent.db"
+tape="$data/tape.db"
+unit=tradeagent.service
+
+as_account() { if [ "$(id -u)" = "$(id -u "$account")" ]; then "$@"; else sudo -n -u "$account" "$@"; fi; }
+read_db() { as_account sqlite3 -readonly -batch -noheader -cmd '.timeout 5000' "$1" "$2"; }
+# ask <db> <sql> <what>: the rows, or one line saying why there are none.
+ask() { read_db "$1" "$2" 2> /dev/null || echo "unreadable|$3"; }
+
+echo "service|$unit|active=$(systemctl is-active "$unit" 2> /dev/null || true)|NRestarts=$(systemctl show -p NRestarts --value "$unit")|since=$(systemctl show -p ActiveEnterTimestamp --value "$unit")|pid=$(systemctl show -p MainPID --value "$unit")"
+
+if as_account test -f "$tape"; then
+    echo "tape|$tape|$(as_account cat "$tape" "$tape-wal" 2> /dev/null | wc -c | tr -d ' ')"
+    ask "$tape" "SELECT 'fetch', source, coalesce(http_status, 'none'), count(*), max(received_at) FROM tape_fetch GROUP BY source, coalesce(http_status, 'none') ORDER BY source, coalesce(http_status, 'none');" "tape_fetch"
+    ask "$tape" "SELECT 'delivery', source, 'age_s=' || coalesce(strftime('%s', 'now') - strftime('%s', max(received_at)), 'unreadable'), max(received_at) FROM tape_fetch WHERE http_status = 200 GROUP BY source ORDER BY source;" "tape_fetch deliveries"
+else
+    echo "tape|$tape|absent"
+fi
+
+if as_account test -f "$db"; then
+    echo "ai_attempt|$(read_db "$db" "SELECT count(*) FROM ai_attempt;" 2> /dev/null || echo unreadable)"
+else
+    echo "ai_attempt|no database at $db"
+fi
+
+# -x: the process's own name, whole; the app is "TradeAgent", so only an AI CLI or its node runtime can match.
+if processes="$(pgrep -u "$account" -a -x 'codex|opencode|node' 2> /dev/null)"; then
+    printf '%s\n' "$processes" | sed 's/^/ai_process|/'
+else
+    echo "ai_process|none"
+fi
+
+newest="$(as_account find "$data/reports" -maxdepth 1 -name '*.md' 2> /dev/null | sort | tail -n 1 || true)"
+if [ -n "$newest" ]; then
+    echo "report|$newest"
+    as_account grep -h 'rows recorded from' "$newest" 2> /dev/null | sed 's/^/report_tape|/' || echo "report_tape|no tape line in it"
+else
+    echo "report|none yet (the first is written after the first local midnight)"
+fi

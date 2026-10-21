@@ -354,7 +354,7 @@ jobs:
       - name: Lint the Linux scripts
         run: |
           shellcheck --version
-          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/ci/prove.sh
+          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh
           shellcheck .github/ci/shard-filter.sh
 
       - name: Build the Linux artifact
