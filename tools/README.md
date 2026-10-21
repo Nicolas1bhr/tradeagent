@@ -208,6 +208,39 @@ blob on stderr and looks like corruption.
   the program lands on the real desktop — and that desktop has to be **unlocked**, or captures are
   blank white.
 
+## linux-host.sh — the owner's always-on Linux host, read and deployed to by the fleet
+
+The recording host (U-host-recording; the kit is `packaging/linux/`). Not a Windows box: its own file,
+`~/.tradeagent/linux.env`, outside the repository and `chmod 600`, key authentication only (BatchMode, so a refused key fails
+at once). Nothing in the repository names the host:
+
+```bash
+export TA_LINUX_HOST=<hostname-or-address>      # reachable from this Mac
+export TA_LINUX_USER=<administrator account>    # needs `sudo -n`
+export TA_LINUX_KEY=<private key path>
+export TA_LINUX_ADDRESS=<the display's address> # the kit's --address: the private network's, or 127.0.0.1   (install)
+export TA_LINUX_ZONE=Europe/Brussels            # the owner's IANA zone                                      (install)
+```
+
+```bash
+tools/linux-host.sh recon                        # read-only: kernel, os, LSMs, systemd, cgroup fs, NTP, memory, disk, ports, the account
+tools/linux-host.sh health                       # kit/tape-health: per-source counts, newest delivery's age, NRestarts, ai_attempt, AI processes
+tools/linux-host.sh install <tarball> "<word>"   # stop -> back up state/tape.db* and tradeagent.db* -> the kit -> health
+tools/linux-host.sh stop "<word>"                # systemctl stop; the data stays
+```
+
+**`install` and `stop` run only on the owner's dated word**, passed as the last argument — a date, then his words:
+`"2026-10-22 yes, deploy it"`. Without one, with one older than three days or in the future, the script refuses before it
+reads the env file. The word is kept beside what it allowed, in the backup folder (`/var/backups/tradeagent/<UTC stamp>/WORD.txt`).
+`install` writes the kit, a backup and nothing of the app's own data: it **never seeds the home** (a seeded AI_AUTHENTICATED
+would be a false record in what becomes the organisation's home). Each deploy is a gap in the tape, so deploy rarely, and
+never from a build that refuses older homes before `U-older-layout-refusal` has landed. On a first install the VNC
+password is made on the host, kept in `/root/tradeagent-vnc-pass` (root-only, never printed) to be handed to the owner
+once and then deleted.
+
+CI exercises all four verbs over a real ssh to its own `linux-host` runner (`.github/workflows/build.yml`, "The fleet's
+tool, against this host"); it has never been pointed at the owner's machines.
+
 ## winagent/ — driving the Windows GUI without a person
 
 `probe atas` answers the measurement question. This answers the other one: **who presses the buttons.**
