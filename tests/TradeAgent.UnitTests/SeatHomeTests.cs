@@ -642,7 +642,9 @@ public class SeatHomeTests
 
     /// <summary>
     /// THE SHIPPED CODEX MANIFEST pointed at a script and at a seat home of this test's own: only the program, the pin and the
-    /// home's root change — the environment, the deny set and the config file are the build's own data.
+    /// home's root change — the environment, the deny set and the config file are the build's own data. The script's digest is
+    /// registered as the test's stand-in for this build's pin (<see cref="BrokerSeat.PinForTest"/>), so a broker seat over it compares
+    /// as the build's own; a program swapped in after this call is not registered and compares against the real pin.
     /// </summary>
     internal static (RuntimeManifest Codex, string Exe, string Dump) Seat(string name, string version = "0.160.1")
     {
@@ -650,6 +652,7 @@ public class SeatHomeTests
         var (exe, dump) = EnvDumper(name, version);
         codex.Executable = exe;
         codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
+        BrokerSeat.PinForTest(codex.Install.ExecutableSha256);
         codex.Seat!.Home = Path.Combine(Path.GetDirectoryName(exe)!, "seat-home");
         return (codex, exe, dump);
     }

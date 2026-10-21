@@ -81,7 +81,8 @@ public static class BrokerSeat
             return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: its entry in runtimes.json has no seat profile, " +
                    $"and this build ({Versions.App}) compiles one. Remove the '{manifest.Id}' entry from runtimes.json to continue. Nothing was started.";
 
-        foreach (var (field, file, build) in Fields(manifest, seat).Zip(Fields(built, own), (a, b) => (a.Field, a.Value, b.Value)))
+        foreach (var (field, file, build) in Fields(manifest, seat, PinOf(manifest)).Zip(Fields(built, own, BuildPin(built, manifest)),
+                     (a, b) => (a.Field, a.Value, b.Value)))
         {
             if (file == build) continue;
             return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: runtimes.json gives its {field} as " +
@@ -92,13 +93,18 @@ public static class BrokerSeat
         return null;
     }
 
-    /// <summary>The broker class's security fields, each as one comparable string, in a fixed order.</summary>
-    static IEnumerable<(string Field, string Value)> Fields(RuntimeManifest m, SeatPlan seat)
+    /// <summary>
+    /// The broker class's security fields, each as one comparable string, in a fixed order — the program's pin first: a broker seat's
+    /// program is this build's pinned codex, and an override that swaps the program and its digest together would otherwise pass the
+    /// pin check and receive the seat's environment before anything else refused it (fix pass 1, R1).
+    /// </summary>
+    static IEnumerable<(string Field, string Value)> Fields(RuntimeManifest m, SeatPlan seat, string pin)
     {
         static string Join(IEnumerable<string>? values) => string.Join('\u001f', values ?? []);
         static string Pairs(IReadOnlyDictionary<string, string>? kv) =>
             Join(kv?.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value));
 
+        yield return ("program pin", pin);
         yield return ("deny set", Join(seat.ArgsFor(SeatPlan.BrokerClass)));
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(SeatPlan.BrokerClass)));
         yield return ("seat environment", Pairs(seat.Environment));
@@ -110,6 +116,26 @@ public static class BrokerSeat
         yield return ("unattended flags", Join(m.UnattendedArgs));
         yield return ("turn command", Join(m.ExecArgs) + "\u001e" + Join(m.ResumeArgs));
     }
+
+    /// <summary>A manifest's program pin as compared: trimmed and lower-case, as <see cref="SeatProfile.IsPin"/> reads it; empty for none.</summary>
+    static string PinOf(RuntimeManifest m) => m.Install.ExecutableSha256?.Trim().ToLowerInvariant() ?? "";
+
+    /// <summary>
+    /// THIS BUILD'S PIN for <paramref name="manifest"/>'s runtime: the built-in manifest's — or, in a test host only, the manifest's own
+    /// when the test rig registered it (<see cref="PinForTest"/>), because a test's codex is a script whose digest no build compiles.
+    /// </summary>
+    static string BuildPin(RuntimeManifest built, RuntimeManifest manifest) =>
+        PuppetSeats.TestHost && TestPins.ContainsKey(PinOf(manifest)) ? PinOf(manifest) : PinOf(built);
+
+    /// <summary>
+    /// THE SCRIPTS A TEST RIG STANDS IN FOR THIS BUILD'S PROGRAM, by digest. Internal and written only by the test assembly
+    /// (<c>InternalsVisibleTo</c>); read only while <see cref="PuppetSeats.TestHost"/> is set, which nothing in the product sets — no
+    /// file, setting or pipe op reaches either (AUTH-001). A digest no test registered is compared against the build's own pin.
+    /// </summary>
+    static readonly ConcurrentDictionary<string, byte> TestPins = new(StringComparer.Ordinal);
+
+    /// <summary>Registers <paramref name="sha256"/> as a test's stand-in for this build's pin (<see cref="TestPins"/>).</summary>
+    internal static void PinForTest(string sha256) => TestPins[sha256.Trim().ToLowerInvariant()] = 0;
 
     /// <summary>A value as the refusal names it: its SHA-256's first twelve hex digits and its length.</summary>
     static string Fingerprint(string value) =>

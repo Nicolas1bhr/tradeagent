@@ -235,6 +235,43 @@ public class BrokerSeatTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// (d) THE PROGRAM'S PIN IS THIS BUILD'S (fix pass 1, R1): a <c>runtimes.json</c> that swaps the program AND its digest — a script
+    /// of the test's own, its SHA-256 written as the pin — is refused by <see cref="AgentSession.CheckSeat"/> naming the pin, before
+    /// the CLI's own reports are read, so the swapped program never runs: not for its reports, not for the turn. The probe here is the
+    /// real <see cref="CliSeatProbe"/>, the one that starts the program.
+    ///
+    /// <para>RED at the pre-fix tip: the pin was not among the compared fields, the manifest's own pin passed the pin check, and the
+    /// real probe started the swapped program for its feature report.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_runtimes_json_that_swaps_the_program_and_its_pin_is_refused_and_the_program_never_runs()
+    {
+        using var db = TestEnv.NewDb();
+        var register = Position(db);
+        var (codex, _, _) = SeatHomeTests.Seat(nameof(A_runtimes_json_that_swaps_the_program_and_its_pin_is_refused_and_the_program_never_runs));
+        var (swapped, ran) = SeatHomeTests.EnvDumper("swapped-program");
+        codex.Executable = swapped;
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(swapped);
+        RuntimeCatalog.SaveOverrides([codex]);
+        var loaded = RuntimeCatalog.Find("codex")!;
+
+        var session = new AgentSession(loaded, () => swapped, () => Path.GetDirectoryName(swapped)!, () => new Dictionary<string, string>(),
+            presence: new AgentPresence(), role: Pos, seatProbe: CliSeatProbe.Instance, seats: register, door: () => DoorAt,
+            surfaceProbe: new FakeSurface(Classic));
+        var verdict = session.CheckSeat();
+        Assert.False(File.Exists(ran), $"the swapped program ran during the seat check: {string.Join(" | ", SeatHomeTests.Argv(ran))}");
+        Assert.True(verdict.Refused, "a runtimes.json that swapped the program and its pin was not refused");
+        Assert.Contains("runtimes.json gives its program pin as SHA-256 ", verdict.Refusal);
+
+        var meter = ThinkingSeatsTests.Meter(db, _ => SeatClasses.Broker);
+        using var metering = meter.Attach(session, Pos);
+        Assert.False(meter.Begin("## Situation", role: Pos).Admitted, "a broker seat on a swapped program was admitted");
+        await session.SendAsync("go");
+        Assert.False(File.Exists(ran), "the swapped program ran for the turn");
+        Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+    }
+
     // ---- (e) armed live ------------------------------------------------------------------------------------------------
 
     /// <summary>
