@@ -313,6 +313,68 @@ public class BrokerSeatTests : IDisposable
         Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
     }
 
+    /// <summary>
+    /// (d) A LIST FIELD IS COMPARED ELEMENT BY ELEMENT (fix pass 2, the re-review's P1): a <c>runtimes.json</c> that replaces two adjacent
+    /// entries of a compared list by ONE entry holding both, joined by the unit separator U+001F, is refused at admission by the
+    /// compare itself, although the CLI's reports and the offered surface would pass — for the home's forbidden paths, with an
+    /// environments.toml seeded in the seat home (the merged entry names no file, so the environments-file check is gone), and for the
+    /// deny set (the merged argument disables nothing).
+    ///
+    /// <para>RED at the pre-fix tip: <c>Fields</c> joined each list with an unescaped U+001F, the merged list compared equal to this
+    /// build's, and the seat was admitted.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("home's forbidden paths")]
+    [InlineData("deny set")]
+    public async Task A_runtimes_json_that_merges_two_entries_into_one_is_refused_although_the_surface_passes(string field)
+    {
+        static string[] Merge(string[] list, int at) =>
+            [.. list[..at], list[at] + "\u001f" + list[at + 1], .. list[(at + 2)..]];
+
+        using var db = TestEnv.NewDb();
+        var register = Position(db);
+        var (codex, exe, dump) = SeatHomeTests.Seat($"merge-{field.Replace(' ', '-').Replace("'", "")}");
+        var environments = "codex/" + CellPolicy.CodexEnvironments;
+        if (field == "home's forbidden paths")
+        {
+            var at = Array.IndexOf(codex.Seat!.Forbidden, environments);
+            Assert.True(at > 0, "this build's forbidden list has no entry before environments.toml to merge it with");
+            codex.Seat.Forbidden = Merge(codex.Seat.Forbidden, at - 1);
+            Assert.DoesNotContain(environments, codex.Seat.Forbidden);
+        }
+        else
+        {
+            var deny = codex.Seat!.Args[SeatPlan.BrokerClass];
+            var at = Enumerable.Range(0, deny.Length - 1).First(i => deny[i] == "--disable" && deny[i + 1] == "shell_tool");
+            codex.Seat.Args[SeatPlan.BrokerClass] = Merge(deny, at);
+            Assert.DoesNotContain("shell_tool", codex.Seat.Args[SeatPlan.BrokerClass]);
+        }
+        RuntimeCatalog.SaveOverrides([codex]);
+        var loaded = RuntimeCatalog.Find("codex")!;
+        if (field == "home's forbidden paths")
+        {
+            // Seeded only here: with the entry intact (the deny-set row) the home check would refuse the seat for the file itself.
+            var seeded = Path.Combine(loaded.Seat!.Root, environments);
+            Directory.CreateDirectory(Path.GetDirectoryName(seeded)!);
+            File.WriteAllText(seeded, "# seeded by the test: codex would read this in place of CODEX_EXEC_SERVER_URL\n");
+        }
+
+        var surface = new FakeSurface(Classic);
+        var session = Session(loaded, exe, register, surface);
+        var verdict = session.CheckSeat();
+        Assert.True(verdict.Refused, $"a runtimes.json that merged two entries of the broker class's {field} into one was admitted");
+        Assert.Contains($"runtimes.json gives its {field} as SHA-256 ", verdict.Refusal);
+        Assert.Equal(0, surface.Asks);
+
+        var meter = ThinkingSeatsTests.Meter(db, _ => SeatClasses.Broker);
+        using var metering = meter.Attach(session, Pos);
+        Assert.False(meter.Begin("## Situation", role: Pos).Admitted, $"a broker seat with a merged {field} was admitted");
+        await session.SendAsync("go");
+        Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
+        Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+        File.Delete(RuntimeCatalog.OverridePath);
+    }
+
     // ---- (e) armed live ------------------------------------------------------------------------------------------------
 
     /// <summary>

@@ -97,30 +97,41 @@ public static class BrokerSeat
     /// The broker class's security fields, each as one comparable string, in a fixed order — the program's pin first: a broker seat's
     /// program is this build's pinned codex, and an override that swaps the program and its digest together would otherwise pass the
     /// pin check and receive the seat's environment before anything else refused it (fix pass 1, R1).
+    ///
+    /// <para>EACH VALUE IS AN UNAMBIGUOUS ENCODING (fix pass 2): a list as its count and each element length-prefixed, a dictionary as
+    /// its ordinal-ordered keys and values the same way — never a separator-joined string, where one element holding the separator
+    /// (<c>"codex/hooks.json\u001fcodex/environments.toml"</c>) compared equal to two and dropped a check. Two values are equal exactly
+    /// when the sequences are; the string form remains only for the refusal's fingerprint.</para>
     /// </summary>
     static IEnumerable<(string Field, string Value)> Fields(RuntimeManifest m, SeatPlan seat, string pin)
     {
-        static string Join(IEnumerable<string>? values) => string.Join('\u001f', values ?? []);
+        static string Seq(IEnumerable<string>? values)
+        {
+            var list = (values ?? []).ToList();
+            var sb = new StringBuilder().Append(list.Count).Append('[');
+            foreach (var v in list) sb.Append(v.Length).Append(':').Append(v);
+            return sb.Append(']').ToString();
+        }
         static string Pairs(IReadOnlyDictionary<string, string>? kv) =>
-            Join(kv?.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value));
+            Seq(kv?.OrderBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => new[] { p.Key, p.Value }));
 
         yield return ("program pin", pin);
         // WHAT MUST NOT EXIST IN THE SEAT'S HOME AND WORKSPACE, AND WHICH FILES HOLD ITS CREDENTIAL (fix pass 1, R2): codex's
         // environments.toml in the home replaces CODEX_EXEC_SERVER_URL=none, and the surface probe's throwaway home has none, so its
         // accepted surface proves nothing about a launched seat whose override dropped the entry (CRED-001, Law 2).
-        yield return ("home's forbidden paths", Join(seat.Forbidden));
-        yield return ("workspace's forbidden names", Join(seat.WorkspaceForbidden));
-        yield return ("credential files", Join(seat.PrivateFiles));
-        yield return ("deny set", Join(seat.ArgsFor(SeatPlan.BrokerClass)));
+        yield return ("home's forbidden paths", Seq(seat.Forbidden));
+        yield return ("workspace's forbidden names", Seq(seat.WorkspaceForbidden));
+        yield return ("credential files", Seq(seat.PrivateFiles));
+        yield return ("deny set", Seq(seat.ArgsFor(SeatPlan.BrokerClass)));
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(SeatPlan.BrokerClass)));
         yield return ("seat environment", Pairs(seat.Environment));
-        yield return ("feature allowlist", Join(seat.FeaturesFor(SeatPlan.BrokerClass)));
-        yield return ("tool-server allowlist", Join(seat.ServersFor(SeatPlan.BrokerClass)));
-        yield return ("feature report command", Join(seat.FeaturesArgs));
-        yield return ("tool-server report command", Join(seat.McpArgs));
-        yield return ("model flag", Join(m.ModelArgs));
-        yield return ("unattended flags", Join(m.UnattendedArgs));
-        yield return ("turn command", Join(m.ExecArgs) + "\u001e" + Join(m.ResumeArgs));
+        yield return ("feature allowlist", Seq(seat.FeaturesFor(SeatPlan.BrokerClass)));
+        yield return ("tool-server allowlist", Seq(seat.ServersFor(SeatPlan.BrokerClass)));
+        yield return ("feature report command", Seq(seat.FeaturesArgs));
+        yield return ("tool-server report command", Seq(seat.McpArgs));
+        yield return ("model flag", Seq(m.ModelArgs));
+        yield return ("unattended flags", Seq(m.UnattendedArgs));
+        yield return ("turn command", Seq(m.ExecArgs) + Seq(m.ResumeArgs));
     }
 
     /// <summary>A manifest's program pin as compared: trimmed and lower-case, as <see cref="SeatProfile.IsPin"/> reads it; empty for none.</summary>
