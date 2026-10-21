@@ -402,7 +402,7 @@ jobs:
     needs: [dedupe-gate, package-linux]
     if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 65   # 45 before the recording-only phase (U-host-recording), which adds about 15 minutes of its own
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
