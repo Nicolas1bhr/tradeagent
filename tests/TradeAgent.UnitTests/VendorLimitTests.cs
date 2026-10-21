@@ -376,4 +376,89 @@ public class VendorLimitTests : IDisposable
         Assert.Equal((1_000m * 1m + 10m * 4m) / 1_000_000m, row.Cost);
         Assert.Null(row.UnpricedReason);
     }
+
+    // ---- (d) the wakes a refused turn took (U-vendor-limit-wakes, item 1) ------------------------------
+
+    /// <summary>A wake of one kind for the chair, due at <paramref name="at"/>; its id.</summary>
+    static string Wake(MissionEventStore events, string kind, DateTimeOffset at)
+    {
+        var id = $"{kind}:{CouncilRoles.Operations}:{Guid.NewGuid():n}";
+        Assert.True(events.Raise(id, kind, at, role: CouncilRoles.Operations));
+        return id;
+    }
+
+    /// <summary>
+    /// ITEM 1, RED FIRST: A TURN THE VENDOR REFUSED FOR ITS LIMIT BEFORE ANY WORK GIVES BACK EVERY WAKE IT TOOK, due again
+    /// when the vendor's hold lifts — as a launch the activation gate refused does (ORCHESTRATION § 2.5). The brief, the
+    /// report and the AI's own wake are the loop's record of what was owed; settling them <c>failed</c> lost them though the
+    /// vendor ran nothing. The owner's words among them are neither settled nor retried as a failed turn's: they stay owed,
+    /// shown <see cref="MissionEventDisposition.Blocked"/> with the vendor's own sentence. RED on the base: every wake read
+    /// <c>failed</c> and the owner's words were re-raised as a retry.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_vendor_refused_before_any_work_gives_its_wakes_back_until_the_hold_lifts()
+    {
+        var name = nameof(A_turn_the_vendor_refused_before_any_work_gives_its_wakes_back_until_the_hold_lifts);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var host = new Host(_db, events, Refusing(name), Home(name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.True(events.RecordOwnerMessage("how is the book?", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        string[] owed = [Wake(events, MissionEventKind.Brief, now), Wake(events, MissionEventKind.Report, now),
+            Wake(events, MissionEventKind.Self, now)];
+
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);                         // the turn the vendor refused, which took all four
+
+        foreach (var id in owed)
+        {
+            var e = events.Get(id)!;
+            Assert.False(e.Consumed, $"{id} was spent on a turn the vendor refused: {e.Disposition}");
+            Assert.Null(e.Disposition);
+        }
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed);
+        Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
+        Assert.Equal(VendorSaid, words.DispositionDetail);
+        Assert.Equal(1, OwnerWakesWaiting(events, now));    // owed once, never re-raised as a failed turn's retry
+
+        // NOTHING IS LAUNCHED INSIDE THE HOLD, and all four wait for it.
+        now = Retry.AddMinutes(-1);
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+        Assert.Equal(4, events.DueFor(CouncilRoles.Operations, now).Count);
+
+        // THE HOLD LIFTS, and the next launch is handed what the refused one was.
+        now = Retry;
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Opened.Count);
+        Assert.Contains("how is the book?", host.Opened[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A GUARD: A LIMIT MET AFTER WORK KEEPS TODAY'S SETTLEMENT. The turn ran a command, so the work happened and may have
+    /// been billed; its wakes are settled <c>failed</c> and the owner's words retried once, as any failed turn's.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_limit_cut_after_it_had_worked_settles_its_wakes_as_failed()
+    {
+        var name = nameof(A_turn_the_limit_cut_after_it_had_worked_settles_its_wakes_as_failed);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var host = new Host(_db, events, Refusing(name, CutAfterWork), Home(name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.True(events.RecordOwnerMessage("how is the book?", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        var brief = Wake(events, MissionEventKind.Brief, now);
+
+        await loop.TurnAsync();
+
+        Assert.Single(host.Opened);
+        Assert.Equal(MissionEventDisposition.Failed, events.Get(brief)!.Disposition);
+        Assert.Equal(MissionEventDisposition.Failed, events.Get(owner)!.Disposition);
+        Assert.Equal(1, OwnerWakesWaiting(events, now));    // the one retry
+    }
 }

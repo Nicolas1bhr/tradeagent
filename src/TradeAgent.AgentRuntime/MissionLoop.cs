@@ -2708,8 +2708,9 @@ public sealed class MissionLoop
             Commit(role, attemptId, events, wake, ended, consumer);
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
-            // for a launch refused at admission (review of U-thinking-seats-a, item 1).
-            if (ended?.GateRefused is not null) lock (_gate) OweTyped(role, typed);
+            // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
+            // before any work (U-vendor-limit-wakes).
+            if (UnworkedRefusal(ended) is not null) lock (_gate) OweTyped(role, typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
             // than after it, so a turn that threw its way out still settles the question — a turn
@@ -3705,17 +3706,23 @@ public sealed class MissionLoop
     /// refusal was — the launch gives them back, and a <see cref="RefusalKind.Position"/> refusal's wakes are settled by O3's seam at the next look, routing by
     /// the kind on the row. The owner's words among them are never settled and never retried as failed: they stay owed, shown
     /// undelivered with the refusal's own sentence (<see cref="MissionEventDisposition.Blocked"/>).</para>
+    ///
+    /// <para><b>So does a turn the vendor refused for its usage limit before any work</b> (<c>U-vendor-limit-wakes</c>): the vendor
+    /// ran nothing, so nothing was answered and the wakes are the loop's only record of what was owed. They are given back exactly
+    /// as the gate's are, due again when the vendor's hold lifts — the hold set after this commit keeps every launch on that pool
+    /// until then — and the owner's words show the vendor's own sentence. A limit met AFTER work is settled as any failed turn is:
+    /// the work happened.</para>
     /// </summary>
     void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer)
     {
         if (wake.Count == 0) return;
-        if (ended?.GateRefused is { } late)
+        if (UnworkedRefusal(ended) is { } why)
         {
             try
             {
                 events.Release([.. wake.Select(e => e.Id)], consumer);
                 foreach (var e in wake.Where(e => e.Kind == MissionEventKind.Owner))
-                    events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, late.Refusal.Words);
+                    events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, why);
             }
             catch (Exception) { /* a record, not a gate — as below */ }
             return;
@@ -3741,6 +3748,16 @@ public sealed class MissionLoop
             // bookkeeping failure into the AI stopping work.
         }
     }
+
+    /// <summary>
+    /// THE SENTENCE OF A REFUSAL THAT LET THE TURN DO NO WORK, or null where the turn ran: the activation gate's at its last
+    /// check, or the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>). Such a turn answered
+    /// nothing, so it gives back every wake it took and every word typed into it.
+    /// </summary>
+    static string? UnworkedRefusal(AgentTurnEnded? ended) =>
+        ended?.GateRefused is { } late ? late.Refusal.Words
+        : ended?.Limit is { BeforeAnyWork: true } limit ? limit.Message
+        : null;
 
     /// <summary>
     /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the chair's next turn — carrying which message it retries and why. A
