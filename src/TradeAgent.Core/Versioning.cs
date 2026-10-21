@@ -413,8 +413,14 @@ public static class Versions
     /// naming the record it rests on), <c>org_escalation</c> (the recipient the app chose up the chain, NULL the owner — a record,
     /// no wake) and <c>org_lateral</c> (a sender-stamped note that wakes nobody) — each refusing UPDATE and DELETE by trigger,
     /// written only by <c>OrgStore</c>. No backfill: nothing before the rung wrote any of them.</para>
+    ///
+    /// <para><b>42 — a forecast's probability is its text, byte for byte</b> (<c>U-forecast-nul</c>, rung 42, after O5b's 41):
+    /// the trigger <c>org_forecast_probability_bytes</c> refuses an <c>org_forecast</c> INSERT whose probability's byte length
+    /// differs from its character length — a NUL inside it, which 41's CHECK reads past (SQLite's <c>length</c>, <c>GLOB</c> and
+    /// <c>substr</c> stop at the first NUL), or a character beyond ASCII. No table rebuilt, no row rewritten: a row stored before
+    /// the rung stands, and the resolver lists one it cannot read as refused, never guessed.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 41;
+    public const int DatabaseSchemaVersion = 42;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its
