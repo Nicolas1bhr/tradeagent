@@ -24,6 +24,12 @@ namespace TradeAgent.Tests.Unit;
 /// and its downloads, answering with the asset names both releases carried on 2026-10-09, and the programs
 /// installed are stand-ins that print a version: nothing is downloaded and nothing of a vendor's is run.</para>
 /// </summary>
+// THE LAUNCHER AND THE FORKS (U-launcher-race): this class starts programs through the home's launcher at Paths.Bin and writes and
+// runs programs of its own, while the classes of this collection replace that launcher (a puppet life deploys the real trade command over
+// it) and write fake runtimes they then execute. Beside them a launch started on the real command's apphost instead of the script (a
+// dotnet banner for a sign-in link, or no link), and a program written while another thread forked held its write handle in the child
+// (ETXTBSY, "the turn ended 154"). It runs in their collection, one at a time with them.
+[Collection(VendorOverrideFiles.Name)]
 public class LinuxHostRuntimeTests(ITestOutputHelper output)
 {
     /// <summary>

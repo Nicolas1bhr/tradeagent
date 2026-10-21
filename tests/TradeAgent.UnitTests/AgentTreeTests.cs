@@ -1086,9 +1086,7 @@ public class AgentTreeTests : IDisposable
         Directory.CreateDirectory(Paths.Bin);
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
         if (string.IsNullOrWhiteSpace(host) || !File.Exists(host)) host = Environment.ProcessPath;
-        File.WriteAllText(LauncherPath, $"#!/bin/sh\nexec \"{host}\" \"{TradeCliDll()}\" \"$@\"\n");
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(LauncherPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        TestEnv.WriteExecutable(LauncherPath, System.Text.Encoding.UTF8.GetBytes($"#!/bin/sh\nexec \"{host}\" \"{TradeCliDll()}\" \"$@\"\n"));
     }
 
     static string WriteScript(string dir, string body)
