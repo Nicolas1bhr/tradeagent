@@ -328,17 +328,22 @@ public partial class CellLinuxTests
     /// <summary>
     /// (f) NO CELL WITHOUT A DELEGATED CGROUP. On a platform that would hold a cell, a launch whose root is not a delegated cgroup — none
     /// looked for in this process, or a directory that is not one — is refused with <see cref="ErrorCode.CELL_UNAVAILABLE"/> naming
-    /// <c>Delegate=yes</c>, and nothing runs. Every OS: the platform is a stand-in. On Linux a launch that is not a cell starts and keeps
+    /// <c>Delegate=yes</c>, and nothing runs. Every OS: the platform is a stand-in and the policy is valid where the row runs (<c>CellScope=EveryOs</c>, so every platform's normal CI step runs it). On Linux a launch that is not a cell starts and keeps
     /// its session, its Mechanism line saying "session only — no delegated cgroup".
     /// </summary>
-    [Fact]
+    [Fact, Trait("CellScope", "EveryOs")]
     public async Task A_cell_launch_without_a_delegated_cgroup_is_refused_naming_delegate_yes()
     {
         var platform = new CellPlatform(true, "6.17.0-1022-azure", "x64", 7, null, "lockdown,capability,landlock,yama,apparmor", "1");
         Assert.Null(platform.Refusal());
         var dir = Scratch("nodelegate");
         var marker = Path.Combine(dir, "ran");
-        var policy = new CellPolicy(dir, [], CellPolicy.SystemRoots, [new("PATH", "/usr/bin:/bin")], null);
+        // THE POLICY MUST BE VALID WHERE THE ROW RUNS, or the refusal below is the policy's, naming a path, and not the cgroup's. The
+        // Linux system roots are absolute only where paths are POSIX; on Windows "/usr" is not fully qualified, so the roots are a
+        // scratch directory of the running OS there (the program is never reached either way).
+        var roots = Path.IsPathFullyQualified(CellPolicy.SystemRoots[0]) ? CellPolicy.SystemRoots : [Scratch("roots")];
+        var policy = new CellPolicy(dir, [], roots, [new("PATH", "/usr/bin:/bin")], null);
+        Assert.Null(policy.Problem());
         var before = Directory.Exists(CellPolicy.Directory) ? Directory.GetFiles(CellPolicy.Directory).Length : 0;
 
         foreach (var root in new[] { AttemptCgroups.Current, AttemptCgroups.Open(Path.Combine(dir, "not-a-cgroup")) })
