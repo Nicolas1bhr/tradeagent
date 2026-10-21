@@ -31,3 +31,15 @@ cell there first (`Containment.cs:282`, `Core`). **Light; tests and CI only — 
 **Read first:** `CellLinuxTests.Cgroup.cs:325-365`, `CellLinuxTests.cs:30-60` (the class trait), `Cell.cs:20-60, 150-170, 475-510`,
 `AgentRuntime/Containment.cs:735-760`, the workflow's test and Cell steps (`:120-260`), `tools/win-test-run.ps1:120-140`.
 **NOT in scope:** any product change; any other Cell row; the runner's other filters.
+
+## Report
+Tip: b7a97921 (code tip b7a97921; this report is docs only). Branch u-cell-row-every-os, base 35ddf4b4 rebased on main f7b2ab02.
+- Build: Release --no-incremental, 0 Warning(s), 0 Error(s). Touched class CellLinuxTests 3x via suite.sh: "Passed: 1, Skipped: 40, Total: 41" each time (the 40 are Linux-only, skipped on macOS).
+- Names: removed: 0, added: 0, base 2828 tip 2828.
+- CI run 39685897934: attempt 1 RED on test (ubuntu) only: 7 PromptStdinTests + 3 LinuxHostRuntimeTests in TradeAgent.UnitTests ("the turn ended 154", 154 = 128+26 = ETXTBSY race on a just-written fake runtime). Diff cannot reach it: it lists the identical 2004 UnitTests rows under the old and the new filter (same md5) and touches no UnitTests file. Re-ran the failed job (no new commit): attempt 2 all 12 jobs green.
+- Item 1 DONE (de667765): row (f) uses CellPolicy.SystemRoots where they are fully qualified, else a scratch dir, and asserts policy.Problem() null before launch. RED shown: roots {"usr"} -> "Assert.Null() Failure ... the cell's program root 'usr' is not an absolute p..."; then green. Assertion text (Delegate=yes) unchanged.
+- Item 2 DONE (b7a97921): row (f) carries Trait CellScope=EveryOs; normal step filter 'Category!=Timing&(Category!=Cell|CellScope=EveryOs)'; Cell step 'Category=Cell&CellScope!=EveryOs' still under systemd-run Delegate=yes. Locally listed: normal = 1 CellLinuxTests row, Cell step = 40, old Category=Cell = 41.
+- Settling check (trx, attempt 2): row (f) outcome Passed on ubuntu (results.trx), macos (results.trx), windows-latest shard 5 (results.trx; first Windows proof). Ubuntu results-cell.trx: 40 Passed, row (f) absent (was 41 incl. (f)).
+- Review: fleet/tmp/A-org/u-cell-row-every-os-build/U-cell-row-every-os-review.md ("No defects found"). The first codex process was killed when my turn ended, so it was started again once, by hand.
+- Tests box: NOT RUN - ready exit 4, another run is in progress.
+- Not done / not verified: no run of the Windows tests box; the ETXTBSY cause is read from the exit code, not reproduced. Runner's win-test-run.ps1 filter unchanged (Category!=Timing).
