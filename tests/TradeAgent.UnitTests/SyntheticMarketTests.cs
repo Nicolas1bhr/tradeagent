@@ -272,6 +272,53 @@ public class SyntheticMarketTests(ITestOutputHelper log)
         Valid();
     }
 
+    /// <summary>
+    /// A SECOND MARKET FOR ONE INSTRUMENT OVER AN OVERLAPPING WINDOW IS REFUSED (<c>U-proving-ground-a</c> fix pass 2, SIM-001
+    /// inside the proving home): its hourly readings would share the first market's subject and source times — the tape's
+    /// natural key — and stand as revisions of them, so the first market's backtest would read the second's signal. It is
+    /// refused in words before anything is written; a market that starts where the other ends is its own window and is kept.
+    /// </summary>
+    [Fact]
+    public void A_second_market_for_one_instrument_over_an_overlapping_window_is_refused_and_the_first_readings_carry_no_revision()
+    {
+        using var scratch = TestEnv.NewScratch("overlapping-market");
+        var home = ProvingHome.Create(Path.Combine(scratch.Dir, "proving"));
+        using var db = new Database(home.DatabaseFile, HomeKind.Proving);
+        using var tape = new TapeStore(home.TapeFile, kind: HomeKind.Proving);
+        var store = new DatasetStore(db);
+
+        var first = SyntheticMarket.Write(home, db, tape, Planted(2));
+        var truths = Directory.GetFiles(home.TruthDir);
+        var raw = Directory.GetFiles(home.DataDir, "*", SearchOption.AllDirectories);
+
+        foreach (var overlapping in new[]
+                 {
+                     Planted(2) with { Seed = 13, Start = Start.AddDays(1) },             // its first day is the first's last
+                     Planted(1) with { Seed = 14, Start = Start.AddHours(-23) },          // its last hour is the first's first
+                     Noise(5) with { Instrument = "SYNB", Start = Start.AddDays(-1) }    // it spans the first whole
+                 })
+        {
+            var refused = Assert.Throws<InvalidOperationException>(() => SyntheticMarket.Write(home, db, tape, overlapping));
+            log.WriteLine(refused.Message);
+            Assert.Contains("overlaps", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("SYNB", refused.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Single(store.All());
+        Assert.Equal(truths, Directory.GetFiles(home.TruthDir));
+        Assert.Equal(raw, Directory.GetFiles(home.DataDir, "*", SearchOption.AllDirectories));
+        var readings = tape.Fetches(ProvingSources.Synthetic, ProvingSources.Signal, 1000).SelectMany(f => tape.ObservationsOf(f.Id)).ToList();
+        Assert.Equal(first.Readings, readings.Count);
+        Assert.All(readings, r => Assert.Equal(1, r.Revision));
+
+        // BESIDE IT, NOT OVER IT: the window that starts where the first ends, and another instrument over the same days.
+        SyntheticMarket.Write(home, db, tape, Planted(1) with { Seed = 15, Start = Start.AddDays(2) });
+        SyntheticMarket.Write(home, db, tape, Noise(2));
+        Assert.Equal(3, store.All().Count);
+        Assert.All(tape.Fetches(ProvingSources.Synthetic, ProvingSources.Signal, 1000).SelectMany(f => tape.ObservationsOf(f.Id)),
+            r => Assert.Equal(1, r.Revision));
+    }
+
     /// <summary>Every file under <paramref name="home"/> outside <c>proving/</c>, by relative path, with its SHA-256.</summary>
     static SortedDictionary<string, string> Files(string home)
     {

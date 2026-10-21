@@ -224,6 +224,19 @@ public static class SyntheticMarket
                 $"this market ({spec.Instrument}, seed {spec.Seed}, from {start:O} for {spec.Days} days) is already written in this "
                 + $"proving home — its truth is at {truth} — and a market is written once. Nothing was written.");
 
+        // ONE MARKET PER INSTRUMENT AND HOUR (SIM-001 inside the proving home): a reading's natural key is its subject and
+        // source time, so a second market whose window overlaps one already on the tape would stand its readings as
+        // revisions of the first's, and the first market's backtest would read the second's signal. Refused, before
+        // anything is written; a window that starts where another ends is its own.
+        var end = start.AddDays(spec.Days);
+        var held = tape.SourceTimes(ProvingSources.Synthetic, ProvingSources.Signal, spec.Instrument, start).Where(t => t < end).ToList();
+        if (held.Count > 0)
+            throw new InvalidOperationException(
+                $"this market ({spec.Instrument}, seed {spec.Seed}, from {start:O} to {end:O}) overlaps a market already written in "
+                + $"this proving home: the tape holds {held.Count} reading(s) of {spec.Instrument} in that window, the first at "
+                + $"{held.Min():O}, and a second market's readings would stand as revisions of them. Nothing was written; a "
+                + "proving home holds one market per instrument and hour.");
+
         var hours = spec.Days * 24;
         var signals = Signals(spec.Seed, hours);
         var dir = Path.Combine(home.DataDir, ProvingSources.Synthetic, spec.Instrument, Interval);
