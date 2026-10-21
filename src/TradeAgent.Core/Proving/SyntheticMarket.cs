@@ -107,9 +107,14 @@ public sealed class ProvingHome
         return home;
     }
 
-    /// <summary>Whether <paramref name="file"/> is <paramref name="mine"/>, compared as full paths.</summary>
+    /// <summary>
+    /// Whether <paramref name="file"/> is <paramref name="mine"/>, compared as they are (R1): a store's path is resolved to a
+    /// full path when it is opened and a home's when it is created, so nothing here resolves either side against the
+    /// directory the process stands in now. A path that is not full is refused, never resolved.
+    /// </summary>
     internal static bool Same(string file, string mine) =>
-        string.Equals(Path.GetFullPath(file), Path.GetFullPath(mine), OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        Path.IsPathFullyQualified(file) && Path.IsPathFullyQualified(mine)
+        && string.Equals(file, mine, OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

@@ -165,7 +165,9 @@ public sealed class TapeStore : IDisposable
     /// </param>
     public TapeStore(string? file = null, IReadOnlyList<BuiltInLens>? builtIns = null, Proving.HomeKind? kind = null)
     {
-        File = file ?? Paths.TapeFile;
+        // CANONICAL AND ABSOLUTE FROM THE OPEN (R1), as Database's: the file this handle opens, whatever directory the
+        // process stands in later.
+        File = Path.GetFullPath(file ?? Paths.TapeFile);
         Kind = kind ?? Proving.ProvingGround.ThisKind;
         var dir = Path.GetDirectoryName(File);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);

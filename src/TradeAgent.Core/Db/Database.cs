@@ -25,7 +25,10 @@ public sealed class Database : IDisposable
     /// </param>
     public Database(string? path = null, Proving.HomeKind? kind = null)
     {
-        var file = path ?? Paths.DatabaseFile;
+        // CANONICAL AND ABSOLUTE FROM THE OPEN (R1): a relative path is resolved once, here, against the directory the
+        // process stands in now — the file this handle opens — so a later move of the working directory never makes it
+        // name another home's.
+        var file = Path.GetFullPath(path ?? Paths.DatabaseFile);
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         FilePath = file;
         Kind = kind ?? Proving.ProvingGround.ThisKind;

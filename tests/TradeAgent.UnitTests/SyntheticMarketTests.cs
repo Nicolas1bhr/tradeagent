@@ -285,3 +285,61 @@ public class SyntheticMarketTests(ITestOutputHelper log)
         return files;
     }
 }
+
+/// <summary>
+/// The tests that move the process's working directory: run alone, after every parallel class, so no other test resolves
+/// a relative path against a directory one of these set.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class WorkingDirectory
+{
+    public const string Name = "the process's working directory";
+}
+
+/// <summary>
+/// R1, COMPLETED (<c>U-proving-ground-a</c> fix pass 2): a store's path is canonical and absolute from the moment it is
+/// opened, so a handle opened RELATIVELY in one proving home never passes as another's after the working directory moves.
+/// </summary>
+[Collection(WorkingDirectory.Name)]
+public class ProvingHandlePathTests(ITestOutputHelper log)
+{
+    [Fact]
+    public void A_handle_opened_relatively_in_one_proving_home_is_refused_as_another_after_the_working_directory_moves()
+    {
+        using var scratch = TestEnv.NewScratch("relative-handles");
+        var a = Directory.CreateDirectory(Path.Combine(scratch.Dir, "a")).FullName;
+        var b = Directory.CreateDirectory(Path.Combine(scratch.Dir, "b")).FullName;
+        var spec = new SyntheticMarketSpec(12, "SYNB", VenueCatalog.BinanceSpot, new DateTimeOffset(2026, 8, 3, 0, 0, 0, TimeSpan.Zero), 1,
+            new SyntheticEdge(16));
+        var was = Directory.GetCurrentDirectory();
+        try
+        {
+            // HOME A AND ITS HANDLES, ALL BY THE SAME RELATIVE PATH, opened while the working directory is a.
+            Directory.SetCurrentDirectory(a);
+            var homeA = ProvingHome.Create("proving");
+            using var dbA = new Database(Path.Combine("proving", "state", "tradeagent.db"), HomeKind.Proving);
+            using var tapeA = new TapeStore(Path.Combine("proving", "state", "tape.db"), kind: HomeKind.Proving);
+
+            // THE SAME RELATIVE PATH NOW NAMES HOME B.
+            Directory.SetCurrentDirectory(b);
+            var homeB = ProvingHome.Create("proving");
+
+            var cross = Assert.Throws<InvalidOperationException>(() => SyntheticMarket.Write(homeB, dbA, tapeA, spec));
+            log.WriteLine(cross.Message);
+            Assert.Contains("does not live in the proving home", cross.Message, StringComparison.Ordinal);
+            Assert.Empty(new DatasetStore(dbA).All());
+            Assert.Empty(tapeA.Fetches());
+            Assert.False(Directory.Exists(homeB.DataDir));
+            Assert.False(Directory.Exists(homeB.TruthDir));
+
+            // AND THE SAME HANDLES STILL WRITE INTO THE HOME THEY WERE OPENED IN, wherever the process now stands.
+            var written = SyntheticMarket.Write(homeA, dbA, tapeA, spec);
+            Assert.StartsWith(homeA.Dir, written.TruthFile, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(homeB.DataDir));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(was);
+        }
+    }
+}
