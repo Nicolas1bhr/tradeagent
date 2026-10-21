@@ -354,7 +354,7 @@ jobs:
       - name: Lint the Linux scripts
         run: |
           shellcheck --version
-          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh
+          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh tools/linux-host.sh
           shellcheck .github/ci/shard-filter.sh
 
       - name: Build the Linux artifact
@@ -448,6 +448,59 @@ jobs:
         run: |
           sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" ADDRESS="$ADDRESS" RUN_MINUTES=20 \
             GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" packaging/linux/ci/prove.sh
+
+      # THE FLEET'S TOOL AGAINST THIS HOST (U-host-recording item 3's settling check): tools/linux-host.sh over a real ssh
+      # to this runner, with a throwaway key and the env file it reads (~/.tradeagent/linux.env, written here and never
+      # kept) — recon, health, the refusal without the owner's dated word, then install (stop -> back up -> the kit ->
+      # health) and stop, on the home the twenty minutes just made. Nothing here seeds anything.
+      - name: The fleet's tool, against this host
+        run: |
+          command -v sshd > /dev/null || sudo apt-get install -y --no-install-recommends openssh-server
+          sudo systemctl start ssh
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/ta-key"
+          mkdir -p ~/.ssh ~/.tradeagent
+          cat "$RUNNER_TEMP/ta-key.pub" >> ~/.ssh/authorized_keys
+          chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys
+          printf 'TA_LINUX_HOST=127.0.0.1\nTA_LINUX_USER=%s\nTA_LINUX_KEY=%s\nTA_LINUX_ADDRESS=%s\nTA_LINUX_ZONE=Europe/Brussels\n' \
+            "$USER" "$RUNNER_TEMP/ta-key" "$ADDRESS" > ~/.tradeagent/linux.env
+          chmod 600 ~/.tradeagent/linux.env
+          ev="$GITHUB_WORKSPACE/linux-host-evidence"
+          mkdir -p "$ev"
+
+          tools/linux-host.sh recon | tee "$ev/tool-recon.txt"
+          grep -q ' x86_64$' "$ev/tool-recon.txt" || { echo "recon read no x86_64 kernel line"; exit 1; }
+          grep -q 'cgroup2fs' "$ev/tool-recon.txt" || { echo "recon read no cgroup2fs"; exit 1; }
+          grep -q 'landlock' "$ev/tool-recon.txt" || { echo "recon read no landlock in the security modules"; exit 1; }
+          grep -q 'NTP service' "$ev/tool-recon.txt" || { echo "recon read no timedatectl NTP line"; exit 1; }
+
+          tools/linux-host.sh health | tee "$ev/tool-health-before.txt"
+          grep -q '^tape|' "$ev/tool-health-before.txt" || { echo "health read no tape line"; exit 1; }
+          grep -q '^fetch|ci-loopback|200|' "$ev/tool-health-before.txt" || { echo "health read no loopback count"; exit 1; }
+
+          # THE OWNER'S DATED WORD: install and stop refuse without one, before they reach any host.
+          if tools/linux-host.sh install linux-artifact/TradeAgent-*-linux-x64.tar.gz "yes" > "$ev/tool-refusal.txt" 2>&1; then
+            echo "install ran without a dated word"; exit 1
+          fi
+          grep -q "dated word" "$ev/tool-refusal.txt" || { echo "the refusal does not name the dated word"; cat "$ev/tool-refusal.txt"; exit 1; }
+          if tools/linux-host.sh stop "2020-01-01 an old word" > /dev/null 2>&1; then echo "stop ran on an old word"; exit 1; fi
+
+          word="$(date -u +%F) CI throwaway host"
+          tools/linux-host.sh install linux-artifact/TradeAgent-*-linux-x64.tar.gz "$word" | tee "$ev/tool-install.txt"
+          grep -q '== backed up [0-9]* files to /var/backups/tradeagent/' "$ev/tool-install.txt" || { echo "install backed nothing up"; exit 1; }
+          backup="$(sudo find /var/backups/tradeagent -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+          sudo ls -l "$backup" | tee "$ev/tool-backup-listing.txt"
+          for f in tape.db tradeagent.db WORD.txt; do
+            grep -q " $f\$" "$ev/tool-backup-listing.txt" || { echo "the backup holds no $f"; exit 1; }
+          done
+          sudo grep -q "CI throwaway host" "$backup/WORD.txt" || { echo "the backup does not keep the word"; exit 1; }
+          systemctl is-active --quiet tradeagent.service || { echo "the app is not running after install"; exit 1; }
+          sleep 90
+          tools/linux-host.sh health | tee "$ev/tool-health-after.txt"
+          grep -q '^service|tradeagent.service|active=active|' "$ev/tool-health-after.txt" || { echo "health reads the service as not active"; exit 1; }
+
+          tools/linux-host.sh stop "$word" | tee "$ev/tool-stop.txt"
+          grep -q '^state: inactive' "$ev/tool-stop.txt" || { echo "stop left the service running"; exit 1; }
+          rm -f ~/.tradeagent/linux.env
 
       - uses: actions/upload-artifact@v7
         if: always()
