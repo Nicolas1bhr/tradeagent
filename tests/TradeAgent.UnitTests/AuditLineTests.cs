@@ -487,11 +487,14 @@ public partial class AuditLineTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A COLUMN OR AN EVENT REWRITTEN OUT OF SHAPE IS FOUND AND NEVER STOPS THE SWEEP. Past dropped triggers, one accepted delivery's refs
-    /// and deviations become JSON TradeAgent never writes, and one acceptance's evidence names no delivery: the sweep does not fail — the
-    /// rewritten delivery fails its seal (severe) and every check that reads those columns; the unreadable acceptance is the line's own
-    /// failure, in its file; and the deliveries accepted after both are still drawn. RED before this fix: the first parse threw, the sweep
-    /// recorded a failure and its cursor never moved again — every later acceptance unaudited (found by the differential guard's seeds).
+    /// A COLUMN OR AN EVENT REWRITTEN OUT OF SHAPE IS FOUND AND NEVER STOPS THE SWEEP. Past dropped triggers (and, for a check result, ignored
+    /// CHECK constraints): one accepted delivery's refs and deviations become JSON TradeAgent never writes; one's report becomes a BLOB; one's
+    /// refs become <c>[null]</c>; one's check result a word that is no number; one's manifest names a key twice and is re-sealed under the
+    /// hash of that, its acceptance rewritten to name the new id; one acceptance's evidence names no delivery and another's is a BLOB. The
+    /// sweep never fails: every rewritten delivery is drawn and FAILS CLOSED into a severe finding citing it; each unreadable acceptance is the
+    /// line's own failure, in its file; the cursor moves past them all and the delivery accepted after them is still drawn, with no finding.
+    /// RED before fix pass 1 (the review's defect 1): an InvalidCast, NullReference, Format or Argument exception escaped one delivery's
+    /// checks, the sweep recorded a failure and its cursor never moved again — every later acceptance unaudited.
     /// </summary>
     [Fact]
     public void A_column_or_an_event_rewritten_out_of_shape_is_found_and_never_stops_the_sweep()
@@ -502,33 +505,59 @@ public partial class AuditLineTests(ITestOutputHelper log)
         var now = DateTimeOffset.UtcNow;
         var bent = Accepted(org, now, "bent");
         var lost = Accepted(org, now, "lost");
+        var blob = Accepted(org, now, "blob");
+        var nulled = Accepted(org, now, "nulled");
+        var unnumbered = Accepted(org, now, "unnumbered");
+        var doubled = Accepted(org, now, "doubled");
+        var blobEvent = Accepted(org, now, "blob event");
         var later = Accepted(org, now, "later");
+        var twice = "{\"report\":\"one\"," + org.Manifest(doubled)![1..];
+        var resealed = Sha256Hex.Of(twice);
         using (var c = OversightSeed.Open(db.FilePath))
         using (var cmd = c.CreateCommand())
         {
             cmd.CommandText = """
+                PRAGMA ignore_check_constraints = ON;
                 DROP TRIGGER org_delivery_sealed_u;
                 DROP TRIGGER org_mandate_event_sealed_u;
+                DROP TRIGGER org_check_sealed_u;
                 UPDATE org_delivery SET refs = '["run:x"]', deviations = 'not json' WHERE id = $bent;
                 UPDATE org_mandate_event SET evidence = '{"not":"a list"}' WHERE kind = 'accepted' AND evidence LIKE '%' || $lost || '%';
+                UPDATE org_delivery SET report = CAST('blob' AS BLOB) WHERE id = $blob;
+                UPDATE org_delivery SET refs = '[null]' WHERE id = $nulled;
+                UPDATE org_check SET passed = 'yes' WHERE delivery_id = $unnumbered;
+                UPDATE org_delivery SET id = $resealed, manifest = $twice WHERE id = $doubled;
+                UPDATE org_mandate_event SET evidence = json_array($resealed) WHERE kind = 'accepted' AND evidence LIKE '%' || $doubled || '%';
+                UPDATE org_mandate_event SET evidence = X'00' WHERE kind = 'accepted' AND evidence LIKE '%' || $blobEvent || '%';
                 """;
-            cmd.Parameters.AddWithValue("$bent", bent);
-            cmd.Parameters.AddWithValue("$lost", lost);
+            foreach (var (k, v) in new[] { ("$bent", bent), ("$lost", lost), ("$blob", blob), ("$nulled", nulled), ("$unnumbered", unnumbered),
+                         ("$doubled", doubled), ("$resealed", resealed), ("$twice", twice), ("$blobEvent", blobEvent) })
+                cmd.Parameters.AddWithValue(k, v);
             cmd.ExecuteNonQuery();
         }
 
         using var store = new AuditStore(NewFile(), now);
         var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
         Assert.Null(swept.Failure);
-        Assert.Equal([bent, later], swept.Drawn.Select(s => s.DeliveryId));
-        foreach (var k in store.Checks(bent)) log.WriteLine($"{k.Name} {k.Passed}: {k.Reason}");
+        Assert.Equal([bent, blob, nulled, unnumbered, resealed, later], swept.Drawn.Select(s => s.DeliveryId));
+        foreach (var k in store.Checks()) log.WriteLine($"{k.DeliveryId[..12]} {k.Name} {k.Passed}: {k.Reason}");
         Assert.All(store.Checks(bent), k => Assert.False(k.Passed));
         Assert.Equal(AuditSeverity.Severe, Assert.Single(store.Findings(), f => f.DeliveryId == bent && f.Check == AuditCheckName.Seal).Severity);
-        Assert.DoesNotContain(store.Checks(later), k => k.Failed);
-        var failure = Assert.Single(store.Failures());
-        log.WriteLine(failure.What);
-        Assert.Contains("names no delivery TradeAgent can read", failure.What, StringComparison.Ordinal);
-        Assert.DoesNotContain("not json", AllText(store.File), StringComparison.Ordinal);
+        foreach (var rewritten in new[] { blob, nulled, unnumbered, resealed })
+        {
+            var cited = store.Findings().Where(f => f.DeliveryId == rewritten).ToList();
+            Assert.Contains(cited, f => f.Severity == AuditSeverity.Severe);
+            Assert.All(cited, f => Assert.Equal(store.Samples().Single(s => s.DeliveryId == rewritten).MandateId, f.MandateId));
+        }
+        Assert.DoesNotContain(store.Findings(), f => f.DeliveryId == later);
+        Assert.Equal(store.Samples().Max(s => s.EventId), store.Cursor());
+        var failures = store.Failures().Select(f => f.What).ToList();
+        foreach (var f in failures) log.WriteLine(f);
+        Assert.Equal(2, failures.Count);
+        Assert.All(failures, f => Assert.Contains("names no delivery TradeAgent can read", f, StringComparison.Ordinal));
+        var text = AllText(store.File);
+        foreach (var words in new[] { "not json", "blob", "yes", "one" })
+            Assert.DoesNotContain($"'{words}'", text, StringComparison.Ordinal);
     }
 
     /// <summary>
