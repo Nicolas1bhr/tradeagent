@@ -496,7 +496,7 @@ sealed class PerceptionCard
     {
         // A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): never the budget in force.
         var b = Ui.ConfirmIf(Labels.SavePerceptionBudget,
-            () => pending() > current() ? Labels.RaisePerceptionBudgetArmed(Labels.Money(pending(), currency())) : null,
+            () => pending() > current() ? Labels.RaisePerceptionBudgetArmed(Amount.ExactMoney(pending(), currency())) : null,
             save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
@@ -508,7 +508,7 @@ sealed class PerceptionCard
     {
         var budget = PendingBudget();
         _src.SaveBudget(budget);
-        var money = Labels.Money(budget, ReadOr(_src.Currency, ""));
+        var money = Amount.ExactMoney(budget, ReadOr(_src.Currency, ""));
         _src.Activity($"Perception may now spend up to {money} a day");
         Ui.Said(_budgetNote, $"Saved. Perception may spend up to {money} a day.");
         Refresh();

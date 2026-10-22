@@ -291,4 +291,52 @@ public class NumberEntryCultureTests
         Assert.Equal(Theme.TextFaint, capNote.Foreground);
         return Task.CompletedTask;
     });
+
+    /// <summary>
+    /// (item 5) THE ARMED GRANT NAMES THE EXACT FIGURE TYPED — and a one-press save's note names the exact figure written. The money
+    /// formatter rounds past four places, so before this a raise to 0.00005 asked "up to 0.0001": the second press wrote one figure
+    /// under a sentence naming another.
+    /// </summary>
+    [Fact]
+    public Task The_armed_grant_names_the_exact_figure_typed() => OnThePage((page, host) =>
+    {
+        // THE OWNER'S COMMA IN THE ENVELOPE, AND A VALUE CEILING PAST FOUR PLACES.
+        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
+        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "0,05";
+        Field<AmountField>(page, "_envelopeNotional").Box.Text = "0,00005";
+        var grant = Field<Button>(page, "_grantEnvelope");
+        Press(grant);
+        Assert.True(Ui.IsArmed(grant));
+        Assert.Contains("up to 0.05 at a time, worth at most 0.00005", (string)grant.Content!, StringComparison.Ordinal);
+
+        // THE DAILY CAP RAISED TO 0.00005: the sentence names 0.00005, not 0.0001, and the second press writes exactly that.
+        host.Gateway.Update(s => s.AiDailyCostCap = 0m);
+        var cap = Field<AmountField>(page, "_dailyCap");
+        var saveCap = PressLabelled(page, Labels.SaveDailyCap);
+        cap.Box.Text = "0.00005";
+        Press(saveCap);
+        Assert.True(Ui.IsArmed(saveCap));
+        Assert.Equal(Labels.RaiseDailyCapArmed(Amount.ExactMoney(0.00005m, host.SpendToday.Currency)), saveCap.Content);
+        Assert.DoesNotContain("0.0001", (string)saveCap.Content!, StringComparison.Ordinal);
+        Press(saveCap);
+        Assert.Equal(0.00005m, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Contains("up to " + Amount.ExactMoney(0.00005m, host.SpendToday.Currency) + " a day",
+            Field<TextBlock>(page, "_capNote").Text, StringComparison.Ordinal);
+
+        // A ONE-PRESS SAVE (lowering) NAMES THE EXACT FIGURE WRITTEN.
+        cap.Box.Text = "0,00001";
+        Press(saveCap);
+        Assert.Equal(0.00001m, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Contains("up to " + Amount.ExactMoney(0.00001m, host.SpendToday.Currency) + " a day",
+            Field<TextBlock>(page, "_capNote").Text, StringComparison.Ordinal);
+
+        // PERCEPTION'S BUDGET, ON THE SAME PAGE: the raise names 0.00005 as typed with a comma.
+        host.Gateway.Update(s => s.PerceptionDailyBudget = 0m);
+        var perception = Field<PerceptionCard>(page, "_perception");
+        perception.BudgetBox.Box.Text = "0,00005";
+        Press(perception.SaveBudget);
+        Assert.True(Ui.IsArmed(perception.SaveBudget));
+        Assert.Contains("up to 0.00005", (string)perception.SaveBudget.Content!, StringComparison.Ordinal);
+        return Task.CompletedTask;
+    });
 }

@@ -1360,7 +1360,7 @@ sealed class SafetyPage
     {
         var b = Ui.ConfirmIf(Labels.SaveDailyCap,
             () => pending() > current()
-                ? Labels.RaiseDailyCapArmed(MissionSituation.Money(pending(), currency()))
+                ? Labels.RaiseDailyCapArmed(Amount.ExactMoney(pending(), currency()))
                 : null,
             save, "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
@@ -1379,7 +1379,7 @@ sealed class SafetyPage
         // A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): it never saves 0 or the figure in force.
         var b = Ui.ConfirmIf(Labels.SaveDailyCap,
             () => box.Figure > current()
-                ? Labels.RaiseDailyCapArmed(MissionSituation.Money(box.Figure, currency()))
+                ? Labels.RaiseDailyCapArmed(Amount.ExactMoney(box.Figure, currency()))
                 : null,
             save, () => Ui.Refusal((Labels.DailyCostCap, box)), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
@@ -1396,7 +1396,7 @@ sealed class SafetyPage
     {
         var b = Ui.ConfirmIf(Labels.SavePlanCapacity,
             () => pending() > current()
-                ? Labels.RaisePlanCapacityArmed(MissionSituation.Money(pending(), currency()))
+                ? Labels.RaisePlanCapacityArmed(Amount.ExactMoney(pending(), currency()))
                 : null,
             save, "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
@@ -1409,7 +1409,7 @@ sealed class SafetyPage
     {
         var b = Ui.ConfirmIf(Labels.SavePlanCapacity,
             () => box.Figure > current()
-                ? Labels.RaisePlanCapacityArmed(MissionSituation.Money(box.Figure, currency()))
+                ? Labels.RaisePlanCapacityArmed(Amount.ExactMoney(box.Figure, currency()))
                 : null,
             save, () => Ui.Refusal((Labels.PlanDailyCapacity, box)), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
@@ -1627,8 +1627,8 @@ sealed class SafetyPage
         (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) typed, string currency) =>
         Labels.EnvelopeArmed(
             string.IsNullOrWhiteSpace(typed.Symbol) ? "that instrument" : typed.Symbol.Trim(),
-            AllocationRow.Num(typed.Quantity),
-            typed.Notional is { } n && n > 0m ? MissionSituation.Money(n, currency) : null,
+            Amount.Exact(typed.Quantity),
+            typed.Notional is { } n && n > 0m ? Amount.ExactMoney(n, currency) : null,
             typed.Until);
 
     /// <summary>
@@ -1677,13 +1677,13 @@ sealed class SafetyPage
             string.IsNullOrWhiteSpace(typed.Version)
                 ? "that version"
                 : typed.Version.Trim()[..Math.Min(12, typed.Version.Trim().Length)],
-            AllocationRow.Num(typed.Quantity),
-            typed.Notional is { } n && n > 0m ? MissionSituation.Money(n, currency) : null,
+            Amount.Exact(typed.Quantity),
+            typed.Notional is { } n && n > 0m ? Amount.ExactMoney(n, currency) : null,
             AllocationRow.Widens(standing, typed.Quantity, typed.Notional));
 
-    /// <summary>Both halves of the rate, as one phrase for the armed sentence to name.</summary>
+    /// <summary>Both halves of the rate, as one phrase for the armed sentence and the saved note to name — exactly, never rounded.</summary>
     static string Rate((decimal In, decimal Out) rate, string currency) =>
-        $"{MissionSituation.Money(rate.In, currency)} in and {MissionSituation.Money(rate.Out, currency)} out";
+        $"{Amount.ExactMoney(rate.In, currency)} in and {Amount.ExactMoney(rate.Out, currency)} out";
 
     /// <summary>
     /// THE ROW THAT CHOOSES WHICH MODEL THE AI RUNS ON, one button per model this build ships a
@@ -2616,7 +2616,7 @@ sealed class SafetyPage
     {
         var cap = _planCap.Figure;
         _host.Gateway.Update(s => s.AiPlanDailyCapacity = cap);
-        var figure = MissionSituation.Money(cap, _host.SpendToday.Currency);
+        var figure = Amount.ExactMoney(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now use up to {figure} a day of your ChatGPT plan, counted at list price");
         Ui.Said(_planCapNote, $"Saved. The AI may use up to {figure} a day of your ChatGPT plan, counted at list price — not money.");
     }
@@ -2625,7 +2625,7 @@ sealed class SafetyPage
     {
         var cap = PendingCap();
         _host.Gateway.Update(s => s.AiDailyCostCap = cap);
-        var money = MissionSituation.Money(cap, _host.SpendToday.Currency);
+        var money = Amount.ExactMoney(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now spend up to {money} a day");
         Ui.Said(_capNote, $"Saved. The AI may spend up to {money} a day.");
     }
