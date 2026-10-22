@@ -329,7 +329,7 @@ public sealed class CouncilRelay
         List<(string File, string Kind)> files;
         try
         {
-            if (!Directory.Exists(outDir)) return pass;
+            // No out/ at all is no pass: the listing below throws DirectoryNotFoundException for it, caught as every refusal is.
             // Top level only, which is what keeps `out/quarantine/` out of the pass: a file the
             // fence has already refused must not be read again on the next turn, for ever.
             //

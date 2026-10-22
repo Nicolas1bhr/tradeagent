@@ -238,15 +238,16 @@ public sealed class GrantedWorkerTools(
     ToolAnswer List(JsonElement args)
     {
         var path = Str(args, "path") ?? ".";
-        var (full, refusal) = ToolPaths.Resolve(home(), path == "." ? "." : path);
+        var (_, refusal) = ToolPaths.Resolve(home(), path == "." ? "." : path);
         // "." resolves to the root itself, which Resolve refuses as not INSIDE it — correct for a file
         // and wrong for a listing, so the root is named here rather than by loosening that rule.
-        var at = path == "." ? Path.GetFullPath(home()) : full;
         if (path != "." && refusal is not null) return ToolAnswer.Refused(refusal, Summary(ListFiles, path));
 
         try
         {
-            if (!Directory.Exists(at))
+            // EXAMINED WITHOUT FOLLOWING IT (fix pass 4): nothing there, or a file, is not a folder here; a link is refused below by the
+            // listing itself, in its own words.
+            if (path != "." && HomeFiles.Describe(home(), path) is null or { Folder: false, Link: false })
                 return ToolAnswer.Refused($"'{path}' is not a folder here.", Summary(ListFiles, path));
 
             // THE FOLDER OPENED WITHOUT FOLLOWING A LINK, AND EACH NAME EXAMINED WITHOUT FOLLOWING IT (fix pass 3): a link is listed as
