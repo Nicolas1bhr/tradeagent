@@ -405,7 +405,8 @@ public class BrokerSeatTests : IDisposable
     /// (g) GUARD: THE CLI CLASS RUNS AS BEFORE. The legacy pair are class <c>cli</c>, unconfined; their argv carries exactly the deny set
     /// this build had before classes — <c>-c mcp_servers={}</c>, no door, no broker flag — their environment no
     /// <c>CODEX_EXEC_SERVER_URL</c>, their model the one chosen; their allowlists the CLI's; their profile hash the four-part one; and
-    /// no surface is probed for them. Green at base (the deny set's text is base's, copied).
+    /// no surface is probed for them. Green at base (the deny set's text is base's, copied) — and since <c>U-cli-code-mode</c> less
+    /// <c>--disable code_mode_host</c> and with the host on its allowlist, the class's one deliberate change.
     /// </summary>
     [Fact]
     public async Task The_cli_class_runs_as_before()
@@ -454,7 +455,10 @@ public class BrokerSeatTests : IDisposable
         Assert.False(SeatHomeTests.ReadEnv(dump).ContainsKey("CODEX_EXEC_SERVER_URL"));
     }
 
-    /// <summary>The CLI class's deny set as main <c>3e78e74d</c> wrote it, before seat classes had fields of their own.</summary>
+    /// <summary>
+    /// The CLI class's deny set as main <c>3e78e74d</c> wrote it, before seat classes had fields of their own — less
+    /// <c>--disable code_mode_host</c>, which <c>U-cli-code-mode</c> moved off the CLI class onto the broker and the cell (attempt 4).
+    /// </summary>
     static readonly string[] BaseCliDeny =
     [
         "--ignore-user-config", "--ignore-rules", "--strict-config",
@@ -466,7 +470,7 @@ public class BrokerSeatTests : IDisposable
         "--disable", "tool_suggest", "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
         "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "daemon_auto_start",
         "--disable", "auth_elicitation", "--disable", "tool_call_mcp_elicitation", "--disable", "worktrees",
-        "--disable", "code_mode_host", "--disable", "in_app_updates",
+        "--disable", "in_app_updates",
         "-c", "mcp_servers={}", "-c", "marketplaces={}", "-c", "notify=[]", "-c", "web_search=\"disabled\"",
         "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false",
         "-c", "include_apps_instructions=false", "-c", "check_for_update_on_startup=false",
@@ -475,10 +479,10 @@ public class BrokerSeatTests : IDisposable
         "-c", "shell_environment_policy.inherit=\"all\"", "-c", "shell_environment_policy.set={}"
     ];
 
-    /// <summary>The CLI class's feature allowlist as main <c>3e78e74d</c> wrote it.</summary>
+    /// <summary>The CLI class's feature allowlist as main <c>3e78e74d</c> wrote it, with <c>code_mode_host</c> on (<c>U-cli-code-mode</c>).</summary>
     static readonly string[] BaseCliFeatures =
     [
-        "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
+        "code_mode_host", "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
         "guardian_approval", "guardian_reuse_parent_compaction", "in_app_dictation", "item_ids", "mentions_v2",
         "resize_all_images", "shell_snapshot", "shell_tool", "sleep_tool", "sqlite", "steer", "system_proxy_fallback",
         "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server", "unbounded_connection_retries",
