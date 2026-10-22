@@ -594,6 +594,12 @@ public sealed class AppHost : IAsyncDisposable
     public AiSpendToday SpendToday => Meter?.Today ?? AiSpendToday.NotMetered;
 
     /// <summary>
+    /// WHO PAYS FOR <paramref name="role"/>'S TURNS (<c>U-billing-classes</c>): the class of its last launch the meter admitted, or
+    /// <c>unknown</c> before one. For the Safety page's words; nothing decides on it.
+    /// </summary>
+    public string BillingClassOf(string role) => Meter?.ClassOf(role) ?? BillingClasses.Unknown;
+
+    /// <summary>
     /// WHY THE AI IS ALLOWED TO TAKE A TURN. Written by this process and by nothing else — there is
     /// no verb and no pipe op that reaches it, which is the rule <c>material</c> and
     /// <c>ai_attempt</c> already keep and the reason an agent cannot buy itself work.

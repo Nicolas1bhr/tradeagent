@@ -262,6 +262,34 @@ public static class Labels
     public const string SaveDailyCap = "Save the daily limit";
 
     /// <summary>
+    /// THE OWNER'S PLAN-CAPACITY CEILING AND ITS PRESS (<c>U-billing-classes</c>): how much of his ChatGPT plan the AI may use in a day,
+    /// counted at list price — never money. Raising it asks twice, naming the figure, as the money cap's raise does.
+    /// </summary>
+    public const string PlanDailyCapacity = "The most of your ChatGPT plan the AI may use in a day, at list price";
+
+    public const string SavePlanCapacity = "Save the plan limit";
+
+    /// <summary>What the second press of <see cref="SavePlanCapacity"/> will do: a grant of more of the owner's plan, named.</summary>
+    public static string RaisePlanCapacityArmed(string amount) =>
+        $"Confirm: let the AI use up to {amount} a day of your ChatGPT plan, counted at list price";
+
+    /// <summary>
+    /// THE THREE THINGS THE PLAN'S FIGURE CANNOT SEE, in the owner's words, beside it on the Safety page (<c>U-billing-classes</c>): the
+    /// vendor's own limit, his own use of the same plan, and bought credits — which are real money no figure here shows.
+    /// </summary>
+    public const string PlanVendorLimit =
+        "OpenAI's own limit on your plan may stop the AI's turns sooner than this; its usage figures are estimates, not fixed limits.";
+
+    /// <inheritdoc cref="PlanVendorLimit"/>
+    public const string PlanSharedWithYou =
+        "Your own use of Codex with the same ChatGPT account shares this plan, and TradeAgent does not count it here.";
+
+    /// <inheritdoc cref="PlanVendorLimit"/>
+    public const string PlanBoughtCredits =
+        "If your plan's included use runs out and you have bought extra credits, turns past it spend those credits — real money that "
+        + "TradeAgent cannot see or count.";
+
+    /// <summary>
     /// What the second press of <see cref="SaveDailyCap"/> will do. RAISING the ceiling is a grant —
     /// the same act as raising a risk limit, done with a different number — so it asks twice and
     /// names the figure; LOWERING it is one press, because hesitating on the way down costs money.
