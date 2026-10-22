@@ -241,6 +241,56 @@ public class BillingClassesTests : IDisposable
             Assert.Equal(AiAdmission.Day, Launch(both, CouncilRoles.Research).Ceiling);
     }
 
+    /// <summary>
+    /// (a)(b) AFTER AN APP START A ROLE IS HELD TO ITS OWN CLASS'S CEILING FROM THE FIRST LOOK (fix pass 1). The loop picks a role
+    /// (<c>affordable</c>) and waits for midnight (<c>CappedUntilMidnight</c>) on its <see cref="TurnMeter.TodayFor"/> before any launch
+    /// is begun: read from process memory, a restarted app read every role as <c>unknown</c>, so with no real money left a plan seat was
+    /// never picked — and never admitted, so never learned. Read from the ledger, a fresh meter over the same home holds the plan seat to
+    /// the plan's capacity and the key seat to the money cap, each blind to the other's ceiling; a role declared on the harness is key with
+    /// no row at all; a role with no row is still <c>unknown</c>, both ceilings.
+    /// </summary>
+    [Fact]
+    public void After_an_app_start_a_role_is_held_to_its_own_classes_ceiling_from_the_first_look()
+    {
+        // THE EARLIER PROCESS: one plan launch, then one key launch.
+        var earlier = Meter(money: 100m, plan: 100m);
+        using (earlier.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(earlier, CouncilRoles.Operations).Admitted);
+        using (earlier.Attach(new Billed(BillingClasses.Key), CouncilRoles.Research))
+            Assert.True(Launch(earlier, CouncilRoles.Research).Admitted);
+
+        // THE APP STARTS AGAIN with no real money today and the plan's 40: no admission in this process yet.
+        var noMoney = Meter(money: 0m, plan: 40m);
+        using (noMoney.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+        {
+            var first = noMoney.TodayFor(CouncilRoles.Operations);
+            Assert.True(first.AdmitsAnotherTurn);
+            Assert.Equal(BillingClasses.Plan, first.Class);
+            Assert.True(Launch(noMoney, CouncilRoles.Operations).Admitted);
+        }
+        Assert.False(noMoney.TodayFor(CouncilRoles.Research).AdmitsAnotherTurn);
+
+        // THE MIRROR: no plan capacity, real money left — the key seat is picked, the plan seat is not.
+        var noPlan = Meter(money: 40m, plan: 0m);
+        Assert.Equal(BillingClasses.Key, noPlan.TodayFor(CouncilRoles.Research).Class);
+        Assert.True(noPlan.TodayFor(CouncilRoles.Research).AdmitsAnotherTurn);
+        Assert.False(noPlan.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+
+        // NO ROW: a home where nobody has launched reads both; a role declared on the harness is key by code, with no row at all —
+        // and a row of the seat a role left does not answer for the seat it is on now.
+        using var fresh = TestEnv.NewDb();
+        Assert.Equal(BillingClasses.Unknown, Meter(money: 40m, plan: 40m, db: fresh).ClassOf(CouncilRoles.Research));
+        var harness = new TurnMeter(fresh, () => 40m, now: () => _at, recordPath: _records, owner: () => Rate, share: _ => 1m,
+            seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Harness, planCap: () => 0m);
+        Assert.Equal(BillingClasses.Key, harness.ClassOf(CouncilRoles.Research));
+        Assert.True(harness.TodayFor(CouncilRoles.Research).AdmitsAnotherTurn);
+        var broker = new TurnMeter(_db, () => 40m, now: () => _at, recordPath: _records, owner: () => Rate, share: _ => 1m,
+            seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Broker, planCap: () => 40m);
+        Assert.Equal(BillingClasses.Unknown, broker.ClassOf(CouncilRoles.Operations));
+    }
+
     // ---- (e) envelopes nest in each class --------------------------------------------------------------------------------
 
     void Exec(string sql, params (string, object?)[] ps) => Exec(_db, sql, ps);

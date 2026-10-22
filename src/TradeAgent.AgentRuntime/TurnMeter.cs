@@ -1031,8 +1031,6 @@ public sealed class TurnMeter
                 {
                     _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass, packet, spec);
                     _live.Enter(written);
-                    // THE CEILING THIS ROLE'S READING IS ABOUT FROM NOW ON (U-billing-classes): its admitted launch's class.
-                    _lastClass[key] = attempt.BillingClass;
                 }
         }
         // WHATEVER STOPPED THE ROW FROM GOING IN REFUSES THE LAUNCH. Never an admission: the row is
@@ -1536,24 +1534,26 @@ public sealed class TurnMeter
     /// — a widened envelope buys the turn its gate would take, and an exhausted subtree is never chosen over a funded
     /// sibling. The legacy pair, with no envelope set, read their division's — the Safety page's split of the day, as before.
     /// A chain nobody can read admits nothing here, as the gate admits nothing.</para>
-    /// <para><b>AGAINST THE CEILING OF THE ROLE'S LAST ADMITTED LAUNCH</b> (<c>U-billing-classes</c>): its class as this meter admitted
-    /// it, and <c>unknown</c> before one — so the loop's first look asks both ceilings, exactly as the gate would for a seat nobody
-    /// has read yet.</para>
+    /// <para><b>AGAINST THE CEILING OF THE ROLE'S OWN CLASS, READ FROM DURABLE TRUTH</b> (<c>U-billing-classes</c>, fix pass 1): never from
+    /// this process's memory, which an app start empties — a plan seat held to the money cap from the loop's first look (or a key seat to
+    /// the plan's) is never picked, so its class is never learned again. See <see cref="ClassOf"/>.</para>
     /// </summary>
-    public AiSpendToday TodayFor(string role) => Reading(role, LastClassOf(role));
+    public AiSpendToday TodayFor(string role) => Reading(role, ClassOf(role));
 
     /// <summary>
-    /// THE CLASS EACH ROLE'S LAST LAUNCH WAS ADMITTED UNDER, by role (<c>U-billing-classes</c>): what the role's own reading is about
-    /// until its next admission says otherwise. Empty at start — a role nobody has admitted reads both ceilings.
+    /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix pass 1), from what outlives the process: a role
+    /// the app declares on its harness is <c>key</c> — code, the harness's own verdict; otherwise the class the ledger recorded on the
+    /// role's last admitted launch on the seat class it is declared on now (<see cref="AiAttemptStore.LastBillingClass"/>), written from
+    /// the verdict that admitted it. <c>unknown</c> — both ceilings, the gate's own answer for a seat nobody has read — where the role has
+    /// no such row, its row was <c>unknown</c>, or the ledger cannot be read. The gate in <see cref="Begin"/> still decides from the
+    /// verdict it reads at admission; this is the reading the loop and the screens look at before it.
     /// </summary>
-    readonly Dictionary<string, string> _lastClass = new(StringComparer.Ordinal);
-
-    /// <summary>The class of <paramref name="role"/>'s last admitted launch, or <c>unknown</c> before one.</summary>
-    public string ClassOf(string role) => LastClassOf(role);
-
-    string LastClassOf(string? role)
+    public string ClassOf(string role)
     {
-        lock (_gate) return _lastClass.TryGetValue(Key(role), out var known) ? known : BillingClasses.Unknown;
+        var declared = Declared(role);
+        if (declared == SeatClasses.Harness) return BillingClasses.Key;
+        try { return BillingClasses.Of(_attempts.LastBillingClass(Key(role), declared)); }
+        catch (Exception) { return BillingClasses.Unknown; }
     }
 
     /// <summary>

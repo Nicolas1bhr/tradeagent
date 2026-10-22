@@ -862,6 +862,23 @@ public sealed class AiAttemptStore(Database db)
     });
 
     /// <summary>
+    /// WHO PAID FOR <paramref name="role"/>'S LAST ADMITTED LAUNCH, as its row recorded it (<c>U-billing-classes</c> fix pass 1): the
+    /// billing class the meter wrote from the seat verdict it admitted, read from the ledger rather than from any process's memory, so an
+    /// app start does not forget which ceiling a role is held to. Narrowed to rows on <paramref name="seatClass"/> where one is named — a
+    /// role moved to another kind of seat is not read by a row of the seat it left. Null where the role has no such row.
+    /// </summary>
+    public string? LastBillingClass(string role, string? seatClass = null) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT billing_class FROM ai_attempt
+             WHERE COALESCE(role, $chair) = $role
+               AND ($seat IS NULL OR seat_class = $seat)
+             ORDER BY started_at DESC, rowid DESC LIMIT 1
+            """, ("$chair", CouncilRoles.Default), ("$role", role), ("$seat", seatClass));
+        return c.ExecuteScalar() as string;
+    });
+
+    /// <summary>
     /// THE TOKEN PROFILE PER POSITION × KIND × SESSION OVER A WINDOW (<c>U-org-packets-a</c>; ORGANISATION § 17, R17 #20): what a fresh
     /// packet costs against a resumed session, from the runtime's own figures on every RESOLVED attempt that started in the window.
     /// One read. The kind is the row's own fact (<c>mandate_id</c>), never today's chart; the session is what the attempt's
