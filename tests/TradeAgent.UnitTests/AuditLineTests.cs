@@ -597,4 +597,49 @@ public partial class AuditLineTests(ITestOutputHelper log)
         Assert.DoesNotContain(store.Flags(), f => f.DeliveryId == plain);
         Assert.Equal((attempts, wakes), (Count(db.FilePath, "ai_attempt"), Count(db.FilePath, "mission_event")));
     }
+
+    // ---- the line on its timer -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE LINE OPENS ITS OWN FILE, AND HOLDS A REFUSAL WITHOUT RUNNING: over a fresh file it opens with no refusal, its file made, its
+    /// cadence a minute; over a file a newer build wrote it holds the refusal naming both versions, starts nothing, and leaves the file as
+    /// found; both quit cleanly. Its file is under <c>state/</c>, outside every workspace and home. RED at base: no line existed.
+    /// </summary>
+    [Fact]
+    public async Task The_line_opens_its_own_file_and_holds_a_refusal_without_running()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(1), AuditLine.Cadence);
+        var file = Path.GetFullPath(AuditStore.DefaultFile);
+        Assert.StartsWith(Path.GetFullPath(Paths.State) + Path.DirectorySeparatorChar, file, StringComparison.Ordinal);
+        foreach (var root in new[] { Paths.Workspace, Paths.AgentHome, Paths.SeatHome, Paths.RoleHome(CouncilRoles.Research) })
+            Assert.False(file.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.Ordinal), $"{file} is under {root}");
+
+        using var db = TestEnv.NewDb();
+        var fresh = NewFile();
+        await using (var line = new AuditLine(db.FilePath, fresh))
+        {
+            Assert.Null(line.Refusal);
+            line.Start();
+            line.Start();
+            Assert.True(File.Exists(fresh));
+        }
+
+        var newer = NewFile();
+        using (var c = new SqliteConnection($"Data Source={newer};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "CREATE TABLE audit_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO audit_meta VALUES('schema', '9');";
+            cmd.ExecuteNonQuery();
+        }
+        var before = File.ReadAllBytes(newer);
+        await using (var held = new AuditLine(db.FilePath, newer))
+        {
+            log.WriteLine(held.Refusal);
+            Assert.Contains("version 9", held.Refusal ?? "", StringComparison.Ordinal);
+            Assert.Contains($"understands {AuditStore.Schema}", held.Refusal ?? "", StringComparison.Ordinal);
+            held.Start();
+        }
+        Assert.Equal(before, File.ReadAllBytes(newer));
+    }
 }

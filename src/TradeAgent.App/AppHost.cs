@@ -4,6 +4,7 @@ using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
+using TradeAgent.Core.Audit;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Core.Oversight;
@@ -56,6 +57,9 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>The app's database file, which the Oversight page reads read-only to say whether a cited record is still there.</summary>
     internal string? DatabaseFile => _db?.FilePath;
+
+    /// <summary>The public audit line (<c>U-org-audit-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>
+    AuditLine? _audit;
 
     /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
     Task? _background;
@@ -1109,6 +1113,10 @@ public sealed class AppHost : IAsyncDisposable
             // here or to the logs; a file it will not open is held on the line for the owner's page, never told the activity log.
             _oversight = new OversightLine(_db!.FilePath);
             _oversight.Start();
+            // THE PUBLIC AUDIT LINE (U-org-audit-a; ORCHESTRATION § 2.13): its own file, state/audit.db, on its own one-minute timer. It reads
+            // approved evidence here READ-ONLY and writes nothing the organisation reads; its findings are shown nowhere until part c.
+            _audit = new AuditLine(_db!.FilePath);
+            _audit.Start();
 
             Gateway.Log.Activity("TradeAgent started");
             if (OperatingSystem.IsLinux())
@@ -2624,6 +2632,7 @@ public sealed class AppHost : IAsyncDisposable
             _loop.Dispose();
         }
         if (_oversight is not null) { await _oversight.DisposeAsync(); _oversight = null; }
+        if (_audit is not null) { await _audit.DisposeAsync(); _audit = null; }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":
