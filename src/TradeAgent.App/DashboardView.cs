@@ -1209,7 +1209,7 @@ sealed class SafetyPage
 
     readonly AmountField _envelopeQuantity = Ui.AmountField(0m, AmountKind.Decimal);
     readonly AmountField _envelopeNotional = Ui.AmountField(0m, AmountKind.Decimal);
-    readonly AmountField _envelopeDays = Ui.AmountField(30m, AmountKind.Whole);
+    readonly AmountField _envelopeDays = Ui.AmountField(30m, AmountKind.Whole, 0m, Amount.MostDays);
     readonly TextBlock _envelopeValue = Ui.Body("");
     readonly TextBlock _envelopeNote = Ui.Micro("");
     readonly TextBlock _deploymentValue = Ui.Body("");
@@ -1795,9 +1795,9 @@ sealed class SafetyPage
         _maxPerMinute = Ui.AmountField(r.MaxOrdersPerMinute, AmountKind.Whole);
         _maxLossPerTrade = Ui.AmountField(r.MaxLossPerTrade, AmountKind.Decimal);
         _maxDailyLoss = Ui.AmountField(r.MaxDailyLoss, AmountKind.Decimal);
-        _lossMinClosure = Ui.AmountField(r.LossMinClosureHours, AmountKind.Decimal);
-        _lossStrikeWindow = Ui.AmountField(r.LossStrikeWindowDays, AmountKind.Whole);
-        _valuationExit = Ui.AmountField(r.ValuationLossExitMinutes, AmountKind.Decimal);
+        _lossMinClosure = Ui.AmountField(r.LossMinClosureHours, AmountKind.Decimal, 0m, Amount.MostHours);
+        _lossStrikeWindow = Ui.AmountField(r.LossStrikeWindowDays, AmountKind.Whole, 0m, Amount.MostDays);
+        _valuationExit = Ui.AmountField(r.ValuationLossExitMinutes, AmountKind.Decimal, 0m, Amount.MostMinutes);
         // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
         // rather than everything is. It said "any".
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
@@ -1811,7 +1811,7 @@ sealed class SafetyPage
             _host.Gateway.Settings.AiTurnAllowanceOutputTokens);
         _allowanceIn = Ui.AmountField(allowance.InputTokens, AmountKind.Whole);
         _allowanceOut = Ui.AmountField(allowance.OutputTokens, AmountKind.Whole);
-        _reviewEvery = Ui.AmountField(_host.Gateway.Settings.MissionReviewMinutes, AmountKind.Whole);
+        _reviewEvery = Ui.AmountField(_host.Gateway.Settings.MissionReviewMinutes, AmountKind.Whole, 0m, Amount.MostMinutes);
         _lanes = LaneField(_host.Gateway.Settings.AiLanes);
         _lanesPerPool = LaneField(_host.Gateway.Settings.AiLanesPerPool);
         _lanesPerCellClass = LaneField(_host.Gateway.Settings.AiLanesPerCellClass);

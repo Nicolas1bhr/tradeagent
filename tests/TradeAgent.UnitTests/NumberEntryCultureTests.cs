@@ -410,6 +410,61 @@ public class NumberEntryCultureTests
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// (fix pass 1) NO TYPED FIGURE CRASHES THE APP: a box whose figure feeds a date or a duration has a stated most, and a figure past it
+    /// is refused in the reading line, never thrown out of the keystroke. RED at 46bfc570: "3000000" typed into the envelope's days threw
+    /// ArgumentOutOfRangeException out of the box's own text change (a date three million days from now does not exist).
+    /// </summary>
+    [Fact]
+    public Task No_typed_figure_throws_and_a_figure_past_a_boxs_stated_most_is_refused() => OnThePage((page, _) =>
+    {
+        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
+        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "1";
+        var days = Field<AmountField>(page, "_envelopeDays");
+        var grant = Field<Button>(page, "_grantEnvelope");
+        var envelopeNote = Field<TextBlock>(page, "_envelopeNote");
+        Press(grant);
+        Assert.True(Ui.IsArmed(grant));
+
+        Assert.Null(Record.Exception(() => days.Box.Text = "3000000"));
+        Assert.Equal("3000000", days.Box.Text);
+        Assert.Null(days.Value);
+        Assert.Equal(Labels.AmountAbove("3000000", Amount.Exact(Amount.MostDays)), days.Refusal);
+        Assert.Equal(days.Refusal, days.Reading.Text);
+        Assert.Equal(Theme.Caution, days.Reading.Foreground);
+        Assert.False(Ui.IsArmed(grant));
+        Assert.Null(Record.Exception(() => Press(grant)));
+        Assert.False(Ui.IsArmed(grant));
+        Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, days.Refusal!), envelopeNote.Text);
+
+        // THE MOST IT TAKES STILL READS, AND ARMS A GRANT ENDING ON A DAY THAT EXISTS.
+        Assert.Null(Record.Exception(() => days.Box.Text = Amount.Exact(Amount.MostDays)));
+        Assert.Equal(Amount.MostDays, days.Value);
+        Press(grant);
+        Assert.True(Ui.IsArmed(grant));
+
+        // EVERY DURATION ON THE PAGE, PAST ITS MOST: refused in words, never thrown — and its most is a span every clock can add.
+        foreach (var (name, most) in new[]
+                 {
+                     ("_lossStrikeWindow", Amount.MostDays), ("_lossMinClosure", Amount.MostHours),
+                     ("_valuationExit", Amount.MostMinutes), ("_reviewEvery", Amount.MostMinutes)
+                 })
+        {
+            var box = Field<AmountField>(page, name);
+            Assert.Null(Record.Exception(() => box.Box.Text = "999999999"));
+            Assert.Equal($"{name}: {Labels.AmountAbove("999999999", Amount.Exact(most))}", $"{name}: {box.Refusal}");
+            box.Box.Text = Amount.Exact(most);
+            Assert.Equal(most, box.Value);
+        }
+        var now = DateTimeOffset.UtcNow;
+        Assert.Null(Record.Exception(() => now.AddDays((double)Amount.MostDays)));
+        Assert.Null(Record.Exception(() => now + TradeAgent.Gateway.LossReopen.ClosureOf(Amount.MostHours)));
+        Assert.Null(Record.Exception(() => now + TradeAgent.Gateway.ValuationLoss.BoundOf(Amount.MostMinutes)));
+        // The review interval is looked at up to eight times slower while nothing happens (MissionLoop.NextLook).
+        Assert.Null(Record.Exception(() => now + TimeSpan.FromTicks(TimeSpan.FromMinutes((double)Amount.MostMinutes).Ticks * 8)));
+        return Task.CompletedTask;
+    });
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

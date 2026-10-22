@@ -98,6 +98,19 @@ public static class Amount
     }
 
     /// <summary>
+    /// THE MOST A DURATION BOX TAKES, in its own unit (<c>U-number-entry-culture</c>, fix pass 1): a hundred years. A figure past it is
+    /// refused in the box's reading line, because a date or a span that far out does not exist on any clock — "3000000" days was
+    /// thrown out of the keystroke that typed it. A hundred years limits nothing an owner means; it only keeps every figure a date.
+    /// </summary>
+    public const decimal MostDays = 36_500m;
+
+    /// <inheritdoc cref="MostDays"/>
+    public const decimal MostHours = MostDays * 24m;
+
+    /// <inheritdoc cref="MostDays"/>
+    public const decimal MostMinutes = MostHours * 60m;
+
+    /// <summary>
     /// A read figure as it is printed back to the owner: every digit it has, trailing zeros dropped,
     /// never rounded and never in a culture's spelling — 0.00005 is "0.00005", not "0.0001".
     /// </summary>
