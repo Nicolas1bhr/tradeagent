@@ -406,7 +406,7 @@ public static class CellNative
         b.Jeq(t.Socketpair, "socketpair", "allow");
         b.Label("flags3").Ld(40).Jset(MSG_FASTOPEN, "eacces", "allow");
         b.Label("flags2").Ld(32).Jset(MSG_FASTOPEN, "eacces", "allow");
-        b.Label("socket").Ld(16).Jeq(AF_INET, "type", null).Jeq(AF_INET6, "type", "eacces");
+        b.Label("socket").Ld(16).Jeq(AF_UNIX, "allow", null).Jeq(AF_INET, "type", null).Jeq(AF_INET6, "type", "eacces");
         b.Label("type").Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "stream", datagrams ? null : "eacces");
         if (datagrams) b.Jeq(SOCK_DGRAM, null, "eacces").Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_UDP, "allow", "eacces");
         b.Label("stream").Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_TCP, "allow", "eacces");
