@@ -476,6 +476,52 @@ public class BillingClassesTests : IDisposable
     }
 
     /// <summary>
+    /// (g) THE DAILY REPORT COUNTS PLAN TURNS AND NEVER PRINTS PLAN FIGURES AS MONEY (fix pass 1): the real-money lines are the money cap's
+    /// own (key and unknown rows), the plan's capacity has its own lines — its figures as capacity, never in the money's format — and the
+    /// turns of each are counted; a role whose launches bill the plan is reported against the plan's ceiling, in its words.
+    /// </summary>
+    [Fact]
+    public async Task The_daily_report_counts_plan_turns_and_never_prints_plan_figures_as_money()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var meter = Meter(money: 10m, plan: 40m, db: db);
+        var store = new AiAttemptStore(db);
+        using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            for (var n = 0; n < 2; n++)
+            {
+                var id = Launch(meter, CouncilRoles.Operations).Id!;
+                Assert.True(store.End(id, 0, _at, 1000, 0, 0, 100, 0, "gpt-5.6-sol", 1.5m, null, null));
+            }
+        // AND ONE STILL OPEN, committed.
+        using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        var report = gw.Reports.Compose(_at, new TradeAgent.Gateway.DailyReportInputs
+        {
+            Spending = [meter.Today, .. CouncilRoles.All.Select(meter.TodayFor)]
+        });
+
+        Assert.Equal(0, report.Spending.Turns);
+        Assert.Equal(2, report.Spending.PlanTurns);
+        Assert.Equal(10m, report.Spending.Cap);
+        Assert.Equal(40m, report.Spending.PlanCap);
+        Assert.Equal(3m, report.Spending.PlanSpent);
+        Assert.Equal(Turn, report.Spending.PlanReserved);
+        Assert.Equal(0m, report.Spending.Spent);
+        var operations = report.Spending.Roles.Single(r => r.Role == CouncilRoles.Title(CouncilRoles.Operations));
+        Assert.Equal(BillingClasses.Plan, operations.Class);
+        Assert.Equal(40m, operations.Cap);
+
+        var text = TradeAgent.Gateway.DailyReportText.Render(report);
+        Assert.Contains($"daily ceiling of real money: {Labels.Money(10m, "USD")}", text, StringComparison.Ordinal);
+        Assert.Contains("turns against plan capacity: 2", text, StringComparison.Ordinal);
+        Assert.Contains($"plan capacity used: 3 of 40 a day, {Turn.ToString("0.####", CultureInfo.InvariantCulture)} committed — "
+                        + "your ChatGPT plan's use counted at list price in USD, not money", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Labels.Money(40m, "USD"), text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Labels.Money(3m, "USD"), text, StringComparison.Ordinal);
+        Assert.Contains($"{CouncilRoles.Title(CouncilRoles.Operations)}: 3 of plan capacity used", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (g) EACH SAFETY-PAGE LINE SAYS "REACHED" ONLY FOR ITS OWN CEILING (fix pass 1): the plan's capacity used up to its 40 leaves the real
     /// money line untouched — nothing of the 10 is spent and it is not reached — and the mirror, the money cap used up, leaves the plan's.
     /// </summary>

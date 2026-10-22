@@ -2333,7 +2333,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 r.Spending.Turns, r.Spending.UnpricedTurns, r.Spending.Currency, r.Spending.Runtime,
                 r.Spending.Basis,
                 [.. r.Spending.Roles.Select(x => new ReportReplyRole(x.Role, x.Model, x.Turns, x.Spent,
-                    x.Reserved, x.Cap, x.Estimated))]),
+                    x.Reserved, x.Cap, x.Estimated, x.Class))],
+                r.Spending.PlanSpent, r.Spending.PlanReserved, r.Spending.PlanCap, r.Spending.PlanTurns),
             [.. r.Decisions.OwnerMessages.Select(m => new ReportReplyMessage(m.Text, m.ReceivedAt,
                 m.Disposition, m.DispositionDetail, m.DueBy, m.Overdue))],
             [.. r.AllGaps.Select(g => new ReportReplyGap(g.Field, g.Why))],
@@ -2418,7 +2419,13 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         string Currency,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Runtime,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Basis,
-        IReadOnlyList<ReportReplyRole> Roles);
+        IReadOnlyList<ReportReplyRole> Roles,
+        // THE PLAN'S OWN FIGURES (U-billing-classes fix pass 1): the four above are real money — key and unknown rows — and these the
+        // owner's plan capacity, a list-price equivalent and never money. Read-only, as everything in this reply is.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? PlanSpent,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? PlanReserved,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? PlanCap,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? PlanTurns);
 
     /// <inheritdoc cref="ReportReply"/>
     sealed record ReportReplyRole(
@@ -2428,7 +2435,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Spent,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Reserved,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Cap,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Estimated);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Estimated,
+        // WHICH CEILING THE THREE FIGURES ARE AGAINST: key real money, plan the plan's capacity (not money), unknown both.
+        string Class);
 
     /// <inheritdoc cref="ReportReply"/>
     sealed record ReportReplyMessage(

@@ -37,9 +37,13 @@ public sealed record ReportIdentity
     public int? SchemaVersion { get; init; }
 }
 
-/// <summary>One role's state on the day. Absent figures are absent, never zero.</summary>
+/// <summary>
+/// One role's state on the day. Absent figures are absent, never zero. <paramref name="Class"/> (<c>U-billing-classes</c>) is the ceiling
+/// the figures are against: <c>key</c> real money, <c>plan</c> the owner's plan capacity — a list-price equivalent, never money — and
+/// <c>unknown</c> the money's figures for a seat nobody read, whose turns count against both.
+/// </summary>
 public sealed record ReportRole(string Role, string? Model, int? Turns, decimal? Spent,
-    decimal? Reserved, decimal? Cap, string? Estimated);
+    decimal? Reserved, decimal? Cap, string? Estimated, string Class = TradeAgent.Core.Db.BillingClasses.Key);
 
 /// <summary>Working, healthy idle, blocked or paused — with the coded reason and the next wake.</summary>
 public sealed record ReportMission
@@ -326,6 +330,18 @@ public sealed record ReportSpending
     /// cannot tell a worst case from is exactly the reading that rule forbids.
     /// </summary>
     public int? UnreportedTurns { get; init; }
+
+    /// <summary>
+    /// THE PLAN'S OWN FIGURES (<c>U-billing-classes</c> fix pass 1), beside the real money's above — which are the money cap's own, over
+    /// the day's key and unknown rows: the plan's capacity used and committed over its plan and unknown rows, its daily ceiling, and its
+    /// turns. A list-price equivalent in <see cref="Currency"/>'s units, never money: printed as capacity, never in the money's format.
+    /// Null where nothing read the plan's ceiling.
+    /// </summary>
+    public decimal? PlanSpent { get; init; }
+    public decimal? PlanReserved { get; init; }
+    public decimal? PlanCap { get; init; }
+    public int? PlanTurns { get; init; }
+
     public string Currency { get; init; } = "";
     public string? Runtime { get; init; }
 
@@ -719,19 +735,33 @@ public static class DailyReportText
         Gaps(b, r.Execution.Missing);
 
         Section(b, "6. AI spending");
-        Kv(b, "spent", Money(r.Spending.Spent, r.Spending.Currency));
+        // TWO CEILINGS, EACH IN ITS OWN WORDS (U-billing-classes fix pass 1): real money — API keys, and every turn whose seat was not
+        // read — and the owner's plan capacity, a list-price equivalent printed as capacity and never in the money's format.
+        Kv(b, "spent in real money", Money(r.Spending.Spent, r.Spending.Currency));
         Kv(b, "reserved and unresolved", Money(r.Spending.Reserved, r.Spending.Currency));
-        Kv(b, "daily ceiling", Money(r.Spending.Cap, r.Spending.Currency));
-        Kv(b, "turns", Whole(r.Spending.Turns)
+        Kv(b, "daily ceiling of real money", Money(r.Spending.Cap, r.Spending.Currency));
+        Kv(b, "turns against real money", Whole(r.Spending.Turns)
                        + (r.Spending.UnpricedTurns is int unpriced and > 0 ? $", {unpriced} of them unpriced" : "")
                        + (r.Spending.UnreportedTurns is int held and > 0
                            ? $", {held} charged at their reservation because no usage was ever reported" : ""));
+        if (r.Spending.PlanCap is not null || r.Spending.PlanTurns is not null)
+        {
+            Kv(b, "plan capacity used", $"{Capacity(r.Spending.PlanSpent)} of {Capacity(r.Spending.PlanCap)} a day, "
+                                        + $"{Capacity(r.Spending.PlanReserved)} committed — {PlanWords(r.Spending.Currency)}");
+            Kv(b, "turns against plan capacity", Whole(r.Spending.PlanTurns)
+                                                 + " — a turn whose seat was not read counts against both ceilings");
+        }
         Kv(b, "runtime", r.Spending.Runtime ?? Unknown);
         if (r.Spending.HarnessKey is { Length: > 0 } key) Kv(b, "harness key", key);
         foreach (var role in r.Spending.Roles)
-            Kv(b, role.Role, $"{Money(role.Spent, r.Spending.Currency)} spent, "
-                             + $"{Money(role.Reserved, r.Spending.Currency)} committed, "
-                             + $"of {Money(role.Cap, r.Spending.Currency)} on {role.Model ?? Unknown}"
+            Kv(b, role.Role, (role.Class == TradeAgent.Core.Db.BillingClasses.Plan
+                                 ? $"{Capacity(role.Spent)} of plan capacity used, {Capacity(role.Reserved)} committed, "
+                                   + $"of {Capacity(role.Cap)} on {role.Model ?? Unknown} — {PlanWords(r.Spending.Currency)}"
+                                 : $"{Money(role.Spent, r.Spending.Currency)} spent, "
+                                   + $"{Money(role.Reserved, r.Spending.Currency)} committed, "
+                                   + $"of {Money(role.Cap, r.Spending.Currency)} in real money on {role.Model ?? Unknown}"
+                                   + (role.Class == TradeAgent.Core.Db.BillingClasses.Unknown
+                                       ? " — its seat was not read, so its turns count against both ceilings" : ""))
                              + (role.Estimated is { } est ? $" — {est}" : ""));
         Kv(b, "basis", r.Spending.Basis ?? Unknown);
         Gaps(b, r.Spending.Missing);
@@ -812,6 +842,12 @@ public static class DailyReportText
 
     /// <summary>An amount with its currency, or the dash. Never a zero standing in for an unknown.</summary>
     static string Money(decimal? v, string currency) => v is { } m ? Labels.Money(m, currency) : Unknown;
+
+    /// <summary>A plan-capacity figure: a number and never the money's format — what it is a list-price equivalent of is said beside it.</summary>
+    static string Capacity(decimal? v) => v is { } c ? c.ToString("0.####", CultureInfo.InvariantCulture) : Unknown;
+
+    static string PlanWords(string currency) =>
+        "your ChatGPT plan's use counted at list price" + (currency.Length > 0 ? $" in {currency}" : "") + ", not money";
 
     static string Instant(DateTimeOffset? at) =>
         at is { } t ? t.ToString("yyyy-MM-dd HH:mm:ssK", CultureInfo.InvariantCulture) : Unknown;

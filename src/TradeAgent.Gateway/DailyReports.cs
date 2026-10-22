@@ -627,9 +627,17 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             gaps.Add(new ReportGap("spent",
                 whole.WhyNoPrice ?? "this installation cannot price a turn, so the figure is a floor"));
 
+        // THE PLAN'S OWN READING (U-billing-classes fix pass 1): the whole day's figures above are the money cap's — key and unknown
+        // rows — and the plan's capacity, over its plan and unknown rows, is reported beside them as capacity, its turns counted.
+        var plan = whole is { Metered: true } ? whole.PlanReading : null;
+
         return new ReportSpending
         {
             Roles = [.. i.Spending.Where(s => s.Role is not null).Select(RoleOf)],
+            PlanSpent = plan is { Metered: true, CanPrice: true } ? plan.Spent : null,
+            PlanReserved = plan?.Reserved,
+            PlanCap = plan?.Cap,
+            PlanTurns = plan?.Turns,
             Spent = whole is { Metered: true, CanPrice: true } ? whole.Spent : null,
             Reserved = whole is { Metered: true } ? whole.Reserved : null,
             Cap = whole is { Metered: true } ? whole.Cap : null,
@@ -1169,9 +1177,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         ? "Perception call"
         : $"{CouncilRoles.Title(CouncilRoles.Or(a.Role))} attempt";
 
+    /// <summary>
+    /// One role's line, against the ceiling of its own class (<c>U-billing-classes</c> fix pass 1): a plan role's figures are the plan's
+    /// capacity and say so; a role nobody has read carries the money's figures and the class <c>unknown</c>, both ceilings.
+    /// </summary>
     static ReportRole RoleOf(AiSpendToday s) => new(
         CouncilRoles.Title(s.Role!), s.Model, s.Turns,
-        s.CanPrice ? s.RoleSpent : null, s.RoleReserved, s.RoleCap, s.Estimated);
+        s.CanPrice ? s.RoleSpent : null, s.RoleReserved, s.RoleCap, s.Estimated,
+        s.PlanReading is null ? BillingClasses.Of(s.Class) : BillingClasses.Unknown);
 
     DateTimeOffset? SafeNextDue()
     {
