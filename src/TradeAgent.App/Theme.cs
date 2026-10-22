@@ -255,24 +255,6 @@ static class Theme
             }
         });
 
-        styles.Add(new Style(x => x.OfType<NumericUpDown>().Template().OfType<Border>())
-        {
-            Setters = { S(Border.BackgroundProperty, BgSunken), S(Border.BorderBrushProperty, Line) }
-        });
-
-        styles.Add(new Style(x => x.OfType<NumericUpDown>())
-        {
-            Setters =
-            {
-                S(TemplatedControl.BackgroundProperty, BgSunken),
-                S(TemplatedControl.BorderBrushProperty, Line),
-                S(TemplatedControl.CornerRadiusProperty, RadiusSm),
-                S(TemplatedControl.ForegroundProperty, Text),
-                S(TemplatedControl.FontFamilyProperty, Mono),
-                S(TemplatedControl.FontSizeProperty, Base)
-            }
-        });
-
         // A NumericUpDown's steppers are RepeatButtons, and NOTHING above reaches them: Avalonia's
         // `OfType<T>()` is an EXACT-type selector, so the global `Button:disabled` rule never
         // matched a `RepeatButton` and Fluent's own disabled paint won by default. On this dark

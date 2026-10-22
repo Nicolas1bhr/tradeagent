@@ -259,8 +259,8 @@ public class LossBudgetCompositionTests
     {
         var text = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "DashboardView.cs"));
 
-        Assert.Contains("_maxLossPerTrade = Ui.NumberField(r.MaxLossPerTrade", text, StringComparison.Ordinal);
-        Assert.Contains("_maxDailyLoss = Ui.NumberField(r.MaxDailyLoss", text, StringComparison.Ordinal);
+        Assert.Contains("_maxLossPerTrade = Ui.AmountField(r.MaxLossPerTrade", text, StringComparison.Ordinal);
+        Assert.Contains("_maxDailyLoss = Ui.AmountField(r.MaxDailyLoss", text, StringComparison.Ordinal);
         Assert.Contains("Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint)", text, StringComparison.Ordinal);
         Assert.Contains("Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint)", text, StringComparison.Ordinal);
 

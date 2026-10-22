@@ -661,17 +661,17 @@ public class OrgLanesTests : IDisposable
     public void Editing_a_lane_box_disarms_a_raise_armed_for_another_figure()
     {
         var saved = new List<int>();
-        var lanes = Ui.NumberField(1m, 1m);
-        var perPool = Ui.NumberField(1m, 1m);
-        var perCell = Ui.NumberField(1m, 1m);
+        var lanes = Ui.AmountField(1m, AmountKind.Whole, 1m);
+        var perPool = Ui.AmountField(1m, AmountKind.Whole, 1m);
+        var perCell = Ui.AmountField(1m, AmountKind.Whole, 1m);
         (int, int, int) Pending() => ((int)(lanes.Value ?? 1), (int)(perPool.Value ?? 1), (int)(perCell.Value ?? 1));
         var b = SafetyPage.BuildSaveLanes([lanes, perPool, perCell], () => (1, 1, 1), Pending, () => saved.Add(Pending().Item1));
 
-        lanes.Value = 2m;
+        lanes.Box.Text = "2";
         Press(b);
         Assert.Equal(Labels.RaiseLanesArmed(2, 1, 1), b.Content);
 
-        lanes.Value = 8m;
+        lanes.Box.Text = "8";
         Press(b);
         Assert.Empty(saved);
         Assert.Equal(Labels.RaiseLanesArmed(8, 1, 1), b.Content);

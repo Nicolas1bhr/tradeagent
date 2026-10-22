@@ -596,14 +596,6 @@ static class Ui
         return g;
     }
 
-    /// <summary>A labelled number the user edits. Committed only when they press Save.</summary>
-    public static NumericUpDown NumberField(decimal value, decimal min = 0m, decimal increment = 1m)
-        => new()
-        {
-            Value = value, Minimum = min, Maximum = 1_000_000_000m, Increment = increment,
-            FormatString = increment == 1m ? "0" : "0.####", Width = 150
-        };
-
     /// <summary>
     /// A MONEY OR LIMIT FIGURE THE OWNER TYPES (<c>U-number-entry-culture</c>): the text kept exactly as typed, read one culture-free
     /// way with what it reads as shown under it, never rewritten, never stepped and never changed by a scroll. Committed only when
