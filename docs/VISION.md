@@ -164,17 +164,31 @@ to; deliveries go up verbatim by reference; claims rest on instruments and explo
 - **No production authority.** A watcher cannot instruct, block or pause; app rules block, and a finding can raise an app-defined review event that the
   department's parent answers with a record.
 
-### 5.3 Third line — the Security & Assurance Council
-- **Independent of the chief:** its budget is set by the owner beside, never inside, the organisation's; it sits outside the chief's subtree; it reports to
-  the owner.
+### 5.3 Third line — the Security Board, with assurance and the private line beside it
+**Amended 2026-10-23** (the owner's security-board direction and answers; `docs/research/2026-10-23/R24-security-board.md`): "the "security" should come
+from the security board not programmatic immutable parameters in the ui"; "The board can put real money to work on its own judgement, with no mandate from
+you"; "The board sets the total too, within your ChatGPT plan." The council grows into the **Security Board**, the holder of the organisation's limit and
+capital authority. Assurance and the owner's private line leave it, because a body cannot audit or secretly watch itself; they sit beside it and score it.
+- **Independent of the chief:** its budget sits beside, never inside, the organisation's — a founding share that only the owner changes, never the board;
+  it sits outside the chief's subtree and outside every `org_*` table; it reports to the owner.
+- **Its authority (AUTH-002):**
+  - It decides every limit in every money currency, paper and live mode, live activation, capital allocation, autonomy grants, venture approval and the
+    chief's appointment.
+  - It acts only through broker acts of board positions, recorded with rationale, evidence class and forecasts and bound to their exact intent.
+  - An act that moves real money or widens a limit needs two board seats, a proposer and a confirmer blind to the proposer's rationale.
+  - It never trades, never touches evidence and never widens its own power.
+  - The owner may veto any act; a veto narrows and never widens (R24 § 4).
 - **Security** is the live security plane (concierge foundation v0.1 § 31): once containment exists, it watches what execution cells actually do —
   processes, network, file and credential access — without needing the agent's cooperation.
-- **Assurance** audits the chief, the strategy council and every watcher; scores each watcher by its catch rate on seeded canaries, so "who watches the
+- **Assurance** — beside the board, not inside it, its budget never the board's to set — audits the chief, the strategy council, every watcher and the
+  board's acts, at the evidence class each allocation records; it scores each watcher by its catch rate on seeded canaries, so "who watches the
   watchers" has a number; and writes the adversarial brief a decider receives at a consequential boundary (ORGANISATION § 5).
-- **The owner's private line** — the watcher of ORGANISATION § 9, invisible to the organisation, code-first, reporting only to the owner — lives here.
+- **The owner's private line** — the watcher of ORGANISATION § 9, invisible to the organisation and to the board, code-first, reporting only to the owner,
+  with its own owner-set cap — is the owner's alone, outside the board, and watches the board too.
 - **Emergency powers, narrow by design** (the concierge contract program's open question OQ-14): quarantine a department's execution cells, freeze its
   envelope, revoke its workload identities — code-executed, logged, attributable. Never a trading act: protective trading stays the app's — loss limits, the
-  kill switch, app-owned risk reduction. Lifting a quarantine is the owner's.
+  kill switch, app-owned risk reduction. These powers are now the board's; lifting a quarantine is a widening and needs two board seats (2026-10-23; until
+  then it was the owner's).
 
 ### 5.4 Shadow evaluations and the short desk
 - **Shadow evaluation:** for a consequential decision — a live proposal, killing a family after a forward record, opening a department or a layer, a
@@ -234,7 +248,8 @@ and the tests by the unit that builds the registry, not by this table):
 
 | Id | Property | Where it lives now |
 |---|---|---|
-| AUTH-001 | Operator authority — mode, kill switch, live activation, approvals, updates — is in-process only; no pipe op reaches it | `CLAUDE.md`; the pipe's op list |
+| AUTH-001 | The owner's authority — the kill switch with pause, stop and flatten, credentials and account connections, a paid API key's spend, updates, his private line, his veto — is in-process only; no pipe op and no verb, the board's included, reaches it (amended 2026-10-23, R24; until then it also held mode, live activation and approvals) | `CLAUDE.md`; the pipe's op list |
+| AUTH-002 | The board's authority — every limit and allowance, paper and live mode, live activation, capital allocation, venture and instrument approval — is reached only by board positions' recorded broker acts bound to their exact intent, two board seats for a widening or a money act; never by text, never a trading act, never over the board's own power (new 2026-10-23, R24) | DESIGN — `U-board-a`, `U-board-b`, `U-board-live` |
 | ORDER-001 | Only `operations` originates money-moving operations; headship never carries it | `Council.cs` `MayPlaceOrders` |
 | ORDER-002…005 | The four `IAtasAdapter` rules: client id round-trip, provable history, definite refusals only, no UI-driven orders | `CLAUDE.md`; `IAtasAdapter` |
 | UNKNOWN-001 | An UNKNOWN order is reconciled, never retried | the gateway; `docs/PRINCIPLES.md` |
@@ -428,11 +443,13 @@ context-cut unit (R13 D1), and each opens only by the earning rule.
 - **The weekly letter:** one page, every number linked to a measurement and checked by code, with the private line's note beside it.
 - **Attention budget and a decision inbox** (concierge canon § 21): for example at most three asks a week, each with a default, ranked by value; the owner
   answers or lets the default apply; safety alerts never count against the budget.
-- **Standing authority — this touches a protection, so it is the owner's decision, and it is NOT adopted.** With dozens of strategies, two presses per live
-  step means rubber-stamping or a bottleneck. The alternative is a bounded, expiring, revocable mandate the owner signs with two presses — "allocate up to X %
-  to versions passing E7, steps of at most Y, expiring in 90 days" — inside which the deterministic allocator acts; the organisation cannot write or widen
-  it, and one press revokes it. The protected property, deliberate owner confirmation, would be kept by making the confirmation bounded and given in advance
-  instead of per step. Only the app, from measurements, may suggest it ("12 of 12 asks of this type approved"); never the organisation.
+- **Standing authority — superseded 2026-10-23 by R24** (`docs/research/2026-10-23/R24-security-board.md`). Offered this option on 2026-10-23 as
+  "One signed mandate (Recommended)" — a bounded, expiring mandate he signs with two presses — the owner chose "The board decides alone": "Only the kill
+  switch stays yours. The board can put real money to work on its own judgement, with no mandate from you."
+  - The Security Board (§ 5.3) allocates live capital by two-seat acts, at an evidence class the app records, inside the gateway's gates, a raise-pace
+    guard and the money he connected.
+  - He keeps the kill switch, his connections and a veto that narrows.
+  - His own deliberate confirmation of live allocations — the property this bullet set out to keep — he removed; it stays inside the board.
 
 ## 9. Models, tools and environments evolve
 - **Seats** are a model class, a playbook and an effort level, pinned by version. A new model takes the exam (§ 6.4), shadows real assignments under its own
@@ -496,12 +513,15 @@ touch the scorer · restructuring that resets trials or α-wealth · "profit" th
 into reality · a workflow engine that prescribes how its agents think.
 
 ## 13. Protected properties this vision touches, and how each is kept
-1. **Operator authority in-process** (AUTH-001): no verb, council, watcher or emergency power reaches mode, the kill switch, live activation, approvals,
-   updates or credentials; the security council's powers act on the organisation's cells and envelopes only, and lifting a quarantine is the owner's.
+1. **The owner's authority in-process** (AUTH-001, amended 2026-10-23): no verb, the board's included, and no council, watcher or emergency power reaches
+   the kill switch and its family, credentials and connections, a paid key's spend, updates or the private line. **The board's authority** (AUTH-002):
+   mode, live activation, limits and allocations are reached only by board positions' broker acts, two seats for a widening, never by text and never as a
+   trading act. The board's emergency powers act on the organisation's cells and envelopes only, and lifting a quarantine is a two-seat board act (R24).
 2. **Money-path rules 1–4 and order permission** (ORDER-001…005): unchanged; order permission stays bound to `operations` and moves only by the owner's
    presses; no layer, council or department carries it.
-3. **Capital:** every live allocation keeps its two presses; standing authority is not adopted (§ 8); retention reads realised profit but never sizes
-   exposure (§ 7.3).
+3. **Capital** (amended 2026-10-23): the owner removed his own confirmation of live allocations (R24). Each allocation is a board act confirmed by a
+   second board seat, at an evidence class the app records, inside the raise-pace guard, the gateway's gates and the money he connected; the board never
+   trades. Retention reads realised profit but never sizes exposure (§ 7.3).
 4. **Spend** (BUDGET-001): reserved before launch; the day-total gate stays first; envelopes nest in every currency; the assurance council's and the private
    line's budgets sit beside the organisation's; a dormant watcher or council seat costs nothing; unknown is never zero.
 5. **Evidence** (EVID-001, SIM-001): the referee, holdout, canaries and conformance vectors stay app-owned; the proving ground and every simulation are never
@@ -535,9 +555,20 @@ evaluations (§ 6); ORGANISATION § 15's build sequence unchanged through M-org1
 reads as authority, not thinking (`docs/PRINCIPLES.md` "Autonomy is the default inside authority"; §§ 0, 1, 2, 6.1, 6.6 above); containment before the
 governance verbs (ORGANISATION § 15 re-sequenced — the order changes, not the units); SIGNAL-001 permanent, restated around its protected property (§§ 6.3, 9).
 
+**Decided 2026-10-23** (the owner's security-board direction and two answers, both against the recommendation;
+`docs/research/2026-10-23/R24-security-board.md`):
+- "The board decides alone": the Security Board (§ 5.3) holds limit and capital authority, real money included.
+- "The board sets it": the AI day-total within his ChatGPT plan; spending on a paid API key still needs his word.
+- He keeps the kill switch and its emergency family, his credentials and connections, updates and his private line.
+- Ventures are representable without limit and built in evidence-led order.
+- §§ 2, 4 and 8 read through it: the owner's seat is his connections, the kill switch, a veto that narrows and his private line; ceilings, authority and
+  live confirmations are the board's; § 2's council is the Security Board, with assurance and the private line beside it (§ 5.3); the chief proposes to
+  the board.
+
 **Open (defaults in brackets):**
-1. Standing authority for live allocations (§ 8) [not adopted: every live step keeps its two presses].
-2. The security council's emergency powers as listed in § 5.3 [as listed].
+1. ~~Standing authority for live allocations (§ 8)~~ — superseded 2026-10-23: the board decides alone (R24). R24 § 9 lists that decision's own open
+   questions, each with its default.
+2. The board's emergency powers as listed in § 5.3 [as listed; lifting a quarantine by two board seats].
 3. Funding beyond the plan [decided after M-org1's measured cost and output].
 4. Model-layer watchers and the assurance council's model seats [code-only until a second vendor's key exists — the owner's 2026-10-02 answer for the
    watcher].
