@@ -342,6 +342,12 @@ public class OrgLedgerTests
         // None writes the chart.
         mandate = [.. mandate, "Decide", "Decision", "DecisionsOf", "Escalation", "EscalationsOf", "Forecast", "ForecastsOn", "LateralsOf",
             "OpenForecasts", "RaiseEscalation", "Resolution", "SendLateral"];
+        // REVISITED, OUT LOUD, BY U-org-seats: SetSeat, the owner's IN-PROCESS seat writer (ORCHESTRATION § 2.1 "a seat moves only by an
+        // app rule or the owner") — it writes a position's four seat columns and one org_event `seated` decided by the owner, so
+        // OrgStore.Seats.cs joins the rung as a writer of org_position and org_event below. No op, verb or argument names a seat (the
+        // vocabulary check above is unchanged), and OrgSeatsTests.No_pipe_op_door_verb_or_trade_verb_writes_a_seat holds that nothing
+        // but this method writes a seat column and nothing calls it from the pipe or the door.
+        mandate = [.. mandate, "SetSeat"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
@@ -355,7 +361,7 @@ public class OrgLedgerTests
             @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
             RegexOptions.IgnoreCase);
         Assert.Equal(
-            ["src/TradeAgent.Core/Db/Database.cs"],
+            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))
                 .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
