@@ -220,7 +220,7 @@ jobs:
           [ "$abi" -ge 6 ] || { echo "::error title=Landlock below ABI 6::kernel $(uname -r) reports Landlock ABI $abi; a cell needs ABI 6"; exit 1; }
 
       # ROUTE (a)'S PINNED CODEX (U-cell-linux-c): the linux-musl package of the one release every seat runs, its archive and its
-      # bin/codex each checked against the build's own pins (RuntimeManifest.cs CodexInstall) — a mismatch is a red run, never a
+      # bin/codex and bin/codex-code-mode-host each checked against the build's own pins (RuntimeManifest.cs CodexInstall) — a mismatch is a red run, never a
       # newer codex. The Cell rows find it through TA_CELL_CODEX; no model, no login, no key but the rows' FAKE ones ever reaches it.
       - name: Fetch the pinned linux codex for the route (a) rows
         if: matrix.os == 'ubuntu-latest'
@@ -233,6 +233,7 @@ jobs:
           echo "340801565906a7028f6baaa9ab6853addaef221f0016a1417a7c1ffdd96c21f0  $RUNNER_TEMP/codex.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/codex.tar.gz" -C "$dir"
           echo "f34a4d2301892ae96c90097786bfe5dc269f187b6f69faf42a7b357b8c081e35  $dir/bin/codex" | sha256sum -c -
+          echo "b33e8a5283f3c65c2a0aca6d43a59cfe850f624d8fa16992e3cad4fcc27c14e1  $dir/bin/codex-code-mode-host" | sha256sum -c -
           echo "codex package: $(ls "$dir" | tr '\n' ' '); $("$dir/bin/codex" --version)"
           echo "TA_CELL_CODEX=$dir/bin/codex" >> "$GITHUB_ENV"
 

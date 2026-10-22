@@ -684,10 +684,30 @@ public class SeatHomeTests
         var codex = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
         var (exe, dump) = EnvDumper(name, version);
         codex.Executable = exe;
-        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
-        BrokerSeat.PinForTest(codex.Install.ExecutableSha256);
+        PinTo(codex, exe);
+        BrokerSeat.PinForTest(codex.Install.ExecutableSha256!);
         codex.Seat!.Home = Path.Combine(Path.GetDirectoryName(exe)!, "seat-home");
         return (codex, exe, dump);
+    }
+
+    /// <summary>
+    /// <paramref name="exe"/> AS THE PIN, AND ITS STAND-INS AS THE PINNED COMPANIONS (<c>U-cli-code-mode</c>): the program's digest is
+    /// the plan's pin, and every companion the plan names gets a stand-in file beside the script — never run — whose digest is that
+    /// companion's pin. The places and features stay the build's own data.
+    /// </summary>
+    internal static void PinTo(RuntimeManifest codex, string exe)
+    {
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
+        foreach (var companion in codex.Install.Companions)
+            companion.Sha256 = SeatProfile.Sha256Of(Companion(exe, companion.Name));
+    }
+
+    /// <summary>A stand-in for the companion <paramref name="name"/> beside <paramref name="exe"/>, written once; never run.</summary>
+    internal static string Companion(string exe, string name)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(exe)!, name);
+        if (!File.Exists(path)) File.WriteAllText(path, $"TradeAgent test stand-in for {name}: never run\n");
+        return path;
     }
 
     /// <summary>Every command line the script was started with, one per line, in order.</summary>
