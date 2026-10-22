@@ -2125,6 +2125,16 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         /// <summary>
+        /// WHAT THE LAUNCH'S PACKET GAVE IT (<c>U-org-packets-b</c>), recorded inside the turn's committed transition — the loop calls
+        /// it only from there — and so in the same <c>Database.Write</c> as the launch's end. It writes <c>ai_attempt_input</c> and
+        /// nothing that decides what the AI is allowed to do.
+        /// </summary>
+        public void RecordInputs(string attempt, IReadOnlyList<PacketInput> inputs)
+        {
+            if (host._db is { } db) new AiAttemptStore(db).RecordInputs(attempt, inputs);
+        }
+
+        /// <summary>
         /// The id the next launch will carry, minted by the meter so the turn's message can name it.
         /// It commits nothing — the launch record is <see cref="BeginTurn"/>'s — and it cannot change
         /// a mode, lift the kill switch or approve anything.

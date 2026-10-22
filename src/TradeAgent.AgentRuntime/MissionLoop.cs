@@ -793,6 +793,13 @@ public interface IMissionHost
     }
 
     /// <summary>
+    /// WHAT THE LAUNCH'S PACKET GAVE IT, recorded (<c>U-org-packets-b</c>; ORCHESTRATION § 2.6): called by the loop only from inside
+    /// <see cref="CommitTurn"/>'s dispositions — the turn's one committed transition — and never for a launch the gate refused at its
+    /// last check, so a note such a launch was shown rides the next packet again. A host with no ledger records nothing — the default.
+    /// </summary>
+    void RecordInputs(string attempt, IReadOnlyList<PacketInput> inputs) { }
+
+    /// <summary>
     /// THE ID THE NEXT LAUNCH WILL CARRY, minted before the turn's message is composed so that the
     /// message can NAME it — <c>out/report-&lt;attempt&gt;.md</c> is how staged output is bound to
     /// the launch that produced it, and an agent cannot write that name without being told the id.
@@ -979,6 +986,14 @@ public sealed record MissionSituation
     /// unquoted beside them.
     /// </summary>
     public MandateView? Mandate { get; init; }
+
+    /// <summary>
+    /// WHAT THIS PACKET SHOWED, by reference (<c>U-org-packets-b</c>; ORCHESTRATION § 2.6, "input lineage"): every note, forecast,
+    /// resolution, escalation, delivery, decision, ledger entry and mandate event the text below carries, as the composer cut it to
+    /// its bound. Not rendered: the loop hands it to the turn's committed transition, which records it as the attempt's input — and
+    /// so advances the position's cursor — only when the launch's outcome is committed.
+    /// </summary>
+    public IReadOnlyList<PacketInput> Inputs { get; init; } = [];
 
     /// <summary>
     /// WHAT CHANGED: one line per observation this turn is answering, each with its entity — the request and its state,
@@ -3062,7 +3077,8 @@ public sealed class MissionLoop
             // IN THE FINALLY, because a turn that was cancelled has still been LAUNCHED and has
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
-            Commit(role, attemptId, events, wake, ended, consumer);
+            // What the packet showed is recorded against the ROW's id only: a host with no ledger has no row to record it on.
+            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : situation.Inputs);
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
@@ -3653,7 +3669,7 @@ public sealed class MissionLoop
     /// a bookkeeping failure into an AI that stopped working.
     /// </summary>
     void Commit(string role, string? attempt, MissionEventStore? events,
-        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer)
+        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer, IReadOnlyList<PacketInput> shown)
     {
         var failed = ended?.Failed ?? true;
         try
@@ -3661,8 +3677,17 @@ public sealed class MissionLoop
             // WHAT BECAME OF EACH WAKE, written with the turn rather than assumed by it. An owner's
             // message whose turn failed is re-raised once, so a runtime that fell over does not
             // swallow the one thing in the block that was waiting for an answer.
-            _host.CommitTurn(role, attempt,
-                () => { if (events is not null) Settle(events, wake, failed, ended, consumer); });
+            //
+            // AND WHAT THE PACKET GAVE THE LAUNCH (U-org-packets-b), in the same transition: the position's cursor advances with the
+            // committed outcome and with nothing else. A launch with no ending the loop saw (its send threw), one the gate refused at
+            // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
+            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too.
+            _host.CommitTurn(role, attempt, () =>
+            {
+                if (events is not null) Settle(events, wake, failed, ended, consumer);
+                if (attempt is not null && shown.Count > 0 && ended is not null && UnworkedRefusal(ended) is null)
+                    _host.RecordInputs(attempt, shown);
+            });
         }
         catch (Exception) { /* the row stays LAUNCHED; the next start loses it and reconciles */ }
     }

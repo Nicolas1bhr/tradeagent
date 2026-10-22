@@ -2851,6 +2851,37 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{seatsRung}') ON CONFLICT(key) DO UPDATE SET value='{seatsRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE: rungs land in landing order, and a unit overtaken renumbers here and in Versions.
+        const int lineageRung = Versions.InputLineageRung;
+        if (have < lineageRung)
+        {
+            // WHAT EACH ATTEMPT'S PACKET GAVE IT — `U-org-packets-b` (docs/ORCHESTRATION.md § 2.6: "Input lineage: each attempt records
+            // what it was given"; "a position's cursor advances only with the attempt's committed outcome"). `ai_attempt_input` — one row
+            // per record the packet SHOWED: a lateral note, a forecast due, a resolution, an escalation, a delivery to judge, a
+            // decision, a ledger entry, a mandate event — by its kind and id, a reference and never a copy (§ 8). Written by the app
+            // only, in the turn's own committed transition (`CouncilRelay.CommitTurn`), never for a launch the gate refused at its last
+            // check or one that crashed before its commit — so a note such a launch was shown rides the next packet again
+            // (at-least-once, stated). Append-only: UPDATE and DELETE refused by trigger, so "since the last packet" cannot be
+            // rewound or advanced past the record of what ran. No backfill: no attempt before this rung was given a position packet.
+            // `IF NOT EXISTS` throughout and the stamp last, because the rungs run in autocommit and a crash before the stamp runs
+            // this again over what it made.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS ai_attempt_input(
+                  attempt_id TEXT NOT NULL REFERENCES ai_attempt(id),
+                  kind       TEXT NOT NULL CHECK (kind IN ('lateral','forecast','resolution','escalation','delivery','decision','ledger','mandate-event')),
+                  ref_id     TEXT NOT NULL CHECK (length(ref_id) BETWEEN 1 AND 200),
+                  PRIMARY KEY(attempt_id, kind, ref_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_attempt_input_ref ON ai_attempt_input(kind, ref_id);
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_input_sealed_u BEFORE UPDATE ON ai_attempt_input
+                BEGIN SELECT RAISE(ABORT, 'what an attempt was given is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_input_sealed_d BEFORE DELETE ON ai_attempt_input
+                BEGIN SELECT RAISE(ABORT, 'what an attempt was given is never deleted'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{lineageRung}') ON CONFLICT(key) DO UPDATE SET value='{lineageRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
