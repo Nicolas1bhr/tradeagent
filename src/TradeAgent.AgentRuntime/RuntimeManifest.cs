@@ -716,6 +716,14 @@ public sealed class RuntimeManifest
     public UsageLimitPlan? UsageLimit { get; set; }
 
     /// <summary>
+    /// THE VENDOR'S OWN SENTENCE FOR A SEAT WHOSE TOOLS CANNOT RUN (<c>U-cli-code-mode</c>): a regex matched against the message of a
+    /// warning item in the turn's stream. A match ends the seat's launches until its program, settings or model change or the app
+    /// restarts, names why, and gives the turn's wakes back. Data, like <see cref="UsageLimit"/>: the sentence is the vendor's, and a
+    /// reworded one is a one-line fix in <c>runtimes.json</c>. Null recognises nothing.
+    /// </summary>
+    public string? ToolsUnavailablePattern { get; set; }
+
+    /// <summary>
     /// ENVIRONMENT VARIABLE NAMES THIS VENDOR'S CLI READS, and the only names outside TradeAgent's
     /// own whitelist that reach the agent process (<see cref="AgentEnvironment"/>).
     ///
@@ -1246,6 +1254,14 @@ public static class RuntimeCatalog
             // `task_complete`), which the app does not read. So the sentence stays the one reading, and the
             // recording is VendorLimitTests.Recorded0160. NOT VERIFIED: the vendor's own server's 429 body — the
             // mock's is the shape codex parses into its limit error, not a recording of OpenAI's.
+            // A SEAT WHOSE TOOLS CANNOT RUN, IN THE VENDOR'S WORDS (U-cli-code-mode). RUN 2026-10-23, codex-cli 0.160.1 on macOS under a
+            // throwaway CODEX_HOME and HOME against a local mock, the CLI class with --disable code_mode_host and gpt-6-luna — attempt 4's
+            // seat — stdout carried, before turn.started:
+            //   {"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because code-mode host
+            //    is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
+            // and the turn exited 0 — the vendor's format in core/src/tools/code_mode/mod.rs:108-121 at rust-v0.160.1, its other causes
+            // (a host program not found, one that would not start) in the same sentence.
+            ToolsUnavailablePattern = "Code Mode is unavailable because",
             UsageLimit = new UsageLimitPlan
             {
                 Pattern = "You['\u2019]ve hit your usage limit",
