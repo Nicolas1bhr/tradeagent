@@ -1430,7 +1430,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     }
 
     /// <summary>
-    /// THE GATEWAY'S OWN RULES REFUSING AN AGENT'S ORDER OR READ (<c>U-org-watcher-b</c>): mode, limits, allocation, loss budget, an
+    /// THE GATEWAY'S OWN RULES REFUSING AN AGENT'S ORDER OR READ: mode, limits, allocation, loss budget, an
     /// expired approval or decision, a withheld holdout. No malformed frame answers any of these codes, so the code alone says a rule
     /// refused — unlike <see cref="ErrorCode.INVALID_REQUEST"/>, which a refusal shares with a malformed frame and so is a refusal only
     /// where its throw site MARKED it (<see cref="RefusalMark"/>). A request waiting for the owner's approval is not refused, and a

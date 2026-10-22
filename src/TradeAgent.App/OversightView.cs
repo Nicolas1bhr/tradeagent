@@ -221,7 +221,7 @@ sealed class OversightPage
     {
         OversightRead? read;
         try { read = _src.Store() is { } store ? OversightRead.From(store) : null; }
-        catch (ObjectDisposedException) { return; } // the quit closed the file under this tick
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { return; } // the quit closed the file under this tick
         var words = OversightWords.Of(read, _src.Refusal(), _src.Currency());
 
         Set(_status, words.Status);
@@ -369,7 +369,7 @@ sealed class OversightBanner
                 .Where(f => f.Severity == OversightSeverity.Severe && !acknowledged.ContainsKey(f.Id))
                 .OrderByDescending(f => f.Seq)];
         }
-        catch (ObjectDisposedException) { return; } // the quit closed the file under this tick
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { return; } // the quit closed the file under this tick
 
         if (waiting.Count == 0) { Hide(); return; }
         _counted = [.. waiting.Select(f => f.Id)];
