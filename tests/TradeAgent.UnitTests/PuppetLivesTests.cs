@@ -243,7 +243,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             var turned = n;
             await life.RunUntil(() => life.AttemptsOf(Chair).Count(a => a.State == AiAttemptState.ENDED) == turned, $"the chair's turn {n} ended");
         }
-        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) == 2, "the member answered both mandates");
+        // AT LEAST TWO: neither mandate is delivered, so the organisation's sweep owes each one a wake again once its launch has
+        // ended (U-org-assignments-a) and the member goes on turning — the first two of its turns are the ones read here.
+        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) >= 2, "the member answered both mandates");
 
         static (string? Session, string? Why) Of(AiAttempt a)
         {
@@ -253,7 +255,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
                 root.TryGetProperty("session_why", out var w) ? w.GetString() : null);
         }
 
-        var members = life.AttemptsOf(member).OrderBy(a => a.StartedAt).ToList();
+        var members = life.AttemptsOf(member).Where(a => a.State == AiAttemptState.ENDED).OrderBy(a => a.StartedAt).Take(2).ToList();
         Assert.Equal([m1.Id, m2.Id], members.Select(a => a.MandateId));
         Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.Mandate)], members.Select(Of));
         var chairs = life.AttemptsOf(Chair).OrderBy(a => a.StartedAt).ToList();
