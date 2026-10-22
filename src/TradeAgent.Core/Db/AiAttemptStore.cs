@@ -735,6 +735,54 @@ public sealed class AiAttemptStore(Database db)
         db.Read(_ => Totals(from, to, null, unitId, ceiling));
 
     /// <summary>
+    /// EVERY UNIT'S DAY SPLIT BY THE CLASS THAT PAID FOR IT (<c>U-org-surface-a</c>), in ONE query: for each unit that funded an attempt
+    /// in the window and each billing class among those attempts, the same seven figures <see cref="UnitTotalsBetween"/> reads for
+    /// that unit (the same aggregate list, over the rows each unit's recorded funding chain holds). <b>The class is exact:</b>
+    /// <c>plan</c> is the plan's rows alone and <c>unknown</c> is the rows nobody established — NOT the "or unknown" of a ceiling
+    /// (<c>ceiling</c> counts an unknown row in both), so the three classes of a unit add up to its whole day and none is counted
+    /// twice. A turn with no cost is in <see cref="AiAttemptTotals.Unpriced"/> and contributes nothing to <c>Spent</c>; it is never added as
+    /// a zero price.
+    /// </summary>
+    public IReadOnlyList<UnitClassTotals> UnitTotalsByClass(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
+    {
+        var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
+        using var c = db.Cmd($"""
+            SELECT unit_id, billing_class,
+            {TotalsColumns}
+            FROM (SELECT a.*, f.unit_id AS unit_id,
+                         CASE WHEN a.role IN ({string.Join(",", principals.Select(p => p.Item1))}) THEN 0 ELSE 1 END AS counted
+                    FROM ai_attempt a JOIN ai_attempt_funding f ON f.attempt_id = a.id
+                   WHERE a.started_at >= $from AND a.started_at < $to)
+            GROUP BY unit_id, billing_class
+            ORDER BY unit_id, billing_class
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), .. principals]);
+        using var r = c.ExecuteReader();
+        var rows = new List<UnitClassTotals>();
+        while (r.Read())
+            rows.Add(new UnitClassTotals(r.GetString(0), BillingClasses.Of(r.GetString(1)),
+                new AiAttemptTotals((decimal)r.GetDouble(2), (decimal)r.GetDouble(3), Int(r, 4), Int(r, 5), Int(r, 6), Int(r, 7), Int(r, 8))));
+        return (IReadOnlyList<UnitClassTotals>)rows;
+    });
+
+    /// <summary>
+    /// THE SEVEN AGGREGATES EVERY TOTAL IS (<see cref="Totals"/>, <see cref="UnitTotalsByClass"/>), over rows that carry a <c>counted</c>
+    /// flag: one expression list, so a figure read by unit and by class can never drift from the figure read whole.
+    /// </summary>
+    const string TotalsColumns = """
+              COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE CAST(cost AS REAL) END), 0),
+              COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN CAST(reserved_cost AS REAL) ELSE 0 END), 0),
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND effective_model IS NULL
+                            AND COALESCE(pricing_basis,'') <> 'owner' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN counted=1 AND state='LAUNCHED' THEN 1 ELSE 0 END),
+              -- Charged a RESERVATION rather than a bill: a cost with a reason it could not be
+              -- priced is exactly that, and it is what keeps `Spent` from reading as an invoice.
+              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
+                       THEN 1 ELSE 0 END)
+        """;
+
+    /// <summary>
     /// The same query with NO lock of its own, so <see cref="Begin"/> can run it inside the
     /// transaction it is about to insert into. Every caller is already holding the database's gate —
     /// either through <see cref="Database.Read"/> above or through <see cref="Database.Write"/> —
@@ -758,17 +806,7 @@ public sealed class AiAttemptStore(Database db)
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
         using var c = db.Cmd($"""
             SELECT
-              COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE CAST(cost AS REAL) END), 0),
-              COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN CAST(reserved_cost AS REAL) ELSE 0 END), 0),
-              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' THEN 1 ELSE 0 END),
-              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
-              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND effective_model IS NULL
-                            AND COALESCE(pricing_basis,'') <> 'owner' THEN 1 ELSE 0 END),
-              SUM(CASE WHEN counted=1 AND state='LAUNCHED' THEN 1 ELSE 0 END),
-              -- Charged a RESERVATION rather than a bill: a cost with a reason it could not be
-              -- priced is exactly that, and it is what keeps `Spent` from reading as an invoice.
-              SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
-                       THEN 1 ELSE 0 END)
+            {TotalsColumns}
             FROM (SELECT *,
                          CASE WHEN $role IS NULL AND role IN ({string.Join(",", principals.Select(p => p.Item1))})
                               THEN 0 ELSE 1 END AS counted
