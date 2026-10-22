@@ -134,13 +134,15 @@ public sealed partial class OrgStore
     /// </summary>
     public OrgList<EscalationRow> EscalationsOpen(string position, bool received) => db.Read(_ =>
     {
+        // EVERY CLOSING EVENT, from the one list (a re-scope closes too, U-org-verbs-a).
+        var closing = MandateEventKind.Closing.Select((_, i) => $"$c{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
         using var c = db.Cmd($"""
             SELECT {EscalationCols} FROM org_escalation x
              WHERE {(received ? "x.to_position" : "x.sender")} = $p
                AND (x.mandate_id IS NULL OR NOT EXISTS (SELECT 1 FROM org_mandate_event e
-                                                        WHERE e.mandate_id = x.mandate_id AND e.kind IN ($a, $c, $x)))
+                                                        WHERE e.mandate_id = x.mandate_id AND e.kind IN ({string.Join(",", closing)})))
              ORDER BY x.at DESC, x.rowid DESC
-            """, ("$p", position), ("$a", MandateEventKind.Accepted), ("$c", MandateEventKind.Cancelled), ("$x", MandateEventKind.Expired));
+            """, [("$p", (object?)position), .. closing.Select((n, i) => (n, (object?)MandateEventKind.Closing[i]))]);
         using var r = c.ExecuteReader();
         var rows = new List<EscalationRow>();
         var refused = new List<string>();

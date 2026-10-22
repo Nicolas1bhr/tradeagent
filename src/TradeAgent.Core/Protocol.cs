@@ -222,6 +222,22 @@ public static class Ops
         MandateList = "mandate-list", MandateShow = "mandate-show";
 
     /// <summary>
+    /// A HEAD RE-SCOPES A MANDATE IT DECIDES INTO A LINKED SUCCESSOR, AND A HOLDER PROPOSES A FINDING BEYOND ITS MANDATE TO ITS
+    /// DECIDER (<c>U-org-verbs-a</c>; ORCHESTRATION § 2.9, ORGANISATION § 4). A re-scope never edits the mandate — rows are never
+    /// updated (§ 2.2): the old one closes <c>rescoped</c> and a new one is issued, each naming the other, the old one's spend and
+    /// failures staying its own. A proposal is a CLAIM and carries no authority: it changes no mandate, admits no launch, and
+    /// wakes the decider once. Named apart from the pipe's ops, joined to <see cref="Organisation"/>; NOT in <see cref="Mutating"/>.
+    /// </summary>
+    public const string MandateRescope = "mandate-rescope", MandatePropose = "mandate-propose";
+
+    /// <summary>
+    /// A POSITION READS ITS OWN PLACE ON THE CHART (<c>U-org-verbs-a</c>; ORCHESTRATION § 2.9): its unit, the chain above it to the
+    /// owner, its open mandates held and decided, and each unit's AI envelope with today's spend — a READ of the caller's own view,
+    /// never another position's. NOT in <see cref="Mutating"/>; it writes nothing.
+    /// </summary>
+    public const string OrgShow = "org-show";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller

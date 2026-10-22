@@ -614,6 +614,25 @@ public static class GatewaySchema
                 new("exact", "string", false, "true: a delivery that names a deviation is refused. false when omitted."),
                 new("forecasts", "string", false, ForecastsArg + " On an assign, a forecast that names no 'subject' is about the mandate being issued — recorded, never scored: you decide it.")
             ]),
+        new(Core.Ops.MandateRescope, "trade mandate rescope <mandate> <why> <goal> --kind K --due T --allocation A [--shape S] [--scope S] [--retries N] [--exact true]", false,
+            "RE-SCOPE A MANDATE YOU DECIDE — when retrying will not do it — saying why: TradeAgent closes it as 'rescoped' and issues a "
+            + "SUCCESSOR to the same holder with the terms you give now (the same arguments as 'mandate-assign', and held to the same "
+            + "rules), each naming the other; the holder is woken once for the successor. Nothing of the old mandate is edited or moved: "
+            + "its launches, spend, deliveries and failures stay its own, and 'mandate-show' of the successor names it and its cost. "
+            + "A different holder is a cancellation and a new assignment. Only its decider may; a closed mandate is refused. It places "
+            + "no order and moves no money.",
+            [
+                new("mandate", "string", true, "The open mandate you decide, as 'mandate-assign' answered it."),
+                new("why", "string", true, $"Why it is re-scoped, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters."),
+                new("goal", "string", true, $"What you want found or made now, in your words: at most {Core.Db.MandateLimits.MaxObjectiveChars:N0} characters."),
+                new("kind", "string", true, "task | exploration"),
+                new("due", "string", true, "The successor's deadline, an ISO-8601 time in the future (UTC when it names no offset)."),
+                new("allocation", "number", true, "The most AI spend the successor's launches may commit over its whole life; above 0. The old mandate's spend is not counted in it and not moved."),
+                new("shape", "string", false, "For a task: report | version | run | ledger | lens. Not for an exploration."),
+                new("scope", "string", false, $"What is in and out of bounds now, in your words: at most {Core.Db.MandateLimits.MaxObjectiveChars:N0} characters."),
+                new("retries", "number", false, $"How many clean failures code handles before it wakes you, 1 to {Core.Db.MandateLimits.MaxRetryLimit}; {Core.Db.MandateLimits.DefaultRetryLimit} when omitted. They start fresh."),
+                new("exact", "string", false, "true: a delivery that names a deviation is refused. false when omitted.")
+            ]),
         new(Core.Ops.MandateCancel, "trade mandate cancel <mandate> <why>", false,
             "CANCEL A MANDATE YOU DECIDE, saying why: TradeAgent records the cancellation as an event, closes the holder's untaken "
             + "wakes, and admits no further launch under it — its spend stops there. Only its decider may; a closed mandate is "

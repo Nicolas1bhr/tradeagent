@@ -171,6 +171,13 @@ public static class MissionEventKind
     /// decider in the very write that found it. Its payload is the mandate's id.
     /// </summary>
     public const string Escalation = "escalation";
+
+    /// <summary>
+    /// A HOLDER PROPOSED A FINDING BEYOND ITS MANDATE TO ITS DECIDER (<c>U-org-verbs-a</c>; ORCHESTRATION § 2.5: an off-path finding
+    /// always reaches the head): raised by the app, ONCE, in the write that recorded the <c>proposed</c> event. Its payload is the
+    /// mandate's id; the proposal is the holder's claim and carries no authority.
+    /// </summary>
+    public const string Proposal = "proposal";
 }
 
 /// <summary>

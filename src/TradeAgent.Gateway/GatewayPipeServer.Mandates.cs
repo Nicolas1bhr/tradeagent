@@ -85,6 +85,25 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>
+    /// RE-SCOPES AN OPEN MANDATE THE CALLER DECIDES INTO A LINKED SUCCESSOR, saying why (<see cref="OrgStore.Rescope"/>): the new terms
+    /// are held to every rule an assignment is; who decides and who holds it are the old row's, never the frame's. Answers the
+    /// successor, naming the mandate it was re-scoped from.
+    /// </summary>
+    object MandateRescope(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var decider = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var retries = req.Args?.ContainsKey("retries") == true ? WholeNumber(req, "retries") : MandateLimits.DefaultRetryLimit;
+        var allocation = req.Dec("allocation")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'allocation' is required: the most AI spend, over the successor's whole life, its holder's launches may commit. Nothing was written.");
+        var (_, successor) = Gateway.Org.Rescope(Require(req, "mandate"), decider, ctx.AttemptId, Require(req, "why"),
+            new MandateTerms(Require(req, "kind"), Require(req, "goal"), req.Str("scope"), req.Str("shape"),
+                NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow);
+        return MandateReply(successor);
+    }
+
+    /// <summary>
     /// THE HOLDER HANDS ITS WORK BACK, SEALED (<see cref="OrgStore.Deliver"/>): the report, the deviations and the refs are its
     /// claims, stored verbatim; the seal, the checks and what code makes of them are TradeAgent's. A position's work reaches its
     /// issuer through this op and nothing else (RULING Q1): a file staged in <c>out/</c> stays held.
@@ -227,6 +246,13 @@ public sealed partial class GatewayPipeServer
                 $"'before' continues one list: name it with 'part' ('{ShowDeliveries}', '{ShowEvents}' or '{ShowForecasts}'), as an answer's 'left_out' says.");
 
         var measured = Measured(Gateway.Org.SpendOf(m.Id));
+        // THE LINEAGE (U-org-verbs-a): the mandate this one was re-scoped from, with ITS measured spend — the predecessor's cost
+        // stays its own and is shown beside this one, never folded in — and the one this was re-scoped into.
+        var predecessor = Gateway.Org.PredecessorOf(m.Id) is { } p && Gateway.Org.Mandate(p) is { } pm
+            ? new { mandate = pm.Id, status = Gateway.Org.MandateStatus(pm.Id), allocation = pm.Allocation.ToString(CultureInfo.InvariantCulture),
+                    measured_spend = Measured(Gateway.Org.SpendOf(pm.Id)) }
+            : null;
+        var successor = Gateway.Org.SuccessorOf(m.Id);
         var deliveries = Gateway.Org.Deliveries(m.Id).Reverse().ToList();
         var events = Gateway.Org.MandateEvents(m.Id).Reverse().ToList();
         var forecasts = Gateway.Org.ForecastsOn(m.Id).Reverse().ToList();
@@ -258,7 +284,7 @@ public sealed partial class GatewayPipeServer
 
         // THE FRAME FIRST, AT THE MOST ITS OWN FIELDS CAN COST once the lists are in: every count and cursor at its widest.
         var widest = new string('f', 64);
-        long spent = ReplyBytes(Show(m, measured, [], [], [], int.MaxValue, int.MaxValue, int.MaxValue, true, widest, true, long.MaxValue,
+        long spent = ReplyBytes(Show(m, measured, predecessor, successor, [], [], [], int.MaxValue, int.MaxValue, int.MaxValue, true, widest, true, long.MaxValue,
             true, widest, LeftOut(m.Id, int.MaxValue, widest, int.MaxValue, long.MaxValue, int.MaxValue, widest)));
 
         var servedD = new List<object>();
@@ -308,12 +334,12 @@ public sealed partial class GatewayPipeServer
         var dNext = part is ShowEvents or ShowForecasts || dLeft == 0 ? null : lastD;
         var eNext = part is ShowDeliveries or ShowForecasts || eLeft == 0 ? null : lastE;
         var fNext = part is ShowDeliveries or ShowEvents || fLeft == 0 ? null : lastF;
-        return Show(m, measured, servedD, servedE, servedF, deliveries.Count, events.Count, forecasts.Count, dLeft > 0, dNext, eLeft > 0, eNext,
+        return Show(m, measured, predecessor, successor, servedD, servedE, servedF, deliveries.Count, events.Count, forecasts.Count, dLeft > 0, dNext, eLeft > 0, eNext,
             fLeft > 0, fNext, dLeft == 0 && eLeft == 0 && fLeft == 0 ? null : LeftOut(m.Id, dLeft, dNext, eLeft, eNext, fLeft, fNext));
     }
 
     /// <summary>The answer of <c>mandate-show</c>, in one place, so the frame measured is the frame sent.</summary>
-    object Show(MandateRow m, object measured, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
+    object Show(MandateRow m, object measured, object? predecessor, string? successor, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
         int eventsTotal, int forecastsTotal, bool deliveriesMore, string? deliveriesNext, bool eventsMore, long? eventsNext,
         bool forecastsMore, string? forecastsNext, string? leftOut) => new
     {
@@ -321,6 +347,8 @@ public sealed partial class GatewayPipeServer
         goal = m.Objective,
         scope = m.Scope,
         measured_spend = measured,
+        predecessor,
+        successor,
         deliveries,
         deliveries_total = deliveriesTotal,
         deliveries_more = deliveriesMore,
@@ -337,7 +365,8 @@ public sealed partial class GatewayPipeServer
         note = "A delivery's report, deviations and refs are its holder's CLAIMS, stored as written; a deviation's "
                + "'stated_cost' is the holder's word, and 'measured_spend' beside it is TradeAgent's, from the launches charged "
                + "to this mandate. The checks, the events and the seal are TradeAgent's records. A forecast's probability is its "
-               + "forecaster's claim; whether it is scored, and its resolution beside it, are TradeAgent's."
+               + "forecaster's claim; whether it is scored, and its resolution beside it, are TradeAgent's. A 'predecessor' is the "
+               + "mandate this one was re-scoped from, with its own measured spend, which stays its own."
     };
 
     /// <summary>What a bounded answer left out, in words naming each list's rest and the call that reads it.</summary>
@@ -439,6 +468,8 @@ public sealed partial class GatewayPipeServer
     {
         mandate = m.Id,
         status = Gateway.Org.MandateStatus(m.Id),
+        rescoped_from = Gateway.Org.PredecessorOf(m.Id),
+        rescoped_into = Gateway.Org.SuccessorOf(m.Id),
         unit = m.UnitId,
         decider = m.Decider,
         holder = m.Holder,
