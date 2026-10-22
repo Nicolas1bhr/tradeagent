@@ -2131,6 +2131,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Func<AiActivity>? Ai { get; set; }
 
+    /// <summary>
+    /// EACH UNIT OF A POSITION'S FUNDING CHAIN, its AI envelope and today's spend, as the host that meters launches resolves them
+    /// (<c>U-org-verbs-a</c>, <c>org-show</c>): nearest unit first, ending at the root, or null where it cannot say. A delegate set by
+    /// the app for the reason <see cref="Ai"/> is one — the gateway never learns the loop, the cap or the split; it shows what it is
+    /// handed. Null, or a null answer, is shown as not metered: unknown, never zero. Nothing an agent sends reaches it but a read.
+    /// </summary>
+    public Func<string, IReadOnlyList<UnitDay>?>? AiEnvelopes { get; set; }
+
     public event Action? StateChanged;
 
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>

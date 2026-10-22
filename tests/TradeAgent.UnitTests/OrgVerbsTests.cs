@@ -1,0 +1,375 @@
+using System.Text.Json;
+using TradeAgent.AgentRuntime;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using TradeAgent.Security;
+using Xunit;
+
+namespace TradeAgent.Tests.Unit;
+
+/// <summary>
+/// A HEAD RE-SCOPES, AN EXECUTOR PROPOSES, EVERY CAPABLE POSITION READS ITS OWN PLACE (<c>U-org-verbs-a</c>, O6 part a;
+/// ORCHESTRATION §§ 2.2, 2.5, 2.9; ORGANISATION § 4). In-process <see cref="GatewayPipeServer"/> calls under launch ids the test
+/// seeded in the ledger, as <see cref="OrgAssignmentTests"/>' other parts do. No real model.
+/// </summary>
+public partial class OrgAssignmentTests
+{
+    const string RescopeWhy = "two clean failures: the question was too wide for one report";
+    const string NarrowerGoal = "summarise in ten lines whether the funding skew leads the next hour";
+
+    static IpcRequest RescopeFrame(string mandate, decimal allocation = 3m, params (string Key, object Value)[] more) =>
+        Frame(Ops.MandateRescope, [
+            ("mandate", mandate), ("why", RescopeWhy), ("goal", NarrowerGoal), ("kind", MandateKind.Task),
+            ("shape", MandateShape.Report), ("due", Due.ToString("O")), ("allocation", allocation), .. more
+        ]);
+
+    /// <summary>A field the wire left out, or wrote as null: the writer omits a null.</summary>
+    static bool Absent(JsonElement e, string name) => !e.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null;
+
+    /// <summary>A mandate whose holder failed twice, cleanly: code retried once and then escalated it to its decider.</summary>
+    static async Task<string> FailedTwice(TradingGateway gw, GatewayPipeServer server, Database db)
+    {
+        var m = await Assigned(server, db, retries: 2);
+        for (var i = 0; i < 2; i++)
+            Assert.True((await server.CallAsync(DeliverFrame(m, TooLong), Member, Launch(db, Member, mandate: m))).Ok);
+        Assert.Equal(MandateEventKind.Escalated, gw.Org.MandateStatus(m));
+        return m;
+    }
+
+    // ---- item 1: mandate-rescope -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (1a) A RE-SCOPE CLOSES THE OLD MANDATE AND ISSUES A LINKED SUCCESSOR IN ONE WRITE (ORCHESTRATION § 2.2: rows never update,
+    /// failures are remembered): a mandate whose holder failed twice is re-scoped by its decider — the old reads <c>rescoped</c>
+    /// with the new id, the new is <c>issued</c> with the old id, the holder is woken ONCE for the new, and the old mandate's spend
+    /// and failures stay its own; <c>mandate-show</c> names the predecessor and its measured cost, and the old one its successor.
+    /// When the successor's wake cannot be written, nothing of the re-scope is. RED at base: no <c>mandate-rescope</c> op.
+    /// </summary>
+    [Fact]
+    public async Task Rescope_closes_the_old_and_issues_a_linked_successor_in_one_write()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var old = await FailedTwice(gw, server, db);
+        var spent = gw.Org.SpendOf(old);
+        var deliveries = gw.Org.Deliveries(old).Count;
+
+        // ONE WRITE: the successor's wake cannot be written, so neither is anything else of the re-scope.
+        Exec(db, """
+            CREATE TRIGGER abort_successor BEFORE INSERT ON mission_event WHEN NEW.kind = 'mandate'
+            BEGIN SELECT RAISE(ABORT, 'the successor''s wake could not be written'); END
+            """);
+        Assert.False((await server.CallAsync(RescopeFrame(old), Head, Launch(db, Head))).Ok);
+        Assert.Equal(1L, Count(db, "org_mandate"));
+        Assert.Equal(MandateEventKind.Escalated, gw.Org.MandateStatus(old));
+        Exec(db, "DROP TRIGGER abort_successor");
+
+        var reply = await server.CallAsync(RescopeFrame(old), Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var successor = Body(reply).GetProperty("mandate").GetString()!;
+        Assert.NotEqual(old, successor);
+        Assert.Equal(MandateEventKind.Issued, Body(reply).GetProperty("status").GetString());
+        Assert.Equal(old, Body(reply).GetProperty("rescoped_from").GetString());
+
+        var closed = gw.Org.MandateEvents(old)[^1];
+        Assert.Equal((MandateEventKind.Rescoped, Head, RescopeWhy), (closed.Kind, closed.Actor, closed.Reason));
+        Assert.Equal([successor], closed.Evidence);
+        Assert.False(gw.Org.IsOpen(old));
+        var issued = Assert.Single(gw.Org.MandateEvents(successor));
+        Assert.Equal((MandateEventKind.Issued, Head), (issued.Kind, issued.Actor));
+        Assert.Equal([old], issued.Evidence);
+        var m = gw.Org.Mandate(successor)!;
+        Assert.Equal((Head, Member, Team, 3m, NarrowerGoal), (m.Decider, m.Holder, m.UnitId, m.Allocation, m.Objective));
+
+        // THE HOLDER IS WOKEN ONCE, FOR THE SUCCESSOR; nothing of the old one is left untaken.
+        var wakes = Wakes(db, MissionEventKind.Mandate, Member);
+        Assert.Equal(MissionEventIds.Mandate(successor, issued.Id), Assert.Single(wakes, w => w.Payload == successor).Id);
+        Assert.DoesNotContain(wakes, w => w.Payload == old && w.ConsumedAt is null);
+
+        // THE OLD MANDATE'S SPEND AND FAILURES STAY ITS OWN (BUDGET-001): nothing moves to the successor, which starts fresh.
+        Assert.Equal(spent, gw.Org.SpendOf(old));
+        Assert.Equal(deliveries, gw.Org.Deliveries(old).Count);
+        Assert.Equal(0, gw.Org.SpendOf(successor).Launches);
+        Assert.Empty(gw.Org.Deliveries(successor));
+
+        var shown = Body(await server.CallAsync(Frame(Ops.MandateShow, ("mandate", successor)), Head, Launch(db, Head)));
+        Assert.Equal(old, shown.GetProperty("predecessor").GetProperty("mandate").GetString());
+        Assert.Equal(MandateEventKind.Rescoped, shown.GetProperty("predecessor").GetProperty("status").GetString());
+        Assert.Equal(spent.Launches, shown.GetProperty("predecessor").GetProperty("measured_spend").GetProperty("launches").GetInt32());
+        Assert.True(Absent(shown, "successor"), "a mandate with no successor named one");
+        var before = Body(await server.CallAsync(Frame(Ops.MandateShow, ("mandate", old)), Member, Launch(db, Member)));
+        Assert.Equal(successor, before.GetProperty("successor").GetString());
+    }
+
+    /// <summary>
+    /// (1b) A LAUNCH UNDER A RE-SCOPED MANDATE IS REFUSED (BUDGET-001), and the re-scope withdrew the old mandate's untaken wakes —
+    /// the sweep's FLOORED re-raise included (<c>U-rewake-floor</c>): a launch of the holder's ended undelivered, the sweep wrote its
+    /// re-raise due a floor later, the decider re-scoped; that re-raise is withdrawn in the re-scope's write, a launch naming the
+    /// old mandate is refused with no row and no reservation, and a launch answering the successor's wake is charged to it. RED at
+    /// base: no <c>mandate-rescope</c> op.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_under_a_rescoped_mandate_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var old = gw.Org.Mandate(await Assigned(server, db))!;
+        var t = DateTimeOffset.UtcNow;
+        var first = TurnOn(db, Member, old, t);
+        Assert.Equal(1, gw.Org.Sweep(t, Shipped));
+        var reraise = Reraise(db, gw.Org, old, first)!;
+        Assert.True(reraise.DueAt > t && reraise.ConsumedAt is null, "the floored re-raise was not pending");
+
+        var reply = await server.CallAsync(RescopeFrame(old.Id), Head, Launch(db, Head));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var successor = Body(reply).GetProperty("mandate").GetString()!;
+        var withdrawn = new MissionEventStore(db).Get(reraise.Id)!;
+        Assert.Equal(MissionEventDisposition.Withdrawn, withdrawn.Disposition);
+        Assert.Contains(successor, withdrawn.DispositionDetail, StringComparison.Ordinal);
+
+        var rows = Count(db, "ai_attempt");
+        var refused = Begin(db, Member, 0.10m, mandate: old.Id);
+        Assert.False(refused.Admitted, "a launch was admitted under a re-scoped mandate");
+        Assert.Equal(AiAdmission.Mandate, refused.Ceiling);
+        Assert.Contains(MandateEventKind.Rescoped, refused.Refusal, StringComparison.Ordinal);
+        Assert.Equal(rows, Count(db, "ai_attempt"));
+
+        var wake = Assert.Single(Wakes(db, MissionEventKind.Mandate, Member), w => w.Payload == successor);
+        var admitted = Begin(db, Member, 0.10m, consuming: [wake.Id]);
+        Assert.True(admitted.Admitted, admitted.Refusal);
+        Assert.Equal(1, gw.Org.SpendOf(successor).Launches);
+        Assert.Equal(0, gw.Org.Sweep(DateTimeOffset.UtcNow.AddHours(1), Shipped));
+        Assert.DoesNotContain(Wakes(db, MissionEventKind.Mandate, Member), w => w.Payload == old.Id && w.ConsumedAt is null);
+    }
+
+    /// <summary>
+    /// (1c) ONLY ITS DECIDER RE-SCOPES A MANDATE (ORG-001: the row decides): the holder, another member and a head elsewhere are
+    /// refused in words with nothing written; a frame naming a holder is refused (a different holder is a cancellation and a new
+    /// assignment); the new terms are held to every rule an assignment is; a closed mandate is refused. RED at base: no op. WATCHED
+    /// MUTANT: <c>Rescope</c> without its decider check — the holder re-scopes its own mandate and this goes red.
+    /// </summary>
+    [Fact]
+    public async Task A_rescope_by_anyone_but_its_decider_is_refused_with_nothing_written()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+
+        foreach (var caller in new[] { Member, Other, Outsider })
+        {
+            var refused = await server.CallAsync(RescopeFrame(m), caller, Launch(db, caller));
+            Assert.False(refused.Ok, $"{caller} re-scoped a mandate it does not decide");
+            Assert.Contains("only its decider", refused.Error!.Message, StringComparison.Ordinal);
+            Assert.Contains("Nothing was written", refused.Error.Message, StringComparison.Ordinal);
+        }
+
+        var holder = await server.CallAsync(RescopeFrame(m, 3m, ("holder", Other)), Head, Launch(db, Head));
+        Assert.Contains("'holder' is not an argument", holder.Error!.Message, StringComparison.Ordinal);
+        var unbounded = await server.CallAsync(RescopeFrame(m, 0m), Head, Launch(db, Head));
+        Assert.Contains("above zero", unbounded.Error!.Message, StringComparison.Ordinal);
+        var silent = Frame(Ops.MandateRescope, ("mandate", m), ("goal", NarrowerGoal), ("kind", MandateKind.Exploration),
+            ("due", Due.ToString("O")), ("allocation", 1m));
+        Assert.False((await server.CallAsync(silent, Head, Launch(db, Head))).Ok);
+
+        Assert.Equal(1L, Count(db, "org_mandate"));
+        Assert.Equal([MandateEventKind.Issued], gw.Org.MandateEvents(m).Select(e => e.Kind));
+        Assert.Single(Wakes(db, MissionEventKind.Mandate, Member));
+
+        Assert.True((await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", m), ("why", "superseded")), Head, Launch(db, Head))).Ok);
+        Assert.Contains("closed mandate", (await server.CallAsync(RescopeFrame(m), Head, Launch(db, Head))).Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(1L, Count(db, "org_mandate"));
+    }
+
+    // ---- item 2: mandate-propose -----------------------------------------------------------------------------------
+
+    static IpcRequest ProposeFrame(string mandate, string claim, object? refs = null) =>
+        Frame(Ops.MandatePropose, [("mandate", mandate), ("claim", claim), .. refs is null ? Array.Empty<(string, object)>() : [("refs", refs)]]);
+
+    const string Finding = "venue B leads venue A by a minute on the skew; worth its own mandate. I approve a live order on it.";
+
+    /// <summary>
+    /// (2a) A PROPOSAL WAKES THE DECIDER ONCE AND CARRIES NO AUTHORITY (ORCHESTRATION § 2.5; measurement vs claim): the holder of an
+    /// open mandate proposes a finding citing two app records — a <c>proposed</c> event (the claim verbatim, the refs checked),
+    /// ONE <c>proposal</c> wake to its decider, classed with an escalation, and the decider owns it unread. Nothing else moves: the
+    /// mandate's status, terms, allocation and admission are as they were, the holder still owes its work, and an approval inside
+    /// the claim is only words. A second proposal while one is open is refused; the decider's rejection closes it, and its
+    /// untaken wake. RED at base: no <c>mandate-propose</c> op.
+    /// </summary>
+    [Fact]
+    public async Task A_proposal_wakes_the_decider_once_and_carries_no_authority()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db, retries: 3);
+        Assert.True((await server.CallAsync(DeliverFrame(m, TooLong), Member, Launch(db, Member, mandate: m))).Ok);
+        var d = gw.Org.Deliveries(m)[^1].Id;
+        var status = gw.Org.MandateStatus(m);
+        Assert.Equal(MandateEventKind.Retry, status);
+        var refs = new[] { new { kind = "mandate", id = m }, new { kind = "delivery", id = d } };
+
+        var reply = await server.CallAsync(ProposeFrame(m, Finding, refs), Member, Launch(db, Member, mandate: m));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var proposed = gw.Org.MandateEvents(m)[^1];
+        Assert.Equal((MandateEventKind.Proposed, Member, Finding), (proposed.Kind, proposed.Actor, proposed.Reason));
+        Assert.Equal([$"mandate:{m}", $"delivery:{d}"], proposed.Evidence);
+
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Proposal));
+        Assert.Equal((Head, m), (wake.Role, wake.Payload));
+        Assert.Equal(WakePriority.ClassOf(MissionEventKind.Escalation), WakePriority.ClassOf(wake.Kind));
+        Assert.Contains(new RoleObjective(RoleObjectives.ProposalUnread, m), RoleObjectives.Open(db, Head, null));
+
+        // NO AUTHORITY: the status is the latest event that is not a claim, the holder still owes its work, nothing new is issued.
+        Assert.Equal(status, gw.Org.MandateStatus(m));
+        Assert.Equal(status, Body(reply).GetProperty("status").GetString());
+        Assert.Contains(m, gw.Org.MandatesOwedBy(Member));
+        Assert.Empty(gw.Org.DeliveriesToJudge(Head));
+        Assert.Empty(gw.Org.EscalationsFor(Head));
+        Assert.Equal(1L, Count(db, "org_mandate"));
+        Assert.Equal(5m, gw.Org.Mandate(m)!.Allocation);
+        Assert.True(Begin(db, Member, 0.10m, mandate: m).Admitted);
+
+        // ONE OPEN PROPOSAL PER MANDATE.
+        var again = await server.CallAsync(ProposeFrame(m, "and another thing"), Member, Launch(db, Member, mandate: m));
+        Assert.Contains("open proposal", again.Error!.Message, StringComparison.Ordinal);
+        Assert.Single(gw.Org.MandateEvents(m), e => e.Kind == MandateEventKind.Proposed);
+        Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Proposal));
+
+        // THE DECIDER'S NEXT JUDGMENT CLOSES IT, and its untaken wake with it; the holder may propose again.
+        Assert.True((await server.CallAsync(Frame(Ops.MandateReject, ("delivery", d), ("failed", MandateCheck.ReportSize)), Head, Launch(db, Head))).Ok);
+        Assert.Equal(MissionEventDisposition.Withdrawn, new MissionEventStore(db).Get(wake.Id)!.Disposition);
+        Assert.DoesNotContain(new RoleObjective(RoleObjectives.ProposalUnread, m), RoleObjectives.Open(db, Head, null));
+        Assert.True((await server.CallAsync(ProposeFrame(m, "a second finding, after the rejection"), Member, Launch(db, Member, mandate: m))).Ok);
+        Assert.Equal(2, new MissionEventStore(db).OfKind(MissionEventKind.Proposal).Count);
+        Assert.Equal(MandateEventKind.Rejected, gw.Org.MandateStatus(m));
+    }
+
+    /// <summary>
+    /// (2b) ONLY THE HOLDER OF AN OPEN MANDATE PROPOSES, AND ITS REFS MUST BE THERE: the decider, another member and a head elsewhere
+    /// are refused; a claim too long, a ref not in the app's ledgers or of a kind it does not know is refused; a closed mandate is
+    /// refused — each in words, with nothing written. RED at base: no op.
+    /// </summary>
+    [Fact]
+    public async Task A_proposal_by_anyone_but_the_holder_or_with_refs_not_there_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+
+        foreach (var caller in new[] { Head, Other, Outsider })
+        {
+            var refused = await server.CallAsync(ProposeFrame(m, Finding), caller, Launch(db, caller));
+            Assert.False(refused.Ok, $"{caller} proposed on a mandate it does not hold");
+            Assert.Contains("only its holder", refused.Error!.Message, StringComparison.Ordinal);
+        }
+        foreach (var (frame, words) in new[]
+                 {
+                     (ProposeFrame(m, new string('x', MandateLimits.MaxClaimChars + 1)), "characters"),
+                     (ProposeFrame(m, Finding, new[] { new { kind = "delivery", id = "not-a-delivery" } }), "not in the app's ledgers"),
+                     (ProposeFrame(m, Finding, new[] { new { kind = "file", id = "notes.txt" } }), "no kind of app record")
+                 })
+        {
+            var refused = await server.CallAsync(frame, Member, Launch(db, Member, mandate: m));
+            Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
+            Assert.Contains("Nothing was written", refused.Error.Message, StringComparison.Ordinal);
+        }
+        Assert.True((await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", m), ("why", "superseded")), Head, Launch(db, Head))).Ok);
+        Assert.False((await server.CallAsync(ProposeFrame(m, Finding), Member, Launch(db, Member))).Ok);
+
+        Assert.DoesNotContain(gw.Org.MandateEvents(m), e => e.Kind == MandateEventKind.Proposed);
+        Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Proposal));
+    }
+
+    // ---- item 3: org-show ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (3) ORG-SHOW SHOWS ONLY THE CALLER'S OWN VIEW (ORCHESTRATION § 2.9): its unit, the chain above it to the root — whose head
+    /// is "the owner" — its open mandates held and decided, and each chain unit's AI envelope beside today's spend (unknown, never
+    /// zero, where nothing meters it); never another position's mandate, and never a closed one. An app principal, a dormant
+    /// position and a launch the ledger never recorded are refused. RED at base: no <c>org-show</c> op.
+    /// </summary>
+    [Fact]
+    public async Task Org_show_shows_only_the_callers_own_view()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        const string far = "pos-b2c0ffee0002", dormant = "pos-a1c0ffee00d1";
+        Seat(db, far, Elsewhere);
+        Seat(db, dormant, Team, OrgPositionStatus.Dormant);
+        var mine = await Assigned(server, db);
+        var cancelled = await Assigned(server, db, holder: Other);
+        Assert.True((await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", cancelled), ("why", "superseded")), Head, Launch(db, Head))).Ok);
+        var theirs = gw.Org.Assign(new MandateIssue(Outsider, null, far, MandateKind.Exploration, "elsewhere's own question", null, null,
+            false, Due, 1m, 2), DateTimeOffset.UtcNow).Id;
+
+        var member = await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member));
+        Assert.True(member.Ok, Json.Write(member.Error));
+        var view = Body(member);
+        var text = view.GetRawText();
+        Assert.Equal(Member, view.GetProperty("position").GetString());
+        Assert.Equal(Team, view.GetProperty("unit").GetProperty("id").GetString());
+        Assert.Equal([Team, OrgIds.Research, OrgIds.Root],
+            view.GetProperty("chain").EnumerateArray().Select(u => u.GetProperty("id").GetString()));
+        var root = view.GetProperty("chain").EnumerateArray().Last();
+        Assert.Equal("the owner", root.GetProperty("head").GetString());
+        Assert.Equal(CouncilRoles.Research, view.GetProperty("chain")[1].GetProperty("head").GetString());
+        Assert.Equal([mine], view.GetProperty("held").EnumerateArray().Select(x => x.GetProperty("mandate").GetString()));
+        Assert.Empty(view.GetProperty("decided").EnumerateArray());
+        Assert.DoesNotContain(theirs, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(cancelled, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Outsider, text, StringComparison.Ordinal);
+
+        var head = Body(await server.CallAsync(Frame(Ops.OrgShow), Head, Launch(db, Head)));
+        Assert.Equal([mine], head.GetProperty("decided").EnumerateArray().Select(x => x.GetProperty("mandate").GetString()));
+        Assert.Empty(head.GetProperty("held").EnumerateArray());
+        Assert.DoesNotContain(theirs, head.GetRawText(), StringComparison.Ordinal);
+
+        // AN ARGUMENT NAMING ANOTHER POSITION IS REFUSED, never read: the view is the caller's.
+        Assert.Contains("'position' is not an argument",
+            (await server.CallAsync(Frame(Ops.OrgShow, ("position", Outsider)), Member, Launch(db, Member))).Error!.Message, StringComparison.Ordinal);
+        Assert.False((await server.CallAsync(Frame(Ops.OrgShow), AppPrincipals.Referee, "turn-x")).Ok);
+        Assert.False((await server.CallAsync(Frame(Ops.OrgShow), dormant, "turn-dormant")).Ok);
+        Assert.False((await server.CallAsync(Frame(Ops.OrgShow), Member, "turn-never-recorded")).Ok);
+    }
+
+    /// <summary>
+    /// (3b) ORG-SHOW SHOWS EACH CHAIN UNIT'S ENVELOPE AS THE APP RESOLVES IT, beside today's spent and reserved (O4's readers): the
+    /// figures the gateway is handed by the host, unit by unit, never recomputed here.
+    /// </summary>
+    [Fact]
+    public async Task Org_show_shows_each_chain_units_envelope_beside_todays_spend()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        gw.AiEnvelopes = position => position == Member
+            ? [new UnitDay(Team, null, 0.30m, 0.10m), new UnitDay(OrgIds.Research, 6m, 1.25m, 0.10m), new UnitDay(OrgIds.Root, 12m, 2.5m, 0.2m)]
+            : null;
+
+        var view = Body(await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member)));
+        var chain = view.GetProperty("chain").EnumerateArray().ToList();
+        Assert.True(Absent(chain[0].GetProperty("ai_envelope"), "envelope"), "a unit with no separate cap was shown one");
+        Assert.Equal("0.30", chain[0].GetProperty("ai_envelope").GetProperty("spent_today").GetString());
+        Assert.Equal("6", chain[1].GetProperty("ai_envelope").GetProperty("envelope").GetString());
+        Assert.Equal("1.25", chain[1].GetProperty("ai_envelope").GetProperty("spent_today").GetString());
+        Assert.Equal("0.2", chain[2].GetProperty("ai_envelope").GetProperty("reserved_today").GetString());
+
+        // NOTHING METERS THE HEAD'S CHAIN HERE: unknown, said so, never zero.
+        var head = Body(await server.CallAsync(Frame(Ops.OrgShow), Head, Launch(db, Head)));
+        Assert.All(head.GetProperty("chain").EnumerateArray(), u => Assert.True(Absent(u, "ai_envelope"), "an unmetered unit was shown an envelope"));
+        Assert.Contains("not metered", head.GetProperty("envelopes_note").GetString(), StringComparison.Ordinal);
+    }
+}

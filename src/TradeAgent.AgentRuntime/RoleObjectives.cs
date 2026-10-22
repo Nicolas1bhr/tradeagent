@@ -80,6 +80,12 @@ public static class RoleObjectives
     /// <summary>A MANDATE THIS POSITION DECIDES THAT PASSED ITS DEADLINE, until a turn of its own has been woken for it.</summary>
     public const string MandateExpired = "mandate-expired";
 
+    /// <summary>
+    /// A PROPOSAL A HOLDER MADE ON A MANDATE THIS POSITION DECIDES (<c>U-org-verbs-a</c>), until a turn of its own has been woken
+    /// for it: an off-path finding always reaches the head (ORCHESTRATION § 2.5). The entity is the mandate's id.
+    /// </summary>
+    public const string ProposalUnread = "proposal-unread";
+
     /// <summary>The entity of <see cref="PositionWatched"/> when the host has no reading of the book to give.</summary>
     public const string UnreadBook = "the book has not been read";
 

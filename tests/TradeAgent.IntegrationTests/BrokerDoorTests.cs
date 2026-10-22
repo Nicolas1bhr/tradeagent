@@ -476,6 +476,10 @@ public class BrokerDoorTests
                 ["type"] = "object", ["properties"] = new Dictionary<string, object>()
             }),
             (_, _, _) => Task.FromResult(ToolAnswer.Ok("the test verb answered", "test-verb-show")));
+        // U-org-verbs-a: THE THREE NEW ORGANISATION VERBS, as the app composes them, sit behind the same gate as the test verb.
+        string[] three = [.. new[] { Ops.MandateRescope, Ops.MandatePropose, Ops.OrgShow }.Select(BrokerDoor.VerbName)];
+        var real = BrokerDoor.OrganisationVerbs(() => server).Where(v => three.Contains(v.Spec.Name)).ToList();
+        Assert.Equal(three, real.Select(v => v.Spec.Name));
         var recorded = new Dictionary<string, string> { ["attempt-unconfined"] = "unconfined", ["attempt-carried"] = "carried" };
         string? AsRecorded(AgentGrant g) => recorded[g.AttemptId] == "unconfined"
             ? $"attempt {g.AttemptId} was recorded unconfined, which carries no organisational decision right"
@@ -494,9 +498,9 @@ public class BrokerDoorTests
             Directory.CreateDirectory(folder);
             var ledger = new ToolCallStore(db);
             await using var door = gate is null
-                ? new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger,
+                ? new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb, .. real], Ledger = ledger,
                     Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger) }
-                : new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger, VerbGate = gate,
+                : new BrokerDoor { Grants = grants, Image = SelfImage, Verbs = [verb, .. real], Ledger = ledger, VerbGate = gate,
                     Tools = g => BrokerDoor.ToolsFor(g, _ => folder, () => server, ledger) };
             door.Start();
             using var http = Client(research.Token);
@@ -506,6 +510,16 @@ public class BrokerDoorTests
             var call = (await Post(http, door.Url!, Rpc(2, "tools/call", new { name = "test-verb-show", arguments = new { } })))
                 .Json.GetProperty("result");
             var rows = ledger.ForAttempt(attempt);
+
+            if (served) Assert.All(three, n => Assert.Contains(n, listed));
+            else Assert.Empty(listed.Intersect(three));
+            if (!served)
+                foreach (var name in three)
+                {
+                    var refused = (await Post(http, door.Url!, Rpc(3, "tools/call", new { name, arguments = new { } }))).Json.GetProperty("result");
+                    Assert.True(refused.GetProperty("isError").GetBoolean(), $"{name} was served to {attempt}: {Text(refused)}");
+                    Assert.Contains("is an organisation verb", Text(refused));
+                }
 
             if (served)
             {

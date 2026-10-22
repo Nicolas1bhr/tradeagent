@@ -233,11 +233,31 @@ public partial class OrgAssignmentTests
         Assert.Equal(0L, Count(db, "org_mandate_event"));
         Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Mandate));
 
+        // U-org-verbs-a: RE-SCOPE, PROPOSE AND ORG-SHOW too — research's headship of the subtree that holds the mandate included.
+        var held = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow).Id;
+        foreach (var caller in CouncilRoles.All)
+            foreach (var frame in new[]
+                     {
+                         Frame(Ops.MandateRescope, ("mandate", held), ("why", "w"), ("goal", "g"), ("kind", MandateKind.Exploration),
+                             ("due", Due.ToString("O")), ("allocation", 1m)),
+                         Frame(Ops.MandatePropose, ("mandate", held), ("claim", "c")),
+                         Frame(Ops.OrgShow)
+                     })
+            {
+                var refused = await server.CallAsync(frame, caller, Launch(db, caller, SeatClasses.Cli));
+                Assert.False(refused.Ok, $"{caller}'s {frame.Op} on an unconfined seat was served");
+                Assert.Contains("Heading a unit grants no verb by itself", refused.Error!.Message, StringComparison.Ordinal);
+            }
+        Assert.Equal(1L, Count(db, "org_mandate"));
+        Assert.Equal([MandateEventKind.Issued], gw.Org.MandateEvents(held).Select(e => e.Kind));
+        Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Mandate));
+        Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Proposal));
+
         // NO GRANT AT ALL, AN APP PRINCIPAL, OR A LAUNCH NOT IN THE LEDGER is nobody.
         Assert.False((await server.CallAsync(AssignFrame(Member), null, null)).Ok);
         Assert.False((await server.CallAsync(AssignFrame(Member), AppPrincipals.Referee, "turn-x")).Ok);
         Assert.False((await server.CallAsync(AssignFrame(Member), Head, "turn-never-recorded")).Ok);
-        Assert.Equal(0L, Count(db, "org_mandate"));
+        Assert.Equal(1L, Count(db, "org_mandate"));
 
         // AND THE CLI'S REACH NAMES NONE OF THEM, for either legacy role.
         foreach (var role in CouncilRoles.All)
@@ -328,7 +348,8 @@ public partial class OrgAssignmentTests
         var fields = typeof(Ops).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
             .Where(f => f.IsLiteral && f.FieldType == typeof(string)).ToList();
         // O5b (U-org-decisions, RULED Q1) JOINS IT: decision-*, forecast-*, escalation-*, lateral-* are organisation verbs too.
-        string[] families = ["Mandate", "Decision", "Forecast", "Escalation", "Lateral"];
+        // O6 PART A (U-org-verbs-a) JOINS IT: org-show, the first org-* verb.
+        string[] families = ["Mandate", "Decision", "Forecast", "Escalation", "Lateral", "Org"];
         bool Organisational(System.Reflection.FieldInfo f) => families.Any(p => f.Name.StartsWith(p, StringComparison.Ordinal));
         var organisation = fields.Where(Organisational)
             .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
