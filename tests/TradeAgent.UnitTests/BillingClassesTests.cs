@@ -569,6 +569,31 @@ public class BillingClassesTests : IDisposable
         finally { await host.Gateway.DisposeAsync(); }
     }
 
+    /// <summary>
+    /// <c>U-billing-followups</c> item 4: A REVIEW IS CALLED UNFUNDED ONLY WHEN THE CLASS IT WOULD BILL CANNOT FUND ONE TURN. With no real
+    /// money today and the plan's 40, a council whose seats are signed in with the plan can still be reviewed — the report said it could
+    /// not, reading both ceilings together. With neither ceiling funding a turn, it still says so.
+    /// </summary>
+    [Fact]
+    public async Task A_review_billed_to_a_funded_plan_is_not_declared_unfunded_with_no_real_money()
+    {
+        using var db = TestEnv.NewDb();
+        var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
+            new AgentPresence());
+        try
+        {
+            foreach (var role in CouncilRoles.All) Finished(db, role, BillingClasses.Plan);
+            host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 40m; });
+            Assert.All(CouncilRoles.All, role => Assert.Equal(BillingClasses.Plan, host.BillingClassOf(role)));
+            Assert.Null(host.ReportInputs().ReviewNotFunded);
+
+            // NEITHER CLASS CAN FUND ONE: unfunded, as before.
+            host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 0m; });
+            Assert.NotNull(host.ReportInputs().ReviewNotFunded);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
     // ---- (f) the setting ------------------------------------------------------------------------------------------------
 
     /// <summary>

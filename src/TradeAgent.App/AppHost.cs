@@ -1489,10 +1489,24 @@ public sealed class AppHost : IAsyncDisposable
             // A REVIEW THAT IS PENDING BECAUSE IT WAS NOT FUNDED, which rule 10 asks for by name. It
             // is not the same fact as a review that has not come round yet, and an owner reading
             // "waiting" needs to know which of the two they are looking at.
-            ReviewNotFunded = SpendToday is { Metered: true } s && !s.AdmitsAnotherTurn
+            ReviewNotFunded = ReviewUnfunded(spend)
                 ? "the day's spending ceiling is reached, so no turn can be taken until it resets"
                 : null
         };
+    }
+
+    /// <summary>
+    /// WHETHER THE NEXT REVIEW CANNOT BE FUNDED (<c>U-billing-followups</c> item 4): only when the ceiling of the class each role would bill
+    /// it to cannot fund one turn — a plan seat against the plan's capacity, a key seat against the money cap, an unknown one against both,
+    /// each role's reading as the loop's own pick reads it (<see cref="TurnMeter.TodayFor"/>, its class's ceiling: <c>AdmitsGlobally</c>).
+    /// Reading both ceilings together called a review on a funded plan unfunded whenever the money cap was spent, and the reverse. A
+    /// position's own envelope is not the day's ceiling and is left out: the sentence names the ceiling. Unmetered, nothing is claimed.
+    /// </summary>
+    static bool ReviewUnfunded(IReadOnlyList<AiSpendToday> spend)
+    {
+        var roles = spend.Where(s => s.Role is not null).ToList();
+        if (roles.Count == 0) return spend is [{ Metered: true } whole] && !whole.AdmitsGlobally;
+        return roles.All(s => s.Metered && !s.AdmitsGlobally);
     }
 
     /// <summary>
