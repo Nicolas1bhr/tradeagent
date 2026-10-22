@@ -298,22 +298,26 @@ public static class HomeFiles
                     : Failure(relative, "opened", errno);
             }
             var handle = new SafeFileHandle(fd, ownsHandle: true);
-            var (mode, links) = Stat(fd);
-            if ((mode & S_IFMT) != S_IFREG || (oneName && links != 1))
+            // THE DESCRIPTOR IS CLOSED ON EVERY WAY OUT BUT THE RETURN (fix pass 5, the fourth re-review's D4): a refusal below, or an
+            // examination that throws, never leaves it open until finalization.
+            try
+            {
+                var (mode, links) = Stat(fd);
+                if ((mode & S_IFMT) != S_IFREG || (oneName && links != 1))
+                    throw new HomeLinkRefused((mode & S_IFMT) != S_IFREG
+                        ? $"'{relative}' is not a file."
+                        : $"'{relative}' has another name somewhere else (a hard link), so TradeAgent does not read it.");
+                // AS File.ReadAllBytes OPENS ON UNIX: a shared advisory lock, refused while another holds the file exclusively (.NET's
+                // FileShare.None), so a file being rewritten under one is not read half-written.
+                if (flock(fd, LockShared | LockNonBlocking) != 0 && Marshal.GetLastPInvokeError() == F.EWOULDBLOCK)
+                    throw new IOException($"'{relative}' is open elsewhere and cannot be read now.");
+                return handle;
+            }
+            catch
             {
                 handle.Dispose();
-                throw new HomeLinkRefused((mode & S_IFMT) != S_IFREG
-                    ? $"'{relative}' is not a file."
-                    : $"'{relative}' has another name somewhere else (a hard link), so TradeAgent does not read it.");
+                throw;
             }
-            // AS File.ReadAllBytes OPENS ON UNIX: a shared advisory lock, refused while another holds the file exclusively (.NET's
-            // FileShare.None), so a file being rewritten under one is not read half-written.
-            if (flock(fd, LockShared | LockNonBlocking) != 0 && Marshal.GetLastPInvokeError() == F.EWOULDBLOCK)
-            {
-                handle.Dispose();
-                throw new IOException($"'{relative}' is open elsewhere and cannot be read now.");
-            }
-            return handle;
         }
         finally { close(dir); }
     }
