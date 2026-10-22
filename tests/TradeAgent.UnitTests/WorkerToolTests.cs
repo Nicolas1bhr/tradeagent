@@ -709,6 +709,29 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.Equal("WRITTEN", File.ReadAllText(Path.Combine(Home(CouncilRoles.Research), CouncilRoles.OutDir, "x")));
     }
 
+    /// <summary>
+    /// <c>./</c> AND <c>./.</c> NAME THE ROLE'S OWN FOLDER, AS <c>.</c> DOES (fix pass 5, the fourth re-review's D6): once their dots are
+    /// dropped they name no segment at all, and the path rule refused them as "outside your own folder" while <c>.</c> was listed. They are
+    /// listed exactly as <c>.</c> is; <c>./../x</c> still climbs, and is still refused.
+    /// </summary>
+    [Fact]
+    public async Task The_folders_own_name_spelled_with_dots_is_listed_as_the_folder()
+    {
+        var tools = Tools(CouncilRoles.Research);
+        var root = await tools.InvokeAsync(Call(ListFiles, new { path = "." }));
+        Assert.True(root.Served, $"list_files . was refused: {root.Content}");
+
+        foreach (var spelled in new[] { "./", "./.", "././" })
+        {
+            var listed = await tools.InvokeAsync(Call(ListFiles, new { path = spelled }));
+            Assert.True(listed.Served, $"list_files {spelled} was refused: {listed.Content}");
+            Assert.Equal(root.Content, listed.Content);
+        }
+        var climbed = await tools.InvokeAsync(Call(ListFiles, new { path = "./../x" }));
+        Assert.False(climbed.Served, $"list_files ./../x was served: {climbed.Content}");
+        Assert.Contains("climbs out of your own folder", climbed.Content);
+    }
+
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]
     static extern int HardLink(string existing, string created);
 
