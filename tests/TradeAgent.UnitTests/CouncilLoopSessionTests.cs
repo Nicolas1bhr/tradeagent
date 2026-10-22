@@ -145,6 +145,57 @@ public partial class CouncilLoopTests
 
         Assert.Equal(["send", "send"], host.Conversations[Executor].Timeline);
         Assert.Contains(said, s => s.Contains("the organisation chart could not be read", StringComparison.Ordinal)
-                                   && s.Contains("kept to the turn bound", StringComparison.Ordinal));
+                                   && s.Contains("kept to the turn and token bounds", StringComparison.Ordinal));
+    }
+
+    // ---- item 2: the head's token bound -----------------------------------------------------------------------------------
+
+    /// <summary>A position above <see cref="TeamHead"/>: it heads the unit <see cref="SessionTeam"/> hangs from, so it decides the head's mandates.</summary>
+    const string UpperHead = "pos-5e5510000003";
+
+    static TurnUsage Read(long input) => new(input, 0, 0, 10, 0, "model-under-test");
+
+    /// <summary>
+    /// (c) A HEAD ROTATES AT TURNS OR TOKENS AND NEVER PER MANDATE. A team head holding two mandates from the head above it, under
+    /// a bound of three turns and 1,000 input tokens: its second mandate resumes the first's session; the turn after one that
+    /// reported 1,200 input tokens is fresh, for <c>tokens</c>; turns that report no usage never read as reaching the bound — nor
+    /// as a zero — and the session's third turn is followed by a fresh one, for <c>turns</c>.
+    ///
+    /// <para>RED at base e697686d: there was no token bound — the turn after 1,200 resumed, and the first stop came at the turn
+    /// bound alone.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_head_rotates_at_turns_or_tokens_and_never_per_mandate()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Unit(db, "team-5e551top", OrgIds.Research, null);
+        Seat(db, UpperHead, "team-5e551top", heads: true);
+        Unit(db, SessionTeam, "team-5e551top", null);
+        Seat(db, TeamHead, SessionTeam, heads: true);
+        var host = new CouncilHost(db, root, new Concurrency()).Add(UpperHead).Add(TeamHead);
+        var loop = new MissionLoop(host, NoHeartbeat with { TurnsPerSession = 3, InputTokensPerSession = 1_000 });
+        var org = new OrgStore(db);
+        MandateRow Up(string objective) => org.Assign(new MandateIssue(UpperHead, null, TeamHead, MandateKind.Task, objective, null,
+            MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        var head = host.Conversations[TeamHead];
+
+        var m1 = Up("map the team's open questions");
+        var m2 = Up("rank them by what they would cost to answer");
+        head.Usage = Read(300);
+        await TurnsUntil(loop, host, TeamHead, 1);
+        head.Usage = Read(1_200);
+        await TurnsUntil(loop, host, TeamHead, 2);
+        Assert.Equal([m1.Id, m2.Id], Served(db, TeamHead));
+
+        head.Usage = null;
+        for (var n = 3; n <= 6; n++)
+        {
+            SelfWake(host, TeamHead, $"turn-head-{n}");
+            await TurnsUntil(loop, host, TeamHead, n);
+        }
+
+        Assert.Equal(["send", "send", $"stop:{SessionWhy.Tokens}", "send", "send", "send", $"stop:{SessionWhy.Turns}", "send"],
+            head.Timeline);
     }
 }

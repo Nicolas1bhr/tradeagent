@@ -137,7 +137,7 @@ public static class SessionWhy
     /// <summary>The session reached <see cref="MissionOptions.TurnsPerSession"/>.</summary>
     public const string Turns = "turns";
 
-    /// <summary>The session's last reported input reached <c>MissionOptions.InputTokensPerSession</c>.</summary>
+    /// <summary>The session's last reported input reached <see cref="MissionOptions.InputTokensPerSession"/>.</summary>
     public const string Tokens = "tokens";
 
     /// <summary>The seat's verified profile changed, and a rollout written under another profile is never continued.</summary>
@@ -174,6 +174,18 @@ public sealed record MissionOptions
 {
     /// <summary>Turns resumed into one CLI session before a fresh one is started. The files are the memory.</summary>
     public int TurnsPerSession { get; init; } = 20;
+
+    /// <summary>
+    /// THE OTHER ROTATION BOUND (<c>U-org-packets-a</c>; ORCHESTRATION § 2.6, "turns or tokens"): a session whose last turn reported
+    /// at least this many input tokens is not resumed again — the next turn starts fresh. Policy data, the owner's to change; zero
+    /// turns it off. A turn that reported no usage never counts as zero: the session keeps the last figure it did report.
+    ///
+    /// <para>The default, 400,000, is about two and a half times the 167,264 input tokens attempt 2 measured on a single turn
+    /// (R15 § 3; ORGANISATION § 6's ≈ 167k): a CLI turn's input sums every request it makes, so a bound near one turn's figure would
+    /// rotate every turn and spend the cache a resumed session earns, while this one catches a context that has grown well past a
+    /// working turn's.</para>
+    /// </summary>
+    public long InputTokensPerSession { get; init; } = 400_000;
 
     /// <summary>The most the AI can ask to be left alone for, and the ceiling of the error backoff.</summary>
     public TimeSpan MaxDelay { get; init; } = TimeSpan.FromMinutes(30);
@@ -1947,7 +1959,8 @@ public sealed class MissionLoop
     /// serves and that mandate's latest <c>retry</c> or <c>rejected</c> event: a different mandate is fresh
     /// (<see cref="SessionWhy.Mandate"/>), the same one sent back since is fresh (<see cref="SessionWhy.Retry"/>), and a launch
     /// with no mandate wake — its own self-wake — keeps the session it has. <b>A head and the legacy pair</b> never rotate per
-    /// mandate. <b>Every position</b> rotates at <see cref="MissionOptions.TurnsPerSession"/>.</para>
+    /// mandate. <b>Every position</b> rotates at <see cref="MissionOptions.TurnsPerSession"/>, or once its session's last reported
+    /// input reached <see cref="MissionOptions.InputTokensPerSession"/>.</para>
     ///
     /// <para>A CHART THAT CANNOT BE READ IS NEVER GUESSED: the position keeps the turn bound only, and the loop says so.</para>
     /// </summary>
@@ -1984,8 +1997,26 @@ public sealed class MissionLoop
             else if (had.SentBack != key.SentBack) why = SessionWhy.Retry;
         }
 
-        return why ?? (turns >= _options.TurnsPerSession ? SessionWhy.Turns : null);
+        return why ?? (turns >= _options.TurnsPerSession ? SessionWhy.Turns
+            : TokensReached(role) ? SessionWhy.Tokens
+            : null);
     }
+
+    /// <summary>
+    /// WHETHER <paramref name="role"/>'S SESSION REPORTED AT LEAST <see cref="MissionOptions.InputTokensPerSession"/> INPUT TOKENS
+    /// on the last turn that reported any. A session with no reported figure is not rotated for tokens — its turn bound still holds.
+    /// </summary>
+    bool TokensReached(string role)
+    {
+        if (_options.InputTokensPerSession <= 0) return false;
+        lock (_gate) return _sessionInput.TryGetValue(role, out var input) && input >= _options.InputTokensPerSession;
+    }
+
+    /// <summary>
+    /// THE INPUT TOKENS EACH ROLE'S SESSION LAST REPORTED (<c>U-org-packets-a</c>): written only from a turn that reported usage, so a
+    /// turn that reported none never stands as a zero; forgotten when the session rotates.
+    /// </summary>
+    readonly Dictionary<string, long> _sessionInput = new(StringComparer.Ordinal);
 
     /// <summary>
     /// WHETHER <paramref name="role"/> IS AN EXECUTOR on the chart as the host reads it now: false for the legacy pair and for a
@@ -1999,14 +2030,14 @@ public sealed class MissionLoop
         try { chart = _host.Positions(); }
         catch (Exception ex)
         {
-            Said(role, $"the organisation chart could not be read ({ex.Message}), so its session is kept to the turn bound and "
+            Said(role, $"the organisation chart could not be read ({ex.Message}), so its session is kept to the turn and token bounds and "
                        + $"not keyed to mandate {mandateId}");
             return false;
         }
 
         if (chart.FirstOrDefault(p => p.Id == role) is not { } position)
         {
-            Said(role, $"the organisation chart names no active position '{role}', so its session is kept to the turn bound and "
+            Said(role, $"the organisation chart names no active position '{role}', so its session is kept to the turn and token bounds and "
                        + $"not keyed to mandate {mandateId}");
             return false;
         }
@@ -2636,7 +2667,7 @@ public sealed class MissionLoop
         if (SessionFor(role, served) is { } rotation)
         {
             await conversation.StopAsync(rotation);
-            lock (_gate) _sessionTurns[role] = 0;
+            lock (_gate) { _sessionTurns[role] = 0; _sessionInput.Remove(role); }
         }
 
         // THE OWNER'S WORDS COME OFF THE TABLE FIRST AND THE IN-MEMORY QUEUE SECOND. With a wake
@@ -2909,6 +2940,8 @@ public sealed class MissionLoop
         {
             _turns++;
             _sessionTurns[role] = Sessions(role) + 1;
+            // WHAT THE RUNTIME SAID THIS TURN READ, or nothing: an unreported turn keeps the last figure, never a zero.
+            if (ended?.Usage?.InputTokens is { } input) _sessionInput[role] = input;
             errors = failed ? Failed(role) : Recovered(role);
             _lastFirstLine = FirstLineOfLastReply(conversation) ?? _lastFirstLine;
         }
