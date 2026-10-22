@@ -32,10 +32,13 @@ public sealed record AuditFinding(string Id, string DeliveryId, string MandateId
 /// </summary>
 public sealed record AuditFlag(string DeliveryId, string MandateId, string? AttemptId, string What, DateTimeOffset At);
 
-/// <summary>What one sweep writes, in one transaction: its samples with their checks, findings and flags, and the cursor it read to.</summary>
+/// <summary>
+/// What one sweep writes, in one transaction: its samples with their checks, findings and flags, the cursor it read to, and the line's own
+/// failures met on the way (an event it could not read), in the app's words.
+/// </summary>
 public sealed record AuditSweepWrite(
     IReadOnlyList<AuditSample> Samples, IReadOnlyList<AuditCheck> Checks, IReadOnlyList<AuditFinding> Findings,
-    IReadOnlyList<AuditFlag> Flags, long? Cursor);
+    IReadOnlyList<AuditFlag> Flags, long? Cursor, IReadOnlyList<string>? Failures = null);
 
 /// <summary>Severity words a finding carries.</summary>
 public static class AuditSeverity
@@ -255,7 +258,7 @@ public sealed class AuditStore : IDisposable
     // -------------------------------------------------------------------------------- one sweep
 
     /// <summary>
-    /// WRITES ONE SWEEP: its samples, their checks, findings and flags, then its cursor, in one transaction — a crash leaves none of it,
+    /// WRITES ONE SWEEP: its samples, their checks, findings and flags, its own failures, then its cursor, in one transaction — a crash leaves none of it,
     /// and a re-run draws the same samples again, which their keys make nothing. Returns the samples this call wrote new.
     /// </summary>
     public IReadOnlyList<AuditSample> Commit(AuditSweepWrite sweep, DateTimeOffset at) => Write(() =>
@@ -301,6 +304,11 @@ public sealed class AuditStore : IDisposable
                 INSERT INTO audit_flag(delivery_id, mandate_id, attempt_id, what, at) VALUES($d, $m, $a, $w, $at)
                 ON CONFLICT(delivery_id) DO NOTHING
                 """, ("$d", g.DeliveryId), ("$m", g.MandateId), ("$a", g.AttemptId), ("$w", g.What), ("$at", Sql.T(g.At)));
+            c.ExecuteNonQuery();
+        }
+        foreach (var what in sweep.Failures ?? [])
+        {
+            using var c = Cmd("INSERT INTO audit_failure(at, what) VALUES($at, $what)", ("$at", Sql.T(at)), ("$what", what));
             c.ExecuteNonQuery();
         }
         if (sweep.Cursor is { } last && (CursorOf(EventSource) ?? 0) < last)

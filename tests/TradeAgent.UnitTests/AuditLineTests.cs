@@ -486,6 +486,51 @@ public partial class AuditLineTests(ITestOutputHelper log)
             Assert.DoesNotContain(words, text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A COLUMN OR AN EVENT REWRITTEN OUT OF SHAPE IS FOUND AND NEVER STOPS THE SWEEP. Past dropped triggers, one accepted delivery's refs
+    /// and deviations become JSON TradeAgent never writes, and one acceptance's evidence names no delivery: the sweep does not fail — the
+    /// rewritten delivery fails its seal (severe) and every check that reads those columns; the unreadable acceptance is the line's own
+    /// failure, in its file; and the deliveries accepted after both are still drawn. RED before this fix: the first parse threw, the sweep
+    /// recorded a failure and its cursor never moved again — every later acceptance unaudited (found by the differential guard's seeds).
+    /// </summary>
+    [Fact]
+    public void A_column_or_an_event_rewritten_out_of_shape_is_found_and_never_stops_the_sweep()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var bent = Accepted(org, now, "bent");
+        var lost = Accepted(org, now, "lost");
+        var later = Accepted(org, now, "later");
+        using (var c = OversightSeed.Open(db.FilePath))
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = """
+                DROP TRIGGER org_delivery_sealed_u;
+                DROP TRIGGER org_mandate_event_sealed_u;
+                UPDATE org_delivery SET refs = '["run:x"]', deviations = 'not json' WHERE id = $bent;
+                UPDATE org_mandate_event SET evidence = '{"not":"a list"}' WHERE kind = 'accepted' AND evidence LIKE '%' || $lost || '%';
+                """;
+            cmd.Parameters.AddWithValue("$bent", bent);
+            cmd.Parameters.AddWithValue("$lost", lost);
+            cmd.ExecuteNonQuery();
+        }
+
+        using var store = new AuditStore(NewFile(), now);
+        var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
+        Assert.Null(swept.Failure);
+        Assert.Equal([bent, later], swept.Drawn.Select(s => s.DeliveryId));
+        foreach (var k in store.Checks(bent)) log.WriteLine($"{k.Name} {k.Passed}: {k.Reason}");
+        Assert.All(store.Checks(bent), k => Assert.False(k.Passed));
+        Assert.Equal(AuditSeverity.Severe, Assert.Single(store.Findings(), f => f.DeliveryId == bent && f.Check == AuditCheckName.Seal).Severity);
+        Assert.All(store.Checks(later), k => Assert.True(k.Passed, k.Reason));
+        var failure = Assert.Single(store.Failures());
+        log.WriteLine(failure.What);
+        Assert.Contains("names no delivery TradeAgent can read", failure.What, StringComparison.Ordinal);
+        Assert.DoesNotContain("not json", AllText(store.File), StringComparison.Ordinal);
+    }
+
     // ---- (f) the refs, now, and the acceptance ----------------------------------------------------------------------------
 
     /// <summary>A launch the ledger recorded as charged to <paramref name="mandate"/>, and a strategy version it wrote — as only a test may.</summary>
