@@ -6,6 +6,7 @@ using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
+using TradeAgent.Core.Oversight;
 using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
 using TradeAgent.Platforms;
@@ -44,6 +45,9 @@ public sealed class AppHost : IAsyncDisposable
     public Uri? DoorUrl => _door?.Url;
 
     CancellationTokenSource? _loop;
+
+    /// <summary>The owner's private line (<c>U-org-watcher-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>
+    OversightLine? _oversight;
 
     /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
     Task? _background;
@@ -940,6 +944,12 @@ public sealed class AppHost : IAsyncDisposable
 
             _loop = new CancellationTokenSource();
             _background = Task.Run(() => BackgroundAsync(_loop.Token));
+
+            // THE OWNER'S PRIVATE LINE (U-org-watcher-a; ORGANISATION § 9): its own file, state/oversight.db, swept on its own one-minute
+            // timer — app code, never the mission loop, never a wake. It reads this database on a READ-ONLY connection and writes nothing
+            // here or to the logs; a file it will not open is held on the line for the owner's page, never told the activity log.
+            _oversight = new OversightLine(_db!.FilePath);
+            _oversight.Start();
 
             Gateway.Log.Activity("TradeAgent started");
             if (OperatingSystem.IsLinux())
@@ -2369,6 +2379,7 @@ public sealed class AppHost : IAsyncDisposable
             }
             _loop.Dispose();
         }
+        if (_oversight is not null) { await _oversight.DisposeAsync(); _oversight = null; }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":
