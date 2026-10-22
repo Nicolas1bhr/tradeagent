@@ -36,7 +36,7 @@ public static class RoleObjectives
     /// kind is added, removed or derived differently — the attempt that ran under the old meaning stays true about
     /// what it ran under.
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     /// <summary>Operations: every message the owner typed reaches a turn, and that turn's outcome is written.</summary>
     public const string OwnerAnswered = "owner-message-answered";
@@ -95,7 +95,8 @@ public static class RoleObjectives
         + ")";
 
     /// <summary>
-    /// The objective kinds a role holds, in this build (<c>U-org-assignments-a</c>, version 3): the legacy pair's, each by its
+    /// The objective kinds a role holds, in this build (<c>U-org-assignments-a</c>, version 3; <c>U-org-verbs-a</c>, version 4 — a
+    /// head also owns the proposals it has not yet been woken for): the legacy pair's, each by its
     /// exact id, unchanged; a HEAD after them (<paramref name="kind"/> as the chart derives it) owns the owner's words addressed to
     /// it (<c>U-org-wakes</c>), the mandates it holds, and — as a decider — its deliveries to judge, its escalations and its
     /// mandates past their deadline; a member or the staff owns the mandates it holds and nothing else — an executor's objective is
@@ -105,7 +106,7 @@ public static class RoleObjectives
     {
         CouncilRoles.Operations => [OwnerAnswered, RequestFinal, PositionWatched, BoundaryAssessed],
         CouncilRoles.Research => [ResearchMandate, VerdictRead, ForwardRunFollowed, BoundaryAssessed],
-        _ when kind == OrgPositionKind.Head => [OwnerAnswered, MandateOwed, DeliveryToJudge, EscalationOpen, MandateExpired],
+        _ when kind == OrgPositionKind.Head => [OwnerAnswered, MandateOwed, DeliveryToJudge, EscalationOpen, MandateExpired, ProposalUnread],
         _ when kind is not null => [MandateOwed],
         _ => []
     };
@@ -175,6 +176,8 @@ public static class RoleObjectives
                     foreach (var m in org.EscalationsFor(role)) open.Add(new RoleObjective(EscalationOpen, m));
                 if (kinds.Contains(MandateExpired))
                     foreach (var m in org.ExpiredUnread(role)) open.Add(new RoleObjective(MandateExpired, m));
+                if (kinds.Contains(ProposalUnread))
+                    foreach (var m in org.ProposalsUnread(role)) open.Add(new RoleObjective(ProposalUnread, m));
                 return open;
         }
 
