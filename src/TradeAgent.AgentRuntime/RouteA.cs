@@ -29,6 +29,15 @@ public static class RouteA
     /// <summary>The harness a <c>cell_assurance</c> row names for this route.</summary>
     public const string Harness = "codex-0.160.1-exec-server-stdio";
 
+    /// <summary>
+    /// THE EGRESS OF AN EXECUTOR'S CELL, ONCE (<c>U-execution-environment</c> item 3; the owner's answer of 2026-10-21, ORGANISATION
+    /// § 16: "Web (443) for every executor"): <see cref="CellEgress.Web"/> — TCP 443 and DNS over TCP, any host. Read by the cell's
+    /// policy (<see cref="Policy"/>), by every admission of a launch under it (<see cref="Admission"/>'s callers) and by the attempt's
+    /// assurance (<see cref="AssuranceRows"/>). Code: no file, setting, verb or pipe op reaches it (AUTH-001). Its loopback and LAN reach
+    /// on 443 are GAP rows on the proof and on every attempt.
+    /// </summary>
+    public static CellEgress Egress => CellEgress.Web;
+
     /// <summary>The one environment <c>environments.toml</c> names, and its default.</summary>
     public const string EnvironmentId = "cell";
 
@@ -69,7 +78,7 @@ public static class RouteA
     /// <summary>
     /// THE CELL'S POLICY: the workspace read-write; the cell's codex home and home read-only (both empty, both the app's); codex's own
     /// root read and run; the system roots; an environment named in full — no <c>CODEX_HOME</c>, <c>HOME</c> or bearer of the
-    /// harness's — and egress <c>none</c>.
+    /// harness's — and egress <see cref="Egress"/> (<c>web</c>: <c>U-execution-environment</c>; <c>none</c> before it).
     /// </summary>
     public static CellPolicy Policy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome) =>
         new(workspace, [cellCodexHome, cellHome], [codexRoot, .. CellPolicy.SystemRoots],
@@ -79,7 +88,7 @@ public static class RouteA
             new("CODEX_HOME", cellCodexHome),
             new("LANG", "C.UTF-8"),
             .. CellPolicy.ToolEnvironment(workspace)
-        ], CellEgress.None);
+        ], Egress);
 
     /// <summary>
     /// THE HARNESS'S <c>environments.toml</c>: one stdio environment, the default, no local one. Its program is TradeAgent's own
@@ -175,9 +184,15 @@ public static class RouteA
     /// holds HARD is MEDIATED for the attempt — no model tool crosses, the process could — and presence and lanes do not move (Q2, Q5).
     /// GAPs are asserted: any process reads another's <c>/proc/*/cmdline</c>, and Landlock does not handle <c>stat</c> outside the grants.
     /// </summary>
-    public static IReadOnlyList<AssuranceRow> AssuranceRows(long proofId)
+    /// <para><b>The network, as the policy's egress</b> (<c>U-execution-environment</c> item 3): the row names <paramref name="egress"/>,
+    /// and under <c>web</c> two GAP rows carry the reach the owner accepted with it — loopback and his LAN on 443 — under the proof's own
+    /// row names, never as passes.</para>
+    public static IReadOnlyList<AssuranceRow> AssuranceRows(long proofId, CellEgress egress)
     {
         var proof = $"cell proof {proofId}";
+        var web = egress.Name == CellEgress.Web.Name;
+        if (!web && egress.Name != CellEgress.None.Name)
+            throw new ArgumentException($"route (a)'s assurance knows egress none and web, not '{egress.Name}'", nameof(egress));
         AssuranceRow Cell(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Cell, c, $"{why}; {proof}");
         static AssuranceRow Harness(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Harness, c, why);
         const string unconfined = "an unconfined codex holding the login: no model-directed tool crosses, the process could";
@@ -195,20 +210,47 @@ public static class RouteA
             Harness("ipc", EnforcementClass.Mediated, unconfined),
             Cell("signals-ptrace-environ", EnforcementClass.HardPlatform, "Landlock ABI >= 6 signal scope and ptrace restriction"),
             Harness("signals-ptrace-environ", EnforcementClass.Mediated, unconfined),
-            Cell("network", EnforcementClass.HardPlatform, "egress none: Landlock connect and bind, seccomp listen and datagrams"),
+            Cell("network", EnforcementClass.HardPlatform, web
+                ? "egress web: Landlock connect to TCP 443 alone and no bind, seccomp listen, fast-open and datagrams"
+                : "egress none: Landlock connect and bind, seccomp listen and datagrams"),
             Harness("network", EnforcementClass.Advisory, "the harness reaches its provider and anything else its account can"),
             Cell("descendants-cancellation", EnforcementClass.HardPlatform, "the attempt's cgroup: cgroup.kill ends every descendant"),
             Harness("descendants-cancellation", EnforcementClass.HardPlatform, "the attempt's cgroup, harness leaf"),
-            Cell("broker-reach", EnforcementClass.HardPlatform, "egress none and no bearer in the cell"),
+            Cell("broker-reach", EnforcementClass.HardPlatform, web
+                ? "egress web reaches TCP 443 alone, the door listens on an ephemeral loopback port, and no bearer is in the cell"
+                : "egress none and no bearer in the cell"),
             Harness("broker-reach", EnforcementClass.HardApp, "the launch grant answers to the harness leaf alone"),
-            Cell("order-permission", EnforcementClass.HardPlatform, "no pipe, no port and no grant in the cell"),
+            Cell("order-permission", EnforcementClass.HardPlatform, web
+                ? "no pipe and no grant in the cell; its one port is 443, where no TradeAgent listener is"
+                : "no pipe, no port and no grant in the cell"),
             Harness("order-permission", EnforcementClass.HardApp, "the grant's role and the gateway's order rules"),
             Cell("cmdline", EnforcementClass.Gap, "/proc/*/cmdline of other processes is readable from a cell"),
             Harness("cmdline", EnforcementClass.Gap, "/proc/*/cmdline is readable"),
             Cell("stat", EnforcementClass.Gap, "Landlock does not handle stat/getattr outside the grants"),
             Harness("stat", EnforcementClass.Gap, unconfined),
+            .. web ? WebGaps(proof) : [],
         ]);
     }
+
+    /// <summary>
+    /// WHAT WEB EGRESS LEAVES OPEN, SAID (the owner's answer, ORGANISATION § 16): from a <c>web</c> cell, TCP 443 on loopback and on the
+    /// owner's LAN is reachable — a listener there is a peer the cell can talk to. Recorded under the proof's own GAP row names
+    /// (<see cref="CellBenchmark.RowNames"/>), on every side, so the attempt's own class carries them; never a pass.
+    /// </summary>
+    static IEnumerable<AssuranceRow> WebGaps(string proof)
+    {
+        foreach (var (row, what) in new[] { (WebLoopbackGap, "TCP 443 on loopback"), (WebLanGap, "TCP 443 on the local network") })
+        {
+            yield return new(row, AssuranceSide.Cell, EnforcementClass.Gap, $"egress web lets the cell reach {what}; {proof} records it as a GAP");
+            yield return new(row, AssuranceSide.Harness, EnforcementClass.Gap, $"the harness reaches {what} and beyond");
+        }
+    }
+
+    /// <summary>The proof's GAP row for loopback on 443, and the attempt's (<see cref="CellBenchmark.RowNames"/>).</summary>
+    public const string WebLoopbackGap = "gap-web-loopback-443";
+
+    /// <summary>The proof's GAP row for the LAN on 443, and the attempt's.</summary>
+    public const string WebLanGap = "gap-web-lan-443";
 }
 
 /// <summary>

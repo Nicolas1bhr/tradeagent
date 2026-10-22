@@ -624,7 +624,10 @@ public partial class CellLinuxTests
             Says(outside, "door-connected");
             var cellHome = Path.Combine(w.Root, "cell-home");
             Directory.CreateDirectory(cellHome);
-            var policy = RouteA.Policy(w.Ws, "/usr/bin/python3", "/usr/bin", cellHome, cellHome);
+            // EGRESS NONE, named here: route (a)'s own policy is an executor's, egress web, since U-execution-environment — whose row
+            // (j) shows the same refusal under web (CellLinuxTests.Executor.cs).
+            var web = RouteA.Policy(w.Ws, "/usr/bin/python3", "/usr/bin", cellHome, cellHome);
+            var policy = new CellPolicy(w.Ws, [cellHome], ["/usr/bin", .. CellPolicy.SystemRoots], web.Environment, CellEgress.None);
             Assert.Equal(CellEgress.None.Name, policy.Egress.Name);
             var ran = await InCell(policy, "/usr/bin/python3", probe, port, AgentGrants.Variable);
             Says(ran, "door-denied", "bearer=none");

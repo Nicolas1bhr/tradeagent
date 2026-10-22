@@ -127,4 +127,106 @@ public class ExecutorCellTests : IDisposable
         Assert.Null(new SeatRegister().KindOf(Member));
         Assert.Null(new SeatRegister { Standing = _ => throw new InvalidOperationException("chart unreadable") }.KindOf(Member));
     }
+
+    // ---- (e) the executor cell's one egress ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// (e) AN EXECUTOR CELL'S EGRESS IS <c>web</c>, AND NOTHING OUTSIDE CODE CHANGES IT: route (a)'s policy carries
+    /// <see cref="RouteA.Egress"/>, which is <see cref="CellEgress.Web"/>; no manifest, seat plan or setting has a field that names an
+    /// egress, and a <c>runtimes.json</c> that tries is refused or ignored — the policy is the same after it.
+    ///
+    /// <para>RED at base: "Expected: web Actual: none".</para>
+    /// </summary>
+    [UnixFact]
+    public void An_executor_cells_egress_is_web_and_nothing_outside_code_changes_it()
+    {
+        var ws = Path.Combine(TestEnv.Home, "exec-e-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(ws);
+        var layout = RouteA.LayoutFor("attempt-e-" + Guid.NewGuid().ToString("n")[..8]);
+        var exe = Path.Combine(Paths.Tools, "codex", "bin", "codex");
+        CellPolicy Policy() => RouteA.Policy(ws, exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome);
+
+        Assert.Equal(CellEgress.Web.Name, RouteA.Egress.Name);
+        Assert.Equal(CellEgress.Web.Name, Policy().Egress.Name);
+        Assert.Contains(CellEgress.Web.Name, CellBenchmark.ProvedEgress);
+
+        // NO FIELD OF DATA NAMES AN EGRESS: not a manifest's, a seat plan's, nor the owner's settings.
+        foreach (var type in new[] { typeof(RuntimeManifest), typeof(SeatPlan), typeof(InstallPlan), typeof(TradeAgentSettings) })
+            Assert.DoesNotContain(type.GetProperties(BindingFlags.Public | BindingFlags.Instance),
+                p => p.Name.Contains("Egress", StringComparison.OrdinalIgnoreCase) || p.Name.Contains("Network", StringComparison.OrdinalIgnoreCase));
+
+        // A runtimes.json that names one is refused or ignored: the policy after it is the same.
+        var before = Policy().Hash;
+        Directory.CreateDirectory(Path.GetDirectoryName(RuntimeCatalog.OverridePath)!);
+        File.WriteAllText(RuntimeCatalog.OverridePath, JsonSerializer.Serialize(new[]
+        {
+            new Dictionary<string, object> { ["id"] = "codex", ["egress"] = "none", ["seat"] = new Dictionary<string, object> { ["egress"] = "none" } }
+        }));
+        try { _ = RuntimeCatalog.Load(); } catch (Exception) { /* refused is as good as ignored */ }
+        Assert.Equal(before, Policy().Hash);
+        Assert.Equal(CellEgress.Web.Name, Policy().Egress.Name);
+    }
+
+    /// <summary>
+    /// (e), THE WORKSPACE'S CANON: AN EXECUTOR'S <c>AGENTS.md</c> IS THE APP'S AGAIN BEFORE ITS TURN. Its cell writes its whole home, the
+    /// canon included; the app's start writes it once (<see cref="WorkspaceBuilder"/>) and the cell seat's session puts the text the app
+    /// kept back before the vendor reads it — so the turn's record reads the app's own canon, version and all. Every OS: the launch
+    /// itself is refused off a proven Linux cell, after the canon is put back.
+    ///
+    /// <para>RED before the fix: the canon the cell had rewritten stayed, and the turn ran under it ("rewritten by the cell").</para>
+    /// </summary>
+    [Fact]
+    public async Task An_executors_canon_is_the_apps_again_before_its_turn()
+    {
+        using var db = Chart();
+        ThinkingSeatsTests.ProveCell(db);
+        var files = new AppFileManifest(Path.Combine(TestEnv.Home, $"app-files-{Guid.NewGuid():n}.tsv"));
+        var root = Path.Combine(TestEnv.Home, "exec-canon-" + Guid.NewGuid().ToString("n")[..8]);
+        var ctx = new WorkspaceContext("Simulator (built in)", true, null, TradingMode.PAPER, true, null, new RiskPolicy(),
+            ConnectorIsBuiltInSimulator: true, Role: Member, Kind: OrgPositionKind.Member);
+        var home = WorkspaceBuilder.Build(ctx, root, files);
+        var canon = Path.Combine(home, Canon.CliFile);
+        var own = File.ReadAllText(canon);
+        Assert.Contains("a sealed Linux cell", own, StringComparison.Ordinal);
+        File.WriteAllText(canon, "# rewritten by the cell\n");
+
+        var (codex, exe, _) = SeatHomeTests.Seat("exec-canon");
+        var session = new AgentSession(codex, () => exe, () => home, () => new Dictionary<string, string>(), presence: new AgentPresence(),
+            role: Member, appFiles: files, seatProbe: BrokerSeatTests.BrokerProbe(), seats: Register(db, codex),
+            door: () => new Uri("http://127.0.0.1:1/mcp"), surfaceProbe: new BrokerSeatTests.FakeSurface(CellSurface));
+        var ended = await SeatHomeTests.Turn(session);
+        Assert.Equal(own, File.ReadAllText(canon));
+        Assert.True(ended.Canon is { AppOwn: true, Version: Canon.Version }, $"the turn's canon record: {ended.Canon}; {ended.Raw}");
+    }
+
+    // ---- (k) the attempt's assurance under web ------------------------------------------------------------------------
+
+    /// <summary>
+    /// (k) AN EXECUTOR ATTEMPT'S ASSURANCE NAMES WEB, AND ITS LOOPBACK AND LAN 443 GAPS: the network row says <c>egress web</c>, and two
+    /// GAP rows under the proof's own names are on the cell, the harness and the attempt — so the attempt's own class is a GAP, never a
+    /// pass. Under <c>none</c> (-c's) neither row is there.
+    ///
+    /// <para>RED at base: it did not compile — <c>AssuranceRows</c> took no egress; its network row said "egress none".</para>
+    /// </summary>
+    [Fact]
+    public void An_executor_attempts_assurance_names_web_and_its_loopback_and_lan_443_gaps()
+    {
+        var rows = RouteA.AssuranceRows(11, RouteA.Egress);
+        var network = rows.Single(r => r.Property == "network" && r.Side == AssuranceSide.Cell);
+        Assert.StartsWith("egress web", network.Evidence, StringComparison.Ordinal);
+        Assert.Contains("cell proof 11", network.Evidence, StringComparison.Ordinal);
+        foreach (var gap in new[] { RouteA.WebLoopbackGap, RouteA.WebLanGap })
+        {
+            Assert.Contains(gap, CellBenchmark.RowNames);
+            foreach (var side in new[] { AssuranceSide.Cell, AssuranceSide.Harness, AssuranceSide.Attempt })
+                Assert.Equal(EnforcementClass.Gap, rows.Single(r => r.Property == gap && r.Side == side).Class);
+        }
+        Assert.Contains("443", rows.Single(r => r.Property == RouteA.WebLoopbackGap && r.Side == AssuranceSide.Cell).Evidence);
+        Assert.Contains("ephemeral loopback port", rows.Single(r => r.Property == "broker-reach" && r.Side == AssuranceSide.Cell).Evidence);
+
+        var none = RouteA.AssuranceRows(11, CellEgress.None);
+        Assert.StartsWith("egress none", none.Single(r => r.Property == "network" && r.Side == AssuranceSide.Cell).Evidence, StringComparison.Ordinal);
+        Assert.DoesNotContain(none, r => r.Property.StartsWith("gap-web", StringComparison.Ordinal));
+        Assert.Throws<ArgumentException>(() => RouteA.AssuranceRows(11, CellEgress.WebPlain));
+    }
 }
