@@ -347,9 +347,10 @@ public sealed class AgentSession(
 
     /// <summary>
     /// HOW THIS LAUNCH'S SEAT IS VERIFIED: its class, the door, and — for a broker seat — the owner's own choice of model for the
-    /// position, which refuses when it names another model than the pin.
+    /// position, which refuses when it names another model than the pin; for a CLI seat the model its argv names, which keys its tool
+    /// dry run (<c>U-cli-code-mode</c>).
     /// </summary>
-    SeatLaunch Launch => new(SeatClass, Door, Broker ? RequestedModel : null, surfaceProbe);
+    SeatLaunch Launch => new(SeatClass, Door, RequestedModel, surfaceProbe);
 
     /// <inheritdoc />
     public SeatVerdict CheckSeat()

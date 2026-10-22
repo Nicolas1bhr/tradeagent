@@ -795,6 +795,11 @@ public static class SeatProfile
         if (!reading.SignedIn)
             return SeatVerdict.Refuse(ErrorCode.AI_AUTH_REQUIRED, seat.SignedOut);
 
+        // A CLI SEAT WHOSE COMMAND TOOL CANNOT RUN IS REFUSED IN WORDS BEFORE ADMISSION (U-cli-code-mode), never passed off as turns that
+        // exit 0: attempt 4's every exec call failed closed while its turns ended clean.
+        if (seatClass == SeatPlan.CliClass && await ToolsRefusalAsync(manifest, exe, probe, launch, ct) is { } dead)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, dead);
+
         if (!broker)
             return new SeatVerdict(null, null, reading)
             {
@@ -819,6 +824,64 @@ public static class SeatProfile
             Offered = offered,
             BillingClass = TradeAgent.Core.Db.BillingClasses.Of(reading.BillingClass)
         };
+    }
+
+    /// <summary>What a passing dry run proved, per (binary digest, argument template, model), for this process's life. Refusals are never kept.</summary>
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Binary, string Template, string Model), byte> ToolsProven = new();
+
+    /// <summary>Forgets every proven tool set: a test's way to make the next verify reach its probe.</summary>
+    internal static void ForgetToolProofs() => ToolsProven.Clear();
+
+    /// <summary>
+    /// NULL WHEN A CLI SEAT OF THIS BINARY, TEMPLATE AND MODEL CAN RUN ITS COMMAND TOOL, or the refusal: read from the proofs kept or, on
+    /// a key not yet proven, from <paramref name="probe"/>'s dry run. A probe that fails is a refusal, and so is every run it reports but
+    /// a call whose output holds the mark; only a pass is kept. The binary is the pin, already verified, so its digest is the pin's.
+    /// </summary>
+    static async Task<string?> ToolsRefusalAsync(RuntimeManifest manifest, string exe, ISeatProbe probe, SeatLaunch launch, CancellationToken ct)
+    {
+        string exeSha;
+        if (manifest.Install.ExecutableSha256 is { Length: > 0 } pin) exeSha = pin.Trim().ToLowerInvariant();
+        else
+        {
+            try { exeSha = Sha256Of(exe); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { return $"TradeAgent will not start the AI: it could not read {exe} ({ex.Message})."; }
+        }
+        var model = launch.Model ?? "";
+        var key = (exeSha, BrokerSeat.TemplateHash(manifest, SeatPlan.CliClass), model);
+        if (ToolsProven.ContainsKey(key)) return null;
+
+        ToolRun run;
+        try { run = await probe.ToolsAsync(new SurfaceAsk(manifest, exe, exeSha, SeatPlan.CliClass, model), ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"TradeAgent will not start {manifest.DisplayName}: it could not check that the AI's command tool runs ({ex.Message}). " +
+                   "Nothing was started; the next turn checks again.";
+        }
+        if (ToolRefusal(manifest, model, run) is { } refusal) return refusal;
+        ToolsProven[key] = 0;
+        return null;
+    }
+
+    /// <summary>
+    /// NULL WHEN <paramref name="run"/> SHOWS A COMMAND TOOL THAT RAN — its output holds the mark only a running call produces — or the
+    /// refusal in words: no command tool offered, a call never answered, or an answer without the mark, quoted.
+    /// </summary>
+    public static string? ToolRefusal(RuntimeManifest manifest, string? model, ToolRun run)
+    {
+        var on = model is { Length: > 0 } m ? $" on {m}" : "";
+        if (run.Tried is null)
+            return $"TradeAgent will not start {manifest.DisplayName}{on}: it would offer the AI no tool that runs a command " +
+                   $"({(run.Offered.Count == 0 ? "no tools at all" : string.Join(", ", run.Offered.Select(BrokerSeat.ToolName).Distinct()))}), so the AI " +
+                   "could read nothing and do nothing while its turns looked finished. Nothing was started.";
+        if (run.Output is null)
+            return $"TradeAgent will not start {manifest.DisplayName}{on}: its command tool '{run.Tried}' was called in a dry run and never " +
+                   "answered, so the AI's commands would not run while its turns looked finished. Nothing was started.";
+        if (run.Output.Contains(run.Expected, StringComparison.Ordinal)) return null;
+        var said = run.Output.Trim();
+        if (said.Length > 300) said = said[..300] + "…";
+        return $"TradeAgent will not start {manifest.DisplayName}{on}: its command tool '{run.Tried}' was called in a dry run and did not run — " +
+               $"it answered \"{said}\" — so every command the AI tried would fail while its turns looked finished. Nothing was started.";
     }
 
     /// <summary>
@@ -1205,12 +1268,19 @@ public interface ISeatProbe
     /// </summary>
     Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, string seatClass, Uri? door,
         CancellationToken ct) => ReadAsync(manifest, exe, workingDirectory, ct);
+
+    /// <summary>
+    /// THE CLI CLASS'S ONE-CALL DRY RUN (<c>U-cli-code-mode</c>): one call of the command tool <paramref name="ask"/>'s binary, template
+    /// and model would be offered, against a loopback mock, and what it gave back — a measurement, judged by
+    /// <see cref="SeatProfile.ToolRefusal"/>. No default: a probe that cannot say must say so, never pass.
+    /// </summary>
+    Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct);
 }
 
 /// <summary>
 /// HOW ONE LAUNCH'S SEAT IS VERIFIED: its class (<see cref="SeatPlan.CliClass"/> or <see cref="SeatPlan.BrokerClass"/>), the app's
-/// door for a class that names it, the model a broker seat is pinned to, and the probe that reads its offered tools (the real dry run
-/// unless a test passes a fake).
+/// door for a class that names it, the model a broker seat is pinned to — or, for the CLI class, the model its argv names, which keys its
+/// tool dry run (<c>U-cli-code-mode</c>) — and the probe that reads its offered tools (the real dry run unless a test passes a fake).
 /// </summary>
 public sealed record SeatLaunch(string SeatClass, Uri? Door = null, string? Model = null, ISurfaceProbe? Surface = null)
 {
@@ -1226,6 +1296,9 @@ public sealed record SeatLaunch(string SeatClass, Uri? Door = null, string? Mode
 public sealed class CliSeatProbe : ISeatProbe
 {
     public static readonly CliSeatProbe Instance = new();
+
+    /// <summary>The real dry run (<see cref="CodexToolProbe"/>).</summary>
+    public Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct) => CodexToolProbe.Instance.RunAsync(ask, ct);
 
     static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 

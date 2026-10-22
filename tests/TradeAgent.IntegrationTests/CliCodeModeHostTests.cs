@@ -128,4 +128,29 @@ public class CliCodeModeHostTests
             try { Directory.Delete(root, recursive: true); } catch (Exception) { /* the test home is purged */ }
         }
     }
+
+    /// <summary>
+    /// (3a) THE APP'S OWN CLI DRY RUN ON THE REAL CODEX (<see cref="CodexToolProbe"/>): under the CLI class's argv on gpt-6-luna the mock's
+    /// code-mode <c>exec</c> runs and the seat passes; under the same argv with <c>--disable code_mode_host</c> put back — attempt 4's —
+    /// the call fails closed and the seat is refused in words quoting "code-mode host is disabled".
+    /// </summary>
+    [PinnedCodexFact]
+    public async Task The_cli_dry_run_passes_the_cli_class_and_refuses_attempt_fours_argv_in_words()
+    {
+        var exe = PinnedCodex();
+        var codex = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
+        var sha = codex.Install.ExecutableSha256!;
+
+        var run = await CodexToolProbe.Instance.RunAsync(new SurfaceAsk(codex, exe, sha, SeatPlan.CliClass, "gpt-6-luna"), default);
+        Assert.Equal("exec", run.Tried);
+        Assert.True(SeatProfile.ToolRefusal(codex, "gpt-6-luna", run) is null,
+            $"the CLI class's own argv failed its dry run: {SeatProfile.ToolRefusal(codex, "gpt-6-luna", run)}");
+
+        var attempt4 = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
+        attempt4.Seat!.Args[SeatPlan.CliClass] = [.. attempt4.Seat.ArgsFor(SeatPlan.CliClass), "--disable", "code_mode_host"];
+        var dead = await CodexToolProbe.Instance.RunAsync(new SurfaceAsk(attempt4, exe, sha, SeatPlan.CliClass, "gpt-6-luna"), default);
+        var refusal = SeatProfile.ToolRefusal(attempt4, "gpt-6-luna", dead);
+        Assert.True(refusal is not null, $"attempt 4's argv passed the dry run: {dead}");
+        Assert.Contains("code-mode host is disabled", refusal, StringComparison.Ordinal);
+    }
 }
