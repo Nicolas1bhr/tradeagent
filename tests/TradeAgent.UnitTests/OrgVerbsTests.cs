@@ -247,7 +247,7 @@ public partial class OrgAssignmentTests
         Assert.True((await server.CallAsync(Frame(Ops.MandateReject, ("delivery", d), ("failed", MandateCheck.ReportSize)), Head, Launch(db, Head))).Ok);
         Assert.Equal(MissionEventDisposition.Withdrawn, new MissionEventStore(db).Get(wake.Id)!.Disposition);
         Assert.DoesNotContain(new RoleObjective(RoleObjectives.ProposalUnread, m), RoleObjectives.Open(db, Head, null));
-        Assert.True((await server.CallAsync(ProposeFrame(m, "a second finding, after the rejection"), Member, Launch(db, Member, mandate: m))).Ok);
+        Assert.True((await server.CallAsync(ProposeFrame(m, "a second finding, after the rejection", refs), Member, Launch(db, Member, mandate: m))).Ok);
         Assert.Equal(2, new MissionEventStore(db).OfKind(MissionEventKind.Proposal).Count);
         Assert.Equal(MandateEventKind.Rejected, gw.Org.MandateStatus(m));
     }
@@ -274,7 +274,8 @@ public partial class OrgAssignmentTests
         }
         foreach (var (frame, words) in new[]
                  {
-                     (ProposeFrame(m, new string('x', MandateLimits.MaxClaimChars + 1)), "characters"),
+                     (ProposeFrame(m, new string('x', MandateLimits.MaxClaimChars + 1), new[] { new { kind = "mandate", id = m } }), "characters"),
+                     (ProposeFrame(m, Finding), "at least one app record"),
                      (ProposeFrame(m, Finding, new[] { new { kind = "delivery", id = "not-a-delivery" } }), "not in the app's ledgers"),
                      (ProposeFrame(m, Finding, new[] { new { kind = "file", id = "notes.txt" } }), "no kind of app record")
                  })
@@ -288,6 +289,30 @@ public partial class OrgAssignmentTests
 
         Assert.DoesNotContain(gw.Org.MandateEvents(m), e => e.Kind == MandateEventKind.Proposed);
         Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Proposal));
+    }
+
+    /// <summary>
+    /// (2c) A PROPOSAL IS NO DELIVERY AND ENDS NO OWED RE-WAKE (<c>U-rewake-floor</c>): a holder's launch ended undelivered after it
+    /// proposed; the sweep still owes the work, keys the re-wake by the event that owes it — the issue, never the proposal — and
+    /// waits the first floor, the proposing launch counted once like any undelivered launch.
+    /// </summary>
+    [Fact]
+    public void A_proposal_is_no_delivery_and_ends_no_owed_rewake()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue(), t);
+        var issued = org.MandateEvents(m.Id)[0];
+        var launch = TurnOn(db, Member, m, t);
+        org.Propose(m.Id, Member, launch, Finding, [new OrgRef(OrgRefKind.Mandate, m.Id)], t);
+        Assert.Equal(MandateEventKind.Issued, org.MandateStatus(m.Id));
+
+        Assert.Equal(1, org.Sweep(t, Shipped));
+        var reraise = new MissionEventStore(db).Get(MissionEventIds.Mandate(m.Id, issued.Id, launch));
+        Assert.NotNull(reraise);
+        Assert.Equal(t + Shipped.After(OrgLevel.Executor, 1), reraise!.DueAt);
     }
 
     // ---- item 3: org-show ------------------------------------------------------------------------------------------

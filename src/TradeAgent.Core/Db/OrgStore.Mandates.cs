@@ -129,11 +129,25 @@ public static class MandateEventKind
     /// <summary>
     /// The holder proposed a finding beyond its mandate to its decider (<c>mandate-propose</c>, <c>U-org-verbs-a</c>): its claim
     /// in the reason, the app records it cites in the evidence. A CLAIM, never a status: it changes nothing the mandate owes or
-    /// admits.
+    /// admits (<see cref="Annotations"/>).
     /// </summary>
     public const string Proposed = "proposed";
 
-    public static readonly string[] All = [Issued, Delivered, Retry, Escalated, Declined, Accepted, Rejected, Cancelled, Expired, Rescoped];
+    public static readonly string[] All = [Issued, Delivered, Retry, Escalated, Declined, Accepted, Rejected, Cancelled, Expired, Rescoped,
+        Proposed];
+
+    /// <summary>
+    /// THE EVENTS THAT RECORD A CLAIM AND NEVER A STATUS (<c>U-org-verbs-a</c>): a mandate's status is its latest event that is NOT
+    /// one of these, so a proposal changes nothing the mandate owes, admits or is judged on — every status reader skips them
+    /// (<see cref="IsStatus"/>, and <see cref="OrgStore"/>'s SQL by <c>e.kind &lt;&gt; 'proposed'</c>).
+    /// </summary>
+    public static readonly string[] Annotations = [Proposed];
+
+    /// <summary>Whether an event of <paramref name="kind"/> is a status — anything but an <see cref="Annotations"/> claim.</summary>
+    public static bool IsStatus(string? kind) => kind is not null && Array.IndexOf(Annotations, kind) < 0;
+
+    /// <summary>The decider's acts that close a holder's open proposal: its next judgment of the mandate.</summary>
+    public static readonly string[] Judging = [Accepted, Rejected, Cancelled, Rescoped];
 
     /// <summary>The events after which nothing more is owed or spent.</summary>
     public static readonly string[] Closing = [Accepted, Cancelled, Expired, Rescoped];
@@ -273,6 +287,13 @@ public sealed partial class OrgStore
 
     const string MandateEventCols = "id, mandate_id, at, kind, actor, attempt_id, reason, evidence";
 
+    /// <summary>
+    /// A MANDATE'S STATUS AS SQL, for a query aliasing the mandate <c>m</c>: the kind of its latest event that is not a claim
+    /// (<see cref="MandateEventKind.Annotations"/>) — a proposal never becomes a status.
+    /// </summary>
+    const string LatestStatus = "(SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id AND e.kind <> '"
+                                + MandateEventKind.Proposed + "' ORDER BY e.id DESC LIMIT 1)";
+
     /// <summary>A new mandate id: the prefix and twelve random hex digits.</summary>
     public static string MintMandate() =>
         MandatePrefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
@@ -410,6 +431,7 @@ public sealed partial class OrgStore
             throw Refused($"a cancellation says why, in at most {MandateLimits.MaxClaimChars} characters.");
         var cancelled = AppendMandateEvent(m.Id, now, MandateEventKind.Cancelled, caller, attempt, why, []);
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"the mandate was cancelled: {why}");
+        ProposalJudged(m, now, $"its decider cancelled the mandate: {why}");
         return cancelled;
     });
 
@@ -441,6 +463,7 @@ public sealed partial class OrgStore
         var rescoped = AppendMandateEvent(m.Id, now, MandateEventKind.Rescoped, caller, attempt, why, [successor.Id]);
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn,
             $"the mandate was re-scoped into {successor.Id}: {why}");
+        ProposalJudged(m, now, $"its decider re-scoped the mandate into {successor.Id}");
         var issued = AppendMandateEvent(successor.Id, now, MandateEventKind.Issued, caller, attempt, null, [m.Id]);
         RaiseMandateWake(successor, issued, now);
         return (rescoped, successor);
@@ -502,10 +525,10 @@ public sealed partial class OrgStore
     /// </summary>
     public IReadOnlyList<string> ExpiredUnread(string decider) => db.Read(_ =>
     {
-        using var c = db.Cmd("""
+        using var c = db.Cmd($"""
             SELECT m.id FROM org_mandate m
              WHERE m.decider = $p
-               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) = $expired
+               AND {LatestStatus} = $expired
                AND EXISTS (SELECT 1 FROM mission_event w WHERE w.kind = $escalation AND w.payload = m.id AND w.consumed_at IS NULL)
              ORDER BY m.created_at, m.id
             """, ("$p", decider), ("$expired", MandateEventKind.Expired), ("$escalation", MissionEventKind.Escalation));
@@ -521,7 +544,7 @@ public sealed partial class OrgStore
         using var c = db.Cmd($"""
             SELECT m.id FROM org_mandate m
              WHERE m.{column} = $p
-               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) IN ({string.Join(",", names)})
+               AND {LatestStatus} IN ({string.Join(",", names)})
              ORDER BY m.created_at, m.id
             """, [("$p", (object?)position), .. names.Select((n, i) => (n, (object?)statuses[i]))]);
         using var r = c.ExecuteReader();
@@ -552,6 +575,89 @@ public sealed partial class OrgStore
             Escalate(m, now, $"its holder declined it as {reason}: {why}", [declined.Id.ToString(CultureInfo.InvariantCulture)]);
             return declined;
         });
+
+    /// <summary>
+    /// THE HOLDER PROPOSES A FINDING BEYOND ITS MANDATE TO ITS DECIDER (<c>U-org-verbs-a</c>; ORCHESTRATION § 2.5: a deviation or an
+    /// off-path finding always reaches the head) — in ONE write: a <c>proposed</c> event whose reason is the holder's CLAIM, stored
+    /// verbatim, and whose evidence is the app records it cites, each checked to be there (<see cref="RefsRefusal"/>); and ONE
+    /// <c>proposal</c> wake to the decider. ONE OPEN PROPOSAL PER MANDATE: the decider's next judgment — accept, reject, re-scope or
+    /// cancel (<see cref="MandateEventKind.Judging"/>) — closes it, and only then may the holder propose again.
+    ///
+    /// <para><b>It carries no authority.</b> A proposal is never a status (<see cref="MandateEventKind.Annotations"/>): the mandate
+    /// owes, admits and is judged exactly as before, its terms and allocation are untouched, and an approval or an order inside the
+    /// claim is words. It is not a delivery, so it ends no owed re-wake (<c>U-rewake-floor</c>).</para>
+    /// </summary>
+    /// <exception cref="TradeAgentException">Not the holder, not open, a proposal already open, no claim or one too long, or a ref
+    /// that is not there; nothing was written.</exception>
+    public MandateEventRow Propose(string mandateId, string caller, string? attempt, string claim, IReadOnlyList<OrgRef> refs,
+        DateTimeOffset now) => db.Write(_ =>
+    {
+        var m = HeldBy(mandateId, caller);
+        // ONE OPEN PROPOSAL PER MANDATE is a limit on the holder's right to wake its decider, as one escalation per mandate is
+        // (U-org-watcher-b): marked, never what the proposal says.
+        if (OpenProposal(m.Id) is { } open)
+            throw Forbidden($"mandate {m.Id} already has an open proposal (event {open.ToString(CultureInfo.InvariantCulture)}): one at a "
+                          + "time, until its decider's next judgment — accept, reject, re-scope or cancel — closes it.");
+        if (string.IsNullOrWhiteSpace(claim) || claim.Length > MandateLimits.MaxClaimChars)
+            throw Refused($"a proposal states its finding in your words, in at most {MandateLimits.MaxClaimChars} characters.");
+        if (refs.Count == 0)
+            throw Refused("a proposal cites at least one app record its finding rests on ('refs').");
+        if (RefsRefusal(refs) is { } refused) throw Refused(refused);
+
+        var proposed = AppendMandateEvent(m.Id, now, MandateEventKind.Proposed, caller, attempt, claim,
+            [.. refs.Select(r => $"{r.Kind}:{r.Id}")]);
+        new MissionEventStore(db).Raise(MissionEventIds.Proposal(m.Id, proposed.Id), MissionEventKind.Proposal, now,
+            payload: m.Id, role: m.Decider);
+        return proposed;
+    });
+
+    /// <summary>
+    /// THE OPEN PROPOSAL ON <paramref name="mandateId"/>, by its event id, or null: its latest <c>proposed</c> event with no judgment
+    /// of the decider's (<see cref="MandateEventKind.Judging"/>) after it.
+    /// </summary>
+    long? OpenProposal(string mandateId)
+    {
+        var judging = MandateEventKind.Judging.Select((_, i) => $"$j{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd($"""
+            SELECT p.id FROM org_mandate_event p
+             WHERE p.mandate_id = $m AND p.kind = $proposed
+               AND NOT EXISTS (SELECT 1 FROM org_mandate_event j
+                                WHERE j.mandate_id = $m AND j.id > p.id AND j.kind IN ({string.Join(",", judging)}))
+             ORDER BY p.id DESC LIMIT 1
+            """, [("$m", (object?)mandateId), ("$proposed", MandateEventKind.Proposed),
+                  .. judging.Select((n, i) => (n, (object?)MandateEventKind.Judging[i]))]);
+        return c.ExecuteScalar() is { } id ? Convert.ToInt64(id, CultureInfo.InvariantCulture) : null;
+    }
+
+    /// <summary>
+    /// THE OPEN MANDATES <paramref name="decider"/> DECIDES WITH A PROPOSAL IT HAS NOT YET BEEN WOKEN FOR — the <c>proposal</c> wake
+    /// is still untaken (RoleObjectives: a head owns its unread proposals). A judgment withdraws that wake, so a closed proposal is
+    /// never listed.
+    /// </summary>
+    public IReadOnlyList<string> ProposalsUnread(string decider) => db.Read(_ =>
+    {
+        var closing = MandateEventKind.Closing.Select((_, i) => $"$c{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd($"""
+            SELECT m.id FROM org_mandate m
+             WHERE m.decider = $p
+               AND {LatestStatus} NOT IN ({string.Join(",", closing)})
+               AND EXISTS (SELECT 1 FROM mission_event w
+                            WHERE w.kind = $proposal AND w.payload = m.id AND w.role = $p AND w.consumed_at IS NULL)
+             ORDER BY m.created_at, m.id
+            """, [("$p", (object?)decider), ("$proposal", MissionEventKind.Proposal),
+                  .. closing.Select((n, i) => (n, (object?)MandateEventKind.Closing[i]))]);
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        return (IReadOnlyList<string>)ids;
+    });
+
+    /// <summary>
+    /// A JUDGMENT CLOSES THE OPEN PROPOSAL, and its untaken <c>proposal</c> wake to the decider is withdrawn in the judgment's own
+    /// write — a decided proposal buys no turn. Called only inside a writer's own write.
+    /// </summary>
+    void ProposalJudged(MandateRow m, DateTimeOffset at, string why) =>
+        new MissionEventStore(db).CloseMandateWakes(m.Id, at, MissionEventDisposition.Withdrawn, why, kind: MissionEventKind.Proposal);
 
     /// <summary>
     /// THE HOLDER HANDS A DELIVERY BACK, SEALED: the report, the deviations it names and the refs it cites — its CLAIMS, stored
@@ -787,6 +893,7 @@ public sealed partial class OrgStore
         var (m, d) = Judged(deliveryId, caller);
         var accepted = AppendMandateEvent(m.Id, now, MandateEventKind.Accepted, caller, attempt, null, [d.Id]);
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"its decider accepted delivery {d.Id}");
+        ProposalJudged(m, now, $"its decider accepted delivery {d.Id}");
         return accepted;
     });
 
@@ -823,6 +930,7 @@ public sealed partial class OrgStore
             }
 
             var rejected = AppendMandateEvent(m.Id, now, MandateEventKind.Rejected, caller, attempt, reason, evidence);
+            ProposalJudged(m, now, $"its decider rejected delivery {d.Id}");
             RaiseMandateWake(m, rejected, now);
             return rejected;
         });
@@ -882,6 +990,7 @@ public sealed partial class OrgStore
                     var expired = AppendMandateEvent(m.Id, now, MandateEventKind.Expired, AppActor, null,
                         $"its deadline {m.Deadline:u} passed with nothing accepted", []);
                     new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, "the mandate expired");
+                    ProposalJudged(m, now, "the mandate expired");
                     new MissionEventStore(db).Raise(MissionEventIds.Escalation(m.Id, expired.Id), MissionEventKind.Escalation, now,
                         payload: m.Id, role: m.Decider);
                     return 1;
@@ -895,7 +1004,10 @@ public sealed partial class OrgStore
 
                 if (status is MandateEventKind.Issued or MandateEventKind.Retry or MandateEventKind.Rejected && !HasOpenLaunch(m.Id))
                 {
-                    var latest = MandateEvents(m.Id)[^1];
+                    // KEYED BY THE EVENT THAT OWES THE WORK — never a proposal, which is a claim: a holder that proposed still owes
+                    // its work, its re-wake keeps its key, and the launch that proposed counts in the floor's doubling as one more
+                    // undelivered launch, no more and no less (U-org-verbs-a).
+                    var latest = MandateEvents(m.Id).Last(e => MandateEventKind.IsStatus(e.Kind));
                     var last = LastLaunch(m.Id);
                     var key = MissionEventIds.Mandate(m.Id, latest.Id, last ?? "none");
                     var events = new MissionEventStore(db);
@@ -932,7 +1044,7 @@ public sealed partial class OrgStore
         var closing = MandateEventKind.Closing.Select((_, i) => $"$c{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
         using var c = db.Cmd($"""
             SELECT m.id FROM org_mandate m
-             WHERE (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) NOT IN ({string.Join(",", closing)})
+             WHERE {LatestStatus} NOT IN ({string.Join(",", closing)})
              ORDER BY m.created_at, m.id
             """, [.. closing.Select((n, i) => (n, (object?)MandateEventKind.Closing[i]))]);
         using var r = c.ExecuteReader();
@@ -1040,10 +1152,10 @@ public sealed partial class OrgStore
     /// </summary>
     string? AskedFor(string holder, DateTimeOffset now)
     {
-        using var c = db.Cmd("""
+        using var c = db.Cmd($"""
             SELECT m.id FROM org_mandate m
              WHERE m.holder = $h AND m.deadline > $now
-               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) IN ($issued, $retry, $rejected)
+               AND {LatestStatus} IN ($issued, $retry, $rejected)
                AND NOT EXISTS (SELECT 1 FROM ai_attempt a WHERE a.mandate_id = m.id AND a.state = 'LAUNCHED')
              ORDER BY COALESCE(m.id = (SELECT mandate_id FROM ai_attempt WHERE role = $h ORDER BY started_at DESC, rowid DESC LIMIT 1), 0) DESC,
                       m.created_at, m.id
@@ -1077,7 +1189,7 @@ public sealed partial class OrgStore
     {
         var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
         if (m.Holder != caller)
-            throw Forbidden($"'{mandateId}' is held by '{m.Holder}', not by you: only its holder delivers or declines it.");
+            throw Forbidden($"'{mandateId}' is held by '{m.Holder}', not by you: only its holder delivers, declines or proposes on it.");
         if (!IsOpen(m.Id))
             throw Refused($"'{mandateId}' is {MandateStatus(m.Id)}: nothing more is owed on a closed mandate.");
         return m;
@@ -1155,10 +1267,11 @@ public sealed partial class OrgStore
         return (IReadOnlyList<MandateEventRow>)rows;
     });
 
-    /// <summary>A mandate's status: the kind of its latest event, or null for no such mandate.</summary>
+    /// <summary>A mandate's status: the kind of its latest event that is not a claim (a proposal), or null for no such mandate.</summary>
     public string? MandateStatus(string mandateId) => db.Read(_ =>
     {
-        using var c = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id ORDER BY id DESC LIMIT 1", ("$id", mandateId));
+        using var c = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id AND kind <> $claim ORDER BY id DESC LIMIT 1",
+            ("$id", mandateId), ("$claim", MandateEventKind.Proposed));
         return c.ExecuteScalar() as string;
     });
 
@@ -1237,7 +1350,8 @@ public sealed partial class OrgStore
             m = r.Read() ? ReadMandate(r) : null;
         if (m is null) return MandateRefusal(mandateId, $"'{mandateId}' is no mandate, so no launch is admitted under it.");
 
-        using (var last = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id ORDER BY id DESC LIMIT 1", ("$id", m.Id)))
+        using (var last = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$id AND kind <> $claim ORDER BY id DESC LIMIT 1",
+                   ("$id", m.Id), ("$claim", MandateEventKind.Proposed)))
             switch (last.ExecuteScalar())
             {
                 case string status when MandateEventKind.Closes(status):

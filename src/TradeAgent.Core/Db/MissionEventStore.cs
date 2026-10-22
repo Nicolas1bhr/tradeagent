@@ -251,6 +251,10 @@ public static class WakePriority
         [MissionEventKind.Delivery] = WakeClass.Research,
         [MissionEventKind.Escalation] = WakeClass.Research,
 
+        // "research", too: a holder's proposal of a finding beyond its mandate (U-org-verbs-a) — classed with the escalation, the
+        // other thing a mandate's life hands up to its decider; the work itself, as a report is.
+        [MissionEventKind.Proposal] = WakeClass.Research,
+
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
         [MissionEventKind.Renewal] = WakeClass.Housekeeping,
@@ -528,6 +532,10 @@ public static class MissionEventIds
 
     /// <summary>An escalation's wake to the decider, keyed by the mandate event that raised it.</summary>
     public static string Escalation(string mandateId, long eventId) => $"{MissionEventKind.Escalation}:{mandateId}:{eventId}";
+
+    /// <summary>A holder's proposal's ONE wake to its decider, keyed by the <c>proposed</c> event that raised it (<c>U-org-verbs-a</c>).</summary>
+    public static string Proposal(string mandateId, long eventId) =>
+        $"{MissionEventKind.Proposal}:{mandateId}:{eventId.ToString(CultureInfo.InvariantCulture)}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,
@@ -1067,8 +1075,10 @@ public sealed class MissionEventStore(Database db)
     /// (<c>U-org-assignments-a</c>): a cancelled or expired mandate has no work left to wake anyone for, and a launch its
     /// allocation refused must not be offered the same wake again. <paramref name="only"/> narrows it to those ids.
     /// </summary>
+    /// <param name="kind">The wakes' kind: the holder's <see cref="MissionEventKind.Mandate"/> wakes unless named — a judgment names
+    /// <see cref="MissionEventKind.Proposal"/> to close the decider's untaken proposal wake (<c>U-org-verbs-a</c>).</param>
     public int CloseMandateWakes(string mandateId, DateTimeOffset at, string disposition, string why,
-        IReadOnlyCollection<string>? only = null) => db.Write(_ =>
+        IReadOnlyCollection<string>? only = null, string kind = MissionEventKind.Mandate) => db.Write(_ =>
     {
         var ids = only?.ToArray() ?? [];
         var names = ids.Select((_, i) => $"$only{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}").ToArray();
@@ -1078,7 +1088,7 @@ public sealed class MissionEventStore(Database db)
              WHERE kind = $mandate AND payload = $id AND consumed_at IS NULL{keep}
             """,
             [("$at", (object?)Sql.T(at)), ("$none", NoLaunch), ("$d", disposition), ("$why", why),
-             ("$mandate", MissionEventKind.Mandate), ("$id", mandateId), .. names.Select((n, i) => (n, (object?)ids[i]))]);
+             ("$mandate", kind), ("$id", mandateId), .. names.Select((n, i) => (n, (object?)ids[i]))]);
         return c.ExecuteNonQuery();
     });
 
