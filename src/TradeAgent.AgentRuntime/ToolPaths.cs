@@ -48,7 +48,9 @@ public static class ToolPaths
         if (Path.IsPathRooted(path) || path.StartsWith('~'))
             return (null, $"'{path}' is an absolute path. Paths are relative to your own folder.");
 
-        var segments = path.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries);
+        // A `.` NAMES THE FOLDER IT IS IN and is dropped before any rule reads the path (fix pass 4, the second re-review's [P3] 7), so
+        // `./out/x` is `out/x` under the write grant too — exactly as the open (HomeFiles) reads it. `..` is never dropped: it is refused.
+        var segments = path.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries).Where(s => s != ".").ToArray();
         if (segments.Any(s => s == ".."))
             return (null, $"'{path}' climbs out of your own folder with '..', which is never allowed. "
                           + "You can only read and write inside the folder TradeAgent gave you.");

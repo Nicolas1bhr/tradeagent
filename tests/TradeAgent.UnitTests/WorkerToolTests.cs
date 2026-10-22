@@ -685,6 +685,30 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.DoesNotContain("SENTINEL", hard.Content);
     }
 
+    /// <summary>
+    /// A <c>.</c> SEGMENT IS THE FOLDER IT IS IN, AND ONLY <c>..</c> CLIMBS (fix pass 4, the second re-review's [P3] 7): <c>./out/x</c> names
+    /// <c>out/x</c>. main served <c>read_file ./out/x</c>, and fix pass 3's helper refused it for every role; the write takes the same path
+    /// as the read, under the same write grant as <c>out/x</c>. <c>./../x</c> is still refused.
+    /// </summary>
+    [Fact]
+    public async Task A_dot_segment_names_the_folder_it_is_in()
+    {
+        var tools = Tools(CouncilRoles.Research);
+
+        var wrote = await tools.InvokeAsync(Call(WriteFile, new { path = "./out/x", content = "WRITTEN" }));
+        var read = await tools.InvokeAsync(Call(ReadFile, new { path = "./out/x" }));
+        var listed = await tools.InvokeAsync(Call(ListFiles, new { path = "./out" }));
+        var climbed = await tools.InvokeAsync(Call(ReadFile, new { path = "./../x" }));
+
+        Assert.True(wrote.Served, $"write_file ./out/x was refused: {wrote.Content}");
+        Assert.True(read.Served, $"read_file ./out/x was refused: {read.Content}");
+        Assert.Equal("WRITTEN", read.Content);
+        Assert.True(listed.Served, $"list_files ./out was refused: {listed.Content}");
+        Assert.Contains("x  ", listed.Content, StringComparison.Ordinal);
+        Assert.False(climbed.Served);
+        Assert.Equal("WRITTEN", File.ReadAllText(Path.Combine(Home(CouncilRoles.Research), CouncilRoles.OutDir, "x")));
+    }
+
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]
     static extern int HardLink(string existing, string created);
 
