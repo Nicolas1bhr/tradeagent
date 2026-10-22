@@ -284,6 +284,15 @@ public static class Labels
         + "the daily limit on the Safety page.";
 
     /// <summary>
+    /// The same refusal from the owner's PLAN-CAPACITY ceiling (<c>U-billing-classes</c>): a turn on his AI plan counted at list price,
+    /// never money — so the sentence names the plan's limit and not the money one, whose repair is a different box.
+    /// </summary>
+    public const string DailyPlanCapacityReached =
+        "The AI has used today's share of your AI plan that TradeAgent may spend (its turns counted at list price, not money), so "
+        + "this turn was not started. Nothing was sent to the AI tool. It starts again after midnight, or sooner if you raise the "
+        + "plan-capacity limit on the Safety page.";
+
+    /// <summary>
     /// The same refusal from a ROLE's share rather than the owner's whole day. A different sentence
     /// because it has a different repair: the day's money is not gone, one role's share of it is,
     /// and the owner changes a split rather than a ceiling.
@@ -296,8 +305,9 @@ public static class Labels
     /// THE SAME REFUSAL FROM A UNIT'S ENVELOPE (<c>U-org-envelopes</c>): one unit of the launch's funding chain has no room for
     /// it. It names the unit, its envelope and its room, and no currency — this layer does not know one.
     /// </summary>
-    public static string UnitEnvelopeReached(string unit, decimal envelope, decimal room, decimal reservation) =>
-        $"{Capitalised(unit)} has {Amount(room)} left of its {Amount(envelope)} envelope of today's AI spending limit, and this "
+    public static string UnitEnvelopeReached(string unit, decimal envelope, decimal room, decimal reservation, bool plan = false) =>
+        $"{Capitalised(unit)} has {Amount(room)} left of its {Amount(envelope)} envelope of today's "
+        + (plan ? "plan-capacity limit (your AI plan's turns counted at list price, not money)" : "AI spending limit") + ", and this "
         + $"turn reserves {Amount(reservation)}, so it was not started. Nothing was sent to the AI tool. It starts again after "
         + "midnight, or sooner if that envelope is widened.";
 

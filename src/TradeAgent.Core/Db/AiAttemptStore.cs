@@ -193,8 +193,26 @@ public sealed record AiAdmissionRule
     /// <summary>The role being charged, or null for a launch attributed to nobody.</summary>
     public string? Role { get; init; }
 
-    /// <summary>The owner's ceiling for the whole day, across every role.</summary>
+    /// <summary>
+    /// WHO PAYS FOR THIS LAUNCH (<c>U-billing-classes</c>), the class its row records — and so which ceilings it is admitted against
+    /// (<see cref="BillingClasses.CeilingsOf"/>): a <c>key</c> launch the money cap, <see cref="Cap"/>, over the day's <c>key</c> and
+    /// <c>unknown</c> rows; a <c>plan</c> launch the plan's capacity, <see cref="PlanCap"/>, over the day's <c>plan</c> and <c>unknown</c>
+    /// rows, and never the money cap; an <c>unknown</c> one both. Required: a rule that named no class would be a guess at one.
+    /// </summary>
+    public required string BillingClass { get; init; }
+
+    /// <summary>
+    /// THE OWNER'S REAL-MONEY CEILING FOR THE WHOLE DAY (<see cref="TradeAgentSettings.AiDailyCostCap"/>), across every role — what a
+    /// <c>key</c> or <c>unknown</c> launch must fit, over the day's <c>key</c> and <c>unknown</c> rows.
+    /// </summary>
     public decimal Cap { get; init; }
+
+    /// <summary>
+    /// THE OWNER'S PLAN-CAPACITY CEILING FOR THE WHOLE DAY (<c>U-billing-classes</c>): a list-price equivalent of what his AI plan's turns
+    /// would cost, never money — what a <c>plan</c> or <c>unknown</c> launch must fit, over the day's <c>plan</c> and <c>unknown</c> rows.
+    /// Read in the same admission as <see cref="Cap"/>, once. Zero admits no plan turn.
+    /// </summary>
+    public decimal PlanCap { get; init; }
 
     /// <summary>
     /// That role's slice of it. Meaningless, and unread, when <see cref="Role"/> is null — and unread when <see cref="Funding"/>
@@ -215,6 +233,13 @@ public sealed record AiAdmissionRule
     /// </summary>
     public IReadOnlyList<FundedUnit>? Funding { get; init; }
 
+    /// <summary>
+    /// THE SAME CHAIN, EACH ENVELOPE SIZED FROM <see cref="PlanCap"/> (<c>U-billing-classes</c>): the same units in the same order as
+    /// <see cref="Funding"/>, read off the same chart in the same admission, each unit's share of the plan's capacity — the envelopes
+    /// nest in each class. Read for a <c>plan</c> or <c>unknown</c> launch; null exactly where <see cref="Funding"/> is.
+    /// </summary>
+    public IReadOnlyList<FundedUnit>? PlanFunding { get; init; }
+
     /// <summary>What THIS launch commits — the number about to be written as its reservation.</summary>
     public decimal Reservation { get; init; }
 
@@ -229,19 +254,27 @@ public sealed record AiAdmissionRule
     /// question — <see cref="AiSpendToday.AdmitsAnotherTurn"/> — for the loop's cheap first look and
     /// for the transaction alike. Two comparisons that could drift apart would be two caps.
     /// </summary>
-    internal AiSpendToday Reading(AiAttemptTotals day, AiAttemptTotals mine) => new()
+    internal AiSpendToday Reading(AiAttemptTotals day, AiAttemptTotals mine, string ceiling) => new()
     {
         Metered = Metered,
         Role = Role,
+        Class = ceiling,
         Spent = day.Spent,
         Reserved = day.Reserved,
         RoleSpent = mine.Spent,
         RoleReserved = mine.Reserved,
         NextTurnReservation = Reservation,
-        Cap = Cap,
-        RoleCap = RoleCap,
+        Cap = CapOf(ceiling),
+        // A ROLE'S OWN CAP IS A SLICE OF THE MONEY CAP (perception's budget): under the plan's ceiling only the day's limit binds.
+        RoleCap = ceiling == BillingClasses.Plan ? CapOf(ceiling) : RoleCap,
         ResumesAt = ResumesAt
     };
+
+    /// <summary>The ceiling named by <paramref name="ceiling"/>: the plan's capacity for <c>plan</c>, otherwise the money cap.</summary>
+    internal decimal CapOf(string ceiling) => ceiling == BillingClasses.Plan ? PlanCap : Cap;
+
+    /// <summary>The funding chain sized from the ceiling named by <paramref name="ceiling"/>.</summary>
+    internal IReadOnlyList<FundedUnit>? FundingOf(string ceiling) => ceiling == BillingClasses.Plan ? PlanFunding : Funding;
 }
 
 /// <summary>
@@ -296,8 +329,14 @@ public sealed record AiAdmission
     /// </summary>
     public string? Ceiling { get; init; }
 
-    /// <summary>What <see cref="Ceiling"/> says for the owner's whole-day limit.</summary>
+    /// <summary>What <see cref="Ceiling"/> says for the owner's whole-day limit of real money.</summary>
     public const string Day = "day";
+
+    /// <summary>
+    /// What <see cref="Ceiling"/> says for the owner's whole-day PLAN-CAPACITY limit (<c>U-billing-classes</c>): a different figure with a
+    /// different repair — the plan's ceiling, raised on the same Safety page — so a caller never reads it as the money cap.
+    /// </summary>
+    public const string PlanDay = "plan-day";
 
     /// <summary>
     /// What <see cref="Ceiling"/> says when the LAUNCH LEDGER refused: the row that reserves the turn could not be
@@ -419,34 +458,45 @@ public sealed class AiAttemptStore(Database db)
         // same connection as the INSERT below.
         if (admit is { } rule)
         {
-            var day = Totals(rule.From, rule.To, null);
-            if (rule.Funding is { } chain)
-            {
-                // THE CHAIN RECORDED IS THE CHAIN ADMITTED: one resolution, or the launch is not written.
-                if (!chain.Select(u => u.UnitId).SequenceEqual(a.Funding ?? [], StringComparer.Ordinal))
-                    throw new ArgumentException("the attempt's funding chain is not the one it was admitted against", nameof(a));
+            // THE ROW'S CLASS IS THE RULE'S CLASS: a launch admitted against one ceiling and recorded against another would be spend
+            // the ceiling it is counted in never admitted.
+            if (BillingClasses.Of(a.BillingClass) != BillingClasses.Of(rule.BillingClass))
+                throw new ArgumentException("the attempt's billing class is not the one it was admitted against", nameof(a));
 
-                // THE DAY FIRST, AND UNCHANGED: every row's money, an app principal's included.
-                var reading = rule.Reading(day, day);
-                if (!reading.AdmitsGlobally) return Refuse(rule, reading);
-
-                // THEN EVERY UNIT OF THE CHAIN, over the attempts it funded, read here under the same lock as the INSERT.
-                if (rule.Metered)
-                    foreach (var unit in chain)
-                    {
-                        if (unit.Envelope is not { } envelope) continue;
-                        var funded = Totals(rule.From, rule.To, null, unit.UnitId);
-                        if (OrgStore.Unfundable(rule.Role ?? CouncilRoles.Default, unit.UnitId, envelope, rule.Reservation) is { } never)
-                            return RefuseUnit(rule, unit.UnitId, envelope, funded, never);
-                        if (funded.Spent + funded.Reserved + rule.Reservation > envelope)
-                            return RefuseUnit(rule, unit.UnitId, envelope, funded, null);
-                    }
-            }
-            else
+            // EACH CEILING THE CLASS MUST FIT (U-billing-classes; BUDGET-001): a key launch the money cap, a plan launch the plan's
+            // capacity, an unknown one both — each over its own rows (its class's and the unknown ones), every one read here.
+            foreach (var ceiling in BillingClasses.CeilingsOf(rule.BillingClass))
             {
-                var mine = rule.Role is null ? day : Totals(rule.From, rule.To, rule.Role);
-                var reading = rule.Reading(day, mine);
-                if (!reading.AdmitsAnotherTurn) return Refuse(rule, reading);
+                var day = Totals(rule.From, rule.To, null, null, ceiling);
+                if (rule.FundingOf(ceiling) is { } chain)
+                {
+                    // THE CHAIN RECORDED IS THE CHAIN ADMITTED: one resolution, or the launch is not written.
+                    if (!chain.Select(u => u.UnitId).SequenceEqual(a.Funding ?? [], StringComparer.Ordinal))
+                        throw new ArgumentException("the attempt's funding chain is not the one it was admitted against", nameof(a));
+
+                    // THE CLASS'S DAY FIRST: every row of that ceiling's money, an app principal's included.
+                    var reading = rule.Reading(day, day, ceiling);
+                    if (!reading.AdmitsGlobally) return Refuse(rule, reading);
+
+                    // THEN EVERY UNIT OF THE CHAIN, its envelope sized from this ceiling, over the attempts it funded in this
+                    // ceiling's rows, read here under the same lock as the INSERT.
+                    if (rule.Metered)
+                        foreach (var unit in chain)
+                        {
+                            if (unit.Envelope is not { } envelope) continue;
+                            var funded = Totals(rule.From, rule.To, null, unit.UnitId, ceiling);
+                            if (OrgStore.Unfundable(rule.Role ?? CouncilRoles.Default, unit.UnitId, envelope, rule.Reservation) is { } never)
+                                return RefuseUnit(rule, unit.UnitId, envelope, funded, never, ceiling);
+                            if (funded.Spent + funded.Reserved + rule.Reservation > envelope)
+                                return RefuseUnit(rule, unit.UnitId, envelope, funded, null, ceiling);
+                        }
+                }
+                else
+                {
+                    var mine = rule.Role is null ? day : Totals(rule.From, rule.To, rule.Role, null, ceiling);
+                    var reading = rule.Reading(day, mine, ceiling);
+                    if (!reading.AdmitsAnotherTurn) return Refuse(rule, reading);
+                }
             }
         }
 
@@ -523,10 +573,11 @@ public sealed class AiAttemptStore(Database db)
             ? reading.Spent + reading.Reserved + reading.NextTurnReservation - reading.Cap
             : reading.RoleSpent + reading.RoleReserved + reading.NextTurnReservation - reading.RoleCap;
 
+        var plan = reading.Class == BillingClasses.Plan;
         return new AiAdmission
         {
             Refusal = global
-                ? Labels.DailySpendingLimitReached
+                ? plan ? Labels.DailyPlanCapacityReached : Labels.DailySpendingLimitReached
                 // PERCEPTION'S OWN BUDGET, IN ITS OWN WORDS (U-decision-port): it is no council role's share, and the
                 // sentence that names one would send the owner to a split that does not hold it.
                 : rule.Role == AppPrincipals.Perception
@@ -534,7 +585,7 @@ public sealed class AiAttemptStore(Database db)
                     // NEVER FOLDED INTO THE CHAIR: a position is refused by its unit (RefuseUnit), and any other role
                     // named here is named as itself (U-org-envelopes).
                     : Labels.RoleShareReached(CouncilRoles.Title(rule.Role!)),
-            Ceiling = global ? AiAdmission.Day : rule.Role,
+            Ceiling = global ? plan ? AiAdmission.PlanDay : AiAdmission.Day : rule.Role,
             Over = over > 0m ? over : 0m,
             ResumesAt = rule.ResumesAt
         };
@@ -545,12 +596,14 @@ public sealed class AiAttemptStore(Database db)
     /// the sentence names the unit, its envelope and the room it has left — or, where one turn is larger than the unit's whole
     /// envelope, <paramref name="never"/>: the sentence of a split that cannot fund its own seat, which midnight does not repair.
     /// </summary>
-    static AiAdmission RefuseUnit(AiAdmissionRule rule, string unitId, decimal envelope, AiAttemptTotals funded, string? never)
+    static AiAdmission RefuseUnit(AiAdmissionRule rule, string unitId, decimal envelope, AiAttemptTotals funded, string? never,
+        string ceiling)
     {
         var room = envelope - funded.Spent - funded.Reserved;
         return new AiAdmission
         {
-            Refusal = never ?? Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation),
+            Refusal = never ?? Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation,
+                plan: ceiling == BillingClasses.Plan),
             Ceiling = unitId,
             Over = rule.Reservation - room,
             ResumesAt = rule.ResumesAt
@@ -666,16 +719,20 @@ public sealed class AiAttemptStore(Database db)
     /// the owner's own (<see cref="OwnerBasis"/>), which is a figure they are responsible for rather
     /// than one this build inferred.
     /// </summary>
-    public AiAttemptTotals TotalsBetween(DateTimeOffset from, DateTimeOffset to, string? role = null) =>
-        db.Read(_ => Totals(from, to, role));
+    /// <param name="ceiling">
+    /// The rows ONE CEILING counts (<c>U-billing-classes</c>): <c>plan</c> the day's <c>plan</c> and <c>unknown</c> rows, <c>key</c> its
+    /// <c>key</c> and <c>unknown</c> rows — an unknown row is in both — or null for every row.
+    /// </param>
+    public AiAttemptTotals TotalsBetween(DateTimeOffset from, DateTimeOffset to, string? role = null, string? ceiling = null) =>
+        db.Read(_ => Totals(from, to, role, null, ceiling));
 
     /// <summary>
     /// ONE UNIT'S DAY (<c>U-org-wakes</c>): every attempt in the window whose recorded funding chain holds <paramref name="unitId"/>
     /// — the same totals <see cref="Begin"/> compares that unit's envelope against inside its transaction, read here for the
     /// loop's first look and the card, so neither can admit what the gate refuses.
     /// </summary>
-    public AiAttemptTotals UnitTotalsBetween(DateTimeOffset from, DateTimeOffset to, string unitId) =>
-        db.Read(_ => Totals(from, to, null, unitId));
+    public AiAttemptTotals UnitTotalsBetween(DateTimeOffset from, DateTimeOffset to, string unitId, string? ceiling = null) =>
+        db.Read(_ => Totals(from, to, null, unitId, ceiling));
 
     /// <summary>
     /// The same query with NO lock of its own, so <see cref="Begin"/> can run it inside the
@@ -694,7 +751,9 @@ public sealed class AiAttemptStore(Database db)
     /// </summary>
     /// <para><b>A UNIT named</b> (<c>U-org-envelopes</c>) is every row whose recorded funding chain holds it — the subtree's spend as
     /// it was admitted, never as today's chart would re-file it; its counts follow the role-less rule above.</para>
-    AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role, string? unit = null)
+    /// <para><b>A CEILING named</b> (<c>U-billing-classes</c>) is the rows that ceiling counts: its own class's and every <c>unknown</c>
+    /// row — an unknown row is counted in both, never in neither.</para>
+    AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role, string? unit = null, string? ceiling = null)
     {
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
         using var c = db.Cmd($"""
@@ -716,8 +775,9 @@ public sealed class AiAttemptStore(Database db)
                     FROM ai_attempt WHERE started_at >= $from AND started_at < $to
                      AND ($role IS NULL OR COALESCE(role,$chair) = $role)
                      AND ($unit IS NULL OR EXISTS (SELECT 1 FROM ai_attempt_funding f
-                                                    WHERE f.unit_id = $unit AND f.attempt_id = ai_attempt.id)))
-            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$unit", unit),
+                                                    WHERE f.unit_id = $unit AND f.attempt_id = ai_attempt.id))
+                     AND ($ceiling IS NULL OR billing_class = $ceiling OR billing_class = 'unknown'))
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$unit", unit), ("$ceiling", ceiling),
             ("$chair", CouncilRoles.Default), .. principals]);
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);

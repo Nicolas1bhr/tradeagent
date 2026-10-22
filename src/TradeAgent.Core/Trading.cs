@@ -874,6 +874,14 @@ public sealed record AiSpendToday
     /// </summary>
     public decimal NextTurnReservation { get; init; }
 
+    /// <summary>
+    /// THE CEILING THIS READING IS AGAINST (<c>U-billing-classes</c>): <c>key</c> — the money cap
+    /// (<see cref="TradeAgentSettings.AiDailyCostCap"/>) over the day's <c>key</c> and <c>unknown</c> rows — or <c>plan</c> — the plan's
+    /// capacity (<c>AiPlanDailyCapacity</c>), a list-price equivalent and never money, over the day's
+    /// <c>plan</c> and <c>unknown</c> rows. <see cref="Cap"/>, <see cref="Spent"/> and <see cref="Reserved"/> are that ceiling's.
+    /// </summary>
+    public string Class { get; init; } = Db.BillingClasses.Key;
+
     public decimal Cap { get; init; }
 
     /// <summary>Empty when <c>costs.json</c> could not be read, so a number is never shown bare.</summary>

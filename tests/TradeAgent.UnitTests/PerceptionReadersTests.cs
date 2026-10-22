@@ -48,7 +48,8 @@ public class PerceptionReadersTests(ITestOutputHelper log)
         RequestedModel = "jev-1.13.0",
         PricingBasis = "list price, read 2026-10-09",
         ReservedCost = Reserve,
-        Role = AppPrincipals.Perception
+        Role = AppPrincipals.Perception,
+        BillingClass = BillingClasses.Key
     };
 
     /// <summary>
@@ -165,6 +166,7 @@ public class PerceptionReadersTests(ITestOutputHelper log)
                 From = from,
                 To = to,
                 Role = AppPrincipals.Perception,
+                BillingClass = BillingClasses.Key,
                 Cap = 5m,
                 RoleCap = 0.001m,
                 Reservation = Reserve,

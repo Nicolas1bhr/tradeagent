@@ -506,6 +506,13 @@ public sealed class TurnMeter
     readonly Func<OwnerPrice?> _owner;
     readonly Func<decimal> _cap;
 
+    /// <summary>
+    /// THE OWNER'S PLAN-CAPACITY CEILING (<c>U-billing-classes</c>): what the day's <c>plan</c> and <c>unknown</c> launches are admitted
+    /// against — a list-price equivalent, never money. A meter handed none holds plan capacity to the money cap's own reading in the
+    /// same admission: one cap counting both, which is what every launch was held to before the classes existed.
+    /// </summary>
+    readonly Func<decimal>? _planCap;
+
     /// <summary>One role's slice of the daily ceiling, as a fraction. An equal share by default.</summary>
     readonly Func<string, decimal> _share;
 
@@ -629,9 +636,10 @@ public sealed class TurnMeter
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null,
         Func<string, decimal>? share = null, Func<string?, SeatSpec>? seat = null, LiveAttempts? live = null,
-        Func<string, string?>? declaredSeat = null)
+        Func<string, string?>? declaredSeat = null, Func<decimal>? planCap = null)
     {
         _db = db;
+        _planCap = planCap;
         _declaredSeat = declaredSeat;
         _live = live ?? LiveAttempts.Shared;
         _attempts = new AiAttemptStore(db);
@@ -931,12 +939,13 @@ public sealed class TurnMeter
         // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
         // no unit's envelope sees. No row, no reservation, no wake.
         //
-        // THE DAY'S CAP IS READ ONCE FOR THIS ADMISSION, here, and both the envelopes and the rule's own cap are sized from that one
-        // value: read twice, a cap the owner lowers between the reads leaves every envelope sized to the old, larger cap inside a
-        // rule enforcing the new one — a child envelope outside its parent's (BUDGET-001).
+        // THE DAY'S CEILINGS ARE READ ONCE FOR THIS ADMISSION, here — the money cap and the plan's capacity — and both the envelopes
+        // and the rule's own ceilings are sized from those values: read twice, a cap the owner lowers between the reads leaves every
+        // envelope sized to the old, larger cap inside a rule enforcing the new one — a child envelope outside its parent's (BUDGET-001).
         var cap = Cap();
-        IReadOnlyList<FundedUnit> funding;
-        try { funding = FundingOf(role, cap); }
+        var planCap = PlanCap(cap);
+        IReadOnlyList<FundedUnit> funding, planFunding;
+        try { (funding, planFunding) = FundingOf(role, cap, planCap); }
         catch (Exception ex)
         {
             return new AiAdmission { Refusal = Labels.FundingChainUnreadable(Key(role), ex.Message), Ceiling = AiAdmission.Chart };
@@ -1014,7 +1023,7 @@ public sealed class TurnMeter
         AiAdmission admission;
         try
         {
-            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding, cap));
+            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation, funding, planFunding, cap, planCap, attempt.BillingClass));
             // NO ENTRY TO REPLACE: one open is refused above. A launch whose turn ended with no end seen here leaves by
             // Release or by its conversation's Detach, not by being overwritten.
             if (admission.Id is { } written)
@@ -1089,7 +1098,8 @@ public sealed class TurnMeter
     /// division's envelope reads (<see cref="OrgEnvelopes"/>), so the legacy pair admits as before; a new position no longer
     /// gets half the day by default.</para>
     /// </summary>
-    AiAdmissionRule RuleFor(string? role, TurnPrice reservation, IReadOnlyList<FundedUnit> funding, decimal cap)
+    AiAdmissionRule RuleFor(string? role, TurnPrice reservation, IReadOnlyList<FundedUnit> funding,
+        IReadOnlyList<FundedUnit> planFunding, decimal cap, decimal planCap, string billingClass)
     {
         var now = _now();
         var (from, to) = OwnerDay.Window(now);
@@ -1098,38 +1108,50 @@ public sealed class TurnMeter
             From = from,
             To = to,
             Role = role,
+            BillingClass = BillingClasses.Of(billingClass),
             Cap = cap,
+            PlanCap = planCap,
             RoleCap = cap,
             Funding = funding,
+            PlanFunding = planFunding,
             Reservation = reservation.Cost ?? 0m,
             ResumesAt = OwnerDay.Midnight(now)
         };
     }
 
     /// <summary>
-    /// THE RULE A LAUNCH BY <paramref name="role"/> WOULD BE ADMITTED AGAINST NOW — its reservation and funding chain resolved,
-    /// no totals in it. For a test that builds two rules before either is admitted. Throws where the chain cannot be read.
+    /// THE RULE A LAUNCH BY <paramref name="role"/> WOULD BE ADMITTED AGAINST NOW — its reservation and funding chains resolved,
+    /// no totals in it, for a launch billed to <paramref name="billingClass"/>. For a test that builds two rules before either is
+    /// admitted. Throws where the chain cannot be read.
     /// </summary>
-    internal AiAdmissionRule AdmissionRuleFor(string? role)
+    internal AiAdmissionRule AdmissionRuleFor(string? role, string billingClass = BillingClasses.Unknown)
     {
         var cap = Cap();
-        return RuleFor(role, Reservation(role), FundingOf(role, cap), cap);
+        var planCap = PlanCap(cap);
+        var (funding, planFunding) = FundingOf(role, cap, planCap);
+        return RuleFor(role, Reservation(role), funding, planFunding, cap, planCap, billingClass);
     }
 
     /// <summary>
-    /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>: the position's own unit, then every unit above it to the root,
-    /// each with its envelope sized from <paramref name="cap"/>, this admission's one reading of the day's cap, and the split as set
-    /// at this instant (<see cref="OrgStore.FundingChain"/>).
+    /// THE FUNDING CHAIN OF A LAUNCH BY <paramref name="role"/>, TWICE: the position's own unit, then every unit above it to the root,
+    /// read off the chart ONCE, and each unit's envelope sized from <paramref name="cap"/> (the money cap) and again from
+    /// <paramref name="planCap"/> (the plan's capacity) — this admission's one reading of each — with the split as set at this instant,
+    /// read once for both (<see cref="OrgEnvelopes.Resolve"/>). The envelopes nest in each class (<c>U-billing-classes</c>).
     /// A launch with NO role is the chair's, as its ledger row is, so its spend stays in the chair's units where the role-share
     /// rule always counted it — and it has no envelope to fit, because a launch nobody was named for was never held to a share
     /// (it keeps its rule, the day's). Throws where the chart cannot answer.
     /// </summary>
-    IReadOnlyList<FundedUnit> FundingOf(string? role, decimal cap)
+    (IReadOnlyList<FundedUnit> Money, IReadOnlyList<FundedUnit> Plan) FundingOf(string? role, decimal cap, decimal planCap)
     {
-        var org = new OrgStore(_db);
-        return role is null
-            ? [.. org.FundingLine(Key(role)).Select(u => new FundedUnit(u.Id, null))]
-            : org.FundingChain(role, cap, Share);
+        var line = new OrgStore(_db).FundingLine(Key(role));
+        if (role is null)
+        {
+            IReadOnlyList<FundedUnit> none = [.. line.Select(u => new FundedUnit(u.Id, null))];
+            return (none, none);
+        }
+        var shares = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        decimal Once(string r) => shares.TryGetValue(r, out var v) ? v : shares[r] = Share(r);
+        return (OrgEnvelopes.Resolve(line, cap, Once), OrgEnvelopes.Resolve(line, planCap, Once));
     }
 
     IReadOnlyList<string>? FundingOrNone(string? role)
@@ -1142,6 +1164,17 @@ public sealed class TurnMeter
     decimal Cap()
     {
         try { return _cap(); }
+        catch (Exception) { return 0m; }
+    }
+
+    /// <summary>
+    /// The owner's plan-capacity ceiling, or zero where the settings could not be read — no plan turn on a guess. A meter handed no
+    /// plan ceiling answers <paramref name="cap"/>, this admission's one reading of the money cap, and reads nothing twice.
+    /// </summary>
+    decimal PlanCap(decimal cap)
+    {
+        if (_planCap is null) return cap;
+        try { return _planCap(); }
         catch (Exception) { return 0m; }
     }
 
@@ -1562,7 +1595,7 @@ public sealed class TurnMeter
         {
             var (from, to) = OwnerDay.Window(now);
             (AiAttemptTotals Totals, decimal Envelope)? binding = null;
-            foreach (var unit in FundingOf(role, cap))
+            foreach (var unit in FundingOf(role, cap, cap).Money)
             {
                 if (unit.Envelope is not { } envelope) continue;
                 var funded = _attempts.UnitTotalsBetween(from, to, unit.UnitId);

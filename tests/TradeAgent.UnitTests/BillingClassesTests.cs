@@ -32,7 +32,8 @@ public class BillingClassesTests : IDisposable
 
     TurnMeter Meter(decimal money, decimal plan, Database? db = null) =>
         new(db ?? _db, () => money, now: () => _at, recordPath: _records, owner: () => Rate, share: _ => 1m,
-            seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts());
+            seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
+            planCap: () => plan);
 
     List<AiAttempt> Rows() => new AiAttemptStore(_db).Between(_at.AddDays(-1), _at.AddDays(1));
 
@@ -149,6 +150,147 @@ public class BillingClassesTests : IDisposable
         Exec(_db, "UPDATE ai_attempt SET exit_code=0 WHERE id=$id", ("$id", id));
         Assert.Equal(BillingClasses.Plan, new AiAttemptStore(_db).Get(id)!.BillingClass);
     }
+
+    // ---- (a) (b) (c) admission per class ----------------------------------------------------------------------------------
+
+    /// <summary>A row of <paramref name="billing"/> still open at <paramref name="reserved"/>: committed money of that class today.</summary>
+    void Spent(string billing, decimal reserved, string? role = null) =>
+        new AiAttemptStore(_db).Begin(new AiAttempt
+        {
+            Id = $"spent-{Guid.NewGuid():n}", StartedAt = _at, ReservedCost = reserved, BillingClass = billing, Role = role
+        });
+
+    /// <summary>One launch of <paramref name="role"/> through the meter, its open entry released so the role may launch again.</summary>
+    static AiAdmission Launch(TurnMeter meter, string role)
+    {
+        var admission = meter.Begin("## Situation", role: role);
+        if (admission.Id is { } id) meter.Release(role, id);
+        return admission;
+    }
+
+    /// <summary>
+    /// (a) A PLAN TURN COUNTS AGAINST THE PLAN CEILING AND NEVER THE MONEY CAP. A money cap of nothing — no real money at all today —
+    /// and a day of key spending far past it do not stop a seat signed in with the plan; its own ceiling does, at the turn that would
+    /// pass it, in the plan's own words. The rows it wrote are <c>plan</c>.
+    /// </summary>
+    [Fact]
+    public void A_plan_turn_counts_against_the_plan_ceiling_and_never_the_money_cap()
+    {
+        Spent(BillingClasses.Key, 50m);
+        var meter = Meter(money: 0m, plan: 2 * Turn + 0.5m);
+        using var seat = meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations);
+
+        Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        var refused = Launch(meter, CouncilRoles.Operations);
+        Assert.False(refused.Admitted);
+        Assert.Equal(AiAdmission.PlanDay, refused.Ceiling);
+        Assert.Equal(Labels.DailyPlanCapacityReached, refused.Refusal);
+        Assert.Equal(Turn - 0.5m, refused.Over);
+        Assert.Equal(2, Rows().Count(a => a.BillingClass == BillingClasses.Plan));
+    }
+
+    /// <summary>
+    /// (b) A KEY TURN COUNTS AGAINST THE MONEY CAP AND NEVER THE PLAN CEILING — the harness: a plan ceiling of nothing and a day of plan
+    /// turns far past it do not stop it; the money cap does, in its own words. (Perception's call, key by construction, is held to the
+    /// money cap in <c>DecisionPortTests</c>, whose row reads <c>key</c>.)
+    /// </summary>
+    [Fact]
+    public void A_key_turn_counts_against_the_money_cap_and_never_the_plan_ceiling()
+    {
+        Spent(BillingClasses.Plan, 50m);
+        var meter = Meter(money: 2 * Turn + 0.5m, plan: 0m);
+        using var seat = meter.Attach(new Billed(BillingClasses.Key), CouncilRoles.Research);
+
+        Assert.True(Launch(meter, CouncilRoles.Research).Admitted);
+        Assert.True(Launch(meter, CouncilRoles.Research).Admitted);
+        var refused = Launch(meter, CouncilRoles.Research);
+        Assert.False(refused.Admitted);
+        Assert.Equal(AiAdmission.Day, refused.Ceiling);
+        Assert.Equal(Labels.DailySpendingLimitReached, refused.Refusal);
+        Assert.Equal(2, Rows().Count(a => a.BillingClass == BillingClasses.Key));
+    }
+
+    /// <summary>
+    /// (c) AN UNKNOWN CLASS COUNTS AGAINST BOTH CEILINGS. Its launch must fit both — refused by the plan's when only the money has room,
+    /// by the money's when only the plan has — and once admitted its row is in both: the next plan turn and the next key turn each see it.
+    /// A conversation that declared no seat is unknown the same way.
+    /// </summary>
+    [Fact]
+    public void An_unknown_class_counts_against_both_ceilings()
+    {
+        var onlyMoney = Meter(money: 100m, plan: 0m);
+        using (onlyMoney.Attach(new Billed(BillingClasses.Unknown), CouncilRoles.Operations))
+            Assert.Equal(AiAdmission.PlanDay, Launch(onlyMoney, CouncilRoles.Operations).Ceiling);
+        var onlyPlan = Meter(money: 0m, plan: 100m);
+        using (onlyPlan.Attach(new Billed(BillingClasses.Unknown), CouncilRoles.Operations))
+            Assert.Equal(AiAdmission.Day, Launch(onlyPlan, CouncilRoles.Operations).Ceiling);
+        // NO SEAT DECLARED: unknown, and so refused by the plan ceiling it has no room in.
+        Assert.Equal(AiAdmission.PlanDay, Launch(Meter(money: 100m, plan: 0m), CouncilRoles.Research).Ceiling);
+        Assert.Empty(Rows());
+
+        var both = Meter(money: 2 * Turn - 0.5m, plan: 2 * Turn - 0.5m);
+        using (both.Attach(new Billed(BillingClasses.Unknown), CouncilRoles.Operations))
+            Assert.True(Launch(both, CouncilRoles.Operations).Admitted);
+        Assert.Equal(BillingClasses.Unknown, Assert.Single(Rows()).BillingClass);
+        using (both.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Research))
+            Assert.Equal(AiAdmission.PlanDay, Launch(both, CouncilRoles.Research).Ceiling);
+        using (both.Attach(new Billed(BillingClasses.Key), CouncilRoles.Research))
+            Assert.Equal(AiAdmission.Day, Launch(both, CouncilRoles.Research).Ceiling);
+    }
+
+    // ---- (e) envelopes nest in each class --------------------------------------------------------------------------------
+
+    void Exec(string sql, params (string, object?)[] ps) => Exec(_db, sql, ps);
+
+    /// <summary>
+    /// (e) THE ENVELOPES NEST IN EACH CLASS, AND TWO SIBLINGS CANNOT BOTH TAKE A CLASS'S LAST ROOM. A subdivision of Research with 0.2 of
+    /// each ceiling (2.00 of 10.00 plan, 2.00 of 10.00 money) — room for one turn of each class. Two sibling positions' plan rules, built
+    /// on an empty ledger before either is admitted: the first is admitted and the second refused by the subdivision, in the plan's
+    /// words; the second sibling's KEY launch is then admitted, because a plan row is in no money envelope — and the subdivision's money
+    /// room is then gone too. An unknown launch sees both envelopes.
+    /// </summary>
+    [Fact]
+    public void Envelopes_nest_in_each_class_and_two_siblings_cannot_both_take_a_classes_last_room()
+    {
+        Exec("""
+            INSERT INTO org_unit(id, parent_id, kind, status, envelope_share, created_at)
+            VALUES('sub-b', $research, 'subdivision', 'active', '0.2', '2026-10-11T12:00:00.0000000Z'),
+                  ('team-b1', 'sub-b', 'team', 'active', NULL, '2026-10-11T12:00:00.0000000Z'),
+                  ('team-b2', 'sub-b', 'team', 'active', NULL, '2026-10-11T12:00:00.0000000Z')
+            """, ("$research", OrgIds.Research));
+        Exec("""
+            INSERT INTO org_position(id, unit_id, home_dir, status, created_at)
+            VALUES('pos-b1', 'team-b1', 'org/pos-b1', 'active', '2026-10-11T12:00:00.0000000Z'),
+                  ('pos-b2', 'team-b2', 'org/pos-b2', 'active', '2026-10-11T12:00:00.0000000Z')
+            """);
+        var meter = Meter(money: 10m, plan: 10m);
+        var store = new AiAttemptStore(_db);
+
+        var first = meter.AdmissionRuleFor("pos-b1", BillingClasses.Plan);
+        var second = meter.AdmissionRuleFor("pos-b2", BillingClasses.Plan);
+        Assert.Equal(2m, first.PlanFunding!.Single(u => u.UnitId == "sub-b").Envelope);
+        Assert.Equal(first.Funding!.Select(u => u.UnitId), first.PlanFunding!.Select(u => u.UnitId));
+        Assert.True(store.Begin(Attempt("b1-plan", "pos-b1", first), admit: first).Admitted);
+        var refused = store.Begin(Attempt("b2-plan", "pos-b2", second), admit: second);
+        Assert.False(refused.Admitted);
+        Assert.Equal("sub-b", refused.Ceiling);
+        Assert.Contains("plan-capacity", refused.Refusal, StringComparison.Ordinal);
+        Assert.Null(store.Get("b2-plan"));
+
+        var key = meter.AdmissionRuleFor("pos-b2", BillingClasses.Key);
+        Assert.True(store.Begin(Attempt("b2-key", "pos-b2", key), admit: key).Admitted);
+        var unknown = meter.AdmissionRuleFor("pos-b1", BillingClasses.Unknown);
+        var neither = store.Begin(Attempt("b1-unknown", "pos-b1", unknown), admit: unknown);
+        Assert.Equal("sub-b", neither.Ceiling);
+        Assert.DoesNotContain("plan-capacity", neither.Refusal, StringComparison.Ordinal);   // the money envelope refused first
+    }
+
+    AiAttempt Attempt(string id, string role, AiAdmissionRule rule) => new()
+    {
+        Id = id, StartedAt = _at, ReservedCost = rule.Reservation, Role = role, BillingClass = rule.BillingClass,
+        Funding = [.. rule.Funding!.Select(u => u.UnitId)]
+    };
 
     /// <summary>The rung's number, spelled once here as in the schema.</summary>
     const int Rung = 46;
