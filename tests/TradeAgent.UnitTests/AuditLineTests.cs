@@ -177,7 +177,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
                          "UPDATE audit_salt SET at='x'", "DELETE FROM audit_salt",
                          "UPDATE audit_cursor SET last_id=0", "DELETE FROM audit_cursor",
                          "UPDATE audit_sample SET unit_id='x'", "DELETE FROM audit_sample",
-                         "UPDATE audit_check SET passed=1", "DELETE FROM audit_check",
+                         "UPDATE audit_check SET outcome='passed'", "DELETE FROM audit_check",
                          "UPDATE audit_finding SET severity='info'", "DELETE FROM audit_finding",
                          "UPDATE audit_flag SET what='x'", "DELETE FROM audit_flag",
                          "UPDATE audit_failure SET what='x'", "DELETE FROM audit_failure",
@@ -524,11 +524,51 @@ public partial class AuditLineTests(ITestOutputHelper log)
         foreach (var k in store.Checks(bent)) log.WriteLine($"{k.Name} {k.Passed}: {k.Reason}");
         Assert.All(store.Checks(bent), k => Assert.False(k.Passed));
         Assert.Equal(AuditSeverity.Severe, Assert.Single(store.Findings(), f => f.DeliveryId == bent && f.Check == AuditCheckName.Seal).Severity);
-        Assert.All(store.Checks(later), k => Assert.True(k.Passed, k.Reason));
+        Assert.DoesNotContain(store.Checks(later), k => k.Failed);
         var failure = Assert.Single(store.Failures());
         log.WriteLine(failure.What);
         Assert.Contains("names no delivery TradeAgent can read", failure.What, StringComparison.Ordinal);
         Assert.DoesNotContain("not json", AllText(store.File), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A DELIVERY WHOSE REFS ARE ALL LENSES IS NOT RUN, NEVER PASSED: the lens registry is not a file this line opens, so a delivery naming
+    /// only a lens has nothing the line can re-resolve — both ref checks store NOT RUN, never passed, and no finding. Mixed refs count only
+    /// the checkable ones, and say how many lenses were not re-resolved. RED before fix pass 1 (the review's defect 2): both stored passed =
+    /// 1, "every one of the 0 records named".
+    /// </summary>
+    [Fact]
+    public void A_delivery_whose_refs_are_all_lenses_is_not_run_never_passed()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var lensOnly = Accepted(org, now, "a lens", refs: [new MandateRef(MandateRefKind.Lens, "funding-skew@1")]);
+        var mixed = Issued(org, now);
+        VersionOf(db.FilePath, "ver-mixed", "turn-mixed-1", mixed.Id);
+        var both = org.Deliver(mixed.Id, Member, "turn-mixed-1", "a version and a lens", [],
+            [new MandateRef(MandateRefKind.Version, "ver-mixed"), new MandateRef(MandateRefKind.Lens, "funding-skew@2")], now).Delivery.Id;
+        org.Accept(both, Head, null, now);
+
+        using var store = new AuditStore(NewFile(), now);
+        Assert.Null(new AuditSweep(db.FilePath, store, rate: 1).Run(now).Failure);
+        foreach (var k in store.Checks()) log.WriteLine($"{k.DeliveryId[..12]} {k.Name} {k.Outcome}: {k.Reason}");
+        foreach (var name in new[] { AuditCheckName.RefsExistNow, AuditCheckName.RefsOfThisMandateNow })
+        {
+            var notRun = Assert.Single(store.Checks(lensOnly), k => k.Name == name);
+            Assert.Equal(AuditOutcome.NotRun, notRun.Outcome);
+            Assert.False(notRun.Passed);
+            Assert.Contains("1 lens record was not re-resolved", notRun.Reason, StringComparison.Ordinal);
+            var counted = Assert.Single(store.Checks(both), k => k.Name == name);
+            Assert.Equal(AuditOutcome.Passed, counted.Outcome);
+            Assert.Contains("every one of the 1 records", counted.Reason, StringComparison.Ordinal);
+            Assert.Contains("1 lens record was not re-resolved", counted.Reason, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain(store.Findings(), f => f.Check is AuditCheckName.RefsExistNow or AuditCheckName.RefsOfThisMandateNow);
+        using var c = new SqliteConnection($"Data Source={store.File};Mode=ReadOnly;Pooling=False");
+        c.Open();
+        Assert.Equal("0", Scalar(c, $"SELECT COUNT(*) FROM audit_check WHERE delivery_id = '{lensOnly}' AND outcome = 'passed' AND check_name LIKE 'refs-%'"));
     }
 
     // ---- (f) the refs, now, and the acceptance ----------------------------------------------------------------------------

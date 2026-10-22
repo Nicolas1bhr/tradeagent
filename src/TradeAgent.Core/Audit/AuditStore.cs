@@ -12,8 +12,32 @@ public sealed record AuditSample(string DeliveryId, string MandateId, string Uni
     public long Seq { get; init; }
 }
 
-/// <summary>One code check of one sample: its name, whether it passed, and the app's own words why — never an agent's.</summary>
-public sealed record AuditCheck(string DeliveryId, string Name, bool Passed, string Reason);
+/// <summary>
+/// What a check came to — a closed word, stored as itself: <see cref="Passed"/>, <see cref="Failed"/>, or <see cref="NotRun"/> when the line
+/// had nothing it could check (a delivery whose every ref is a lens, which the line cannot re-resolve). NOT RUN is never counted as passed.
+/// </summary>
+public static class AuditOutcome
+{
+    public const string Passed = "passed";
+    public const string Failed = "failed";
+    public const string NotRun = "not run";
+
+    public static readonly string[] All = [Passed, Failed, NotRun];
+}
+
+/// <summary>One code check of one sample: its name, its <see cref="AuditOutcome"/>, and the app's own words why — never an agent's.</summary>
+public sealed record AuditCheck(string DeliveryId, string Name, string Outcome, string Reason)
+{
+    /// <summary>A check that ran: passed or failed.</summary>
+    public AuditCheck(string deliveryId, string name, bool passed, string reason)
+        : this(deliveryId, name, passed ? AuditOutcome.Passed : AuditOutcome.Failed, reason) { }
+
+    /// <summary>Whether it ran and passed; NOT RUN is not passed.</summary>
+    public bool Passed => Outcome == AuditOutcome.Passed;
+
+    /// <summary>Whether it ran and failed — what a finding is.</summary>
+    public bool Failed => Outcome == AuditOutcome.Failed;
+}
 
 /// <summary>
 /// ONE FINDING: a check of a sample that failed, as an APP MEASUREMENT — it cites the delivery, the mandate and the attempt that sealed it,
@@ -182,7 +206,7 @@ public sealed class AuditStore : IDisposable
                 CREATE TABLE IF NOT EXISTS audit_check(
                   delivery_id TEXT NOT NULL REFERENCES audit_sample(delivery_id),
                   check_name  TEXT NOT NULL,
-                  passed      INTEGER NOT NULL CHECK (passed IN (0, 1)),
+                  outcome     TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'not run')),
                   reason      TEXT NOT NULL,
                   PRIMARY KEY (delivery_id, check_name));
 
@@ -281,8 +305,10 @@ public sealed class AuditStore : IDisposable
         // ONLY A SAMPLE THIS CALL DREW carries this call's checks, findings and flags: a sample drawn before keeps what it was found to be.
         foreach (var k in sweep.Checks.Where(k => fresh.Contains(k.DeliveryId)))
         {
-            using var c = Cmd("INSERT INTO audit_check(delivery_id, check_name, passed, reason) VALUES($d, $n, $p, $r)",
-                ("$d", k.DeliveryId), ("$n", k.Name), ("$p", k.Passed ? 1 : 0), ("$r", k.Reason));
+            if (Array.IndexOf(AuditOutcome.All, k.Outcome) < 0)
+                throw new ArgumentException($"a check's outcome is {string.Join(", ", AuditOutcome.All)}, not '{k.Outcome}'");
+            using var c = Cmd("INSERT INTO audit_check(delivery_id, check_name, outcome, reason) VALUES($d, $n, $o, $r)",
+                ("$d", k.DeliveryId), ("$n", k.Name), ("$o", k.Outcome), ("$r", k.Reason));
             c.ExecuteNonQuery();
         }
         foreach (var f in sweep.Findings.Where(f => fresh.Contains(f.DeliveryId)))
@@ -344,11 +370,11 @@ public sealed class AuditStore : IDisposable
     /// <summary>The checks of one sample, or of every sample, in the order written.</summary>
     public IReadOnlyList<AuditCheck> Checks(string? deliveryId = null) => Read(() =>
     {
-        using var c = Cmd($"SELECT delivery_id, check_name, passed, reason FROM audit_check {(deliveryId is null ? "" : "WHERE delivery_id=$d")} ORDER BY rowid",
+        using var c = Cmd($"SELECT delivery_id, check_name, outcome, reason FROM audit_check {(deliveryId is null ? "" : "WHERE delivery_id=$d")} ORDER BY rowid",
             ("$d", deliveryId));
         var rows = new List<AuditCheck>();
         using var r = c.ExecuteReader();
-        while (r.Read()) rows.Add(new AuditCheck(r.GetString(0), r.GetString(1), r.GetInt64(2) != 0, r.GetString(3)));
+        while (r.Read()) rows.Add(new AuditCheck(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3)));
         return (IReadOnlyList<AuditCheck>)rows;
     });
 

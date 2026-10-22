@@ -80,7 +80,7 @@ public static class AuditChecks
                 ? new AuditCheck(d, AuditCheckName.AcceptedClean, false, string.Format(CultureInfo.InvariantCulture, unreadable, "deviations"))
                 : AcceptedClean(evidence, d, n),
         };
-        var findings = checks.Where(k => !k.Passed).Select(k => Finding(sample, attempt, k.Name, now)).ToList();
+        var findings = checks.Where(k => k.Failed).Select(k => Finding(sample, attempt, k.Name, now)).ToList();
         var flag = deviationCount > 0 && findings.Count == 0 ? new AuditFlag(d, sample.MandateId, attempt, DormantFlag, now) : null;
         return new Outcome(checks, findings, flag);
     }
@@ -154,7 +154,7 @@ public static class AuditChecks
 
     /// <summary>
     /// The sentence a lens ref adds: the lens registry is the tape's file, which this line does not open (it opens the app's database and
-    /// its own file, nothing else), so a lens is NOT re-resolved — said, never counted as passed or failed.
+    /// its own file, nothing else), so a lens is NOT re-resolved — said, and never counted: a check with nothing else to count is NOT RUN.
     /// </summary>
     static string LensNote(IReadOnlyList<MandateRef> refs)
     {
@@ -162,9 +162,19 @@ public static class AuditChecks
         return lenses == 0 ? "" : $"; {lenses} lens record{(lenses == 1 ? " was" : "s were")} not re-resolved — the lens registry is not a file this line opens";
     }
 
+    /// <summary>
+    /// NOT RUN (fix pass 1): a delivery naming no record this line can re-resolve — none at all, or only lenses — has nothing to check, and
+    /// says so as its own state, never as passed.
+    /// </summary>
+    static AuditCheck? NotRun(string id, string name, IReadOnlyList<MandateRef> refs, IReadOnlyList<MandateRef> checkable) =>
+        checkable.Count > 0 ? null : new AuditCheck(id, name, AuditOutcome.NotRun,
+            (refs.Count == 0 ? "the delivery names no record, so there was nothing to re-resolve" : "no record named is one this line can re-resolve")
+            + LensNote(refs));
+
     static AuditCheck RefsExistNow(AuditEvidence evidence, string id, IReadOnlyList<MandateRef> refs)
     {
         var checkable = refs.Where(r => r.Kind != MandateRefKind.Lens).ToList();
+        if (NotRun(id, AuditCheckName.RefsExistNow, refs, checkable) is { } notRun) return notRun;
         var missing = checkable.Count(r => Origin(evidence, r) is null);
         return new AuditCheck(id, AuditCheckName.RefsExistNow, missing == 0, (missing == 0
             ? $"every one of the {checkable.Count} records named is in the app's ledgers now"
@@ -174,6 +184,7 @@ public static class AuditChecks
     static AuditCheck RefsOfThisMandateNow(AuditEvidence evidence, string id, string mandate, IReadOnlyList<MandateRef> refs)
     {
         var checkable = refs.Where(r => r.Kind != MandateRefKind.Lens).ToList();
+        if (NotRun(id, AuditCheckName.RefsOfThisMandateNow, refs, checkable) is { } notRun) return notRun;
         var foreign = checkable.Count(r => Origin(evidence, r) is not { } o || !o.Any(a => a is not null && MandateOf(evidence, a) == mandate));
         return new AuditCheck(id, AuditCheckName.RefsOfThisMandateNow, foreign == 0, (foreign == 0
             ? $"every one of the {checkable.Count} records named was produced by a launch charged to the mandate, as the ledgers read now"
