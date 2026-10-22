@@ -11,9 +11,28 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-21, PREPARED for the next build run), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
+heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-22, the BUILD RUN — in progress at its last checkpoint), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-22 — THE BUILD RUN (opened 00:15 CEST on the owner's word; checkpointed 13:0x, in progress) — resume from `fleet/handoff/ORCHESTRATOR.md`'s
+BUILD RUN block (the state) and `fleet/BOARD.md` (decisions and log).** The owner, verbatim: "yes. i trust you to enter the orchestrator's position and run this
+session to it's fullest. everything you need is ready by your past preparations. i will not be available for the next 8 hours. as stated in the how we build and such
+you need to make sure your context stays sharp while also making sure the managers are as grounded as can be. you'll manage. in case of emergency you can always ping me."
+- **Landed (13; records on main):** U-proving-ground-a `1399ac5a` · U-cell-row-every-os `5cfb0c73` · U-thinking-seats-c `59dbfa42` (canon v5) · U-forecast-nul
+  `a13b8005` (rung 42) · U-turn-tail-drain `3616f5c8` · U-vendor-limit-wakes `ec41416f` · U-cell-linux-c `7550906b` (rung 43) · U-org-packets-a `18afc2e5` ·
+  U-launcher-race `ed0386c2` · U-host-recording `9095bdc8` · U-org-watcher-a `52a09706` · U-org-seats `3d2196c0` (rung 44) · U-org-packets-b `b7cd6fd0` (rung 45). Schema 45.
+- **In flight:** seat A — U-execution-environment (fix pass 3: one no-follow helper wherever the unconfined app acts in a home an executor cell can write; the
+  independent review found three link races that could carry a credential or a ledger out — CRED-001; nothing puts a model in an executor cell before a RECORDED
+  proven cell, so the gate holds meanwhile), U-org-watcher-b, U-org-audit-a next (split a/b/c; -b waits on the owner's Q1–Q3); seat B — U-billing-classes (rung 46),
+  U-rewake-floor (the per-level re-wake floor, due before M-org1), O6 U-org-verbs-a.
+- **Attempt 4 ≡ M-org0:** GO pinned `ec41416f` (push CI green); bundle and a fresh home built by the observer leg (`fleet/status/M.md`); waits for the owner at the
+  Mac (sign-in, the cap raise, the two clicks; T0 ≤ 17:30 local). The fleet's Codex reviews met his Plus limit five times overnight (00:22–05:16): the record states
+  them and the window at T0. Codex quiet from 08:15: a fresh Claude leg stands in as the independent review; each record says "Codex review owed".
+- **The tape deploy is blocked on the owner:** key auth to his server is refused (his own access there is by password, never typed by the fleet); a fleet key is
+  prepared outside the repo; his one step installs it, then `tools/linux-host.sh` (landed with U-host-recording) runs the recon and the deploy on his dated word.
+- **Owner asks queued:** the key step; Plus extra credits and the Safety page; U-org-audit Q1–Q3; his go for M-org1 on the Linux host; § 16 still-asked 2–5.
+- **NOT VERIFIED:** the tape on his server (not deployed); attempt 4 (not run); the vendor-limit sentence under his real plan; packet sizes in a runtime's tokens.
 
 **2026-10-21 — PREPARED for the next build run (a planning session: no heartbeat, no seat, no builder); resume from `fleet/handoff/ORCHESTRATOR.md`'s
 top block ("PREPARED 2026-10-21"), then `fleet/handoff/A.md` and `B.md` (their PREPARED notes on top).** The owner: "okay let's do a check up on the current

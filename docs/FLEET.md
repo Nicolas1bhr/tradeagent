@@ -114,6 +114,12 @@ The operational text is `fleet/SPEED-MODE.md`, with the compact builder prompt `
   the heartbeat resumes them from their branches. Landing fixers go before new units. A code landing makes every other prepped unit run CI again, so prefer
   trains and cancel a run the moment it can no longer carry.
 - **Never "a flake".** A red the diff cannot reach is named with its run id and judged at landing (`LAND_JUDGED_RED`); its second sighting makes it a unit.
+- **Learned 2026-10-22 (the build run):** a leg's detached CI wait sometimes never re-invokes it, or dies at a resume — a seat keeps ONE background wait of its own
+  while legs are in flight and wakes any leg ≥ 10 min past its CI with no push or report; the Codex review starts in its own process group
+  (`fleet/BUILDER-PROMPT-v2.md` 3b), since a plain `( codex … &)` dies with the leg's turn; `fleet/bin/scan.sh`'s range mode scans every commit's patch in
+  base..tip, and an exclusion is an exact phrase, never a bare word. **While an observed run reserves the owner's plan,** a fresh Claude leg (opus/high,
+  read-only, the step-3b prompt, never the builder's report) stands in as the independent review and the held Codex review runs after the window as a second
+  pass; the record says so. The stand-ins found real defects in nearly every unit that morning, among them three credential-path link races.
 
 ## Grounding — read before acting, verify before trusting
 
