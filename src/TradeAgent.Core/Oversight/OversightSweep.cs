@@ -46,7 +46,7 @@ public sealed class OversightSweep(string databaseFile, OversightStore store, IR
             foreach (var scope in scopes)
             {
                 var fresh = store.Findings(scope.Id, store.LastDigest(scope.Id)?.ThroughSeq ?? 0);
-                if (DigestComposer.Compose(scope.Id, fresh, now) is not { } digest) continue;
+                if (DigestComposer.Compose(scope.Id, fresh, now, records.Resolves) is not { } digest) continue;
                 if (DigestCheck.Verify(digest.Text, cite => cite.Kind == "wf" ? store.HasFinding(cite.Id) : records.Resolves(cite)) is { } refused)
                 {
                     store.RecordFailure(now, $"a digest for scope {scope.Id} was refused and not written: {refused}");

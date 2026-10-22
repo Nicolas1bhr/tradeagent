@@ -34,25 +34,38 @@ public static partial class DigestComposer
         _ => f.Detector,
     };
 
-    /// <summary>One finding's sentence: its template filled, then its citations.</summary>
-    public static string Sentence(OversightFinding f)
+    /// <summary>
+    /// One finding's sentence: its template filled, then its citations — the finding's own id and every cited record
+    /// <paramref name="stillThere"/> still finds in the app's database.
+    ///
+    /// <para><b>A CITED RECORD THE APP HAS SINCE PRUNED</b> (its engineering log is rotated — <c>LogStore.Rotate</c>) is never dropped in silence and never
+    /// bracketed as a citation it can no longer be: the sentence says, in words of this closed list, which cited record is no longer in the app's
+    /// database, and still ends in the finding's own id, which resolves in the oversight file and keeps what was measured. So a pruned source
+    /// neither blocks the scope's digests nor lets a sentence through uncited (fix pass 1, R1).</para>
+    /// </summary>
+    public static string Sentence(OversightFinding f, Func<OversightCite, bool> stillThere)
     {
+        ArgumentNullException.ThrowIfNull(stillThere);
         if (!Templates.TryGetValue(TemplateKey(f), out var template))
             throw new InvalidOperationException($"no digest template tells a '{f.Detector}' finding");
         var text = Placeholder().Replace(template, m => m.Groups[1].Value == "unit" ? f.UnitId
             : f.Measured.TryGetValue(m.Groups[1].Value, out var v) ? Plain(v) : "?");
+        var gone = f.Cites.Where(c => !stillThere(c)).ToList();
+        if (gone.Count > 0)
+            text += $" {string.Join(", ", gone)} {(gone.Count == 1 ? "is" : "are")} no longer in the app's database; the finding keeps what was measured.";
         var cites = new StringBuilder($" [{f.Id}]");
-        foreach (var c in f.Cites) cites.Append(" [").Append(c).Append(']');
+        foreach (var c in f.Cites.Except(gone)) cites.Append(" [").Append(c).Append(']');
         return text + cites;
     }
 
     /// <summary>
     /// The scope's digest over <paramref name="fresh"/> — the findings newer than its last digest — or null when there are none.
+    /// <paramref name="stillThere"/> says whether a cited record is still in the app's database (see <see cref="Sentence"/>).
     /// </summary>
-    public static OversightDigest? Compose(string scope, IReadOnlyList<OversightFinding> fresh, DateTimeOffset at)
+    public static OversightDigest? Compose(string scope, IReadOnlyList<OversightFinding> fresh, DateTimeOffset at, Func<OversightCite, bool> stillThere)
     {
         if (fresh.Count == 0) return null;
-        var text = string.Join('\n', fresh.Select(Sentence));
+        var text = string.Join('\n', fresh.Select(f => Sentence(f, stillThere)));
         var through = fresh.Max(f => f.Seq);
         return new OversightDigest("wd-" + Sha256Hex.Of(scope + "\n" + through.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             scope, at, text, [.. fresh.Select(f => f.Id)], through);

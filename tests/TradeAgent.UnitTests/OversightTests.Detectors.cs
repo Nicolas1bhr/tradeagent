@@ -148,6 +148,55 @@ public partial class OversightTests
         Assert.Single(store.Digests(OversightStore.RootScope));
     }
 
+    /// <summary>
+    /// (g) A FINDING WHOSE CITED RECORD THE APP PRUNED STILL REACHES THE OWNER — and blocks nothing. A pipe refusal is found and written, the
+    /// process dies before its digest, the app prunes that <c>engineering_log</c> row, the line restarts and finds something new: the digest is
+    /// written, it carries the orphaned finding's sentence ending in the finding's own id (which keeps what was measured), says in words which
+    /// cited record is no longer in the app's database, and never brackets a cite that does not resolve. RED before fix pass 1: the citation
+    /// check needed the deleted row, refused the scope's digest and the cursor never moved — every later digest of the scope was refused too.
+    /// </summary>
+    [Fact]
+    public void A_finding_whose_cited_log_row_was_pruned_still_reaches_the_digest_and_blocks_nothing()
+    {
+        var now = OversightSeed.Now();
+        var (file, store) = Home();
+        OversightSeed.Seed(file, "refusals", now);
+        var snapshot = OrgSnapshot.Read(file, now, new Dictionary<string, long?>());
+        var found = store.Scopes().SelectMany(s => OversightDetector.All.SelectMany(d => d.Detect(snapshot, s, new OversightWindow(now)))).ToList();
+        store.Commit(found, snapshot.Cursors, now); // ... and the process dies before the digest.
+        var orphan = Assert.Single(store.Findings(OversightStore.RootScope), f => f.Subject.StartsWith("log:", StringComparison.Ordinal));
+        var pruned = Assert.Single(orphan.Cites, c => c.Kind == "log");
+        using (var c = OversightSeed.Open(file))
+        using (var prune = c.CreateCommand())
+        {
+            prune.CommandText = "DELETE FROM engineering_log WHERE CAST(id AS TEXT) = $id";
+            prune.Parameters.AddWithValue("$id", pruned.Id);
+            Assert.Equal(1, prune.ExecuteNonQuery());
+        }
+        var path = store.File;
+        store.Dispose();
+
+        using var reopened = new OversightStore(path, now);
+        OversightSeed.Seed(file, "dead-version-rerun", now);
+        var swept = new OversightSweep(file, reopened).Run(now.AddMinutes(1));
+        foreach (var (at, what) in reopened.Failures()) log.WriteLine($"failure {at:O}: {what}");
+        Assert.Null(swept.Failure);
+        Assert.Empty(reopened.Failures());
+        var digest = Assert.Single(swept.Digests, d => d.ScopeId == OversightStore.RootScope);
+        log.WriteLine(digest.Text);
+        Assert.Contains(orphan.Id, digest.Findings);
+        Assert.Contains(swept.Added, f => f.Detector == "dead-version-rerun");
+
+        var sentence = Assert.Single(digest.Text.Split('\n'), l => l.Contains(orphan.Id, StringComparison.Ordinal));
+        Assert.EndsWith($"[{orphan.Id}]", sentence, StringComparison.Ordinal);
+        Assert.DoesNotContain($"[{pruned}]", sentence, StringComparison.Ordinal);
+        Assert.Contains($"{pruned} is no longer in the app's database", sentence, StringComparison.Ordinal);
+        using var records = new OrgRecords(file);
+        Assert.Null(DigestCheck.Verify(digest.Text, c => c.Kind == "wf" ? reopened.HasFinding(c.Id) : records.Resolves(c)));
+        // The check itself is not loosened: the pruned record, cited, still refuses.
+        Assert.NotNull(DigestCheck.Verify($"A fact. [{orphan.Id}] [{pruned}]", c => c.Kind == "wf" ? reopened.HasFinding(c.Id) : records.Resolves(c)));
+    }
+
     /// <summary>THE TEMPLATE LIST IS CLOSED AND STATES FACTS: one per detector variant, and no word that recommends (§ 9's first eight weeks).</summary>
     [Fact]
     public void The_digest_templates_are_a_closed_list_of_facts()
