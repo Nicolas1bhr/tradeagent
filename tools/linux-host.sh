@@ -128,16 +128,19 @@ set -euo pipefail
 stage="$1" address="$2" zone="$3" word="$4" tgz="$5"
 account=tradeagent home=/var/lib/tradeagent
 state="$home/.local/share/TradeAgent/state"
-was_active=no
-cleanup() { rm -rf "$stage"; }
-trap cleanup EXIT
+was_active=no kit_owns_it=no
+# EVERY way out of this script, before the kit takes over, leaves the recorder as it was found: a failed command, a refusal
+# (`exit 1` runs no ERR trap — the 2026-10-22 review's R2: too little room for the backup left it stopped), a signal.
+on_exit() { local rc=$?; trap - EXIT; if [ "$was_active" = yes ] && [ "$kit_owns_it" = no ]; then systemctl start tradeagent.service || true; fi; rm -rf "$stage"; exit "$rc"; }
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cd "$stage"
 sha256sum -c --ignore-missing SHA256SUMS
 
-# 1. STOP: the app's own clean quit (it records "TradeAgent stopped"); a failure from here to the kit starts the old one again.
+# 1. STOP: the app's own clean quit (it records "TradeAgent stopped"); any exit from here to the kit starts the old one again.
 if systemctl cat tradeagent.service > /dev/null 2>&1 && systemctl is-active --quiet tradeagent.service; then was_active=yes; fi
-restore() { [ "$was_active" = yes ] && systemctl start tradeagent.service || true; }
-trap 'restore; cleanup' ERR
 if [ "$was_active" = yes ]; then echo "== stopping tradeagent.service =="; systemctl stop tradeagent.service; fi
 
 # 2. BACK UP the databases (the tape's and the app's, WAL files with them) to a dated folder outside the home, each copy
@@ -170,8 +173,7 @@ if [ ! -s "$home/.vnc/vncauth" ]; then
     args+=(--vnc-pass-file "$pf")
     echo "== first install: the VNC password is in $pf (root-only, not printed); hand it over once, then delete it =="
 fi
-trap cleanup EXIT   # past this point the kit owns the service
-trap - ERR
+kit_owns_it=yes   # past this point the kit owns the service
 bash ./install.sh "${args[@]}"
 echo "== kit done =="
 REMOTE
