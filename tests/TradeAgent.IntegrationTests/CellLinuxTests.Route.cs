@@ -1,4 +1,9 @@
+using System.Text.Json;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -71,5 +76,103 @@ public partial class CellLinuxTests
         Says(outside, "socket-connected");
         var ran = await InCell(w.Policy(), "/usr/bin/python3", probe, socket!, pipe!);
         Says(ran, "socket-denied", "pipe-denied");
+    }
+
+    /// <summary>
+    /// L3, A GUARD ON THE GRANT: A CELL-LEAF PROCESS IS OUTSIDE THE HARNESS'S GRANT. Route (a)'s harness runs in
+    /// <c>&lt;attempt&gt;/harness</c> and its launch grant answers to that leaf alone. A process of the same session that moved into the
+    /// attempt's <c>cell/</c> leaf — still beneath the attempt, where -b's container on the attempt would have counted it a member —
+    /// presents the harness's grant and is refused naming the cgroup; the harness's own process is served.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_cell_leaf_process_is_outside_the_harness_grant()
+    {
+        PlatformIsACells();
+        using var rows = Rows();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        var pipe = "ta-ra-" + Guid.NewGuid().ToString("n")[..12];
+        var grants = new AgentGrants();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+        var cli = Launcher();
+
+        async Task<(int Code, string Out, string Err)> FromHarness(string grantName, string before)
+        {
+            using var grant = grants.Issue(CouncilRoles.Research, grantName);
+            var psi = Plain("/bin/sh", "-c", before + "exec \"$0\" \"$@\"", cli[0], cli[1], "data", "list", "--json");
+            psi.Environment["TRADEAGENT_PIPE"] = pipe;
+            psi.Environment[AgentGrants.Variable] = grant.Token;
+            using var h = ProcessContainment.StartHarness(psi, ProcessContainment.Prepare(Launcher()), Launcher(), attemptId: grantName,
+                cgroups: rows.Cgroups);
+            Assert.NotNull(h.Container);
+            Assert.True(Directory.Exists(h.Cgroup!.Cell), "the attempt's cell leaf was not made beside the harness");
+            Assert.True(grants.Bind(grant.Token, h.Container!));
+            var ran = await Finish(h);
+            return (ran.Code, ran.Out, ran.Err);
+        }
+
+        var own = await FromHarness("harness-own", "");
+        Assert.True(own.Code == 0, $"the harness's own process, in its harness leaf, was not served (exit {own.Code}): {own.Out} {own.Err}");
+        using (var doc = JsonDocument.Parse(own.Out)) Assert.True(doc.RootElement.GetProperty("ok").GetBoolean(), own.Out);
+
+        const string intoCell = "cg=/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup); " +
+                                "[ \"${cg##*/}\" = harness ] || exit 8; echo $$ > \"${cg%/harness}/cell/cgroup.procs\" || exit 9; ";
+        var moved = await FromHarness("harness-moved", intoCell);
+        Assert.True(moved.Code is not (0 or 8 or 9),
+            $"a process in the attempt's cell leaf presented the harness's grant and was served (exit {moved.Code}): {moved.Out} {moved.Err}");
+        Assert.Contains("IPC_UNAUTHENTICATED", moved.Out + moved.Err);
+        Assert.Contains("cgroup", moved.Out + moved.Err);
+    }
+
+    /// <summary>
+    /// ITEM 3: THE SUPERVISOR JOINS AN EMPTY <c>harness</c> OR <c>cell</c> LEAF OF AN ATTEMPT, AND NOTHING ELSE BENEATH ONE. A leaf of
+    /// another name, a leaf of a directory that is not an attempt's, and a leaf that already holds a process are refused with exit 126
+    /// and nothing started.
+    /// </summary>
+    [LinuxFact]
+    public async Task The_supervisor_joins_an_empty_harness_or_cell_leaf_of_an_attempt_and_nothing_else()
+    {
+        PlatformIsACells();
+        using var rows = Rows();
+        var attempt = rows.Cgroups.Create("leaves");
+        attempt.MakeLeaves();
+        var other = Path.Combine(attempt.Dir, "other");
+        Directory.CreateDirectory(other);
+        var notAttempt = Path.Combine(Path.GetDirectoryName(attempt.Dir)!, "plain-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(Path.Combine(notAttempt, AttemptCgroups.CellLeaf));
+        try
+        {
+            async Task<Ran> Join(string dir)
+            {
+                var cli = Launcher();
+                var psi = Plain(cli[0], cli[1], ContainedLaunch.Flag, ContainedLaunch.CgroupFlag, dir, "/bin/sh", "-c",
+                    "sed -n 's/^0:://p' /proc/self/cgroup");
+                using var p = System.Diagnostics.Process.Start(psi)!;
+                p.StandardInput.Close();
+                var so = p.StandardOutput.ReadToEndAsync();
+                var se = p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+                return new Ran(p.ExitCode, await so, await se, "join");
+            }
+            foreach (var leaf in new[] { attempt.Harness, attempt.Cell })
+            {
+                var ran = await Join(leaf);
+                Assert.True(ran.Code == 0, $"joining {leaf}: exit {ran.Code} {ran.Err}");
+                Assert.Equal(LineOf(leaf)[3..], ran.Out.Trim());
+            }
+            foreach (var refused in new[] { other, Path.Combine(notAttempt, AttemptCgroups.CellLeaf) })
+            {
+                var ran = await Join(refused);
+                Assert.True(ran.Code == ContainedLaunch.CgroupRefused, $"{refused} was joined (exit {ran.Code}): {ran.Out} {ran.Err}");
+                Assert.Contains("nothing was started", ran.Err);
+            }
+        }
+        finally
+        {
+            attempt.Kill(TimeSpan.FromSeconds(3));
+            attempt.Remove();
+            try { Directory.Delete(Path.Combine(notAttempt, AttemptCgroups.CellLeaf)); Directory.Delete(notAttempt); } catch (IOException) { }
+        }
     }
 }

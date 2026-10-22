@@ -223,8 +223,15 @@ public static class ContainedLaunch
             return $"{dir} is not a canonical path that exists";
         if (!AttemptCgroups.Under(dir))
             return $"{dir} is not beneath the cgroup filesystem at {AttemptCgroups.Mount}";
-        if (!Path.GetFileName(dir).StartsWith(AttemptCgroups.AttemptPrefix, StringComparison.Ordinal))
-            return $"{dir} is not an attempt's cgroup (its name does not start with {AttemptCgroups.AttemptPrefix})";
+        // AN ATTEMPT, OR ONE OF ROUTE (a)'S TWO LEAVES DIRECTLY BENEATH ONE (U-cell-linux-c item 3): still beneath the attempt, so -b's
+        // container (the session AND the attempt's cgroup) holds whatever joins a leaf.
+        var name = Path.GetFileName(dir);
+        var attempt = AttemptCgroups.Leaves.Contains(name, StringComparer.Ordinal) ? Path.GetDirectoryName(dir) ?? "" : dir;
+        if (!Path.GetFileName(attempt).StartsWith(AttemptCgroups.AttemptPrefix, StringComparison.Ordinal))
+            return $"{dir} is not an attempt's cgroup nor its {string.Join(" or ", AttemptCgroups.Leaves)} leaf (the attempt's name does not " +
+                   $"start with {AttemptCgroups.AttemptPrefix})";
+        if (attempt != dir && !AttemptCgroups.Under(attempt))
+            return $"{attempt} is not beneath the cgroup filesystem at {AttemptCgroups.Mount}";
         if (CellNative.NotOwnedByThisAccount(dir) is { } owner) return owner;
         if (AttemptCgroups.Procs(dir) is not { } procs) return $"{dir}/cgroup.procs could not be read";
         if (procs.Count > 0) return $"{dir} already holds process {string.Join(", ", procs.Take(8))}, so it is not a new attempt's";

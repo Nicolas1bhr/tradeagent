@@ -169,7 +169,7 @@ public sealed class ContainedProcess : IDisposable
     readonly int _session;
 
     internal ContainedProcess(Process process, IntPtr job, bool ownSession, bool held, string mechanism, CellLaunch? cell = null,
-        AttemptCgroup? cgroup = null)
+        AttemptCgroup? cgroup = null, string? grantCgroup = null)
     {
         Process = process;
         _job = job;
@@ -194,7 +194,7 @@ public sealed class ContainedProcess : IDisposable
         if (ownSession && _leaderStart != 0)
             Container = cgroup is null
                 ? new SessionContainer(this)
-                : new AllOf(new SessionContainer(this), new CgroupContainer(cgroup.Dir, () => _over));
+                : new AllOf(new SessionContainer(this), new CgroupContainer(grantCgroup ?? cgroup.Dir, () => _over));
     }
 
     /// <summary>
@@ -679,6 +679,60 @@ public static class ProcessContainment
             : sessionOnly is not null ? $"a session of its own (session only — no delegated cgroup: {sessionOnly}); cancelling kills its process group"
             : "a session of its own; cancelling kills its process group",
             cgroup: cgroup);
+    }
+
+    /// <summary>
+    /// STARTS ROUTE (a)'S HARNESS (<c>U-cell-linux-c</c> item 3, L3): the codex process that holds the login, in the attempt's
+    /// <c>harness/</c> leaf, with the attempt's <c>cell/</c> leaf made beside it, empty, for the exec-server's cell the harness starts.
+    /// The launch's grant binds to the HARNESS LEAF, never the attempt: a process of the cell leaf is beneath the attempt, and a
+    /// container on the attempt would count it a member — with egress <c>web</c> the cell would be one port from the door. Linux only,
+    /// under a held delegated root, or <see cref="ErrorCode.CELL_UNAVAILABLE"/> and nothing starts.
+    /// </summary>
+    public static ContainedProcess StartHarness(ProcessStartInfo psi, PreparedHold hold, IReadOnlyList<string>? launcher = null,
+        string? attemptId = null, AttemptCgroups? cgroups = null)
+    {
+        ArgumentNullException.ThrowIfNull(psi);
+        ArgumentNullException.ThrowIfNull(hold);
+        if (!OperatingSystem.IsLinux())
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"route (a) runs on Linux only; {psi.FileName} was not started");
+        var prefix = launcher ?? DefaultLauncher();
+        if (CannotHold(prefix) is { } unheld) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, unheld);
+        var root = cgroups ?? AttemptCgroups.Current;
+        if (!root.Held)
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"Route (a) runs only inside the cgroup TradeAgent's service delegates to it (Delegate=yes), and this computer gives it none: " +
+                $"{root.Refusal}. {psi.FileName} was not started");
+        AttemptCgroup attempt;
+        try
+        {
+            attempt = root.Create(attemptId);
+            attempt.MakeLeaves();
+        }
+        catch (TradeAgentException ex)
+        {
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{ex.Message}; {psi.FileName} was not started", ex);
+        }
+        var exe = psi.FileName;
+        var args = psi.ArgumentList.ToArray();
+        Relaunch(psi, prefix!, [ContainedLaunch.CgroupFlag, attempt.Harness]);
+        Process process;
+        try
+        {
+            process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command at {prefix![0]} did not start; {exe} was not started");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            Command(psi, exe, args);
+            attempt.Remove();
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command at {prefix![0]} would not start ({ex.Message}); {exe} was not started", ex);
+        }
+        return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
+            $"route (a)'s harness: a session of its own in the harness leaf of the attempt's cgroup {Path.GetFileName(attempt.Dir)} " +
+            $"({AttemptCgroups.Ceilings}), its cell leaf beside it; the grant answers to the harness leaf alone; cancelling kills the " +
+            "attempt's cgroup, then the session",
+            cgroup: attempt, grantCgroup: attempt.Harness);
     }
 
     /// <summary>
