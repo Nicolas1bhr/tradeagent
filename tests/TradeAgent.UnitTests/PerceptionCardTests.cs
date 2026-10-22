@@ -291,6 +291,35 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
                      + "it is left today, for everything the AI spends.", card.Shown.Spent);
     }
 
+    /// <summary>
+    /// THE CARD NEVER ADDS PLAN ROWS AS MONEY (<c>U-billing-classes</c> fix pass 1): perception is held to the real-money cap, over the
+    /// day's key and unknown rows, and so is the card's sentence about it. Six of plan capacity used against a money cap of five leave the
+    /// cap whole — it does not bind first — while one of unknown counts, as the gate counts it.
+    /// </summary>
+    [Fact]
+    public void The_card_never_adds_plan_rows_as_money()
+    {
+        using var rig = new CardRig { Budget = 1m, Cap = 5m };
+        var store = new AiAttemptStore(rig.Store.Db);
+        var now = DateTimeOffset.Now;
+        store.Begin(new AiAttempt
+        {
+            Id = $"plan-{Guid.NewGuid():n}", StartedAt = now, ReservedCost = 6m, Role = CouncilRoles.Operations, BillingClass = BillingClasses.Plan
+        });
+        rig.Card.Update();
+        Assert.False(rig.Card.Shown!.CapBindsFirst);
+        Assert.Equal("Perception has spent or set aside 0 of 1 USD today.", rig.Card.Shown.Spent);
+
+        store.Begin(new AiAttempt
+        {
+            Id = $"unknown-{Guid.NewGuid():n}", StartedAt = now, ReservedCost = 4.5m, Role = CouncilRoles.Research, BillingClass = BillingClasses.Unknown
+        });
+        rig.Card.Update();
+        Assert.True(rig.Card.Shown!.CapBindsFirst);
+        Assert.Equal("Perception has spent or set aside 0 of 1 USD today. Your daily AI limit of 5 USD binds first: 0.5 USD of "
+                     + "it is left today, for everything the AI spends.", rig.Card.Shown.Spent);
+    }
+
     // ---- (g) ------------------------------------------------------------------------------------------------------
 
     /// <summary>

@@ -407,7 +407,9 @@ sealed class PerceptionCard
             {
                 var (from, to) = OwnerDay.Window(_src.Now());
                 perception = ledger.TotalsBetween(from, to, AppPrincipals.Perception);
-                day = ledger.TotalsBetween(from, to);
+                // THE REAL-MONEY CAP'S OWN ROWS, key and unknown (U-billing-classes fix pass 1): perception is held to the money cap,
+                // and the plan's capacity is never added up as money.
+                day = ledger.TotalsBetween(from, to, ceiling: BillingClasses.Key);
             }
         }
         catch (Exception) { perception = day = null; }
