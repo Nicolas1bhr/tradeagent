@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -431,10 +431,19 @@ public static class Canon
         TradeAgent writes this section at every start from what it grants you here.
 
         {{if code}}
+        {{if cell}}
+        - **Where you run:** a sealed {{os}} cell on the account owner's computer, in this folder and nowhere
+          else. You may create files, write and run code, install packages and use the shell. Your network is
+          {{network}}. The owner's files, TradeAgent's own and every other folder are outside the cell,
+          and TradeAgent's command is not on your path.
+        - **Your tools:** {{tools}} — served by TradeAgent to the AI program around your cell, which
+          executes and records every call.
+        {{else}}
         - **Where you run:** the account owner's computer ({{os}}), as their own user, in this folder. You
           may create files, write and run code, install packages, use the shell and use the internet.
         - **Your command:** `trade`, on your PATH —
           {{verbs}}.
+        {{end}}
         {{else}}
         {{if broker}}
         - **Where you run:** an AI program TradeAgent starts with no shell, no file, patch or image tool and
@@ -450,8 +459,8 @@ public static class Canon
           it, copy out of it, do not write into it{{end}}.
         - **You write:**
           {{writes}}.
-        - {{if walled}}**A wall:** your tools refuse any other path.{{else}}**A convention, not a wall:** no operating-system sandbox confines your program, so
-          nothing but this file keeps you to those folders.{{end}}
+        - {{if cell}}**A wall:** the cell refuses any path outside this folder; inside it, the folders above are a convention.{{else}}{{if walled}}**A wall:** your tools refuse any other path.{{else}}**A convention, not a wall:** no operating-system sandbox confines your program, so
+          nothing but this file keeps you to those folders.{{end}}{{end}}
         {{if wake}}
         - **Waking:** write `{{wake_file}}` to ask for your next wake, at most {{wake_cap}} ahead.
         {{else}}
@@ -636,7 +645,7 @@ public static class Canon
 
         ## Trading
 
-        {{if code}}All trading goes through one command: `trade`. It is on your PATH.{{else}}All trading goes through your `trade` tool.{{end}}
+        {{if command}}All trading goes through one command: `trade`. It is on your PATH.{{else}}All trading goes through your `trade` tool.{{end}}
 
         Start here:
 
@@ -720,9 +729,10 @@ public static class Canon
         something to persist, write it to a file here rather than keeping a process alive.
 
         **Leave no process behind.** This matters more now that you work continuously than it did when
-        somebody was typing to you: a turn ENDS. Your process exits, and anything you started that
+        somebody was typing to you: a turn ENDS. {{if cell}}When it does, TradeAgent ends everything your
+        cell started, so work left running is simply lost.{{else}}Your process exits, and anything you started that
         outlives it goes on consuming this computer with nobody watching it, turn after turn, for as long
-        as the machine is on. Run your script, wait for it, read its output, and let it finish. If a
+        as the machine is on.{{end}} Run your script, wait for it, read its output, and let it finish. If a
         job genuinely takes longer than a turn, write its state to a file and pick it up next turn —
         that is what the files are for.
         {{end}}
@@ -842,6 +852,10 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "harness" => reach.Runtime == RuntimeClass.Harness,
             // A BROKER-ONLY SEAT (U-thinking-seats-c): a vendor program that acts only through the door's tools.
             "broker" => reach.Runtime == RuntimeClass.Broker,
+            // AN EXECUTOR'S CELL SEAT (U-execution-environment): code of its own in a sealed Linux cell, the door's tools outside it.
+            "cell" => reach.Runtime == RuntimeClass.Cell,
+            // A SEAT WHOSE ONE TOOL IS THE `trade` COMMAND LINE: the CLI's, and no other.
+            "command" => reach.Runtime == RuntimeClass.Cli,
             // A SEAT WHOSE SESSION CARRIES TURNS: every vendor program, the broker's included; the harness starts each turn fresh.
             "resumes" => reach.Runtime != RuntimeClass.Harness,
             "orders" => reach.MayPlaceOrders,
@@ -883,6 +897,7 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "title" => CouncilRoles.Title(c.Role),
             "version" => Canon.Version.ToString(CultureInfo.InvariantCulture),
             "os" => reach.Os ?? throw Lacks("an operating system of its own"),
+            "network" => reach.Network ?? throw Lacks("a network of its own"),
             "platform" => c.ConnectorName,
             "account" => c.AccountId ?? "",
             "mode" => c.Mode.ToString(),
@@ -921,7 +936,7 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
 
     static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
-        "title", "version", "os", "platform", "account", "mode", "blocked_reason", "max_order_quantity", "max_notional",
+        "title", "version", "os", "network", "platform", "account", "mode", "blocked_reason", "max_order_quantity", "max_notional",
         "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_lines",
         "journal_lines", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
         "assessment_lines", "challenge_lines", "wake_file", "wake_cap", "turns_per_session", "guide", "verbs", "tools",

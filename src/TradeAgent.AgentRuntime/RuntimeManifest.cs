@@ -84,6 +84,20 @@ public sealed class SeatPlan
     public const string CliClass = "cli";
 
     /// <summary>
+    /// THE CLASS RULE, ONCE (<c>U-execution-environment</c>; <c>docs/ORCHESTRATION.md</c> § 2.8, § 5's doing-seat column): the
+    /// legacy pair on <see cref="CliClass"/>; an EXECUTOR — a <see cref="TradeAgent.Core.Db.OrgPositionKind.Member"/> beyond the pair —
+    /// on <see cref="CellClass"/> where the runtime has one, its code in a confined cell; every other position beyond the pair (a
+    /// Head, Staff, or one whose kind nobody could read) on <see cref="BrokerClass"/> where the runtime has one; else the CLI class.
+    /// <paramref name="offers"/> answers whether the runtime has a class — for a session, its BUILT-IN manifest. The session, the
+    /// app's declared seat (the gate) and the homes' canons all read this one answer; nothing outside code picks a class (AUTH-001).
+    /// </summary>
+    public static string ClassFor(string role, string? kind, Func<string, bool> offers) =>
+        CouncilRoles.IsKnown(role) ? CliClass
+        : kind == TradeAgent.Core.Db.OrgPositionKind.Member && offers(CellClass) ? CellClass
+        : offers(BrokerClass) ? BrokerClass
+        : CliClass;
+
+    /// <summary>
     /// THE BROKER-ONLY CLASS (<c>U-thinking-seats-c</c>; <c>docs/ORCHESTRATION.md</c> § 2.7): a codex seat with no environment
     /// (<c>CODEX_EXEC_SERVER_URL=none</c>), no shell, file or image tool, no sub-agents, and the app's door as its only tool server —
     /// MEDIATED, on a pinned classic-tools model whose offered surface is verified before every launch (<see cref="BrokerSeat"/>).
@@ -495,12 +509,14 @@ public sealed class RuntimeManifest
     /// is <c>broker</c> (<c>U-thinking-seats-c</c>: no shell, the app's door as its only tool server, a pinned model, its offered tools
     /// verified); every other CLI seat — the legacy pair's, with a seat plan or without one — is <c>cli</c>. Code, never data: not
     /// serialized and read from no file (ORCHESTRATION § 2.7); whether a runtime has a broker class is the BUILT-IN manifest's answer.
+    /// <para><b>And by the position's KIND</b> (<c>U-execution-environment</c>; <see cref="SeatPlan.ClassFor"/>): an executor — a Member
+    /// beyond the pair — on a runtime whose built-in manifest has the <c>cell</c> class starts on <c>cell</c>; a Head and Staff stay
+    /// <c>broker</c>. <paramref name="kind"/> is the chart's, read where asked; null is a kind nobody could read, never a Member.</para>
     /// </summary>
-    public string SessionSeatClassFor(string role) =>
+    public string SessionSeatClassFor(string role, string? kind) =>
         Puppet ? PuppetSeatClass
         : DeclaredSeatClass is { } declared && PuppetSeats.TestHost ? declared
-        : !CouncilRoles.IsKnown(role) && BrokerSeat.Offers(Id) ? TradeAgent.Core.Db.SeatClasses.Broker
-        : TradeAgent.Core.Db.SeatClasses.Cli;
+        : SeatPlan.ClassFor(role, kind, seatClass => BrokerSeat.Offers(Id, seatClass));
     public string DisplayName { get; set; } = "";
 
     /// <summary>

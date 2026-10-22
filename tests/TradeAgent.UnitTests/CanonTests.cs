@@ -36,7 +36,8 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         { CouncilRoles.Research, RuntimeClass.Cli },
         { CouncilRoles.Research, RuntimeClass.Harness },
         { CouncilRoles.Operations, RuntimeClass.Harness },
-        { Position, RuntimeClass.Broker }
+        { Position, RuntimeClass.Broker },
+        { Position, RuntimeClass.Cell }
     };
 
     /// <summary>The pairs that run — the legacy pair's three and a position's broker seat — each on the built-in simulator and off it.</summary>
@@ -46,10 +47,12 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         { CouncilRoles.Research, RuntimeClass.Cli, true },
         { CouncilRoles.Research, RuntimeClass.Harness, true },
         { Position, RuntimeClass.Broker, true },
+        { Position, RuntimeClass.Cell, true },
         { CouncilRoles.Operations, RuntimeClass.Cli, false },
         { CouncilRoles.Research, RuntimeClass.Cli, false },
         { CouncilRoles.Research, RuntimeClass.Harness, false },
-        { Position, RuntimeClass.Broker, false }
+        { Position, RuntimeClass.Broker, false },
+        { Position, RuntimeClass.Cell, false }
     };
 
     /// <summary>The app's default settings, on the built-in simulator unless told otherwise.</summary>
@@ -58,11 +61,14 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         ConnectorIsBuiltInSimulator: simulator, Role: role);
 
     /// <summary>A role's home exactly as a start builds it, recorded on a manifest of the test's own.</summary>
-    (string Home, AppFileManifest Files) Built(string role, bool simulator = true)
+    /// <para>A position on <see cref="RuntimeClass.Cell"/> is built as an executor — a Member, whose home the app writes the cell's canon
+    /// for (<c>U-execution-environment</c>); any other is built with no kind, as a broker seat's.</para>
+    (string Home, AppFileManifest Files) Built(string role, bool simulator = true, RuntimeClass? runtime = null)
     {
-        var files = new AppFileManifest(Path.Combine(_root, $"app-files-{role}-{simulator}.tsv"));
-        var root = Path.Combine(_root, $"{role}-{simulator}");
-        return (WorkspaceBuilder.Build(Ctx(role, simulator), root, files), files);
+        var kind = runtime == RuntimeClass.Cell ? TradeAgent.Core.Db.OrgPositionKind.Member : null;
+        var files = new AppFileManifest(Path.Combine(_root, $"app-files-{role}-{simulator}-{kind}.tsv"));
+        var root = Path.Combine(_root, $"{role}-{simulator}-{kind}");
+        return (WorkspaceBuilder.Build(Ctx(role, simulator) with { Kind = kind }, root, files), files);
     }
 
     static string Read(string home, string relPath) =>
@@ -142,7 +148,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         RuntimeClass runtime, bool simulator)
     {
         var reach = AgentReach.For(role, runtime);
-        var (home, _) = Built(role, simulator);
+        var (home, _) = Built(role, simulator, runtime);
         var problems = new List<string>();
 
         foreach (var (name, file, rendered) in new[]
@@ -165,6 +171,37 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
 
         foreach (var p in problems) log.WriteLine(p);
         Assert.True(problems.Count == 0, $"{role}·{runtime}: {problems.Count} unreachable — first: {problems.FirstOrDefault()}");
+    }
+
+    /// <summary>
+    /// (f) EVERY TOOL AND PATH THE CELL CANON NAMES IS REACHABLE (<c>U-execution-environment</c> item 4): an executor's home, built as a
+    /// start builds it, holds the cell's canon and guide in <c>AGENTS.md</c> and <c>GUIDE.md</c>, every tool call, path and verb of which
+    /// the cell seat reaches — its door's tools from the harness, its own folder — and it is told where it runs, its network, its wall
+    /// and that the command line is not its own.
+    ///
+    /// <para>RED at base: it did not compile — no <c>RuntimeClass.Cell</c>; an executor's home was written the broker's canon.</para>
+    /// </summary>
+    [Fact]
+    public void Every_tool_and_path_the_cell_canon_names_is_reachable()
+    {
+        Every_verb_tool_and_path_the_canon_names_is_reachable_by_its_role_and_runtime(Position, RuntimeClass.Cell, true);
+        Every_verb_tool_and_path_the_canon_names_is_reachable_by_its_role_and_runtime(Position, RuntimeClass.Cell, false);
+        var home = Built(Position, runtime: RuntimeClass.Cell).Home;
+        var text = Read(home, Canon.CliFile);
+        var guide = Read(home, Canon.GuideFile);
+        foreach (var said in new[]
+                 {
+                     "a sealed Linux cell", AgentReach.CellNetwork, "TradeAgent's command is not on your path",
+                     "the cell refuses any path outside this folder"
+                 })
+            Assert.Contains(said, text, StringComparison.Ordinal);
+        Assert.Contains("All trading goes through your `trade` tool", guide, StringComparison.Ordinal);
+        Assert.Contains("TradeAgent ends everything your", guide, StringComparison.Ordinal);
+        foreach (var t in new[] { text, guide })
+        {
+            Assert.DoesNotContain("on your PATH", t, StringComparison.Ordinal);
+            Assert.DoesNotContain("as their own user", t, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -286,7 +323,11 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         // v5 (U-thinking-seats-c): the reach section tells a broker-only seat where it runs, and a session's length follows whether
         // the seat resumes rather than whether it runs code.
         (5, CouncilRoles.Operations, "cbb987381e4068d09a749553a38c7916e8940ba26d30dff6d867202ba76803a0"),
-        (5, CouncilRoles.Research, "04ddafbd943d7b6a0198489f640a7e3f15117f503945635817a6afe02daa441b")
+        (5, CouncilRoles.Research, "04ddafbd943d7b6a0198489f640a7e3f15117f503945635817a6afe02daa441b"),
+        // v6 (U-execution-environment): the reach section tells an executor's cell seat where it runs — a sealed Linux cell, its
+        // network, its door tools and that `trade` is not on its path — and its own wall; trading's line follows the command line, not code.
+        (6, CouncilRoles.Operations, "7f00ed7885022e9c7436b9d23808f375fa1e68096560efa00cbd639f7a494d74"),
+        (6, CouncilRoles.Research, "244181ac0be42eba2bbf8bc36a6d2984036f7b55011f27a93a1d582197d531c5")
     ];
 
     /// <summary>
@@ -479,7 +520,30 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         using var home = TestEnv.NewScratch("reach");
         Directory.CreateDirectory(home.Dir);
 
-        if (runtime == RuntimeClass.Broker)
+        if (runtime == RuntimeClass.Cell)
+        {
+            // AN EXECUTOR'S CELL SEAT (U-execution-environment): the door's tools exactly as a broker seat's — served from the harness —
+            // and a program of its own in a Linux cell walled to its folder, the network its egress class names, the CLI's folders as
+            // its convention inside that wall, the loop's wake, and a CLI session's length.
+            var offered = new GrantedWorkerTools(role, () => home.Dir, () => null).Offered.Select(t => t.Name).ToList();
+            var verbs = BrokerDoor.OrganisationVerbs(() => null).Select(v => v.Spec.Name).ToList();
+            Assert.Equal([.. offered, .. verbs], reach.Tools);
+            Assert.All(reach.Verbs.Where(v => Ops.IsOrganisation(v.Op)), v => Assert.Equal(BrokerDoor.VerbName(v.Op), v.Invocation));
+            Assert.Equal(AgentReach.For(role, RuntimeClass.Broker).Verbs, reach.Verbs);
+            Assert.True(reach.Walled);
+            Assert.True(reach.RunsCode);
+            Assert.Equal("Linux", reach.Os);
+            Assert.Equal(AgentReach.CellNetwork, reach.Network);
+            Assert.Equal([AgentReach.OwnFolder], reach.Reads);
+            Assert.False(reach.ReadsInbox);
+            Assert.Equal([.. WorkspaceBuilder.SubDirs, CouncilRoles.OutDir, AgentReach.TopFolder(MissionLoop.WakeFile)], reach.Writes);
+            Assert.Equal(MissionLoop.WakeFile, reach.WakeFile);
+            Assert.Equal(new MissionOptions().TurnsPerSession, reach.TurnsPerSession);
+            Assert.Equal(Canon.CliFile, Canon.FileFor(runtime));
+            Assert.Equal([RuntimeClass.Cell, RuntimeClass.Harness], WorkspaceBuilder.RuntimesOf(role, TradeAgent.Core.Db.OrgPositionKind.Member));
+            Assert.DoesNotContain(RuntimeClass.Cli, WorkspaceBuilder.RuntimesOf(role, TradeAgent.Core.Db.OrgPositionKind.Member));
+        }
+        else if (runtime == RuntimeClass.Broker)
         {
             // EXACTLY WHAT THE DOOR SERVES ITS GRANT (U-thinking-seats-c): the harness's own tools, as the door lists them, and the
             // organisation's verbs under their door names — the broker class is mediated, which carries them — and nothing else.

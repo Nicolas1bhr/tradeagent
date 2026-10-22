@@ -528,7 +528,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         null => null,
         ApiAgentRuntime => SeatClasses.Harness,
-        CliAgentRuntime cli => cli.Manifest.SessionSeatClassFor(role),
+        CliAgentRuntime cli => cli.Manifest.SessionSeatClassFor(role, _seats.KindOf(role)),
         _ => SeatClasses.Cli
     };
 
@@ -1154,6 +1154,7 @@ public sealed class AppHost : IAsyncDisposable
         // meter or the loop exists, so no launch can start against a register nothing set — which refuses an unconfined launch
         // outside a test host (fix pass 2, item 5). Its reads are asked at each launch, never here.
         _seats.Facts = FactsFor;
+        _seats.Standing = StandingOf;
         _seats.Neighbours = ActiveBeyondLegacy;
 
         // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
