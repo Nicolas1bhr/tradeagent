@@ -360,6 +360,115 @@ public class BillingClassesTests : IDisposable
         Assert.Equal((0m, 10m), (meter.TodayIn(BillingClasses.Plan).Cap, meter.TodayIn(BillingClasses.Key).Cap));
     }
 
+    /// <summary>
+    /// (f) RAISING THE PLAN CEILING ASKS TWICE AND LOWERING SAVES IN ONE — the Safety page's own press over its own box: a raise names
+    /// the figure as the plan's, at list price; an edit disarms a raise armed for another figure; a lower or unchanged figure saves at
+    /// once. And the money box beside it keeps its own press.
+    /// </summary>
+    [Fact]
+    public void Raising_the_plan_ceiling_asks_twice_and_lowering_saves_in_one()
+    {
+        var saved = new List<decimal>();
+        var current = 40m;
+        var box = TradeAgent.App.Ui.NumberField(current, 0m, 5m);
+        var b = TradeAgent.App.SafetyPage.BuildSavePlanCapacity(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
+
+        box.Value = 60m;
+        Press(b);
+        Assert.Empty(saved);
+        Assert.Equal(Labels.RaisePlanCapacityArmed("60 USD"), b.Content);
+        Assert.Contains("ChatGPT plan, counted at list price", (string)b.Content!, StringComparison.Ordinal);
+
+        box.Value = 100m;                       // an edit disarms the raise that named 60
+        Press(b);
+        Assert.Empty(saved);
+        Assert.Equal(Labels.RaisePlanCapacityArmed("100 USD"), b.Content);
+        Press(b);
+        Assert.Equal([100m], saved);
+
+        current = 100m;
+        box.Value = 10m;                        // lowering: one press
+        Press(b);
+        Assert.Equal([100m, 10m], saved);
+        Assert.Equal(Labels.SavePlanCapacity, b.Content);
+        current = 10m;
+        Press(b);                               // unchanged: one press
+        Assert.Equal([100m, 10m, 10m], saved);
+    }
+
+    static void Press(Avalonia.Controls.Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+
+    /// <summary>
+    /// (g), THE SAFETY PAGE'S HALF: today against each ceiling — the money in real money, the plan's at list price and named "not money" —
+    /// the three sentences the plan's figure cannot see, and every seat's class in words.
+    /// </summary>
+    [Fact]
+    public void The_safety_page_shows_both_ceilings_and_every_seats_class()
+    {
+        var meter = Meter(money: 10m, plan: 40m);
+        using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        var (money, plan) = TradeAgent.App.SafetyPage.TodayLines(meter.Today);
+        Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} in real money.", money);
+        Assert.Equal($"Today: {Labels.Money(Turn, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.",
+            plan);
+
+        var seats = TradeAgent.App.SafetyPage.SeatClassesLine(
+            CouncilRoles.All.Select(r => (CouncilRoles.Title(r), meter.ClassOf(r))));
+        Assert.Contains($"{CouncilRoles.Title(CouncilRoles.Operations)} — your ChatGPT plan's capacity", seats, StringComparison.Ordinal);
+        Assert.Contains($"{CouncilRoles.Title(CouncilRoles.Research)} — not read yet, so its turns count against both limits", seats,
+            StringComparison.Ordinal);
+        Assert.Contains("perception — real money", seats, StringComparison.Ordinal);
+
+        Assert.Contains("may stop the AI's turns sooner", Labels.PlanVendorLimit, StringComparison.Ordinal);
+        Assert.Contains("does not count it here", Labels.PlanSharedWithYou, StringComparison.Ordinal);
+        Assert.Contains("real money that TradeAgent cannot see", Labels.PlanBoughtCredits, StringComparison.Ordinal);
+    }
+
+    // ---- GUARD: AUTH-001 ------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// GUARD — NO PIPE OP, DOOR VERB OR <c>trade</c> VERB REACHES EITHER CEILING (AUTH-001; CLAUDE.md, operator authority in-process only):
+    /// no op or verb is named for a ceiling, a capacity or a billing class and none takes an argument that would address one; no source of
+    /// the gateway — where every pipe op and door verb is served — nor the app's door names either setting; and the class column is
+    /// written by one statement, the ledger's own insert.
+    /// </summary>
+    [Fact]
+    public void No_pipe_op_door_verb_or_trade_verb_reaches_either_ceiling()
+    {
+        string[] words = ["billing", "capacity", "ceiling", "costcap", "cost-cap", "dailycap", "daily-cap", "plancap", "plan-cap", "spend-limit"];
+        foreach (var op in TradeAgent.Gateway.GatewaySchema.Ops())
+            foreach (var word in words)
+            {
+                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
+                foreach (var arg in op.Args) Assert.DoesNotContain(word, arg.Name, StringComparison.OrdinalIgnoreCase);
+            }
+
+        var root = RepoRoot();
+        string[] settings = [nameof(TradeAgentSettings.AiDailyCostCap), nameof(TradeAgentSettings.AiPlanDailyCapacity)];
+        var reaching = Directory.GetFiles(Path.Combine(root, "src", "TradeAgent.Gateway"), "*.cs", SearchOption.AllDirectories)
+            .Append(Path.Combine(root, "src", "TradeAgent.AgentRuntime", "BrokerDoor.cs"))
+            .Where(f => settings.Any(name => File.ReadAllText(f).Contains(name, StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.True(reaching.Count == 0, "an agent-facing source names a ceiling: " + string.Join(", ", reaching));
+
+        // THE COLUMN IN CODE (comments aside): the schema's rung and the ledger's own store, and nothing else names it.
+        var code = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadLines(f).Any(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)
+                                                   && l.Contains("billing_class", StringComparison.Ordinal)))
+            .Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(["AiAttemptStore.cs", "Database.cs"], code);
+    }
+
+    static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "tests"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
+    }
+
     /// <summary>The rung's number, spelled once here as in the schema.</summary>
     const int Rung = 46;
 

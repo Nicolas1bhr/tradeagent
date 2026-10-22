@@ -1548,6 +1548,9 @@ public sealed class TurnMeter
     /// </summary>
     readonly Dictionary<string, string> _lastClass = new(StringComparer.Ordinal);
 
+    /// <summary>The class of <paramref name="role"/>'s last admitted launch, or <c>unknown</c> before one.</summary>
+    public string ClassOf(string role) => LastClassOf(role);
+
     string LastClassOf(string? role)
     {
         lock (_gate) return _lastClass.TryGetValue(Key(role), out var known) ? known : BillingClasses.Unknown;

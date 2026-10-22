@@ -1097,6 +1097,16 @@ sealed class SafetyPage
     };
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
+
+    /// <summary>
+    /// THE SECOND CEILING (<c>U-billing-classes</c>): the owner's ChatGPT plan's capacity, a list-price equivalent and never money — its
+    /// box, its note, today's figure for each ceiling and every seat's class in words, all updated in place.
+    /// </summary>
+    readonly NumericUpDown _planCap;
+    readonly TextBlock _planCapNote = Ui.Micro("");
+    readonly TextBlock _moneyToday = Ui.Body("");
+    readonly TextBlock _planToday = Ui.Body("");
+    readonly TextBlock _seatClasses = Ui.Micro("");
     readonly NumericUpDown _allowanceIn, _allowanceOut;
     readonly TextBlock _allowanceNote = Ui.Micro("");
     readonly NumericUpDown _reviewEvery;
@@ -1367,6 +1377,55 @@ sealed class SafetyPage
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
         return b;
     }
+
+    /// <summary>
+    /// THE PLAN'S CEILING, RAISED IN TWO PRESSES (<c>U-billing-classes</c>): <see cref="BuildSaveDailyCap(Func{decimal}, Func{decimal},
+    /// Func{string}, Action)"/>'s rule for the plan's box — raising it grants the AI more of the owner's plan, so it asks twice naming
+    /// the figure; lowering it, or leaving it, saves in one.
+    /// </summary>
+    internal static Button BuildSavePlanCapacity(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SavePlanCapacity,
+            () => pending() > current()
+                ? Labels.RaisePlanCapacityArmed(MissionSituation.Money(pending(), currency()))
+                : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>The plan's press over its own box: an edit disarms a raise armed for another figure, as the money box's does.</summary>
+    internal static Button BuildSavePlanCapacity(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    {
+        var b = BuildSavePlanCapacity(current, () => box.Value ?? current(), currency, save);
+        box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
+        return b;
+    }
+
+    /// <summary>
+    /// TODAY AGAINST EACH CEILING, as the Safety page says it (<c>U-billing-classes</c>): the money cap's figure, and the plan's — a
+    /// list-price equivalent, never called a cost. <paramref name="today"/> is the meter's reading of both (<c>TurnMeter.Today</c>).
+    /// </summary>
+    internal static (string Money, string Plan) TodayLines(AiSpendToday today)
+    {
+        if (!today.Metered) return ("Today: not metered.", "Today: not metered.");
+        string Line(AiSpendToday r, string what) =>
+            $"Today: {MissionSituation.Money(r.Spent + r.Reserved, r.Currency)} of {MissionSituation.Money(r.Cap, r.Currency)} {what}"
+            + (r.AdmitsAnotherTurn ? "." : " — reached; the next turn of this kind waits for midnight.");
+        var plan = today.PlanReading ?? today;
+        return (Line(today, "in real money"), Line(plan, "of plan capacity, counted at list price — not money"));
+    }
+
+    /// <summary>
+    /// EVERY SEAT'S CLASS IN WORDS (<c>U-billing-classes</c>): who pays for each role's turns, as its last admitted launch was read — or
+    /// that nobody has read it yet, and so it counts against both limits — and perception, always its own key.
+    /// </summary>
+    internal static string SeatClassesLine(IEnumerable<(string Title, string Class)> seats) =>
+        "Who pays for each seat's turns: "
+        + string.Join("; ", seats.Select(s => $"{s.Title} — " + (s.Class == BillingClasses.Unknown
+            ? "not read yet, so its turns count against both limits"
+            : BillingClasses.Words(s.Class))))
+        + "; perception — real money (its own API key).";
 
     /// <summary>
     /// THE PRESS THAT WRITES HOW OFTEN THE AI IS WOKEN FOR NOTHING IN PARTICULAR.
@@ -1698,6 +1757,7 @@ sealed class SafetyPage
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
+        _planCap = Ui.NumberField(_host.Gateway.Settings.AiPlanDailyCapacity, 0m, 5m);
         // THE OTHER HALF OF THE CEILING'S ARITHMETIC. The limit above is only a limit because a
         // number is set aside before each turn, and this is that number in tokens. The boxes open on
         // what is in force, so an owner correcting it can see what they are correcting.
@@ -1737,16 +1797,35 @@ sealed class SafetyPage
         // — has nothing to say about it. Folding it into that button would put a money ceiling
         // behind a comparison that cannot see it.
         var spending = Ui.Section("What the AI costs", Ui.Col(Theme.S2,
-            Ui.Muted("The AI works non-stop, and every turn it takes is charged to whoever pays for its "
-                + "AI tool. This is the most it may spend on itself in a day. Reaching it stops the AI "
-                + "taking new turns until midnight; it does not touch your orders or positions."),
+            Ui.Muted("The AI works non-stop, and every turn it takes is paid for one of two ways: with real money, through an "
+                + "API key, or out of your ChatGPT plan. Each has its own daily limit below. Reaching one stops the AI taking "
+                + "new turns of that kind until midnight; it does not touch your orders or positions. A turn TradeAgent cannot "
+                + "tell the kind of counts against both."),
             Ui.Spacer(Theme.S2),
+            // REAL MONEY: the API keys' ceiling.
+            Ui.Label("Real money (API keys)"),
+            _moneyToday,
             Ui.FieldRow(Labels.DailyCostCap, _dailyCap,
-                "0 stops it working at all. Raising this lets the AI spend more of your money, so it asks again first."),
+                "0 stops every paid turn. Raising this lets the AI spend more of your money, so it asks again first."),
             Ui.Spacer(Theme.S2),
             BuildSaveDailyCap(_dailyCap, () => _host.Gateway.Settings.AiDailyCostCap,
                 () => _host.SpendToday.Currency, SaveDailyCap),
             _capNote,
+            Ui.Spacer(Theme.S3),
+            // THE PLAN'S CAPACITY (U-billing-classes): a list-price equivalent, never money — its own box and its own two presses.
+            Ui.Label("Your ChatGPT plan's capacity (counted at list price, not money)"),
+            _planToday,
+            Ui.FieldRow(Labels.PlanDailyCapacity, _planCap,
+                "0 stops every turn on your plan. Raising this lets the AI use more of your plan, so it asks again first."),
+            Ui.Spacer(Theme.S2),
+            BuildSavePlanCapacity(_planCap, () => _host.Gateway.Settings.AiPlanDailyCapacity,
+                () => _host.SpendToday.Currency, SavePlanCapacity),
+            _planCapNote,
+            Ui.Micro(Labels.PlanVendorLimit),
+            Ui.Micro(Labels.PlanSharedWithYou),
+            Ui.Micro(Labels.PlanBoughtCredits),
+            Ui.Spacer(Theme.S2),
+            _seatClasses,
             Ui.Divider(),
             // BESIDE THE CEILING, because the two are one arithmetic: what is set aside before each
             // turn is what decides how many turns fit inside the limit above. It takes no permission
@@ -2046,6 +2125,12 @@ sealed class SafetyPage
         // Read from the gateway, not from `status`: GatewayStatus is the agent-facing shape and this
         // is a fact about the row this build read, not about what the AI may do.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
+
+        // TODAY AGAINST EACH CEILING, AND WHO PAYS FOR EACH SEAT (U-billing-classes), updated in place on every pass.
+        var (moneyToday, planToday) = TodayLines(_host.SpendToday);
+        _moneyToday.Text = moneyToday;
+        _planToday.Text = planToday;
+        _seatClasses.Text = SeatClassesLine(CouncilRoles.All.Select(r => (CouncilRoles.Title(r), _host.BillingClassOf(r))));
 
         var i = 0;
         foreach (var mode in Enum.GetValues<TradingMode>())
@@ -2491,6 +2576,18 @@ sealed class SafetyPage
     /// Writes the ceiling. The activity line is in the owner's words and names the figure, because
     /// this is the one setting whose effect they will meet later as an AI that stopped.
     /// </summary>
+    /// <summary>
+    /// Writes the plan's ceiling (<c>U-billing-classes</c>). The activity line names it as plan capacity at list price, never as money.
+    /// </summary>
+    void SavePlanCapacity()
+    {
+        var cap = _planCap.Value ?? _host.Gateway.Settings.AiPlanDailyCapacity;
+        _host.Gateway.Update(s => s.AiPlanDailyCapacity = cap);
+        var figure = MissionSituation.Money(cap, _host.SpendToday.Currency);
+        _host.Gateway.Log.Activity($"The AI may now use up to {figure} a day of your ChatGPT plan, counted at list price");
+        _planCapNote.Text = $"Saved. The AI may use up to {figure} a day of your ChatGPT plan, counted at list price — not money.";
+    }
+
     void SaveDailyCap()
     {
         var cap = PendingCap();
