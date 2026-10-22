@@ -266,10 +266,13 @@ public static class Ops
     /// </summary>
     public const string LateralSend = "lateral-send", LateralList = "lateral-list";
 
-    /// <summary>Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>).</summary>
+    /// <summary>
+    /// Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>; <c>U-org-verbs-a</c>:
+    /// <see cref="MandateRescope"/>, <see cref="MandatePropose"/>, <see cref="OrgShow"/>).
+    /// </summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
-        LateralList];
+        LateralList, MandateRescope, MandatePropose, OrgShow];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 
