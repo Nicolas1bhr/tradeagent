@@ -70,8 +70,10 @@ first_start_done() { [ -f "$db" ] && [ "$(activity_count 'TradeAgent started')" 
 # supervisor/, +pids +memory are enabled below the unit, and no attempt-* is left. Asked of the kernel, not the app.
 unit_cgroup() { echo "/sys/fs/cgroup$(systemctl show -p ControlGroup --value tradeagent.service)"; }
 main_in_supervisor() { [ "$(sed -n 's/^0:://p' "/proc/$(main_pid)/cgroup" 2> /dev/null)" = "$(systemctl show -p ControlGroup --value tradeagent.service)/supervisor" ]; }
+no_attempts() { [ -z "$(find "$(unit_cgroup)" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*')" ]; }
+
 assert_cgroup() {
-    local when="$1" dir owner control leftover
+    local when="$1" dir owner control
     dir="$(unit_cgroup)"
     [ -d "$dir" ] || fail "$when: the unit has no cgroup at $dir"
     owner="$(stat -c %U "$dir")"
@@ -81,8 +83,11 @@ assert_cgroup() {
     control="$(cat "$dir/cgroup.subtree_control")"
     case " $control " in *" pids "*) ;; *) fail "$when: pids is not enabled below $dir (subtree_control: $control)" ;; esac
     case " $control " in *" memory "*) ;; *) fail "$when: memory is not enabled below $dir (subtree_control: $control)" ;; esac
-    leftover="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*' | tr '\n' ' ')"
-    [ -z "$leftover" ] || fail "$when: attempt cgroups are left under $dir: $leftover"
+    # THE APP'S OWN START BENCHMARK (U-cell-linux-c item 5) launches cells right after the sweep, each in an attempt cgroup that is
+    # removed when its row ends: a leftover is one that is STILL there after 30 s, which a cell row never is and a crash's leftover
+    # that the sweep missed always is.
+    wait_until 30 no_attempts \
+        || fail "$when: attempt cgroups are left under $dir: $(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*' | tr '\n' ' ')"
     pass "$when: the unit's cgroup $dir is $account's, the app's main process $(main_pid) is in supervisor/, subtree_control '$control', no attempt-* left"
 }
 loopback_row_after() { [ "$(loopback_max_id)" -gt "$1" ]; }

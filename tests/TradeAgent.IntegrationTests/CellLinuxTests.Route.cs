@@ -452,8 +452,12 @@ public partial class CellLinuxTests
             var policyFile = r.Policy.Write();
             var signIn = Path.Combine(r.W.Root, "seat-auth.json");
             File.WriteAllText(signIn, "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"sk-FAKE-route-a-0000\"}");
+            // THE LAUNCHER, ITS STAGE AND THE EXEC-SERVER WRITE THEIR STDERR TO A FILE the row prints: codex keeps a stdio program's
+            // stderr to itself, and a cell that would not start is otherwise only "unsupported call" (CI run 39702504076).
+            var leg = Path.Combine(dir, "cell-leg.err");
+            IReadOnlyList<string> launcher = ["/bin/sh", "-c", $"exec \"$0\" \"$@\" 2>>'{leg}'", .. Launcher()];
             RouteA.Make(layout, Encoding.UTF8.GetBytes("# the class's keys travel on the command line\n"),
-                RouteA.EnvironmentsToml(Launcher(), attempt.Cell, policyFile, r.Codex, Paths.Home), signIn);
+                RouteA.EnvironmentsToml(launcher, attempt.Cell, policyFile, r.Codex, Paths.Home), signIn);
             plant?.Invoke(layout);
 
             var cli = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
@@ -468,6 +472,7 @@ public partial class CellLinuxTests
             psi.Environment["HOME"] = r.W.Home;
             psi.Environment[AgentGrants.Variable] = "FAKE-harness-bearer-0002";
             psi.Environment["TRADEAGENT_HOME"] = Paths.Home;
+            psi.Environment["RUST_LOG"] = "warn,codex_exec_server=debug,codex_core::environment=debug,codex_app_server_client=debug";
             if (Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnetRoot) psi.Environment["DOTNET_ROOT"] = dotnetRoot;
             using var h = ProcessContainment.StartHarness(psi, attempt, Launcher());
             h.Process.StandardInput.Close();
@@ -486,7 +491,13 @@ public partial class CellLinuxTests
                             outputs[id.GetString()!] = item.GetProperty("output").ToString();
             }
             RouteA.Remove(layout);
-            return new Turn(outputs, h.Process.ExitCode, await so, await se);
+            var err = await se;
+            var legErr = File.Exists(leg) ? File.ReadAllText(leg) : "(the launcher never ran: no stderr file)";
+            var envLines = string.Join("\n", err.Split('\n').Where(l => l.Contains("environment", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("exec_server", StringComparison.Ordinal) || l.Contains("stdio", StringComparison.OrdinalIgnoreCase)).TakeLast(40));
+            return new Turn(outputs, h.Process.ExitCode, await so,
+                $"{err[^Math.Min(err.Length, 1500)..]}\n--- policy file after the turn: {(File.Exists(policyFile) ? "STILL THERE (no supervisor removed it)" : "removed")}" +
+                $"\n--- the cell leg's stderr ---\n{legErr[^Math.Min(legErr.Length, 3000)..]}\n--- codex's environment log ---\n{envLines}");
         }
         finally
         {
@@ -543,7 +554,7 @@ public partial class CellLinuxTests
             View("c4", Path.Combine(r.W.Ws, "img.png")),
             View("c5", Path.Combine(harnessSide, "img.png")),
         ]);
-        var said = $"exit {turn.Exit}\n--- outputs ---\n{string.Join("\n", turn.Outputs.Select(o => o.Key + ": " + o.Value))}\n--- stderr ---\n{turn.Stderr[^Math.Min(turn.Stderr.Length, 3000)..]}";
+        var said = $"exit {turn.Exit}\n--- outputs ---\n{string.Join("\n", turn.Outputs.Select(o => o.Key + ": " + o.Value))}\n--- stderr ---\n{turn.Stderr}";
         _output.WriteLine("route (b): " + said);
         Assert.True(turn.Outputs.TryGetValue("c1", out var c1), "the shell call returned nothing: " + said);
         Assert.Contains("MARK", c1);
