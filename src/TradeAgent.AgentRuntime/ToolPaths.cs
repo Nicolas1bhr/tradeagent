@@ -91,6 +91,15 @@ public static class ToolPaths
     }
 
     /// <summary>
+    /// WHETHER THE PATH NAMES THE ROOT ITSELF: <c>.</c>, <c>./</c>, <c>./.</c> — a path of nothing but <c>.</c> segments (fix pass 5, the
+    /// fourth re-review's D6). <see cref="Resolve"/> refuses the root as not INSIDE it, which is right for a file; a listing asks for it by
+    /// this. A <c>..</c> anywhere is never the root: it is refused by <see cref="Resolve"/> for climbing.
+    /// </summary>
+    public static bool NamesRoot(string? path) =>
+        path is { Length: > 0 } && !Path.IsPathRooted(path) && !path.StartsWith('~')
+        && path.Split('/', StringSplitOptions.RemoveEmptyEntries).All(s => s == ".");
+
+    /// <summary>
     /// The first component BELOW the root that is a symbolic link, or null when none is. Walks down
     /// from the root so the root's own ancestry — which the app chose and the worker did not — is never
     /// what refuses a path.

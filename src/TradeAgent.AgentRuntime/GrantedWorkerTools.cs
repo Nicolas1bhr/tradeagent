@@ -238,21 +238,23 @@ public sealed class GrantedWorkerTools(
     ToolAnswer List(JsonElement args)
     {
         var path = Str(args, "path") ?? ".";
-        var (_, refusal) = ToolPaths.Resolve(home(), path == "." ? "." : path);
         // "." resolves to the root itself, which Resolve refuses as not INSIDE it — correct for a file
-        // and wrong for a listing, so the root is named here rather than by loosening that rule.
-        if (path != "." && refusal is not null) return ToolAnswer.Refused(refusal, Summary(ListFiles, path));
+        // and wrong for a listing, so the root is named here rather than by loosening that rule. So are
+        // "./" and "./." (fix pass 5, D6): only dots, listed exactly as "." is.
+        var atRoot = ToolPaths.NamesRoot(path);
+        var (_, refusal) = ToolPaths.Resolve(home(), path);
+        if (!atRoot && refusal is not null) return ToolAnswer.Refused(refusal, Summary(ListFiles, path));
 
         try
         {
             // EXAMINED WITHOUT FOLLOWING IT (fix pass 4): nothing there, or a file, is not a folder here; a link is refused below by the
             // listing itself, in its own words.
-            if (path != "." && HomeFiles.Describe(home(), path) is null or { Folder: false, Link: false })
+            if (!atRoot && HomeFiles.Describe(home(), path) is null or { Folder: false, Link: false })
                 return ToolAnswer.Refused($"'{path}' is not a folder here.", Summary(ListFiles, path));
 
             // THE FOLDER OPENED WITHOUT FOLLOWING A LINK, AND EACH NAME EXAMINED WITHOUT FOLLOWING IT (fix pass 3): a link is listed as
             // one, never as what it points at — its target's size and kind are the app's to know, not the cell's.
-            var seen = HomeFiles.List(home(), path);
+            var seen = HomeFiles.List(home(), atRoot ? "." : path);
             var entries = new List<string>();
             foreach (var dir in seen.Where(e => e.Folder).OrderBy(e => e.Name, StringComparer.Ordinal))
                 entries.Add(dir.Name + "/");
