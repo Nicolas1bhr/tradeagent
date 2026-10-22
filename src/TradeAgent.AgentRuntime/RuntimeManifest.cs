@@ -503,6 +503,19 @@ public sealed class RuntimeManifest
     internal string? DeclaredSeatClass { get; init; }
 
     /// <summary>
+    /// A TEST HOST'S MODEL PROVIDER (<c>U-execution-environment</c> item 0): the <c>-c</c> keys that point a real codex at the tests' mock
+    /// model (<c>tests/TradeAgent.IntegrationTests/CellRoute/mock_responses.py</c>), appended after the class's deny set on a turn's
+    /// command line — so a route (a) turn runs end to end through <see cref="AgentSession"/> with no model, no login and no key but a
+    /// FAKE one. The <see cref="DeclaredSeatClass"/> pattern: code only, never serialized, honoured only while
+    /// <see cref="PuppetSeats.TestHost"/> is set, which nothing in the product sets — no file, setting, verb or pipe op reaches it.
+    /// </summary>
+    [JsonIgnore]
+    internal string[] TestProviderArgs { get; set; } = [];
+
+    /// <summary>The test host's provider keys (<see cref="TestProviderArgs"/>), and none anywhere else.</summary>
+    internal string[] TestHostProviderArgs => PuppetSeats.TestHost ? TestProviderArgs : [];
+
+    /// <summary>
     /// THE CLASS OF THE SEAT AN <see cref="AgentSession"/> OF <paramref name="role"/> OVER THIS MANIFEST STARTS — the one answer the
     /// session's own verdict, its last check before the process and the app's declared seat all read: a test host's puppet plays its
     /// declared class (<see cref="PuppetSeatClass"/>); a position beyond the legacy pair on a runtime this build gives a broker class

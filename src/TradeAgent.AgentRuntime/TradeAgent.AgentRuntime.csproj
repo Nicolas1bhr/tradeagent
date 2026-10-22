@@ -25,5 +25,6 @@
          without a way to make the process die exactly there. Test-only visibility, the same
          arrangement TradeAgent.App already has, rather than a public member the product could use. -->
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+    <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
   </ItemGroup>
 </Project>
