@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Reflection;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using TradeAgent.App;
@@ -384,5 +386,54 @@ public class NumberEntryCultureTests
         }
         Assert.False(typeof(AmountField).GetProperty(nameof(AmountField.Value))!.SetMethod!.IsPublic);
         Assert.False(typeof(AmountField).GetProperty(nameof(AmountField.Value))!.SetMethod!.IsAssembly);
+    });
+
+    /// <summary>A wheel or trackpad scroll over <paramref name="over"/>, as the platform raises it.</summary>
+    static PointerWheelEventArgs Wheel(Interactive over, Visual root) =>
+        new(over, new Avalonia.Input.Pointer(1, PointerType.Mouse, true), root, new Point(1, 1), 0,
+            new PointerPointProperties(), KeyModifiers.None, new Vector(0, 1)) { RoutedEvent = InputElement.PointerWheelChangedEvent };
+
+    /// <summary>The box clicked into, as the focus manager marks it — there is no window here to click in.</summary>
+    static void Focused(InputElement element)
+    {
+        var p = typeof(InputElement);
+        p.GetProperty(nameof(InputElement.IsKeyboardFocusWithin))!.SetMethod!.Invoke(element, [true]);
+        p.GetProperty(nameof(InputElement.IsFocused))!.SetMethod!.Invoke(element, [true]);
+    }
+
+    /// <summary>
+    /// (item 7) NO SCROLL CHANGES A NUMBER — the owner, 2026-10-22: "it's also important that values cannot be changed by scrolling over
+    /// them if they weren't clicked in the first place". A wheel over a money or limit box, not clicked into and then clicked into,
+    /// changes neither its figure nor its text, and the event is left unhandled so the page scrolls. Decided: a FOCUSED box takes no
+    /// wheel change either — typing is the one way a figure changes.
+    ///
+    /// <para>RED at 988c9487 through the stock number box with its spinner: unfocused, the wheel was already left alone (a guard,
+    /// green at base); clicked into, one wheel notch stepped 7 to 8 and swallowed the scroll — Expected (7, False), Actual (8, True).</para>
+    /// </summary>
+    [Fact]
+    public Task A_scroll_over_a_money_box_never_changes_its_value_and_scrolls_the_page() => OnThePage((page, _) =>
+    {
+        var fields = page.Root.GetLogicalDescendants().OfType<AmountField>().ToList();
+        Assert.Equal(26, fields.Count);
+        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "0,05";
+
+        foreach (var field in fields)
+        {
+            var before = (field.Box.Text, field.Value);
+
+            var unfocused = Wheel(field.Box, page.Root);
+            field.Box.RaiseEvent(unfocused);
+            Assert.Equal(before, (field.Box.Text, field.Value));
+            Assert.False(unfocused.Handled);
+
+            Focused(field);
+            Focused(field.Box);
+            var focused = Wheel(field.Box, page.Root);
+            field.Box.RaiseEvent(focused);
+            Assert.Equal(before, (field.Box.Text, field.Value));
+            Assert.False(focused.Handled);
+        }
+        Assert.Equal(0.05m, Field<AmountField>(page, "_envelopeQuantity").Value);
+        return Task.CompletedTask;
     });
 }
